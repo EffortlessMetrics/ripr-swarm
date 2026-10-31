@@ -107,6 +107,25 @@ pub(crate) fn preview_actionability_for(finding: &Finding) -> Option<PreviewActi
         // that and keep the specific per-finding reason.
         match scope_qualified_why(finding, specific) {
             Some(why) => why,
+            // This branch runs only when the projection returned no packet, so
+            // the shared validator never ran and there is no validator reason
+            // to displace; `specific` is the classifier's generic evidence
+            // line. A moved assertion selection (RIPR-SPEC-0224) is a real,
+            // nameable cause behind that generic line, so lead with it. A
+            // repo-scope reason (above) still wins, and anything else keeps
+            // the evidence line.
+            None if matches!(
+                finding.language,
+                Some(LanguageId::TypeScript | LanguageId::JavaScript)
+            ) =>
+            {
+                super::typescript_packet_projection::typescript_moved_selection_blocker(finding)
+                    .unwrap_or_else(|| {
+                        specific
+                            .unwrap_or("TypeScript preview lacks a complete repair packet contract")
+                            .to_string()
+                    })
+            }
             None => specific
                 .unwrap_or("TypeScript preview lacks a complete repair packet contract")
                 .to_string(),
@@ -467,7 +486,7 @@ mod tests {
 
         assert_eq!(actionability.authority_boundary, "preview_advisory_only");
         assert!(!actionability.repair_packet_ready);
-        assert_eq!(actionability.gap_state, "advisory");
+        assert_eq!(actionability.gap_state, "unknown");
         assert_eq!(
             actionability.actionability_category,
             "incomplete_repair_packet"
@@ -519,9 +538,7 @@ mod tests {
         finding.language = Some(LanguageId::Rust);
 
         assert!(preview_actionability_for(&finding).is_none());
-        assert!(is_preview_actionability_evidence_line(
-            "gap_state: advisory"
-        ));
+        assert!(is_preview_actionability_evidence_line("gap_state: unknown"));
         assert!(is_preview_actionability_evidence_line(
             "unlock_condition: add graph legs"
         ));
@@ -531,7 +548,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_evidence_replaces_blocked_lines_for_packet_ready_finding() {
+    fn projected_evidence_replaces_blocked_lines_for_packet_ready_finding() -> Result<(), String> {
         let mut finding = sample_typescript_finding();
         finding
             .evidence
@@ -565,9 +582,61 @@ mod tests {
             role: crate::domain::RelatedTestRole::Contributing,
         });
         finding.missing.push(
-            "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: blocked"
+            "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: blocked"
                 .to_string(),
         );
+
+        finding
+            .missing
+            .push("boundary discriminator is missing".to_string());
+        finding.recommended_next_step = Some(
+            "add assertion; no actionable repair packet is emitted until fields resolve"
+                .to_string(),
+        );
+        let render = |finding: &Finding| -> Result<serde_json::Value, String> {
+            let rendered = crate::output::json::render_context_packet(
+                finding,
+                5,
+                &crate::config::RiprConfig::default(),
+                std::path::Path::new("."),
+            );
+            serde_json::from_str(&rendered).map_err(|err| err.to_string())
+        };
+        let context = render(&finding)?;
+        assert_eq!(
+            context["missing"],
+            serde_json::json!(["boundary discriminator is missing"])
+        );
+        assert_eq!(
+            context["missing_discriminators"][0]["value"],
+            "amount == threshold"
+        );
+        assert_eq!(context["classification"], "weakly_exposed");
+        assert_eq!(context["ripr"]["infect"], "unknown");
+        assert!(
+            context["recommended_next_step"]
+                .as_str()
+                .is_some_and(|s| s.contains("repair packet is complete"))
+        );
+        let mut unsupported = finding.clone();
+        unsupported.language = Some(LanguageId::Rust);
+        assert_eq!(
+            render(&unsupported)?["missing"],
+            serde_json::json!(unsupported.missing)
+        );
+        let mut incomplete = finding.clone();
+        incomplete
+            .evidence
+            .retain(|s| !s.starts_with("typescript_verify_command: "));
+        assert!(!preview_actionability_for(&incomplete).is_some_and(|a| a.repair_packet_ready));
+        assert_eq!(
+            render(&incomplete)?["missing"],
+            serde_json::json!(incomplete.missing)
+        );
+        let mut stale = finding.clone();
+        stale.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        assert!(!preview_actionability_for(&stale).is_some_and(|a| a.repair_packet_ready));
+        assert_eq!(render(&stale)?["missing"], serde_json::json!(stale.missing));
 
         let projected = projected_preview_actionability_evidence(&finding);
         let missing = projected_preview_actionability_missing(&finding);
@@ -596,7 +665,7 @@ mod tests {
             "{projected:?}"
         );
         assert!(
-            !projected.iter().any(|line| line == "gap_state: advisory"
+            !projected.iter().any(|line| line == "gap_state: unknown"
                 || line == "actionability_category: incomplete_repair_packet"
                 || line.starts_with("why_not_actionable: ")
                 || line.starts_with("repair_route: ")
@@ -610,6 +679,7 @@ mod tests {
                 .any(|line| line.starts_with("TypeScript preview actionability `")),
             "{missing:?}"
         );
+        Ok(())
     }
 
     /// #4105 wrongfam end-to-end: the observed `login('alice')` input provably
@@ -687,6 +757,7 @@ mod tests {
     fn sample_typescript_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib.ts:2:typescript_preview".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -714,7 +785,7 @@ mod tests {
             confidence: 0.4,
             evidence: vec![
                 "owner: applyDiscount".to_string(),
-                "gap_state: advisory".to_string(),
+                "gap_state: unknown".to_string(),
                 "actionability_category: incomplete_repair_packet".to_string(),
                 "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                     .to_string(),

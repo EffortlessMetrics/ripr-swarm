@@ -73,15 +73,18 @@ use super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Assertion admission for one extracted TypeScript test.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum TypeScriptAssertionAdmission {
     /// The extractor recognized at least one assertion whose oracle kind it
     /// can grade (anything other than `OracleKind::Unknown`).
+    #[serde(rename = "recognized_assertion_present")]
     Recognized,
     /// The whole test and everything the runner runs around it were walked
     /// and nothing assertion-like exists.
+    #[serde(rename = "extraction_complete_no_assertion")]
     NoAssertionLike,
     /// Something assertion-like is present that RIPR cannot admit or resolve.
+    #[serde(rename = "assertion_like_present_but_unresolved")]
     Unresolved,
 }
 
@@ -294,6 +297,25 @@ impl TypeScriptAdmissionContext {
         context.registration_is_known_in(call, expected_describe, &names)
     }
 
+    /// Whether `local` is bound by this context's imports to a member `family`
+    /// accepts: the renamed spelling of a registration root (`const { test: t
+    /// } = runner`, `import { test as t }`, #10987). A namespace object's own
+    /// name (`runner`) and imports of members outside `family` read as
+    /// nothing. The caller still decides the registration itself through
+    /// `registration_is_known_in`, which keeps the runner-source and
+    /// shadowing gates.
+    pub(crate) fn binds_renamed_registration_root(
+        &self,
+        local: &str,
+        family: impl Fn(&str) -> bool,
+    ) -> bool {
+        self.imports.iter().any(|import| {
+            !import.namespace
+                && import.local == local
+                && import.imported.as_deref().is_some_and(&family)
+        })
+    }
+
     /// The context a registration is resolved in: the runner imports only,
     /// with every other import and re-export carried as an enclosing name.
     /// Built once per statement list, not once per registration.
@@ -349,6 +371,13 @@ impl TypeScriptAdmissionContext {
         };
         scan.registration(call)
             .is_some_and(|registration| registration.kind == expected)
+    }
+
+    /// Validated runner imports shared by registration disclosure (#10169).
+    pub(super) fn runner_declaration_imports(&self) -> impl Iterator<Item = &TypeScriptImport> {
+        self.registration_imports
+            .iter()
+            .filter(|import| self.import_class(import) == ImportClass::Runner)
     }
 
     fn import_class(&self, import: &TypeScriptImport) -> ImportClass {

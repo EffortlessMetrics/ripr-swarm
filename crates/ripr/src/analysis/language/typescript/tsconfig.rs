@@ -7,7 +7,10 @@
 //!   `<workspace-root>/jsconfig.json`; package-level tsconfigs are out of
 //!   scope, and the load-gap advice says so instead of implying the project
 //!   lacks config (#8715).
-//! - `extends` and `references` are NOT followed.
+//! - `extends` chains are followed up to 8 hops when every target is a
+//!   relative path inside the directory of the extending config
+//!   (#11204); `references`, package-name `extends`, cross-directory
+//!   bases, cycles, and missing targets fail closed.
 //! - Resolution succeeds ONLY when a specifier matches a SINGLE existing
 //!   workspace file (.ts/.tsx/.js/.jsx/.mts/.cts/.mjs/.cjs).
 //!   Zero or >1 matches → `None`.
@@ -83,7 +86,14 @@ pub(crate) struct TsAliasMap {
     /// unresolved advice stays the flag-off / load-gap advice.
     tsconfig_loaded: bool,
     /// In-workspace package names (#4554), consulted after `paths`.
-    packages: super::workspace_packages::WorkspacePackages,
+    ///
+    /// Shared, not owned: every cache miss hands the map to the parse worker,
+    /// and the package table lists every indexed source path.
+    packages: std::sync::Arc<super::workspace_packages::WorkspacePackages>,
+    /// [`Self::cache_digest`], computed once. The digest renders the whole
+    /// package table, so recomputing it for each of the workspace's files
+    /// made a run quadratic in the file count. Every mutator resets it.
+    digest: std::sync::OnceLock<(u64, u64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -207,10 +217,10 @@ impl TsAliasMapLoadGap {
             ),
             Self::ExtendsUnsupported { config } => (
                 format!(
-                    "the {config} at the workspace root uses `extends`/`references`, which single-hop alias resolution deliberately does not follow"
+                    "the {config} at the workspace root uses an `extends`/`references` form alias resolution cannot follow exactly (package-name or cross-directory base, cycle, missing target, or `references`)"
                 ),
                 format!(
-                    "inline the extended compilerOptions.paths into the workspace-root {config} for credit; discovery reads only the workspace-root config and never follows extends chains"
+                    "inline the extended compilerOptions.paths into the workspace-root {config} for credit; extends chains are followed only for relative bases in the same directory as the extending config"
                 ),
             ),
             Self::IncompleteConfig { config } => (
@@ -231,6 +241,13 @@ impl TsAliasMapLoadGap {
     }
 }
 
+// Counts full digest renders on this thread so a test can tell a memo hit
+// from a recomputation that happens to return an equal value.
+#[cfg(test)]
+thread_local! {
+    static DIGEST_COMPUTATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl TsAliasMap {
     /// Deterministic content digest for cache keys (the export-facts cache
     /// keys its entries by every input that can change resolution
@@ -238,7 +255,13 @@ impl TsAliasMap {
     /// `HashMap` iteration order is not stable; the remaining fields are
     /// order-stable (`Vec`, `BTreeMap`, `BTreeSet`) and hash directly.
     pub(crate) fn cache_digest(&self) -> (u64, u64) {
+        *self.digest.get_or_init(|| self.compute_cache_digest())
+    }
+
+    fn compute_cache_digest(&self) -> (u64, u64) {
         use std::hash::{Hash, Hasher};
+        #[cfg(test)]
+        DIGEST_COMPUTATIONS.with(|count| count.set(count.get() + 1));
         let mut first = std::collections::hash_map::DefaultHasher::new();
         let mut second = std::collections::hash_map::DefaultHasher::new();
         first.write_u8(0xA7);
@@ -283,7 +306,7 @@ impl TsAliasMap {
         Self {
             root: root.to_path_buf(),
             base_url: ".".to_string(),
-            packages,
+            packages: std::sync::Arc::new(packages),
             ..Self::default()
         }
     }
@@ -293,7 +316,8 @@ impl TsAliasMap {
         mut self,
         packages: super::workspace_packages::WorkspacePackages,
     ) -> Self {
-        self.packages = packages;
+        self.packages = std::sync::Arc::new(packages);
+        self.digest = std::sync::OnceLock::new();
         self
     }
 
@@ -502,7 +526,7 @@ pub(crate) fn load_alias_map_with_read_error(
         // Capped read: a read failure fail-closes the alias map; size-limit
         // outcomes are disclosed by the caller through the second slot.
         return match read_config_capped(&path) {
-            Ok(text) => match parse_alias_map(root, &text) {
+            Ok(text) => match parse_alias_map(root, &path, &text) {
                 Ok(map) => (Some(map), None, None),
                 Err(blocker) => {
                     let gap = match blocker {
@@ -541,7 +565,20 @@ enum TsAliasMapBlocker {
     IncompleteConfig,
 }
 
-fn parse_alias_map(root: &Path, text: &str) -> Result<TsAliasMap, TsAliasMapBlocker> {
+/// `compilerOptions` after merging an `extends` chain (#11204): the
+/// extending config wins per key, a declared `paths` object replaces the
+/// inherited one whole (as `tsc` treats it, even when empty), and
+/// `baseUrl` is the nearest declaration. `paths` is `None` until some
+/// config in the chain declares it.
+struct MergedCompilerOptions {
+    base_url: Option<String>,
+    paths: Option<HashMap<String, Vec<String>>>,
+}
+
+/// Maximum `extends` hops followed from the workspace-root config.
+const MAX_EXTENDS_DEPTH: usize = 8;
+
+fn parse_raw_tsconfig(text: &str) -> Result<RawTsConfig, TsAliasMapBlocker> {
     // `tsc` reads tsconfig.json / jsconfig.json as JSONC (#4549): strip
     // comments and trailing commas first, then parse strictly. A lexical
     // failure (unterminated block comment or string) and a strict-parse
@@ -549,25 +586,96 @@ fn parse_alias_map(root: &Path, text: &str) -> Result<TsAliasMap, TsAliasMapBloc
     let normalized = strip_jsonc(text).map_err(|detail| TsAliasMapBlocker::Unparseable {
         detail: detail.to_string(),
     })?;
-    let raw: RawTsConfig = serde_json::from_str(&normalized).map_err(|err| {
-        TsAliasMapBlocker::Unparseable {
-            // Bound the parser message: it can quote long input spans.
-            detail: err.to_string().chars().take(160).collect(),
-        }
-    })?;
+    serde_json::from_str(&normalized).map_err(|err| TsAliasMapBlocker::Unparseable {
+        // Bound the parser message: it can quote long input spans.
+        detail: err.to_string().chars().take(160).collect(),
+    })
+}
 
-    // Fail-closed: if extends/references are present, do NOT follow them.
-    if raw.extends.is_some() || raw.references.is_some() {
+/// Merge the `compilerOptions` of the config at `config_path` (already
+/// read as `text`) with every config it extends, bases first.
+///
+/// Fail-closed as `ExtendsUnsupported` for anything this loader cannot
+/// follow exactly: `references`, a non-relative (package-name) `extends`,
+/// an `extends` target outside the directory of the extending config
+/// (inherited `paths` templates are anchored at that directory, so a
+/// cross-directory base cannot be rebased exactly), a missing or
+/// unreadable target, a cycle, or a chain deeper than
+/// [`MAX_EXTENDS_DEPTH`].
+fn merge_compiler_options(
+    config_path: &Path,
+    text: &str,
+    visited: &mut Vec<PathBuf>,
+    depth: usize,
+) -> Result<MergedCompilerOptions, TsAliasMapBlocker> {
+    if depth > MAX_EXTENDS_DEPTH || visited.iter().any(|seen| seen == config_path) {
         return Err(TsAliasMapBlocker::ExtendsUnsupported);
     }
+    visited.push(config_path.to_path_buf());
+    let raw = parse_raw_tsconfig(text)?;
+    if raw.references.is_some() {
+        return Err(TsAliasMapBlocker::ExtendsUnsupported);
+    }
+    let config_dir = config_path
+        .parent()
+        .ok_or(TsAliasMapBlocker::ExtendsUnsupported)?;
+    let mut merged = MergedCompilerOptions {
+        base_url: None,
+        paths: None,
+    };
+    if let Some(extends) = &raw.extends {
+        let targets: Vec<&str> = match extends {
+            serde_json::Value::String(single) => vec![single.as_str()],
+            serde_json::Value::Array(many) => many
+                .iter()
+                .map(|entry| entry.as_str().ok_or(TsAliasMapBlocker::ExtendsUnsupported))
+                .collect::<Result<Vec<_>, _>>()?,
+            _ => return Err(TsAliasMapBlocker::ExtendsUnsupported),
+        };
+        for target in targets {
+            if !target.starts_with("./") && !target.starts_with("../") {
+                return Err(TsAliasMapBlocker::ExtendsUnsupported);
+            }
+            let mut base_path = config_dir.join(target);
+            if base_path.extension().is_none() {
+                base_path.set_extension("json");
+            }
+            if base_path.parent() != Some(config_dir) || !base_path.is_file() {
+                return Err(TsAliasMapBlocker::ExtendsUnsupported);
+            }
+            let base_text = read_config_capped(&base_path)
+                .map_err(|_read_err| TsAliasMapBlocker::ExtendsUnsupported)?;
+            let base = merge_compiler_options(&base_path, &base_text, visited, depth + 1)?;
+            // Later array entries override earlier ones; the extending
+            // config itself is applied after the whole chain.
+            if base.base_url.is_some() {
+                merged.base_url = base.base_url;
+            }
+            if base.paths.is_some() {
+                merged.paths = base.paths;
+            }
+        }
+    }
+    if let Some(options) = raw.compiler_options {
+        if options.base_url.is_some() {
+            merged.base_url = options.base_url;
+        }
+        if options.paths.is_some() {
+            merged.paths = options.paths;
+        }
+    }
+    visited.pop();
+    Ok(merged)
+}
 
-    let compiler_opts = raw
-        .compiler_options
-        .ok_or(TsAliasMapBlocker::IncompleteConfig)?;
-    let base_url = compiler_opts
-        .base_url
-        .ok_or(TsAliasMapBlocker::IncompleteConfig)?;
-    let paths = compiler_opts.paths.unwrap_or_default();
+fn parse_alias_map(
+    root: &Path,
+    config_path: &Path,
+    text: &str,
+) -> Result<TsAliasMap, TsAliasMapBlocker> {
+    let merged = merge_compiler_options(config_path, text, &mut Vec::new(), 0)?;
+    let base_url = merged.base_url.ok_or(TsAliasMapBlocker::IncompleteConfig)?;
+    let paths = merged.paths.unwrap_or_default();
 
     // An absolute baseUrl (POSIX `/…`, drive-letter, or UNC) cannot be
     // anchored to `root` by single-hop resolution. Keep the map so the
@@ -615,6 +723,7 @@ fn parse_alias_map(root: &Path, text: &str) -> Result<TsAliasMap, TsAliasMapBloc
         glob_entries,
         tsconfig_loaded: true,
         packages: Default::default(),
+        digest: Default::default(),
     })
 }
 
@@ -763,7 +872,8 @@ fn normalize_config_dir(raw: &str) -> Option<String> {
 ///
 /// A leading UTF-8 byte-order mark is dropped (`tsc` accepts one, and editors
 /// on Windows write it; #4638 review): the strict parser rejects it.
-fn strip_jsonc(text: &str) -> Result<String, &'static str> {
+/// Shared JSONC normalization for alias loading and conservative gap scoping.
+pub(super) fn strip_jsonc(text: &str) -> Result<String, &'static str> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut out = String::with_capacity(text.len());
     // Byte offset in `out` of a comma seen since the last significant
@@ -901,6 +1011,53 @@ mod tests {
         let _ = fs::write(dir.join(name), content);
     }
 
+    // ── cache_digest (#10943) ─────────────────────────────────────────────
+
+    #[test]
+    fn cache_digest_is_stable_across_clones_and_follows_the_package_table() {
+        let root = temp_dir("digest-once");
+        write(
+            &root,
+            "pkg/package.json",
+            r#"{"name":"pkg-a","main":"src/a.ts"}"#,
+        );
+        write(&root, "pkg/src/a.ts", "export const a = 1;\n");
+        let files = [PathBuf::from("pkg/src/a.ts")];
+        let packages = super::super::workspace_packages::WorkspacePackages::discover(&root, &files);
+        assert!(!packages.is_empty(), "fixture must discover its package");
+        let computations = || DIGEST_COMPUTATIONS.with(|count| count.get());
+        let map = TsAliasMap::workspace_packages_only(&root, packages.clone());
+        let start = computations();
+        let first = map.cache_digest();
+        assert_eq!(computations(), start + 1, "first call renders the table");
+        assert_eq!(map.cache_digest(), first);
+        assert_eq!(
+            map.clone().cache_digest(),
+            first,
+            "a clone keeps the digest"
+        );
+        assert_eq!(
+            computations(),
+            start + 1,
+            "repeat and cloned calls must hit the memo, not re-render the table"
+        );
+        let empty = TsAliasMap::workspace_packages_only(&root, Default::default());
+        let empty_digest = empty.cache_digest();
+        assert_ne!(empty_digest, first, "fixture table must change the digest");
+        let replaced = empty.with_workspace_packages(packages.clone());
+        assert_eq!(
+            replaced.cache_digest(),
+            first,
+            "replacing the package table must reset the memoized digest"
+        );
+        assert_eq!(
+            computations(),
+            start + 3,
+            "the empty map and the replaced map each render once"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
     // ── load_alias_map ────────────────────────────────────────────────────
 
     #[test]
@@ -928,7 +1085,7 @@ mod tests {
         }
         .parts();
         assert!(
-            recovery.contains("never follows extends chains"),
+            recovery.contains("extends chains are followed only for relative bases"),
             "extends recovery must name the scope boundary: {recovery}"
         );
         assert!(
@@ -944,6 +1101,107 @@ mod tests {
             &root,
             "tsconfig.json",
             r#"{"extends":"./base","compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        assert!(load_alias_map(&root).is_none());
+    }
+
+    #[test]
+    fn extends_chain_resolves_paths_from_base_config() -> Result<(), String> {
+        let root = temp_dir("extends-chain");
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
+        );
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json"}"#,
+        );
+        write(&root, "src/owner.ts", "export function owner() {}");
+        let map = load_alias_map(&root).ok_or("extends chain should load")?;
+        let resolved = map.resolve("@/owner").ok_or("alias should resolve")?;
+        assert_eq!(
+            resolved.to_string_lossy().replace('\\', "/"),
+            "src/owner.ts"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn extends_child_paths_override_base_paths() -> Result<(), String> {
+        let root = temp_dir("extends-override");
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/owner":["src/base-owner"]}}}"#,
+        );
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json","compilerOptions":{"paths":{"@/owner":["src/child-owner"]}}}"#,
+        );
+        write(&root, "src/base-owner.ts", "export const v = 1;");
+        write(&root, "src/child-owner.ts", "export const v = 2;");
+        let map = load_alias_map(&root).ok_or("extends chain should load")?;
+        let resolved = map.resolve("@/owner").ok_or("alias should resolve")?;
+        assert_eq!(
+            resolved.to_string_lossy().replace('\\', "/"),
+            "src/child-owner.ts"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn extends_child_empty_paths_replaces_base_paths() -> Result<(), String> {
+        // `tsc` replaces the inherited `paths` object whole when the
+        // extending config declares `paths`, even when it declares it
+        // empty: base aliases the child does not redeclare are gone.
+        let root = temp_dir("extends-empty-paths");
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/owner":["src/base-owner"]}}}"#,
+        );
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json","compilerOptions":{"paths":{}}}"#,
+        );
+        write(&root, "src/base-owner.ts", "export const v = 1;");
+        let map = load_alias_map(&root).ok_or("extends chain should load")?;
+        assert!(map.resolve("@/owner").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn extends_cycle_fails_closed() {
+        let root = temp_dir("extends-cycle");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./tsconfig.base.json"}"#,
+        );
+        write(
+            &root,
+            "tsconfig.base.json",
+            r#"{"extends":"./tsconfig.json","compilerOptions":{"baseUrl":".","paths":{}}}"#,
+        );
+        assert!(load_alias_map(&root).is_none());
+    }
+
+    #[test]
+    fn extends_into_subdirectory_fails_closed_for_now() {
+        let root = temp_dir("extends-subdir");
+        write(
+            &root,
+            "tsconfig.json",
+            r#"{"extends":"./config/tsconfig.base.json"}"#,
+        );
+        write(
+            &root,
+            "config/tsconfig.base.json",
+            r#"{"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}"#,
         );
         assert!(load_alias_map(&root).is_none());
     }

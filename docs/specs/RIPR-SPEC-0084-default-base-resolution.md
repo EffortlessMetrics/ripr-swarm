@@ -126,6 +126,29 @@ never the current branch, with a `--base` example); the current branch is
 the only one. A Git probe that fails to run adds no context rather than a
 guessed cause.
 
+A damaged repository is not a missing base. When the `HEAD` probe itself
+fails with a Git `fatal:` line (exit 128, for example a corrupt
+`.git/packed-refs`), the default-base failure is the unreadable-repository
+refusal: Git's own reason plus the repair naming the file to correct or
+restore, typed as an unusable repository root (`repository_root_unusable`),
+never "no commits yet" and never `base_unresolvable` (#10566). A quiet exit 1
+alone does not establish an unborn `HEAD`: corrupt loose refs, recursive ref
+cycles and inaccessible refs can answer identically. The recursive
+`git symbolic-ref --quiet HEAD` probe must also successfully name a branch
+ref before the first-commit recovery is offered. Its fatal failures retain
+Git's reason, advise inspecting `HEAD` and restoring its referenced metadata
+or read access, and use `repository_root_unusable` with repair route
+`analysis/repository-root`. Unanswered or unexplained probes never justify a
+first-commit suggestion. A truly unborn branch retains `base_unresolvable`
+and `analysis/base-resolution`. Both refusals exit 2 and emit no consumable
+analysis. Concurrent ref mutation between probes is not a snapshot guarantee.
+
+Doctor uses the same HEAD discriminator: damaged metadata is a failed
+`git_head` check with Git's reason and metadata/access recovery, never an
+unborn advisory. Its completed diagnosis exits 3 and its canonical action
+names `git_head` recovery without a runnable check command. A genuine unborn
+branch remains advisory and exits 0 when other checks pass (RIPR-SPEC-0007).
+
 This message explicitly says the analysis did not run (unlike "No probes
 found", which means the analysis ran and found nothing). It names the
 problem and the two remediation paths.
@@ -234,6 +257,15 @@ root counts, so an alias at
 a range that restores the same tree yields the same empty result, and the
 Start-here action owns the remediation instead.
 
+### Non-Git root refusal keeps its remedy (#11408)
+
+The not-a-work-tree refusal leads with the remedy (run from inside a
+repository or pass `--root <path>` to one; `ripr pilot --root .` works
+without Git history) and trails the root path. The LSP shows it as a
+`window/showMessage` warning bounded to 240 characters, so an over-long
+root is the part shortened, never the remedy. A short failure message is
+shown unchanged.
+
 ### Non-claims
 
 - This spec does NOT auto-run the suggested scope or pick an arbitrary ref.
@@ -299,11 +331,22 @@ Start-here action owns the remediation instead.
 - `crates/ripr/src/analysis/diff/load.rs::tests::explicit_base_is_used_as_is_without_resolution`
 - `crates/ripr/src/analysis/diff/load.rs::tests::load_diff_from_file_returns_content`
 - `crates/ripr/tests/cli_smoke.rs::history_commands_resolve_the_default_base_without_origin`
+- `crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::non_git_workspace_warning_keeps_the_remedy_inside_the_bound`
+  — positive: a long root keeps the remedy inside the 240-character bound.
+- `crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::non_git_workspace_warning_keeps_the_remedy_for_short_and_multibyte_roots`
+  — the shortest root and a multibyte root keep the remedy inside the bound.
+- `crates/ripr/src/lsp/backend.rs::bounded_failure_message_tests::short_analysis_failure_warning_is_unchanged`
+  — negative control: a short failure is shown unchanged.
 - `crates/ripr/tests/cli_smoke.rs::history_commands_without_a_resolvable_default_base_fail_named`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_missing_packet_recovers_without_a_resolvable_base`
 - `crates/ripr/tests/cli_smoke.rs::first_pr_check_recovery_write_resolves_the_default_base`
 - `crates/ripr/src/cli/commands/check.rs::tests::default_base_equal_to_head_is_named_and_distinct_commits_stay_silent`
 - `crates/ripr/tests/hostile_repos.rs::default_base_equal_to_head_is_called_out`
+- `crates/ripr/tests/hostile_repos.rs::corrupt_packed_refs_without_base_is_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::corrupt_loose_refs_without_base_are_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::looping_ref_without_base_is_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::unreadable_ref_without_base_is_not_reported_as_unborn`
+- `crates/ripr/tests/hostile_repos.rs::repository_without_a_usable_base_refuses_with_a_route`
 - `crates/ripr/src/cli/parse.rs::tests::base_and_diff_conflict_error_names_the_command_and_both_flags`
 - `crates/ripr/src/cli/parse.rs::tests::attached_terminal_stdin_note_fires_only_for_a_terminal`
 - `crates/ripr/src/cli/parse.rs::tests::terminal_stdin_disclosure_emits_once_only_for_a_terminal_diff_source`

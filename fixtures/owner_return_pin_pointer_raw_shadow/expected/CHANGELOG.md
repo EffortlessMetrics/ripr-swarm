@@ -91,3 +91,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_raw_shadow (8)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_raw_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_raw_shadow (9)
+
+Reason:
+RIPR-SPEC-0122: incomplete evidence stage tokens render as plain words in the human repair advisory (#11025)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_raw_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_raw_shadow (10)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_raw_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

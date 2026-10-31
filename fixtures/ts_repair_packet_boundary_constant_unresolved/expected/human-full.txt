@@ -3,12 +3,17 @@ mode: fast
 root: fixtures/ts_repair_packet_boundary_constant_unresolved/input
 config: <cwd>/fixtures/ts_repair_packet_boundary_constant_unresolved/input/ripr.toml
 
-Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: typescript = 1
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 WARNING src/pricing.ts:4
   id: probe:src_pricing.ts:typescript_preview:17445ecf
@@ -16,9 +21,10 @@ WARNING src/pricing.ts:4
 Changed
   after:    if (amount >= DISCOUNT_THRESHOLD) {
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  typescript:src/pricing.ts::discountedTotal
 
 Language
@@ -28,10 +34,10 @@ Language
 
 Preview actionability
   authority: preview_advisory_only
-  gap state: advisory
+  gap state: unknown
   category: incomplete_repair_packet
   repair packet ready: false
-  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: boundary constant `DISCOUNT_THRESHOLD` in the missing discriminator `amount == DISCOUNT_THRESHOLD` is not resolved to a concrete value, so the observed call input `discountedTotal(20000)` is not shown to hit it; derive an input equal to `DISCOUNT_THRESHOLD` before the packet is delegatable
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: derive an input equal to `DISCOUNT_THRESHOLD` before this repair can be handed to an agent: boundary constant `DISCOUNT_THRESHOLD` in the missing discriminator `amount == DISCOUNT_THRESHOLD` is not resolved to a concrete value, so the observed call input `discountedTotal(20000)` is not shown to hit it
   repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
   missing fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
   evidence needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
@@ -39,6 +45,7 @@ Preview actionability
 
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 2 related test(s) found for owner `discountedTotal`
@@ -46,8 +53,8 @@ Evidence
   - propagation unknown: TypeScript preview adapter does not yet model propagation
   - observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)
   - discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `amount == DISCOUNT_THRESHOLD`
-  - related test tests/pricing.test.ts:3 no discount below threshold uses strong exact value oracle: expect(...).toBe(...); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/pricing.test.ts:7 discounts far above threshold uses strong exact value oracle: expect(...).toBe(...); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/pricing.test.ts:3 no discount below threshold uses strong exact value oracle: expect(...).toBe(...); unconfirmed: the preview adapter could not confirm that this assertion observes the changed behavior
+  - related test tests/pricing.test.ts:7 discounts far above threshold uses strong exact value oracle: expect(...).toBe(...); unconfirmed: the preview adapter could not confirm that this assertion observes the changed behavior
 
 Weakness
   - Related tests reach `discountedTotal` with a strong oracle, but no strong assertion observes a `discountedTotal(...)` call at the changed predicate boundary `amount == DISCOUNT_THRESHOLD`; inputs on one side of the boundary do not discriminate the changed comparison
@@ -59,13 +66,13 @@ TypeScript preview card (advisory)
   owner: discountedTotal
   owner kind: function
   changed behavior: predicate changed at src/pricing.ts:4: `if (amount >= DISCOUNT_THRESHOLD) {`
-  related test: tests/pricing.test.ts:7 discounts far above threshold
+  related test: tests/pricing.test.ts:3 no discount below threshold
   oracle: exact_value (strong)
   missing discriminator: amount == DISCOUNT_THRESHOLD
   suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
   verify: npx --no-install jest tests/pricing.test.ts
   repair packet ready: false
-  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: boundary constant `DISCOUNT_THRESHOLD` in the missing discriminator `amount == DISCOUNT_THRESHOLD` is not resolved to a concrete value, so the observed call input `discountedTotal(20000)` is not shown to hit it; derive an input equal to `DISCOUNT_THRESHOLD` before the packet is delegatable
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract; validator: is not agent-packet eligible: derive an input equal to `DISCOUNT_THRESHOLD` before this repair can be handed to an agent: boundary constant `DISCOUNT_THRESHOLD` in the missing discriminator `amount == DISCOUNT_THRESHOLD` is not resolved to a concrete value, so the observed call input `discountedTotal(20000)` is not shown to hit it
   repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
   limits:
     - Syntax-first TypeScript/JavaScript preview evidence only.

@@ -67,7 +67,10 @@ the policy and PR ledgers, start-here, the report index, and the PR guidance
 annotations. It reads the workflow settings (RIPR_GATE_MODE,
 RIPR_GATE_BASELINE, RIPR_COMMENT_MODE, RIPR_UPLOAD_SARIF) and the GitHub
 Actions run (GITHUB_EVENT_NAME, GITHUB_BASE_REF, GITHUB_EVENT_PATH,
-GITHUB_REPOSITORY, GITHUB_ACTOR) from its environment. Each step prints as
+GITHUB_REPOSITORY, GITHUB_ACTOR) from its environment. RIPR_PILOT_TIMEOUT_MS
+(positive milliseconds) sets the pilot step's deadline as an explicit
+`ripr pilot --timeout-ms` hard limit; unset keeps pilot's default deadline
+and automatic extension, and an invalid value is refused. Each step prints as
 a log group; an advisory step's failure is logged and the packet continues,
 while a failed diff capture, gate evaluation, or (in a blocking gate mode)
 PR guidance or SARIF render makes the command exit nonzero after the rest of
@@ -192,7 +195,7 @@ Start-here vocabulary:
 "#;
 pub(super) const CALIBRATE_HELP: &str = r#"Import cargo-mutants outcomes as advisory calibration over static evidence.
 
-Usage: ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|json] [--out PATH]
+Usage: ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|markdown|text|json] [--out PATH]
 
 Options:
   --mutants-json PATH          cargo-mutants JSON file, or mutants.out directory containing outcomes.json and/or mutants.json. A mutants.json-only import counts unexecuted candidates in matched_total.

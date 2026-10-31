@@ -1,0 +1,29 @@
+# Registers the TypeScript per-file fact persistence slice (#10725) as a
+# new behavior spec: diff-mode check persists per-file facts keyed by
+# content, a warm run serves untouched files from the store with findings
+# identical to a cold run, and `check -v` discloses the real reuse counts.
+[[behavior]]
+id = "RIPR-SPEC-0363"
+name = "typescript per-file fact persistence"
+spec = "docs/specs/RIPR-SPEC-0363-typescript-per-file-fact-store.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/fact_store_tests.rs::cold_run_persists_per_file_facts_for_every_workspace_file",
+  "crates/ripr/src/analysis/language/typescript/fact_store_tests.rs::warm_rerun_reuses_persisted_facts_and_reproduces_identical_findings",
+  "crates/ripr/src/analysis/language/typescript/fact_store_tests.rs::edited_file_is_recomputed_while_unchanged_files_reuse",
+  "crates/ripr/src/analysis/language/typescript/fact_store_tests.rs::tampered_cache_entry_is_recomputed_not_served",
+  "crates/ripr/src/analysis/language/typescript/fact_store_tests.rs::mtime_preserving_same_length_rewrite_is_recomputed",
+  "crates/ripr/src/analysis/language/typescript/fact_store_tests.rs::fact_cache_line_discloses_real_counts_and_stays_silent_on_zero_work",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/fact_store.rs",
+  "crates/ripr/src/analysis/language/typescript/mod.rs",
+  "crates/ripr/src/analysis/language/adapter.rs",
+  "crates/ripr/src/analysis/pipeline.rs",
+  "crates/ripr/src/app/check.rs",
+]
+outputs = [
+  "CHANGELOG.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

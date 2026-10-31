@@ -89,6 +89,14 @@ wrong in three shapes, each of which an earlier candidate credited:
 
 ## Behavior
 
+The bounded provider-backed proptest profile in RIPR-SPEC-0117 (#10839) may
+supply a generated test with a receipt for an ordinary-assertion interpretation.
+Only the exact generation-owned TestFact borrows that short source and its line
+mapping. Its provider, Cargo registration, source/configuration and callback
+failure premises are proved before registration; ordinary owner/operand and
+discriminator rules below still apply. This does not add `prop_assert*` to the
+non-returning trusted macro set or establish model/helper failure propagation.
+
 An `assert_eq!` confirms a `return_value` probe's discriminator (or an
 `error_path` probe's, for a changed early `return Err(..)`; rule 3) when all
 of the following hold. Each rule fails closed: when ripr cannot establish it,
@@ -112,6 +120,26 @@ SPEC-0197 refusal note with its actual macro name. An independently admitted
 effect assertion in the same test still supplies its existing observation and
 discriminator; a refused sibling does not remove it. This does not change effect
 identity, propagation or observer matching.
+
+Return/error `assert!(matches!(..))` oracles also take the shared execution
+and macro-context admission before token or variant matching can credit them.
+Ignored tests, including reason-bearing ignores, and expected-panic tests with
+an additional fallback panic cannot lend strong evidence. A provably inactive
+`cfg_attr` keeps the matches assertion's execution available. A sole bare
+`assert!(matches!(..))` under `should_panic` keeps its conservative reading when
+the actual free owner directly returns a unit error variant, its inputs are
+literal strings, its matches pattern is an unguarded unit error variant, and
+the returned enum passes the existing declared-variant and expansion admission
+and has no non-plain
+destructor. A named `should_panic(expected = ...)` additionally requires a custom
+string-literal assertion diagnostic without formatting that contains the expected
+text; implicit, formatted or mismatched diagnostics remain unresolved. Its inverted success condition
+can distinguish two results. Other owners, arguments or destructors may supply
+an independent expected panic; unresolved cases withhold credit as an analyzer
+limit. The attribute alone does not establish a missing discriminator. This
+execution admission
+does not grant a new value pin or resolve the existing undercredit of inverse
+expected-panic variant checks. The existing `assert_eq!` outcomes are unchanged.
 
 An effect oracle whose fact text is a compound statement rather than the macro
 invocation (`loop { break; assert_eq!(..); }`, a labeled block, a `macro_rules!`
@@ -581,6 +609,12 @@ wrong credits.
        may not bind it itself (a `mod`, `struct`, `enum`, `union`, `trait`
        or `type` of the name, a `use` of the name, or any glob, in a file of
        the test's crate).
+       A file that composes only under another explicitly declared Cargo
+       target (a manifest `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]`
+       `path` other than the test's own root) is not a file of the test's
+       crate (#11123); a file whose placement is unestablished still is
+       (fixtures `declared_target_glob_public_call` and
+       `undeclared_target_glob_public_call`).
      The owner must sit directly in a module (not a fn body or an `impl`)
      that ripr can place by parsing its file. Neither the owner nor any
      enclosing inline module may carry a `cfg` or `cfg_attr` attribute,
@@ -1610,6 +1644,37 @@ not pair either. An owner call or binding spelled only inside a comment or
 string literal is not a call or a reference. These rules hold for
 `assert_eq!` as well.
 
+#### Repo repair boundary evidence (#8610)
+
+The repo-seam producer also consumes this pin for a `predicate_boundary`
+that is the boolean owner's whole tail. Both full and compact evidence,
+related-test ranking and repair receipts use the same admitted strength;
+the extracted `relational_check` / weak fact remains unchanged.
+
+This first repo slice admits direct bare owner calls with literal integer
+arguments. The owner must declare `-> bool`, its parameters must be known
+fixed-width primitive integers, and its statement-free tail must compare
+only those parameters and integer literals. The existing evaluator must
+complete and agree with the assertion's true or false expectation. An
+unknown or contradicted fold supplies no new credit. Arithmetic, casts,
+overloaded operands, pointer-sized types, earlier statements, qualified
+calls and let-bound results retain their prior reading in this slice.
+
+Owner and assertion execution admission still run through `OwnerReturnPin`.
+The existing boundary-pairing authority must pair the selected assertion
+with the same test's exact boundary call, using that test's actual
+activation facts and preserving its complete assertion set. An unasserted
+`is_adult(18)` beside `assert!(is_adult(30))`, an early-return mask, a
+deciding disjunction or an assertion on another owner cannot borrow this
+credit. Static movement remains independent of focused test execution.
+
+The same owner's `return_value` seam over that whole boolean tail consumes
+the identical admission (#11111): it observes the same returned value, and
+the diff-mode return-value finding already credits the pinned assertion,
+so `ripr check` and `ripr repair` read one verdict for the change. Every
+gate above applies unchanged; a return-value seam whose owner tail is not
+the admitted comparison gains nothing.
+
 ### Lone-equality pins
 
 `assert!(owner(..) == v)` fails exactly when `assert_eq!(owner(..), v)`
@@ -2280,7 +2345,26 @@ receiving call is itself resolved.
   macros elsewhere in the file stay invisible, as for every other site.
   `macro_use` or `no_implicit_prelude` anywhere in a non-trusted macro's
   arguments makes every trusted name ambiguous (stricter than the same
-  attribute written on an item, which a resolved module can admit). A
+  attribute written on an item, which a resolved module can admit). The one
+  exception (#5993) is `#[macro_use] mod NAME;` written directly in the
+  branches of `cfg_if::cfg_if! { if #[cfg(..)] { .. } else { .. } }`, where
+  `cfg_if` is a manifest-verified registry crate no module, alias or
+  workspace package takes the name of: that is the same item written
+  directly, admitted when `NAME.rs` or `NAME/mod.rs` beside the declaring
+  crate-root or `mod.rs` file is indexed; a crate root is `src/lib.rs`,
+  `src/main.rs` or `src/bin/NAME/main.rs`, so a non-root `lib.rs` or
+  `main.rs` (for example `src/util/lib.rs` declared by `mod lib;`, whose
+  children live under `lib/`) stays ambiguous. The `cfg_if!` call must sit at
+  the declaring file's top level (inside an inline module the file is
+  `inner/NAME.rs`, which stays ambiguous), and a file with a glob `use`, a
+  `use` naming `cfg_if`, an `include!`, or any item-position macro invocation
+  other than a `cfg_if::cfg_if!` block that never names `cfg_if` stays
+  ambiguous because any of them could bind `cfg_if` to something else (a user
+  `macro_rules!` can expand to `use ..::cfg_if;` or `mod cfg_if` that exist
+  only as token trees). An `extern crate`, an inline module
+  body, a `#[path]` or other attribute on the item, a bare `cfg_if!`, any
+  `no_implicit_prelude`, and a mention of the assertion in the arguments stay
+  ambiguous. A
   `macro_rules!` confined to an inline module or function body (no
   `#[macro_use]` on any enclosing module, no out-of-line child module)
   refuses only tests inside that item; a glob import from a workspace member
@@ -2333,6 +2417,54 @@ receiving call is itself resolved.
   `[lib]`/`[[bin]]`/`[[test]]` `path` that moves a target is not read, so a
   file at a default target path that some other target includes through
   `#[path]` is still judged by its default root.
+- A manifest-established binary context is also a containment boundary for
+  exported bindings and opaque macro arguments (#10191). A binary cannot be
+  imported by another crate, so `fuzz_target!` in a separate fuzz binary does
+  not rebind an integration test's `assert_eq!`. Changed constructed fields
+  use the same assertion-identity gate as whole returns, including whole-record
+  equality and field reads. A local or imported shadow and an opaque in-scope
+  expansion refuse credit and disclose the refusal; a qualified standard
+  assertion retains credit despite a local bare-name shadow. Every approved execution
+  context must be a binary root, read from the selected manifest epoch:
+  ordinary binary layouts or a literal `[[bin]] path`, including paths outside
+  `src/`. A file also declared as any discovered package's library root,
+  including a sibling package's `../` target path, does not qualify. The bounded
+  manifest inventory and library paths use the selected source epoch; an
+  incomplete inventory cannot establish binary-only ownership. The
+  inventory walk fails closed: a symlink anywhere in the workspace, or more
+  than 200,000 walked entries, leaves it incomplete, so the exception
+  degrades to the conservative refusal on such checkouts rather than
+  crediting from a partial inventory. A composition (`#[path]`, `include!`)
+  of a withheld binary from any admitted file, nested packages included,
+  returns that binary's macros to workspace scope; quote-delimited
+  segments are all read, so an unpaired quote cannot hide a composed name.
+  Shared library/module contexts, unresolved includes,
+  unknown paths, unparsed files and missing manifests keep the conservative
+  refusal. The narrowed dependent-scope scan applies the same boundary only
+  when the withheld file itself is that binary root. This exception does not
+  establish positive owner-call identity for custom binary paths.
+- A private file-level foreign glob (`use rayon::prelude::*;` with no
+  visibility, outside any inline module or block) is visible only in its own
+  module and the modules declared beneath it, so it reaches a test only when
+  the test's file is the glob's file or a file the glob's file declares,
+  directly or through further `mod` edges (`use super::*;` in a `mod tests;`
+  child still sees it). A glob in a sibling or unrelated file of the same
+  crate no longer refuses the test. The confinement needs established
+  composition on both ends: the glob's file has an execution context (so it
+  is no `include!` fragment and nothing above it is unresolved), the test's
+  file has one, and no `include!` or `#[path]` is unresolved anywhere in the
+  workspace. Otherwise the glob keeps its crate-local reach above. `pub`
+  globs, `#[macro_use]`, definitions, imports by name, globs in a macro body
+  and withheld files are unchanged
+  (`a_sibling_modules_private_glob_does_not_block_the_test`,
+  `a_glob_in_the_tests_own_file_or_an_ancestor_still_blocks_it`,
+  `a_glob_reaches_a_child_test_module_file_through_use_super`,
+  `a_path_attribute_mount_is_a_module_of_its_declarer`,
+  `an_include_fragment_glob_lands_in_its_includer_and_stays_workspace_wide`,
+  `an_unresolved_include_anywhere_leaves_the_glob_workspace_wide`,
+  `a_public_glob_is_not_confined`,
+  `a_withheld_file_keeps_its_glob_workspace_wide`,
+  `the_refusal_site_names_the_glob_only_for_tests_it_reaches`).
 - `use pretty_assertions::assert_eq;` (or `assert_ne`) under its own name
   counts as the standard assertion only when the importing file's nearest
   `Cargo.toml` inside the analysis root declares `pretty_assertions` as a
@@ -3080,7 +3212,13 @@ unmet condition keeps today's reading:
 3. At least one related test names the owner, and every such test is a plain
    test (no case table, no local shadow of the owner's name) whose
    assertions are all equality assertions whose first operand is one bare
-   owner call with literal arguments that fold.
+   owner call with literal arguments that fold, or relational assertions
+   (`assert!(left > right)` with `<`, `<=`, `>`, `>=` or `!=`, no `&&`/`||`)
+   whose sides are each a literal expression or one bare owner call with
+   literal arguments that fold, and whose comparison has the same truth value
+   under the current and the baseline body (`backoff_ms(3, 100) >
+   backoff_ms(1, 100)` is true for `2^n` and `3^n`; `backoff_ms(3, 100) >
+   1000` is not, so that test keeps the credit).
 4. At every such call the owner folds to the same value under the current and
    the baseline body, while a grid of integer arguments (each parameter over
    `0, 1, 2, 3, 5, 6, 7, 10`, at most three parameters; a single-parameter
@@ -3089,12 +3227,46 @@ unmet condition keeps today's reading:
    which the two bodies fold to different values. An equivalent rewrite
    (`x * 3` to `3 * x`) has no such call and keeps today's reading: asking for
    a test that tells the versions apart would name one that cannot exist.
+5. The workspace does not rebind `assert`, `debug_assert`, `assert_eq` or
+   `assert_ne` (the #10386 parser-backed binding scan): both reasons read
+   assertion macros and comparison tokens by name, and a rebound `assert!`
+   may expand to an exact-value check its written relational tokens never
+   show (`assert!(owner(3) > owner(1))` expanding to
+   `assert_eq!(owner(3), 9)` distinguishes `2 * n` from `3 * n`), so a
+   workspace that may rebind any of them keeps today's reading.
+
+The summary names the reason instead of one blanket wording (#10916): an
+equality-only reading says every related test calls the owner with literal
+inputs at which the changed expression and its baseline evaluate to the same
+value; a reading that admitted a relational assertion says every related
+test's assertions hold with the same truth value on the baseline and the
+change, because the asserted inputs may still evaluate differently
+(`backoff_ms(3, 100)` is 800 before and 2700 after).
 
 A related test that never names the owner is ignored: a helper that calls the
 owner would already make condition 2 fail. The reading only downgrades; a
 fold that fails, overflows the declared width or meets a float, an unsupported
 method or a `let` is not evaluable and changes nothing. It asks nothing of
 the oracle's strength and is not a runtime claim.
+
+### A partly changed struct literal confirms only through its changed fields (#10916)
+
+A probe on a returned struct literal (`Request { url: self.url, timeout_ms:
+self.timeout_ms.unwrap_or(3_000) }`) confirms observation and discrimination
+through tokens of the whole literal, so an assertion on an untouched field
+(`assert_eq!(build().url, ..)`) used to credit a change that only moved
+`timeout_ms`. When the probe carries its `before` text and the baseline and
+the current literal are the same struct literal (the same type or variant
+path, the same field names in the same order, no `..base` spread) with a
+proper, non-empty subset of the initializers differing (compared by non-trivia
+tokens, so formatting and comments are not a change while whitespace inside a
+string literal is), the confirming tokens and the builder-override fields
+(RIPR-SPEC-0040, #6613) are those fields' names and initializer text alone.
+A test that reads the changed default keeps the credit; one that sets the
+field through a verified setter before reading it does not. Any other shape
+(no `before`, a different path or field list, a spread, every field changed,
+a non-literal) keeps today's reading. The rule only downgrades and is not a
+runtime claim.
 
 ### A returned bare comparison is read at its boundary (#9094)
 
@@ -3155,6 +3327,23 @@ same value and keeps its credit.
 Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted by this path, and helper-transferred rows are not read (#9147). The shared producer's resolver (#9218, below) is more permissive for equality-boundary inputs; this path keeps its stricter rule.
 
 The shared owner call-value producer (`call_values_for_owner`, which feeds the equality-boundary reading `equality_observed`/`exact_rows` and the helper-transferred entry rows) reads a module-qualified free call of the owner's name only when its spelled path settles on the owner: through the same-named-rival call identity when the owner has rivals, otherwise through the owner-alone identity, which reads `crate`/`self`/`super`, in-file `mod` names, `use`-bound modules (`use crate::pricing; pricing::thr(..)`, renames included) and the owner crate's own name from another crate's test, and finally a path anchored at the owner's crate whose target module re-exports the owner through a top-level `pub use` item of the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file never counts), whose leaf is not renamed and whose path resolves to the owner's own module (`pub use internal::inner;`, `pub use crate::internal::*;`). Explicit leaves take precedence over globs (an explicit dependency export beats an owner glob and an explicit owner export beats a dependency glob), a dependency glob beside an owner glob is ambiguous and declines, and a leading `::`, an undeclared first segment, a nested-scope `use` or an unreadable tree does not qualify (`pub use other_dep::thr;`, `pub use other_dep::*;`). A `crate::` qualifier counts only from a test in the owner's own crate target. A bare call, a type-path call and a method call keep their reading; any other qualified spelling (`rival::thr(101)`, a module bound to something else, a dependency path, a glob-bound or unreadable qualifier, a `#[path]`-remapped package) supplies no input row (#9218).
+
+Grouped re-exports recurse through syntax-tree use groups, including nested
+`crate::{internal::{thr}}` leaves. A leading `::` belongs only to its leaf and
+descendants; an unrelated absolute sibling cannot invalidate a local owner leaf.
+Renames are read from syntax, including intervening newlines and `as _`, and never
+turn into unrenamed owner credit. A `cfg`/`cfg_attr`-gated use remains a possible
+binding that cannot establish owner credit, so it cannot silently reveal an owner
+glob underneath it (#10047). The nested positive and dependency-glob, renamed-leaf
+and cfg controls are pinned in `returned_comparison_boundary` and the
+`rust_nested_use_*` fixtures; the conservative fixtures also join RIPR-SPEC-0108.
+These controls assert the infection-stage boundary summary and presence or absence
+of the exact `x == 101` input row, independently of final gap admission. On the
+current integrated main, the same-name path-qualifier false refusal (#10604)
+leaves all four fixture return-value findings `static_unknown` before and after
+the re-export repair and clears final missing-discriminator arrays. The fixtures
+use direct calls, not function values; their retained limitation is a known
+independent defect, not evidence that the qualifier names a function value.
 
 Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). It does not cover the computed-input continuation (`computed_input_parameters`), which reads calls by name and stays unfiltered because it is conservative (it only ever unresolves a boundary), nor the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. The call-value producer and the chain entry rows are the only consumers filtered. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.
 

@@ -207,6 +207,33 @@ a `Receipt boundary` line says so. That movement is static evidence, not a
 runtime or mutation result. Rerunning `ripr first-pr` after the edit reports
 the evidence as stale and prints a refresh that also passes `--worktree`, so
 the next run selects the next open gap rather than the one just closed.
+When a check-output ledger has no repairable row, first-pr does not turn that
+absence into a current no-action claim: the preview/mixed corpus identity is
+not yet available. It reports `source_currentness_unavailable`, retains
+the input root separately from the selected root, and offers a fresh
+selected-workspace check to inspect. If that fresh check still has no repairable
+row, the limitation remains; a fresh check alone does not establish whole-corpus
+currentness. A known distinct producer root instead reports `wrong_root`. A JavaScript-flavoured TypeScript root (`package.json` and `.ts` files, no
+`tsconfig.json`) is not a wrong root: first-pr needs a `tsconfig.json` or
+`jsconfig.json` at the root, or a `package.json` with JavaScript or TypeScript
+files at the root or under `src/`, `test/` or `tests/`; a `package.json` alone is
+not enough. It reports
+`typescript_project_marker_missing` and tells you to add `tsconfig.json`
+(`jsconfig.json` for a JavaScript-only root) (#10713). A root that also looks
+like a Python project keeps `wrong_root`. When
+the producer root is missing, relative, or cannot be resolved, its identity is
+unknown: first-pr must not offer a regeneration command that can overwrite the
+supplied check output. This applies even when the ledger projects zero records;
+only a verified same-root input can use its existing regeneration route. One
+exception names no foreign file: a `--check-output` supplied as a plain
+root-relative path is the selected root's own artifact, so its present artifact
+keeps the anchored regeneration command, and a zero-record projection miss on
+it keeps the blocked repo-exposure recovery; neither promotes its evidence.
+When
+the selected head is the live HEAD, the suggested command is a fresh default
+worktree analysis for inspection, not a replay of the original mode or policy;
+it does not redirect over the supplied input. Otherwise no live-worktree check
+is offered: use a checkout at the selected head and the intended configuration.
 `ripr pr-summary` carries the same start command as
 its first local reproduction command, and its Markdown, like
 `gate-decision.md`, follows the start with the after-phase step and the same
@@ -222,7 +249,19 @@ head it stops with the matching blocked state. Either way the next command is
 the seam-level
 `ripr review-comments --root . --base <base-ref> --head HEAD --out target/ripr/review/comments.json`.
 On a fresh checkout that makes three regeneration steps before the start:
-repo exposure, gap ledger, then review cards. Each run names the next one.
+repo exposure, gap ledger, then review cards. The first run prints one command
+(`Missing artifact`) and a `Later steps` line naming the rest in dependency
+order, with the review-cards step marked as needed only when the gap ledger
+names no repair start; rerun first-pr after each command to get the next one
+(#11298). The packet JSON `selected.also_missing` keeps every later step with its
+literal command. By default first-pr reads artifact presence only and runs none
+of these commands itself. `ripr first-pr --run-chain` (#11720) is the opt-in that
+runs the missing ones for you, in that order (the review cards only when the
+gap ledger names no repair start), each exactly as printed with the resolved
+`--base` and `--head`, then composes the packet. It runs analysis and
+writes the missing artifacts under `target/ripr/`; it stops at the first failing
+step, or a step that exits 0 without a non-empty parseable JSON artifact (exit 2,
+no packet), and never regenerates an artifact that already exists.
 Only current cards that carry no repair start, or cards rendered from the gap
 ledger, end in no-action; the reason says which.
 

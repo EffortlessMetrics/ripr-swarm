@@ -125,16 +125,18 @@ pub(crate) fn python_byte_limit_from_env(
             let parsed = raw
                 .trim()
                 .parse::<u64>()
-                .map_err(|err| format!("{env_name} must be a positive integer: {err}"))?;
+                .map_err(|err| format!("{env_name} must be a positive integer: {err}; set it to a whole number above zero, or unset it to use the default"))?;
             if parsed == 0 {
-                return Err(format!("{env_name} must be a positive integer"));
+                return Err(format!(
+                    "{env_name} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
+                ));
             }
             Ok(parsed)
         }
         Err(std::env::VarError::NotPresent) => Ok(default),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(format!("{env_name} must be a positive integer"))
-        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{env_name} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 
@@ -167,18 +169,18 @@ pub(crate) fn python_workspace_file_limit_from_env(
     match value {
         Ok(raw) => {
             let parsed = raw.trim().parse::<usize>().map_err(|err| {
-                format!("{PYTHON_MAX_WORKSPACE_FILES_ENV} must be a positive integer: {err}")
+                format!("{PYTHON_MAX_WORKSPACE_FILES_ENV} must be a positive integer: {err}; set it to a whole number above zero, or unset it to use the default")
             })?;
             if parsed == 0 {
                 return Err(format!(
-                    "{PYTHON_MAX_WORKSPACE_FILES_ENV} must be a positive integer"
+                    "{PYTHON_MAX_WORKSPACE_FILES_ENV} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
                 ));
             }
             Ok(parsed)
         }
         Err(std::env::VarError::NotPresent) => Ok(DEFAULT_PYTHON_MAX_WORKSPACE_FILES),
         Err(std::env::VarError::NotUnicode(_)) => Err(format!(
-            "{PYTHON_MAX_WORKSPACE_FILES_ENV} must be a positive integer"
+            "{PYTHON_MAX_WORKSPACE_FILES_ENV} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
         )),
     }
 }
@@ -335,6 +337,48 @@ pub(crate) fn read_workspace_sources_capped(
     }
 }
 
+/// Where a diff-reach scan (#10785) reads one discovered file from. The
+/// committed-source overlay is thread-local, so it is resolved on the calling
+/// thread before the scan fans out.
+pub(crate) enum ScanSource {
+    /// Read the working tree under the per-file cap.
+    Worktree(std::path::PathBuf),
+    /// Committed bytes of a dirty tracked file, or the decode/size failure.
+    Committed(Result<String, CappedReadError>),
+    /// A dirty path with no content at `HEAD`: not source.
+    Absent,
+}
+
+/// Resolve the scan source of one workspace-relative file.
+pub(crate) fn scan_source_for(root: &Path, relative: &Path, file_limit: u64) -> ScanSource {
+    match crate::analysis::committed_source::lookup(root, relative) {
+        crate::analysis::committed_source::CommittedSourceRead::Worktree => {
+            ScanSource::Worktree(root.join(relative))
+        }
+        crate::analysis::committed_source::CommittedSourceRead::Committed(bytes) => {
+            ScanSource::Committed(committed_source_capped(
+                &root.join(relative),
+                bytes,
+                file_limit,
+                u64::MAX,
+            ))
+        }
+        crate::analysis::committed_source::CommittedSourceRead::AbsentAtHead => ScanSource::Absent,
+    }
+}
+
+impl ScanSource {
+    /// The text a scan sees: the per-file cap applies, the aggregate budget
+    /// does not, because a scan keeps no source once it has looked.
+    pub(crate) fn read(&self, file_limit: u64) -> Option<Result<String, CappedReadError>> {
+        match self {
+            Self::Worktree(path) => Some(read_source_capped(path, file_limit, None)),
+            Self::Committed(read) => Some(read.clone()),
+            Self::Absent => None,
+        }
+    }
+}
+
 /// Apply the per-file cap, the remaining aggregate budget, and UTF-8
 /// decoding to committed bytes, exactly as a working-tree read would.
 fn committed_source_capped(
@@ -361,6 +405,10 @@ fn committed_source_capped(
 /// sentinel byte): the metadata length was checked above, but the file can
 /// grow between that check and this read, and an unclamped read would cache
 /// an over-budget source as a success.
+pub(super) fn source_matches_capped(path: &Path, expected: &str) -> bool {
+    read_source_capped(path, expected.len() as u64, None).is_ok_and(|actual| actual == expected)
+}
+
 fn read_source_capped(
     path: &Path,
     file_limit: u64,

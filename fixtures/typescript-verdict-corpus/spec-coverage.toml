@@ -792,6 +792,7 @@ scope = "out"
 reason = "Rust analyzer transfer rule over Rust syntax; a TypeScript case cannot label it"
 
 # Rust spec 0154
+# Assertion-form parity
 [[spec]]
 id = "RIPR-SPEC-0154"
 scope = "out"
@@ -831,3 +832,13 @@ reason = "Rust/Cargo analyzer behavior; a TypeScript case cannot label it"
 id = "RIPR-SPEC-0361"
 scope = "out"
 reason = "Pipeline diff-scope line-budget guard behavior; not a typescript verdict example"
+
+[[spec]]
+id = "RIPR-SPEC-0362"
+scope = "out"
+reason = "Gate/ledger refusal-admission behavior; not an exposure-verdict example a TypeScript case labels"
+
+[[spec]]
+id = "RIPR-SPEC-0363"
+scope = "out"
+reason = "TypeScript per-file fact persistence; a cache-admission behavior, not an exposure-verdict example a typescript case labels"

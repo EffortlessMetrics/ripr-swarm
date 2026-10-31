@@ -377,8 +377,8 @@ pub struct MissingDiscriminatorFact {
 /// that writes it and the miss renderer that reads it agree.
 pub(crate) const ARM_UNSELECTED_REASON_PREFIX: &str = "No related test call selects arm";
 
-/// Opens the reason of a side-effect or call-deletion missing discriminator
-/// that names an enclosing `if` no related test's input enters
+/// Opens the reason of a side-effect, call-deletion, error-path or
+/// error-variant return-value missing discriminator that names an enclosing `if` no related test's input enters
 /// (RIPR-SPEC-0263). Shared like [`ARM_UNSELECTED_REASON_PREFIX`].
 pub(crate) const GUARD_UNENTERED_REASON_PREFIX: &str = "No related test call enters guard";
 
@@ -393,8 +393,9 @@ pub(crate) fn is_unselected_input_reason(reason: &str) -> bool {
 /// The missing discriminator that names an input no test supplies: for a
 /// predicate probe the boundary `left == right` it never reaches
 /// (`classify::activation::missing_boundary_discriminator`), for a match-arm
-/// probe the arm no test input selects, and for a side-effect or
-/// call-deletion probe the enclosing `if` no test input enters. Error-variant and field facts name
+/// probe the arm no test input selects, and for a side-effect,
+/// call-deletion, error-path or error-variant return-value probe the
+/// enclosing `if` no test input enters. Error-variant and field facts name
 /// an assertion that is missing instead.
 pub(crate) fn input_boundary_fact<'a>(
     facts: &'a [MissingDiscriminatorFact],
@@ -403,13 +404,21 @@ pub(crate) fn input_boundary_fact<'a>(
     match family {
         // A returned bare comparison reads the same boundary (#9094); no
         // other return-value fact is spelled `left == right`.
-        ProbeFamily::Predicate | ProbeFamily::ReturnValue => {
-            facts.iter().find(|fact| fact.value.contains(" == "))
-        }
+        ProbeFamily::Predicate => facts.iter().find(|fact| fact.value.contains(" == ")),
+        // A returned error variant under an unentered `if` reads the guard
+        // (#11147), after the bare-comparison reading above.
+        ProbeFamily::ReturnValue => facts
+            .iter()
+            .find(|fact| fact.value.contains(" == "))
+            .or_else(|| {
+                facts
+                    .iter()
+                    .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX))
+            }),
         ProbeFamily::MatchArm => facts
             .iter()
             .find(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX)),
-        ProbeFamily::SideEffect | ProbeFamily::CallDeletion => facts
+        ProbeFamily::SideEffect | ProbeFamily::CallDeletion | ProbeFamily::ErrorPath => facts
             .iter()
             .find(|fact| fact.reason.starts_with(GUARD_UNENTERED_REASON_PREFIX)),
         _ => None,
@@ -479,8 +488,9 @@ pub struct RelatedTest {
     /// Why this test does not catch the changed behavior, when ripr can say.
     /// `None` for a test whose oracle supports the finding's class, and for
     /// findings from producers that do not record it. Explanation only: no
-    /// decision helper reads this field; row eligibility is [`Self::role`]
-    /// (#5563).
+    /// decision helper reads this field except the refused-assertion exception
+    /// of the opaque assertion-macro limit (`AssertionNotCredited`, RIPR-SPEC-0120,
+    /// #9644); row eligibility is [`Self::role`] (#5563).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<RelatedTestMiss>,
     /// Whether this row belonged to the legacy decision set or was retained
@@ -632,6 +642,11 @@ pub struct Finding {
     pub class: ExposureClass,
     pub ripr: RiprEvidence,
     pub confidence: f32,
+    /// Why `confidence` is held at its value, for preview-adapter findings
+    /// (#10700). Empty for Rust, whose score is not a per-class constant.
+    /// Explains the number only; no decision helper reads it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub confidence_basis: Vec<crate::domain::ConfidenceCap>,
     pub evidence: Vec<String>,
     pub missing: Vec<String>,
     pub flow_sinks: Vec<FlowSinkFact>,
@@ -692,7 +707,7 @@ pub struct Finding {
     /// Required in every construction (no `Default` is applied by struct
     /// literals), so a producer must state its scope; repo-mode producers
     /// set it through [`Finding::mark_repo_scoped`]. Consumers read it via
-    /// [`Finding::analysis_mode`], never from the free-text evidence line.
+    /// `Finding::analysis_mode`, never from the free-text evidence line.
     /// Omitted from serialized `Finding` when `diff`; a missing field in an
     /// older artifact deserializes as `diff`, which `analysis_mode` still
     /// refuses if the legacy evidence line says otherwise.
@@ -799,6 +814,11 @@ pub const SOURCE_CURRENTNESS_VALUES: [&str; 4] = [
     "moved_or_renamed",
     "unresolved_subject",
 ];
+
+/// This producer reason requires a fresh physical source observation and cannot
+/// be safely reused from a check artifact's diff/config-only identity.
+pub(crate) const LIVE_PYTHON_TRUTHINESS_ALIGNMENT: &str =
+    "strong_oracle_observes_dunder_truthiness";
 
 /// Controlled enum values for [`Finding::oracle_alignment`]. Registered in
 /// `policy/output_contracts.txt` and documented in `docs/OUTPUT_SCHEMA.md`.

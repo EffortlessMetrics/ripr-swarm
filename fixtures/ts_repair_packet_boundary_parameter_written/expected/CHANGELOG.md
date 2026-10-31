@@ -253,3 +253,123 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (22)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (23)
+
+Reason:
+RIPR-SPEC-0088: TypeScript preview check JSON states top-level canonical_gap_id (#10709)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (24)
+
+Reason:
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (25)
+
+Reason:
+RIPR-SPEC-0122: #11229 script-file ObservationUnconfirmed wording names the preview adapter (wording only; verdict and credit unchanged)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (26)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (27)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording says the adapter cannot confirm observation, not reach
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (28)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording states the adapter could not confirm observation without a causal claim
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (29)
+
+Reason:
+RIPR-SPEC-0087: unbound-operand refusal leads with the remedy so the digest budget keeps it
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (30)
+
+Reason:
+RIPR-SPEC-0087: plain wording for the unbound-operand remedy
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (31)
+
+Reason:
+RIPR-SPEC-0087: plain wording for the unbound-operand remedy
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

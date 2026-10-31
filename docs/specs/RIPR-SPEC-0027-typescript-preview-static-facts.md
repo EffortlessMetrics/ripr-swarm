@@ -124,6 +124,17 @@ Test discovery:
   `node:test` `suite(...)`, as test and describe roots with the same active
   modifiers (`.only`, `.concurrent`, `.sequential`); `.skip`, `xit`, and
   `xcontext` register nothing (#4548)
+- a renamed registration alias the imports layer admits (`const { test: t } =
+  require('node:test')`, `import { test as t }`): the alias registers like
+  the direct spelling, bare or through an active modifier, with the same
+  runner-source, shadowing, skip/todo-options and inactive-modifier fences
+  (#10987). The namespace object's own name, a member read off it
+  (`runner.test(...)`), and an aliased `.each` factory register nothing
+  through this path
+- AVA's macro form, a named macro between the title and the callback
+  (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
+  function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a
+  function third argument stays argument 1
 - an options object between the title and the callback
   (`it(name, { timeout }, fn)`, `describe(name, { concurrency }, fn)`); a
   trailing timeout (`test(name, fn, 5000)`) keeps argument 1 as the callback;
@@ -197,19 +208,44 @@ Test discovery:
   `./x.js` to `x.ts`. Anything the scan cannot follow keeps the disclosure: an
   unresolved relative import, a computed `import()` / `require()`,
   `import.meta.glob` / `require.context` / `createRequire`, a bare specifier a
-  tsconfig path, workspace package or the root package name could resolve, a
-  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, a relative
-  `extends`, a package-level `paths`, any bundler, transpiler or test-runner
-  config that declares an alias or module directory, a Rust change related
-  through the Bun bridge, and a closure over 400 files. The conditional
+  tsconfig path, workspace package or the root package name could resolve
+  (a self-import follows the adapter's resolver, then `package.json` `exports`
+  targets that are indexed sources; an unscanned build output relates nothing,
+  and a missing entry, pattern or absent `exports` keeps the gap), a
+  `~`, `#`, `$`, `/` or `@/` specifier, a `baseUrl`, `rootDirs`, an `extends`
+  chain that is an npm package base, unreadable, or declares `paths`,
+  `baseUrl` or `rootDirs` (a workspace-relative chain without them does not
+  remap; JSONC keys are decoded), a project `references` entry the scan does
+  not visit, a `paths` in the root config that did not load, any bundler,
+  transpiler or test-runner config that declares an `alias` key (a
+  hyphenated lint-rule name such as `no-this-alias` does not) or module
+  directory, a Rust change related through the Bun
+  bridge, and a closure over 400 files. A nested package tsconfig that
+  declares `paths` or an unvisited `extends` remaps only files beneath its own
+  directory: a closure that reaches one keeps the gap, other gap files stay
+  scoped. The conditional
   assertion credit and owner-extraction disclosures keep their own scopes.
 - a symlink or junction the walk does not follow is counted for
   `typescript_workspace_links_skipped` / `typescript_repo_links_skipped`
   (#10614) unless it is a link to an existing regular file whose own name the
   adapter would not index (a docs `index.md -> README.md`): the walk indexes by
   the entry's own path, so such a link hides no test or source. A directory
-  link, a source-named link, a dangling link and a link whose target cannot be
-  read stay counted.
+  link is not counted either when it aliases a directory the walk already
+  visits (#10829): its canonical target is a listable directory inside the
+  canonical root with no excluded component (`.tools/skills ->
+  ../.agent/skills`), so its files are indexed at their real path, unless an
+  indexed file reaches it (#10829, #10899): a string or template literal (decoded, so
+  `'..\u002falias/sum'` counts) that is a relative specifier (`./x`, `../x`)
+  resolving lexically from the importing file's directory to the link or a path
+  beneath it (`../alias/sum` with `alias -> src`, `'../my lib/sum'`) names a path
+  the walk never indexes, so the alias is counted. The specifier is resolved
+  rather than matched by characters, so the link's real target spelled by prose,
+  a comment or a bare string is not an import through it. An absolute-looking
+  literal counts when it spells `/<link name>` as a component; an unreadable or
+  oversized indexed file counts; so does a file that does not parse cleanly and
+  has `/<link name>` in its text or a `\u`, `\x` or octal escape. A directory link that leaves the root, points into an excluded directory or at a
+  directory the walk cannot list, a source-named link, a dangling link and a
+  link whose target cannot be read stay counted.
 - a file named `*.d.ts`, `*.d.mts` or `*.d.cts` is parsed as a TypeScript
   declaration file (#10812): its top-level declarations are ambient, so
   `export const x: T;` is not a parse error there. The same text in an
@@ -390,6 +426,15 @@ Probes the adapter must generate (syntax-first):
 - mock-interaction probes for changed call surfaces against identifiers
   resolved through a syntactic `vi.fn()` / `jest.fn()` initializer
 
+A changed line whose old and new text differ only in a trailing `//` comment or
+in trailing whitespace emits no probe (#10706): the statement runs identically,
+so no gap id or discriminator can embed the comment text. The executable text
+of both lines, semicolon included, must be equal and both lines must split into
+code and comment reliably; a changed token, a dropped semicolon, a changed
+indentation, a `//` inside a string, a line inside a template literal, block
+comment, line-continued string or JSX text that crosses a line break, and a
+file that does not parse all keep the probe.
+
 Added lines that are blank, comment-only, or punctuation-only (`}`, `});`,
 `)`) produce no probe. Neither do lines inside a top-level ambient
 declaration found in the parsed syntax tree (`declare function`,
@@ -429,6 +474,40 @@ operands to the same value. Predicates without a comparable boundary (such as
 values stay `weakly_exposed`; the literal or operand-pair boundary becomes the
 missing discriminator when one is known.
 
+The named boundary is the comparison the edit changed (#10399). On a compound
+condition (`a > b || c >= d`) the adapter compares parser-owned tokens of the old and new line and reads
+the boundary from the one condition-level comparison whose tokens differ,
+never from a neighbouring comparison on the same line. Literal and comment
+contents, callback bodies, call arguments, computed access and type syntax do
+not supply comparison sites. Unsupported operands and malformed old or new
+syntax retain refusal; whitespace/comment-only edits name no boundary. When the edit
+touches no comparison (an operand such as `isDone ||` is removed), touches
+several, or the line cannot be tokenized, the changed operator cannot be
+located unambiguously, so no boundary is named: no `missing_discriminator`,
+and the limitation reports that the changed line has no statically comparable
+predicate boundary. An added line with several comparisons is likewise
+unlabeled. The selected comparison and full changed source line retain separate
+identities: expected-side branch checks must still find the original owner line,
+so narrowing a label cannot credit an expectation that matches neither outcome.
+The module-bound boundary-input and boundary-parameters facts likewise keep
+reading the full changed source line rather than the selected text: their
+whole-side and verbatim-line gates need the source line's statement context and
+line identity, so a fact stays available on a compound line whose single
+comparison sits next to the statement opening (`if (total > 100 && ready) {`)
+and refuses on narrowed text alone or on a line holding several comparisons.
+Returned-ternary arm edits retain their sole condition boundary only when the
+condition tokens are unchanged.
+
+Clause-level selection on `&&` / `||` / `??` conditions is decided by the parse
+tree, not by token order, so `a && b > 1 || c` and `a || b > 1 && c` each name
+`b == 1` when only that comparison's tokens changed (#11196). A reordered or
+removed clause, a moved parenthesis, a swapped
+logical operator, an edit to a non-comparison clause, a clause quoted in a
+string or template literal, and a clause with a call, computed or nullish
+operand each name no boundary. The named clause is a boundary fact only: under
+`&&` it is observable when the other clauses hold, so it never claims that a
+test can drive that clause independently.
+
 Three one-hop input resolutions credit the idiom shapes that reach the same
 boundary without changing the guards (#4104 E):
 
@@ -466,6 +545,27 @@ boundary without changing the guards (#4104 E):
   initializers, repeated declarations, off-value constants, and constants
   imported from a module the adapter cannot resolve to the owner stay
   fail-closed.
+- **Test-side constants** (#10707, #10706): an owner-call argument that is
+  a bare identifier of any spelling (`edge`, `EDGE`) resolves to its integer
+  value only when the name provably has one binding, decided on the oxc
+  token stream. In the test callback: exactly one
+  `const NAME [: number] = <plain decimal integer>` declarator directly in
+  the callback block (never a nested block, loop header, or parameter list),
+  and every other occurrence in the callback a plain read after the
+  declaration. At the test file's module level: exactly one top-level such
+  `const`, every other occurrence in the file a plain read (the owner-module
+  constant rule), and no non-file-level enclosing scope binding the name.
+  The callback's own declaration decides first; a binding it refuses is
+  never rescued by an outer scope. Fail-closed: `let`/`var`, a reassigned or
+  updated name, a shadowing parameter, catch, function, inner declaration or
+  destructuring, an object key or shorthand spelling, a second declaration,
+  a computed, signed, non-decimal, fractional or non-safe-integer
+  initializer, an import that does not resolve to the owner, `eval`/`with`,
+  a read before the declaration, and member reads (`config.edge`, whose
+  property a test can rewrite). The credit only substitutes the value for
+  the name; the position, arity, off-value and expected-side rules are the
+  literal path's, unchanged. Fixtures: `ts_boundary_local_constant_credit`,
+  `ts_boundary_local_constant_refused`.
 - **Boundary input evidence**: for a changed predicate with a named missing
   discriminator `<param> == <operand>`, the adapter emits
   `typescript_boundary_input: parameter=<param>;index=<i>;operand=<operand>;value=<v>`
@@ -509,6 +609,46 @@ boundary without changing the guards (#4104 E):
   type); a computed or string-literal name, an optional method (`pick?(n)`), an
   object-type return and a method named like a control keyword are not, and keep
   their previous behavior (#10776).
+
+- **`typeof` kind tests** (#11196): an equality comparison of a `typeof`
+  expression with a quoted type-name word (`typeof input === "function"`,
+  also `!==`, `==`, `!=`, and the reversed spelling) names the missing
+  discriminator `typeof <operand> == "<kind>"`. It never reads as
+  `<operand> == "<kind>"`, which would name the type-name string as the input.
+  Two `typeof` sides, a relational operator, or a non-literal kind name no
+  discriminator. The comparison is witnessed only by an observed owner call
+  whose argument at the guarded parameter's position is written as a value of
+  exactly that kind (an inline function for `"function"`, a number literal for
+  `"number"`, and so on; a trailing type assertion such as `as any` is read
+  through). The kind's name as a string literal is a string, so
+  `resolveValue("function" as any)` does not witness a `"function"` test. The
+  guarded operand must be a plain owner parameter; a member read or a local
+  stays unwitnessed. The repair packet's assertion shape asks for a value of
+  the kind in place of the argument and never reuses the observed input, and
+  the "inputs on one side of the boundary" wording is not used for this shape.
+- **Faithful boundary discriminator** (#11256): a predicate's missing
+  discriminator reads its comparison in code spans only, and a quoted operand
+  is one operand whatever it holds. `arg !== "--"` and `mode === "a b"` are not
+  cut at the `-` or the space (`arg == "`); holding characters the
+  discriminator vocabulary does not carry, they name no discriminator and the
+  finding offers no repair start. A comparison operator inside a string literal
+  is no comparison. `if (arg === "stop")` still names `arg == "stop"`. Which
+  comparison of a compound condition changed is chosen from the old and new
+  line (#10399).
+- **Derived boundary operand** (#11256): when the compared side is a local the
+  owner binds only from a call (`const type = getType(key);`) whose arguments
+  name no owner parameter, and the other side is a literal, no test call can
+  set the value. The finding lists
+  `typescript_boundary_operand_derived_unresolved` and offers no repair start,
+  because the existing tests may already notice the change through the result.
+  A parameter operand, a call over a parameter (`kindOf(name)`), a non-call
+  initializer and an owner without a fixed positional signature keep their
+  previous reading.
+- **Open gap reason in the after phase** (#11196): when `agent verify` refuses
+  a gap that still reads open, the refusal appends the missing discriminator
+  the before and after check-findings artifacts already state (unchanged, or
+  changed from one to the other). With no discriminator in the after artifact
+  it appends nothing; the refusal reads as before and no reason is invented.
 
 When the adapter cannot classify, it emits one of the `static_limit_kind`
 values defined in RIPR-SPEC-0026:

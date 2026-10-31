@@ -1,0 +1,851 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/typescript_infection_shapes/input",
+  "config_path": "<cwd>/fixtures/typescript_infection_shapes/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":6,"findings":6,"exposed":1,"weakly_exposed":1,"reachable_unrevealed":1,"no_static_path":0,"infection_unknown":3,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":0},{"language":"typescript","files":2}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:4fbb9720aa6abe91","base_revision":null,"input_identity":"sha256:311fa91dc32051f2550dc33215f1c8bd296ea499cb479d7c034964095ed9b3b7","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":2,"changed_line_count":14,"candidate_line_count":6,"probe_count":6,"finding_count":6},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_guard.ts:typescript_preview:0e63c99e",
+      "canonical_gap_id": "gap:typescript:typescript_preview:0e63c99e",
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "oracle_below_strong", "summary": "related tests hold no exact-value oracle (weak or smoke assertion)"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_guard.ts:typescript_preview:0e63c99e",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/guard.ts",
+        "line": 3,
+        "expression": "    return b;",
+        "owner": "typescript:src/guard.ts::safeDiv"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `safeDiv`"},
+        "infect": {"state":"no","confidence":"low","summary":"No related test call enters `b === 0`: observed `safeDiv` calls: `(4, 2)`."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `relational_check` (rank 3)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: infection is `no` for this `branch_not_entered` edit, so whether an assertion discriminates the change is not asked (#10704)."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `safeDiv`", "infection no: No related test call enters `b === 0`: observed `safeDiv` calls: `(4, 2)`.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)", "discriminator unknown: TypeScript preview adapter: infection is `no` for this `branch_not_entered` edit, so whether an assertion discriminates the change is not asked (#10704).", "local flow reaches returned value: return b; (line 3)", "related test tests/safe_div.test.ts:3 divides uses weak relational check oracle: expect(...).toBeGreaterThan(...)"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return b;","line":3}
+      ],
+      "evidence": ["owner: safeDiv", "typescript_infection: no (branch_not_entered)", "typescript_oracle_observed: safeDiv(4, 2)", "typescript_oracle_expected: 0", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/safe_div.test.ts:4", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/guard.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_guard.ts:typescript_preview:0e63c99e;owner=safeDiv", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run tests/safe_div.test.ts"],
+      "missing": ["The change to `safeDiv` sits inside `b === 0`, and no related test call enters it: observed `safeDiv` calls: `(4, 2)`. The changed line never runs under the tests, so no assertion can observe it. Add a test input that enters the guard.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "divides",
+          "file": "tests/safe_div.test.ts",
+          "line": 3,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "expect(...).toBeGreaterThan(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "return_value changed at src/guard.ts:3: `return b;`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "relational_check",
+        "oracle_strength": "weak",
+        "owner": "safeDiv",
+        "owner_kind": "function",
+        "probe_family": "return_value",
+        "related_test": {
+          "file": "tests/safe_div.test.ts",
+          "line": 3,
+          "name": "divides"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Add an exact return-value assertion for the changed output.",
+        "verify": {
+          "command": "npx --no-install vitest run tests/safe_div.test.ts"
+        },
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+      },
+      "preview_actionability": {
+        "actionability_category": "missing_target_shape",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "repair_kind",
+          "target_test_shape",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/guard.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 3,
+            "owner": "safeDiv",
+            "raw": "file=src/guard.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_guard.ts:typescript_preview:0e63c99e;owner=safeDiv",
+            "sample": null,
+            "source_id": "probe:src_guard.ts:typescript_preview:0e63c99e"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.",
+      "suggested_next_action": "TypeScript preview advisory: no related test call enters the changed branch; add a test input that enters it before strengthening any assertion. No repair packet is emitted.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_guard.ts:typescript_preview:2fd6b073",
+      "canonical_gap_id": "gap:typescript:typescript_preview:2fd6b073",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "oracle_below_strong", "summary": "related tests hold no exact-value oracle (weak or smoke assertion)"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_guard.ts:typescript_preview:2fd6b073",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/guard.ts",
+        "line": 9,
+        "expression": "    return x;",
+        "owner": "typescript:src/guard.ts::floorAt"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `floorAt`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `relational_check` (rank 3)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `return value == x`."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `floorAt`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `relational_check` (rank 3)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == x`.", "local flow reaches returned value: return x; (line 9)", "related test tests/floor_at.test.ts:3 floors uses weak relational check oracle: expect(...).toBeGreaterThan(...)", "missing discriminator return value == x: changed TypeScript returned-value at line 9 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return x;","line":9}
+      ],
+      "evidence": ["owner: floorAt", "missing_discriminator: return value == x", "typescript_oracle_observed: floorAt(-1, 0)", "typescript_oracle_expected: -5", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/floor_at.test.ts:4", "gap_state: actionable", "actionability_category: complete_repair_packet", "why_actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)", "repair_action: add a focused assertion for the missing discriminator `return value == x` in the related test, shaped like `expect(floorAt(-1, 0)).toBe(expected)`", "raw_evidence_ref: file=src/guard.ts;line=9;kind=typescript_preview_probe;source_id=probe:src_guard.ts:typescript_preview:2fd6b073;owner=floorAt", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run tests/floor_at.test.ts"],
+      "missing": ["Related test reaches `floorAt` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference)."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "return value == x",
+            "reason": "changed TypeScript returned-value at line 9 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"return_value","text":"return x;","line":9}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "return value == x",
+          "reason": "changed TypeScript returned-value at line 9 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"return_value","text":"return x;","line":9}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "floors",
+          "file": "tests/floor_at.test.ts",
+          "line": 3,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "expect(...).toBeGreaterThan(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "weak_assertion",
+          "why": "assertion too weak to tell the old behavior from the new"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "return_value changed at src/guard.ts:9: `return x;`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is an advisory summary; the complete repair packet is projected separately and is also advisory."
+        ],
+        "missing_discriminator": "return value == x",
+        "oracle_kind": "relational_check",
+        "oracle_strength": "weak",
+        "owner": "floorAt",
+        "owner_kind": "function",
+        "probe_family": "return_value",
+        "related_test": {
+          "file": "tests/floor_at.test.ts",
+          "line": 3,
+          "name": "floors"
+        },
+        "repair_packet_ready": true,
+        "repair_route": "add a focused assertion for the missing discriminator `return value == x` in the related test, shaped like `expect(floorAt(-1, 0)).toBe(expected)`",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Add an exact return-value assertion for the changed output.",
+        "verify": {
+          "command": "npx --no-install vitest run tests/floor_at.test.ts"
+        },
+        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
+      },
+      "typescript_repair_packet": {
+        "allowed_edit_surface": [
+          "tests/floor_at.test.ts"
+        ],
+        "assertion_shape": "expect(floorAt(-1, 0)).toBe(expected)",
+        "authority_boundary": "preview_advisory_only",
+        "canonical_gap_id": "gap:typescript:typescript_preview:2fd6b073",
+        "file": "src/guard.ts",
+        "forbidden_files": [
+          "src/guard.ts"
+        ],
+        "gap_id": "probe:src_guard.ts:typescript_preview:2fd6b073",
+        "language": "typescript",
+        "language_status": "preview",
+        "line": 9,
+        "missing_discriminator": "return value == x",
+        "must_not_change": [
+          "Do not edit production code unless the focused proof exposes a real product defect.",
+          "Do not broaden the change beyond this GapRecord and its repair route.",
+          "Do not treat static evidence as runtime mutation, coverage, or correctness proof.",
+          "Do not generate tests or call external providers from this packet.",
+          "Do not treat preview-language evidence as gate authority."
+        ],
+        "owner": "floorAt",
+        "receipt_command": "ripr receipt write --gap gap:typescript:typescript_preview:2fd6b073 --verify-command 'npx --no-install vitest run tests/floor_at.test.ts' --status not_run --out target/ripr/receipts/gap-typescript-typescript_preview-2fd6b073.json",
+        "repair_kind": "AddValueAssertion",
+        "schema_version": "0.5",
+        "source": "typescript_preview_projection",
+        "target_test": "tests/floor_at.test.ts::floors",
+        "verify_command": "npx --no-install vitest run tests/floor_at.test.ts"
+      },
+      "preview_actionability": {
+        "actionability_category": "complete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "",
+        "gap_state": "actionable",
+        "missing_actionability_fields": [],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/guard.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 9,
+            "owner": "floorAt",
+            "raw": "file=src/guard.ts;line=9;kind=typescript_preview_probe;source_id=probe:src_guard.ts:typescript_preview:2fd6b073;owner=floorAt",
+            "sample": null,
+            "source_id": "probe:src_guard.ts:typescript_preview:2fd6b073"
+          }
+        ],
+        "repair_packet_ready": true,
+        "repair_route": "add a focused assertion for the missing discriminator `return value == x` in the related test, shaped like `expect(floorAt(-1, 0)).toBe(expected)`",
+        "unlock_condition": null,
+        "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == x`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only).",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == x`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only).",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_pricing.ts:typescript_preview:b7b2112c",
+      "canonical_gap_id": "gap:typescript:typescript_preview:b7b2112c",
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "infection_not_established", "summary": "whether the changed value alters behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_pricing.ts:typescript_preview:b7b2112c",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/pricing.ts",
+        "line": 3,
+        "expression": "    return 6;",
+        "owner": "typescript:src/pricing.ts::bulk"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `bulk`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not model infection for this `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `relational_check` (rank 3)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: infection is `unknown` for this `literal_return` edit, so whether an assertion discriminates the change is not asked (#10704)."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `bulk`", "infection unknown: TypeScript preview adapter does not model infection for this `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `relational_check` (rank 3)", "discriminator unknown: TypeScript preview adapter: infection is `unknown` for this `literal_return` edit, so whether an assertion discriminates the change is not asked (#10704).", "local flow reaches returned value: return 6; (line 3)", "related test tests/pricing.test.ts:4 pricing bulk uses weak relational check oracle: expect(...).toBeGreaterThan(...)"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return 6;","line":3}
+      ],
+      "evidence": ["owner: bulk", "typescript_infection: unknown (literal_return)", "typescript_oracle_observed: bulk(20)", "typescript_oracle_expected: 0", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/pricing.test.ts:4", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/pricing.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:b7b2112c;owner=bulk", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run tests/pricing.test.ts"],
+      "missing": ["The change to `bulk` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion is requested until a test input is shown to change the behavior.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pricing bulk",
+          "file": "tests/pricing.test.ts",
+          "line": 4,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "expect(...).toBeGreaterThan(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "return_value changed at src/pricing.ts:3: `return 6;`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "relational_check",
+        "oracle_strength": "weak",
+        "owner": "bulk",
+        "owner_kind": "function",
+        "probe_family": "return_value",
+        "related_test": {
+          "file": "tests/pricing.test.ts",
+          "line": 4,
+          "name": "pricing bulk"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Add an exact return-value assertion for the changed output.",
+        "verify": {
+          "command": "npx --no-install vitest run tests/pricing.test.ts"
+        },
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+      },
+      "preview_actionability": {
+        "actionability_category": "missing_target_shape",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "repair_kind",
+          "target_test_shape",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/pricing.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 3,
+            "owner": "bulk",
+            "raw": "file=src/pricing.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:b7b2112c;owner=bulk",
+            "sample": null,
+            "source_id": "probe:src_pricing.ts:typescript_preview:b7b2112c"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+      },
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "relational_check",
+      "oracle_strength": "weak",
+      "recommended_next_step": "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.",
+      "suggested_next_action": "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_pricing.ts:typescript_preview:26f2aacf",
+      "canonical_gap_id": "gap:typescript:typescript_preview:26f2aacf",
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_pricing.ts:typescript_preview:26f2aacf",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/pricing.ts",
+        "line": 24,
+        "expression": "  return a / b + 0;",
+        "owner": "typescript:src/pricing.ts::div"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `div`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `div`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator yes: Related test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches returned value: return a / b + 0; (line 24)", "related test tests/pricing.test.ts:8 pricing div uses strong exact value oracle: expect(...).toBe(...)"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return a / b + 0;","line":24}
+      ],
+      "evidence": ["owner: div", "typescript_oracle_observed: div(4, 2)", "typescript_oracle_expected: 2", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/pricing.test.ts:8", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/pricing.ts;line=24;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:26f2aacf;owner=div", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run tests/pricing.test.ts"],
+      "missing": ["Related test reaches `div` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pricing div",
+          "file": "tests/pricing.test.ts",
+          "line": 8,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "return_value changed at src/pricing.ts:24: `return a / b + 0;`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "div",
+        "owner_kind": "function",
+        "probe_family": "return_value",
+        "related_test": {
+          "file": "tests/pricing.test.ts",
+          "line": 8,
+          "name": "pricing div"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "verify": {
+          "command": "npx --no-install vitest run tests/pricing.test.ts"
+        },
+        "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
+      },
+      "preview_actionability": {
+        "actionability_category": "strong_oracle_observed",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "none for a repair packet; retain strong related-test evidence as non-actionable context",
+        "gap_state": "already_observed",
+        "missing_actionability_fields": [],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/pricing.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 24,
+            "owner": "div",
+            "raw": "file=src/pricing.ts;line=24;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:26f2aacf;owner=div",
+            "sample": null,
+            "source_id": "probe:src_pricing.ts:typescript_preview:26f2aacf"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
+        "unlock_condition": null,
+        "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
+      "suggested_next_action": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_pricing.ts:typescript_preview:1ba7ffcf",
+      "canonical_gap_id": "gap:typescript:typescript_preview:1ba7ffcf",
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "infection_not_established", "summary": "whether the changed value alters behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_pricing.ts:typescript_preview:1ba7ffcf",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/pricing.ts",
+        "line": 27,
+        "expression": "  return opts?.max ?? 20;",
+        "owner": "typescript:src/pricing.ts::cap"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `cap`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not model infection for this `fallback_literal` edit: the edit changes the literal operand of a `??` / `||` fallback, and the adapter does not model whether any test input takes the fallback."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: infection is `unknown` for this `fallback_literal` edit, so whether an assertion discriminates the change is not asked (#10704)."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `cap`", "infection unknown: TypeScript preview adapter does not model infection for this `fallback_literal` edit: the edit changes the literal operand of a `??` / `||` fallback, and the adapter does not model whether any test input takes the fallback.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator unknown: TypeScript preview adapter: infection is `unknown` for this `fallback_literal` edit, so whether an assertion discriminates the change is not asked (#10704).", "local flow reaches returned value: return opts?.max ?? 20; (line 27)", "related test tests/pricing.test.ts:9 pricing cap uses strong exact value oracle: expect(...).toBe(...)"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return opts?.max ?? 20;","line":27}
+      ],
+      "evidence": ["owner: cap", "typescript_infection: unknown (fallback_literal)", "typescript_oracle_observed: cap({ max: 3 })", "typescript_oracle_expected: 3", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/pricing.test.ts:9", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/pricing.ts;line=27;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:1ba7ffcf;owner=cap", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run tests/pricing.test.ts"],
+      "missing": ["The change to `cap` is a `fallback_literal` edit: the edit changes the literal operand of a `??` / `||` fallback, and the adapter does not model whether any test input takes the fallback. No assertion is requested until a test input is shown to change the behavior.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pricing cap",
+          "file": "tests/pricing.test.ts",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "return_value changed at src/pricing.ts:27: `return opts?.max ?? 20;`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "cap",
+        "owner_kind": "function",
+        "probe_family": "return_value",
+        "related_test": {
+          "file": "tests/pricing.test.ts",
+          "line": 9,
+          "name": "pricing cap"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "verify": {
+          "command": "npx --no-install vitest run tests/pricing.test.ts"
+        },
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+      },
+      "preview_actionability": {
+        "actionability_category": "missing_target_shape",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "repair_kind",
+          "target_test_shape",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/pricing.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 27,
+            "owner": "cap",
+            "raw": "file=src/pricing.ts;line=27;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:1ba7ffcf;owner=cap",
+            "sample": null,
+            "source_id": "probe:src_pricing.ts:typescript_preview:1ba7ffcf"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+      },
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.",
+      "suggested_next_action": "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_pricing.ts:typescript_preview:7d52efbc",
+      "canonical_gap_id": "gap:typescript:typescript_preview:7d52efbc",
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "infection_not_established", "summary": "whether the changed value alters behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether the changed value alters behavior is not established. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_pricing.ts:typescript_preview:7d52efbc",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/pricing.ts",
+        "line": 32,
+        "expression": "export function say(msg: string, loud = true): string {",
+        "owner": "typescript:src/pricing.ts::say"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `say`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not model infection for this `default_parameter` edit: the edit changes a default parameter value, and the adapter does not model whether any test call omits the argument."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: infection is `unknown` for this `default_parameter` edit, so whether an assertion discriminates the change is not asked (#10704)."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `say`", "infection unknown: TypeScript preview adapter does not model infection for this `default_parameter` edit: the edit changes a default parameter value, and the adapter does not model whether any test call omits the argument.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator unknown: TypeScript preview adapter: infection is `unknown` for this `default_parameter` edit, so whether an assertion discriminates the change is not asked (#10704).", "related test tests/pricing.test.ts:11 pricing say uses strong exact value oracle: expect(...).toBe(...)"],
+      "flow_sinks": [
+      ],
+      "evidence": ["owner: say", "probe_fact: ambiguous_fallback", "typescript_infection: unknown (default_parameter)", "typescript_oracle_observed: say(\"a\", true)", "typescript_oracle_expected: \"A\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/pricing.test.ts:11", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/pricing.ts;line=32;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:7d52efbc;owner=say", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved", "typescript_verify_command: npx --no-install vitest run tests/pricing.test.ts"],
+      "missing": ["The change to `say` is a `default_parameter` edit: the edit changes a default parameter value, and the adapter does not model whether any test call omits the argument. No assertion is requested until a test input is shown to change the behavior.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "pricing say",
+          "file": "tests/pricing.test.ts",
+          "line": 11,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "expect(...).toBe(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "predicate changed at src/pricing.ts:32: `export function say(msg: string, loud = true): string {`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "say",
+        "owner_kind": "function",
+        "probe_family": "predicate",
+        "related_test": {
+          "file": "tests/pricing.test.ts",
+          "line": 11,
+          "name": "pricing say"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
+        "verify": {
+          "command": "npx --no-install vitest run tests/pricing.test.ts"
+        },
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+      },
+      "preview_actionability": {
+        "actionability_category": "missing_target_shape",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
+        "gap_state": "unknown",
+        "missing_actionability_fields": [
+          "repair_kind",
+          "target_test_shape",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/pricing.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 32,
+            "owner": "say",
+            "raw": "file=src/pricing.ts;line=32;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:7d52efbc;owner=say",
+            "sample": null,
+            "source_id": "probe:src_pricing.ts:typescript_preview:7d52efbc"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+      },
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.",
+      "suggested_next_action": "TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 2,
+      "sample_paths": ["src/guard.ts", "src/pricing.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/guard.ts","digest":"sha256:fa16f90f4efb0ec86d062b6b63bf7914860897e45339f564c841a0ccb44f450f"},{"path":"src/pricing.ts","digest":"sha256:ee3c18581ccc223e5612e79a66810c3d0e0cb80e21c49650bea01443a73e5b7e"},{"path":"tests/floor_at.test.ts","digest":"sha256:b76839d96e8103a1e8c71c6d2ff6331cc4da7a639f45619314d1ca912e700685"}]}
+}

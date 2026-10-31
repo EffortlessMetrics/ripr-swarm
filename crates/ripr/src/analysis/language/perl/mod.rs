@@ -24,8 +24,11 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+mod boundary_input;
 mod fact_index;
 mod static_limit;
+
+use boundary_input::BoundaryInput;
 
 /// The `ripr-perl-facts-v1` packet schema. Re-uses the canonical declaration
 /// from `app` (Campaign 31 item 5) so the schema version has one source of
@@ -49,6 +52,13 @@ fn is_supported_perl_fact_exporter(name: &str) -> bool {
         PERL_RIPR_FACT_EXPORTER | "perllsp" | PERL_LSP_FACT_EXPORTER
     )
 }
+
+/// Producer capability promising the oracle grading RIPR-SPEC-0235 rule 16
+/// reads: an assertion that carries a matcher for the raised error
+/// (`throws_ok` with a class or regex, `like(dies {...}, ...)`) is
+/// `strong_exact`, a bare `dies_ok` or value `like` stays `weak_broad`, and an
+/// exception block nested in such an assertion is not a separate oracle.
+const PERL_ORACLE_MATCHER_GRADING: &str = "oracle_matcher_grading";
 
 /// Stable reason marker for a *configured* managed Perl facts producer that
 /// was invoked and failed (#6828). The adapter returns this marked reason so
@@ -74,10 +84,12 @@ fn producer_failure_reason(reason: &str) -> String {
 /// (repo-relative path segments) and `:` (id-namespace separators).
 fn validate_stable_id(id: &str) -> Result<(), String> {
     if id.is_empty() {
-        return Err("ID must be non-empty".to_string());
+        return Err("ID must be non-empty; give every fact a stable non-empty id".to_string());
     }
     if id.chars().any(char::is_whitespace) {
-        return Err("ID must not contain whitespace".to_string());
+        return Err(
+            "ID must not contain whitespace; remove the whitespace from the fact id".to_string(),
+        );
     }
     if id.len() >= 2 && id.as_bytes()[1] == b':' {
         return Err(format!("ID `{id}` looks like a Windows drive path"));
@@ -113,22 +125,24 @@ fn validate_repo_relative_path(path: &str) -> Result<(), String> {
         return Err("path must be non-empty (use `.` for the repo root)".to_string());
     }
     if path.starts_with('/') {
-        return Err(format!("path `{path}` is absolute; must be repo-relative"));
+        return Err(format!(
+            "path `{path}` is absolute; must be repo-relative; export the path relative to the repository root"
+        ));
     }
     if path.len() >= 2 && path.as_bytes()[1] == b':' {
         return Err(format!(
-            "path `{path}` has a Windows drive prefix; must be repo-relative"
+            "path `{path}` has a Windows drive prefix; must be repo-relative; export the path relative to the repository root"
         ));
     }
     if path.contains('\\') {
         return Err(format!(
-            "path `{path}` uses backslash separators; SPEC-0064 requires `/`"
+            "path `{path}` uses backslash separators; SPEC-0064 requires `/`; export the path with `/` separators"
         ));
     }
     for segment in path.split('/') {
         if segment == ".." {
             return Err(format!(
-                "path `{path}` contains `..`; must stay within the repo"
+                "path `{path}` contains `..`; must stay within the repo; export a path inside the repository root"
             ));
         }
     }
@@ -185,7 +199,7 @@ impl PerlAdapter {
             .map_err(|err| format!("parse ripr-perl-facts-v1 packet: {err}"))?;
         if packet.schema_version != crate::app::PERL_FACT_PACKET_SCHEMA {
             return Err(format!(
-                "unsupported Perl fact packet schema `{}`; expected `{}`",
+                "unsupported Perl fact packet schema `{}`; expected `{}`; regenerate the packet with an exporter that emits that schema",
                 packet.schema_version,
                 crate::app::PERL_FACT_PACKET_SCHEMA,
             ));
@@ -289,6 +303,7 @@ impl LanguageAdapter for PerlAdapter {
             limitations,
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
+            preview_fact_cache: Default::default(),
         })
     }
 
@@ -607,6 +622,7 @@ fn unowned_change_findings(
             );
             findings.push(crate::domain::Finding {
                 analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
                 id: probe_id.clone(),
                 canonical_gap: None,
                 probe: Probe {
@@ -775,6 +791,14 @@ fn packet_to_findings_with_currentness(
             ExposureClass::StaticUnknown
         } else if related.is_empty() {
             ExposureClass::NoStaticPath
+        } else if sink_aligned_evidence
+            .as_ref()
+            .is_some_and(|aligned| aligned.boundary_input == BoundaryInput::Unestablished)
+        {
+            // RIPR-SPEC-0235 rule 22 (#8979): equal sink text on a changed
+            // ordering comparison names the predicate, not an input that
+            // crosses its threshold. Unknown, never `exposed`.
+            ExposureClass::StaticUnknown
         } else if sink_aligned_evidence.is_some() {
             // H2: established sink alignment → already observed. The strongest
             // honest claim in the conservative taxonomy. No repair gap is
@@ -823,11 +847,26 @@ fn packet_to_findings_with_currentness(
             class
         };
         let is_already_observed = class == ExposureClass::Exposed;
+        let predicate_input_unestablished = class == ExposureClass::StaticUnknown
+            && !class_blocked
+            && !partial_without_change_link
+            && sink_aligned_evidence
+                .as_ref()
+                .is_some_and(|aligned| aligned.boundary_input == BoundaryInput::Unestablished);
         let observable_unavailable = class == ExposureClass::StaticUnknown
             && !class_blocked
             && !partial_without_change_link
             && !coderef_unresolved
             && packet.observable_declared_absent(&change.change_id);
+        let pinned_error_unresolved = class == ExposureClass::StaticUnknown
+            && !class_blocked
+            && packet.grades_oracle_matchers()
+            && related_evidence.iter().any(|ev| {
+                ev.class == ExposureClass::StaticUnknown
+                    && ev.reachability_hint == ReachabilityHint::Reachable
+                    && ev.oracle_strength == Some(OracleStrength::StrongExact)
+                    && ev.oracle_shape.as_deref() == Some("exception_observer")
+            });
         let broad_oracle_unresolved = class == ExposureClass::StaticUnknown
             && !class_blocked
             && related_evidence.iter().any(|ev| {
@@ -1054,6 +1093,7 @@ fn packet_to_findings_with_currentness(
 
         findings.push(crate::domain::Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: probe_id,
             canonical_gap,
             probe,
@@ -1105,6 +1145,12 @@ fn packet_to_findings_with_currentness(
                     "Make the related Perl test runner available, then add a focused assertion for the changed behavior and verify it."
                         .to_string()
                 }
+            } else if predicate_input_unestablished {
+                // RIPR-SPEC-0235 rule 22: say why this is unknown and what
+                // settles it, instead of crediting an input that may sit far
+                // from the threshold.
+                "A related Perl test asserts the value of the changed comparison, but ripr cannot establish that its owner call passes the threshold value (the packet carries no fact saying where the inputs fall), so it cannot tell whether moving the threshold would fail it. If it asserts a value on each side of the boundary, no change is needed; otherwise add one."
+                    .to_string()
             } else if coderef_unresolved {
                 // RIPR-SPEC-0235 rule 20: say why this is unknown and what
                 // settles it, instead of asking for an assertion that may exist.
@@ -1119,6 +1165,11 @@ fn packet_to_findings_with_currentness(
                 // RIPR-SPEC-0235 rule 18: say why this is unknown instead of
                 // asking for an assertion that may already exist.
                 "The fact producer found no observable for this change, so ripr cannot tell whether a related Perl test's assertion pins it. If an existing assertion checks the changed value, no change is needed; otherwise add one."
+                    .to_string()
+            } else if pinned_error_unresolved {
+                // RIPR-SPEC-0235 rule 16: the assertion pins the raised error,
+                // and static facts do not say whether it pins the boundary.
+                "A related Perl test asserts the error this code raises through a class or message matcher, so ripr cannot tell whether it pins the changed boundary. If it fails when the boundary moves, no change is needed; otherwise add a case on each side of it."
                     .to_string()
             } else if is_already_observed {
                 // H2: the change is already discriminated by an existing test.
@@ -1175,7 +1226,7 @@ impl PerlLspFactExportRequest {
         let out = stable_repo_path_arg(out.into(), "out")?;
         let requested_fact_classes = canonical_fact_classes(requested_fact_classes);
         if requested_fact_classes.is_empty() {
-            return Err("Perl fact export request requires at least one fact class".to_string());
+            return Err("Perl fact export request requires at least one fact class; pass at least one fact class".to_string());
         }
 
         Ok(Self {
@@ -1316,7 +1367,7 @@ impl PerlFactPacket {
         //    an unavailable packet carries no usable facts).
         if matches!(self.packet_status, PacketStatus::Unavailable) {
             return Err(
-                "ingestion: packet_status is `unavailable`; no facts to consume".to_string(),
+                "ingestion: packet_status is `unavailable`; no facts to consume; rerun the exporter until it reports a complete packet".to_string(),
             );
         }
 
@@ -1393,7 +1444,7 @@ impl PerlFactPacket {
             for id in ids {
                 if !seen.insert(*id) {
                     return Err(format!(
-                        "ingestion: duplicate {field} ID `{id}` — IDs must be unique"
+                        "ingestion: duplicate {field} ID `{id}` — IDs must be unique; regenerate the Perl fact packet with a corrected exporter and rerun"
                     ));
                 }
             }
@@ -1408,7 +1459,9 @@ impl PerlFactPacket {
         for (field, ids) in &id_checks {
             for id in ids {
                 if let Err(reason) = validate_stable_id(id) {
-                    return Err(format!("ingestion: malformed {field} ID `{id}` — {reason}"));
+                    return Err(format!(
+                        "ingestion: malformed {field} ID `{id}` — {reason}; regenerate the Perl fact packet with a corrected exporter and rerun"
+                    ));
                 }
             }
         }
@@ -1421,7 +1474,7 @@ impl PerlFactPacket {
         for file in &self.files {
             if let Err(reason) = validate_repo_relative_path(&file.path) {
                 return Err(format!(
-                    "ingestion: file `{}` path `{}` is not repo-relative — {reason}",
+                    "ingestion: file `{}` path `{}` is not repo-relative — {reason}; regenerate the Perl fact packet with a corrected exporter and rerun",
                     file.file_id, file.path
                 ));
             }
@@ -1440,19 +1493,19 @@ impl PerlFactPacket {
                 && !change_ids.contains(relation.change_id.as_str())
             {
                 return Err(format!(
-                    "ingestion: relation `{}` references unknown change_id `{}`",
+                    "ingestion: relation `{}` references unknown change_id `{}`; regenerate the Perl fact packet with a corrected exporter and rerun",
                     relation.relation_id, relation.change_id
                 ));
             }
             if !owner_ids.contains(relation.owner_id.as_str()) {
                 return Err(format!(
-                    "ingestion: relation `{}` references unknown owner_id `{}`",
+                    "ingestion: relation `{}` references unknown owner_id `{}`; regenerate the Perl fact packet with a corrected exporter and rerun",
                     relation.relation_id, relation.owner_id
                 ));
             }
             if !test_ids.contains(relation.test_id.as_str()) {
                 return Err(format!(
-                    "ingestion: relation `{}` references unknown test_id `{}`",
+                    "ingestion: relation `{}` references unknown test_id `{}`; regenerate the Perl fact packet with a corrected exporter and rerun",
                     relation.relation_id, relation.test_id
                 ));
             }
@@ -1460,7 +1513,7 @@ impl PerlFactPacket {
                 && !oracle_ids.contains(oracle_id.as_str())
             {
                 return Err(format!(
-                    "ingestion: relation `{}` references unknown oracle_id `{oracle_id}`",
+                    "ingestion: relation `{}` references unknown oracle_id `{oracle_id}`; regenerate the Perl fact packet with a corrected exporter and rerun",
                     relation.relation_id
                 ));
             }
@@ -1472,13 +1525,13 @@ impl PerlFactPacket {
         for change in &self.changes {
             if !file_ids.contains(change.file_id.as_str()) {
                 return Err(format!(
-                    "ingestion: change `{}` references unknown file_id `{}`",
+                    "ingestion: change `{}` references unknown file_id `{}`; regenerate the Perl fact packet with a corrected exporter and rerun",
                     change.change_id, change.file_id
                 ));
             }
             if !owner_ids.contains(change.owner_id.as_str()) {
                 return Err(format!(
-                    "ingestion: change `{}` references unknown owner_id `{}`",
+                    "ingestion: change `{}` references unknown owner_id `{}`; regenerate the Perl fact packet with a corrected exporter and rerun",
                     change.change_id, change.owner_id
                 ));
             }
@@ -1561,14 +1614,14 @@ impl PerlFactPacket {
             None => {
                 return Err(
                     "ingestion: packet `input.head` is missing; a complete packet must \
-                     declare the head it was built against"
+                     declare the head it was built against; regenerate the packet with a corrected exporter"
                         .to_string(),
                 );
             }
             Some(head) if head.trim().is_empty() => {
                 return Err(
                     "ingestion: packet `input.head` is empty; a complete packet must \
-                     declare the head it was built against"
+                     declare the head it was built against; regenerate the packet with a corrected exporter"
                         .to_string(),
                 );
             }
@@ -1578,7 +1631,7 @@ impl PerlFactPacket {
             // `repo_relative == "."` is allowed (it is the canonical repo root);
             // validate_repo_relative_path permits `.` explicitly.
             return Err(format!(
-                "ingestion: root.repo_relative `{}` is not repo-relative — {reason}",
+                "ingestion: root.repo_relative `{}` is not repo-relative — {reason}; regenerate the Perl fact packet with a corrected exporter and rerun",
                 self.root.repo_relative
             ));
         }
@@ -1610,7 +1663,7 @@ impl PerlFactPacket {
             if file.digest != recomputed_digest {
                 return Err(format!(
                     "ingestion: stale digest for file `{}` (`{}`) — declared `{}` does not \
-                     match the current on-disk content `{recomputed_digest}`; rebuild the packet",
+                     match the current on-disk content `{recomputed_digest}`; regenerate the packet from the current files",
                     file.file_id, file.path, file.digest
                 ));
             }
@@ -1945,6 +1998,13 @@ impl PerlFactPacket {
         })
     }
 
+    fn grades_oracle_matchers(&self) -> bool {
+        self.producer
+            .capabilities
+            .iter()
+            .any(|capability| capability == PERL_ORACLE_MATCHER_GRADING)
+    }
+
     fn observable_declared_absent(&self, change_id: &str) -> bool {
         self.change(change_id).is_some_and(|change| {
             change.changed_observable.declared_absent()
@@ -1972,7 +2032,13 @@ impl PerlFactPacket {
         let bound = oracle.test_id == relation.test_id
             && oracle.target_owner_id.as_deref() == Some(relation.owner_id.as_str());
         if bound && oracle.is_strong_exact() {
-            if self.observable_declared_absent(&relation.change_id) {
+            if self.grades_oracle_matchers() && oracle.kind == OracleKind::ExceptionObserver {
+                // RIPR-SPEC-0235 rule 16: the producer graded this exception
+                // assertion strong because it carries a matcher for the
+                // error. That pins that an error is raised, not which
+                // boundary raises it, so a gap would be as wrong as right.
+                ExposureClass::StaticUnknown
+            } else if self.observable_declared_absent(&relation.change_id) {
                 // RIPR-SPEC-0235 rule 18: the producer found no changed
                 // observable, so there is nothing for the oracle's sink to
                 // align to and ripr cannot tell whether the strong oracle
@@ -1984,11 +2050,13 @@ impl PerlFactPacket {
             }
         } else if bound
             && oracle.is_broad_unresolved()
+            && !self.grades_oracle_matchers()
             && relation.relation_kind.supports_weak_oracle_credit()
         {
-            // RIPR-SPEC-0235 rule 16 (#6582): the producer grades `throws_ok`,
-            // `dies_ok` and `like(dies {...}, ...)` alike as `weak_broad`, so a
-            // gap here is as likely wrong as right. Unknown, not a gap.
+            // RIPR-SPEC-0235 rule 16 (#6582): without matcher grading the
+            // producer grades `throws_ok`, `dies_ok` and `like(dies {...}, ...)`
+            // alike as `weak_broad`, so a gap here is as likely wrong as
+            // right. Unknown, not a gap.
             ExposureClass::StaticUnknown
         } else {
             ExposureClass::ReachableUnrevealed
@@ -3399,6 +3467,9 @@ struct SinkAlignedObservation {
     test_name: String,
     observed_sink: String,
     oracle_shape: String,
+    /// RIPR-SPEC-0235 rule 22: whether a changed ordering comparison has a
+    /// literal threshold input in this oracle's owner call.
+    boundary_input: BoundaryInput,
 }
 
 /// Whether this row's own evidence earned the finding's weak exposure (a
@@ -3458,6 +3529,10 @@ fn sink_aligned_observation(
         return None;
     }
 
+    // Rule 22: the first aligned oracle that is not an unestablished ordering
+    // comparison wins; otherwise the first aligned oracle is kept so the caller
+    // can tell "aligned but input unestablished" from "not aligned".
+    let mut unestablished: Option<SinkAlignedObservation> = None;
     for ev in related_evidence {
         // Only a direct owner call with positive reachability can prove
         // observation. Advisory relations (file_proximity, package_reference,
@@ -3480,6 +3555,12 @@ fn sink_aligned_observation(
         if !oracle.is_strong_exact() {
             continue;
         }
+        // RIPR-SPEC-0235 rule 16 matcher grading: a graded exception
+        // assertion pins that an error is raised, not which boundary raises
+        // it, so equal sink text never establishes observation.
+        if packet.grades_oracle_matchers() && oracle.kind == OracleKind::ExceptionObserver {
+            continue;
+        }
         if oracle.target_owner_id.as_deref() != Some(change.owner_id.as_str()) {
             continue;
         }
@@ -3497,17 +3578,37 @@ fn sink_aligned_observation(
         if sink_text_eq(observed_sink, changed_observable)
             || sink_text_eq(observed_sink, normalized_observable)
         {
-            return Some(SinkAlignedObservation {
+            // Any strong exact oracle of the same test may supply the
+            // threshold input: the producer links only some oracles to the
+            // owner, and each is an exact-value assertion on that test's call.
+            let boundary_input = boundary_input::boundary_input_for(
+                changed_observable,
+                &change.owner_id,
+                packet
+                    .oracles
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.test_id == ev.test_id && candidate.is_strong_exact()
+                    })
+                    .filter_map(|candidate| candidate.expression.as_deref()),
+            );
+            let aligned = SinkAlignedObservation {
                 test_name: ev.test_name.clone(),
                 observed_sink: observed_sink.to_string(),
                 oracle_shape: ev
                     .oracle_shape
                     .clone()
                     .unwrap_or_else(|| change.behavior_hint.default_assertion_shape().to_string()),
-            });
+                boundary_input,
+            };
+            if boundary_input == BoundaryInput::Unestablished {
+                unestablished.get_or_insert(aligned);
+            } else {
+                return Some(aligned);
+            }
         }
     }
-    None
+    unestablished
 }
 
 /// Whether `text` applies a pattern: a `=~` or `!~` binding, or a `qr`, `m`,
@@ -4136,7 +4237,9 @@ fn fact_classes_arg(fact_classes: &[PerlFactClass]) -> String {
 
 fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
     if path.is_empty() {
-        return Err(format!("Perl fact export `{field}` path must not be empty"));
+        return Err(format!(
+            "Perl fact export `{field}` path must not be empty; pass a repo-relative path"
+        ));
     }
     if path.contains('\\')
         || path.starts_with('/')
@@ -4144,7 +4247,7 @@ fn stable_repo_path_arg(path: String, field: &str) -> Result<String, String> {
         || path.split('/').any(|component| component == "..")
     {
         return Err(format!(
-            "Perl fact export `{field}` path must be repo-relative and use `/` separators"
+            "Perl fact export `{field}` path must be repo-relative and use `/` separators; pass a path relative to the repository root"
         ));
     }
     Ok(path)

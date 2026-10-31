@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// One operator impl for `Money` plus the test body under study.
+#[derive(Clone, Copy)]
 struct Case {
     label: &'static str,
     /// Trait path as written in the impl header (`Add`, `Neg`).
@@ -25,17 +26,16 @@ struct Case {
     extra_items: &'static str,
     /// Source of `src/macros.rs`, a second workspace file.
     sibling: &'static str,
+    /// Self type as written in the impl header (`Money`, `other::Money`).
+    impl_type: &'static str,
     test_body: &'static str,
 }
 
 fn source(case: &Case) -> String {
     format!(
         "use std::ops::*;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Money(pub i64);
-
-impl {trait_name} for Money {{
+{definition}
+impl {trait_name} for {impl_type} {{
     {signature} {{
 {new_line}
     }}
@@ -52,6 +52,12 @@ mod tests {{
 }}
 ",
         trait_name = case.trait_name,
+        impl_type = case.impl_type,
+        definition = if case.impl_type == "Money" {
+            "\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\n"
+        } else {
+            ""
+        },
         signature = case.signature,
         new_line = case.new_line,
         extra = case.extra_items,
@@ -147,6 +153,7 @@ const ADD: Case = Case {
     new_line: "        Money(other.0 + self.0)",
     extra_items: "",
     sibling: "",
+    impl_type: "Money",
     test_body: "assert_eq!(Money(2) + Money(3), Money(5));",
 };
 
@@ -171,6 +178,7 @@ fn typed_operands_reach_each_operator_impl() -> Result<(), String> {
             new_line: "        Money(self.0 + 0 - other.0)",
             extra_items: "",
             sibling: "",
+            impl_type: "Money",
             test_body: "let a = Money(5);\n        let b = Money(3);\n        assert_eq!(a - b, Money(2));",
         },
         Case {
@@ -182,6 +190,7 @@ fn typed_operands_reach_each_operator_impl() -> Result<(), String> {
             new_line: "        Money(0 - self.0)",
             extra_items: "",
             sibling: "",
+            impl_type: "Money",
             test_body: "let m = Money(4);\n        assert_eq!(-m, Money(-4));",
         },
         Case {
@@ -193,6 +202,7 @@ fn typed_operands_reach_each_operator_impl() -> Result<(), String> {
             new_line: "        Money(!(self.0))",
             extra_items: "",
             sibling: "",
+            impl_type: "Money",
             test_body: "assert_eq!(!Money(0), Money(-1));",
         },
         Case {
@@ -204,6 +214,7 @@ fn typed_operands_reach_each_operator_impl() -> Result<(), String> {
             new_line: "        self.0 = self.0 + other.0;",
             extra_items: "",
             sibling: "",
+            impl_type: "Money",
             test_body: "let mut total = Money(1);\n        total += Money(2);\n        assert_eq!(total, Money(3));",
         },
     ];
@@ -253,6 +264,7 @@ fn every_binary_and_assigning_operator_reaches_its_impl() -> Result<(), String> 
             new_line: leak(format!("        Money((self.0 {token} other.0) + 0)")),
             extra_items: "",
             sibling: "",
+            impl_type: "Money",
             test_body: leak(format!(
                 "let a = Money(6);\n        let b = Money(2);\n        let r = a {token} b;\n        assert_eq!(r, Money(0));"
             )),
@@ -268,6 +280,7 @@ fn every_binary_and_assigning_operator_reaches_its_impl() -> Result<(), String> 
             new_line: leak(format!("        self.0 = self.0 {token} other.0;")),
             extra_items: "",
             sibling: "",
+            impl_type: "Money",
             test_body: leak(format!(
                 "let mut total = Money(6);\n        total {token}= Money(2);\n        let _ = total;"
             )),
@@ -416,6 +429,7 @@ fn generic_arguments_are_not_shift_operators() -> Result<(), String> {
         new_line: "        Money((self.0) >> other.0)",
         extra_items: "",
         sibling: "",
+        impl_type: "Money",
         test_body: "let v: Vec<Result<u8, Money>> = Vec::new();\n        assert!(v.is_empty());",
     };
     let direct = direct_tests(&shr)?;
@@ -504,8 +518,9 @@ fn a_binary_minus_after_a_block_is_not_negation() -> Result<(), String> {
         signature: "type Output = Money;\n    fn neg(self) -> Money",
         old_line: "        Money(-self.0)",
         new_line: "        Money(0 - self.0)",
-        extra_items: "",
+        extra_items: "impl Sub for Money { type Output = Money; fn sub(self, other: Money) -> Money { Money(self.0 - other.0) } }",
         sibling: "",
+        impl_type: "Money",
         test_body: "let n = Money(2);\n        let r = Money { 0: 5 } - n;\n        assert_eq!(r.0, 3);",
     };
     let direct = direct_tests(&case)?;
@@ -554,6 +569,7 @@ fn a_macro_defined_in_a_sibling_file_may_generate_a_second_impl() -> Result<(), 
         extra_items: "
 add_for!(i32);
 ",
+        impl_type: "Money",
         sibling: "macro_rules! add_for {
     ($t:ty) => {
         impl Add<$t> for Money {
@@ -664,6 +680,166 @@ fn classes(case: &Case) -> Result<Vec<ExposureClass>, String> {
         .into_iter()
         .map(|finding| finding.class)
         .collect())
+}
+
+#[test]
+fn grouped_self_import_binds_the_enclosing_type_name() -> Result<(), String> {
+    let base = Case {
+        label: "grouped_self",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let foreign = Case {
+        label: "grouped_self_foreign",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod named { use super::*; use crate::other::Money::{self}; #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&foreign)?, [ExposureClass::StaticUnknown]);
+    let owner = Case {
+        label: "grouped_self_owner",
+        extra_items: "#[cfg(test)] mod named { use super::Money::{self}; use std::ops::Add; #[test] fn named_call() { let _ = Money::add(super::Money(1), super::Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&owner)?, [ExposureClass::WeaklyExposed]);
+    let sibling = Case {
+        label: "grouped_self_sibling",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod unrelated { use crate::other::Money::{self}; }\n#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let _ = Money::add(Money(1), Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&sibling)?, [ExposureClass::WeaklyExposed]);
+    Ok(())
+}
+
+#[test]
+fn module_type_bindings_do_not_name_the_operator_owner() -> Result<(), String> {
+    let base = Case {
+        label: "module_binding",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let real_owner = Case {
+        label: "module_binding_owner",
+        extra_items: "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let _ = Money::add(Money(1), Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&real_owner)?, [ExposureClass::WeaklyExposed]);
+    let owner_import = Case {
+        label: "module_binding_owner_import",
+        extra_items: "#[cfg(test)] mod named { use super::Money; use std::ops::Add; #[test] fn named_call() { let _ = Money::add(Money(1), Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&owner_import)?, [ExposureClass::WeaklyExposed]);
+
+    let owner_alias = Case {
+        label: "module_binding_owner_alias",
+        extra_items: "#[cfg(test)] mod named { use super::*; type Money = super::Money; #[test] fn named_call() { let _ = Money::add(super::Money(1), super::Money(1)); } }",
+        ..base
+    };
+    // The relation stage itself currently withholds a type alias, including
+    // one that names the owner. This slice does not change that admission.
+    assert_eq!(classes(&owner_alias)?, [ExposureClass::StaticUnknown]);
+
+    let sibling = Case {
+        label: "module_binding_sibling",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod unrelated { use crate::other::Money; }\n#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let _ = Money::add(Money(1), Money(1)); } }",
+        ..base
+    };
+    assert_eq!(classes(&sibling)?, [ExposureClass::WeaklyExposed]);
+
+    let foreign_import = Case {
+        label: "module_binding_foreign_import",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod named { use super::*; use crate::other::Money; #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&foreign_import)?, [ExposureClass::StaticUnknown]);
+    let raw_import = Case {
+        label: "module_binding_raw_import",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod named { use super::*; use crate::other::r#Money; #[test] fn named_call() { let _ = r#Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&raw_import)?, [ExposureClass::StaticUnknown]);
+    let nested_import = Case {
+        label: "module_binding_nested_import",
+        extra_items: "mod other { pub type Money = i64; }\n#[cfg(test)] mod outer { use crate::other::Money; use std::ops::Add; mod named { use super::*; #[test] fn named_call() { let _ = Money::add(1, 1); } } }",
+        ..base
+    };
+    assert_eq!(classes(&nested_import)?, [ExposureClass::StaticUnknown]);
+    let local_module = Case {
+        label: "module_binding_local_module",
+        extra_items: "#[cfg(test)] mod named { #[allow(non_snake_case)] mod Money { pub fn add(_: i64, _: i64) -> i64 { 2 } } #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&local_module)?, [ExposureClass::StaticUnknown]);
+
+    let foreign = Case {
+        label: "module_binding_foreign_alias",
+        extra_items: "mod other { pub type Coin = i64; }\n#[cfg(test)] mod named { use super::*; use crate::other::Coin as Money; #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&foreign)?, [ExposureClass::StaticUnknown]);
+
+    let local = Case {
+        label: "module_binding_local_alias",
+        extra_items: "#[cfg(test)] mod named { use super::*; type Money = i64; #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&local)?, [ExposureClass::StaticUnknown]);
+    Ok(())
+}
+
+#[test]
+fn a_same_module_binding_cannot_shadow_a_qualified_impl_type() -> Result<(), String> {
+    // `impl Add for other::Money` with a root `type Money = i64`: the test's
+    // `Money::add(1, 1)` is `i64::add`, not this impl. The owner's module was
+    // accepted wholesale, so this read as a call of the impl and lifted the
+    // withholding into a false `weakly_exposed`.
+    let shadowed = Case {
+        label: "same_module_shadow",
+        trait_name: "Add",
+        method: "add",
+        signature: "type Output = other::Money;\n    fn add(self, other: other::Money) -> other::Money",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "mod other { pub struct Money(pub i64); }\ntype Money = i64;\n#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        sibling: "",
+        impl_type: "other::Money",
+        test_body: "assert_eq!((other::Money(2) + other::Money(3)).0, 5);",
+    };
+    assert_eq!(classes(&shadowed)?, [ExposureClass::StaticUnknown]);
+    // Positive control: the genuine same-module definition and path still
+    // credit (`module_binding_owner` pins the nested-module form).
+    let genuine = Case {
+        label: "same_module_genuine",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let _ = Money::add(Money(1), Money(1)); } }",
+        ..ADD
+    };
+    assert_eq!(classes(&genuine)?, [ExposureClass::WeaklyExposed]);
+    Ok(())
+}
+
+#[test]
+fn an_unresolved_macro_invocation_in_the_test_scope_withholds_the_credit() -> Result<(), String> {
+    // A sibling-defined macro invoked in the test's enclosing module expands
+    // to a foreign `Money` import; the invocation never names `Money`. The
+    // expansion cannot be read statically, so the enclosing scope is not
+    // clear and the type-path call stays withheld.
+    let base = Case {
+        label: "macro_binding",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        ..ADD
+    };
+    let foreign = Case {
+        label: "macro_binding_foreign",
+        extra_items: "mod other { pub type Money = i64; }\nmod defs { macro_rules! foreign_money { () => { use super::other::Money; } } pub(crate) use foreign_money; }\n#[cfg(test)] mod named { use super::*; use super::defs::foreign_money; foreign_money!(); #[test] fn named_call() { let _ = Money::add(1, 1); } }",
+        ..base
+    };
+    assert_eq!(classes(&foreign)?, [ExposureClass::StaticUnknown]);
+    Ok(())
 }
 
 /// Relating the test says the operator runs, not that an assertion would
@@ -977,9 +1153,8 @@ mod pathed {
         [ExposureClass::WeaklyExposed]
     );
 
-    // The related rows are capped at eight for display; a path call among the
-    // cut rows cannot be seen, so the result must not depend on test names:
-    // renaming only the path-call test leaves the class unchanged (#10551).
+    // A path call beyond the display window still lifts the syntax-only limit;
+    // renaming the test does not change the classification (#10625).
     let crowded_path_call_last = Case {
         label: "crowded_path_call_last",
         old_line: "        Self(self.0 + other.0)",
@@ -1040,10 +1215,21 @@ mod crowded {
 ",
         ..ADD
     };
-    assert_eq!(
-        classes(&crowded_path_call_last)?,
-        [ExposureClass::StaticUnknown]
+    let crowded_last = findings_of(&crowded_path_call_last)?;
+    assert_eq!(crowded_last.len(), 1);
+    assert!(
+        crowded_last[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
     );
+    assert_eq!(crowded_last[0].related_tests.len(), 8);
+    assert!(
+        !crowded_last[0]
+            .related_tests
+            .iter()
+            .any(|test| test.name == "zz_pathed")
+    );
+    assert_eq!(crowded_last[0].class, ExposureClass::WeaklyExposed);
     let crowded_path_call_first = Case {
         label: "crowded_path_call_first",
         old_line: "        Self(self.0 + other.0)",
@@ -1106,7 +1292,7 @@ mod crowded {
     };
     assert_eq!(
         classes(&crowded_path_call_first)?,
-        [ExposureClass::StaticUnknown]
+        [ExposureClass::WeaklyExposed]
     );
 
     // `Type::method(..)` names the owner like `.method(..)`, so the finding is judged by that test's own evidence (#10551).
@@ -1252,6 +1438,7 @@ const INDEX: Case = Case {
     new_line: "        &(self.0)",
     extra_items: "",
     sibling: "",
+    impl_type: "Money",
     test_body: "let m = Money(7);\n        assert_eq!(m[0], 7);",
 };
 
@@ -1265,6 +1452,7 @@ const INDEX_MUT: Case = Case {
     new_line: "        &mut (self.0)",
     extra_items: INDEX_IMPL,
     sibling: "",
+    impl_type: "Money",
     test_body: "let mut m = Money(1);\n        m[0] = 5;\n        assert_eq!(m.0, 5);",
 };
 
@@ -1534,5 +1722,274 @@ fn an_unconfirmed_index_credit_is_withheld() -> Result<(), String> {
         ..changed
     };
     assert_eq!(on_changed_line(&weak)?.class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+/// A `}` can finish a statement or a left operand. This syntax-only reader
+/// conservatively relates neither impl for an unparenthesized block statement.
+#[test]
+fn block_statements_followed_by_minus_stay_unrelated() -> Result<(), String> {
+    let neg = Case {
+        label: "neg after block statement",
+        trait_name: "Neg",
+        method: "neg",
+        signature: "type Output = Money;\n    fn neg(self) -> Money",
+        old_line: "        Money(-self.0)",
+        new_line: "        Money(0 - self.0)",
+        extra_items: "impl Sub for Money { type Output = Money; fn sub(self, other: Money) -> Money { Money(self.0 - other.0) } }",
+        sibling: "",
+        impl_type: "Money",
+        test_body: "",
+    };
+    let sub = Case {
+        label: "sub after block statement",
+        trait_name: "Sub",
+        method: "sub",
+        signature: "type Output = Money;\n    fn sub(self, other: Money) -> Money",
+        old_line: "        Money(self.0 - other.0)",
+        new_line: "        Money((self.0) - other.0)",
+        extra_items: "impl Neg for Money { type Output = Money; fn neg(self) -> Money { Money(-self.0) } }",
+        sibling: "",
+        impl_type: "Money",
+        test_body: "",
+    };
+    for case in [&neg, &sub] {
+        for body in [
+            "let n = Money(2);\n        if true {} -n;\n        assert_eq!(Money(9).0, 9);",
+            "let n = Money(2);\n        {} -n;\n        assert_eq!(Money(9).0, 9);",
+            "let n = Money(2);\n        match true { true => (), false => () } -n;\n        assert_eq!(Money(9).0, 9);",
+        ] {
+            let direct = direct_tests(&Case {
+                test_body: body,
+                ..*case
+            })?;
+            assert!(direct.is_empty(), "{}: {body}: {direct:?}", case.label);
+        }
+    }
+    // The same brace before a real typed left operand still selects Sub.
+    let direct = direct_tests(&Case {
+        test_body: "let n = Money(2);\n        let r = Money { 0: 5 } - n;\n        assert_eq!(r.0, 3);",
+        ..sub
+    })?;
+    assert_eq!(direct, ["operator_under_test"]);
+    // A separate, observed unary expression still selects Neg.
+    let direct = direct_tests(&Case {
+        test_body: "let n = Money(2);\n        if true {}\n        let r = -n;\n        assert_eq!(r, Money(-2));",
+        ..neg
+    })?;
+    assert_eq!(direct, ["operator_under_test"]);
+    Ok(())
+}
+
+/// Plain `+=` mutates its Self operand despite returning unit. Crediting the
+/// relation still requires that exact operand type and one matching impl.
+#[test]
+fn standalone_add_assign_keeps_typed_operand_and_unique_impl_gates() -> Result<(), String> {
+    let assign = Case {
+        label: "standalone AddAssign",
+        trait_name: "AddAssign",
+        method: "add_assign",
+        signature: "fn add_assign(&mut self, other: Money)",
+        old_line: "        self.0 += other.0;",
+        new_line: "        self.0 = self.0 + other.0;",
+        extra_items: "",
+        sibling: "",
+        impl_type: "Money",
+        test_body: "let mut total = Money(1);\n        total += Money(2);\n        assert_eq!(total, Money(3));",
+    };
+    assert_eq!(direct_tests(&assign)?, ["operator_under_test"]);
+    let wrong_type = Case {
+        label: "integer AddAssign beside unused Money",
+        test_body: "let money = Money(1);\n        let mut total = 1i64;\n        total += 2;\n        assert_eq!(total, 3);\n        let _ = money;",
+        ..assign
+    };
+    assert!(direct_tests(&wrong_type)?.is_empty());
+    let second_impl = Case {
+        label: "second AddAssign impl",
+        extra_items: "impl AddAssign<i64> for Money { fn add_assign(&mut self, other: i64) { self.0 += other; } }",
+        ..assign
+    };
+    assert!(direct_tests(&second_impl)?.is_empty());
+    // The compound operator cannot supply a relation for Add::add.
+    let add = Case {
+        extra_items: "impl AddAssign for Money { fn add_assign(&mut self, other: Money) { self.0 += other.0; } }",
+        ..with_body(ADD, "Add is not AddAssign", assign.test_body)
+    };
+    assert!(direct_tests(&add)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn capped_rows_do_not_hide_a_named_operator_call() -> Result<(), String> {
+    let common = Case {
+        label: "uncapped_named_call",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "#[cfg(test)] mod extra { use super::*; #[test] fn operator_use() { let sum = Money(1) + Money(1); assert_eq!(sum.0, 2); } }",
+        test_body: "let sum = Money::add(Money(1), Money(1)); assert_ne!(sum.0, 3);",
+        ..ADD
+    };
+    assert_eq!(classes(&common)?, [ExposureClass::WeaklyExposed]);
+    let operator = Case {
+        label: "capped_operator_only",
+        test_body: "let sum = Money(1) + Money(1);\n        assert_ne!(sum.0, 3);\n        assert_ne!(sum.0, 4);\n        assert_ne!(sum.0, 5);\n        assert_ne!(sum.0, 6);\n        assert_ne!(sum.0, 7);\n        assert_ne!(sum.0, 8);\n        assert_ne!(sum.0, 9);\n        assert_ne!(sum.0, 10);\n        assert_ne!(sum.0, 11);",
+        ..common
+    };
+    let operator_findings = findings_of(&operator)?;
+    assert_eq!(operator_findings.len(), 1);
+    assert!(
+        operator_findings[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(operator_findings[0].related_tests.len(), 8);
+    assert_eq!(operator_findings[0].class, ExposureClass::StaticUnknown);
+    let ignored_named = Case {
+        label: "capped_ignored_named_call",
+        test_body: "let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n        assert_eq!(sum.0, 1 + 1);\n        assert_eq!(sum.0, 3 - 1);\n        assert_eq!(sum.0, 4 - 2);\n        assert_eq!(sum.0, 5 - 3);\n        assert_eq!(sum.0, 6 - 4);\n        assert_eq!(sum.0, 7 - 5);\n        assert_eq!(sum.0, 8 - 6);\n        assert_eq!(sum.0, 9 - 7);",
+        extra_items: "
+#[cfg(test)]
+mod ignored {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn named_call() {
+        let sum = Money::add(Money(1), Money(1));
+        assert_eq!(sum.0, 2);
+    }
+}",
+        ..operator
+    };
+    let ignored_findings = findings_of(&ignored_named)?;
+    assert_eq!(ignored_findings.len(), 1);
+    assert!(
+        ignored_findings[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(ignored_findings[0].class, ExposureClass::StaticUnknown);
+    assert_eq!(
+        ignored_findings[0]
+            .static_limit_kind
+            .map(|kind| kind.as_str()),
+        Some("rust_implicit_call_unresolved")
+    );
+    let named = Case {
+        label: "capped_named_call",
+        test_body: "let sum = Money::add(Money(1), Money(1));\n        assert_ne!(sum.0, 3);\n        assert_ne!(sum.0, 4);\n        assert_ne!(sum.0, 5);\n        assert_ne!(sum.0, 6);\n        assert_ne!(sum.0, 7);\n        assert_ne!(sum.0, 8);\n        assert_ne!(sum.0, 9);\n        assert_ne!(sum.0, 10);\n        assert_ne!(sum.0, 11);",
+        ..common
+    };
+    let named_findings = findings_of(&named)?;
+    assert_eq!(named_findings.len(), 1);
+    assert!(
+        named_findings[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(named_findings[0].related_tests.len(), 8);
+    assert!(
+        named_findings[0]
+            .related_tests
+            .iter()
+            .any(|test| test.name == "operator_under_test"
+                && test.relation_reason == Some(RelationReason::DirectOwnerCall))
+    );
+    assert_eq!(named_findings[0].class, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn capped_method_call_must_bind_the_operator_owner() -> Result<(), String> {
+    fn check(label: &str, call: &str, operators: usize) -> Result<Vec<Finding>, String> {
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "ripr-cap-receiver-{}-{}",
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
+        let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
+        for i in 0..operators {
+            source.push_str(&format!("    #[test]\n    fn a{i:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
+        }
+        source.push_str(&format!("    #[test]\n    fn zz_test() {{\n        let sum = Money(1) + Money(1);\n        {call}\n        assert_eq!(sum.0, 2);\n    }}\n}}\n"));
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"cap-receiver\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n").map_err(|e| e.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), source).map_err(|e| e.to_string())?;
+        std::fs::write(root.join("diff.patch"), "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -7,1 +7,1 @@\n-        Self(self.0 + other.0)\n+        Self(other.0 + self.0)\n").map_err(|e| e.to_string())?;
+        let output = check_workspace(CheckInput {
+            root: root.clone(),
+            base: None,
+            diff_file: Some(root.join("diff.patch")),
+            mode: Mode::Ready,
+            format: OutputFormat::Json,
+            include_unchanged_tests: false,
+            ..CheckInput::default()
+        })?;
+        let findings: Vec<_> = output
+            .findings
+            .into_iter()
+            .filter(|finding| finding.probe.location.line == 7)
+            .collect();
+        std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+        if findings.len() != 1 {
+            return Err(format!(
+                "{label}: expected one finding, got {}",
+                findings.len()
+            ));
+        }
+        Ok(findings)
+    }
+    let foreign = check(
+        "foreign",
+        "let n = 1i64.add(1);\n        assert_eq!(n, 2);",
+        8,
+    )?;
+    assert!(
+        foreign[0]
+            .related_tests_matched_total
+            .is_some_and(|total| total > 8)
+    );
+    assert_eq!(foreign[0].class, ExposureClass::StaticUnknown);
+    let foreign_binding = check(
+        "foreign-binding",
+        "let n: i64 = 1;\n        let value = n.add(1);\n        assert_eq!(value, 2);",
+        8,
+    )?;
+    assert_eq!(foreign_binding[0].class, ExposureClass::StaticUnknown);
+    let uncapped = check(
+        "uncapped-foreign",
+        "let n = 1i64.add(1);\n        assert_eq!(n, 2);",
+        1,
+    )?;
+    assert_eq!(uncapped[0].class, ExposureClass::WeaklyExposed);
+    let operator_only = check("operator-only", "", 8)?;
+    assert_eq!(operator_only[0].class, ExposureClass::StaticUnknown);
+    for (label, call) in [
+        (
+            "constructor",
+            "let result = Money(1).add(Money(1));\n        assert_eq!(result.0, 2);",
+        ),
+        (
+            "binding",
+            "let money = Money(1);\n        let result = money.add(Money(1));\n        assert_eq!(result.0, 2);",
+        ),
+        (
+            "mixed",
+            "let n = 1i64.add(1);\n        let result = Money(1).add(Money(1));\n        assert_eq!(n, 2);\n        assert_eq!(result.0, 2);",
+        ),
+        (
+            "type_path",
+            "let result = Money::add(Money(1), Money(1));\n        assert_eq!(result.0, 2);",
+        ),
+    ] {
+        let findings = check(label, call, 8)?;
+        assert!(
+            findings[0]
+                .related_tests_matched_total
+                .is_some_and(|total| total > 8),
+            "{label}"
+        );
+        assert_eq!(findings[0].class, ExposureClass::WeaklyExposed, "{label}");
+    }
     Ok(())
 }

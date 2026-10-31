@@ -3,8 +3,9 @@ use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
+use super::cli_subcommand::CliSubcommand;
 use super::effect_alignment::ChangedEffect;
-use super::fixtures::literal_owner_instance_fixture;
+use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
 use super::forwarding_decorator::is_forwarding_decorator;
 use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
@@ -160,9 +161,22 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
+    // A group subcommand's registration decorator builds a command that runs
+    // the body; it stops being an indirection once a test is shown to invoke
+    // the group with its name (`cli_subcommand.rs`, #9226).
+    let reached_subcommand_decorator = owner
+        .cli_subcommand
+        .as_ref()
+        .filter(|_| {
+            related_candidates
+                .iter()
+                .any(|candidate| candidate.relation == PythonRelationKind::CliRunnerInvoke)
+        })
+        .map(CliSubcommand::decorator);
     if let Some(decorator) = owner.decorators.iter().find(|decorator| {
         !is_transparent_owner_decorator_for_owner(decorator, owner)
             && !is_forwarding_decorator(decorator, owner, owner_source)
+            && reached_subcommand_decorator.as_ref() != Some(*decorator)
     }) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
@@ -347,7 +361,7 @@ pub(super) const LAMBDA_LIMIT_EVIDENCE: &str =
 /// is a plain one-line string literal return (`return "lambda x"`): no braces
 /// (an f-string expression or a dict could hold code), no triple quotes (the
 /// line may close a string opened above) and no other quote state to track.
-fn contains_lambda_keyword(text: &str) -> bool {
+pub(super) fn contains_lambda_keyword(text: &str) -> bool {
     let plain_line =
         !text.contains(['{', '\\']) && !text.contains("\"\"\"") && !text.contains("'''");
     text.match_indices("lambda").any(|(idx, _)| {
@@ -454,6 +468,15 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
         if ch == '\'' || ch == '"' {
             let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
             let width = if triple { 3 } else { 1 };
+            // A single-line f-string whose quote pairing cannot be followed
+            // (3.12 same-quote nesting in a field, a newline in a field)
+            // hides what follows: a miss, never an invented call (#9230).
+            if !triple
+                && chars_end_with_f_prefix(&chars[..index])
+                && single_line_fstring_is_ambiguous(chars[index..].iter().copied())
+            {
+                return true;
+            }
             open = Some((ch, width));
             index += width;
             continue;
@@ -461,6 +484,60 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
         index += 1;
     }
     open.is_some()
+}
+
+/// Whether the identifier run that ends `before` is an `f` string prefix
+/// (`f`, `F`, `rf`, `fR`, ...): at most two characters, and not the tail of a
+/// longer name such as `perf`.
+fn chars_end_with_f_prefix(before: &[char]) -> bool {
+    let run = before
+        .iter()
+        .rev()
+        .take_while(|ch| is_python_identifier_char(**ch))
+        .count();
+    let prefix: String = before[before.len() - run..].iter().collect();
+    run <= 2 && matches!(prefix.to_ascii_lowercase().as_str(), "f" | "rf" | "fr")
+}
+
+/// Whether the single-line f-string literal that starts at the first character
+/// of `literal` (its opening quote) has a replacement field the quote pairing
+/// cannot follow: its own quote nested inside a field (Python 3.12), or a
+/// newline inside a field. Both are valid source where the text after the
+/// nested quote or the line break is not necessarily code, so the caller hides
+/// the rest of the text. `false` for a literal that closes cleanly, for one
+/// whose field is still open when the text ends (the open-string rule already
+/// hides it) and for a newline outside any field (not this rule's concern).
+pub(super) fn single_line_fstring_is_ambiguous(literal: impl Iterator<Item = char>) -> bool {
+    let mut literal = literal.peekable();
+    let Some(quote) = literal.next() else {
+        return false;
+    };
+    // Open replacement fields; `0` is literal text.
+    let mut depth = 0usize;
+    while let Some(ch) = literal.next() {
+        if ch == '\\' {
+            literal.next();
+        } else if depth == 0 {
+            if ch == quote {
+                return false;
+            }
+            if ch == '{' {
+                // `{{` is an escaped brace, not a field.
+                if literal.peek() == Some(&'{') {
+                    literal.next();
+                } else {
+                    depth = 1;
+                }
+            }
+        } else if ch == quote || ch == '\n' {
+            return true;
+        } else if ch == '{' {
+            depth += 1;
+        } else if ch == '}' {
+            depth -= 1;
+        }
+    }
+    false
 }
 
 pub(super) fn contains_metaprogramming(text: &str) -> bool {
@@ -920,19 +997,32 @@ fn related_candidates_have_unresolved_pytest_fixture_limit(
 }
 
 fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOwner) -> bool {
-    test.framework == PythonFramework::Pytest
-        && body_calls_owner(&test.body_text, owner)
-        && test
-            .fixtures
-            .iter()
-            // A direct parametrize argname is a value pytest supplies, not a
-            // fixture, unless an unsettled `indirect=` may route it (#10685);
-            // a parametrize mark does not resolve the test's other fixtures
-            // (#9619).
-            .filter(|fixture| !test.takes_parametrize_value(fixture))
-            .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
-            .filter(|fixture| !literal_owner_instance_fixture(test, owner, fixture))
-            .any(|fixture| body_uses_identifier(&test.body_text, fixture))
+    !unresolved_pytest_fixture_names(test, owner).is_empty()
+}
+
+/// The fixtures a pytest test that calls the owner takes and uses but ripr
+/// does not read, in signature order. These are what block the exposure
+/// answer, so the finding names them (#10979).
+pub(super) fn unresolved_pytest_fixture_names<'t>(
+    test: &'t PythonTest,
+    owner: &PythonOwner,
+) -> Vec<&'t str> {
+    if test.framework != PythonFramework::Pytest || !body_calls_owner(&test.body_text, owner) {
+        return Vec::new();
+    }
+    test.fixtures
+        .iter()
+        .map(String::as_str)
+        // A direct parametrize argname is a value pytest supplies, not a
+        // fixture, unless an unsettled `indirect=` may route it (#10685);
+        // a parametrize mark does not resolve the test's other fixtures
+        // (#9619).
+        .filter(|fixture| !test.takes_parametrize_value(fixture))
+        .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
+        .filter(|fixture| !literal_owner_instance_fixture(test, owner, fixture))
+        .filter(|fixture| !inert_tool_fixture(test, fixture))
+        .filter(|fixture| body_uses_identifier(&test.body_text, fixture))
+        .collect()
 }
 
 fn is_known_auxiliary_pytest_fixture(fixture: &str) -> bool {
@@ -1378,6 +1468,37 @@ fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
     })
 }
 
+/// #9226: the edit changes only the value of integer literals. Every other
+/// token is identical, so no callee, keyword, operator or operand moved and the
+/// imported symbol the line calls is the same before and after. The line is
+/// `classify` lifts the import abstention for it only when a strong exact
+/// oracle observes the owner (it then reads `weakly_exposed`); otherwise the
+/// limit stands.
+pub(super) fn integer_literal_swap(old: &str, new: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    // Re-indenting moves the statement under or out of a block, which changes
+    // which inputs reach it.
+    if old.get(..indent(old)) != new.get(..indent(new)) {
+        return false;
+    }
+    let (old, new) = (old.trim(), new.trim());
+    let tokens = |text: &str| -> Option<Vec<Tok>> {
+        lex(text, Mode::Module)
+            .map(|result| result.ok().map(|(token, _)| token))
+            .collect()
+    };
+    let (Some(old), Some(new)) = (tokens(old), tokens(new)) else {
+        return false;
+    };
+    old.len() == new.len()
+        && old != new
+        && old
+            .iter()
+            .zip(&new)
+            .all(|(a, b)| a == b || matches!((a, b), (Tok::Int { .. }, Tok::Int { .. })))
+}
+
 pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) -> bool {
     imports.iter().any(|import| {
         !is_known_mock_constructor_import(import)
@@ -1625,6 +1746,7 @@ pub(super) mod tests {
             class_facts: Default::default(),
             foreign_writes: Default::default(),
             version_conditional: false,
+            cli_subcommand: None,
         }
     }
 

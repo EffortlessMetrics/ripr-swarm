@@ -48,9 +48,35 @@ pub struct DiagnosticSourceLocation {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DiagnosticConfidence {
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_contract_confidence"
+    )]
     pub value: Option<f32>,
     pub basis: String,
+}
+
+/// A confidence at the two-decimal precision of the output contract
+/// (`docs/OUTPUT_SCHEMA.md`), as the `f64` a JSON value carries.
+///
+/// `check` JSON and human output print `{:.2}`; widening the stored `f32`
+/// straight to `f64` would serialize `0.4` as `0.4000000059604645`. The LSP
+/// diagnostic payload, the context packet witness and SARIF
+/// `properties.confidence` all go through this one helper (#10717).
+pub(crate) fn contract_confidence(value: f32) -> f64 {
+    format!("{value:.2}")
+        .parse()
+        .unwrap_or_else(|_| f64::from(value))
+}
+
+fn serialize_contract_confidence<S: serde::Serializer>(
+    value: &Option<f32>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(value) => serializer.serialize_f64(contract_confidence(*value)),
+        None => serializer.serialize_none(),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -707,6 +733,7 @@ mod tests {
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:pricing:88:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

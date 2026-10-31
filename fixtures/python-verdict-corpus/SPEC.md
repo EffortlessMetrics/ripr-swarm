@@ -34,9 +34,15 @@ this repository's license, one per test library or library feature:
   boundaries, `assume`, a reference-implementation oracle and a no-assertion
   property (derandomized in `tests/conftest.py`).
 - `authored-py-pytest-numpy`: RIPR-SPEC-0238 example 10, an owner whose
-  only test asserts through `np.testing.assert_array_equal`. It is a
-  subject of its own so the other subjects' tests still run without
-  numpy; its truth was recorded with numpy 2.1.3.
+  only test asserts through `np.testing.assert_array_equal`, and the rule 28
+  cases beside it (`src/extra.py`): an assertpy `is_equal_to` chain and a
+  `from numpy.testing import assert_equal` call, both credited, and five
+  false-credit traps that stay non-credited (an `assert_allclose` tolerance, a
+  helper under `pytest.raises(AssertionError)`, a test-local `np` with no
+  numpy import, a monkeypatched helper, an owner compared with itself). It is
+  a subject of its own so the other subjects' tests still run without numpy
+  or assertpy; example 10's truth was recorded with numpy 2.1.3 and the rule 28
+  cases with numpy 2.4.6, assertpy 1.1 and pytest 9.2.0.
 - `authored-py-pytest-blocks`: multi-line replacement blocks, where the
   behavior change is the second line of a block that also rewrites the
   comment above it (#7556).
@@ -171,6 +177,47 @@ the `py-spec0233-exNN-` prefix and the subject keeps its
 digest. Each such case cites its example in `spec_examples`, and
 `spec-coverage.toml` gates those citations through `spec-examples.lock`; example 34, added at
 merge, has its cases under the same prefix.
+
+## Owner-sensitive nested calls (#9814)
+
+`authored-py-nested-call-9814` uses only stdlib `unittest`. Its single
+`assert f(g(5)) == g(5)` observes two different owners: independent `g`
+returns 10, so constant/increment edits of identity `f` fail; constant edits
+of `g` still pass because identity `f` preserves the changed value on both
+sides. A separate `normalize(normalize(x)) == normalize(x)` test retains
+the ordinary idempotence control.
+
+The three `py-nested-*-owner` cases retain these runtime labels. The outer
+owner is credited because the assertion is resolved per finding: extraction
+records the outer callee and only a finding owned by that bare function reads
+the assertion as an exact pin (#9814). Comparing only the outer and repeated
+callee names would falsely credit the inner owner case. Import aliases, receiver identity, owner calls nested inside the
+repeated expression, and helper calls back into the changed owner need
+separate controls before widening credit.
+
+At base `1818f481c279b84634c32ee19e9c23d199459967`, the direct strength
+readers include `assertion_selection`, `related_tests`, `classify`,
+`sink_alignment`, `boundary`, `table_rows`, `approx_band`, `arm_activation`,
+`guard_activation`, `term_activation`, `no_behavior`, `message_pin` and
+`static_limits`. `repo/evidence` also projects selected candidate assertions
+without an old changed line. A correction confined to the public row or the
+main classifier's final verdict would leave those consumers inconsistent.
+
+The retained [runtime transcript](evidence/9814-unittest.txt) records the
+three edited subjects and six return mutations. Replay their own test
+command from a scratch subject after applying the selected diff and then
+each recorded `mutated_line`, or use the existing `verdict-corpus relabel`
+route. Static scoring runs no Python:
+
+```bash
+cargo xtask verdict-corpus check --language python --cases py-nested-independent-outer-owner,py-nested-repeated-inner-owner,py-nested-idempotent-owner
+```
+
+The [static transcript](evidence/9814-static.txt) also retains a deliberately
+wrong same-callee-only experiment: it turns the inner-owner row into
+`exposed` / `false_exposed`, and the unchanged corpus check rejects that
+row. The experiment is excluded from the candidate; current extraction
+continues to demote all three cases.
 
 ## Refreshing
 

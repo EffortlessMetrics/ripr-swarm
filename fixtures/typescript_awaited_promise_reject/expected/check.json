@@ -12,9 +12,16 @@
   "findings": [
     {
       "id": "probe:src_profile.ts:typescript_preview:9da98202",
+      "canonical_gap_id": "gap:typescript:typescript_preview:9da98202",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_profile.ts:typescript_preview:9da98202",
         "family": "error_path",
@@ -35,8 +42,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"return await Promise.reject(new Error(\"missing id\"));","line":3}
       ],
-      "evidence": ["owner: loadProfile", "missing_discriminator: rejects Error matching \"missing id\"", "typescript_oracle_observed: loadProfile(\"\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/profile.test.ts:2", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/profile.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_profile.ts:typescript_preview:9da98202;owner=loadProfile", "related_test_relation: same_file_proximity (rejects missing profile id broadly)", "related_test_uncertain: same_file_proximity (rejects missing profile id broadly)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Only heuristic TypeScript test links were found for `loadProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: loadProfile", "missing_discriminator: rejects Error matching \"missing id\"", "typescript_oracle_observed: loadProfile(\"\")", "typescript_oracle_confidence: low", "typescript_oracle_evidence_ref: tests/profile.test.ts:2", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/profile.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_profile.ts:typescript_preview:9da98202;owner=loadProfile", "related_test_relation: same_file_proximity (rejects missing profile id broadly)", "related_test_uncertain: same_file_proximity (rejects missing profile id broadly)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `loadProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -107,7 +114,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",
@@ -149,9 +156,16 @@
     },
     {
       "id": "probe:src_profile.ts:typescript_preview:1733d672",
+      "canonical_gap_id": "gap:typescript:typescript_preview:1733d672",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_profile.ts:typescript_preview:1733d672",
         "family": "error_path",
@@ -172,8 +186,8 @@
       "flow_sinks": [
         {"kind":"error_variant","text":"await Promise.reject(new Error(\"missing id\"));","line":10}
       ],
-      "evidence": ["owner: publishProfile", "missing_discriminator: rejects Error matching \"missing id\"", "typescript_oracle_observed: publishProfile(\"\", { publish: async () => {} })", "typescript_oracle_confidence: medium", "typescript_oracle_evidence_ref: tests/profile.test.ts:6", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/profile.ts;line=10;kind=typescript_preview_probe;source_id=probe:src_profile.ts:typescript_preview:1733d672;owner=publishProfile", "related_test_relation: same_file_proximity (rejects missing publish id exactly)", "related_test_uncertain: same_file_proximity (rejects missing publish id exactly)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Only heuristic TypeScript test links were found for `publishProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "evidence": ["owner: publishProfile", "missing_discriminator: rejects Error matching \"missing id\"", "typescript_oracle_observed: publishProfile(\"\", { publish: async () => {} })", "typescript_oracle_confidence: medium", "typescript_oracle_evidence_ref: tests/profile.test.ts:6", "gap_state: unknown", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/profile.ts;line=10;kind=typescript_preview_probe;source_id=probe:src_profile.ts:typescript_preview:1733d672;owner=publishProfile", "related_test_relation: same_file_proximity (rejects missing publish id exactly)", "related_test_uncertain: same_file_proximity (rejects missing publish id exactly)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Only heuristic TypeScript test links were found for `publishProfile`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.", "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
       "assertion_texts": {
       },
       "activation": {
@@ -244,7 +258,7 @@
         "actionability_category": "incomplete_repair_packet",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "canonical_gap_id",
           "repair_kind",

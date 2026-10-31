@@ -155,7 +155,14 @@ fn summary_md(entries: &[ClassifiedSeam], max_seams: usize) -> String {
     let artifacts = pilot_artifacts();
     let mut context = pilot_context(&artifacts);
     context.max_seams = max_seams;
-    render_pilot_summary_md(entries, context)
+    let before = crate::git::test_process_spawns();
+    let standalone = render_pilot_summary_md(entries, context);
+    let (markdown, _) = render_pilot_human_summaries(entries, context);
+    assert_eq!(markdown, standalone);
+    // These spec fixtures propose tests/ targets or no repair route. Rendering
+    // them with root="." must not pay for any Git observation (#10037).
+    assert_eq!(crate::git::test_process_spawns() - before, 0);
+    markdown
 }
 
 /// The Markdown ranked list from its first entry on, so a note can be placed
@@ -217,6 +224,10 @@ fn spec_0237_example_06_evidence_is_a_boolean() -> Result<(), String> {
 /// discriminator, so `a` implies `m` in production evidence and those two
 /// seams cannot be built. This is the nearest buildable input: it still
 /// orders `m` over `r` over `a`, each as a later tie-breaker.
+///
+/// #11292: `a.rs` carries a producer-owned integration proposal, so it has a
+/// repair route and now leads the unroutable `b.rs`, `c.rs`, `e.rs` and
+/// `f.rs`; `d.rs` (related test plus a route) still leads it.
 #[test]
 fn spec_0237_example_07_evidence_precedence() -> Result<(), String> {
     let input = [
@@ -231,8 +242,8 @@ fn spec_0237_example_07_evidence_precedence() -> Result<(), String> {
         ranked(&input, 6)?,
         [
             "src/d.rs:1",
-            "src/b.rs:1",
             "src/a.rs:1",
+            "src/b.rs:1",
             "src/c.rs:1",
             "src/e.rs:1",
             "src/f.rs:1"

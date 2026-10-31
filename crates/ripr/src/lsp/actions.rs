@@ -15,6 +15,7 @@ use super::{
     COPY_AGENT_PACKET_COMMAND, COPY_AGENT_RECEIPT_COMMAND, COPY_AGENT_REPAIR_COMMAND,
     COPY_AGENT_VERIFY_COMMAND, COPY_CONTEXT_COMMAND, COPY_SUGGESTED_ASSERTION_COMMAND,
     COPY_TARGETED_TEST_BRIEF_COMMAND, OPEN_RELATED_TEST_COMMAND, REFRESH_COMMAND,
+    SHOW_RELATED_TEST_COMMAND,
 };
 use crate::agent::loop_commands;
 use crate::analysis::ClassifiedSeam;
@@ -23,7 +24,7 @@ use crate::analysis::repair_route::{
 };
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, RelationConfidence};
 use crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY;
-use crate::domain::OracleStrength;
+use crate::domain::{EvidenceState, OracleStrength};
 use crate::lsp::gap_artifacts::command_specs_for_projection;
 use crate::output::agent_seam_packets::{
     suggested_assertion_for_classified_seam, targeted_test_brief_for_classified_seam,
@@ -153,7 +154,7 @@ fn kind_matches_only(action: &CodeActionOrCommand, only: &[CodeActionKind]) -> b
 /// `lsp/capabilities.rs`. They run inside the server through
 /// `workspace/executeCommand`, so every client can run them regardless of
 /// the negotiated `riprEditor` advertisement (#1776).
-pub(super) const SERVER_EXECUTED_COMMANDS: [&str; 7] = [
+pub(super) const SERVER_EXECUTED_COMMANDS: [&str; 8] = [
     REFRESH_COMMAND,
     COLLECT_CONTEXT_COMMAND,
     COLLECT_EVIDENCE_CONTEXT_COMMAND,
@@ -161,6 +162,7 @@ pub(super) const SERVER_EXECUTED_COMMANDS: [&str; 7] = [
     COLLECT_REPAIR_PACKET_COMMAND,
     COLLECT_TOP_LIMITATION_COMMAND,
     COLLECT_RECEIPT_STATUS_COMMAND,
+    SHOW_RELATED_TEST_COMMAND,
 ];
 
 /// A code action survives the client-command filter when its command
@@ -343,7 +345,7 @@ pub(super) fn resolve_action(
     let data = action
         .data
         .clone()
-        .ok_or_else(|| "code action is missing its ripr data payload".to_string())?;
+        .ok_or_else(|| "code action is missing its ripr data payload; ask the client to request code actions again, and send each action back unchanged".to_string())?;
     let command_id = resolve_command_id(&action, &data)?;
     let parsed = parse_validated_action_data(&data, &command_id)?;
     if parsed.addresses_artifact() {
@@ -416,7 +418,7 @@ fn resolve_command_id(action: &CodeAction, data: &Value) -> Result<String, Strin
         Some(capability) if capability != "server" && !capability.trim().is_empty() => {
             Ok(capability.to_string())
         }
-        _ => Err("code action carries no command and its payload cannot recover one".to_string()),
+        _ => Err("code action carries no command and its payload cannot recover one; ask the client to request code actions again, and send each action back unchanged".to_string()),
     }
 }
 
@@ -841,10 +843,11 @@ fn push_seam_actions(
     if let Some(related) = related_test
         && let Some(target) = related_test_target(context.snapshot, related)
     {
-        actions.push(open_related_test_action(
+        actions.extend(open_related_test_action(
             target,
             context.diagnostic,
             Some(context.snapshot),
+            client_features,
         ));
     }
 }
@@ -928,10 +931,11 @@ fn push_gap_actions(
             ));
         }
         if let Some(target) = gap_related_test_target(context.snapshot, context.data) {
-            actions.push(open_related_test_action(
+            actions.extend(open_related_test_action(
                 target,
                 context.diagnostic,
                 Some(context.snapshot),
+                client_features,
             ));
         }
         let verify_command = first_safe_command_at(
@@ -1103,11 +1107,12 @@ const AGENT_VERIFY_COMMAND_TITLE: &str = "Verify after test: copy verify command
 const AGENT_RECEIPT_COMMAND_TITLE: &str = "Review result: copy receipt command";
 const AGENT_CARD_COMMAND_TITLE: &str = "Agent handoff: copy repair card";
 const COPY_STATIC_LIMIT_NOTE_TITLE: &str = "Inspect gap: copy static-limit note";
-const COPY_FIRST_REPAIR_PACKET_TITLE: &str = "Copy first repair packet";
+const COPY_FIRST_REPAIR_PACKET_TITLE: &str = "Copy repair instructions for an AI agent";
 const COPY_PYTHON_AGENT_PACKET_TITLE: &str = "Agent handoff: copy Python packet";
-const COPY_PYTHON_REPAIR_CARD_TITLE: &str = "Copy Python repair card";
+const COPY_PYTHON_REPAIR_CARD_TITLE: &str = "Copy Python repair instructions for an AI agent";
 const COPY_PYTHON_PYTEST_SKELETON_TITLE: &str = "Write Python test: copy pytest skeleton";
-const COPY_TYPESCRIPT_REPAIR_PACKET_TITLE: &str = "Copy TypeScript repair packet (advisory)";
+const COPY_TYPESCRIPT_REPAIR_PACKET_TITLE: &str =
+    "Copy TypeScript repair instructions for an AI agent (advisory)";
 const REFRESH_ANALYSIS_TITLE: &str = "Refresh Analysis - Saved Workspace Check";
 
 fn copy_agent_loop_command_action(
@@ -1265,7 +1270,7 @@ fn python_agent_packet_target(
     let data = diagnostic.data.as_ref()?;
     if string_at(data, &["source"]) != Some("gap_decision_ledger")
         || string_at(data, &["language"]) != Some("python")
-        || string_at(data, &["gap_state"]) != Some("actionable")
+        || !string_at(data, &["gap_state"]).is_some_and(EvidenceState::is_actionable_word)
         || string_at(data, &["repairability"]) != Some("repairable")
     {
         return None;
@@ -1663,7 +1668,7 @@ fn python_pytest_skeleton_target(snapshot: &AnalysisSnapshot, data: &Value) -> O
     }))
 }
 
-/// Build the LSP action target for "Copy TypeScript repair packet (advisory)"
+/// Build the LSP action target for "Copy TypeScript repair instructions for an AI agent (advisory)"
 /// (RIPR-SPEC-0088 §PR8). Returns `None` unless:
 /// - `data.preview_actionability.repair_packet_ready == true`
 /// - `data.language == "typescript"` (or javascript)
@@ -2255,24 +2260,120 @@ fn open_related_test_action(
     target: LSPAny,
     diagnostic: &Diagnostic,
     snapshot: Option<&AnalysisSnapshot>,
-) -> CodeActionOrCommand {
-    CodeActionOrCommand::CodeAction(CodeAction {
+    client_features: &ClientFeatureProfile,
+) -> Option<CodeActionOrCommand> {
+    // Generic-client navigation (RIPR-SPEC-0129): a client that did not
+    // advertise the client-side `ripr.openRelatedTest` command but does
+    // advertise `window/showDocument` gets the same navigation through the
+    // server-executed `ripr.showRelatedTest` command. The server answers it
+    // with a `window/showDocument` request; it never edits or runs a test.
+    let (command_id, action_name, arguments) = if !client_features
+        .supports_client_command(OPEN_RELATED_TEST_COMMAND)
+        && client_features.show_document
+    {
+        // The server command is bound to the snapshot input identity; a
+        // snapshot without one cannot bind it, so no action is offered.
+        let identity = snapshot.and_then(AnalysisSnapshot::input_identity_id)?;
+        let mut target = target;
+        target
+            .as_object_mut()?
+            .insert("input_identity".to_string(), Value::String(identity));
+        (SHOW_RELATED_TEST_COMMAND, "show_related_test", target)
+    } else {
+        (OPEN_RELATED_TEST_COMMAND, "open_related_test", target)
+    };
+    Some(CodeActionOrCommand::CodeAction(CodeAction {
         title: OPEN_RELATED_TEST_TITLE.to_string(),
         kind: Some(CodeActionKind::new("quickfix.ripr.navigate")),
         diagnostics: Some(vec![diagnostic.clone()]),
         command: Some(Command {
             title: OPEN_RELATED_TEST_TITLE.to_string(),
-            command: OPEN_RELATED_TEST_COMMAND.to_string(),
-            arguments: Some(vec![target]),
+            command: command_id.to_string(),
+            arguments: Some(vec![arguments]),
         }),
         data: Some(action_data_payload(
             "quickfix.ripr.navigate",
-            "open_related_test",
-            OPEN_RELATED_TEST_COMMAND,
+            action_name,
+            command_id,
             Some(diagnostic),
             snapshot,
         )),
         ..CodeAction::default()
+    }))
+}
+
+/// Validates a `ripr.showRelatedTest` request and builds the
+/// `window/showDocument` parameters (RIPR-SPEC-0129). Fail closed: the
+/// client must have advertised `window/showDocument`, a current analysis
+/// snapshot must exist, the action's input identity must still match it
+/// (a stale action never navigates to an old line), and the target must be
+/// an existing file inside the workspace root. Navigation only: no edit and
+/// no test execution.
+pub(super) fn show_related_test_params(
+    arguments: &[LSPAny],
+    snapshot: Option<&AnalysisSnapshot>,
+    client_features: &ClientFeatureProfile,
+) -> Result<tower_lsp_server::ls_types::ShowDocumentParams, String> {
+    use tower_lsp_server::ls_types::{Position, Range, ShowDocumentParams, Uri};
+    if !client_features.show_document {
+        return Err(format!(
+            "`{SHOW_RELATED_TEST_COMMAND}` needs a client that advertises window/showDocument"
+        ));
+    }
+    let Some(snapshot) = snapshot else {
+        return Err(format!(
+            "`{SHOW_RELATED_TEST_COMMAND}` needs a current analysis snapshot; run `{REFRESH_COMMAND}`"
+        ));
+    };
+    let target = arguments
+        .first()
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            format!("`{SHOW_RELATED_TEST_COMMAND}` expects one object: {{\"uri\", \"line\", \"input_identity\"}}")
+        })?;
+    let uri = target
+        .get("uri")
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse::<Uri>().ok())
+        .ok_or_else(|| format!("`{SHOW_RELATED_TEST_COMMAND}` needs a file `uri`"))?;
+    let line = target
+        .get("line")
+        .and_then(Value::as_u64)
+        .filter(|line| *line >= 1)
+        .and_then(|line| u32::try_from(line - 1).ok())
+        .ok_or_else(|| format!("`{SHOW_RELATED_TEST_COMMAND}` needs a 1-based `line`"))?;
+    // Both sides must carry an identity: an absent identity is a refusal,
+    // never a match (`None == None` would fail open).
+    match (
+        target.get("input_identity").and_then(Value::as_str),
+        snapshot.input_identity_id(),
+    ) {
+        (Some(supplied), Some(current)) if supplied == current => {}
+        (Some(_), Some(_)) => {
+            return Err(format!(
+                "stale `{SHOW_RELATED_TEST_COMMAND}` target: the analysis input changed; run `{REFRESH_COMMAND}`"
+            ));
+        }
+        _ => {
+            return Err(format!(
+                "`{SHOW_RELATED_TEST_COMMAND}` target carries no `input_identity` bound to the current snapshot; run `{REFRESH_COMMAND}`"
+            ));
+        }
+    }
+    let inside_root = super::uri::path_from_file_uri(&uri).is_some_and(|path| {
+        super::uri::path_is_within_root(snapshot.root.as_path(), &path) && path.is_file()
+    });
+    if !inside_root {
+        return Err(format!(
+            "`{SHOW_RELATED_TEST_COMMAND}` target is not an existing file inside the workspace; pass a file path or URI under the workspace root"
+        ));
+    }
+    let position = Position::new(line, 0);
+    Ok(ShowDocumentParams {
+        uri,
+        external: Some(false),
+        take_focus: Some(true),
+        selection: Some(Range::new(position, position)),
     })
 }
 
@@ -2286,6 +2387,8 @@ fn is_delivery_limitation(diagnostic: &Diagnostic) -> bool {
         Some(tower_lsp_server::ls_types::NumberOrString::String(code))
             if code == super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE
+                || code == super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE
+                || code == super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE
     )
 }
 
@@ -2519,6 +2622,52 @@ mod tests {
                 "{language} {path}"
             );
         }
+    }
+
+    #[test]
+    fn language_not_analyzed_marker_has_no_finding_context_action() -> Result<(), String> {
+        let marker = Diagnostic {
+            source: Some("ripr".to_string()),
+            code: Some(tower_lsp_server::ls_types::NumberOrString::String(
+                super::super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE.to_string(),
+            )),
+            data: Some(serde_json::json!({"kind": "language_not_analyzed"})),
+            ..Default::default()
+        };
+        let mut features = ClientFeatureProfile::unsupported();
+        features.ripr_editor = Some(
+            super::super::client_features::RiprEditorClientCapabilities {
+                version: "test".to_string(),
+                commands: vec![COPY_CONTEXT_COMMAND.to_string()],
+                guarded_test_edit: false,
+            },
+        );
+        let actions = code_action_response(&code_action_params(vec![marker])?, None, &features);
+        assert_eq!(action_titles(&actions), vec![REFRESH_ANALYSIS_TITLE]);
+        Ok(())
+    }
+
+    #[test]
+    fn preview_withheld_marker_has_no_finding_context_action() -> Result<(), String> {
+        let marker = Diagnostic {
+            source: Some("ripr".to_string()),
+            code: Some(tower_lsp_server::ls_types::NumberOrString::String(
+                super::super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+            )),
+            data: Some(serde_json::json!({"kind": "preview_findings_withheld"})),
+            ..Default::default()
+        };
+        let mut features = ClientFeatureProfile::unsupported();
+        features.ripr_editor = Some(
+            super::super::client_features::RiprEditorClientCapabilities {
+                version: "test".to_string(),
+                commands: vec![COPY_CONTEXT_COMMAND.to_string()],
+                guarded_test_edit: false,
+            },
+        );
+        let actions = code_action_response(&code_action_params(vec![marker])?, None, &features);
+        assert_eq!(action_titles(&actions), vec![REFRESH_ANALYSIS_TITLE]);
+        Ok(())
     }
 
     #[test]

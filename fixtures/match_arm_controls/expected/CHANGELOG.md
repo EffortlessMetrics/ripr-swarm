@@ -444,3 +444,49 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_controls (38)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — match_arm_controls (1)
+
+Reason:
+Source-only composition preserves main #10852 exposed verdicts and its exact-value discriminator summaries while retaining #10192 hidden kind/reason suffixes. The corresponding JSON facts and formatter contract were read independently. No analyzer execution or golden blessing was performed in this continuation; native comparison remains pending.
+
+Command:
+`git merge --no-commit --no-ff 4375bc7cc53e49d39bac2b53b2e8e524f790d6f3` (manual conflict composition afterward)
+
+Updated:
+- `expected/human.txt`
+
+## Pending — match_arm_controls (38)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — match_arm_controls (39)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

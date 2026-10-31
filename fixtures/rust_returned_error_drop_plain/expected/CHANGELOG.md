@@ -193,3 +193,79 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_plain (16)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_plain --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_returned_error_drop_plain (16)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_plain --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_plain (17)
+
+Reason:
+RIPR-SPEC-0122: check now prints one hand-written-test step when a gap has neither a repair start nor a stub, and only stub commands that produce a stub (#10710)
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_plain --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_plain (18)
+
+Reason:
+RIPR-SPEC-0122: the hand-written step respects a field-not-returned or no-return-value stub refusal, and a lone validated stub the changed expression did not pick stays a choice (#10710)
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_plain --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_plain (19)
+
+Reason:
+RIPR-SPEC-0122: check human output drops the no-repair-route clause beside a repair advisory that names its own route or recovery (#10710)
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_plain --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_returned_error_drop_plain (20)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless rust_returned_error_drop_plain --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -441,15 +441,33 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                 .collect();
             // Do not replace an observed failure with a deadline noticed
             // only after joining, nor with a sibling's abort (#6721).
-            if let Some(error) = cancellation::select_batch_error(
+            let batch_error = cancellation::select_batch_error(
                 token.as_ref(),
                 results
                     .iter()
                     .filter_map(|(_, result)| result.as_ref().err()),
-            ) {
+            )
+            .or_else(|| cancellation::checkpoint().err());
+            if let Some(error) = batch_error {
+                // #11205: a deadline or cancellation that lands while this
+                // batch is parsing must not discard the files that already
+                // finished. Each fact is keyed by its own content and stays
+                // a valid future hit, so a retry converges instead of
+                // starting cold. An ordinary source failure stores nothing.
+                let ordinary_failure = results
+                    .iter()
+                    .any(|(_, result)| matches!(result, Err(WorkerError::Failed(_))));
+                if !ordinary_failure {
+                    for (position, result) in results {
+                        if let (Ok(facts), Some(Pending::Parse { key })) =
+                            (result, pending.get(position))
+                        {
+                            store_fresh_facts(cache, key, &facts, &batch[position].0, stats);
+                        }
+                    }
+                }
                 return Err(error);
             }
-            cancellation::checkpoint()?;
             for (position, result) in results {
                 parsed[position] = Some(result.map_err(WorkerError::into_message)?);
             }
@@ -466,6 +484,11 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
         // Phase 3 (sequential, input order): store fresh facts, then insert.
         // `pending` and `parsed` are consumed here and dropped at the end of
         // this iteration, before the next batch is admitted.
+        //
+        // #11205: once an abort is noticed here, the remaining parsed misses
+        // are still stored (they are complete and content-keyed) while index
+        // insertion stops; the abort is returned after the batch.
+        let mut abort: Option<String> = None;
         for (position, entry) in pending.into_iter().enumerate() {
             let (file, bytes) = &batch[position];
             // Recorded on cache hits too, so a warm run discloses the same file.
@@ -481,20 +504,42 @@ fn insert_cached_file_batches<B: AsRef<[(PathBuf, Vec<u8>)]>>(
                             root.join(file).display()
                         ));
                     };
-                    cancellation::checkpoint()?;
-                    match cache.store_file_facts(&key, &facts) {
-                        Ok(()) => stats.stores += 1,
-                        Err(error) => stats.record_store_failure(file.clone(), error),
-                    }
+                    store_fresh_facts(cache, &key, &facts, file, stats);
                     facts
                 }
             };
-            cancellation::checkpoint()?;
+            if abort.is_some() {
+                continue;
+            }
+            if let Err(error) = cancellation::checkpoint() {
+                abort = Some(error);
+                continue;
+            }
             insert_file_summary(&mut index, file.clone(), summary);
-            cancellation::checkpoint()?;
+            if let Err(error) = cancellation::checkpoint() {
+                abort = Some(error);
+            }
+        }
+        if let Some(error) = abort {
+            return Err(error);
         }
     }
     Ok((index, content_hash.finish()))
+}
+
+/// Store one freshly parsed file's facts and count the outcome. The cache is
+/// per-file and non-transactional, so a failed store is recorded, not fatal.
+fn store_fresh_facts(
+    cache: &RepoFileFactCache,
+    key: &RepoFileFactCacheKey,
+    facts: &super::FileFacts,
+    file: &Path,
+    stats: &mut FileFactCacheStats,
+) {
+    match cache.store_file_facts(key, facts) {
+        Ok(()) => stats.stores += 1,
+        Err(error) => stats.record_store_failure(file.to_path_buf(), error),
+    }
 }
 
 /// Test-only lifetime instrument for #5029: the most `FileFacts` held
@@ -676,7 +721,7 @@ fn build_index_with_adapters(
 /// never an error: the gate only ever under-credits.
 fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
     let mut names = std::collections::BTreeSet::new();
-    let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+    let Ok(text) = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")) else {
         return names;
     };
     // A manifest is a TOML document (a table), not a standalone value:
@@ -711,7 +756,7 @@ fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
 /// package, or moves the library root (`[lib] path` other than `src/lib.rs`),
 /// so every consumer under-credits.
 fn manifest_library_name(root: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(root.join("Cargo.toml")).ok()?;
+    let text = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")).ok()?;
     let value = text.parse::<toml::Table>().ok()?;
     let package = value
         .get("package")
@@ -775,7 +820,7 @@ fn absolute_member_dirs(root: &Path) -> Vec<PathBuf> {
 /// The `[workspace] members` directories (literal paths and trailing `/*`
 /// globs, minus `exclude`) of the root manifest.
 fn workspace_member_directories(root: &Path) -> Vec<PathBuf> {
-    let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+    let Ok(text) = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")) else {
         return Vec::new();
     };
     let Ok(value) = text.parse::<toml::Table>() else {

@@ -349,3 +349,122 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (27)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: #10192 displays hidden finding kind/reason, exact ambiguous seam choices, and evidence-specific unresolved-edge guidance; verdict, stage, identity and oracle fields stay unchanged (independently compared against actual JSON).
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (30)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (31)
+
+Reason:
+RIPR-SPEC-0113: honest no-static-path next step names the owner and the ordered add-test, native verifier, refresh route (#10708)
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (32)
+
+Reason:
+RIPR-SPEC-0088: TypeScript preview check JSON states top-level canonical_gap_id (#10709)
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (33)
+
+Reason:
+RIPR-SPEC-0113 and #10913: missing static relation is not universal test absence; inspect existing calls and import/export paths before adding a test if needed. Preserve classification, related-test credit and repair eligibility.
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (34)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: compose landed main fixture rows with 10192 hidden-row kind/reason naming and typed unresolved-edge guidance; JSON findings, classes, oracles and recommendations unchanged (golden-drift cosmetic-only)
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (35)
+
+Reason:
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (36)
+
+Reason:
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (37)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_parse_depth_budget (38)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless ts_parse_depth_budget --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

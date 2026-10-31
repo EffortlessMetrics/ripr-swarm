@@ -28,10 +28,15 @@ use crate::domain::OwnerKind;
 use std::collections::HashMap;
 
 /// Class-level facts the entry binding reads, filled once per workspace.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(in crate::analysis::language::python) struct PythonClassFacts {
-    /// Every method name defined in the owner's class body.
-    pub(in crate::analysis::language::python) methods: Vec<String>,
+    /// Sole observing source after the truthiness-only physical isolation audit.
+    /// Unknown/default contexts cannot provide the new integer truthiness credit.
+    pub(in crate::analysis::language::python) truthiness_observer: Option<std::path::PathBuf>,
+    /// Every method name defined in the owner's class body, shared by every
+    /// method of the class: a copy per method made the pass quadratic in
+    /// class size in memory (pandas `DataFrame`, #10914).
+    pub(in crate::analysis::language::python) methods: std::sync::Arc<Vec<String>>,
     /// Whether the class's `__enter__` is a bare `return self`.
     pub(in crate::analysis::language::python) enter_returns_self: bool,
     /// The class has no decorators, metaclass or other class keywords, a body
@@ -54,12 +59,16 @@ pub(in crate::analysis::language::python) struct PythonClassFacts {
     pub(in crate::analysis::language::python) bound_names: Option<Vec<String>>,
 }
 
+/// One class's method names, shared by its methods, and whether `__enter__`
+/// returns `self`.
+type SharedClassMethods = (std::sync::Arc<Vec<String>>, bool);
+
 /// Fills [`PythonClassFacts`] on each method owner from the owners that share
 /// its file and class.
 pub(in crate::analysis::language::python) fn apply_class_facts(owners: &mut [PythonOwner]) {
     // Keyed by (file, class): a linear search per owner made this pass
     // methods x classes on large workspaces (#10735).
-    let mut grouped: HashMap<(std::path::PathBuf, String), PythonClassFacts> = HashMap::new();
+    let mut grouped: HashMap<(&std::path::Path, &str), (Vec<String>, bool)> = HashMap::new();
     for owner in owners.iter() {
         if owner.class_path.is_empty()
             || !matches!(
@@ -69,11 +78,11 @@ pub(in crate::analysis::language::python) fn apply_class_facts(owners: &mut [Pyt
         {
             continue;
         }
-        let entry = grouped
-            .entry((owner.file.clone(), owner.class_path.clone()))
+        let (methods, enter_returns_self) = grouped
+            .entry((owner.file.as_path(), owner.class_path.as_str()))
             .or_default();
-        if !entry.methods.contains(&owner.name) {
-            entry.methods.push(owner.name.clone());
+        if !methods.contains(&owner.name) {
+            methods.push(owner.name.clone());
         }
         if owner.name == "__enter__"
             && owner.decorators.is_empty()
@@ -82,13 +91,24 @@ pub(in crate::analysis::language::python) fn apply_class_facts(owners: &mut [Pyt
                 .first()
                 .is_some_and(|first| owner.term_facts.returned_parameter() == Some(&first.name))
         {
-            entry.enter_returns_self = true;
+            *enter_returns_self = true;
         }
     }
+    let grouped: HashMap<(std::path::PathBuf, String), SharedClassMethods> = grouped
+        .into_iter()
+        .map(|((file, class), (methods, enter_returns_self))| {
+            (
+                (file.to_path_buf(), class.to_string()),
+                (std::sync::Arc::new(methods), enter_returns_self),
+            )
+        })
+        .collect();
     for owner in owners.iter_mut() {
-        if let Some(class_facts) = grouped.get(&(owner.file.clone(), owner.class_path.clone())) {
-            owner.class_facts.methods = class_facts.methods.clone();
-            owner.class_facts.enter_returns_self = class_facts.enter_returns_self;
+        if let Some((methods, enter_returns_self)) =
+            grouped.get(&(owner.file.clone(), owner.class_path.clone()))
+        {
+            owner.class_facts.methods = std::sync::Arc::clone(methods);
+            owner.class_facts.enter_returns_self = *enter_returns_self;
         }
     }
 }

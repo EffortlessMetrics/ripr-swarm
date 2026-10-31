@@ -20,6 +20,10 @@
 //! - otherwise the boundary is missing. An operand that is neither a literal
 //!   nor a parameter (`item.on_hand`, a computed `len(items)`, a comprehension
 //!   local) is unresolved and never counts as observed, so this fails closed.
+//!   The one derivable local is a once-bound `visible = len(text)` over an
+//!   unrebound parameter that a call binds to a plain string literal (#11103):
+//!   it resolves to that literal's length, so the gate can name the equality
+//!   input shape instead of declining the repair card.
 //!
 //! A module-scope constant (`DISCOUNT_THRESHOLD = 10_000`) that nothing in the
 //! module can rebind resolves to its literal, like a literal operand; a test
@@ -38,7 +42,7 @@
 
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::discriminators::{is_literal_python_model_field_value, python_string_literal_value};
-use super::guard_activation::name_rebound_in_owner;
+use super::guard_activation::{name_rebound_in_owner, owner_binding_lines};
 use super::module_constants::PythonModuleConstant;
 use super::no_behavior::{
     call_arglists_with_offsets, call_segment_keyword_name, matching_call_paren,
@@ -163,7 +167,24 @@ pub(super) fn python_boundary_evidence(
     let condition = predicate_condition(line_text);
     let relational = relational_operators(&condition);
     let (operators, old_equality_operands) = if relational.is_empty() {
-        let gate = equality_predicate_gate(&condition, old_line_text)?;
+        let Some(gate) = equality_predicate_gate(&condition, old_line_text) else {
+            // A single-operand test swap (`x is None` -> `not x`, #9186).
+            use super::truthiness_swap::strip_trailing_comment;
+            let old_line_text = strip_trailing_comment(old_line_text?);
+            let line_text = strip_trailing_comment(line_text);
+            return super::truthiness_swap::python_truthiness_swap_evidence(
+                line_text,
+                old_line_text,
+                (
+                    &predicate_condition(line_text),
+                    &predicate_condition(old_line_text),
+                ),
+                owner,
+                owner_source,
+                related_candidates,
+                focus,
+            );
+        };
         (gate.operators, gate.old_operands)
     } else {
         (relational, None)
@@ -177,7 +198,21 @@ pub(super) fn python_boundary_evidence(
         .map(|(left, right)| format!("{left} == {right}"));
 
     let constants = unrebound_constants(owner, related_candidates);
-    let rows = strong_owner_call_rows(owner, &constants, related_candidates, focus);
+    let (mut rows, gaps) =
+        strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
+    // A once-bound `local = len(param)` takes the length of the literal string
+    // each call passes, so the comparison against it is readable (#11103).
+    let mut derived_locals: Vec<String> = Vec::new();
+    if let (Some((left, right)), Some(source)) = (&operands, owner_source) {
+        for operand in [left, right] {
+            if static_operand(operand, &constants).is_none()
+                && let Some(parameter) = len_local_parameter(source, owner, operand, line_text)
+                && derive_len_local(&mut rows, operand, &parameter)
+            {
+                derived_locals.push(operand.clone());
+            }
+        }
+    }
     if let (Some((left, right)), Some(old)) = (&operands, old_line_text)
         && reversing_flip(&condition, old, left, right)
         && rows.iter().any(|row| {
@@ -186,7 +221,7 @@ pub(super) fn python_boundary_evidence(
                     resolve_operand(left, row, &constants),
                     resolve_operand(right, row, &constants),
                 ),
-                (Some(l), Some(r)) if !literals_equal(&l, &r)
+                (Some(l), Some(r)) if literals_equal(&l, &r) == Some(false)
             )
         })
     {
@@ -198,6 +233,30 @@ pub(super) fn python_boundary_evidence(
         // through to the adjacent-boundary rules below and stay unproven.
         return None;
     }
+    // A literal argument normally cannot stand for a rebound parameter.
+    // The sole-yield, unit-step generator grammar is a closed exception.
+    let walk = operands.as_ref().and_then(|(left, right)| {
+        let walk = super::loop_walk::generator_walk(
+            owner_source?,
+            owner,
+            line_text,
+            old_line_text,
+            left,
+            right,
+        )?;
+        (!gaps
+            && !rows.is_empty()
+            && rows.iter().all(|row| {
+                resolve_operand(left, row, &constants)
+                    .is_some_and(|value| value.parse::<i128>().is_ok())
+                    && super::loop_walk::sequence_oracle_observes_row(
+                        row,
+                        owner,
+                        related_candidates,
+                    )
+            }))
+        .then_some(walk)
+    });
     if let (Some((left, right)), Some(source)) = (&operands, owner_source) {
         for operand in [left, right] {
             if owner
@@ -205,6 +264,7 @@ pub(super) fn python_boundary_evidence(
                 .iter()
                 .any(|parameter| parameter.name == *operand)
                 && name_rebound_in_owner(source, owner, operand)
+                && walk.is_none()
             {
                 // The owner rebinds the operand (a loop counter such as
                 // `start -= 1`), so the call argument does not stay the
@@ -228,7 +288,9 @@ pub(super) fn python_boundary_evidence(
         .flat_map(|row| {
             row.bindings
                 .iter()
-                .filter(|(_, binding)| !binding.from_default)
+                .filter(|(parameter, binding)| {
+                    !binding.from_default && !derived_locals.contains(parameter)
+                })
                 .map(|(parameter, binding)| ValueFact {
                     file: Some(row.file.clone()),
                     line: row.line,
@@ -245,7 +307,7 @@ pub(super) fn python_boundary_evidence(
         observed_values.extend(rows.iter().filter_map(|row| {
             let elements = row.elements.get(filter.iterable)?;
             Some(ValueFact {
-                file: None,
+                file: Some(row.file.clone()),
                 line: row.line,
                 text: row.text.clone(),
                 value: format!("{} = [{}]", filter.iterable, elements.join(", ")),
@@ -297,18 +359,79 @@ pub(super) fn python_boundary_evidence(
                 .get(filter.iterable)
                 .cloned()
                 .unwrap_or_default(),
-            _ => resolve_operand(operand, row, &constants)
-                .into_iter()
-                .collect(),
+            _ => {
+                let mut values: Vec<_> = resolve_operand(operand, row, &constants)
+                    .into_iter()
+                    .collect();
+                if let Some(walk) = &walk
+                    && operand == walk.local
+                    && values
+                        .iter()
+                        .any(|value| value.parse::<i128>().is_ok_and(|start| walk.reaches(start)))
+                {
+                    values.push(walk.bound.clone());
+                }
+                values
+            }
         }
     };
+    // Missing is an aggregate claim: every relevant call must be placeable.
+    // Keep a resolved witness even if another call is unknown, but do not let
+    // the resolved values hide a call that could be at the boundary.
+    let unresolved = |operand: &str, row: &CallRow| match &filter {
+        Some(filter) if filter.local == operand => !row.elements.contains_key(filter.iterable),
+        _ => resolve_operand(operand, row, &constants).is_none(),
+    };
+    let unplaced_call = gaps
+        || rows.iter().any(|row| {
+            unresolved(&left, row)
+                || unresolved(&right, row)
+                || old_equality_operands
+                    .as_ref()
+                    .is_some_and(|(left, right)| unresolved(left, row) || unresolved(right, row))
+        });
+    // An unresolved operand no call binds (a rebound module constant such
+    // as `DISCOUNT_THRESHOLD`) is not an unplaced call: the calls are
+    // placed, and the observed-values reason below names that operand as
+    // unresolved (#11103). Only a gap in the calls themselves, or an
+    // unresolved call-bound operand (a parameter, its attribute, or a
+    // comprehension local over a parameter), makes placement unknown.
+    let call_bound = |operand: &str| {
+        let root = operand
+            .trim_start_matches('-')
+            .split('.')
+            .next()
+            .unwrap_or(operand);
+        owner
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name == root)
+            || filter.as_ref().is_some_and(|filter| {
+                filter.local == operand
+                    && owner
+                        .parameters
+                        .iter()
+                        .any(|parameter| parameter.name == filter.iterable)
+            })
+    };
+    let unplaced_call_input = gaps
+        || rows.iter().any(|row| {
+            let mut operands: Vec<&str> = vec![&left, &right];
+            if let Some((old_left, old_right)) = &old_equality_operands {
+                operands.push(old_left);
+                operands.push(old_right);
+            }
+            operands
+                .iter()
+                .any(|operand| call_bound(operand) && unresolved(operand, row))
+        });
     for row in &rows {
         let left_candidates = candidates(&left, row);
         let right_candidates = candidates(&right, row);
         if let Some((left_value, right_value)) = left_candidates.iter().find_map(|left_value| {
             right_candidates
                 .iter()
-                .find(|right_value| literals_equal(left_value, right_value))
+                .find(|right_value| literals_equal(left_value, right_value) == Some(true))
                 .map(|right_value| (left_value, right_value))
         }) {
             observed_new = true;
@@ -317,7 +440,11 @@ pub(super) fn python_boundary_evidence(
                 line: row.line,
                 text: format!(
                     "{} | {}; {}",
-                    row.text,
+                    if walk.is_some() {
+                        format!("{} (unit-step generator walk)", row.text)
+                    } else {
+                        row.text.clone()
+                    },
                     operand_provenance(&left, left_value, &constants),
                     operand_provenance(&right, right_value, &constants)
                 ),
@@ -332,7 +459,7 @@ pub(super) fn python_boundary_evidence(
             let old_right_value = resolve_operand(old_right, row, &constants);
             if let (Some(old_left_value), Some(old_right_value)) =
                 (&old_left_value, &old_right_value)
-                && literals_equal(old_left_value, old_right_value)
+                && literals_equal(old_left_value, old_right_value) == Some(true)
             {
                 observed_old = true;
                 observed_values.push(ValueFact {
@@ -350,6 +477,63 @@ pub(super) fn python_boundary_evidence(
             }
         }
     }
+    // A rewrite that keeps the predicate on every integer (`v >= 100` ->
+    // `v > 99`) changes no behavior, so what a test must notice is a wrong
+    // version of the new line. The equality row pins its operator flip, but
+    // Python's mutation tool also shifts a number literal up by one
+    // (mutmut: `n` -> `n + 1`). For `v > C` and `v <= C` (and their
+    // mirrors) that moves the boundary off the equality point to
+    // `v == C + 1`, which a further row must place (#10842). `v >= C` and
+    // `v < C` move it onto `v == C`. A behavior change keeps the equality
+    // rule: the equality row notices the edit itself (RIPR-SPEC-0238 #39).
+    let step = observed_new
+        .then(|| literal_step(&condition, &operators, &left, &right))
+        .flatten()
+        .filter(|step| {
+            static_operand(&step.variable, &constants).is_none()
+                && old_line_text.is_some_and(|old| integer_equivalent_rewrite(line_text, old))
+        })
+        .filter(|step| {
+            !rows.iter().any(|row| {
+                candidates(&step.variable, row)
+                    .iter()
+                    .any(|value| literals_equal(value, &step.value) == Some(true))
+            })
+        });
+    if let Some(step) = step {
+        if gaps || rows.iter().any(|row| unresolved(&step.variable, row)) {
+            crate::analysis::classify::sort_value_facts(&mut observed_values);
+            return Some(PythonBoundaryEvidence {
+                activation: BoundaryActivation::Missing,
+                discriminator: None,
+                observed_values,
+                reason: format!(
+                    "Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the shifted boundary of `{condition}`"
+                ),
+            });
+        }
+        let observed_lists = format!(
+            "observed {} values: {}",
+            step.variable,
+            list_or_unresolved(if step.variable == left {
+                left_values
+            } else {
+                right_values
+            })
+        );
+        crate::analysis::classify::sort_value_facts(&mut observed_values);
+        return Some(PythonBoundaryEvidence {
+            activation: BoundaryActivation::Missing,
+            discriminator: Some(format!("{} == {}", step.variable, step.value)),
+            observed_values,
+            reason: format!(
+                "A strong related test call places {left} equal to {right}, but none places {variable} equal to {value}, where the shifted bound `{shifted}` differs; {observed_lists}",
+                variable = step.variable,
+                value = step.value,
+                shifted = step.shifted,
+            ),
+        });
+    }
     let observed = observed_new || observed_old;
     // Preserve distinct source files while collapsing exact duplicate facts
     // and ordering tied rows deterministically (#8389).
@@ -365,7 +549,7 @@ pub(super) fn python_boundary_evidence(
         .any(|(operand, values)| {
             static_operand(operand, &constants).is_none() && values.is_empty()
         });
-    let discriminator = if observed || !unresolved_operand {
+    let discriminator = if observed || (!unresolved_operand && !unplaced_call) {
         discriminator
     } else {
         None
@@ -376,6 +560,10 @@ pub(super) fn python_boundary_evidence(
         && observed_old
     {
         format!("A strong related test call places {old_left} equal to {old_right}")
+    } else if unplaced_call_input {
+        format!(
+            "Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary of `{condition}`"
+        )
     } else {
         // A literal operand is its own value and a module constant names its
         // one value; only operands that vary with the test input are listed.
@@ -412,6 +600,87 @@ pub(super) fn python_boundary_evidence(
         observed_values,
         reason,
     })
+}
+
+/// The owner parameter `local` measures when its single binding in the owner
+/// is a plain `local = len(parameter)` that precedes the changed line and the
+/// parameter is never rebound. Anything else (a second binding, a loop target,
+/// a computed argument, a rebound parameter, a binding after the predicate) is
+/// not derivable and the operand stays unresolved (#11103; rebound and
+/// loop-carried shapes stay with #9733 and #9426).
+fn len_local_parameter(
+    owner_source: &str,
+    owner: &PythonOwner,
+    local: &str,
+    changed_line_text: &str,
+) -> Option<String> {
+    if !is_simple_operand(local) || local.contains('.') {
+        return None;
+    }
+    let bindings = owner_binding_lines(owner_source, owner, local);
+    let [(binding_index, binding)] = bindings.as_slice() else {
+        return None;
+    };
+    // `visible = len(s)` or the annotated `visible: int = len(s)`.
+    let suffix = binding.strip_prefix(local)?.trim_start();
+    let value = match suffix.strip_prefix(':') {
+        Some(annotated) => annotated.split_once('=')?.1.trim(),
+        None => suffix.strip_prefix('=')?.trim(),
+    };
+    let argument = value
+        .strip_prefix("len")?
+        .trim_start()
+        .strip_prefix('(')?
+        .strip_suffix(')')?
+        .trim();
+    let parameter_ok = !argument.is_empty()
+        && argument.chars().all(is_python_identifier_char)
+        && !argument.starts_with(|ch: char| ch.is_ascii_digit())
+        && argument != local
+        && owner
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name == argument)
+        && !name_rebound_in_owner(owner_source, owner, argument);
+    if !parameter_ok {
+        return None;
+    }
+    let changed_index = owner_source
+        .lines()
+        .enumerate()
+        .skip(owner.start_line)
+        .take(owner.end_line.saturating_sub(owner.start_line))
+        .find(|(_, line)| line.trim() == changed_line_text.trim())
+        .map(|(index, _)| index)?;
+    (*binding_index < changed_index).then(|| argument.to_string())
+}
+
+/// Bind `local` in every row whose call passes `parameter` a plain string
+/// literal to that literal's length in characters. All or nothing: a row whose
+/// call passes a prefixed, escaped, concatenated or non-literal argument (or
+/// none) could sit on the boundary unseen, so any such row leaves the operand
+/// unresolved for every row. Returns whether the local was derived.
+fn derive_len_local(rows: &mut [CallRow], local: &str, parameter: &str) -> bool {
+    let lengths: Option<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            let body = python_string_literal_value(&row.bindings.get(parameter)?.value)?;
+            (!body.contains(['\\', '\r'])).then(|| body.chars().count().to_string())
+        })
+        .collect();
+    let Some(lengths) = lengths.filter(|lengths| !lengths.is_empty()) else {
+        return false;
+    };
+    for (row, value) in rows.iter_mut().zip(lengths) {
+        row.bindings.insert(
+            local.to_string(),
+            Binding {
+                value,
+                from_default: false,
+            },
+        );
+    }
+    true
 }
 
 /// Whether ONE related row's own calls provably leave the changed predicate
@@ -628,6 +897,139 @@ fn provably_unequal(left: &str, right: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether the old and new predicates are each one relational comparison of
+/// the same name against an integer literal, true on exactly the same
+/// integers (`v >= 100` and `v > 99`, `v < 10` and `9 >= v`), with the rest
+/// of the condition unchanged (`and flag` -> `or flag` is a behavior change)
+/// and the line around the condition unchanged (`return 0 if v >= 100 else 6`
+/// -> `return 0 if v > 99 else 5` changes a branch value).
+fn integer_equivalent_rewrite(new_line_text: &str, old_line_text: &str) -> bool {
+    let new_condition = predicate_condition(new_line_text);
+    let old_condition = predicate_condition(old_line_text);
+    let outside = |line: &str, condition: &str| {
+        line.replacen(condition, "\u{0}", 1)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    if outside(new_line_text, &new_condition) != outside(old_line_text, &old_condition) {
+        return false;
+    }
+    match (integer_bound(&new_condition), integer_bound(&old_condition)) {
+        (Some(new), Some(old)) => new == old,
+        _ => false,
+    }
+}
+
+/// The inclusive bound a comparison of a name against an integer literal
+/// sets on the name, and the condition text around the comparison:
+/// (name, lower bound?, bound, surrounding text).
+fn integer_bound(condition: &str) -> Option<(String, bool, i128, String)> {
+    let operators = relational_operators(condition);
+    let [(start, len)] = operators.as_slice() else {
+        return None;
+    };
+    let operator = condition.get(*start..start + len)?;
+    let (left, right) = simple_comparison_operands(condition, *start, *len)?;
+    let before = condition
+        .get(..*start)?
+        .trim_end()
+        .strip_suffix(left.as_str())?;
+    let after = condition
+        .get(start + len..)?
+        .trim_start()
+        .strip_prefix(right.as_str())?;
+    let surrounding = format!("{before}\u{0}{after}")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let integer = |operand: &str| -> Option<i128> {
+        let value = canonical_decimal(&literal_value(operand)?)?;
+        if value.contains('.') {
+            return None;
+        }
+        value.parse().ok()
+    };
+    // Read as `name <operator> bound`.
+    let (name, operator, bound) = match (integer(&left), integer(&right)) {
+        (None, Some(bound)) => (left, operator, bound),
+        (Some(bound), None) => (
+            right,
+            match operator {
+                "<" => ">",
+                "<=" => ">=",
+                ">" => "<",
+                ">=" => "<=",
+                _ => return None,
+            },
+            bound,
+        ),
+        _ => return None,
+    };
+    if literal_value(&name).is_some() {
+        return None;
+    }
+    let (lower, bound) = match operator {
+        ">" => (true, bound.checked_add(1)?),
+        ">=" => (true, bound),
+        "<" => (false, bound.checked_sub(1)?),
+        "<=" => (false, bound),
+        _ => return None,
+    };
+    Some((name, lower, bound, surrounding))
+}
+
+/// The row a one-up shift of a literal integer bound needs (#10842).
+struct LiteralStep {
+    /// The operand that varies with the test input.
+    variable: String,
+    /// `C + 1`, where the shifted comparison first differs.
+    value: String,
+    /// The comparison with the bound shifted (`amount > 100`).
+    shifted: String,
+}
+
+/// For one relational comparison of a name against an integer literal,
+/// the input value at which the literal shifted up by one changes the
+/// result, when that is not the equality point already required. A bound
+/// spelled as a module constant or an offset (`LIMIT - 1`), a float and a
+/// comparison of two names keep the equality rule alone.
+fn literal_step(
+    condition: &str,
+    operators: &[(usize, usize)],
+    left: &str,
+    right: &str,
+) -> Option<LiteralStep> {
+    let [(start, len)] = operators else {
+        return None;
+    };
+    let operator = condition.get(*start..start + len)?;
+    let integer = |operand: &str| {
+        literal_value(operand)
+            .and_then(|value| canonical_decimal(&value))
+            .filter(|value| !value.contains('.'))
+    };
+    let (variable, bound, needs_step) = match (integer(left), integer(right)) {
+        (None, Some(bound)) => (left, bound, matches!(operator, ">" | "<=")),
+        (Some(bound), None) => (right, bound, matches!(operator, "<" | ">=")),
+        _ => return None,
+    };
+    if !needs_step || literal_value(variable).is_some() {
+        return None;
+    }
+    let value = shifted_integer(&bound, 1)?;
+    let shifted = if variable == left {
+        format!("{left} {operator} {value}")
+    } else {
+        format!("{value} {operator} {right}")
+    };
+    Some(LiteralStep {
+        variable: variable.to_string(),
+        value,
+        shifted,
+    })
 }
 
 /// Whether the old predicate compares the same operands in the same order
@@ -1192,20 +1594,12 @@ pub(super) struct CallRow {
 /// Owner calls from related tests whose strongest assertion is strong: the
 /// same tests that could credit `exposed`. Each analyzable call binds owner
 /// parameters to literal arguments (or literal defaults when omitted).
-pub(super) fn strong_owner_call_rows(
-    owner: &PythonOwner,
-    constants: &[PythonModuleConstant],
-    related_candidates: &[PythonRelatedCandidate<'_>],
-    focus: &PythonAssertionFocus,
-) -> Vec<CallRow> {
-    strong_owner_call_rows_with_gaps(owner, constants, related_candidates, focus).0
-}
-
 /// The strong owner-call rows, and whether some strong related test has an
 /// owner call that binds no row (a `*args` unpack, a comment inside the
 /// argument list) or no owner call this reader recognizes at all. A rule
 /// that needs every strong input (`term_activation.rs`, `guard_activation.rs`)
-/// treats that as unresolved; the boundary rule reads the rows it has.
+/// treats that as unresolved; the boundary rule also retains such gaps when
+/// deciding whether all calls miss a boundary.
 pub(super) fn strong_owner_call_rows_with_gaps(
     owner: &PythonOwner,
     constants: &[PythonModuleConstant],
@@ -1291,9 +1685,18 @@ fn candidate_call_rows(
     for name in owner_call_names(owner, candidate.test, method_call) {
         for (first_line, text) in &sources {
             for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
-                let Some((bindings, case_arguments, elements)) =
-                    bind_call_arguments(owner, constants, candidate.test, skip, arglist)
-                else {
+                // A name's value is only read from the test body itself, at
+                // the call's position in it (#10707).
+                let call_start = std::ptr::eq(*text, candidate.test.body_text.as_str())
+                    .then(|| arglist.as_ptr().addr() - text.as_ptr().addr());
+                let Some((bindings, case_arguments, elements)) = bind_call_arguments(
+                    owner,
+                    constants,
+                    candidate.test,
+                    skip,
+                    arglist,
+                    call_start,
+                ) else {
                     gaps = true;
                     continue;
                 };
@@ -1436,6 +1839,7 @@ fn bind_call_arguments(
     test: &PythonTest,
     skip: usize,
     arglist: &str,
+    call_start: Option<usize>,
 ) -> Option<BoundArguments> {
     let positional: Vec<&str> = owner
         .parameters
@@ -1492,6 +1896,24 @@ fn bind_call_arguments(
         } else if let Some(value) =
             literal_value(value).or_else(|| imported_constant_value(owner, constants, test, value))
         {
+            bindings.insert(
+                name,
+                Binding {
+                    value,
+                    from_default: false,
+                },
+            );
+        } else if let Some(value) = call_start
+            .and_then(|start| super::test_local_literal::test_local_literal(test, value, start))
+        {
+            bindings.insert(
+                name,
+                Binding {
+                    value,
+                    from_default: false,
+                },
+            );
+        } else if let Some(value) = super::test_local_literal::test_module_constant(test, value) {
             bindings.insert(
                 name,
                 Binding {
@@ -1659,23 +2081,61 @@ pub(super) fn literal_value(text: &str) -> Option<String> {
     None
 }
 
-/// Literal equality as Python compares the scalar values: decimals by value
-/// (`100 == 100.0`), strings by content regardless of quote style, and
-/// `True`/`False`/`None` by identity. Mixed kinds never compare equal here
-/// (for example `True == 1`), which fails closed toward "not observed".
-pub(super) fn literals_equal(left: &str, right: &str) -> bool {
+/// Literal equality as Python compares scalar values: decimals by value
+/// (`100 == 100.0`), bools against numbers (`True == 1`, `False == 0`),
+/// strings by decoded content, and `True`/`False`/`None` by identity.
+/// Returns `None` when static evidence cannot read the comparison (mixed
+/// unreadable kinds, escapes, prefixes) rather than a definite inequality.
+pub(super) fn literals_equal(left: &str, right: &str) -> Option<bool> {
+    match (bool_as_decimal(left), bool_as_decimal(right)) {
+        (Some(left), Some(right)) => return Some(left == right),
+        (Some(bool_value), None) => {
+            if let Some(number) = canonical_decimal(right) {
+                return Some(number == bool_value);
+            }
+        }
+        (None, Some(bool_value)) => {
+            if let Some(number) = canonical_decimal(left) {
+                return Some(number == bool_value);
+            }
+        }
+        (None, None) => {}
+    }
     match (canonical_decimal(left), canonical_decimal(right)) {
-        (Some(left), Some(right)) => return left == right,
-        (Some(_), None) | (None, Some(_)) => return false,
+        (Some(left), Some(right)) => return Some(left == right),
+        (Some(_), None) | (None, Some(_)) => return None,
         (None, None) => {}
     }
     match (
         python_string_literal_value(left),
         python_string_literal_value(right),
     ) {
-        (Some(left), Some(right)) => left == right,
-        (None, None) => left == right,
-        _ => false,
+        (Some(left), Some(right)) => Some(left == right),
+        (None, None) => {
+            if left == right {
+                Some(true)
+            } else if provably_unequal(left, right) {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        _ => {
+            if provably_unequal(left, right) {
+                Some(false)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// The decimal value Python equates a bool literal with.
+fn bool_as_decimal(text: &str) -> Option<String> {
+    match text {
+        "True" => Some("1".to_string()),
+        "False" => Some("0".to_string()),
+        _ => None,
     }
 }
 
@@ -1760,6 +2220,22 @@ fn test_body_after_header(text: &str) -> Option<&str> {
     let close = matching_call_paren(text, open)?;
     let colon = close + text[close..].find(':')?;
     text.get(colon + 1..)
+}
+
+#[cfg(test)]
+mod literals_equal_tests {
+    use super::literals_equal;
+
+    #[test]
+    fn python_bool_numeric_equality_and_inequality() {
+        assert_eq!(literals_equal("True", "1"), Some(true));
+        assert_eq!(literals_equal("1", "True"), Some(true));
+        assert_eq!(literals_equal("True", "1.0"), Some(true));
+        assert_eq!(literals_equal("False", "0"), Some(true));
+        assert_eq!(literals_equal("0", "False"), Some(true));
+        assert_eq!(literals_equal("True", "2"), Some(false));
+        assert_eq!(literals_equal("2", "True"), Some(false));
+    }
 }
 
 #[cfg(test)]

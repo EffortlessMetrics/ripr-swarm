@@ -1,0 +1,9 @@
+diff --git a/src/extra.py b/src/extra.py
+--- a/src/extra.py
++++ b/src/extra.py
+@@ -35,4 +35,4 @@ def wide(text):
+ 
+ 
+ def spaced(text):
+-    return [int(text) + 1]
++    return [int(text) + 2]

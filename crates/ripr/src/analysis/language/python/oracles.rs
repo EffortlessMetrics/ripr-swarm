@@ -1,5 +1,8 @@
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
-use super::{PythonAssertion, PythonOracleShape, expr_full_name};
+use super::{
+    KnownEqualityLibrary, PythonAssertion, PythonKnownEqualityHelper, PythonOracleShape,
+    expr_full_name,
+};
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 use rustpython_parser::text_size::TextRange;
@@ -71,36 +74,136 @@ fn collect_assertions(
             Stmt::With(with_stmt) => {
                 let after = &statements[index + 1..];
                 collect_with_item_assertions(&with_stmt.items, &with_stmt.body, after, source, out);
+                let first = out.len();
                 collect_assertions(&with_stmt.body, source, loops, out);
+                forget_known_equality_helpers(&mut out[first..]);
             }
             Stmt::AsyncWith(with_stmt) => {
                 let after = &statements[index + 1..];
                 collect_with_item_assertions(&with_stmt.items, &with_stmt.body, after, source, out);
+                let first = out.len();
                 collect_assertions(&with_stmt.body, source, loops, out);
+                forget_known_equality_helpers(&mut out[first..]);
             }
             Stmt::Try(try_stmt) => {
+                let first = out.len();
                 if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
                     collect_assertions(&try_stmt.body, source, loops, out);
                 }
                 collect_except_handler_assertions(&try_stmt.handlers, source, loops, out);
                 collect_assertions(&try_stmt.orelse, source, loops, out);
                 collect_assertions(&try_stmt.finalbody, source, loops, out);
+                forget_known_equality_helpers(&mut out[first..]);
             }
             Stmt::TryStar(try_stmt) => {
+                let first = out.len();
                 if !handlers_swallow_assertion_errors(&try_stmt.handlers) {
                     collect_assertions(&try_stmt.body, source, loops, out);
                 }
                 collect_except_handler_assertions(&try_stmt.handlers, source, loops, out);
                 collect_assertions(&try_stmt.orelse, source, loops, out);
                 collect_assertions(&try_stmt.finalbody, source, loops, out);
+                forget_known_equality_helpers(&mut out[first..]);
             }
             Stmt::Match(match_stmt) => {
+                let first = out.len();
                 for case in &match_stmt.cases {
                     collect_assertions(&case.body, source, loops, out);
                 }
+                forget_known_equality_helpers(&mut out[first..]);
             }
             _ => {}
         }
+    }
+}
+
+/// A numpy.testing or assertpy equality helper under a `with`, `try` or
+/// `match` may be expected to fail (`with pytest.raises(AssertionError)`) or
+/// may not run, so it stays an unclassified helper (#10936).
+fn forget_known_equality_helpers(assertions: &mut [PythonAssertion]) {
+    for assertion in assertions {
+        assertion.known_equality_helper = None;
+    }
+}
+
+/// `np.testing.assert_array_equal(A, B)`, `assert_equal(A, B)` or
+/// `assert_that(A).is_equal_to(B)` as a candidate: the shape only. Whether
+/// the callee is numpy's or assertpy's is settled later from the file's
+/// imports (`known_equality_helpers.rs`).
+fn known_equality_candidate(
+    call: &ast::ExprCall,
+    source: &SourceText<'_>,
+) -> Option<PythonKnownEqualityHelper> {
+    let operand = |expr: &Expr| {
+        let text = text_for_range(source, expr.range()).trim().to_string();
+        match expr {
+            Expr::Compare(_)
+            | Expr::BoolOp(_)
+            | Expr::IfExp(_)
+            | Expr::Lambda(_)
+            | Expr::NamedExpr(_)
+            | Expr::UnaryOp(_)
+            | Expr::Starred(_)
+            | Expr::Yield(_)
+            | Expr::YieldFrom(_)
+            | Expr::Await(_) => format!("({text})"),
+            _ => text,
+        }
+    };
+    if let Expr::Attribute(method) = call.func.as_ref()
+        && method.attr.as_str() == "is_equal_to"
+        && let Expr::Call(subject) = method.value.as_ref()
+    {
+        let callee = plain_dotted_name(subject.func.as_ref())?;
+        if callee.rsplit('.').next() != Some("assert_that")
+            || subject.args.len() != 1
+            || !subject.keywords.is_empty()
+            || call.args.len() != 1
+            || !call.keywords.is_empty()
+            || matches!(subject.args[0], Expr::Starred(_))
+            || matches!(call.args[0], Expr::Starred(_))
+        {
+            return None;
+        }
+        return Some(PythonKnownEqualityHelper {
+            library: KnownEqualityLibrary::Assertpy,
+            callee,
+            left: operand(&subject.args[0]),
+            right: operand(&call.args[0]),
+            established: None,
+        });
+    }
+    let callee = plain_dotted_name(call.func.as_ref())?;
+    if !matches!(
+        callee.rsplit('.').next(),
+        Some("assert_array_equal" | "assert_equal")
+    ) || call.args.len() != 2
+        || call.args.iter().any(|arg| matches!(arg, Expr::Starred(_)))
+        || call.keywords.iter().any(|keyword| {
+            !keyword
+                .arg
+                .as_ref()
+                .is_some_and(|name| matches!(name.as_str(), "err_msg" | "verbose" | "strict"))
+        })
+    {
+        return None;
+    }
+    Some(PythonKnownEqualityHelper {
+        library: KnownEqualityLibrary::NumpyTesting,
+        callee,
+        left: operand(&call.args[0]),
+        right: operand(&call.args[1]),
+        established: None,
+    })
+}
+
+/// A dotted name made only of names and attribute accesses.
+fn plain_dotted_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Name(name) => Some(name.id.to_string()),
+        Expr::Attribute(attribute) => plain_dotted_name(attribute.value.as_ref())
+            .map(|prefix| format!("{prefix}.{}", attribute.attr)),
+        _ => None,
     }
 }
 
@@ -215,6 +318,14 @@ fn collect_with_item_assertions(
     }
 }
 
+/// True when `full_name` is `self.<method>`, `cls.<method>`, or `super().<method>`.
+fn is_unittest_receiver(full_name: &str, method: &str) -> bool {
+    let suffix = format!(".{method}");
+    full_name
+        .strip_suffix(&suffix)
+        .is_some_and(|receiver| matches!(receiver, "self" | "cls" | "super"))
+}
+
 /// RIPR-SPEC-0238 rule 14: the text of the first statement after a
 /// `raises(...) as N` / `assertRaises(...) as N` item that compares a
 /// value-preserving read of the raised error with `==`, when nothing in
@@ -232,10 +343,14 @@ fn bound_exception_comparison(
         return None;
     };
     let name = expr_full_name(call.func.as_ref())?;
-    let field = match name.as_str() {
-        "self.assertRaises" | "self.assertRaisesRegex" => "exception",
-        "pytest.raises" | "raises" => "value",
-        _ => return None,
+    let field = if is_unittest_receiver(&name, "assertRaises")
+        || is_unittest_receiver(&name, "assertRaisesRegex")
+    {
+        "exception"
+    } else if name == "pytest.raises" || name == "raises" {
+        "value"
+    } else {
+        return None;
     };
     for stmt in after {
         if let Some((left, right)) = equality_operands(stmt) {
@@ -428,17 +543,19 @@ fn assertion_from_assert(
         oracle_for_assert_expr(assert_stmt.test.as_ref(), source);
     // RIPR-SPEC-0238 rule 25: a property check relates the owner to itself
     // or to the value it was given, so it pins no value (#9594).
+    let mut owner_exact_callee = None;
     if oracle_strength == OracleStrength::Strong
         && let Expr::Compare(compare) = assert_stmt.test.as_ref()
         && is_property_compare(compare, loops, source)
     {
         oracle_kind = OracleKind::RelationalCheck;
         oracle_strength = OracleStrength::Weak;
+        owner_exact_callee = independent_outer_callee(compare, source);
     }
     PythonAssertion {
         text: text_for_range(source, assert_stmt.range).trim().to_string(),
         callable_call: None,
-        helper_derived: false,
+        helper_origin: super::PythonHelperOrigin::Inline,
         // The failure message observes nothing (RIPR-SPEC-0238 rule 4).
         gate_text: format!(
             "assert {}",
@@ -465,6 +582,8 @@ fn assertion_from_assert(
         oracle_strength,
         oracle_shape,
         bare_bool_call: bare_bool_call(assert_stmt.test.as_ref(), source),
+        known_equality_helper: None,
+        owner_exact_callee,
     }
 }
 
@@ -590,7 +709,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         return Some(PythonAssertion {
             gate_text: format!("{text}\n{callable_call}"),
             callable_call: Some(callable_call),
-            helper_derived: false,
+            helper_origin: super::PythonHelperOrigin::Inline,
             text,
             source_range: Some(call.range),
             observed_operands: Vec::new(),
@@ -599,6 +718,8 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
             oracle_strength,
             oracle_shape,
             bare_bool_call: None,
+            known_equality_helper: None,
+            owner_exact_callee: None,
         });
     }
     let gate_text = compared_operands(call)
@@ -615,7 +736,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         text,
         gate_text,
         callable_call: None,
-        helper_derived: false,
+        helper_origin: super::PythonHelperOrigin::Inline,
         source_range: Some(call.range),
         observed_operands: compared_operands(call)
             .map(|(left, right)| {
@@ -635,6 +756,10 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         oracle_strength,
         oracle_shape,
         bare_bool_call: None,
+        known_equality_helper: (oracle_shape == PythonOracleShape::UnknownCustomHelper)
+            .then(|| known_equality_candidate(call, source))
+            .flatten(),
+        owner_exact_callee: None,
     })
 }
 
@@ -778,6 +903,43 @@ fn is_property_compare(compare: &ast::ExprCompare, loops: &[String], source: &st
         })
 }
 
+/// `f(g(x)) == g(x)`: the bare callee `f` whose result an independent `g(x)`
+/// pins (#9814). `g(x)` runs on both sides, so a changed `g` passes through an
+/// identity-like `f`; only a changed `f` is discriminated. The outer call takes
+/// the shared call as its sole argument and `f` appears nowhere inside it.
+/// Whether the finding's owner is `f` is decided per finding in
+/// `owner_exact.rs`.
+fn independent_outer_callee(compare: &ast::ExprCompare, source: &str) -> Option<String> {
+    let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+    else {
+        return None;
+    };
+    [
+        (compare.left.as_ref(), right),
+        (right, compare.left.as_ref()),
+    ]
+    .into_iter()
+    .find_map(|(outer, shared)| {
+        let (Expr::Call(outer), Expr::Call(_)) = (outer, shared) else {
+            return None;
+        };
+        let Expr::Name(callee) = outer.func.as_ref() else {
+            return None;
+        };
+        let [argument] = outer.args.as_slice() else {
+            return None;
+        };
+        if !outer.keywords.is_empty() {
+            return None;
+        }
+        let shared_text = text_for_range(source, shared.range());
+        let same = code_without_spacing(&text_for_range(source, argument.range()))
+            == code_without_spacing(&shared_text);
+        (same && !super::mentions_python_name(&shared_text, callee.id.as_str()))
+            .then(|| callee.id.to_string())
+    })
+}
+
 fn oracle_for_compare(
     compare: &ast::ExprCompare,
     source: &str,
@@ -902,7 +1064,8 @@ fn oracle_for_call(
     if matches!(
         last_segment,
         "assertEqual" | "assertDictEqual" | "assertAlmostEqual"
-    ) && (last_segment != "assertAlmostEqual" || name == "self.assertAlmostEqual")
+    ) && (last_segment != "assertAlmostEqual"
+        || is_unittest_receiver(&name, "assertAlmostEqual"))
         && compared_operands(call).is_some_and(|(first, second)| same_tokens(source, first, second))
     {
         // RIPR-SPEC-0238 rule 1: comparing an expression with itself pins nothing.
@@ -940,9 +1103,9 @@ fn oracle_for_call(
             oracle_shape_for_call_arguments(call, PythonOracleShape::BoundaryAssertion),
         )),
         // RIPR-SPEC-0238 rule 12: at its default tolerance the call pins the
-        // value; an explicit band may admit the old value. Only `self.` is the
-        // unittest method; another receiver may be a project helper.
-        "assertAlmostEqual" if name == "self.assertAlmostEqual" => {
+        // value; an explicit band may admit the old value. Only unittest
+        // receivers count; another receiver may be a project helper.
+        "assertAlmostEqual" if is_unittest_receiver(&name, "assertAlmostEqual") => {
             let explicit = |position: usize, keyword: &str| {
                 call.args
                     .get(position)

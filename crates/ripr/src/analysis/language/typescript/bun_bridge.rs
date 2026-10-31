@@ -1,6 +1,7 @@
 //! Bun bridge facts and cross-language analysis for the TypeScript preview adapter.
 
 use super::*;
+use crate::domain::EvidenceState;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct TypeScriptBunArrayBufferFact {
@@ -1305,6 +1306,7 @@ pub(crate) fn bun_cross_language_finding_for_changed_rust_line_with_profile(
         bun_cross_language_stage_states(hint.verdict);
     Some(Finding {
         analysis_scope: crate::domain::AnalysisScope::Diff,
+        confidence_basis: bridge_confidence_basis(hint.verdict),
         id: probe.id.0.clone(),
         canonical_gap: None,
         probe,
@@ -1381,7 +1383,7 @@ pub(crate) fn typescript_bun_cross_language_actionability(
 ) -> TypeScriptActionability {
     match hint.verdict {
         TypeScriptBunBridgeVerdict::TsDiscriminated => TypeScriptActionability {
-            gap_state: "already_observed",
+            gap_state: EvidenceState::AlreadyObserved.as_str(),
             category: "bun_ub_ts_discriminated",
             why_not_actionable: format!(
                 "configured {} TypeScript preview evidence discriminates the profiled boundary; no repair packet should be emitted",
@@ -1395,7 +1397,7 @@ pub(crate) fn typescript_bun_cross_language_actionability(
         TypeScriptBunBridgeVerdict::TsMissingResizable
         | TypeScriptBunBridgeVerdict::TsMissingShared
         | TypeScriptBunBridgeVerdict::TsMissingSharedAndResizable => TypeScriptActionability {
-            gap_state: "static_limitation",
+            gap_state: EvidenceState::StaticLimitation.as_str(),
             category: "cross_language_oracle_visibility_unresolved",
             why_not_actionable: format!(
                 "configured {} TypeScript preview evidence is missing external discriminator(s): {}; placement can name the configured TypeScript test file, but RIPR cannot emit a public repair packet without verification, receipt, and edit-surface evidence",
@@ -1413,7 +1415,7 @@ pub(crate) fn typescript_bun_cross_language_actionability(
                 "the missing TypeScript discriminator in the configured test file plus verify command, receipt command, and edit constraints before repair-packet projection",
         },
         TypeScriptBunBridgeVerdict::TsMissingExternalOracle => TypeScriptActionability {
-            gap_state: "static_limitation",
+            gap_state: EvidenceState::StaticLimitation.as_str(),
             category: "cross_language_oracle_visibility_unresolved",
             why_not_actionable: format!(
                 "configured {} TypeScript preview facts include a partial external observer path, but the callsite or oracle edge is incomplete, so RIPR cannot safely credit the Rust seam or suggest a repair packet",
@@ -1431,7 +1433,7 @@ pub(crate) fn typescript_bun_cross_language_actionability(
                 "external callsite, external oracle, binding or FFI route, verify command, receipt command, raw evidence refs, and edit constraints",
         },
         TypeScriptBunBridgeVerdict::TsMentionNotObserver => TypeScriptActionability {
-            gap_state: "static_limitation",
+            gap_state: EvidenceState::StaticLimitation.as_str(),
             category: "cross_language_oracle_visibility_unresolved",
             why_not_actionable:
                 "maxByteLength or byte-token evidence appears without a Blob input and stable-byte observer, so it cannot be credited to the Rust seam"
@@ -1446,7 +1448,7 @@ pub(crate) fn typescript_bun_cross_language_actionability(
                 "Blob input, stable-byte observer, binding or FFI route, verify command, and raw evidence refs",
         },
         TypeScriptBunBridgeVerdict::BridgeUnknown => TypeScriptActionability {
-            gap_state: "static_limitation",
+            gap_state: EvidenceState::StaticLimitation.as_str(),
             category: "cross_language_oracle_visibility_unresolved",
             why_not_actionable:
                 "TypeScript discriminators are present, but the Rust bridge is unknown and must not be reported as no_static_path"
@@ -1456,6 +1458,22 @@ pub(crate) fn typescript_bun_cross_language_actionability(
             evidence_needed: "configured bridge hint or generated bridge fact plus raw evidence refs",
         },
     }
+}
+
+/// Capping reasons for a bridge finding (#10700). The bridge maps a configured
+/// Rust owner to a TypeScript integration test, so a related test exists; the
+/// oracle is strong only when the bridge verdict is `ts_discriminated`.
+fn bridge_confidence_basis(
+    verdict: TypeScriptBunBridgeVerdict,
+) -> Vec<crate::domain::ConfidenceCap> {
+    crate::domain::ConfidenceCap::for_preview(
+        &verdict.exposure_class(),
+        &crate::domain::ConfidenceBasisInputs {
+            has_related_test: true,
+            strong_oracle_present: verdict == TypeScriptBunBridgeVerdict::TsDiscriminated,
+            boundary_input_matched: true,
+        },
+    )
 }
 
 pub(crate) fn bun_cross_language_stage_states(
@@ -1928,5 +1946,30 @@ pub(crate) fn bun_cross_language_unlock_condition(
         TypeScriptBunBridgeVerdict::BridgeUnknown => Some(
             "name the binding or FFI edge from the Rust seam to the external test before crediting external discriminators".to_string(),
         ),
+    }
+}
+
+#[cfg(test)]
+mod bridge_basis_tests {
+    use super::*;
+    use crate::domain::ConfidenceCap;
+
+    #[test]
+    fn a_discriminated_bridge_is_not_capped_on_the_oracle() {
+        let discriminated = bridge_confidence_basis(TypeScriptBunBridgeVerdict::TsDiscriminated);
+        assert_eq!(
+            discriminated,
+            vec![
+                ConfidenceCap::PreviewStagesNotModeled,
+                ConfidenceCap::SyntaxFirstNoTypeResolution
+            ],
+            "an Exposed (ts_discriminated) bridge must not be capped on the oracle"
+        );
+        let missing = bridge_confidence_basis(TypeScriptBunBridgeVerdict::TsMissingResizable);
+        assert_eq!(
+            missing.last(),
+            Some(&ConfidenceCap::DiscriminatorNotEstablished)
+        );
+        assert_ne!(discriminated, missing);
     }
 }

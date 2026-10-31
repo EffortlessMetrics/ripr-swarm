@@ -12,9 +12,16 @@
   "findings": [
     {
       "id": "probe:src_pricing.ts:typescript_preview:f12d3569",
+      "canonical_gap_id": "gap:typescript:typescript_preview:f12d3569",
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "boundary_input_not_matched", "summary": "no observed call supplies the changed boundary input"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:f12d3569",
         "family": "predicate",
@@ -95,7 +102,7 @@
         "limits": [
           "Syntax-first TypeScript/JavaScript preview evidence only.",
           "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
-          "This card is advisory and is not a repair packet."
+          "This card is an advisory summary; the complete repair packet is projected separately and is also advisory."
         ],
         "missing_discriminator": "DISCOUNT_THRESHOLD == amount",
         "oracle_kind": "exact_value",
@@ -105,8 +112,8 @@
         "probe_family": "predicate",
         "related_test": {
           "file": "tests/pricing.test.ts",
-          "line": 7,
-          "name": "discounts far above threshold"
+          "line": 3,
+          "name": "no discount below threshold"
         },
         "repair_packet_ready": true,
         "repair_route": "add a focused assertion for the missing discriminator `DISCOUNT_THRESHOLD == amount` in the related test, shaped like `expect(discountedTotal(10000)).toBe(expected)`",
@@ -146,7 +153,7 @@
         "repair_kind": "AddBoundaryAssertion",
         "schema_version": "0.5",
         "source": "typescript_preview_projection",
-        "target_test": "tests/pricing.test.ts::discounts far above threshold",
+        "target_test": "tests/pricing.test.ts::no discount below threshold",
         "verify_command": "npx --no-install jest tests/pricing.test.ts"
       },
       "preview_actionability": {

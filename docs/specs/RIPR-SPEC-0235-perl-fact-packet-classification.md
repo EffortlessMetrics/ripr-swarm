@@ -335,6 +335,24 @@ For each change, the first match wins:
     `dynamic_framework_indirection` kinds stay `reachable_unrevealed`. The
     recommended next step says the producer grades the assertion broad and that
     no change is needed if it asserts the message, class or value.
+
+    **Matcher grading.** A packet whose `producer.capabilities` lists
+    `oracle_matcher_grading` promises that the producer separates these
+    assertions: `throws_ok` with a class or regex and `like(dies {...}, ...)`
+    are `strong_exact`, a bare `dies_ok` or a value `like` stays `weak_broad`,
+    and an exception block nested in such an assertion is not a second oracle.
+    For such a packet a `weak_broad` oracle is an ordinary weak oracle
+    (`reachable_unrevealed`, the gap), and a bound `strong_exact`
+    `exception_observer` reads `static_unknown`: a class or message matcher
+    pins that an error is raised, not which boundary raises it. The recommended
+    next step says so. A packet without the capability keeps the reading above,
+    including example 5. The perl-lsp-swarm producer advertises the capability from
+    56b40816 (perl-lsp-swarm#18503), and the Perl verdict corpus pins it.
+    From 43336765 (perl-lsp-swarm#18540) the producer also grades
+    `like($@, MATCHER)` the same way and binds it to the callee in the
+    `eval { ... }` statement directly before it, and block `eval` in a test
+    file is no longer an `eval_or_string_code` boundary; block `eval` in a
+    source file and every string form still are.
 17. **`isnt` pins nothing.** An oracle whose recorded expression begins with
     the call `isnt` (bare, or qualified `Test::More::`, `Test2::V0::` or
     `Test2::V1::`) is read as `weak_smoke` when the producer graded it
@@ -395,6 +413,70 @@ For each change, the first match wins:
     subs, so the line was silent and silence reads as "nothing to check". A
     file with no owner-less boundary that names a limit, and a line a
     change or owner covers, are unchanged.
+22. **A changed ordering comparison needs a threshold input (#8979).**
+    Rule 9 aligns a change whose `changed_observable` contains an ordering
+    comparison (`<`, `>`, `<=`, `>=`, `<=>`, or a `lt`, `gt`, `le`, `ge` or
+    `cmp` word that is not a variable, method or hash key name; a `>` after
+    `-` or `=` is an arrow or fat comma) only when the aligned oracle's
+    `expression`, or the `expression` of any other strong exact oracle of the
+    same test (the producer links only some oracles to the owner), calls the
+    changed owner's sub with a literal argument that equals a numeric literal
+    that is a whole side of the comparison (`1000` in
+    `'gold' if 1000 <= $points`; digit separators are ignored, a leading `-`
+    counts; the sub name comes from the owner id). A literal beside an
+    arithmetic or concatenation operator (`$n + 1 > 10`, `$x > 10 + $y`,
+    `$total / 100 >= 5` for the `100`) is only part of an operand and is not a
+    threshold. Quoted strings and `#` comments in the oracle expression are
+    masked before the owner call is read, so a call named inside a message is
+    never an input. An oracle expression
+    that holds anything this read does not parse supplies no input at all: any
+    `/` (a bare pattern, `m//`, `s///`, `tr///`, division), a `=~` or `!~`
+    binding, a heredoc introducer (`<<EOT`, `<< "EOT"`, `<<~EOT`), or a `q`,
+    `qq`, `qw`, `qr`, `m`, `s`, `tr` or `y` word followed by any delimiter. A
+    word after a sigil or `->`, a hash key (`{s}`, `s =>`) and a longer name
+    are not those operators. A `-` after an operand is subtraction, not a sign. An exact oracle on one
+    input observes the value at that input, not whether the input sits near
+    the threshold: moving `>= 1000` changes no asserted value when the test
+    asserts only 2000 and 10. The packet carries no row-owned predicate-input
+    fact (the producer fact tracked by perl-lsp-swarm#17237 and #5562), so
+    this is a bounded lexical read of two strings the packet already
+    carries; ripr does not parse Perl. Without that threshold input the
+    change reads `static_unknown`, with no gap and no location (rule 13) and
+    no suggested test location or assertion, and a next step that names what
+    settles it; `static_limit_kind` still comes from the existing projection. A
+    nested call, a variable, a string and any other argument form
+    contribute no input, and a literal that is not directly beside the
+    operator is not a threshold; each of those choices withholds `exposed`
+    rather than granting it.
+    The threshold hit is not a claim that the test also asserts a value on
+    the other side of the boundary. Equality tests (`==`, `eq`) are not
+    ordering comparisons and keep rule 9. A row credited only by equal sink
+    text with inputs that are not literals (for example
+    `perl-test2-close-month-subtest`, which reaches the boundary through a
+    sum) reads `limited` until the producer emits the fact; that is an
+    accepted missed credit, not a claim that the test fails to
+    discriminate.
+    Known limits, stated honestly: the read is lexical and approximate. It
+    does not know which argument position the threshold literal sits in (any
+    top-level literal argument of the owner call counts). It does not know
+    which owner call the assertion is about: when the owner sub name appears
+    as a call more than once in one oracle expression it withholds, but only
+    calls spelled as the owner (bare or with the owner's package) are
+    counted: a call through a variable receiver, one inside an interpolated
+    string, and a call in a separate aligned oracle are not, and a call
+    elsewhere in the same test file is not distinguished. It reads a
+    changed expression as text, so a `<` or `>` inside a string in
+    `changed_observable` (`$x == 3 ? 'a > 5' : 0`) can be read as a
+    comparison, and a `-->` or other operator spelling is not specially
+    recognized. An observable with more than one ordering comparison
+    supplies no threshold. The oracle-expression guard is a fail-closed scan,
+    not a parser: it withholds on any `/`, `` ` ``, `$"`, `$'`, `=~`, `!~`,
+    heredoc introducer or quote-like word (`q`, `qq`, `qw`, `qx`, `qr`, `m`,
+    `s`, `tr`, `y`) followed by a non-word delimiter (a word-character
+    delimiter such as `q x ... x` is not recognized), and treats `| & ^ x` and arithmetic neighbours as part
+    of a larger operand, so it over-withholds. These choices are meant to
+    only withhold, but the read is not proven complete: a construct it does
+    not know could still be read as a call.
 
 ### Decisions
 
@@ -634,10 +716,16 @@ cases.
     from code, not probed).
 32. `changed_observable: null` (or blank) on the change: `static_unknown`, no gap, no
     location (rule 18; was `weakly_exposed`).
+33. Example 5's oracle with `producer.capabilities` also listing
+    `oracle_matcher_grading`: `static_unknown`, no gap, no location (rule 16
+    matcher grading). The same packet with the oracle `weak_broad`:
+    `reachable_unrevealed`, gap (without the capability: `static_unknown`).
 
 ## Test Mapping
 
 - Existing: `crates/ripr/src/analysis/language/perl/tests.rs`:
+  `perl_matcher_grading_separates_pinned_errors_from_broad_assertions`
+  (rule 16 matcher grading, example 33),
   `perl_related_test_linking_classifies_reachability_and_revealability`
   (rules 3, 4, 6), `perl_to_domain_oracle_mapping_preserves_signal_kinds`
   (rule 12 kind), `h2_sink_aligned_oracle_classifies_exposed_and_suppresses_repair_gap`
@@ -651,7 +739,8 @@ cases.
   adds no numbered example: the corpus counts those),
   `closure_oracle_beside_an_unlinked_owner_call_is_unknown_not_a_gap` (rule 20)
   and `uncovered_top_level_line_beside_file_boundaries_is_a_stated_limit`
-  (rule 21), which add no numbered examples either,
+  (rule 21), and `h2_changed_ordering_comparison_is_not_observed_by_equal_sink_text`
+  (rule 22), which add no numbered examples either,
   `h2_producer_declared_absent_observable_is_unknown_not_a_gap` (rule 18,
   example 32), `h2_aligned_sink_on_another_tests_oracle_does_not_promote`
   (rules 5 and 9, example 28), `h1_ownerless_file_boundary_still_blocks`,
@@ -686,7 +775,10 @@ cases.
   - `PerlFactPacket::related_test_evidence_for_change`: rule 3;
   - `PerlFactPacket::classify_related_relation`: rules 4 to 7;
   - `PerlFactPacket::classify_change_from_related_tests`: rule 8;
-  - `sink_aligned_observation`: rules 5, 9 and 19 (`matches_a_pattern`);
+  - `sink_aligned_observation`: rules 5, 9 and 19 (`matches_a_pattern`), and
+    rule 22 (its `boundary_input::boundary_input_for` branch, read again in
+    `packet_to_findings`);
+  - `boundary_input::boundary_input_for`: rule 22;
   - `packet_to_findings_with_currentness` (`coderef_unresolved`) and
     `PerlFactPacket::test_asserts_through_code_reference`: rule 20;
   - `unowned_change_findings` and `static_limit::file_scope_kind`: rule 21;

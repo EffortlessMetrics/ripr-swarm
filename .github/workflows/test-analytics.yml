@@ -30,7 +30,12 @@ jobs:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # #10794 / #9646: the default shallow PR checkout has no base branch,
+          # so base-resolution tests (cli_progress, cli_smoke pr-evidence) fail
+          # and nextest aborts before ~30% of the suite runs.
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
@@ -52,6 +57,9 @@ jobs:
       - name: Prepare locked JSON owner-return fixture dependencies
         run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
 
+      - name: Prepare locked proptest profile dependencies
+        run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+
       - name: Run Rust tests with JUnit output
         run: cargo nextest run --workspace --all-features --profile ci
 
@@ -60,7 +68,7 @@ jobs:
 
       - name: Upload test results artifact
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-junit
           path: target/nextest/ci/junit.xml

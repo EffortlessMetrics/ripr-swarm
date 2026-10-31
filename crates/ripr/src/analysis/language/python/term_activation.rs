@@ -49,17 +49,17 @@ use rustpython_parser::{Mode, parse};
 
 /// A function body that is one guarded return of literals:
 /// `if <parameter> <op> <operand>: return <then>` then `return <else>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub(super) struct PythonGuardedReturn {
-    parameter: String,
-    operator: &'static str,
-    operand: String,
-    then_value: String,
-    else_value: String,
+    pub(super) parameter: String,
+    pub(super) operator: &'static str,
+    pub(super) operand: String,
+    pub(super) then_value: String,
+    pub(super) else_value: String,
 }
 
 /// Body facts used by bounded term activation and helper alignment.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct PythonTermFacts {
     /// Conservative raw yield presence, including unresolved string/nested
     /// text. Only helper-derived credit reads this refusal fact.
@@ -85,9 +85,18 @@ pub(super) struct PythonTermFacts {
     /// function may recurse. Textual and over-approximate (#5491 `missing_input`
     /// withholds on it).
     calls_own_name: bool,
+    /// The function's text holds no `return` and no `yield` as code, so a
+    /// call's result is never a value the body computed (the implicit `None`,
+    /// or a coroutine/wrapper the call returns before the body runs). Textual
+    /// and over-approximate: a nested or bare `return` makes it false.
+    returns_no_value: bool,
 }
 
 impl PythonTermFacts {
+    pub(super) fn returns_no_value(&self) -> bool {
+        self.returns_no_value
+    }
+
     pub(super) fn calls_own_name(&self) -> bool {
         self.calls_own_name
     }
@@ -159,6 +168,8 @@ pub(super) fn term_facts(
         bound_names,
         returned_parameter,
         calls_own_name: false,
+        returns_no_value: code_mention_count(owner_text, "return") == 0
+            && code_mention_count(owner_text, "yield") == 0,
     }
 }
 

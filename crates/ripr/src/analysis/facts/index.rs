@@ -100,7 +100,7 @@ fn validate<'a, T: 'a>(
         }
         if id.offset >= arena.len() {
             return Err(format!(
-                "invalid {kind} fact membership: {} >= {}",
+                "invalid {kind} fact membership: {} >= {}; report this as a ripr bug with the command and workspace shape",
                 id.offset,
                 arena.len()
             ));
@@ -170,6 +170,12 @@ pub struct RustIndex {
     /// own crate: its scopes come from this text, not from the file that
     /// holds the comment.
     pub(super) doctest_sources: BTreeMap<(PathBuf, usize), (String, std::sync::Arc<str>)>,
+    pub(super) proptest_receipts:
+        BTreeMap<(PathBuf, usize, String), super::proptest::ProptestReceipt>,
+    /// Analysis-local failed verification, never part of raw FileFacts or a
+    /// serialized provider receipt. Rebuilt together with property registration.
+    pub(super) proptest_metadata_failures:
+        BTreeMap<(PathBuf, usize, String), super::proptest::ProptestMetadataFailure>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -398,28 +404,33 @@ impl<'a> IndexFiles<'a> {
     pub fn at(&self, path: &Path) -> FileFactsView<'a> {
         self.index.file_view(&self.index.files[path])
     }
+    #[track_caller]
     pub fn get_key_value(&self, path: &Path) -> Option<(&'a PathBuf, FileFactsView<'a>)> {
-        self.index
-            .files
-            .get_key_value(path)
-            .map(|(key, file)| (key, self.index.file_view(file)))
+        let found = self.index.files.get_key_value(path);
+        crate::analysis::probe_read_trace::file(path, found.is_some());
+        found.map(|(key, file)| (key, self.index.file_view(file)))
     }
+    #[track_caller]
     pub fn get(&self, path: &Path) -> Option<FileFactsView<'a>> {
-        self.index
-            .files
-            .get(path)
-            .map(|file| self.index.file_view(file))
+        let found = self.index.files.get(path);
+        crate::analysis::probe_read_trace::file(path, found.is_some());
+        found.map(|file| self.index.file_view(file))
     }
+    #[track_caller]
     pub fn iter(
         &self,
     ) -> impl DoubleEndedIterator<Item = (&'a PathBuf, FileFactsView<'a>)> + ExactSizeIterator + use<'a>
     {
+        crate::analysis::probe_read_trace::universe(
+            crate::analysis::probe_read_trace::Universe::Files,
+        );
         let index = self.index;
         index
             .files
             .iter()
             .map(move |(path, file)| (path, index.file_view(file)))
     }
+    #[track_caller]
     pub fn values(
         &self,
     ) -> impl DoubleEndedIterator<Item = FileFactsView<'a>> + ExactSizeIterator + use<'a> {
@@ -431,7 +442,11 @@ impl<'a> IndexFiles<'a> {
     ) -> impl DoubleEndedIterator<Item = &'a PathBuf> + ExactSizeIterator + use<'a> {
         self.index.files.keys()
     }
+    #[track_caller]
     pub fn len(&self) -> usize {
+        crate::analysis::probe_read_trace::universe(
+            crate::analysis::probe_read_trace::Universe::Files,
+        );
         self.index.files.len()
     }
     #[cfg(test)]
@@ -467,6 +482,40 @@ impl serde::Serialize for IndexFiles<'_> {
 const SLACK_CHECKPOINT_STRIDE: usize = 4096;
 
 impl RustIndex {
+    /// Registration provenance survives later policy changes to a generated
+    /// fact. It is not interpretation authority: consumers must separately
+    /// require the exact receipt before crediting that property.
+    pub(crate) fn is_registered_proptest(&self, test: &TestFact) -> bool {
+        self.proptest_receipts.contains_key(&(
+            test.file.clone(),
+            test.start_line,
+            test.name.clone(),
+        ))
+    }
+
+    /// A generation-owned interpretation of an exact provider-bound property.
+    /// Raw/cached/deserialized TestFacts cannot manufacture this authority.
+    pub(crate) fn proptest_source(&self, test: &TestFact) -> Option<(&str, usize)> {
+        self.proptest_receipt(test)
+            .map(|receipt| (receipt.source.as_ref(), receipt.line_offset))
+    }
+
+    /// The normalized body keeps the original file-root namespace. This is
+    /// the same private registration receipt used for assertion admission.
+    pub(crate) fn proptest_name_scopes(
+        &self,
+        test: &TestFact,
+    ) -> Option<std::sync::Arc<crate::analysis::syntax::NameScopes>> {
+        self.proptest_receipt(test)
+            .map(|receipt| std::sync::Arc::clone(&receipt.name_scopes))
+    }
+
+    fn proptest_receipt(&self, test: &TestFact) -> Option<&super::proptest::ProptestReceipt> {
+        self.proptest_receipts
+            .get(&(test.file.clone(), test.start_line, test.name.clone()))
+            .filter(|receipt| &receipt.test == test)
+    }
+
     /// Crate names whose glob imports the trusted-macro scan treats as
     /// workspace-owned: `macro_owned_crates` when the build computed it,
     /// else `package_names` (an index assembled without a manifest walk).
@@ -492,7 +541,11 @@ impl RustIndex {
 }
 
 impl RustIndex {
+    #[track_caller]
     pub fn functions(&self) -> FactSlice<'_, FunctionFact> {
+        crate::analysis::probe_read_trace::universe(
+            crate::analysis::probe_read_trace::Universe::Functions,
+        );
         FactSlice {
             arena: &self.function_facts,
             order: Some(&self.function_order),
@@ -513,11 +566,24 @@ impl RustIndex {
             .map(|(_, source)| &**source)
     }
 
+    #[track_caller]
     pub fn tests(&self) -> FactSlice<'_, TestFact> {
+        crate::analysis::probe_read_trace::universe(
+            crate::analysis::probe_read_trace::Universe::Tests,
+        );
         FactSlice {
             arena: &self.test_facts,
             order: Some(&self.test_order),
         }
+    }
+    /// The test fact at `position` of [`Self::tests`], read as that one fact
+    /// rather than as the whole set. Positions come from a candidate list the
+    /// caller already holds, so the read depends on the fact it returns.
+    #[track_caller]
+    pub fn test_at(&self, position: usize) -> &TestFact {
+        let test = &self.test_facts[self.test_order[position]];
+        crate::analysis::probe_read_trace::test(&test.file, test.start_line, &test.name);
+        test
     }
     pub fn files(&self) -> IndexFiles<'_> {
         IndexFiles { index: self }
@@ -653,6 +719,10 @@ impl RustIndex {
         // register its examples from its new bytes, never the old text.
         self.doctest_sources
             .retain(|(file, _), _| file.as_path() != path);
+        self.proptest_receipts
+            .retain(|(file, _, _), _| file.as_path() != path);
+        self.proptest_metadata_failures
+            .retain(|(file, _, _), _| file.as_path() != path);
         // Positions follow the retained orders; rebuild them now so slot
         // lookups never answer from the pre-removal layout.
         self.function_positions.clear();

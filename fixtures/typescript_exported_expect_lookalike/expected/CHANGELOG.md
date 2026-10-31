@@ -24,3 +24,55 @@ Producer:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — typescript_exported_expect_lookalike (2)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless typescript_exported_expect_lookalike --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_exported_expect_lookalike (3)
+
+Reason:
+RIPR-SPEC-0088: TypeScript preview check JSON states top-level canonical_gap_id (#10709)
+
+Command:
+`cargo xtask goldens bless typescript_exported_expect_lookalike --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_exported_expect_lookalike (4)
+
+Reason:
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
+
+Command:
+`cargo xtask goldens bless typescript_exported_expect_lookalike --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_exported_expect_lookalike (5)
+
+Reason:
+RIPR-SPEC-0088: related-test selection ties keep the first row, matching the check headline (#11228)
+
+Command:
+`cargo xtask goldens bless typescript_exported_expect_lookalike --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

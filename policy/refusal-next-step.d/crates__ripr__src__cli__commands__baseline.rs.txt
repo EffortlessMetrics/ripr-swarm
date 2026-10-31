@@ -1,0 +1,6 @@
+crates/ripr/src/cli/commands/baseline.rs|baseline diff requires --baseline <path> baseline diff requires --current <path> -- missing value for {flag}
+crates/ripr/src/cli/commands/baseline.rs|baseline diff requires --current <path> -- missing value for {flag}
+crates/ripr/src/cli/commands/baseline.rs|baseline update requires --baseline <path> baseline update requires --current <path>
+crates/ripr/src/cli/commands/baseline.rs|baseline update requires --current <path>
+crates/ripr/src/cli/commands/baseline.rs|baseline update requires --remove-resolved or --migrate-legacy-identities; adopting new debt is not supported
+crates/ripr/src/cli/commands/baseline.rs|missing value for {flag}

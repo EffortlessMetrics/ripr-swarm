@@ -5,6 +5,7 @@ use super::{array_field, escape, field, float_field, number_field};
 use crate::config::RiprConfig;
 use crate::output::json::report::{related_test_json, stop_reason_values};
 use crate::output::next_step::reconcile_next_step;
+use crate::output::preview_actionability::projected_preview_actionability_missing;
 
 // Keep the registered packet version literal in this renderer path so the
 // output-contract check can verify the JSON surface while the DTO owns values.
@@ -41,6 +42,10 @@ pub(crate) fn render_context_packet_with_explain_command(
     // DTO's `from_finding` seed is the class profile default for callers
     // that hold no config.
     packet.severity = config.severity().for_exposure(&finding.class).as_str();
+    // The DTO starts with raw analysis evidence; resolve the provisional preview
+    // packet-availability message using the same validator-backed projection as
+    // the check surface and next-step reconciliation. Keep real missing facts.
+    packet.missing = projected_preview_actionability_missing(finding);
     if let (Some(witness), Some(command)) = (packet.witness.as_mut(), explain_command) {
         witness.explain_command = command;
     }
@@ -80,6 +85,12 @@ pub(crate) fn render_context_packet_dto(packet: &ContextPacket) -> String {
     field(&mut out, 1, "classification", packet.classification, true);
     field(&mut out, 1, "severity", packet.severity, true);
     float_field(&mut out, 1, "confidence", packet.confidence, true);
+    super::formatter::confidence_basis_fields(
+        &mut out,
+        1,
+        &packet.confidence_basis,
+        packet.confidence_why_capped.as_deref(),
+    );
     out.push_str("  \"probe\": {\n");
     field(&mut out, 2, "id", &packet.probe.id, true);
     field(&mut out, 2, "family", &packet.probe.family, true);
@@ -297,6 +308,29 @@ mod tests {
         assert!(packet.contains("No test checks \\\"boundary\\\"\\ncase"));
     }
 
+    /// #10717: the witness `DiagnosticConfidence` serializes at the contract's
+    /// two decimals; computed `f32` noise is rounded, clean values are kept.
+    #[test]
+    fn witness_confidence_value_serializes_at_contract_precision() -> Result<(), String> {
+        let noisy = 0.1_f32 + 0.6_f32;
+        assert_ne!(noisy.to_string(), "0.7", "fixture must carry f32 noise");
+        for (value, expected) in [(noisy, "0.7"), (0.4, "0.4"), (0.75, "0.75"), (0.0, "0.0")] {
+            let confidence = DiagnosticConfidence {
+                value: Some(value),
+                basis: "b".to_string(),
+            };
+            let json = serde_json::to_value(&confidence).map_err(|e| e.to_string())?;
+            assert_eq!(json["value"].to_string(), expected);
+        }
+        let none = DiagnosticConfidence {
+            value: None,
+            basis: "b".to_string(),
+        };
+        let json = serde_json::to_value(&none).map_err(|e| e.to_string())?;
+        assert!(json.get("value").is_none());
+        Ok(())
+    }
+
     #[test]
     fn context_packet_witness_nests_at_the_packet_indent() -> Result<(), String> {
         // The witness is a serde-owned DTO; it must expand at the
@@ -402,6 +436,7 @@ mod tests {
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

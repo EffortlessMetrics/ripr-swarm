@@ -226,26 +226,37 @@ const MAX_TOP_FILES_SUMMARY_JSON: usize = 25;
 pub(crate) enum RepoExposureLimit<'a> {
     Inventory(&'a SeamLimitInfo),
     PilotBudget(&'a SeamLimitInfo),
+    Both(&'a SeamLimitInfo, &'a SeamLimitInfo),
 }
 
 impl<'a> RepoExposureLimit<'a> {
     pub(crate) fn info(self) -> &'a SeamLimitInfo {
         match self {
-            Self::Inventory(info) | Self::PilotBudget(info) => info,
+            Self::Inventory(info) | Self::PilotBudget(info) | Self::Both(info, _) => info,
+        }
+    }
+
+    pub(crate) fn parts(self) -> [Option<Self>; 2] {
+        match self {
+            Self::Both(budget, inventory) => [
+                Some(Self::PilotBudget(budget)),
+                Some(Self::Inventory(inventory)),
+            ],
+            one => [Some(one), None],
         }
     }
 
     pub(crate) fn category(self) -> &'static str {
         match self {
             Self::Inventory(_) => "repo_seam_limit_applied",
-            Self::PilotBudget(_) => "pilot_seam_budget_applied",
+            Self::PilotBudget(_) | Self::Both(_, _) => "pilot_seam_budget_applied",
         }
     }
 
     pub(crate) fn control(self) -> &'static str {
         match self {
             Self::Inventory(_) => "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
-            Self::PilotBudget(_) => "RIPR_PILOT_SEAM_BUDGET",
+            Self::PilotBudget(_) | Self::Both(_, _) => "RIPR_PILOT_SEAM_BUDGET",
         }
     }
 
@@ -257,10 +268,10 @@ impl<'a> RepoExposureLimit<'a> {
             (Self::Inventory(_), SeamLimitSource::Configured) => {
                 "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
             }
-            (Self::PilotBudget(_), SeamLimitSource::Default) => {
+            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Default) => {
                 "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
             }
-            (Self::PilotBudget(_), SeamLimitSource::Configured) => {
+            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Configured) => {
                 "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
             }
         }
@@ -274,10 +285,10 @@ impl<'a> RepoExposureLimit<'a> {
             (Self::Inventory(_), SeamLimitSource::Configured) => {
                 "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
             }
-            (Self::PilotBudget(_), SeamLimitSource::Default) => {
+            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Default) => {
                 "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget"
             }
-            (Self::PilotBudget(_), SeamLimitSource::Configured) => {
+            (Self::PilotBudget(_) | Self::Both(_, _), SeamLimitSource::Configured) => {
                 "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts"
             }
         }
@@ -364,6 +375,7 @@ fn write_repo_exposure_json<W: io::Write>(
             ts_guidance,
             python_guidance,
             generated_skip,
+            analysis_inputs: None,
         },
         None,
         None,
@@ -393,6 +405,11 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         let subject = source_subject
             .get_or_insert_with(|| serde_json::json!({"digest_algorithm": "sha256", "files": []}));
         subject["corpus"] = crate::output::gap_source_subject::captured_rust_corpus_subject(key);
+        if let Some(files) = context.analyzed_production_files.as_deref()
+            && let Some(files) = crate::output::gap_source_subject::production_files_subject(files)
+        {
+            subject["corpus"]["analyzed_production_files"] = files;
+        }
     }
     trace_latency_phase(
         "serialize_source_subject",
@@ -400,10 +417,15 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         source_subject_started.elapsed(),
     );
     let mut hasher = Sha256Writer::new();
+    let analysis_inputs = context
+        .corpus_key
+        .as_ref()
+        .map(crate::output::gap_source_subject::analysis_inputs_subject);
     let disclosures = RepoExposureJsonDisclosures {
         ts_guidance,
         python_guidance,
         generated_skip,
+        analysis_inputs: analysis_inputs.as_ref(),
     };
     // The hash pass streams the document through `Sha256Writer`, which
     // hashes each chunk without buffering it, so no destination I/O
@@ -569,6 +591,9 @@ struct RepoExposureJsonDisclosures<'a> {
     ts_guidance: Option<&'a TsFullRepoGuidance>,
     python_guidance: Option<&'a PythonRepoExposureGuidance>,
     generated_skip: Option<&'a GeneratedRustSkip>,
+    /// Non-Rust analysis input identity (#9599). Top-level, not inside
+    /// `source_subject`, whose corpus identity stays checkout-path independent.
+    analysis_inputs: Option<&'a serde_json::Value>,
 }
 
 fn write_repo_exposure_json_document<W: io::Write>(
@@ -583,6 +608,7 @@ fn write_repo_exposure_json_document<W: io::Write>(
         ts_guidance,
         python_guidance,
         generated_skip,
+        analysis_inputs,
     } = disclosures;
     // The seams' own slice: the entry index below can never run past it.
     let classified = seams.classified;
@@ -599,6 +625,9 @@ fn write_repo_exposure_json_document<W: io::Write>(
     }
     if let Some(source_subject) = source_subject {
         writeln!(out, "  \"source_subject\": {},", source_subject)?;
+    }
+    if let Some(analysis_inputs) = analysis_inputs {
+        writeln!(out, "  \"analysis_inputs\": {},", analysis_inputs)?;
     }
     writeln!(out, "  \"scope\": \"repo\",")?;
 
@@ -639,7 +668,14 @@ fn write_repo_exposure_json_document<W: io::Write>(
     if has_limitations {
         writeln!(out, "  \"limitations\": [")?;
         let mut first = true;
-        if let Some(limit) = limit_info {
+        for limit in limit_info
+            .into_iter()
+            .flat_map(RepoExposureLimit::parts)
+            .flatten()
+        {
+            if !first {
+                writeln!(out, "    ,")?;
+            }
             let info = limit.info();
             let repair_route = limit.repair_route();
             writeln!(out, "    {{")?;
@@ -1325,7 +1361,11 @@ pub(crate) fn render_repo_exposure_md_with_limit(
     if has_limitations {
         out.push_str("\n## Limitations\n\n");
         // Seam-limit disclosure: emit only when a real cap fired.
-        if let Some(limit) = limit_info {
+        for limit in limit_info
+            .into_iter()
+            .flat_map(RepoExposureLimit::parts)
+            .flatten()
+        {
             let info = limit.info();
             let control = limit.markdown_repair_route();
             out.push_str(&format!(
@@ -1676,6 +1716,7 @@ mod tests {
             ts_guidance: None,
             python_guidance: None,
             generated_skip: None,
+            analysis_inputs: None,
         };
         let document = |budget: usize| -> Result<Vec<u8>, String> {
             let mut out = Vec::new();

@@ -12,9 +12,16 @@
   "findings": [
     {
       "id": "probe:src_pricing.ts:typescript_preview:fff3ea84",
+      "canonical_gap_id": "gap:typescript:typescript_preview:fff3ea84",
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:fff3ea84",
         "family": "predicate",
@@ -34,8 +41,8 @@
       "evidence_path": ["reach no: 0 related test(s) found for owner `DEFAULT_FEE_RULE`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation no: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator no: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."],
       "flow_sinks": [
       ],
-      "evidence": ["owner: DEFAULT_FEE_RULE", "probe_fact: ambiguous_fallback", "gap_state: advisory", "actionability_category: missing_context", "why_not_actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route", "repair_route: add trusted related-test matching for this owner shape before emitting a repair packet", "missing_actionability_fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/pricing.ts;line=6;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:fff3ea84;owner=DEFAULT_FEE_RULE", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["No trusted TypeScript module-initializer observer for `DEFAULT_FEE_RULE`. Direct `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers are supported, but helper-derived values, shadowed aliases, dynamic initialization, and non-expect references stay advisory in preview.", "TypeScript preview actionability `advisory` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet"],
+      "evidence": ["owner: DEFAULT_FEE_RULE", "probe_fact: ambiguous_fallback", "gap_state: unknown", "actionability_category: missing_context", "why_not_actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route", "repair_route: add trusted related-test matching for this owner shape before emitting a repair packet", "missing_actionability_fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/pricing.ts;line=6;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:fff3ea84;owner=DEFAULT_FEE_RULE", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["No trusted TypeScript module-initializer observer for `DEFAULT_FEE_RULE`. Direct `expect(IMPORTED_CONST)...` and `expect(namespace.EXPORT)...` observers are supported, but helper-derived values, shadowed aliases, dynamic initialization, and non-expect references stay advisory in preview.", "TypeScript preview actionability `unknown` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet"],
       "assertion_texts": {
       },
       "activation": {
@@ -84,7 +91,7 @@
         "actionability_category": "missing_context",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "trusted related test or observer, target shape, verify command, receipt command, and edit boundaries",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "related_test_or_observer",
           "target_test_shape",
@@ -124,9 +131,16 @@
     },
     {
       "id": "probe:src_pricing.ts:typescript_preview:bd772dc8",
+      "canonical_gap_id": "gap:typescript:typescript_preview:bd772dc8",
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "no_related_test", "summary": "no related test reaches the changed owner"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_pricing.ts:typescript_preview:bd772dc8",
         "family": "predicate",
@@ -146,8 +160,8 @@
       "evidence_path": ["reach no: 0 related test(s) found for owner `applyDiscount`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation no: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator no: TypeScript preview adapter found no strong discriminator; use `toBe` / `toEqual` / `toStrictEqual` to escalate. TypeScript `toThrow` forms remain broad error evidence until payload inspection lands."],
       "flow_sinks": [
       ],
-      "evidence": ["owner: applyDiscount", "gap_state: advisory", "actionability_category: missing_context", "why_not_actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route", "repair_route: add trusted related-test matching for this owner shape before emitting a repair packet", "missing_actionability_fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/pricing.ts;line=14;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:bd772dc8;owner=applyDiscount", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["No test references `applyDiscount(` — add a test that calls the changed owner.", "TypeScript preview actionability `advisory` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet"],
+      "evidence": ["owner: applyDiscount", "gap_state: unknown", "actionability_category: missing_context", "why_not_actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route", "repair_route: add trusted related-test matching for this owner shape before emitting a repair packet", "missing_actionability_fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/pricing.ts;line=14;kind=typescript_preview_probe;source_id=probe:src_pricing.ts:typescript_preview:bd772dc8;owner=applyDiscount", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["No statically linked test call to `applyDiscount(` was established; inspect existing test calls and their import/export paths.", "TypeScript preview actionability `unknown` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet"],
       "assertion_texts": {
       },
       "activation": {
@@ -196,7 +210,7 @@
         "actionability_category": "missing_context",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "trusted related test or observer, target shape, verify command, receipt command, and edit boundaries",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "related_test_or_observer",
           "target_test_shape",
@@ -227,8 +241,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.",
-      "suggested_next_action": "TypeScript preview advisory: no test references the changed owner; add a test that calls the owner and asserts the changed behavior with `toBe` / `toEqual` before any repair packet is emitted.",
+      "recommended_next_step": "TypeScript preview advisory: no statically linked test calls `applyDiscount(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding.",
+      "suggested_next_action": "TypeScript preview advisory: no statically linked test calls `applyDiscount(`; inspect existing test calls and their import/export paths; if no suitable test exists, add a test that calls the changed owner and asserts the changed behavior with `toBe` / `toEqual`. Then run the project's native test command and rerun `ripr check` to refresh the finding.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",

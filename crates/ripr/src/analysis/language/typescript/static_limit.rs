@@ -800,6 +800,7 @@ fn contains_member_call_name(body_text: &str, object_name: &str, method_name: &s
 pub(crate) fn named_limitations_for_oracle_candidates(
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    probe_family: &ProbeFamily,
 ) -> Vec<TypeScriptNamedLimitation> {
     // Only consider oracle-eligible candidates (direct call, imported call, etc.)
     // Heuristic-only (name/proximity) links are not oracle-eligible and cannot
@@ -808,6 +809,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
     let mut saw_oracle_helper_gated = false;
     let mut saw_snapshot = false;
     let mut saw_custom_matcher = false;
+    let mut saw_match_object_scalar = false;
     let mut saw_table_case = false;
     let mut saw_dynamic_assertion = false;
 
@@ -873,8 +875,28 @@ pub(crate) fn named_limitations_for_oracle_candidates(
             // `oracle.rs::oracle_for_matcher` returns `OracleKind::Unknown` for any matcher
             // not in the recognised set. The matcher field is the real AST identifier from the
             // `expect(x).<matcher>(...)` call expression — it is genuine AST evidence, not invented.
+            // RIPR-SPEC-0250 rule 4: `toMatchObject(<scalar literal>)` is a
+            // recognised matcher whose meaning depends on the runner, so it
+            // names its own limitation instead of "unrecognised matcher".
             if matches!(assertion.oracle_kind, OracleKind::Unknown)
+                && match_object_scalar_expected(assertion)
+                && !saw_match_object_scalar
+            {
+                let sample = format!(
+                    "{}:{}",
+                    normalized_path(&candidate.test.file),
+                    candidate.test.evidence_line(assertion)
+                );
+                limitations.push(TypeScriptNamedLimitation {
+                    name: "typescript_match_object_scalar_unresolved",
+                    sample_source: sample,
+                    why_not_actionable: "the test calls `.toMatchObject(...)` with a scalar literal, which Vitest compares for plain equality and Jest rejects with a matcher error, so the adapter cannot tell what it pins".to_string(),
+                    repair_route: "analysis/typescript-match-object-scalar-runner",
+                });
+                saw_match_object_scalar = true;
+            } else if matches!(assertion.oracle_kind, OracleKind::Unknown)
                 && !assertion.matcher.is_empty()
+                && !match_object_scalar_expected(assertion)
                 && !saw_custom_matcher
             {
                 let sample = format!(
@@ -900,6 +922,12 @@ pub(crate) fn named_limitations_for_oracle_candidates(
             // `has_dynamic_matcher_arg = true` for such cases (RIPR-SPEC-0085 §PR5).
             // A `toMatchObject(<const>)` argument whose test-body literal was
             // read (RIPR-SPEC-0250 example 5) is resolved, so it is not listed.
+            // A dynamic argument only hides a discriminator for this change
+            // when the assertion is in the seam's oracle family
+            // (RIPR-SPEC-0104): an unresolved error expectation cannot pin a
+            // returned value or predicate, and vice versa. That family
+            // condition scopes the dynamic-assertion limitation only; the
+            // table-case limitation below keeps its original rule.
             if assertion.has_dynamic_matcher_arg
                 && assertion.expected_object_const.is_none()
                 && !saw_dynamic_assertion
@@ -922,26 +950,44 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                     });
                     saw_table_case = true;
                 }
-                let sample = format!(
-                    "{}:{}",
-                    normalized_path(&candidate.test.file),
-                    candidate.test.evidence_line(assertion)
-                );
-                let why = format!(
-                    "the matcher `.{}(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior",
-                    assertion.matcher
-                );
-                limitations.push(TypeScriptNamedLimitation {
-                    name: "typescript_dynamic_assertion_unresolved",
-                    sample_source: sample,
-                    why_not_actionable: why,
-                    repair_route: "analysis/typescript-dynamic-assertion-resolution",
-                });
-                saw_dynamic_assertion = true;
+                if ts_oracle_kind_matches_seam(&assertion.oracle_kind, probe_family) {
+                    let sample = format!(
+                        "{}:{}",
+                        normalized_path(&candidate.test.file),
+                        candidate.test.evidence_line(assertion)
+                    );
+                    let why = format!(
+                        "the matcher `.{}(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior",
+                        assertion.matcher
+                    );
+                    limitations.push(TypeScriptNamedLimitation {
+                        name: "typescript_dynamic_assertion_unresolved",
+                        sample_source: sample,
+                        why_not_actionable: why,
+                        repair_route: "analysis/typescript-dynamic-assertion-resolution",
+                    });
+                    saw_dynamic_assertion = true;
+                }
             }
         }
     }
     limitations
+}
+
+/// A `toMatchObject` assertion whose resolved expected value is written as a
+/// scalar literal (string, number, boolean or `null`), not an object or array.
+fn match_object_scalar_expected(assertion: &TypeScriptAssertion) -> bool {
+    assertion.matcher == "toMatchObject"
+        && !assertion.has_dynamic_matcher_arg
+        && assertion
+            .expected_value_or_variant
+            .as_deref()
+            .map(str::trim_start)
+            .is_some_and(|text| {
+                text.starts_with(['"', '\'', '-', '+'])
+                    || text.starts_with(|ch: char| ch.is_ascii_digit())
+                    || matches!(text, "true" | "false" | "null")
+            })
 }
 
 fn table_case_test(test: &TypeScriptTest) -> bool {
@@ -1321,4 +1367,101 @@ pub(crate) fn namespace_tail_has_call(tail: &str) -> bool {
         return false;
     }
     false
+}
+
+/// #11256: a predicate comparing a local the owner computes from a call whose
+/// arguments mention no owner parameter (`const type = getType(key);` ...
+/// `type === "boolean"`) reads a value no call into the owner can set, so a
+/// repair asking for "an input on the boundary" cannot be followed and the
+/// existing tests may already notice the change through the result. Names the
+/// local, or nothing: every other shape keeps its previous reading.
+pub(crate) fn derived_boundary_operand_limitation(
+    owner: &TypeScriptOwner,
+    boundary: &TsPredicateBoundary,
+) -> Option<TypeScriptNamedLimitation> {
+    let TsPredicateBoundary::Parsed {
+        left,
+        right,
+        nullish: false,
+    } = boundary
+    else {
+        return None;
+    };
+    let is_identifier = |text: &str| {
+        text.chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
+            && text
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
+            && !matches!(text, "true" | "false" | "null" | "undefined")
+    };
+    let is_literal = |text: &str| {
+        text.starts_with(['"', '\'', '-'])
+            || text.starts_with(|ch: char| ch.is_ascii_digit())
+            || matches!(text, "true" | "false" | "null")
+    };
+    let operand = match (left.as_str(), right.as_str()) {
+        (name, literal) if is_identifier(name) && is_literal(literal) => name,
+        (literal, name) if is_identifier(name) && is_literal(literal) => name,
+        _ => return None,
+    };
+    // Fixed positional signature only: otherwise "no parameter" is unknown.
+    owner.arity?;
+    if owner.params.iter().any(|param| param == operand) {
+        return None;
+    }
+    let source = owner.source_text.as_deref()?;
+    let bindings: Vec<(usize, &str)> = source
+        .lines()
+        .enumerate()
+        .filter_map(|(offset, line)| {
+            let text = line.trim();
+            let rest = text
+                .strip_prefix("const ")
+                .or_else(|| text.strip_prefix("let "))?
+                .strip_prefix(operand)?
+                .strip_prefix(" = ")?;
+            Some((offset, rest.trim_end_matches(';').trim()))
+        })
+        .collect();
+    // Every binding of the name (a scoped redeclaration is another binding)
+    // must be a call that mentions no owner parameter.
+    let mut callees = Vec::new();
+    for (_, initializer) in &bindings {
+        // `callee(args)` with nothing after the closing parenthesis.
+        let open = initializer.find('(')?;
+        let callee = initializer.get(..open)?;
+        let args = initializer.get(open + 1..)?.strip_suffix(')')?;
+        if callee.is_empty()
+            || !callee
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' || ch == '.')
+            || args.contains(['(', ')', '`'])
+            || args.contains("...")
+        {
+            return None;
+        }
+        let mentions_parameter = args
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'))
+            .any(|token| owner.params.iter().any(|param| param == token));
+        if mentions_parameter {
+            return None;
+        }
+        callees.push(callee);
+    }
+    let (offset, _) = *bindings.first()?;
+    let callee = callees.first()?;
+    Some(TypeScriptNamedLimitation {
+        name: "typescript_boundary_operand_derived_unresolved",
+        sample_source: format!(
+            "{}:{}",
+            normalized_path(&owner.file),
+            owner.start_line + offset
+        ),
+        why_not_actionable: format!(
+            "the changed comparison reads `{operand}`, which the owner computes with `{callee}(...)` instead of receiving it as a parameter; a test call cannot set it directly, so the adapter cannot tell whether an existing test already notices the change"
+        ),
+        repair_route: "analysis/typescript-derived-boundary-operand",
+    })
 }

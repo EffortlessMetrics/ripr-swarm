@@ -253,7 +253,22 @@ fn constant_name_not_imported_from_the_owner_module_does_not_bind() -> Result<()
     let tests = "from src.pricing import discounted_total\nfrom config import DISCOUNT_THRESHOLD\n\ndef test_other():\n    assert discounted_total(5_000) == 5_000\n    assert discounted_total(DISCOUNT_THRESHOLD) == 9_000\n";
     let finding = classify("DISCOUNT_THRESHOLD = 10_000\n", tests)?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(discriminators(&finding), ["amount == DISCOUNT_THRESHOLD"]);
+    // The wrong-module call does not bind the owner's constant, and its
+    // unresolved input could sit on the boundary, so no concrete
+    // discriminator is named (#10990).
+    assert!(
+        discriminators(&finding).is_empty(),
+        "{:?}",
+        discriminators(&finding)
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|line| line.contains("unresolved inputs")),
+        "{:?}",
+        finding.missing
+    );
     Ok(())
 }
 
@@ -322,6 +337,7 @@ fn mock_patching_in_a_test_file_counts_as_a_dynamic_writer() {
     for source in [
         "from unittest import mock\n\n@mock.patch('pricing.DISCOUNT_THRESHOLD', 5)\ndef test_x():\n    pass\n",
         "from unittest.mock import patch\nimport pricing\n\ndef test_x():\n    with patch.object(pricing, 'DISCOUNT_THRESHOLD', 5):\n        pass\n",
+        "import pricing\n\neval(\"globals()\")[\"DISCOUNT_THRESHOLD\"] = 5000\n",
     ] {
         assert!(super::writes_namespace_dynamically(source), "{source}");
     }
@@ -330,12 +346,36 @@ fn mock_patching_in_a_test_file_counts_as_a_dynamic_writer() {
     ));
 }
 
+/// #11102: an import names a writer without calling it.
+#[test]
+fn importing_a_writer_name_is_not_a_dynamic_write() {
+    for source in [
+        "from unittest.mock import patch\n\ndef test_x():\n    assert 1\n",
+        "from unittest.mock import (\n    call,\n    patch,\n)\n",
+        "import os; from unittest.mock import patch\n",
+        "# note\n\nfrom unittest.mock import patch\n",
+    ] {
+        assert!(!super::writes_namespace_dynamically(source), "{source}");
+    }
+    for source in [
+        "from unittest.mock import patch as p\n",
+        "from unittest.mock import patch\n\npatch('pkg.X', 5)\n",
+        "from unittest.mock import patch\n\n@patch('pkg.X', 5)\ndef test_x(m):\n    pass\n",
+        "import os; setattr(os, 'x', 1)\n",
+        "from importlib import reload as r\n",
+        "from unittest.mock import (\n    patch  # c\n    as p,\n)\n",
+    ] {
+        assert!(super::writes_namespace_dynamically(source), "{source}");
+    }
+}
+
 #[test]
 fn dynamic_namespace_writers_unresolve_owner_constants() -> Result<(), String> {
     for writer in [
         "importlib.reload(pricing)",
         "pricing.__setattr__('DISCOUNT_THRESHOLD', 5)",
         "delattr(pricing, 'DISCOUNT_THRESHOLD')",
+        "eval(\"globals().update(DISCOUNT_THRESHOLD=5)\")",
     ] {
         let source = format!(
             "import importlib\nimport src.pricing as pricing\nDISCOUNT_THRESHOLD = 10_000\n{writer}\n{OWNER}"

@@ -605,6 +605,112 @@ fn context_selector_miss_prints_error_without_a_failed_progress_line() -> Result
     Ok(())
 }
 
+fn run_check_with_env(
+    fixture: &DiffFixture,
+    extra: &[&str],
+    quiet_env: Option<&str>,
+) -> Result<Output, String> {
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let mut args = vec!["check", "--root", root.as_str(), "--diff", diff.as_str()];
+    args.extend_from_slice(extra);
+    let mut command = ripr();
+    command.args(&args).env_remove("RIPR_QUIET");
+    if let Some(value) = quiet_env {
+        command.env("RIPR_QUIET", value);
+    }
+    command
+        .output()
+        .map_err(|error| format!("run ripr {args:?}: {error}"))
+}
+
+/// #11580: `RIPR_QUIET` is an environment twin of `--quiet`: it drops the
+/// stderr progress stream and changes nothing on stdout.
+#[test]
+fn ripr_quiet_env_drops_progress_without_changing_stdout() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let loud = run_check_with_env(&fixture, &["--format", "json"], None)?;
+    let quiet = run_check_with_env(&fixture, &["--format", "json"], Some("1"))?;
+    assert!(loud.status.success(), "{}", stderr_text(&loud));
+    assert!(quiet.status.success(), "{}", stderr_text(&quiet));
+    assert_eq!(
+        loud.stdout, quiet.stdout,
+        "env quiet must not change stdout"
+    );
+    assert!(
+        stderr_text(&loud).contains("ripr progress:"),
+        "control run must have emitted progress"
+    );
+    let quiet_err = stderr_text(&quiet);
+    assert!(
+        !quiet_err.contains("ripr progress:"),
+        "RIPR_QUIET=1 must suppress progress: {quiet_err}"
+    );
+    Ok(())
+}
+
+/// Negative: the explicit off spellings keep progress, so a harness that
+/// exports `RIPR_QUIET=0` is not silenced by accident.
+#[test]
+fn ripr_quiet_env_off_spellings_keep_progress() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    for off in ["0", "false", ""] {
+        let run = run_check_with_env(&fixture, &["--format", "json"], Some(off))?;
+        assert!(run.status.success(), "{}", stderr_text(&run));
+        assert!(
+            stderr_text(&run).contains("ripr progress:"),
+            "RIPR_QUIET={off:?} must keep progress"
+        );
+    }
+    Ok(())
+}
+
+/// #11580: the built binary prints the compact agent report on stdout, keeps
+/// progress off stdout, and is a small fraction of the full human report.
+#[test]
+fn check_format_agent_prints_the_compact_report() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let agent = run_check_with_env(&fixture, &["--format", "agent"], Some("1"))?;
+    assert!(agent.status.success(), "{}", stderr_text(&agent));
+    assert_eq!(
+        stderr_text(&agent),
+        "",
+        "RIPR_QUIET leaves stderr empty on a clean run"
+    );
+    let text = String::from_utf8_lossy(&agent.stdout).into_owned();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[0].starts_with("#ripr agent static-advisory base="),
+        "{text}"
+    );
+    let gap = lines
+        .iter()
+        .find(|line| line.starts_with("weakly_exposed|"))
+        .ok_or_else(|| format!("fixture must list its boundary gap: {text}"))?;
+    assert!(
+        gap.contains("|src/lib.rs:2|amount >= threshold|missing=amount == threshold|test=t1|"),
+        "{gap}"
+    );
+    assert!(gap.contains("|id=probe:"), "{gap}");
+    let next = lines
+        .iter()
+        .find(|line| line.starts_with("next=ripr explain "))
+        .ok_or_else(|| format!("top gap must carry a drill-in command: {text}"))?;
+    assert!(next.contains("--diff "), "scope-bound command: {next}");
+    assert!(!text.contains("ripr progress:"), "{text}");
+    let full = run_check_with_env(&fixture, &["--format", "human-full", "--quiet"], None)?;
+    assert!(
+        text.len() * 2 < full.stdout.len(),
+        "agent {} bytes vs human-full {} bytes",
+        text.len(),
+        full.stdout.len()
+    );
+    // Deterministic: a second run is byte-identical.
+    let again = run_check_with_env(&fixture, &["--format", "agent", "--quiet"], None)?;
+    assert_eq!(agent.stdout, again.stdout);
+    Ok(())
+}
+
 // --- #4945: repo-scoped audit-path formats disclose progress and cost ---
 
 /// Small single-crate fixture workspace for repo-format runs. Repo formats
@@ -872,6 +978,190 @@ fn pilot_projects_repo_stages_on_stderr_and_keeps_packet_bytes_unchanged() -> Re
     assert_eq!(
         loud_summary, quiet_summary,
         "progress wiring must not change pilot-summary.json bytes"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+// --- #10727: verbose pilot prints a per-stage timing table on stderr only ---
+
+#[test]
+fn verbose_pilot_prints_a_stage_table_and_leaves_stdout_and_packet_bytes_unchanged()
+-> Result<(), String> {
+    let root = repo_fixture_root("pilot-progress")?;
+    let out = root.join("pilot-out");
+    let plain = run_pilot(&root, &out, &[])?;
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    let summary_path = out.join("pilot-summary.json");
+    let plain_summary = std::fs::read(&summary_path)
+        .map_err(|error| format!("read plain pilot-summary.json: {error}"))?;
+    assert!(
+        !stderr_text(&plain).contains("stage timings"),
+        "the table is verbose-only: {}",
+        stderr_text(&plain)
+    );
+
+    let verbose = run_pilot(&root, &out, &["-v"])?;
+    assert!(verbose.status.success(), "{}", stderr_text(&verbose));
+    let verbose_err = stderr_text(&verbose);
+    assert!(
+        verbose_err.contains("ripr pilot: stage timings ("),
+        "missing stage table: {verbose_err}"
+    );
+    let table: Vec<&str> = verbose_err
+        .lines()
+        .skip_while(|line| !line.starts_with("ripr pilot: stage timings"))
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .collect();
+    let all_stages: Vec<&str> = table
+        .iter()
+        .filter_map(|line| line.split_whitespace().next())
+        .collect();
+    // The inventory's own phases ride beneath it; which of them ran depends
+    // on whether the plain run above left a warm cache.
+    assert!(
+        all_stages
+            .iter()
+            .any(|stage| stage.starts_with("inventory.")),
+        "no inventory phase rows: {verbose_err}"
+    );
+    let stages: Vec<&str> = all_stages
+        .iter()
+        .copied()
+        .filter(|stage| !stage.starts_with("inventory."))
+        .collect();
+    assert_eq!(
+        stages,
+        [
+            "load_change",
+            "inventory",
+            "change_classification",
+            "diff_only_files",
+            "seam_budget",
+            "language_scan",
+            "write_artifacts",
+            "total",
+        ],
+        "{verbose_err}"
+    );
+    assert!(
+        table.iter().all(|line| line.trim_end().contains(" ms")),
+        "every row carries a millisecond count: {verbose_err}"
+    );
+    assert!(
+        table
+            .iter()
+            .any(|line| line.contains("inventory") && line.contains("items=")),
+        "the inventory row names its seam count: {verbose_err}"
+    );
+
+    assert_eq!(
+        plain.stdout, verbose.stdout,
+        "-v must not change pilot terminal stdout"
+    );
+    let verbose_summary = std::fs::read(&summary_path)
+        .map_err(|error| format!("read verbose pilot-summary.json: {error}"))?;
+    assert_eq!(
+        plain_summary, verbose_summary,
+        "timings must not enter pilot-summary.json"
+    );
+    assert!(
+        !String::from_utf8_lossy(&verbose_summary).contains("elapsed"),
+        "no wall-clock value in the packet"
+    );
+
+    // The sidecar carries the same stages as the table; a later run without
+    // `-v` must not leave it standing as that run's timings.
+    let sidecar_path = out.join("pilot-timings.json");
+    let sidecar: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&sidecar_path)
+            .map_err(|error| format!("read pilot-timings.json: {error}"))?,
+    )
+    .map_err(|error| format!("pilot-timings.json is not JSON: {error}"))?;
+    let sidecar_stages: Vec<&str> = sidecar["stages"]
+        .as_array()
+        .ok_or("stages is not an array")?
+        .iter()
+        .filter_map(|row| row["stage"].as_str())
+        .collect();
+    let table_stages: Vec<&str> = all_stages
+        .iter()
+        .copied()
+        .filter(|stage| *stage != "total")
+        .collect();
+    assert_eq!(sidecar_stages, table_stages, "{sidecar}");
+    assert!(sidecar["total_ms"].is_u64(), "{sidecar}");
+    let again = run_pilot(&root, &out, &[])?;
+    assert!(again.status.success(), "{}", stderr_text(&again));
+    assert!(
+        !sidecar_path.exists(),
+        "a run without -v removes the prior sidecar"
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn verbose_pilot_fails_rather_than_leave_an_unwritable_sidecar_as_current() -> Result<(), String> {
+    let root = repo_fixture_root("pilot-progress")?;
+    let out = root.join("pilot-out");
+    // A directory at the sidecar path cannot be replaced or removed as a
+    // file, so the prior-sidecar guard must refuse instead of passing.
+    std::fs::create_dir_all(out.join("pilot-timings.json"))
+        .map_err(|error| format!("create blocking directory: {error}"))?;
+    let verbose = run_pilot(&root, &out, &["-v"])?;
+    assert!(
+        !verbose.status.success(),
+        "an unreplaceable sidecar must not read as current: {}",
+        stderr_text(&verbose)
+    );
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+fn verbose_table_stages(output: &std::process::Output) -> Vec<String> {
+    stderr_text(output)
+        .lines()
+        .skip_while(|line| !line.starts_with("ripr pilot: stage timings"))
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .filter_map(|line| line.split_whitespace().next().map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn verbose_pilot_names_the_cold_inventory_phases_and_then_the_cache_load() -> Result<(), String> {
+    let root = repo_fixture_root("pilot-phases")?;
+    let out = root.join("pilot-out");
+    // A fresh fixture root has no cache, so the first run computes.
+    let cold = run_pilot(&root, &out, &["-v"])?;
+    assert!(cold.status.success(), "{}", stderr_text(&cold));
+    let cold_stages = verbose_table_stages(&cold);
+    for phase in [
+        "inventory.seams",
+        "inventory.evidence",
+        "inventory.classify",
+    ] {
+        assert!(
+            cold_stages.iter().any(|stage| stage == phase),
+            "a cold run times {phase}: {cold_stages:?}"
+        );
+    }
+    let warm = run_pilot(&root, &out, &["-v"])?;
+    assert!(warm.status.success(), "{}", stderr_text(&warm));
+    let warm_stages = verbose_table_stages(&warm);
+    assert!(
+        warm_stages
+            .iter()
+            .any(|stage| stage == "inventory.cache_load"),
+        "a warm run shows its cache load: {warm_stages:?}"
+    );
+    assert!(
+        !warm_stages
+            .iter()
+            .any(|stage| stage == "inventory.classify"),
+        "a warm run does not recompute: {warm_stages:?}"
     );
     ignore_remove_dir_all(&root);
     Ok(())

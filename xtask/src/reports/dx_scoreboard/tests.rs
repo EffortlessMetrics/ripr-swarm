@@ -306,6 +306,198 @@ fn gate_uses_the_larger_margin_and_skips_other_runner_classes() -> Result<(), St
     Ok(())
 }
 
+/// `MINIMAL` with ceilings on the `serde` row (#10914).
+fn ceilinged_config(ceilings: &str) -> Result<Config, String> {
+    parse_config(&MINIMAL.replacen(
+        "sha = \"dd18663450ec3ee38e35e3a4ee141932614e662c\"\n",
+        &format!(
+            "sha = \"dd18663450ec3ee38e35e3a4ee141932614e662c\"\nceilings = {{ {ceilings} }}\n"
+        ),
+        1,
+    ))
+}
+
+#[test]
+fn a_ceilinged_row_fails_the_gate_above_its_ceiling_whatever_the_baseline() -> Result<(), String> {
+    // #10914: a row cut under a bar stays guarded even when the baseline
+    // cannot compare it (another runner class) or holds no baseline at all.
+    let config = ceilinged_config("\"speed.warm_check_ms\" = 2000")?;
+    let warm = |repo: &str, outcome| vec![sample("speed.warm_check_ms", Some(repo), outcome)];
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &warm("serde", SampleOutcome::Value(1500.0)),
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |samples: &[Sample], runner: &str, baseline: Option<&Value>| {
+        build_report(
+            &config,
+            &all_boards(),
+            samples,
+            &context(runner),
+            baseline,
+            true,
+        )
+    };
+
+    let under = gate(
+        &warm("serde", SampleOutcome::Value(1999.0)),
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(
+        under["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        under["gate"]
+    );
+    // 1500 -> 2100 is inside the 500 ms regression floor, but over the ceiling.
+    for (runner, base) in [
+        ("runner-a", Some(&baseline)),
+        ("runner-b", Some(&baseline)),
+        ("runner-a", None),
+    ] {
+        let over = gate(&warm("serde", SampleOutcome::Value(2100.0)), runner, base);
+        assert_eq!(
+            over["gate"]["status"].as_str(),
+            Some("fail"),
+            "{runner}: {}",
+            over["gate"]
+        );
+        let breaches = over["gate"]["ceiling_breaches"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(breaches.len(), 1, "{breaches:?}");
+        assert_eq!(breaches[0]["repo"], "serde");
+        assert_eq!(breaches[0]["value"], 2100.0);
+        assert!(
+            gate_failure_message(&over).contains("ceiling breached speed.warm_check_ms on serde")
+        );
+        assert!(
+            render_markdown(&over)
+                .contains("**Ceiling breached** `speed.warm_check_ms` on `serde`")
+        );
+    }
+    // A ceilinged row that ran but produced no value is not under its ceiling.
+    let incomplete = gate(
+        &warm("serde", SampleOutcome::Incomplete(900.0)),
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(incomplete["gate"]["status"].as_str(), Some("fail"));
+    let unmeasured = gate(
+        &warm("serde", SampleOutcome::NotMeasured),
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(unmeasured["gate"]["status"].as_str(), Some("fail"));
+    // Another row's value, or no sample of the row (a heavy row left out of
+    // the run), is not this row's breach.
+    let other = gate(
+        &warm("tokio", SampleOutcome::Value(9000.0)),
+        "runner-b",
+        Some(&baseline),
+    );
+    assert_eq!(
+        other["gate"]["ceiling_breaches"].as_array().map(Vec::len),
+        Some(0)
+    );
+    // A row the run selected (another of its metrics has a sample) whose
+    // ceilinged metric has no sample at all is a missing measurement.
+    let missing = gate(
+        &[sample(
+            "first_run.friction_events",
+            Some("serde"),
+            SampleOutcome::Value(1.0),
+        )],
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(
+        missing["gate"]["status"].as_str(),
+        Some("fail"),
+        "{}",
+        missing["gate"]
+    );
+    let breaches = missing["gate"]["ceiling_breaches"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(breaches.len(), 1, "{breaches:?}");
+    assert_eq!(breaches[0]["repo"], "serde");
+    assert!(breaches[0]["value"].is_null());
+    // A row the run selected (recorded in its corpus) with no samples at all
+    // differs from a row the run left out, which has neither.
+    let mut selected = context("runner-a");
+    selected
+        .corpus
+        .push(json!({"id": "serde", "status": "complete"}));
+    let silent = build_report(&config, &all_boards(), &[], &selected, None, true);
+    assert_eq!(
+        silent["gate"]["status"].as_str(),
+        Some("fail"),
+        "{}",
+        silent["gate"]
+    );
+    assert_eq!(
+        silent["gate"]["ceiling_breaches"].as_array().map(Vec::len),
+        Some(1)
+    );
+    let left_out = build_report(
+        &config,
+        &all_boards(),
+        &[],
+        &context("runner-a"),
+        None,
+        true,
+    );
+    assert_eq!(
+        left_out["gate"]["ceiling_breaches"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    // Without --gate a breach is reported but nothing fails.
+    let ungated = build_report(
+        &config,
+        &all_boards(),
+        &warm("serde", SampleOutcome::Value(2100.0)),
+        &context("runner-a"),
+        None,
+        false,
+    );
+    assert_eq!(ungated["gate"]["status"].as_str(), Some("not_run"));
+    Ok(())
+}
+
+#[test]
+fn a_ceiling_must_name_a_measured_per_repo_lower_is_better_metric() -> Result<(), String> {
+    for (ceilings, message) in [
+        (
+            "\"speed.warm_check_mss\" = 2000",
+            "unknown metric `speed.warm_check_mss`",
+        ),
+        (
+            "\"ci.workflow_lines\" = 150",
+            "needs a measured per-repo lower_is_better metric",
+        ),
+        (
+            "\"first_run.friction_events\" = 1",
+            "needs a measured per-repo lower_is_better metric",
+        ),
+        ("\"speed.warm_check_ms\" = 0", "must be a positive number"),
+    ] {
+        match ceilinged_config(ceilings) {
+            Err(error) if error.contains(message) => {}
+            other => return Err(format!("{ceilings}: expected `{message}`, got {other:?}")),
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn gate_fails_on_a_broken_instrument_even_without_baseline() -> Result<(), String> {
     let config = parse_config(MINIMAL)?;
@@ -1883,6 +2075,7 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         note: String::new(),
         heavy: false,
         language: None,
+        ceilings: BTreeMap::new(),
     };
     let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
     assert_eq!(validate_corpus(&[entry("a", full)]), Ok(()));
@@ -3222,6 +3415,7 @@ fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_par
         note: String::new(),
         heavy: false,
         language: None,
+        ceilings: BTreeMap::new(),
     };
 
     let refused = super::measure::prepare_checkout(&entry, &options);
@@ -4661,6 +4855,16 @@ fn corpus_pins_python_commits_and_rejects_unknown_languages() -> Result<(), Stri
     if python[0].heavy || python[1..].iter().any(|entry| !entry.heavy) {
         return Err("click must be the light Python row and the larger ones heavy".to_string());
     }
+    // #10914: the large Python rows were cut under 2 s and 512 MiB and stay
+    // guarded.
+    for entry in &python[2..] {
+        if entry.ceilings.get("speed.warm_check_ms") != Some(&2000.0) {
+            return Err(format!("{} lost its 2 s warm-check ceiling", entry.id));
+        }
+        if entry.ceilings.get("speed.warm_check_peak_rss_mb") != Some(&512.0) {
+            return Err(format!("{} lost its 512 MiB peak-memory ceiling", entry.id));
+        }
+    }
     // Rows without a language stay Rust, so existing pins keep their meaning.
     if config
         .corpus
@@ -4730,8 +4934,8 @@ fn repo_view_rows_carry_the_corpus_language() -> Result<(), String> {
 /// TypeScript row (#10338). The exact pin is asserted so moving it is a
 /// deliberate two-place edit that re-asks whether the commit still edits
 /// TypeScript source and its test. Only repositories that complete are pinned
-/// (defu, ky, h3, execa): zod is partial on the commits tried, and a
-/// repository that stops short fails the completion gate even when new.
+/// (defu, ky, h3, execa, destr, zod): a repository that stops short fails the
+/// completion gate even when new, so a pinned diff must complete.
 #[test]
 fn corpus_pins_the_typescript_commit() -> Result<(), String> {
     let config = parse_config(include_str!(
@@ -4765,10 +4969,35 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
             "ed80079bc4e21a259fdc521c5a4b27126b308c9a",
             false,
         ),
+        (
+            "destr-typescript",
+            "f9c78d402556aba3e50f94d46176f36a0570acbd",
+            false,
+        ),
+        (
+            "zod-typescript",
+            "680d19f7d1e042e55934209caeb79bc843b94f44",
+            false,
+        ),
+        (
+            "valibot-typescript",
+            "e6b538386cfa4ccf8be6122f7f457ea7d4020325",
+            false,
+        ),
+        (
+            "remeda-typescript",
+            "d02c3bdb5e18cfa53e76f33f4ae525adce515379",
+            false,
+        ),
+        (
+            "hono-typescript",
+            "d54720da80134a180f5fe2dd98a7676cfc8f08b4",
+            false,
+        ),
     ];
     if typescript != expected {
         return Err(format!(
-            "expected only the verified defu, ky, h3 and execa TypeScript rows, got {typescript:?}"
+            "expected only the verified defu, ky, h3, execa, destr, zod, valibot, remeda and hono TypeScript rows, got {typescript:?}"
         ));
     }
     Ok(())

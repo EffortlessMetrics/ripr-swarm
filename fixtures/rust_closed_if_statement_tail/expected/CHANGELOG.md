@@ -12,3 +12,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_closed_if_statement_tail (2)
+
+Reason:
+RIPR-SPEC-0108: a self-closed if statement no longer lends the next line as a branch value (#10880); rebased on main's reworded human output
+
+Command:
+`cargo xtask goldens bless rust_closed_if_statement_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

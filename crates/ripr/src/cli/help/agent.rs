@@ -11,7 +11,7 @@ Advanced and compatibility workflows:
   brief      Rank the seams in a working set so an agent starts at the strongest one.
   packet     Expand one visible seam into the existing agent seam packet JSON.
   card       Hand off one visible seam as the compact default repair card.
-  stub       Write a compiling Rust test stub for one gap, ready to fill and run.
+  stub       Write a compiling Rust test stub for one gap, ready to fill and run (Rust files only).
   verify     Compare before/after repo-exposure JSON for agent verification.
   verify-execute
              Run the one validated, bounded, read-only verify command that a packet names.
@@ -30,7 +30,8 @@ The same transaction with explicit phases:
   ripr agent repair --attempt ID --phase after
 
 From a Rust `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
-the finding prints) gives a ready-to-run test for that gap in one step.
+the finding prints) gives a ready-to-run test for that gap in one step. Stub
+generation supports Rust files only; a Python or TypeScript path exits `3`.
 
 `--seam-id` takes a seam ID from `ripr pilot --root .` or `ripr agent status`,
 and `--phase before` also accepts a `ripr check` finding ID (`probe:...` or
@@ -66,6 +67,9 @@ paths and shared command templates for the before snapshot, packet, brief,
 after snapshot, verify, and receipt steps. It remains advisory and static; it
 does not call an LLM API, run mutation testing, generate tests, edit files,
 change cache behavior, or touch LSP/MCP surfaces.
+
+A refusal (for example, an unknown seam or an unsupported language) exits `3`
+with the cause on stderr.
 "#;
 pub(super) const AGENT_BRIEF_HELP: &str = r#"Write a bounded brief for a coding agent over the current diff or change.
 
@@ -77,6 +81,8 @@ Options:
                    top level; `--root .` pins this directory.
   --diff PATH      Select a diff file and line-level working set. An existing
                    file typed relative to a member directory is bound to it.
+                   The path must stay under --root; a diff outside it is
+                   refused.
   --base REV       Derive the working set from a base revision.
   --files PATHS    Comma-separated repo-relative file paths; from a member
                    directory, existing files bind to that directory.
@@ -114,6 +120,9 @@ it renders one agent packet from an explicit agent-packet-eligible GapRecord
 without rerunning analysis. It remains advisory and static; it does not run
 mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
+
+A refusal (for example, an unknown seam or gap) exits `3` with the cause on
+stderr and empty stdout.
 "#;
 pub(super) const AGENT_CARD_HELP: &str = r#"Hand off one seam as the compact default repair card.
 
@@ -125,8 +134,9 @@ Options:
                    top level; `--root .` pins this directory.
   --seam-id ID     Select one visible seam by ID.
   --json           Emit the versioned repair_card.v1 JSON document. Without
-                   this flag the same typed fields render as a compact human
-                   summary.
+                   this flag the same typed fields render as a short plain
+                   brief; add the global `--verbose` for the full field list
+                   (producer, subject, non-claim, detail routes).
 
 The card command assembles the compact RepairCardV1 handoff for one seam: the
 changed behavior, the exact blocker, the instruction state, the edit cage, the
@@ -148,7 +158,7 @@ failures (an unreadable config or a failed probe) stay exit `2` with human
 prose only, like the sibling verify and repair commands.
 "#;
 
-pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for one gap, ready to fill and run.
+pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for one gap, ready to fill and run (Rust files only).
 
 Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE [--kind FAMILY]) [--write] [--json]
 
@@ -201,7 +211,7 @@ classification to pick the seam; after selection it looks up the inventory
 grip so the stub can disclose it. A strongly_gripped seam is still a
 scaffold (`state: ready`, exit 0): nothing is "configured off" — the seam is
 exposed because existing tests already discriminate it, so the disclosure
-says a stub would add nothing (only a class a user severity actually
+says the stub is an optional scaffold, not evidence of a missing discriminator (only a class a user severity actually
 disables is described as "configured off"). Side-effect and call-presence
 gaps, async, unsafe, and generic owners are refused with a named reason
 (exit `3`); under `--json` stdout
@@ -421,7 +431,9 @@ Options:
   --attempt ID         Select one durable repair attempt; valid for `after`
                        and `verify` (verify accepts only `--attempt`).
   --phase before|after|verify
-                       Which phase of the repair loop to run.
+                       Which phase of the repair loop to run. Defaults to
+                       `before` (start a new attempt); `after` and `verify`
+                       require an existing repair attempt.
   --python-repair-trust-manifest PATH
                        Bind this attempt to an accepted Python repair-trust
                        selection manifest; `before` only.
@@ -503,6 +515,9 @@ Environment variables:
                                     recapture. Presence enables tracing even
                                     if the value is empty or 0; it does not
                                     change any verdict.
+
+A named refusal exits `3` with the cause on stderr; usage and operational
+errors exit `2`.
 "#;
 
 #[cfg(test)]

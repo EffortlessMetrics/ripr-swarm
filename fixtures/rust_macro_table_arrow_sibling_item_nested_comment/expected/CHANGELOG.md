@@ -49,3 +49,42 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_macro_table_arrow_sibling_item_nested_comment (5)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless rust_macro_table_arrow_sibling_item_nested_comment --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_macro_table_arrow_sibling_item_nested_comment (6)
+
+Reason:
+RIPR-SPEC-0118 / docs/OUTPUT_SCHEMA.md: compose landed main fixture rows with 10192 hidden-row kind/reason naming and typed unresolved-edge guidance; JSON findings, classes, oracles and recommendations unchanged (golden-drift cosmetic-only)
+
+Command:
+`cargo xtask goldens bless rust_macro_table_arrow_sibling_item_nested_comment --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_macro_table_arrow_sibling_item_nested_comment (7)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless rust_macro_table_arrow_sibling_item_nested_comment --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -11,7 +11,7 @@
 //!   `ends_with` / `contains`, `str::strip_prefix` / `strip_suffix`
 //! - `chars().next()` / `chars().next_back()`
 //! - `char::len_utf8`
-//! - `Option::map_or` with a literal default and the identity closure
+//! - `Option::map_or` with an evaluated bounded default and the identity closure
 //!   (`|idx| idx`, `|c| c`)
 //! - `checked_add` / `checked_sub` on exact integers
 //! - bounded string slicing from exact indices on established UTF-8
@@ -115,6 +115,31 @@ pub(crate) fn evaluate_initializer(initializer: &str, inputs: &ExactInputs) -> E
     }
 }
 
+/// The folded decimal value of a literal-only integer expression (#10479):
+/// plain decimal literals joined by `+ - * / %` and parentheses, with no
+/// names, suffixes, signs or method calls. A bare literal is not an
+/// expression to fold, and an overflow, an
+/// underflow, a division by zero or a result at the arithmetic bound answers
+/// `None` through [`evaluate_initializer`]'s fail-closed arithmetic. The
+/// unwritten integer type could change a result beyond that bound.
+pub(crate) fn fold_literal_integer(expression: &str) -> Option<String> {
+    let text = expression.trim().trim_end_matches([',', ';']).trim();
+    let literal_only = text
+        .chars()
+        .all(|ch| ch.is_ascii_digit() || ch.is_whitespace() || "+-*/%()".contains(ch));
+    let has_operator = text.contains(['+', '-', '*', '/', '%']);
+    if !literal_only || !has_operator {
+        return None;
+    }
+    match evaluate_initializer(text, &ExactInputs::new()) {
+        EvalOutcome::Exact {
+            value: TypedValue::Index(folded),
+            ..
+        } => Some(folded.to_string()),
+        _ => None,
+    }
+}
+
 /// The exact value of a product of non-negative integers (#9329): factors
 /// joined by `*`, each a plain decimal literal or an identifier bound in
 /// `inputs` to a plain decimal. Nothing else is read: no parentheses, sums,
@@ -211,7 +236,16 @@ fn eval_expression(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) 
 /// observed equality row (credit) but never name a missing input, so a
 /// consumer that would otherwise turn "no row lands on the boundary" into a
 /// repair signal treats a chain using one as unknown instead.
-pub(crate) const CREDIT_ONLY_OPERATIONS: [&str; 3] = ["arith", "split_whitespace", "count"];
+pub(crate) const CREDIT_ONLY_OPERATIONS: [&str; 8] = [
+    "arith",
+    "split_whitespace",
+    "count",
+    "trim",
+    "trim_start",
+    "trim_end",
+    "to_lowercase",
+    "to_uppercase",
+];
 
 /// Results above this bound fail closed: the unwritten integer type of a
 /// literal-only expression could change the answer beyond it.
@@ -390,7 +424,7 @@ fn apply_method(
     };
     // Reject an unknown family before evaluating its arguments so the
     // named edge is the unsupported method itself, not its argument.
-    const EVALUATED_METHODS: [&str; 16] = [
+    const EVALUATED_METHODS: [&str; 21] = [
         "rfind",
         "find",
         "len",
@@ -407,6 +441,11 @@ fn apply_method(
         "next_back",
         "split_whitespace",
         "count",
+        "trim",
+        "trim_start",
+        "trim_end",
+        "to_lowercase",
+        "to_uppercase",
     ];
     if !EVALUATED_METHODS.contains(&name) {
         return Err(unsupported(&format!(
@@ -443,6 +482,15 @@ fn apply_method(
         (TypedValue::Str(value), "split_whitespace", None) => {
             TypedValue::Words(value.split_whitespace().map(str::to_string).collect())
         }
+        // Normalizers (#10838): exact over a literal row, so a trimmed or
+        // case-folded local resolves to the value the equality compares.
+        (TypedValue::Str(value), "trim", None) => TypedValue::Str(value.trim().to_string()),
+        (TypedValue::Str(value), "trim_start", None) => {
+            TypedValue::Str(value.trim_start().to_string())
+        }
+        (TypedValue::Str(value), "trim_end", None) => TypedValue::Str(value.trim_end().to_string()),
+        (TypedValue::Str(value), "to_lowercase", None) => TypedValue::Str(value.to_lowercase()),
+        (TypedValue::Str(value), "to_uppercase", None) => TypedValue::Str(value.to_uppercase()),
         (TypedValue::Words(words), "count", None) => TypedValue::Index(words.len()),
         (TypedValue::CharSeq(chars), "count", None) => TypedValue::Index(chars.len()),
         (TypedValue::Str(value), "starts_with", Some(TypedValue::Str(prefix))) => {
@@ -586,8 +634,8 @@ fn take_braced(text: &str) -> Option<(&str, &str)> {
     None
 }
 
-/// `Option::map_or(default, |param| param)`: only the literal default
-/// plus the identity closure are supported (`|idx| idx`).
+/// `Option::map_or(default, |param| param)`: the default must evaluate
+/// before selecting either option arm, as it does in Rust.
 fn eval_map_or(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> Option<EvalResult> {
     let dot = text.find(".map_or(")?;
     let (receiver_text, rest) = text.split_at(dot);
@@ -600,6 +648,14 @@ fn eval_map_or(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> O
         .strip_prefix('|')
         .and_then(|rest| rest.split_once('|'))
         .map(|(parameter, body)| (parameter.trim(), body.trim().trim_end_matches(';').trim()));
+    let receiver = match eval_expression(receiver_text, inputs, steps) {
+        Ok(value) => value,
+        Err(outcome) => return Some(Err(outcome)),
+    };
+    let default_value = match eval_expression(default_text.trim(), inputs, steps) {
+        Ok(value) => value,
+        Err(outcome) => return Some(Err(outcome)),
+    };
     let Some((parameter, body)) = identity_param else {
         return Some(Err(unsupported(
             "map_or closure is not the supported identity form",
@@ -610,10 +666,6 @@ fn eval_map_or(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> O
             "map_or closure body is not the identity (only `|p| p` is evaluated)",
         )));
     }
-    let receiver = match eval_expression(receiver_text, inputs, steps) {
-        Ok(value) => value,
-        Err(outcome) => return Some(Err(outcome)),
-    };
     if steps.len() >= MAX_CHAIN_STEPS {
         return Some(Err(unsupported(
             "chain depth exceeds the bounded step limit",
@@ -624,12 +676,8 @@ fn eval_map_or(text: &str, inputs: &ExactInputs, steps: &mut Vec<EvalStep>) -> O
         TypedValue::OptChar(Some(value)) => TypedValue::Char(value),
         TypedValue::OptStr(Some(value)) => TypedValue::Str(value),
         TypedValue::OptIndex(None) | TypedValue::OptChar(None) | TypedValue::OptStr(None) => {
-            // The default produced the value: the step is part of the
-            // provenance chain even on the None arm (#3295 review).
-            let default_value = match eval_expression(default_text.trim(), inputs, steps) {
-                Ok(value) => value,
-                Err(outcome) => return Some(Err(outcome)),
-            };
+            // The default was evaluated once, including its provenance,
+            // before selecting the None arm (#3295 review).
             steps.push(EvalStep {
                 operation: "map_or".to_string(),
                 detail: format!(
@@ -937,6 +985,50 @@ mod tests {
     }
 
     #[test]
+    fn literal_only_integer_expressions_fold_to_their_value() {
+        for (expression, folded) in [
+            ("8 * 100", "800"),
+            ("8 * 100,", "800"),
+            ("(2 + 2) * 200", "800"),
+            ("1000 - 200", "800"),
+            ("40 + 2", "42"),
+            ("2 + 3 * 4", "14"),
+        ] {
+            assert_eq!(
+                super::fold_literal_integer(expression).as_deref(),
+                Some(folded),
+                "{expression}"
+            );
+        }
+    }
+
+    #[test]
+    fn literal_folding_refuses_everything_that_is_not_plain_integer_arithmetic() {
+        for expression in [
+            "800",
+            "SCALE * 100",
+            "scale * 100",
+            "8u32 * 100",
+            "-8 * 100",
+            "1_000 * 2",
+            "100000 * 100000",
+            "5 - 6",
+            "5 / 0",
+            "5 % 0",
+            "\"a\".len() + 1",
+            "8 * 100 + x",
+            "",
+            "+",
+        ] {
+            assert_eq!(
+                super::fold_literal_integer(expression),
+                None,
+                "{expression}"
+            );
+        }
+    }
+
+    #[test]
     fn integer_arithmetic_fails_closed() {
         let table = &[("input", "\"abcde\""), ("n", "6")];
         for expression in [
@@ -978,6 +1070,36 @@ mod tests {
             evaluate_initializer("input.chars().count().count()", &inputs(table)),
             EvalOutcome::Unsupported { .. }
         ));
+    }
+
+    #[test]
+    fn string_normalizers_resolve_over_an_exact_text_row() {
+        let table = &[("label", "\" Alpha \"")];
+        for (expression, expected) in [
+            ("label.trim()", "Alpha"),
+            ("label.trim_start()", "Alpha "),
+            ("label.trim_end()", " Alpha"),
+            ("label.to_lowercase()", " alpha "),
+            ("label.to_uppercase()", " ALPHA "),
+            ("label.trim().to_lowercase()", "alpha"),
+        ] {
+            assert_eq!(
+                exact(expression, table),
+                TypedValue::Str(expected.into()),
+                "{expression}"
+            );
+        }
+        // A normalizer over a non-text receiver or with an argument stays
+        // unread, and the ASCII-only folds stay outside the families.
+        for expression in ["n.trim()", "label.trim(1)", "label.to_ascii_uppercase()"] {
+            assert!(
+                matches!(
+                    evaluate_initializer(expression, &inputs(&[("label", "\"x\""), ("n", "5")])),
+                    EvalOutcome::Unsupported { .. }
+                ),
+                "{expression}"
+            );
+        }
     }
 
     #[test]
@@ -1253,6 +1375,70 @@ mod tests {
             "not a supported operation chain"
         ));
         Ok(())
+    }
+
+    #[test]
+    fn map_or_validates_the_eager_default_on_some_and_none() {
+        for input in ["\"a:b\"", "\"ab\""] {
+            let table = &[("input", input), ("n", "0")];
+            assert!(matches_unsupported(
+                &evaluate_initializer("input.rfind(':').map_or(1 / n, |i| i)", &inputs(table)),
+                "divides by zero",
+            ));
+            assert!(matches_unsupported(
+                &evaluate_initializer("input.rfind(':').map_or(mystery(), |i| i)", &inputs(table)),
+                "not a supported operation chain",
+            ));
+        }
+    }
+
+    #[test]
+    fn map_or_keeps_eager_default_provenance_on_some_and_none() -> Result<(), String> {
+        for (input, literal_value) in [("\"a:b\"", 1), ("\"ab\"", 7)] {
+            let table = &[("input", input), ("n", "1")];
+            match evaluate_initializer("input.rfind(':').map_or(1 / n, |i| i)", &inputs(table)) {
+                EvalOutcome::Exact { value, provenance } => {
+                    assert_eq!(value, TypedValue::Index(1));
+                    let operations: Vec<_> = provenance
+                        .iter()
+                        .map(|step| step.operation.as_str())
+                        .collect();
+                    assert_eq!(operations, ["rfind", "arith", "map_or"]);
+                }
+                other => return Err(format!("expected exact, got {other:?}")),
+            }
+            assert_eq!(
+                exact("input.rfind(':').map_or(7, |i| i)", table),
+                TypedValue::Index(literal_value)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn map_or_preserves_receiver_and_default_failure_order() {
+        let table = &[("input", "\"a:b\""), ("n", "0")];
+        assert!(matches_unsupported(
+            &evaluate_initializer("input.mystery().map_or(1 / n, |i| i + 1)", &inputs(table)),
+            ".mystery(",
+        ));
+        assert!(matches_unsupported(
+            &evaluate_initializer("input.rfind(':').map_or(1 / n, |i| i + 1)", &inputs(table)),
+            "divides by zero",
+        ));
+    }
+
+    #[test]
+    fn map_or_refuses_opaque_eager_defaults_on_both_arms() {
+        for input in ["\"a:b\"", "\"ab\""] {
+            for default in ["tick()", "panic!(\"default\")"] {
+                let expression = format!("input.rfind(':').map_or({default}, |i| i)");
+                assert!(matches_unsupported(
+                    &evaluate_initializer(&expression, &inputs(&[("input", input)])),
+                    "not a supported operation chain",
+                ));
+            }
+        }
     }
 
     #[test]

@@ -101,6 +101,15 @@ pub(crate) fn build_gate_decision_report(
                         // a malformed or incomplete producer document.
                         config_errors.push(partial_error);
                         Value::Null
+                    } else if let Some(refusal_error) =
+                        refusal_input_error(&value, path, "gate input")
+                    {
+                        // #10733: a producer refusal (exit 2, empty findings,
+                        // `downstream_consumable: false`) is not a denominator
+                        // at all; fail closed instead of deriving `pass` from
+                        // zero evaluated records.
+                        config_errors.push(refusal_error);
+                        Value::Null
                     } else if let Some(producer_error) = pr_guidance_producer_error(&value, path) {
                         // The document is structurally valid but the producer
                         // disclosed it did not complete (status=error/incomplete/
@@ -125,7 +134,15 @@ pub(crate) fn build_gate_decision_report(
         }
         None => Value::Null,
     };
-    let gap_ledger = read_gap_ledger(input, &mut config_errors, &mut consumed);
+    let mut gap_ledger_coverage = None;
+    let mut gap_ledger_refusal: Vec<String> = Vec::new();
+    let gap_ledger = read_gap_ledger(
+        input,
+        &mut config_errors,
+        &mut consumed,
+        &mut gap_ledger_coverage,
+        &mut gap_ledger_refusal,
+    );
     warn_for_optional_json(
         &input.root,
         input.repo_exposure.as_ref(),
@@ -225,13 +242,40 @@ pub(crate) fn build_gate_decision_report(
     // so a baseline entry elsewhere is not evidence of resolution.
     let analysis_scope = if config_errors.is_empty() {
         match gap_ledger.as_ref() {
-            Some(records) => {
-                Some(crate::output::review_comments::gap_ledger_analysis_scope_json(records))
+            Some(records) => Some(
+                crate::output::review_comments::gap_ledger_analysis_scope_json(
+                    records,
+                    gap_ledger_coverage.as_ref(),
+                    &gap_ledger_refusal,
+                ),
+            ),
+            None => {
+                let scope = pr_guidance
+                    .get("analysis_scope")
+                    .filter(|scope| scope.is_object())
+                    .cloned();
+                // #9599: `rust_workspace_complete` is emitted only from a
+                // verified, fresh gap-ledger coverage disclosure. A PR
+                // guidance document never produced one, so a scope of that
+                // kind arriving here is dropped and the baseline stays
+                // fail-closed (not evaluated).
+                if scope
+                    .as_ref()
+                    .and_then(|scope| scope.get("scope"))
+                    .and_then(Value::as_str)
+                    == Some("rust_workspace_complete")
+                {
+                    warnings.push(
+                        "pr_guidance analysis_scope claimed rust_workspace_complete, which only \
+                         a verified fresh gap-ledger coverage disclosure may carry; the scope was \
+                         dropped and baselined gaps stay not evaluated"
+                            .to_string(),
+                    );
+                    None
+                } else {
+                    scope
+                }
             }
-            None => pr_guidance
-                .get("analysis_scope")
-                .filter(|scope| scope.is_object())
-                .cloned(),
         }
     } else {
         None
@@ -488,8 +532,10 @@ fn read_gap_ledger(
     input: &GateEvaluateInput,
     config_errors: &mut Vec<String>,
     consumed: &mut input::ConsumedInputHashes,
+    coverage: &mut Option<Value>,
+    refusal: &mut Vec<String>,
 ) -> Option<Vec<GapRecord>> {
-    input::read_gap_ledger_impl(input, config_errors, consumed)
+    input::read_gap_ledger_impl(input, config_errors, consumed, coverage, refusal)
 }
 
 fn read_recommendation_calibration(
@@ -1518,6 +1564,95 @@ fn partial_scope_input_error(value: &Value, path: &Path) -> Option<String> {
     }
 }
 
+/// The named producer refusal a check document discloses (#11161): the
+/// typed run status when the document carries a known one, the producer's
+/// own first limitation message, and its repair route. `Some` exactly when
+/// the document carries an explicit non-consumable record
+/// (`downstream_consumable: false` from either the `analysis_scope` or the
+/// `run_limitations[]` position) — the RIPR-SPEC-0362 refusal identity — so
+/// a complete, absent, or malformed document, or a consumable envelope
+/// without an outcome, yields `None` and keeps its downstream generic
+/// handling. Runs after the typed bounded/partial/incomplete checks in
+/// every consumer so those keep their own named repairs.
+#[derive(Debug, PartialEq)]
+pub(crate) struct ProducerRefusal {
+    pub(crate) status: Option<String>,
+    pub(crate) message: String,
+    pub(crate) repair_route: String,
+}
+
+/// See [`ProducerRefusal`].
+pub(crate) fn producer_refusal(value: &Value) -> Option<ProducerRefusal> {
+    if !discloses_non_consumable_record(value) {
+        return None;
+    }
+    let status = refusal_run_status(value).map(str::to_string);
+    // Message and route come from ONE refusal-bearing record so a
+    // multi-record envelope never pairs an unrelated message with the
+    // refusal's route: first the refusal-bearing `run_limitations[]` entry
+    // (non-consumable or carrying the refusal status), then any entry.
+    let limitations: Vec<&Value> = value
+        .get("run_limitations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .collect();
+    let non_empty = |record: &Value, key: &str| {
+        record
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_string)
+    };
+    let refusal_entry = limitations
+        .iter()
+        .find(|entry| {
+            entry.get("downstream_consumable").and_then(Value::as_bool) == Some(false)
+                || (status.is_some()
+                    && entry.get("run_status").and_then(Value::as_str) == status.as_deref())
+        })
+        .copied();
+    let scope = value.get("analysis_scope");
+    let scope_refuses = scope
+        .and_then(|scope| scope.get("downstream_consumable"))
+        .and_then(Value::as_bool)
+        == Some(false);
+    let message = refusal_entry
+        .and_then(|entry| non_empty(entry, "message"))
+        .or_else(|| {
+            if refusal_entry.is_none() {
+                limitations
+                    .iter()
+                    .find_map(|entry| non_empty(entry, "message"))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "no producer message recorded".to_string());
+    let repair_route = refusal_entry
+        .and_then(|entry| non_empty(entry, "repair_route"))
+        .or_else(|| {
+            scope
+                .filter(|_| scope_refuses || refusal_entry.is_none())
+                .and_then(|scope| non_empty(scope, "repair_route"))
+        })
+        .or_else(|| {
+            if refusal_entry.is_none() {
+                limitations
+                    .iter()
+                    .find_map(|entry| non_empty(entry, "repair_route"))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "not recorded".to_string());
+    Some(ProducerRefusal {
+        status,
+        message,
+        repair_route,
+    })
+}
+
 /// Whether a JSON document discloses the `limited_partial_scope` run state in
 /// any of the positions the run-state vocabulary uses.
 pub(crate) fn discloses_limited_partial_scope(value: &Value) -> bool {
@@ -1584,6 +1719,116 @@ fn findings_bound_input_error(value: &Value, path: &Path, role: &str) -> Option<
             crate::output::json::FINDINGS_BOUND_RUN_STATUS,
             role,
             crate::output::json::CHECK_FINDINGS_BYTES_ENV,
+        ))
+    } else {
+        None
+    }
+}
+
+/// Producer refusal run statuses: the typed identities the limited-check
+/// renderers emit when the producer refused to run (exit 2, nothing
+/// analyzed, empty findings, `downstream_consumable: false`). These are the
+/// scope guards (`crates/ripr/src/output/limited_check.rs`); the
+/// post-argv-parse refusal envelope (#6834) uses other typed identities and
+/// is caught by the generic non-consumable record check.
+const REFUSAL_RUN_STATUSES: [&str; 2] = ["diff_scope_oversized", "repo_scope_oversized"];
+
+fn as_refusal_run_status(status: &str) -> Option<&'static str> {
+    REFUSAL_RUN_STATUSES
+        .iter()
+        .find(|known| **known == status)
+        .copied()
+}
+
+/// The typed producer refusal status a document discloses, if any (#10733).
+/// Positions mirror `discloses_limited_partial_scope`: top-level
+/// `run_status`, `analysis_scope.run_status`, and
+/// `run_limitations[].run_status` / `category`.
+pub(crate) fn refusal_run_status(value: &Value) -> Option<&'static str> {
+    if let Some(status) = value
+        .get("run_status")
+        .and_then(Value::as_str)
+        .and_then(as_refusal_run_status)
+    {
+        return Some(status);
+    }
+    if let Some(status) = value
+        .pointer("/analysis_scope/run_status")
+        .and_then(Value::as_str)
+        .and_then(as_refusal_run_status)
+    {
+        return Some(status);
+    }
+    value
+        .get("run_limitations")
+        .and_then(Value::as_array)
+        .and_then(|limitations| {
+            limitations.iter().find_map(|entry| {
+                ["run_status", "category"].iter().find_map(|key| {
+                    entry
+                        .get(*key)
+                        .and_then(Value::as_str)
+                        .and_then(as_refusal_run_status)
+                })
+            })
+        })
+}
+
+/// Whether any disclosed record of the producer run is explicitly
+/// non-consumable (`downstream_consumable: false`) in the positions the
+/// check schema opens for it: `analysis_scope` and `run_limitations[]`
+/// entries (#10733). Complete producers never write the member, so an
+/// explicit `false` is a refusal regardless of whether this reader knows
+/// the typed run status.
+pub(crate) fn discloses_non_consumable_record(value: &Value) -> bool {
+    value
+        .pointer("/analysis_scope/downstream_consumable")
+        .and_then(Value::as_bool)
+        == Some(false)
+        || value
+            .get("run_limitations")
+            .and_then(Value::as_array)
+            .is_some_and(|limitations| {
+                limitations.iter().any(|entry| {
+                    entry.get("downstream_consumable").and_then(Value::as_bool) == Some(false)
+                })
+            })
+}
+
+/// Fail-closed refusal for gate inputs that disclose a producer refusal
+/// (#10733). A refused run produced no denominator at all, so it must never
+/// reach the evaluation — an empty refusal envelope would otherwise pass as
+/// a zero-finding run. Names the typed refusal status when the document
+/// carries one; otherwise names the generic `downstream_consumable: false`
+/// record. Runs after the typed bounded/partial/incomplete checks so those
+/// keep their own named repairs; the generic check also sees partial and
+/// bounded envelopes, which is exactly why the order matters.
+///
+/// RIPR-SPEC-0362 identity: the explicit `downstream_consumable: false` is
+/// required — from either the `analysis_scope` or the `run_limitations[]`
+/// position. A known refusal status WITHOUT the explicit flag is the healthy
+/// complete shape (a complete producer never writes the member), so it is
+/// admitted here, exactly like any other consumable document; refusing it
+/// would report a refusal the document does not disclose.
+pub(crate) fn refusal_input_error(value: &Value, path: &Path, role: &str) -> Option<String> {
+    if !discloses_non_consumable_record(value) {
+        return None;
+    }
+    if let Some(status) = refusal_run_status(value) {
+        Some(format!(
+            "gate input {} discloses a producer refusal (run_status: {status}, \
+             downstream_consumable: false); nothing was analyzed, so a refusal is never a \
+             {role} — follow the refusal's repair_route (narrower diff or scope budget) \
+             and re-run before gating",
+            display_path(path),
+        ))
+    } else if discloses_non_consumable_record(value) {
+        Some(format!(
+            "gate input {} discloses a non-consumable producer record \
+             (downstream_consumable: false) with no known typed run status; a refused or \
+             limited document is never a {role} — follow its repair_route and re-run before \
+             gating",
+            display_path(path),
         ))
     } else {
         None

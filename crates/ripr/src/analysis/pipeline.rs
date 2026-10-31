@@ -45,6 +45,89 @@ fn is_preview_language(language: LanguageId) -> bool {
     )
 }
 
+/// Reason prefix for a language adapter that panicked mid-run (#11132).
+///
+/// A panic or unwind inside an adapter, or inside an AST consumer it drives
+/// (including rayon workers, which re-raise on the calling thread), must not
+/// end the process. Native stack exhaustion is a signal, not an unwind, and
+/// cannot be caught here: the per-language pre-parse nesting budgets keep
+/// that class out of the parsers.
+pub(crate) const ADAPTER_PANIC_REASON_PREFIX: &str = "static limit adapter_panicked: ";
+
+/// Run one language adapter call so a panic becomes a typed `Err`.
+///
+/// The `Err` rides the existing per-language failure channel: a preview
+/// language is recorded as a `Failed` `LanguageRun` with the sibling
+/// languages' findings intact, and a Rust failure propagates as the typed
+/// analysis failure it already was. The adapter's output is discarded
+/// whole, never partially merged, so a contained failure can never carry
+/// findings, let alone an actionable repair signal. The panic payload is
+/// not echoed: it can quote repository text, and the installed panic hook
+/// has already reported it on stderr.
+fn contain_adapter_panic<T>(
+    options: &AnalysisOptions,
+    language: LanguageId,
+    run: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let contained = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        #[cfg(test)]
+        injected_adapter_panic::fire(&options.root, language);
+        run()
+    }));
+    #[cfg(not(test))]
+    let _ = options;
+    match contained {
+        Ok(result) => result,
+        Err(_payload) => Err(format!(
+            "{ADAPTER_PANIC_REASON_PREFIX}the {} adapter stopped on an internal error while analyzing this workspace; its findings are unavailable for this run",
+            language.as_str()
+        )),
+    }
+}
+
+/// Test-only fault injection for [`contain_adapter_panic`] (#11132): raise a
+/// panic inside the adapter call for an armed `(root, language)`, so tests
+/// drive the production containment through check, pilot, LSP and MCP.
+/// Keyed by workspace root so concurrent tests never see each other's arming.
+#[cfg(test)]
+pub(crate) mod injected_adapter_panic {
+    use super::LanguageId;
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static ARMED: Mutex<BTreeSet<(PathBuf, String)>> = Mutex::new(BTreeSet::new());
+
+    /// Disarms on drop.
+    pub(crate) struct Armed(PathBuf, String);
+
+    impl Drop for Armed {
+        fn drop(&mut self) {
+            if let Ok(mut armed) = ARMED.lock() {
+                armed.remove(&(self.0.clone(), self.1.clone()));
+            }
+        }
+    }
+
+    pub(crate) fn arm(root: &Path, language: LanguageId) -> Armed {
+        let key = (root.to_path_buf(), language.as_str().to_string());
+        if let Ok(mut armed) = ARMED.lock() {
+            armed.insert(key.clone());
+        }
+        Armed(key.0, key.1)
+    }
+
+    pub(super) fn fire(root: &Path, language: LanguageId) {
+        let due = ARMED
+            .lock()
+            .map(|armed| armed.contains(&(root.to_path_buf(), language.as_str().to_string())))
+            .unwrap_or(false);
+        if due {
+            std::panic::resume_unwind(Box::new("injected language adapter panic (#11132)"));
+        }
+    }
+}
+
 #[cfg(test)]
 static DIFF_PIPELINE_ENTRIES: std::sync::Mutex<
     std::collections::BTreeMap<std::path::PathBuf, usize>,
@@ -62,6 +145,28 @@ static DIFF_AGGREGATES: std::sync::Mutex<
 static REPO_AGGREGATES: std::sync::Mutex<
     std::collections::BTreeMap<std::path::PathBuf, DiffLanguageAggregate>,
 > = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Changed-file counts per routed language wire label, JavaScript-family
+/// files counted apart from TypeScript. Path routing only: it needs no
+/// adapter, so it names the languages a diff touched whether or not their
+/// adapter ran.
+fn routed_changed_file_counts(
+    files: &[diff::ChangedFile],
+) -> std::collections::BTreeMap<&'static str, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for file in files {
+        let Some(language) = route(&file.path) else {
+            continue;
+        };
+        let label = if language == LanguageId::TypeScript && is_javascript_family_path(&file.path) {
+            LanguageId::JavaScript.as_str()
+        } else {
+            language.as_str()
+        };
+        *counts.entry(label).or_insert(0) += 1;
+    }
+    counts
+}
 
 /// Language labels the changed files route to, with JavaScript-family files
 /// kept apart from TypeScript (the one adapter reads both, the outcomes do
@@ -164,6 +269,9 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     if let Some(subject) = options.git_candidate.as_ref() {
         let resolved = super::git_candidate_execution::resolve(subject, options.git_timeout)
             .map_err(|error| error.to_string())?;
+        // #10796: the candidate subject is the requested input source; the
+        // exact-tree identity below is what a deadline refusal may echo.
+        super::publish_input_source_fact(super::InputSource::GitCandidate);
         if crate::is_verbose() {
             eprintln!(
                 "ripr: immutable git candidate resolved: {}",
@@ -219,6 +327,16 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
         options.diff_file.as_ref(),
         options.git_timeout,
     )?;
+    // #10796: publish only what this completed load actually resolved; a
+    // supplied diff ignores `base`, so its base facts stay unavailable.
+    super::publish_loaded_input_facts(
+        if options.diff_file.is_some() {
+            super::InputSource::SuppliedDiff
+        } else {
+            super::InputSource::Committed
+        },
+        &loaded,
+    );
     cancellation::checkpoint()?;
     // A committed-history diff names lines as they exist at HEAD, so the
     // adapters must read HEAD content for tracked files with uncommitted
@@ -374,6 +492,9 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options.base.as_deref(),
         options.git_timeout,
     )?;
+    // #10796: the working-tree load completed and holds this diff's base and
+    // merge-base origin; publish them for a possible deadline refusal.
+    super::publish_loaded_input_facts(super::InputSource::WorkingTree, &loaded);
     cancellation::checkpoint()?;
     // #7716: consumers that render neither the untracked-routed-files
     // naming (RIPR-SPEC-0116) nor the analyzed-revisions naming (#5997) —
@@ -679,7 +800,7 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
     }
     let summary = summary.join(", ");
     let verdict = if truncated_paths.is_empty() {
-        "The empty result is correct — ripr cannot analyze non-source files.".to_string()
+        "Nothing was analyzed: ripr cannot analyze non-source files, so this is not a statement about changed behavior.".to_string()
     } else {
         let listed = truncated_paths
             .iter()
@@ -1289,6 +1410,10 @@ fn run_pipeline_for_diff_text_with_language_config(
     if out_of_scope.count > 0 && changed_files.is_empty() {
         return Err(scope_matched_nothing_error(diff_scope, &out_of_scope));
     }
+    // #10796: the scoped intake completed — publish the adapter-facing scoped
+    // file count and the out-of-scope count. These are intake quantities, not
+    // raw Git path counts and not adapter result counts.
+    super::publish_scoped_intake_facts(changed_files.len(), out_of_scope.count);
     let mut limitations = parsed_diff
         .limitations
         .into_iter()
@@ -1350,13 +1475,15 @@ fn run_pipeline_for_diff_text_with_language_config(
     // partial_budget_invalid), not a per-language advisory gap.
     if languages.contains(&LanguageId::Rust) {
         cancellation::checkpoint()?;
-        let result = RustAdapter.analyze_diff_for_languages_with_rust_config(
-            options,
-            oracle_policy,
-            &analysis_changed_files,
-            languages,
-            rust_config,
-        )?;
+        let result = contain_adapter_panic(options, LanguageId::Rust, || {
+            RustAdapter.analyze_diff_for_languages_with_rust_config(
+                options,
+                oracle_policy,
+                &analysis_changed_files,
+                languages,
+                rust_config,
+            )
+        })?;
         cancellation::checkpoint()?;
         if result.skipped_files > 0 {
             // Name the files and the rule that matched: most repositories
@@ -1482,6 +1609,12 @@ fn run_pipeline_for_diff_text_with_language_config(
     // counts are merged once per adapter family so enabling both ids does not
     // retain each finding twice.
     let mut typescript_family_merged = false;
+    // #10725: per-language persistent fact-cache admissions, rendered into
+    // the verbose reuse line by `app::check`.
+    let mut preview_fact_caches: Vec<(
+        LanguageId,
+        crate::analysis::language::PreviewFactCacheStats,
+    )> = Vec::new();
     for language in languages {
         cancellation::checkpoint()?;
         // Non-abort contract (Campaign 31 PR 10, #1403): a preview-language
@@ -1492,19 +1625,43 @@ fn run_pipeline_for_diff_text_with_language_config(
             continue;
         }
         let attempted = match language {
-            LanguageId::TypeScript | LanguageId::JavaScript => analyze_typescript_diff(
-                options,
-                oracle_policy,
-                preview_changed_files,
-                &language_config.typescript.handwritten_files,
-            ),
-            LanguageId::Python => analyze_python_diff(
-                options,
-                oracle_policy,
-                preview_changed_files,
-                &language_config.python.handwritten_files,
-            ),
-            LanguageId::Perl => analyze_perl_diff(options, oracle_policy, preview_changed_files),
+            LanguageId::TypeScript | LanguageId::JavaScript => {
+                contain_adapter_panic(options, *language, || {
+                    analyze_typescript_diff(
+                        options,
+                        oracle_policy,
+                        preview_changed_files,
+                        &language_config.typescript.handwritten_files,
+                    )
+                })
+            }
+            // A diff that touches no Python path gives the adapter nothing to
+            // classify: its findings come only from changed Python files, and
+            // the arm below drops its limitations for a language the diff does
+            // not touch. Indexing the whole Python workspace for that result
+            // was most of a warm Rust check in a repository that bundles Python
+            // tooling (servo's 200k-file `tests/wpt`: 3.5 s of 3.6 s).
+            // Without the adapter compiled in, the unavailable-language error
+            // below is the recorded outcome, so only skip a real adapter.
+            #[cfg(feature = "lang-python")]
+            LanguageId::Python
+                if !preview_changed_files
+                    .iter()
+                    .any(|file| route(&file.path) == Some(LanguageId::Python)) =>
+            {
+                Ok(untouched_preview_result())
+            }
+            LanguageId::Python => contain_adapter_panic(options, *language, || {
+                analyze_python_diff(
+                    options,
+                    oracle_policy,
+                    preview_changed_files,
+                    &language_config.python.handwritten_files,
+                )
+            }),
+            LanguageId::Perl => contain_adapter_panic(options, *language, || {
+                analyze_perl_diff(options, oracle_policy, preview_changed_files)
+            }),
             LanguageId::Rust => {
                 continue;
             }
@@ -1546,7 +1703,14 @@ fn run_pipeline_for_diff_text_with_language_config(
                     .any(|file| route(&file.path) == Some(adapter_language));
                 let keeps_limitations =
                     reads_only_supplied_evidence || diff_touches_language || produced_findings;
-                diff_outcomes.extend(LanguageAnalysisOutcomeV1::from_diff_result(
+                // Unreadable (for example non-UTF-8) unchanged sources are
+                // counted in `skipped_files`, never in `result.limitations`.
+                // The language child turns that count into a partial
+                // denominator, so a diff that depends on this language must
+                // carry the matching top-level limitation; a diff that
+                // cannot depend on it keeps the child out of scope.
+                let unread_sources = result.skipped_files > 0;
+                let outcomes = LanguageAnalysisOutcomeV1::from_diff_result(
                     *language,
                     &result,
                     &if keeps_limitations {
@@ -1556,9 +1720,33 @@ fn run_pipeline_for_diff_text_with_language_config(
                     },
                     &routed_outcome_labels(preview_changed_files),
                     &scope_label,
-                ));
+                );
+                diff_outcomes.extend(if unread_sources && !keeps_limitations {
+                    outcomes
+                        .iter()
+                        .map(LanguageAnalysisOutcomeV1::without_scope)
+                        .collect()
+                } else {
+                    outcomes
+                });
+                // A changed file that cannot be read already reports its own
+                // path-bearing `language_scope_unsupported`; do not stack a
+                // pathless duplicate in front of it.
+                let already_disclosed = result.limitations.iter().any(|limitation| {
+                    limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                });
+                if unread_sources && keeps_limitations && !already_disclosed {
+                    limitations.push(unread_sources_limitation(*language, result.skipped_files)?);
+                }
                 if repeat_typescript_pass {
                     continue;
+                }
+                // #10725: the typescript/javascript family merges above, so
+                // only the first pass's admissions are recorded — the repeat
+                // pass served everything from the caches the first pass
+                // seeded and would double-count.
+                if result.preview_fact_cache.did_work() {
+                    preview_fact_caches.push((adapter_language, result.preview_fact_cache.clone()));
                 }
                 value_origins.extend(result.value_origins);
                 findings.extend(result.findings);
@@ -1866,7 +2054,13 @@ fn run_pipeline_for_diff_text_with_language_config(
             .all(|(_, count)| *count == 0)
         && !diff_text.trim().is_empty()
     {
-        eprintln!("{}", zero_file_diff_disclosure(diff_text));
+        eprintln!(
+            "{}",
+            zero_file_diff_disclosure(
+                diff_text,
+                options.diff_file.as_deref() == Some(std::path::Path::new("-"))
+            )
+        );
     }
 
     // Disclose a truncated diff stream (#4375): at least one file section
@@ -1992,6 +2186,28 @@ fn run_pipeline_for_diff_text_with_language_config(
     let mut summary_result = summary::summarize_findings(rust_changed_files, &findings);
     for (language, files) in changed_files_by_language {
         summary_result.record_changed_files_by_language(language.as_str(), files);
+    }
+    // #10719: a routed language whose adapter produced no count (not enabled,
+    // not compiled in, or it errored) still changed files. The summary must
+    // list them, so a consumer reading `summary` alone never sees "no files
+    // changed" for a diff that `analysis_outcome` reports as skipped or
+    // failed. An adapter that returned a result keeps its own count
+    // (including an honest zero and its own generated/excluded-path
+    // denominator), so only labels outside every recorded adapter family are
+    // added here.
+    let family = |label: &str| match LanguageId::from_wire(label) {
+        Some(LanguageId::JavaScript) => Some(LanguageId::TypeScript),
+        other => other,
+    };
+    let recorded: Vec<LanguageId> = summary_result
+        .changed_files_by_language
+        .iter()
+        .filter_map(|count| family(&count.language))
+        .collect();
+    for (label, files) in routed_changed_file_counts(&analysis_changed_files) {
+        if !family(label).is_some_and(|family| recorded.contains(&family)) {
+            summary_result.record_changed_files_by_language(label, files);
+        }
     }
 
     limitations.extend(limitations_from_language_runs(&language_runs)?);
@@ -2125,6 +2341,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         rust_diagnostic_origins,
         rust_consumed_sources,
         language_view: Some(language_view),
+        preview_fact_caches,
     })
 }
 
@@ -2263,8 +2480,9 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         // failures are recorded, Rust failures still propagate.
         if !is_preview_language(*language) {
             // Rust (stable) failures propagate via `?`.
-            let result =
-                RustAdapter.analyze_repo_with_rust_config(options, oracle_policy, rust_config)?;
+            let result = contain_adapter_panic(options, LanguageId::Rust, || {
+                RustAdapter.analyze_repo_with_rust_config(options, oracle_policy, rust_config)
+            })?;
             cancellation::checkpoint()?;
             let skipped_reason = (result.skipped_files > 0).then(|| {
                 format!(
@@ -2289,13 +2507,21 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             continue;
         }
         let attempted = match language {
-            LanguageId::TypeScript | LanguageId::JavaScript => analyze_typescript_repo(
-                options,
-                oracle_policy,
-                &language_config.typescript.handwritten_files,
-            ),
-            LanguageId::Python => analyze_python_repo(options, oracle_policy),
-            LanguageId::Perl => analyze_perl_repo(options, oracle_policy),
+            LanguageId::TypeScript | LanguageId::JavaScript => {
+                contain_adapter_panic(options, *language, || {
+                    analyze_typescript_repo(
+                        options,
+                        oracle_policy,
+                        &language_config.typescript.handwritten_files,
+                    )
+                })
+            }
+            LanguageId::Python => contain_adapter_panic(options, *language, || {
+                analyze_python_repo(options, oracle_policy)
+            }),
+            LanguageId::Perl => contain_adapter_panic(options, *language, || {
+                analyze_perl_repo(options, oracle_policy)
+            }),
             LanguageId::Rust => {
                 continue;
             }
@@ -2409,6 +2635,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         rust_diagnostic_origins,
         rust_consumed_sources,
         language_view: Some(language_view),
+        preview_fact_caches: Vec::new(),
     })
 }
 
@@ -2868,6 +3095,27 @@ fn analyze_typescript_diff(
     unavailable_language(LanguageId::TypeScript)
 }
 
+/// What a preview adapter reports for a diff that touches none of its
+/// language, without indexing the workspace: no findings, no limitations, no
+/// changed files and no cache work.
+#[cfg(feature = "lang-python")]
+fn untouched_preview_result() -> LanguageDiffResult {
+    LanguageDiffResult {
+        value_origins: Default::default(),
+        findings: Vec::new(),
+        harness_projections: Vec::new(),
+        changed_files: 0,
+        candidate_line_count: 0,
+        changed_files_by_language: Vec::new(),
+        partial_scope: None,
+        skipped_files: 0,
+        limitations: Vec::new(),
+        rust_diagnostic_origins: Default::default(),
+        rust_consumed_sources: Default::default(),
+        preview_fact_cache: crate::analysis::language::PreviewFactCacheStats::zero_work(),
+    }
+}
+
 #[cfg(feature = "lang-python")]
 fn analyze_python_diff(
     options: &AnalysisOptions,
@@ -2944,6 +3192,10 @@ fn perl_run_status_for_err(reason: &str) -> LanguageRunStatus {
     if reason.starts_with(super::language::PERL_PRODUCER_FAILURE_REASON_PREFIX) {
         return LanguageRunStatus::Failed;
     }
+    // #11132: a contained adapter panic is a failed run, not an absent one.
+    if reason.starts_with(ADAPTER_PANIC_REASON_PREFIX) {
+        return LanguageRunStatus::Failed;
+    }
     if reason.starts_with("ingestion:") {
         LanguageRunStatus::Invalid
     } else {
@@ -3018,6 +3270,28 @@ fn rebase_finding_paths_to_repository(
     for finding in &mut result.findings {
         finding.probe.location.file = rebase(&finding.probe.location.file);
     }
+}
+
+/// The analysis-outcome limitation for unchanged source files a preview
+/// adapter could not read (non-UTF-8, permissions): tests living in them are
+/// not part of the evidence, so the result cannot claim a complete denominator.
+fn unread_sources_limitation(
+    language: LanguageId,
+    unread: usize,
+) -> Result<AnalysisLimitation, String> {
+    AnalysisLimitation::new(
+        AnalysisLimitationKind::LanguageScopeUnsupported,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            "Restore read access to the files or re-encode them as UTF-8, then re-run the analysis.",
+        )?,
+    )
+    .with_affected_items(unread as u64)?
+    .with_detail(format!(
+        "{unread} {} source file(s) could not be read (permissions or non-UTF-8 encoding) and are not part of the evidence; a test in them is not considered.",
+        language.as_str()
+    ))
 }
 
 /// The analysis-outcome limitation for a `limited_partial_scope` run. Its
@@ -3105,11 +3379,15 @@ fn is_binary_sentinel(line: &str) -> bool {
 }
 
 /// Stderr note for a non-empty diff that parsed to zero changed files.
-fn zero_file_diff_disclosure(diff_text: &str) -> &'static str {
+fn zero_file_diff_disclosure(diff_text: &str, from_stdin: bool) -> &'static str {
     if has_only_non_text_changes(diff_text) {
         "ripr: the diff changes only binary files or file modes; there are no text hunks to analyze. \
          This empty result reflects an empty analysis scope, not sufficient tests. \
          Run ripr on a diff that includes the source changes."
+    } else if from_stdin {
+        "ripr: the diff input contained no parseable file changes (0 hunks, 0 files). \
+         If this is unexpected, verify the diff piped on stdin is a valid unified diff. \
+         The empty result may not reflect sufficient tests \u{2014} it reflects an empty analysis scope."
     } else {
         "ripr: the diff input contained no parseable file changes (0 hunks, 0 files). \
          If this is unexpected, verify the --diff path points to a valid unified diff. \
@@ -3221,7 +3499,7 @@ mod tests {
         if message.contains(".md, .md") {
             return Err(format!("extensions must be deduplicated: {message}"));
         }
-        if !message.contains("empty result is correct") {
+        if !message.contains("Nothing was analyzed") {
             return Err(format!("disclosure must carry the non-claim: {message}"));
         }
         Ok(())
@@ -3269,7 +3547,7 @@ mod tests {
         if message.contains("(.)") {
             return Err(format!("disclosure must not render a bare `.`: {message}"));
         }
-        if message.contains("empty result is correct") {
+        if message.contains("Nothing was analyzed") {
             return Err(format!(
                 "a truncated source header must not be called correct: {message}"
             ));
@@ -3293,7 +3571,7 @@ mod tests {
                 "disclosure must name path and extension: {message}"
             ));
         }
-        if !message.contains("empty result is correct") {
+        if !message.contains("Nothing was analyzed") {
             return Err(format!("genuine non-source keeps the non-claim: {message}"));
         }
         Ok(())
@@ -4076,7 +4354,7 @@ mod tests {
         let files = vec![changed_file("pkg/calc.go"), changed_file("README.md")];
         let message = non_source_disclosure_message(&files)
             .ok_or_else(|| "a Go-only diff must disclose".to_string())?;
-        assert!(!message.contains("empty result is correct"), "{message}");
+        assert!(!message.contains("Nothing was analyzed"), "{message}");
         assert!(
             message.contains("(Go)") && message.contains("not a clean pass"),
             "{message}"
@@ -4445,10 +4723,13 @@ mod tests {
     #[test]
     fn zero_file_disclosure_names_non_text_diffs_and_keeps_generic_wording() {
         let binary = "diff --git a/x.bin b/x.bin\nBinary files a/x.bin and b/x.bin differ\n";
-        assert!(zero_file_diff_disclosure(binary).contains("no text hunks to analyze"));
-        let garbage = zero_file_diff_disclosure("not a diff\n");
-        assert!(garbage.contains("valid unified diff"));
+        assert!(zero_file_diff_disclosure(binary, false).contains("no text hunks to analyze"));
+        let garbage = zero_file_diff_disclosure("not a diff\n", false);
+        assert!(garbage.contains("verify the --diff path points to a valid unified diff"));
         assert!(!garbage.contains("no text hunks"));
+        let piped = zero_file_diff_disclosure("not a diff\n", true);
+        assert!(piped.contains("verify the diff piped on stdin is a valid unified diff"));
+        assert!(!piped.contains("--diff path"));
     }
 
     #[test]
@@ -4537,7 +4818,7 @@ mod tests {
     #[test]
     fn truncated_diff_disclosure_names_truncated_sections_and_truncation() -> Result<(), String> {
         // #4375: the stderr disclosure names the exact evidence and never
-        // claims the empty result is correct. Per-section counts, so the
+        // claims that nothing was analyzed. Per-section counts, so the
         // message stays truthful for mixed diffs.
         let message = truncated_diff_disclosure_message(2).ok_or_else(|| {
             "a positive truncated-section count must produce the disclosure".to_string()
@@ -4551,8 +4832,8 @@ mod tests {
             "the disclosure must name the truncation, got: {message}"
         );
         assert!(
-            !message.contains("The empty result is correct"),
-            "a truncated stream must never claim the empty result is correct, got: {message}"
+            !message.contains("Nothing was analyzed"),
+            "a truncated stream must never claim that nothing was analyzed, got: {message}"
         );
         assert!(
             truncated_diff_disclosure_message(0).is_none(),
@@ -5739,6 +6020,183 @@ mod tests {
         Ok(())
     }
 
+    /// Workspace for the #11132 containment tests: a Rust file and a Python
+    /// file both changed by one diff.
+    fn mixed_panic_workspace(
+        name: &str,
+    ) -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+        let root = temp_root(name)?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+        )?;
+        write(&root.join("calc.py"), "def double(x):\n    return x * 2\n")?;
+        let diff_file = root.join("mixed.diff");
+        write(
+            &diff_file,
+            "diff --git a/src/lib.rs b/src/lib.rs\n\
+             --- /dev/null\n\
+             +++ b/src/lib.rs\n\
+             @@ -0,0 +1 @@\n\
+             +pub fn discount(price: u32) -> u32 { price / 2 }\n\
+             diff --git a/calc.py b/calc.py\n\
+             --- /dev/null\n\
+             +++ b/calc.py\n\
+             @@ -0,0 +2 @@\n\
+             +def double(x):\n\
+             +    return x * 2\n",
+        )?;
+        Ok((root, diff_file))
+    }
+
+    /// #11132 (diff scope, shared by `check`, `pilot`, the LSP sidecar and the
+    /// MCP refresh): a panic inside a preview adapter is a typed `Failed`
+    /// language run. The process survives, the sibling language's findings are
+    /// intact, and the failed adapter contributes nothing, so nothing from it
+    /// can be an actionable repair signal.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn diff_pipeline_contains_a_preview_adapter_panic() -> Result<(), String> {
+        let (root, diff_file) = mixed_panic_workspace("adapter-panic-preview-diff")?;
+        let options = aggregate_options(root.clone(), diff_file);
+        let languages = [LanguageId::Rust, LanguageId::Python];
+        let policy = OraclePolicy::default();
+
+        // Control: without the injected panic the Python adapter produces its
+        // own findings, so the absence below is the containment, not a
+        // fixture that never reached Python.
+        let control = run_diff_pipeline_with_oracle_policy(&options, &policy, &languages)?;
+        assert!(
+            control
+                .findings
+                .iter()
+                .any(|finding| finding.language == Some(crate::domain::LanguageId::Python)),
+            "control run must reach the Python adapter: {:?}",
+            control.findings
+        );
+        assert!(
+            !control
+                .language_runs
+                .iter()
+                .any(|run| run.language == "python"),
+            "control run records no failed Python run"
+        );
+
+        let _armed = super::injected_adapter_panic::arm(&root, LanguageId::Python);
+        let analysis = run_diff_pipeline_with_oracle_policy(&options, &policy, &languages)?;
+        let python_run = analysis
+            .language_runs
+            .iter()
+            .find(|run| run.language == "python")
+            .ok_or_else(|| format!("no python run in {:?}", analysis.language_runs))?;
+        assert_eq!(python_run.status, super::LanguageRunStatus::Failed);
+        let reason = python_run.reason.as_deref().unwrap_or_default();
+        assert!(
+            reason.starts_with(super::ADAPTER_PANIC_REASON_PREFIX),
+            "typed adapter_panicked reason, got {reason:?}"
+        );
+        assert!(
+            !analysis
+                .findings
+                .iter()
+                .any(|finding| finding.language == Some(crate::domain::LanguageId::Python)),
+            "a contained adapter yields no findings, actionable or otherwise"
+        );
+        assert!(
+            analysis.summary.changed_rust_files >= 1,
+            "the sibling Rust language still completes"
+        );
+        assert!(
+            !analysis
+                .language_runs
+                .iter()
+                .any(|run| run.language == "rust"),
+            "Rust ran to completion"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #11132: the Rust adapter panics are the typed analysis failure Rust
+    /// failures already are (`diff_scope_oversized`, a bad root), never an
+    /// unwind through the caller and never a result without Rust evidence.
+    #[test]
+    fn diff_pipeline_turns_a_rust_adapter_panic_into_a_typed_failure() -> Result<(), String> {
+        let (root, diff_file) = mixed_panic_workspace("adapter-panic-rust-diff")?;
+        let options = aggregate_options(root.clone(), diff_file);
+        let _armed = super::injected_adapter_panic::arm(&root, LanguageId::Rust);
+        let result = run_diff_pipeline_with_oracle_policy(
+            &options,
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Python],
+        );
+        let Err(error) = result else {
+            return Err("a Rust adapter panic must be an Err, not a result".to_string());
+        };
+        let message = error.to_string();
+        assert!(
+            message.starts_with(super::ADAPTER_PANIC_REASON_PREFIX)
+                && message.contains("the rust adapter"),
+            "typed adapter_panicked failure, got {message:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #11132 (repo scope, `ripr pilot` and repo-mode checks): the same
+    /// containment for the whole-workspace producers.
+    #[test]
+    fn repo_pipeline_contains_adapter_panics() -> Result<(), String> {
+        let root = temp_root("adapter-panic-repo")?;
+        write(
+            &root.join("src/lib.rs"),
+            "pub fn discount(price: u32) -> u32 { price / 2 }\n",
+        )?;
+        write(&root.join("calc.py"), "def double(x):\n    return x * 2\n")?;
+        let mut options = aggregate_options(root.clone(), root.join("unused.diff"));
+        options.diff_file = None;
+        options.mode = AnalysisMode::Deep;
+        let languages = [LanguageId::Rust, LanguageId::Python];
+        let policy = OraclePolicy::default();
+
+        {
+            let _armed = super::injected_adapter_panic::arm(&root, LanguageId::Python);
+            let analysis = run_repo_pipeline_with_oracle_policy(&options, &policy, &languages)?;
+            let python_run = analysis
+                .language_runs
+                .iter()
+                .find(|run| run.language == "python")
+                .ok_or_else(|| format!("no python run in {:?}", analysis.language_runs))?;
+            assert_eq!(python_run.status, super::LanguageRunStatus::Failed);
+            assert!(
+                python_run
+                    .reason
+                    .as_deref()
+                    .unwrap_or_default()
+                    .starts_with(super::ADAPTER_PANIC_REASON_PREFIX)
+            );
+            assert!(
+                !analysis
+                    .findings
+                    .iter()
+                    .any(|finding| finding.language == Some(crate::domain::LanguageId::Python)),
+                "a contained adapter yields no findings"
+            );
+        }
+
+        let _armed = super::injected_adapter_panic::arm(&root, LanguageId::Rust);
+        let Err(error) = run_repo_pipeline_with_oracle_policy(&options, &policy, &languages) else {
+            return Err("a Rust adapter panic must be an Err".to_string());
+        };
+        assert!(
+            error
+                .to_string()
+                .starts_with(super::ADAPTER_PANIC_REASON_PREFIX)
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     fn run_repo_aggregate(
         name: &str,
         files: &[(&str, &str)],
@@ -5796,6 +6254,79 @@ mod tests {
             "{:?}",
             analysis.language_runs
         );
+        Ok(())
+    }
+
+    /// #10546: one compat row per selected label is intentional. Both ids
+    /// share one partial adapter result, so each publishes the same Partial
+    /// row (typescript, then javascript) in either id order, and a
+    /// label-matching consumer (the preview advisory's `analyzed` check)
+    /// reports a degraded run for either label.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn repo_pipeline_both_typescript_ids_publish_a_compat_row_per_label() -> Result<(), String> {
+        let files = [
+            (
+                "src/price.ts",
+                "export function price(amount: number): number {\n  return amount > 10 ? 1 : 2;\n}\n",
+            ),
+            (
+                "src/price.test.ts",
+                "import { price } from './price';\ntest('p', () => { expect(price(20)).toBe(1); });\n",
+            ),
+            (
+                "src/tax.js",
+                "export function tax(amount) {\n  return amount > 5 ? 1 : 2;\n}\n",
+            ),
+            (
+                "src/tax.test.js",
+                "import { tax } from './tax';\ntest('t', () => { expect(tax(9)).toBe(1); });\n",
+            ),
+            ("src/broken.ts", "export function (((( {\n"),
+        ];
+        let (single, _) =
+            run_repo_aggregate("repo-label-single", &files, &[LanguageId::TypeScript])?;
+        // Fixture construction: the single-id run is one Partial row.
+        assert_eq!(single.language_runs.len(), 1, "{:?}", single.language_runs);
+        let typescript = single.language_runs[0].clone();
+        assert_eq!(typescript.language, "typescript");
+        assert_eq!(typescript.status, super::LanguageRunStatus::Partial);
+        assert!(
+            typescript
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("parser error(s)")),
+            "{typescript:?}"
+        );
+        let javascript = LanguageRun {
+            language: "javascript".to_string(),
+            ..typescript.clone()
+        };
+        for (label, order) in [
+            ("both", [LanguageId::TypeScript, LanguageId::JavaScript]),
+            ("reversed", [LanguageId::JavaScript, LanguageId::TypeScript]),
+        ] {
+            let (run, _) = run_repo_aggregate(&format!("repo-label-{label}"), &files, &order)?;
+            // Rows follow the selected id order; the vector is exact.
+            let expected = if label == "both" {
+                vec![typescript.clone(), javascript.clone()]
+            } else {
+                vec![javascript.clone(), typescript.clone()]
+            };
+            assert_eq!(run.language_runs, expected, "{label}");
+            // The advisory check matches rows by label, so the degraded run
+            // is never read as analyzed for either label.
+            let advisory = run
+                .preview_language_advisories
+                .iter()
+                .find(|advisory| advisory.language == "typescript")
+                .ok_or_else(|| format!("{label}: expected a typescript advisory"))?;
+            assert!(advisory.enabled, "{label}");
+            assert!(!advisory.analyzed(&run.language_runs), "{label}");
+            let mut js_advisory = advisory.clone();
+            js_advisory.language = "javascript".to_string();
+            assert!(!js_advisory.analyzed(&run.language_runs), "{label}: js");
+        }
         Ok(())
     }
 
@@ -6829,6 +7360,141 @@ index 0000000..1111111 100644
         Ok(())
     }
 
+    /// #10719: an adapter that errored on the diff produced no count, so its
+    /// language is still listed from the routed files instead of being
+    /// omitted from the summary.
+    #[cfg(feature = "lang-perl")]
+    #[test]
+    fn diff_pipeline_summary_lists_changed_files_of_a_language_whose_adapter_errored()
+    -> Result<(), String> {
+        let root = temp_root("summary-errored-adapter")?;
+        let diff_file = root.join("perl.diff");
+        write(
+            &diff_file,
+            "diff --git a/lib/App.pm b/lib/App.pm\n\
+             --- /dev/null\n\
+             +++ b/lib/App.pm\n\
+             @@ -0,0 +1 @@\n\
+             +sub discount { return 0 }\n",
+        )?;
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: Some("Perl facts exporter exited non-zero".to_string()),
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Perl],
+        )?;
+        assert!(
+            result
+                .language_runs
+                .iter()
+                .any(|run| run.language == "perl"
+                    && run.status == super::LanguageRunStatus::Failed),
+            "precondition: the Perl adapter failed: {:?}",
+            result.language_runs
+        );
+        let per_language: Vec<(&str, usize)> = result
+            .summary
+            .changed_files_by_language
+            .iter()
+            .map(|count| (count.language.as_str(), count.files))
+            .collect();
+        assert_eq!(per_language, vec![("perl", 1), ("rust", 0)]);
+        Ok(())
+    }
+
+    /// #10719: a diff touching languages whose adapters are not enabled must
+    /// still list them in `summary.changed_files_by_language`, so the summary
+    /// agrees with the routed `analysis_outcome` file counts. An adapter that
+    /// ran keeps its own count (here the Rust adapter's honest zero).
+    #[test]
+    fn diff_pipeline_summary_lists_changed_files_of_languages_without_an_adapter()
+    -> Result<(), String> {
+        let root = temp_root("summary-disabled-languages")?;
+        let diff_file = root.join("mixed.diff");
+        write(
+            &diff_file,
+            r#"diff --git a/src/a.ts b/src/a.ts
+index 0000000..1111111 100644
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,0 +1,1 @@
++export const a = 1;
+diff --git a/src/b.tsx b/src/b.tsx
+index 0000000..1111111 100644
+--- a/src/b.tsx
++++ b/src/b.tsx
+@@ -1,0 +1,1 @@
++export const b = 1;
+diff --git a/src/c.js b/src/c.js
+index 0000000..1111111 100644
+--- a/src/c.js
++++ b/src/c.js
+@@ -1,0 +1,1 @@
++exports.c = 1;
+diff --git a/app/main.py b/app/main.py
+index 0000000..1111111 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -1,0 +1,1 @@
++VALUE = 1
+"#,
+        )?;
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust],
+        )?;
+
+        let per_language: Vec<(&str, usize)> = result
+            .summary
+            .changed_files_by_language
+            .iter()
+            .map(|count| (count.language.as_str(), count.files))
+            .collect();
+        assert_eq!(
+            per_language,
+            vec![
+                ("javascript", 1),
+                ("python", 1),
+                ("rust", 0),
+                ("typescript", 2)
+            ],
+            "every routed language must be listed even when its adapter did not run"
+        );
+        assert_eq!(result.summary.changed_rust_files, 0);
+        Ok(())
+    }
+
     #[cfg(any(feature = "lang-typescript", feature = "lang-python"))]
     fn excluded_path_advisory_options(
         root: &std::path::Path,
@@ -7600,6 +8266,80 @@ index 0000000..1111111 100644
         Ok(())
     }
 
+    /// A diff that touches no Python path must not index the Python workspace:
+    /// the adapter's per-file fact store is the observable of that work. The
+    /// same workspace with a Python file in the diff is the control that the
+    /// store is written when the adapter does run.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn diff_pipeline_skips_python_workspace_index_for_rust_only_diff() -> Result<(), String> {
+        let store_has_entries = |root: &std::path::Path| {
+            let base = crate::analysis::seam_cache::cache_base_dir(root);
+            fs::read_dir(base)
+                .map(|entries| {
+                    entries.flatten().any(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .contains("python-file-facts")
+                    })
+                })
+                .unwrap_or(false)
+        };
+        let run = |name: &str, diff: &str| -> Result<(PathBuf, usize), String> {
+            let root = temp_root(name)?;
+            fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+            write(
+                &root.join("tools.py"),
+                "def helper(value):\n    return value + 1\n",
+            )?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 { a }\n",
+            )?;
+            let diff_file = root.join("change.diff");
+            write(&diff_file, diff)?;
+            let result = run_diff_pipeline_with_oracle_policy(
+                &AnalysisOptions {
+                    root: root.clone(),
+                    base: None,
+                    diff_file: Some(diff_file),
+                    mode: AnalysisMode::Draft,
+                    resolved_subject_identity: None,
+                    open_rust_index_paths: Default::default(),
+                    include_unchanged_tests: true,
+                    resolve_tsconfig_paths: false,
+                    perl_facts_path: None,
+                    perl_producer_failure: None,
+                    git_timeout: None,
+                    git_candidate: None,
+                    production_like_targets: Default::default(),
+                    test_harnesses: Vec::new(),
+                },
+                &OraclePolicy::default(),
+                &[LanguageId::Rust, LanguageId::Python],
+            )?;
+            Ok((root, result.findings.len()))
+        };
+        let (rust_root, _) = run(
+            "python-skip-rust-only",
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn price(a: i32) -> i32 { a }\n+pub fn price(a: i32) -> i32 { a + 1 }\n",
+        )?;
+        assert!(
+            !store_has_entries(&rust_root),
+            "a Rust-only diff must not fact-extract the Python workspace"
+        );
+        let (python_root, _) = run(
+            "python-skip-control",
+            "diff --git a/tools.py b/tools.py\n--- a/tools.py\n+++ b/tools.py\n@@ -1,2 +1,2 @@\n def helper(value):\n-    return value\n+    return value + 1\n",
+        )?;
+        assert!(
+            store_has_entries(&python_root),
+            "control: a Python diff must populate the Python fact store"
+        );
+        Ok(())
+    }
+
     #[cfg(all(feature = "lang-typescript", feature = "lang-python"))]
     #[test]
     fn repo_pipeline_dispatches_enabled_preview_feature_adapters() -> Result<(), String> {
@@ -7783,6 +8523,7 @@ index 0000000..1111111 100644
             uninspected_changed_lines_lower_bound: uninspected_lines,
             stop_reason,
             next_file_changed_lines: (uninspected_lines > 0).then_some(uninspected_lines),
+            whole_diff_budgets: None,
             partition_identity: "sha256:partition".to_string(),
         }
     }

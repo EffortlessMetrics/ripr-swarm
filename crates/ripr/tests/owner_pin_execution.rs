@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[path = "owner_pin_execution/cfg_if_macro_use.rs"]
+mod cfg_if_macro_use;
+
 #[path = "owner_pin_execution/field_projected_collection.rs"]
 mod field_projected_collection;
 
@@ -21,6 +24,9 @@ mod literal_json_output;
 #[path = "owner_pin_execution/operand_callee_identity.rs"]
 mod operand_callee_identity;
 
+#[path = "owner_pin_execution/boundary_call_identity.rs"]
+mod boundary_call_identity;
+
 #[path = "owner_pin_execution/effect_assertion_sweep.rs"]
 mod effect_assertion_sweep;
 #[path = "owner_pin_execution/effect_assertions.rs"]
@@ -28,6 +34,8 @@ mod effect_assertions;
 #[path = "owner_pin_execution/function_pointer.rs"]
 mod function_pointer;
 
+#[path = "owner_pin_execution/matches_panic.rs"]
+mod matches_panic;
 #[path = "owner_pin_execution/polling_helper.rs"]
 mod polling_helper;
 

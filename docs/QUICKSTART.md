@@ -97,13 +97,21 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 ```
 
 From a `ripr-swarm` checkout, `cargo install --path crates/ripr` does the same.
-Either route compiles from source. A `cargo build --release` in the workspace (thin LTO,
-16 codegen units) took about 6 minutes on a cold 4-core Linux container in
-October 2026. A local build of the packaged crate, which is what `cargo install
-ripr --locked` should compile once 0.11.0 is published, took about 4.6 minutes on
-the same container because it carries no profile section (an estimate, not a
-crates.io install). A
-prebuilt 0.11 archive exists only after 0.11.0 is published.
+Either route compiles from source. A cold `cargo build --release` of the
+workspace (thin LTO, 16 codegen units) took about 6 minutes (366 s) on a 4-core
+Linux container in October 2026, against 17 minutes (1037 s) for the earlier
+fat-LTO, single-codegen-unit profile; `cargo install ripr` for 0.10.0 took about
+2 minutes on an earlier run. The packaged 0.11.0 crate carries no profile
+section, so `cargo install ripr --locked` should build in about 4.6 minutes
+(275 s) once 0.11.0 is on crates.io (measured by building the packaged crate with
+`cargo build --release` on the same container, not a download). In that walk,
+`doctor` and `check` each took under 3 seconds on small crates; `ripr pilot`
+takes longer on large repositories. The prebuilt 0.10.0 archive downloads in
+about a second, against about two minutes to compile 0.10.0 from source. There is
+no prebuilt 0.11 archive until 0.11.0 is published.
+`cargo xtask first-run --install-archive 0.10.0` replays the archive route end
+to end and times it; the [first-run scoreboard](../benchmarks/dx_scoreboard/README.md)
+tracks the install time so a rise shows.
 
 With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed,
 `cargo binstall ripr` uses the prebuilt 0.11.0 release archive when that asset is
@@ -144,7 +152,35 @@ as `ripr progress: <stage> [<scope>]`, with throttled heartbeats if a stage
 stays active. JSON, SARIF, and other machine stdout stay byte-clean. Unknown
 totals never become a percentage or ETA. Progress does not mean analysis is
 faster or that the command will succeed. `--quiet` suppresses the progress
-stream; it does not change findings or exit codes.
+stream; it does not change findings or exit codes. `ripr explain` and
+`ripr context` print the same `ripr progress:` lines on stderr and accept
+`--quiet`, as does `ripr pilot`. The stderr progress lines are a deliberate
+contract: stdout is the output contract, so for machine capture (for example
+the JSON from `context`) use `--quiet` or `2>/dev/null`, never `2>&1`.
+
+A short glossary for the terms below:
+
+| Term | Meaning |
+| --- | --- |
+| seam | A place in the code where behavior could change; a repair targets one seam ID. |
+| discriminator | The check that would tell the old behavior from the new. |
+| oracle / assertion | What a test compares against; a weak oracle (for example `> 0`) reaches the code but does not notice the change. |
+| grip | How firmly tests hold a behavior, for example `weakly_gripped` or `strongly_gripped`. |
+| `probe:` ID | Names one finding in one diff. `explain` and `context` take it; `ripr repair` resolves it to its seam, then may refuse if that seam is not repair-eligible. |
+| edit cage | The repair attempt's rule: only new test functions inside the allowed test surface (for inline tests, the existing `#[cfg(test)] mod tests`) may be added; production code and existing tests stay unchanged. |
+| receipt | The static before/after evidence record from the after phase; not a test result. |
+
+Human output uses plain words for the schema values: `appear noticed` is
+`exposed`, `partly noticed` is `weakly_exposed`, `reached but not noticed` is
+`reachable_unrevealed`, and `no test path` is `no_static_path`. Use
+`--format human-full` or JSON to see the schema value. See
+[Terminology](TERMINOLOGY.md) for the seam-level words and
+[RIPR-SPEC-0122](specs/RIPR-SPEC-0122-bounded-human-check-output.md) for the human output wording.
+
+Agents and scripts reading `ripr check --json` should pass `--quiet` so stderr
+stays free of `ripr progress:` lines. The JSON is the full versioned report and
+is large: read `summary` and `canonical_next_action` (when present) first, then fetch one
+finding's evidence with `ripr context --at <finding-id> --json --quiet`.
 
 When a finding is selected, copy its printed `ripr explain` command to inspect
 the evidence, or its `ripr context` command for an agent handoff. Those commands
@@ -157,6 +193,10 @@ To expand the output:
 ripr check --format human-full
 ripr check --format json
 ```
+
+If `check` offers a finding but no `ripr repair` start, run
+`ripr pilot --root .`: it ranks the whole repository differently and may name a
+supported repair that `check` did not.
 
 A finding can guide an ordinary test improvement through the
 [daily loop](#check-test-and-refresh-the-same-change) below. For a governed
@@ -210,7 +250,10 @@ RIPR_BASE=$(git merge-base HEAD origin/main) &&
   ripr check --root . --base "$RIPR_BASE" --worktree
 ```
 
-Replace `origin/main` with your review base when needed. Confirm that the
+Replace `origin/main` with your review base when needed. A repository with no
+`origin` remote (for example a local demo) fails here with exit 128
+(`Not a valid object name origin/main`); use `main`, or your real base branch,
+instead: `git merge-base HEAD main`. Confirm that the
 output names the intended production file and changed behavior. Keep the same
 root, resolved base, source mode, and analysis mode throughout the loop.
 `--worktree` includes the production change since that base plus the current
@@ -233,7 +276,16 @@ and filter for the edited test. For example, in a Rust crate with
 cargo test --test pricing equality_boundary_discounts -- --exact
 ```
 
-Use your actual test name and target. Check the native exit status and test
+For an inline `#[cfg(test)] mod tests` in `src/lib.rs`, the exact name includes
+the module path:
+
+```bash
+cargo test --lib tests::equal -- --exact
+```
+
+`cargo test --lib equal -- --exact` matches nothing there: it runs 0 tests and
+still exits 0. Confirm the summary says `1 passed`. Use your actual test name
+and target. Check the native exit status and test
 summary: the intended test must execute and pass. A zero exit with zero tests
 selected, an ignored test, a compile failure, or a timeout does not verify the
 edit. `ripr check` does not run that command for you.
@@ -285,9 +337,14 @@ unavailable-adapter guidance, not the Rust repair sequence.
 Python analysis is `preview`: its evidence is advisory, not Rust-grade. A
 Python project needs no `ripr.toml` — when the repository root has a Python
 project marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
-`requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`), the CLI
-auto-enables the preview. From a Python repository on a branch with a change
-to inspect:
+`requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`) or Python source
+under `src/` or `tests/`, the CLI auto-enables the preview. Work from a Python repository on a branch with a change
+to inspect.
+
+Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
+ripr writes its artifacts under `target/ripr`, and `check`, `pilot` and
+`agent repair` all create it, so ignoring it keeps `git add -A` from
+committing ripr's own reports. Then run:
 
 ```bash
 ripr check
@@ -304,12 +361,11 @@ ripr pilot --root .
 
 When the Rust ranking is empty, pilot's top recommendation is the Python
 repair card (`language: python (preview)`) and its `Next, in order:` route;
-run the steps it prints. Both commands write under `target/ripr/`; in a
-project without a Cargo `target/` convention, add `/target/ripr/` to
-`.gitignore` (doctor and pilot say so on the first run when no ignore rule
-covers it).
+run the steps it prints. Both commands write under `target/ripr/` (see the `.gitignore` note above;
+doctor and pilot also say so on the first run when no ignore rule covers it).
 
-A repository with no marker leaves the preview disabled; `check` then skips
+A repository with no marker and no Python source under `src/` or `tests/`
+leaves the preview disabled; `check` then skips
 Python files and prints:
 
 ```text
@@ -321,8 +377,64 @@ To enable, add to ripr.toml:
 enabled = ["python"]
 ```
 
-Enable it exactly as printed when the repository has no marker. Python
+Enable it exactly as printed when the preview is not auto-enabled. Python
 repair routes and their evidence limits are described in
+[Known Limits](#known-limits) and
+[Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
+
+For Python and TypeScript the repair route is: `ripr check` -> `ripr agent
+repair --gap-id <gap> --base <base> --phase before` (check prints the exact
+command) -> edit the one named test file -> commit it -> `ripr continue
+--attempt <id>`. `ripr repair` (seam-based) and `ripr agent stub` are
+Rust-only.
+
+### TypeScript first hour (preview)
+
+TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. A
+TypeScript project needs no `ripr.toml` — when the repository root has a
+`tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
+`tests/`), or a package one level down or under `packages/*`, `apps/*`,
+`libs/*` or `libraries/*` has one, the CLI auto-enables the preview. Work from a TypeScript repository on
+a branch with a change to inspect.
+
+Before the first run, add `/target/ripr/` (or `/target/`) to `.gitignore`:
+ripr writes its artifacts under `target/ripr`, and `check`, `pilot` and
+`agent repair` all create it. Then run:
+
+```bash
+ripr check
+```
+
+`check` analyzes the changed TypeScript files; its top finding is labeled
+`State: preview language, advisory only` and, when the repair packet is
+complete, names the test file, the missing case and a verify command such as
+`npx --no-install vitest run tests/pricing.test.ts`. It also prints the route
+under `Next: drill into the top finding:`. Start the repair with the
+`ripr agent repair` line it prints:
+
+```bash
+ripr agent repair --gap-id gap:typescript:... --base main --phase before
+```
+
+Edit only the one test file the packet names (production code stays
+unchanged), **commit** the test, then run the `ripr continue` line the
+command printed:
+
+```bash
+ripr continue --attempt repair-attempt-...
+```
+
+`continue` runs the after phase: when the gap reads `exposed` it writes the
+receipt under `target/ripr/reports/`. It compares static evidence only and
+does not run your tests, so run the verify command from `check` yourself after
+`continue` succeeds (some TypeScript runners write cache files that the attempt
+would otherwise observe) and keep the test only if it passes.
+
+`ripr repair` (seam-based) and `ripr agent stub` are Rust-only: on a
+TypeScript path `ripr repair` points back to `ripr check`, and `ripr agent
+stub --at src/file.ts:N` exits `3` with `stub generation supports Rust files
+only`. A repository with a `ripr.toml` that sets `enabled = ["rust"]` keeps
+TypeScript off. Evidence limits are described in
 [Known Limits](#known-limits) and
 [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
 
@@ -360,18 +472,29 @@ Generate the advisory GitHub workflow:
 ripr init --ci github
 ```
 
-Review the generated files before committing them. The workflow installs the
-ripr version that generated it. An unreleased development build instead pins
-the latest release and says so in a warning; after
+Review the generated files before committing them: `init` writes a `ripr.toml`
+beside the workflow. That file pins `[languages] enabled = ["rust"]`, which
+turns off the Python and TypeScript previews for the repository. `init` warns
+when the root looks like a Python or TypeScript project; add that language to
+`enabled` or delete the `[languages]` section. The workflow
+installs the ripr version that generated it. An unreleased development build
+instead pins the latest release and says so in a note; after
 upgrading ripr, refresh with `ripr init --ci github --force`. Preview the
 files first with `--dry-run`. On a PR, read the summary comment it posts on the
 conversation (one comment, updated on every push; same-repository PRs only), then the job summary
 and the linked artifacts for the evidence and suggested test.
 The generated workflow is non-blocking by default; a policy gate is a separate,
-explicit adoption decision.
+explicit adoption decision. It also uploads SARIF to the Security tab; that needs
+code scanning (free on public repositories, GitHub Code Security on private
+ones). Where it is unavailable the upload fails without failing the job, and
+the run page shows a `RIPR SARIF upload failed` warning; set
+`RIPR_UPLOAD_SARIF` to `"false"` in the workflow to stop trying.
 The workflow runs on `ubuntu-latest` and pins `shell: bash`, so its steps
 still parse if you move the job to another runner; only the Linux runner is
 covered by ripr's own tests.
+
+Upgrading from 0.10? See the
+[0.10 to 0.11 upgrade guide](INSTALL_CHANNELS.md#upgrading-from-010-to-011).
 
 The [copyable CI recipe](CI.md#copyable-ripr-advisory-workflow) is the downstream
 usage section of the repository's CI guide. See [PR review guidance](PR_REVIEW_GUIDANCE.md)
@@ -387,16 +510,18 @@ route, not an arbitrary finding ID:
 ripr pilot --root .
 ```
 
-Before starting a repair, make sure `target/` is in a committed `.gitignore`
-(see below) and that the production change itself is committed: the before
-phase refuses a seam whose edit-target file has uncommitted changes. When pilot recommends a repair, run the exact
+**Before you start:** commit your change and make sure `/target/` is in
+`.gitignore` (details below). The before phase refuses a seam whose
+edit-target file has uncommitted changes. When pilot recommends a repair, run the exact
 `ripr agent repair ... --phase before` command it prints. That printed command
 is the advanced spelling of the ordinary start `ripr repair <seam-id>`; both
 begin the same before/edit/after attempt, and the ordinary start additionally
-prints the compact repair card for the seam. The printed command carries pilot's seam ID,
-which names a code
-location across the repository. The `probe:...` IDs printed by `ripr check`
-name findings in one diff and are not accepted here.
+prints the repair card for the seam. The card is long; the command to run next
+is on the `Next, after the test edit:` line, printed just before the card.
+The printed command carries pilot's seam ID, which names a code
+location across the repository. A `probe:...` ID printed by `ripr check`
+names a finding in one diff; `ripr repair` resolves it to its seam but may then
+refuse if that seam is not repair-eligible.
 
 Before starting a Rust repair, ensure Git ignores Cargo's entire `target/`
 directory, for example with `/target/` in `.gitignore`. Effective local or global
@@ -415,9 +540,13 @@ that was already gitignored when the before phase ran; a `.gitignore` change
 made mid-attempt is itself refused. Redirect ripr output under `target/ripr/` or
 outside the repository.
 
-Then run the exact `--attempt ... --phase after` command printed before the edit
-(the ordinary spelling is `ripr continue`, which selects the attempt when the
-choice is unambiguous).
+Then run the after-phase command the before phase printed:
+`ripr continue --root ... --attempt <id>` (the advanced spelling is
+`ripr agent repair ... --attempt ... --phase after`). Plain `ripr continue`
+selects the attempt when the choice is unambiguous. Run before you have edited
+the test, it exits 3 (recoverable): the attempt stays `awaiting_edit`, and you
+can rerun it after the edit. Each premature run counts as one of the attempt's
+5 after-phase refusals, so edit the test first.
 It records the after snapshot and a receipt of static evidence movement.
 Keep the test execution result separately: a static improvement is not proof
 that a test ran or that a mutant was caught.
@@ -432,6 +561,9 @@ ripr status --root .
 ```
 
 (`ripr agent status --root .` is the advanced spelling of the same report.)
+Before you have edited the test, `Status: incomplete` with state
+`awaiting_edit` is normal. The command to run is in the fenced `Next Command`
+block of the report.
 
 Use the reported continuation or recovery step. The full phase and identity
 reference is [Repair attempt identity](REPAIR_ATTEMPT.md).
@@ -448,12 +580,72 @@ For lower-level control, see [Agent workflows](AGENT_WORKFLOWS.md) and
 [the LLM operator guide](LLM_OPERATOR_GUIDE.md). No LLM provider is called by
 these commands.
 
+### Agent repair details
+
+Reference details for driving ripr from a coding agent:
+
+- `ripr check` prints the `ripr explain` and `ripr context` commands for the top
+  finding. With `--format json` the result embeds the same bounded
+  `canonical_next_action` (class, selected item, root, diff source, and followable
+  route). `ripr doctor --json` carries the same `canonical_next_action` when setup
+  needs a precise recovery, matching the human Safe-next-action line.
+- Run the follow-up commands ripr prints (`ripr explain`, `ripr context`,
+  `ripr agent repair ...`) exactly as printed: their IDs belong to that run and
+  cannot be copied from documentation. `agent repair --seam-id` and `ripr repair`
+  accept the seam ID that `pilot` prints. They also resolve a `probe:...`,
+  `repo-probe:...` or `gap:...` finding ID from `ripr check` to its one seam. If
+  the ID is stale, ambiguous, or its seam is not repair-eligible they refuse and
+  start no attempt. Run `ripr pilot --root .` to list current seam IDs.
+- The compact repair card is the default bounded handoff to a coding agent:
+  `ripr agent card --root . --seam-id <seam-id> --json` projects the
+  fix-instruction summary, repair-route readiness, and canonical next action, with
+  the full packet behind the card's explicit detail route. A successful
+  `ripr repair` start prints the same card.
+- Between the repair phases, the attempt refuses any new file outside the allowed
+  test files, whether Git ignores it or not. When your tests live in an inline
+  `#[cfg(test)] mod tests` inside the source file (the `cargo new --lib` layout),
+  the repair edits that file, but only by adding new test functions inside that
+  one module; any other change to the file fails the attempt. Build output under a
+  gitignored `target/` is the exception. Before starting a repair, make sure
+  `target/` is in a committed `.gitignore`; changing `.gitignore` mid-attempt is
+  itself refused. Redirect ripr output under `target/ripr/` or outside the
+  repository.
+- Exit `0` means the command completed and `2` means it could not, which includes
+  the file refusal above; `3` means ripr declined: a gate blocked, or it refused a
+  request, such as a repair after phase refused for a named cause. See
+  [exit codes](EXIT_CODES.md). The [LLM operator guide](LLM_OPERATOR_GUIDE.md)
+  covers the full repair loop.
+
 ### Prepare a PR summary
 
 After generating the needed evidence, use `ripr first-pr` to compose the
-PR-facing packet. It does not run analysis or repair the code. See
+PR-facing packet. By default it does not run analysis (`--run-chain` opts in,
+below), and it never repairs the code. See
 [First successful PR workflow](FIRST_PR_WORKFLOW.md) for the inputs and
 `ripr help first-pr` for its options.
+
+On a fresh checkout the first `first-pr` run prints one next command (the
+`Missing artifact` regeneration command for repo exposure) and names the later
+steps (gap ledger, then review cards) on a `Later steps` line without their
+commands. Run the printed command, then rerun `first-pr`; it prints the next
+command each time. It reads artifact presence only and runs none of them. To
+have `first-pr` run that missing-artifact chain itself, pass `--run-chain`:
+`ripr first-pr --run-chain` runs the repo-exposure report, the gap ledger and
+the review cards in order, each only when its artifact is missing (the cards
+only when the gap ledger names no repair start) and each exactly the command
+`first-pr` would have printed (with the resolved `--base` and `--head`), then
+composes the packet in the same invocation. It is opt-in because it runs
+analysis (cost scales with the repository, minutes on a large one), writes the
+missing artifacts under `target/ripr/` and uses no network. The first failing
+step, or a step that exits 0 without leaving a non-empty, parseable `.json`
+artifact, stops it with exit `2` and names the step; no packet is written from
+partial artifacts. It cannot be combined with `--check` or `--check-output`.
+The packet JSON (`selected.also_missing`) still carries every later step with
+its literal command. Commit your test first, because the
+committed diff does not include uncommitted edits. After a successful repair
+the final state `no actionable gap` is expected: the gap is already addressed.
+It also appears when no repairable PR-local gap was selected; read the printed
+`Reason:` line to tell which.
 
 ## Troubleshooting
 
@@ -478,6 +670,7 @@ route is required, and ordinary real-repository route yield and success remain
 unestablished. Python analysis is `preview`, with selected pytest/unittest
 repair routes at `usable alpha`. Only complete weak-evidence routes get repair
 cards; zero cards is normal for unsupported or non-repairable findings.
+`ripr repair` and `ripr agent stub` support Rust files only.
 
 TypeScript is enabled automatically for TypeScript-shaped repositories without a
 `ripr.toml`; JavaScript is an opt-in preview. Diff analysis recognizes:

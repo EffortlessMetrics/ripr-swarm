@@ -49,6 +49,10 @@
 //! v0.5 entry is impossible.
 
 use super::facts::FileFacts;
+#[cfg(feature = "lang-python")]
+use super::language::PythonFileFactStore;
+#[cfg(feature = "lang-typescript")]
+use super::language::TypeScriptFileFactStore;
 use super::seam_classification::ClassifiedSeam;
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
@@ -58,8 +62,8 @@ use super::test_grip_evidence::RelatedTestGrip;
 use super::test_grip_evidence::shared_grips::SharedGrips;
 use crate::config::{
     PYTHON_PROJECT_MARKERS, PYTHON_SOURCE_DIR_MARKERS, TYPESCRIPT_PROJECT_MARKERS,
-    TYPESCRIPT_SOURCE_DIR_MARKERS, source_dir_contains_detectable_python,
-    source_dir_contains_detectable_typescript,
+    TYPESCRIPT_SOURCE_DIR_MARKERS, detect_javascript_led_root,
+    source_dir_contains_detectable_python, source_dir_contains_detectable_typescript,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -71,7 +75,7 @@ use std::sync::{Arc, OnceLock};
 macro_rules! cache_layers {
     ($($variant:ident => $name:literal),+ $(,)?) => {
         #[derive(Clone, Copy)]
-        enum CacheLayer { $($variant),+ }
+        pub(crate) enum CacheLayer { $($variant),+ }
 
         impl CacheLayer {
             const fn name(self) -> &'static str {
@@ -91,6 +95,12 @@ cache_layers! {
     CompactClassifiedSeamsSharded => "repo-compact-classified-seams-sharded",
     CorpusFingerprint => "repo-corpus-fingerprint",
     FileFacts => "repo-file-facts",
+    // TypeScript preview per-file facts (#10725): content-keyed envelopes the
+    // diff-mode adapter reuses across runs, same conventions as FileFacts.
+    TypeScriptFileFacts => "typescript-file-facts",
+    // Python diff-mode per-file facts (#10914): the TypeScript store's
+    // conventions, one content-keyed envelope per workspace file.
+    PythonFileFacts => "python-file-facts",
     ModuleTreeScans => "repo-module-tree-scans",
     ScopedClassifiedSeams => "repo-scoped-classified-seams",
     // Test-only producer: `RepoSeamCountCache` is constructed only under
@@ -122,8 +132,14 @@ pub fn cache_layer_names() -> &'static [&'static str] {
     CACHE_LAYER_NAMES
 }
 
-fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathBuf {
+pub(crate) fn cache_layer_dir(workspace_root: &Path, layer: CacheLayer) -> PathBuf {
     cache_base_dir(workspace_root).join(layer.name())
+}
+
+/// A versioned entry directory under an already-resolved cache `base`,
+/// for producers that shard their entries by a schema-version component.
+pub(crate) fn cache_layer_versioned_dir(base: &Path, layer: CacheLayer, version: &str) -> PathBuf {
+    base.join(layer.name()).join(version)
 }
 
 /// The directories production caches write entries into, under an already
@@ -150,6 +166,10 @@ pub(crate) fn production_entry_dirs(base: &Path) -> Vec<(PathBuf, bool)> {
     );
     dirs.push(RepoCorpusFingerprintCache::at_base(base).entry_dir());
     dirs.push(RepoFileFactCache::at_base(base).entry_dir());
+    #[cfg(feature = "lang-typescript")]
+    dirs.push(TypeScriptFileFactStore::at_base(base).entry_dir());
+    #[cfg(feature = "lang-python")]
+    dirs.push(PythonFileFactStore::at_base(base).entry_dir());
     dirs.push(RepoModuleTreeScanCache::at_base(base).entry_dir());
     dirs.push(RepoScopedInventoryCache::at_base(base).entry_dir());
     dirs
@@ -557,9 +577,30 @@ pub(crate) struct CachedSeamLimitInfo {
 /// (#10797); `1.114` credited a coincident row.
 /// `1.116`: a `let` literal that a tuple, struct, `for` or other pattern
 /// rebinds is not the owner call's argument (#10819); `1.115` paired it.
-/// `1.117`: a predicate on a self-closed `if` statement takes no branch-value
-/// sink from the next line (#10880); `1.116` credited a coincident row.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.117";
+/// `1.117`: whole suffixed decimal integer arguments supply repository
+/// activation and boundary equality values (#10839); older entries missed them.
+/// `1.118`: a standard `Drop::drop` can be credited through a scope-end
+/// carrier (RIPR-SPEC-0240, #10814).
+/// `1.119`: a direct bare boolean assertion can grip its whole primitive
+/// integer boundary after owner admission, consistency and exact-call pairing
+/// (#8610). Old entries retain the missed weak repair result.
+/// `1.120`: a literal-only integer expression that folds exactly adds its value
+/// as an owner-scoped probe token, and the sole glob of the owner's declared
+/// dependency reaches a `T::name(..)` owner (RIPR-SPEC-0158, RIPR-SPEC-0172,
+/// #10479). Old entries keep the missed observation and the abstain.
+/// `1.121`: a Display `write!` tail whose format template changed beyond
+/// fixed text no longer borrows an exact output pin (#9836).
+/// `1.122`: a pushed element embedding a type from outside the scanned workspace
+/// no longer reads as comparing by its fields (#10684).
+/// `1.123`: return/error matches! assertions require shared test execution
+/// admission. Older entries may credit ignored or broad expected-panic tests.
+/// `1.124`: retain the opaque assertion-macro limit beside nested expected
+/// macros when a bare owner call sits outside their inputs (#9644). The same
+/// version also covers a Kani proof harness getting its own source role
+/// instead of reading as a production function (RIPR-SPEC-0367).
+/// `1.125`: a predicate on a self-closed `if` statement takes no branch-value
+/// sink from the next line (#10880); `1.124` credited a coincident row.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.125";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -722,8 +763,15 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.117";
 /// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
 /// `0.122`: same row-input oracle as full `1.115` (#10797).
 /// `0.123`: same rebound-let rule as full `1.116` (#10819).
-/// `0.124`: same self-closed `if` rule as full `1.117` (#10880).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.124";
+/// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
+/// `0.125`: same scope-end carrier as full `1.118` (#10814).
+/// `0.126`: same boolean boundary grip as full `1.119` (#8610).
+/// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
+/// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
+/// `0.130`: same matches! execution admission as full `1.123`.
+/// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
+/// `0.132`: same self-closed `if` rule as full `1.125` (#10880).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.132";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -888,8 +936,15 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.124";
 /// `0.121`: same call-in-term accumulator as full `1.114` (#9478).
 /// `0.122`: same row-input oracle as full `1.115` (#10797).
 /// `0.123`: same rebound-let rule as full `1.116` (#10819).
-/// `0.124`: same self-closed `if` rule as full `1.117` (#10880).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.124";
+/// `0.124`: same suffixed decimal argument values as full `1.117` (#10839).
+/// `0.125`: same scope-end carrier as full `1.118` (#10814).
+/// `0.126`: same boolean boundary grip as full `1.119` (#8610).
+/// `0.127`: same literal fold and sole-glob reach as full `1.120` (#10479).
+/// `0.128`: same Display placeholder-edit refusal as full `1.121` (#9836).
+/// `0.130`: same matches! execution admission as full `1.123`.
+/// `0.131`: same nested expected-macro limitation as full `1.124` (#9644).
+/// `0.132`: same self-closed `if` rule as full `1.125` (#10880).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.132";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1084,7 +1139,9 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `return_value` (RIPR-SPEC-0360, #9478); `1.48` facts keep it unmapped.
 /// `1.50`: the row's literal arguments are substituted into the returned
 /// expression (#10797); `1.49` facts keep the unsubstituted row.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.50";
+/// `1.51`: exact `#[kani::proof]` functions carry the proof-harness role
+/// (RIPR-SPEC-0367); `1.50` facts leave them production.
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.51";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -1642,6 +1699,19 @@ impl WorkspaceKeyContext<'_> {
         } else {
             workspace_manifests_hash
         };
+        let workspace_manifests_hash =
+            if super::workspace::eligible_proptest_root(self.workspace_root) {
+                let identity = super::workspace::verified_proptest_identity(self.workspace_root)
+                    .map_or_else(
+                        || "unverified".to_string(),
+                        |receipt| receipt.validation_digest,
+                    );
+                hash_str(&format!(
+                    "{workspace_manifests_hash}:proptest-1.11-singleton:{identity}"
+                ))
+            } else {
+                workspace_manifests_hash
+            };
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.
@@ -2723,7 +2793,7 @@ pub(crate) struct RepoFileFactCache {
 /// also stays `None`; the per-read corrupt path still reports the error
 /// kinds it can discriminate. Metadata follows symlinks so a base that
 /// resolves to a usable directory keeps its silent warm/cold behavior.
-fn cache_dir_not_a_directory_reason(base: &Path) -> Option<String> {
+pub(crate) fn cache_dir_not_a_directory_reason(base: &Path) -> Option<String> {
     match std::fs::metadata(base) {
         Ok(metadata) if !metadata.is_dir() => {
             Some(format!("cache dir is not a directory: {}", base.display()))
@@ -2742,7 +2812,7 @@ fn cache_dir_not_a_directory_reason(base: &Path) -> Option<String> {
 /// deadline) refuses rather than admits, and the build recomputes cold.
 /// Limits: an extracted archive carries no Git evidence, and this does not
 /// authenticate entries an untracked process wrote into the root.
-fn cache_base_untrusted_reason(base: &Path) -> Option<String> {
+pub(crate) fn cache_base_untrusted_reason(base: &Path) -> Option<String> {
     if !base.is_dir() {
         return None;
     }
@@ -2918,11 +2988,15 @@ impl RepoFileFactCache {
             stage: FileFactStoreStage::CreateDir,
             message: format!("create file fact cache dir failed: {err}"),
         })?;
-        let envelope = FileFactCacheEnvelope::new(key.clone(), facts.clone());
-        let bytes = codec::encode_file_facts(&envelope).map_err(|message| FileFactStoreError {
-            stage: FileFactStoreStage::Encode,
-            message,
-        })?;
+        // Borrow the key and facts: the owned envelope deep-cloned the whole
+        // `FileFacts` (and four key strings) for every cold write only to
+        // serialize it once for the digest and once for the entry.
+        let envelope = FileFactCacheEnvelopeRef::new(key, facts);
+        let bytes =
+            codec::encode_file_facts_ref(&envelope).map_err(|message| FileFactStoreError {
+                stage: FileFactStoreStage::Encode,
+                message,
+            })?;
         crate::atomic_file::write_cache(&self.entry_path(key), &bytes, "file fact cache").map_err(
             |message| FileFactStoreError {
                 stage: FileFactStoreStage::Write,
@@ -3053,6 +3127,36 @@ struct FileFactCacheEnvelope {
     file_facts: FileFacts,
 }
 
+/// Borrowing write-side twin of [`FileFactCacheEnvelope`]. Field names, order
+/// and the omitted `payload_digest` match the owned envelope exactly, so the
+/// digest and the entry bytes are identical; it only avoids cloning the facts.
+#[derive(serde::Serialize)]
+struct FileFactCacheEnvelopeRef<'a> {
+    file_fact_cache_schema_version: &'a str,
+    analyzer_version: &'a str,
+    file_path: &'a Path,
+    content_hash: &'a str,
+    file_facts: &'a FileFacts,
+}
+
+impl<'a> FileFactCacheEnvelopeRef<'a> {
+    fn new(key: &'a RepoFileFactCacheKey, file_facts: &'a FileFacts) -> Self {
+        Self {
+            file_fact_cache_schema_version: &key.schema_version,
+            analyzer_version: &key.analyzer_version,
+            file_path: &key.file_path,
+            content_hash: &key.content_hash,
+            file_facts,
+        }
+    }
+
+    fn expected_digest(&self) -> Result<String, String> {
+        semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
+    }
+}
+
+const FILE_FACT_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:FileFactCacheEnvelope:v1";
+
 /// The envelope fields the inventory needs; serde skips the rest.
 #[derive(serde::Deserialize)]
 struct FileFactCacheHeader {
@@ -3164,6 +3268,7 @@ impl KnownFilePaths {
 }
 
 impl FileFactCacheEnvelope {
+    #[cfg(test)]
     fn new(key: RepoFileFactCacheKey, file_facts: FileFacts) -> Self {
         Self {
             payload_digest: None,
@@ -3510,7 +3615,10 @@ fn encode_checksummed_pretty_to_writer<T: serde::Serialize, W: std::io::Write>(
 }
 
 /// Unkeyed checksum integrity does not authenticate a writer who can recompute the digest.
-fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<String, String> {
+pub(crate) fn semantic_body_digest<T: serde::Serialize>(
+    domain: &str,
+    body: &T,
+) -> Result<String, String> {
     use sha2::{Digest, Sha256};
     // The serializer streams into SHA-256: warm admission never retains a second body.
     struct ChecksumWriter(Sha256);
@@ -3548,13 +3656,29 @@ fn semantic_body_digest<T: serde::Serialize>(domain: &str, body: &T) -> Result<S
     });
     Ok(format!("sha256:{:x}", writer.0.finalize()))
 }
-fn encode_integrity_body<T: serde::Serialize>(
+pub(crate) fn encode_integrity_body<T: serde::Serialize>(
     body: &T,
     payload_digest: String,
 ) -> Result<Vec<u8>, String> {
     note_integrity_envelope();
     let mut bytes = Vec::new();
     encode_checksummed_pretty_to_writer(body, payload_digest, &mut bytes)?;
+    record_integrity_vec_len(bytes.len());
+    Ok(bytes)
+}
+/// [`encode_integrity_body`] without pretty-printing, for envelopes large
+/// enough that indentation would dominate their size (the Python per-file
+/// fact store, #10914). Decoding and the digest are unchanged.
+pub(crate) fn encode_integrity_body_compact<T: serde::Serialize>(
+    body: &T,
+    payload_digest: String,
+) -> Result<Vec<u8>, String> {
+    note_integrity_envelope();
+    let bytes = serde_json::to_vec(&ChecksummedBody {
+        body,
+        payload_digest,
+    })
+    .map_err(|err| format!("encode checksummed cache body failed: {err}"))?;
     record_integrity_vec_len(bytes.len());
     Ok(bytes)
 }
@@ -3578,7 +3702,7 @@ impl FileFactCacheEnvelope {
     /// Unsigned typed body binds identity and all serialized served fields in fixed order.
     /// Nested serde-skipped derived state is excluded by the existing serialization contract.
     fn expected_digest(&self) -> Result<String, String> {
-        semantic_body_digest("ripr-cache:FileFactCacheEnvelope:v1", self)
+        semantic_body_digest(FILE_FACT_ENVELOPE_DIGEST_DOMAIN, self)
     }
     fn validate_integrity(&self) -> Result<(), String> {
         let expected = self.expected_digest()?;
@@ -3647,8 +3771,8 @@ mod codec {
     #[cfg(test)]
     use super::CountCacheEnvelope;
     use super::{
-        CacheEnvelope, CorpusFingerprintEnvelope, FileFactCacheEnvelope, ShardedCacheEnvelope,
-        ShardedCacheManifest,
+        CacheEnvelope, CorpusFingerprintEnvelope, FileFactCacheEnvelope, FileFactCacheEnvelopeRef,
+        ShardedCacheEnvelope, ShardedCacheManifest,
     };
 
     #[cfg(test)]
@@ -3692,7 +3816,14 @@ mod codec {
         serde_json::from_slice(bytes).map_err(|err| format!("decode counts failed: {err}"))
     }
 
+    #[cfg(test)]
     pub(super) fn encode_file_facts(envelope: &FileFactCacheEnvelope) -> Result<Vec<u8>, String> {
+        super::encode_integrity_body(envelope, envelope.expected_digest()?)
+    }
+
+    pub(super) fn encode_file_facts_ref(
+        envelope: &FileFactCacheEnvelopeRef<'_>,
+    ) -> Result<Vec<u8>, String> {
         super::encode_integrity_body(envelope, envelope.expected_digest()?)
     }
 
@@ -3714,7 +3845,7 @@ mod codec {
     }
 }
 
-fn hash_str(s: &str) -> String {
+pub(crate) fn hash_str(s: &str) -> String {
     hash_bytes(s.as_bytes())
 }
 
@@ -4088,7 +4219,11 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
     feature_facts.sort();
     path_dep_edges.sort();
     path_dep_edges.dedup();
+    let graph_context = UnparsedManifestContext::new(root, &parsed_manifests, &path_dep_edges);
     for (manifest, detail) in unparsed_manifests {
+        if graph_context.proves_outside_graph(&manifest) {
+            continue;
+        }
         path_dep_limitations.push(PathDependencyLimitation {
             manifest,
             kind: PathDependencyLimitationKind::ManifestUnparsed,
@@ -4115,6 +4250,195 @@ pub(crate) fn workspace_graph_provenance(root: &Path) -> WorkspaceGraphProvenanc
 /// Repo-relative, `/`-separated directory text of a manifest path, or `None`
 /// when the path is not valid UTF-8 (the supported-path boundary: no lossy
 /// conversion). The root manifest's directory is the empty string.
+/// What the parsed manifests prove about where an unparsed manifest can sit.
+struct UnparsedManifestContext {
+    /// `(workspace root directory, member patterns)` for every parsed manifest
+    /// with a `[workspace]` table; `None` patterns mean `members` is present
+    /// but not a plain string array and so cannot be evaluated.
+    workspaces: Vec<(String, Option<Vec<String>>)>,
+    /// Directories of every parsed manifest.
+    parsed_dirs: Vec<String>,
+    /// Directories named as a path-dependency, `[patch]` or `[replace]` target.
+    targets: BTreeSet<String>,
+}
+
+impl UnparsedManifestContext {
+    fn new(
+        root: &Path,
+        parsed_manifests: &[(&PathBuf, String, toml::Value)],
+        edges: &[PathDependencyEdge],
+    ) -> Self {
+        let mut workspaces = Vec::new();
+        let mut parsed_dirs = Vec::new();
+        let mut targets: BTreeSet<String> = edges
+            .iter()
+            .filter_map(|edge| edge.resolved_path.clone())
+            .collect();
+        for (path, _, value) in parsed_manifests {
+            let Some(dir) = portable_manifest_dir_text(path) else {
+                continue;
+            };
+            if let Some(workspace) = value.get("workspace").and_then(toml::Value::as_table) {
+                let patterns = match workspace.get("members") {
+                    None => Some(Vec::new()),
+                    Some(members) => members.as_array().and_then(|items| {
+                        items
+                            .iter()
+                            .map(|item| item.as_str().map(str::to_string))
+                            .collect::<Option<Vec<_>>>()
+                    }),
+                };
+                workspaces.push((dir.clone(), patterns));
+            }
+            // `[patch.<source>]` and `[replace]` entries are graph members
+            // that the edge inventory does not capture.
+            let mut patched = Vec::new();
+            if let Some(patch) = value.get("patch").and_then(toml::Value::as_table) {
+                patched.extend(patch.values().filter_map(toml::Value::as_table));
+            }
+            if let Some(replace) = value.get("replace").and_then(toml::Value::as_table) {
+                patched.push(replace);
+            }
+            for entries in patched {
+                for entry in entries.values() {
+                    if let Some(declared) = entry
+                        .as_table()
+                        .and_then(|table| table.get("path"))
+                        .and_then(toml::Value::as_str)
+                    {
+                        let declared = declared.replace('\\', "/");
+                        targets.insert(resolve_repo_relative(&dir, &declared).0);
+                    }
+                }
+            }
+            parsed_dirs.push(dir);
+        }
+        // The scanned manifest identity replaces `\\` with `/` and does not
+        // follow symlinked directories, so a target can spell the same
+        // directory differently from the unparsed manifest: add the
+        // separator-normalised spelling and the resolved real location.
+        let canonical_root = root.canonicalize().ok();
+        let mut spellings = BTreeSet::new();
+        for target in &targets {
+            spellings.insert(target.replace('\\', "/"));
+            if let (Some(canonical_root), Ok(real)) =
+                (&canonical_root, root.join(target).canonicalize())
+                && let Ok(relative) = real.strip_prefix(canonical_root)
+            {
+                spellings.insert(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+        targets.extend(spellings);
+        Self {
+            workspaces,
+            parsed_dirs,
+            targets,
+        }
+    }
+
+    /// True when an unparsed manifest provably cannot be part of the
+    /// path-dependency graph: no path-dependency, `[patch]` or `[replace]`
+    /// target is its directory, no parsed manifest lives beneath it (it could
+    /// be a workspace root whose members inherit from it), and at least one
+    /// ancestor workspace exists, every ancestor workspace enumerates
+    /// `members` with patterns this matcher fully understands, and none
+    /// selects it. Cargo refuses a workspace whose member or path-dependency
+    /// target fails to parse, so a stray fixture manifest (for example a
+    /// deliberately invalid `Cargo.toml` under a test directory) is outside
+    /// the graph and must not mark the inventory partial. Anything unproven
+    /// stays a limitation (fail closed).
+    fn proves_outside_graph(&self, manifest: &str) -> bool {
+        let dir = manifest.rsplit_once('/').map_or("", |(dir, _)| dir);
+        if dir.is_empty() || self.targets.contains(dir) {
+            return false;
+        }
+        let beneath = format!("{dir}/");
+        if self
+            .parsed_dirs
+            .iter()
+            .any(|parsed| parsed.starts_with(&beneath))
+        {
+            return false;
+        }
+        let mut ancestors = 0usize;
+        for (root_dir, patterns) in &self.workspaces {
+            let relative = if root_dir.is_empty() {
+                dir
+            } else {
+                match dir
+                    .strip_prefix(root_dir.as_str())
+                    .and_then(|rest| rest.strip_prefix('/'))
+                {
+                    Some(rest) => rest,
+                    None => continue,
+                }
+            };
+            ancestors += 1;
+            let Some(patterns) = patterns else {
+                return false;
+            };
+            if !patterns
+                .iter()
+                .all(|pattern| matches!(member_pattern_selects(pattern, relative), Some(false)))
+            {
+                return false;
+            }
+        }
+        ancestors > 0
+    }
+}
+
+/// Evaluate one `[workspace] members` pattern against a root-relative
+/// directory. Supports literal segments and `*` wildcards inside a segment;
+/// returns `None` for syntax it does not model (`**`, `?`, classes, braces,
+/// absolute or `..` paths) so the caller fails closed.
+fn member_pattern_selects(pattern: &str, relative: &str) -> Option<bool> {
+    let pattern = pattern.replace('\\', "/");
+    let pattern = pattern.trim_start_matches("./").trim_end_matches('/');
+    if pattern.is_empty()
+        || pattern.starts_with('/')
+        || pattern.contains(['?', '[', '{'])
+        || pattern.contains("**")
+        || pattern
+            .split('/')
+            .any(|segment| segment == ".." || segment == ".")
+        || pattern.chars().nth(1) == Some(':')
+    {
+        return None;
+    }
+    let pattern_segments: Vec<&str> = pattern.split('/').collect();
+    let dir_segments: Vec<&str> = relative.split('/').collect();
+    Some(
+        pattern_segments.len() == dir_segments.len()
+            && pattern_segments
+                .iter()
+                .zip(&dir_segments)
+                .all(|(pattern, segment)| segment_matches(pattern, segment)),
+    )
+}
+
+/// Match one path segment against a pattern whose only metacharacter is `*`.
+fn segment_matches(pattern: &str, segment: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    let Some(mut rest) = segment.strip_prefix(first) else {
+        return false;
+    };
+    let parts: Vec<&str> = parts.collect();
+    let Some((last, middle)) = parts.split_last() else {
+        return rest.is_empty();
+    };
+    for part in middle {
+        let Some(at) = rest.find(part) else {
+            return false;
+        };
+        rest = &rest[at + part.len()..];
+    }
+    rest.len() >= last.len() && rest.ends_with(last)
+}
+
 fn portable_manifest_dir_text(manifest_path: &Path) -> Option<String> {
     let dir = manifest_path.parent().unwrap_or_else(|| Path::new(""));
     Some(dir.to_str()?.replace('\\', "/"))
@@ -4367,7 +4691,7 @@ fn canonical_toml_value(value: &toml::Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_string())
 }
 
-fn hash_bytes(bytes: &[u8]) -> String {
+pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:016x}", fnv1a_64(bytes))
 }
 
@@ -4383,6 +4707,11 @@ fn hash_named_workspace_files(root: &Path, file_name: &str) -> String {
 /// (bounded to two presence booleans — never a per-file enumeration).
 /// TypeScript no-config detection (`tsconfig.json`/`jsconfig.json` and
 /// detectable TypeScript source below `src`/`tests`) binds the same way.
+/// A package-led JavaScript root (#11336: root `package.json` plus detectable
+/// JS/TS source at the root or below `src`/`test`/`tests`) also selects the
+/// TypeScript adapter, so its effective detection result binds as one
+/// `js_led_root=1` line, only when true. Roots where it is false keep their
+/// prior identities byte-for-byte.
 /// Content-only edits intentionally preserve this identity while creation
 /// and deletion invalidate it. Generated files and excluded directories do
 /// not participate: detection ignores them, so binding them would orphan
@@ -4409,10 +4738,12 @@ fn hash_workspace_manifests(root: &Path) -> String {
         .copied()
         .filter(|dir| source_dir_contains_detectable_typescript(root, dir))
         .collect();
+    let javascript_led_root = detect_javascript_led_root(root);
     if present_python_markers.is_empty()
         && detectable_source_dirs.is_empty()
         && present_typescript_markers.is_empty()
         && detectable_typescript_dirs.is_empty()
+        && !javascript_led_root
     {
         return cargo_identity;
     }
@@ -4437,6 +4768,9 @@ fn hash_workspace_manifests(root: &Path) -> String {
         identity.push_str("typescript_source_dir=");
         identity.push_str(dir);
         identity.push('\n');
+    }
+    if javascript_led_root {
+        identity.push_str("js_led_root=1\n");
     }
     hash_str(&identity)
 }
@@ -4665,7 +4999,7 @@ fn collect_manifest_dir_prefixes(root: &Path, directory: &Path, prefixes: &mut V
 
 /// FNV-1a 64-bit. Same algorithm `seams::compute_seam_id` uses; chosen
 /// for its dependency-free determinism across Rust releases.
-fn fnv1a_64(bytes: &[u8]) -> u64 {
+pub(crate) fn fnv1a_64(bytes: &[u8]) -> u64 {
     const FNV_OFFSET: u64 = 0xcbf29ce484222325;
     const FNV_PRIME: u64 = 0x100000001b3;
     let mut hash: u64 = FNV_OFFSET;
@@ -4739,20 +5073,26 @@ mod tests {
         let compact = RepoSeamFactCache::at_compact_classified(root);
         let corpus = RepoCorpusFingerprintCache::at(root);
         let files = RepoFileFactCache::at(root);
+        #[cfg(feature = "lang-typescript")]
+        let ts_facts = TypeScriptFileFactStore::at(root);
+        #[cfg(feature = "lang-python")]
+        let py_facts = PythonFileFactStore::at(root);
         let scans = RepoModuleTreeScanCache::at(root);
         let counts = RepoSeamCountCache::at(root);
         let scoped = RepoScopedInventoryCache::at(root);
-        let produced = [
+        let mut produced: Vec<&std::path::Path> = vec![
             &full.dir,
             &full.sharded_dir,
             &compact.dir,
             &compact.sharded_dir,
             &corpus.dir,
             &files.dir,
-            &scans.dir,
-            &counts.dir,
-            &scoped.dir,
         ];
+        #[cfg(feature = "lang-typescript")]
+        produced.push(ts_facts.dir_path());
+        #[cfg(feature = "lang-python")]
+        produced.push(py_facts.dir_path());
+        produced.extend([&scans.dir, &counts.dir, &scoped.dir].map(PathBuf::as_path));
         let actual: BTreeSet<_> = produced
             .into_iter()
             .map(|path| {
@@ -4766,13 +5106,23 @@ mod tests {
                     .ok_or_else(|| "layer is not UTF-8".to_string())
             })
             .collect::<Result<_, _>>()?;
-        let expected: BTreeSet<_> = cache_layer_names().iter().copied().collect();
+        // The TypeScript and Python layers stay registered without their
+        // features (the `cache clear` leftover convention, same as
+        // `SeamCounts`), but no producer runs to produce them, so a build
+        // without the feature cannot claim they were produced.
+        let expected: BTreeSet<_> = cache_layer_names()
+            .iter()
+            .copied()
+            .filter(|name| cfg!(feature = "lang-typescript") || *name != "typescript-file-facts")
+            .filter(|name| cfg!(feature = "lang-python") || *name != "python-file-facts")
+            .collect();
         assert_eq!(
             actual, expected,
             "every produced layer must be maintainable"
         );
+        let registered: BTreeSet<_> = cache_layer_names().iter().copied().collect();
         assert_eq!(
-            expected.len(),
+            registered.len(),
             cache_layer_names().len(),
             "duplicate layer name"
         );
@@ -4918,7 +5268,7 @@ mod tests {
         // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.50");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.51");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5058,8 +5408,17 @@ mod tests {
         // 1.113 -> 1.114: call-in-term accumulator (RIPR-SPEC-0360, #9478).
         // 1.114 -> 1.115: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
         // 1.115 -> 1.116: rebound let literal is not the argument (#10819).
-        // 1.116 -> 1.117: self-closed `if` statement tail (#10880).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.117");
+        // 1.116 -> 1.117: whole suffixed decimal arguments feed repository activation (#10839).
+        // 1.117 -> 1.118: scope-end carrier for a standard Drop (#10814).
+        // 1.118 -> 1.119: direct boolean boundary owner grip (RIPR-SPEC-0197, #8610).
+        // 1.119 -> 1.120: literal-only fold and sole-glob reach (#10479).
+        // 1.120 -> 1.121: Display placeholder-edit refusal (#9836).
+        // 1.121 -> 1.122: foreign embedded-type equality reading (#10684).
+        // 1.122 -> 1.123: return/error matches! execution admission.
+        // 1.123 -> 1.124: nested expected-macro limit (#9644) and the
+        // proof-harness source role (RIPR-SPEC-0367).
+        // 1.124 -> 1.125: self-closed `if` statement tail (#10880).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.125");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5162,9 +5521,17 @@ mod tests {
         // 0.120 -> 0.121: same call-in-term accumulator as full 1.114.
         // 0.121 -> 0.122: same row-input oracle as full 1.115.
         // 0.122 -> 0.123: same rebound-let rule as full 1.116.
-        // 0.123 -> 0.124: same self-closed `if` rule as full 1.117.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.124");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.124");
+        // 0.123 -> 0.124: same suffixed decimal argument values as full 1.117.
+        // 0.124 -> 0.125: same scope-end carrier as full 1.118.
+        // 0.125 -> 0.126: same boolean boundary grip as full 1.119 (#8610).
+        // 0.126 -> 0.127: same literal fold and sole-glob reach as full 1.120.
+        // 0.127 -> 0.128: same Display placeholder-edit refusal as full 1.121.
+        // 0.128 -> 0.129: same foreign embedded-type reading as full 1.122.
+        // 0.129 -> 0.130: same matches! admission as full 1.123.
+        // 0.130 -> 0.131: same nested expected-macro limit as full 1.124 (#9644).
+        // 0.131 -> 0.132: same self-closed `if` rule as full 1.125.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.132");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.132");
     }
 
     #[test]
@@ -5201,6 +5568,26 @@ mod tests {
             CacheLoad::Hit(facts) => assert_eq!(facts, current_facts),
             other => return Err(format!("quarantined facts did not round trip: {other:?}")),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn store_file_facts_writes_the_owned_envelope_bytes() -> Result<(), String> {
+        use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter};
+        // The store path borrows the key and facts instead of cloning them
+        // into an owned envelope; the entry on disk must stay byte-identical
+        // to what the owned envelope encodes.
+        let scratch = integrity_scratch("store-owned-bytes")?;
+        let cache = RepoFileFactCache::at_dir(scratch.0.clone());
+        let file = Path::new("src/lib.rs");
+        let source = "pub fn f(x: u32) -> u32 { if x > 0 { x + 1 } else { 0 } }\n\
+                      #[test] fn t() { assert_eq!(f(1), 2); }\n";
+        let facts = RaRustSyntaxAdapter.summarize_file(file, source)?;
+        let key = RepoFileFactCacheKey::new(file, source.as_bytes());
+        cache.store_file_facts(&key, &facts)?;
+        let owned = FileFactCacheEnvelope::new(key.clone(), facts);
+        let on_disk = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
+        assert_eq!(on_disk, codec::encode_file_facts(&owned)?);
         Ok(())
     }
 
@@ -7243,6 +7630,85 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn package_led_javascript_root_changes_cache_identity() -> Result<(), String> {
+        let root = isolated_dir("javascript-led-root");
+        ignore_remove_dir_all(&root);
+        std::fs::create_dir_all(&root).map_err(|err| format!("create workspace: {err}"))?;
+        let identity = || hash_workspace_manifests(&root);
+        let cargo_only = hash_named_workspace_files(&root, "Cargo.toml");
+
+        // JavaScript with no manifest is not detected: the identity stays the
+        // bare Cargo identity (the early-return path), byte for byte.
+        std::fs::write(root.join("index.js"), "x").map_err(|err| format!("write index: {err}"))?;
+        assert!(!detect_javascript_led_root(&root));
+        assert_eq!(identity(), cargo_only);
+
+        let manifest = root.join("package.json");
+        std::fs::write(&manifest, "{}").map_err(|err| format!("write package.json: {err}"))?;
+        assert!(detect_javascript_led_root(&root));
+        let with_manifest = identity();
+        assert_ne!(with_manifest, cargo_only, "package.json creation flips it");
+
+        std::fs::write(&manifest, "{\"name\":\"edited\"}")
+            .map_err(|err| format!("rewrite package.json: {err}"))?;
+        assert_eq!(
+            with_manifest,
+            identity(),
+            "content-only package.json edits preserve the presence identity"
+        );
+
+        std::fs::remove_file(&manifest).map_err(|err| format!("remove package.json: {err}"))?;
+        assert_eq!(identity(), cargo_only, "package.json deletion restores it");
+
+        // A manifest alone is not a marker either.
+        std::fs::remove_file(root.join("index.js")).map_err(|err| format!("remove: {err}"))?;
+        std::fs::write(&manifest, "{}").map_err(|err| format!("write package.json: {err}"))?;
+        assert_eq!(identity(), cargo_only);
+
+        // #11419: each package-led source directory (`src/`, `test/`,
+        // `tests/`) participates in the identity, mirroring the detector's
+        // own per-directory coverage — not just the root source.
+        for dir in ["src", "test", "tests"] {
+            let source = root.join(dir).join("present.js");
+            std::fs::create_dir_all(root.join(dir))
+                .map_err(|err| format!("create {dir}: {err}"))?;
+            std::fs::write(&source, "x").map_err(|err| format!("write {dir}: {err}"))?;
+            assert!(
+                detect_javascript_led_root(&root),
+                "{dir}/ source selects the adapter"
+            );
+            assert_ne!(
+                identity(),
+                cargo_only,
+                "creating the first {dir} source must invalidate the cache identity"
+            );
+
+            std::fs::remove_file(&source).map_err(|err| format!("remove {dir}: {err}"))?;
+            assert_eq!(
+                identity(),
+                cargo_only,
+                "removing the last {dir} source must restore the baseline identity"
+            );
+
+            // Nested sources are covered by the recursive detector walk.
+            let nested = root.join(dir).join("pkg").join("nested.js");
+            std::fs::create_dir_all(root.join(dir).join("pkg"))
+                .map_err(|err| format!("create {dir}/pkg: {err}"))?;
+            std::fs::write(&nested, "x").map_err(|err| format!("write {dir}/pkg: {err}"))?;
+            assert_ne!(
+                identity(),
+                cargo_only,
+                "nested {dir} sources participate in detection identity"
+            );
+            std::fs::remove_file(&nested).map_err(|err| format!("remove nested {dir}: {err}"))?;
+        }
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
     #[test]
     fn python_source_dir_presence_changes_cache_identity() -> Result<(), String> {
         let root = isolated_dir("python-source-dir-inputs");
@@ -8067,6 +8533,191 @@ mod tests {
 
         ignore_remove_dir_all(&root);
         Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_outside_every_member_pattern_is_not_a_limitation() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-outside");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(&root, "tests/fixture/in/Cargo.toml", "[package\nname = ")?;
+
+        let provenance = workspace_graph_provenance(&root);
+        assert!(
+            provenance.path_dependency_limitations.is_empty(),
+            "a fixture manifest outside every member pattern is outside the graph: {:?}",
+            provenance.path_dependency_limitations
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_that_may_be_in_the_graph_stays_a_limitation() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-inside");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )?;
+        // Selected by `crates/*`.
+        write_manifest(&root, "crates/broken/Cargo.toml", "[package\nname = ")?;
+        // Reached by a path dependency of a parsed member.
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nvendored = { path = \"../../vendor/dep\" }\n",
+        )?;
+        write_manifest(&root, "vendor/dep/Cargo.toml", "[package\nname = ")?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let manifests: Vec<&str> = provenance
+            .path_dependency_limitations
+            .iter()
+            .map(|limitation| limitation.manifest.as_str())
+            .collect();
+        assert_eq!(
+            manifests,
+            vec!["crates/broken/Cargo.toml", "vendor/dep/Cargo.toml"]
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_stays_a_limitation_when_any_boundary_is_unproven() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-unproven");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/*\"]\n\n\
+             [patch.crates-io]\npatched = { path = \"vendor/patched\" }\n",
+        )?;
+        write_manifest(
+            &root,
+            "crates/app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )?;
+        // Nested workspace that selects `m` although the root does not.
+        write_manifest(
+            &root,
+            "tools/ws/Cargo.toml",
+            "[workspace]\nmembers = [\"m\"]\n",
+        )?;
+        write_manifest(&root, "tools/ws/m/Cargo.toml", "[package\nname = ")?;
+        // `[patch]` target.
+        write_manifest(&root, "vendor/patched/Cargo.toml", "[package\nname = ")?;
+        // Unparsed manifest that may itself be a workspace root.
+        write_manifest(&root, "sub/Cargo.toml", "[workspace\nmembers = ")?;
+        write_manifest(
+            &root,
+            "sub/inner/Cargo.toml",
+            "[package]\nname = \"inner\"\nversion = \"0.1.0\"\n",
+        )?;
+        let provenance = workspace_graph_provenance(&root);
+        let manifests: Vec<&str> = provenance
+            .path_dependency_limitations
+            .iter()
+            .map(|limitation| limitation.manifest.as_str())
+            .collect();
+        assert_eq!(
+            manifests,
+            vec![
+                "sub/Cargo.toml",
+                "tools/ws/m/Cargo.toml",
+                "vendor/patched/Cargo.toml"
+            ]
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unparsed_manifest_reached_through_a_symlink_or_backslash_spelling_stays_a_limitation()
+    -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-spellings");
+        ignore_remove_dir_all(&root);
+        write_manifest(&root, "Cargo.toml", "[workspace]\nmembers = [\"app\"]\n")?;
+        write_manifest(
+            &root,
+            "app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n\
+             [dependencies]\nlinked = { path = \"../linked\" }\nodd = { path = \"../odd\\\\dir\" }\n",
+        )?;
+        write_manifest(&root, "vendor/bad/Cargo.toml", "[package\nname = ")?;
+        write_manifest(&root, "odd/dir/Cargo.toml", "[package\nname = ")?;
+        std::os::unix::fs::symlink(root.join("vendor/bad"), root.join("linked"))
+            .map_err(|err| err.to_string())?;
+
+        let provenance = workspace_graph_provenance(&root);
+        let manifests: Vec<&str> = provenance
+            .path_dependency_limitations
+            .iter()
+            .map(|limitation| limitation.manifest.as_str())
+            .collect();
+        assert_eq!(
+            manifests,
+            vec!["odd/dir/Cargo.toml", "vendor/bad/Cargo.toml"]
+        );
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_without_any_ancestor_workspace_stays_a_limitation() -> Result<(), String> {
+        let root = isolated_dir("path-dep-unparsed-no-workspace");
+        ignore_remove_dir_all(&root);
+        write_manifest(
+            &root,
+            "app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
+        )?;
+        write_manifest(&root, "other/Cargo.toml", "[package\nname = ")?;
+
+        let provenance = workspace_graph_provenance(&root);
+        assert_eq!(provenance.path_dependency_limitations.len(), 1);
+
+        ignore_remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unparsed_manifest_is_kept_when_member_syntax_is_not_modeled() {
+        for pattern in ["crates/**", "crates/[ab]*", "crates/?", "../x", "/abs"] {
+            assert_eq!(member_pattern_selects(pattern, "tests/fixture"), None);
+        }
+        assert_eq!(
+            member_pattern_selects("crates/*", "tests/fixture"),
+            Some(false)
+        );
+        assert_eq!(member_pattern_selects("crates/*", "crates/app"), Some(true));
+        assert_eq!(
+            member_pattern_selects("crates/a*p", "crates/app"),
+            Some(true)
+        );
+        assert_eq!(
+            member_pattern_selects("crates/*", "crates/a/b"),
+            Some(false)
+        );
+        assert!(!segment_matches("a*b*c", "abxbd"));
+        assert!(segment_matches("a*b*c", "axbyc"));
     }
 
     #[test]
@@ -10210,16 +10861,28 @@ mod generation_transition_tests {
         // each constructor's `entry_dirs`/`entry_dir` (#6707), so this
         // table must not: flipping a constructor flag changes the
         // production side only and fails this test.
-        let expected = vec![
+        let mut expected = vec![
             (full.dir.clone(), false),
             (full.sharded_dir.clone(), true),
             (compact.dir.clone(), false),
             (compact.sharded_dir.clone(), true),
             (RepoCorpusFingerprintCache::at(root).dir, false),
             (RepoFileFactCache::at(root).dir, false),
+        ];
+        #[cfg(feature = "lang-typescript")]
+        expected.push((
+            TypeScriptFileFactStore::at(root).dir_path().to_path_buf(),
+            false,
+        ));
+        #[cfg(feature = "lang-python")]
+        expected.push((
+            PythonFileFactStore::at(root).dir_path().to_path_buf(),
+            false,
+        ));
+        expected.extend([
             (RepoModuleTreeScanCache::at(root).dir, false),
             (RepoScopedInventoryCache::at(root).dir, false),
-        ];
+        ]);
         assert_eq!(production_entry_dirs(&cache_base_dir(root)), expected);
         // The constructors doctor's list is derived from must carry the
         // same flags, so a flag flipped in `entry_dirs`/`entry_dir`
@@ -10229,6 +10892,10 @@ mod generation_transition_tests {
         constructed.extend(compact.entry_dirs());
         constructed.push(RepoCorpusFingerprintCache::at(root).entry_dir());
         constructed.push(RepoFileFactCache::at(root).entry_dir());
+        #[cfg(feature = "lang-typescript")]
+        constructed.push(TypeScriptFileFactStore::at(root).entry_dir());
+        #[cfg(feature = "lang-python")]
+        constructed.push(PythonFileFactStore::at(root).entry_dir());
         constructed.push(RepoModuleTreeScanCache::at(root).entry_dir());
         constructed.push(RepoScopedInventoryCache::at(root).entry_dir());
         assert_eq!(constructed, expected);

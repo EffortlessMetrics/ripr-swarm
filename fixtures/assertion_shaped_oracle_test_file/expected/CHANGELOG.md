@@ -448,7 +448,56 @@ Updated:
 ## Pending — assertion_shaped_oracle_test_file (29)
 
 Reason:
-RIPR-SPEC-0108: a self-closed let-if statement no longer lends the next line as a branch value, so confidence drops 0.66 to 0.61 and the class stays unknown (#10880)
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (30)
+
+Reason:
+RIPR-SPEC-0122: check now prints one hand-written-test step when a gap has neither a repair start nor a stub, and only stub commands that produce a stub (#10710)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (31)
+
+Reason:
+RIPR-SPEC-0122: the hand-written step respects a field-not-returned or no-return-value stub refusal, and a lone validated stub the changed expression did not pick stays a choice (#10710)
+RIPR-SPEC-0122: incomplete evidence stage tokens render as plain words in the human repair advisory (#11025)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (32)
+
+Reason:
+RIPR-SPEC-0122: check human output drops the no-repair-route clause beside a repair advisory that names its own route or recovery (#10710)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (33)
+
+Reason:
+RIPR-SPEC-0108: a self-closed if statement no longer lends the next line as a branch value (#10880); rebased on main's reworded human output
 
 Command:
 `cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`

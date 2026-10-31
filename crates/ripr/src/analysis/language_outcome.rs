@@ -52,7 +52,7 @@ pub(crate) enum OutcomeMode {
 }
 
 impl OutcomeMode {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Repo => "repo",
             Self::Diff => "diff",
@@ -481,6 +481,13 @@ impl LanguageAnalysisOutcomeV1 {
     ///
     /// The reason joins the typed limitations; a non-success status without one
     /// still names its status so the record is never reasonless.
+    ///
+    /// One compat row per selected language label is intentional (#10546).
+    /// Disclosure consumers, such as the preview-language advisory's
+    /// `analyzed` check, match rows by label, so a shared TypeScript-family
+    /// adapter result publishes a row for each selected id (`typescript` and
+    /// `javascript`). Collapsing them would make a degraded `javascript`
+    /// label read as analyzed.
     pub(crate) fn compat_run(&self) -> Option<LanguageRun> {
         let status = self.status.compat_status()?;
         let reason = if self.limitations.is_empty() {

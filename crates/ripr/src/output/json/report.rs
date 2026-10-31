@@ -1,8 +1,8 @@
 use crate::app::CheckOutput;
 use crate::config::RiprConfig;
 use crate::domain::{
-    Finding, FindingCanonicalGap, FlowSinkFact, MissingDiscriminatorFact, ProbeFamily, RelatedTest,
-    StageEvidence, ValueFact,
+    Finding, FindingCanonicalGap, FlowSinkFact, LanguageId, MissingDiscriminatorFact, ProbeFamily,
+    RelatedTest, StageEvidence, ValueFact,
 };
 use crate::output::agent_seam_packets::{
     AGENT_SEAM_PACKET_SCHEMA_VERSION, allowed_edit_surface_for_gap_route,
@@ -15,7 +15,9 @@ use crate::output::preview_actionability::{
     projected_preview_actionability_evidence, projected_preview_actionability_missing,
 };
 use crate::output::python_repair_card::{PythonRepairCard, python_repair_card};
-use crate::output::typescript_packet_projection::typescript_gap_record_for;
+use crate::output::typescript_packet_projection::{
+    typescript_canonical_gap_id, typescript_gap_record_for,
+};
 use crate::output::typescript_preview_card::{
     typescript_preview_card, typescript_preview_card_json_value,
 };
@@ -750,6 +752,19 @@ pub(crate) fn render_with_config(
         }
         out.push_str("  ]");
     }
+    // Additive per-language completeness projection (#11272): the shared
+    // `LanguageCompletenessView` owner's rows, so a completed zero-finding run
+    // reads differently from a skipped or unavailable adapter. Appended last
+    // as one compact line; classification goldens strip it like
+    // `canonical_next_action` (dedicated schema tests own the field).
+    if let Some(view) = output
+        .analysis_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.language_view.as_ref())
+    {
+        out.push_str(",\n  \"language_completeness\": ");
+        out.push_str(&view.to_json_value().to_string());
+    }
     out.push_str("}\n");
     out
 }
@@ -844,6 +859,23 @@ fn finding_json_with_config_and_counts(
             true,
         );
         canonical_gap_json(out, gap, indent + 1, true);
+    } else if finding.language == Some(LanguageId::TypeScript)
+        && finding.id.starts_with("probe:")
+        && finding.id.contains(":typescript_preview:")
+        && typescript_preview_card(finding).is_some()
+    {
+        // TypeScript preview findings carry no `FindingCanonicalGap`, but
+        // `ripr agent repair --gap-id` and the human output already name the
+        // gap; state the same content-addressed id (the shared derivation
+        // `ripr agent` consumers re-derive) so machine consumers need not
+        // scrape text (#10709).
+        field(
+            out,
+            indent + 1,
+            "canonical_gap_id",
+            &typescript_canonical_gap_id(&finding.id),
+            true,
+        );
     }
     field(
         out,
@@ -860,6 +892,12 @@ fn finding_json_with_config_and_counts(
         true,
     );
     float_field(out, indent + 1, "confidence", finding.confidence, true);
+    super::formatter::confidence_basis_fields(
+        out,
+        indent + 1,
+        &crate::domain::basis_entries(&finding.confidence_basis, finding.language),
+        crate::domain::why_capped_line(&finding.confidence_basis, finding.language).as_deref(),
+    );
     // #5531: carry the typed scope for repo findings only, so ledger consumers
     // of the rendered check JSON read the scope, not an evidence line. Omitted
     // for diff scope to keep diff-mode bytes identical.
@@ -1255,6 +1293,17 @@ fn evidence_path_values(finding: &Finding) -> Vec<String> {
 }
 
 fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
+    // #11228: TypeScript and JavaScript findings use the one shared selection
+    // rule (first of equal strength) so the oracle summary describes the row
+    // the headline, card and packet name. Other languages keep their existing
+    // last-of-equal-strength summary; moving them is a separate, golden-wide
+    // change.
+    if matches!(
+        finding.language,
+        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
+    ) {
+        return crate::output::related_test_miss::strongest_related_test(&finding.related_tests);
+    }
     finding
         .related_tests
         .iter()
@@ -2046,9 +2095,24 @@ mod evidence_path_separator_tests {
     };
     use std::path::PathBuf;
 
+    #[test]
+    fn finding_serde_skips_an_empty_confidence_basis_and_round_trips_a_set_one()
+    -> Result<(), String> {
+        let mut finding = finding_with_related("src/lib.rs");
+        let empty = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert!(empty.get("confidence_basis").is_none());
+        finding.confidence_basis = vec![crate::domain::ConfidenceCap::NoRelatedTest];
+        let set = serde_json::to_value(&finding).map_err(|e| e.to_string())?;
+        assert_eq!(set["confidence_basis"][0], "no_related_test");
+        let back: Finding = serde_json::from_value(set).map_err(|e| e.to_string())?;
+        assert_eq!(back.confidence_basis, finding.confidence_basis);
+        Ok(())
+    }
+
     fn finding_with_related(file: &str) -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

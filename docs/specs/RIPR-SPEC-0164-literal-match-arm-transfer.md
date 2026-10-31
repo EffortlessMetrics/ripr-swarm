@@ -68,9 +68,17 @@ related test row pins the exact label per arm.
   other branch after the edit, as a row on the new literal does before
   it. A compound predicate, a changed left operand, a named or computed
   constant, a row on neither literal and a weak oracle keep the missing
-  equality-boundary discriminator. Known limit (#10856): the rule is not
-  path-sensitive, so a row that an earlier branch or early return
-  handles still counts, as a row on the new literal already does.
+  equality-boundary discriminator. Reach (#10856): an equality
+  credit (a row on either constant) requires that nothing in the owner
+  before the changed line can take the row away: no earlier `if`, `else`,
+  `match`, loop, `return`, `?`, `break` or `continue`. Otherwise the
+  rows are not credited: the boundary reads unresolved where the row
+  would have been credited on the new constant, and as the missing
+  equality for the replaced constant (as before #10304). On a match-arm
+  line the one enclosing `match` is not a diversion, but an earlier arm
+  (`=>`) or an earlier statement still is.
+  Corpus cases `eq-divert-*` pin it; evaluating simple
+  earlier conditions on the row to recover those credits is future work.
 
 ## Required Evidence
 

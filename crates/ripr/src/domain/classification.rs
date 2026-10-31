@@ -89,16 +89,32 @@ pub(crate) const LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX: &str =
     "limitation_first_unresolved_edge: ";
 pub(crate) const LIMITATION_ANALYZER_ROUTE_PREFIX: &str = "limitation_analyzer_route: ";
 pub(crate) const LIMITATION_NON_CLAIM_PREFIX: &str = "limitation_non_claim: ";
+/// Additive declaration context, kept separate from the canonical edge text.
+pub(crate) const LIMITATION_HELPER_BOUNDARY_PREFIX: &str = "limitation_helper_boundary: ";
 
+/// Static exposure classification for a changed behavior.
+///
+/// This is draft static evidence about whether current tests appear to
+/// contain a discriminator for the change; it never claims a test was
+/// executed or that test adequacy was demonstrated. See
+/// `docs/STATIC_EXPOSURE_MODEL.md` for the full model.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExposureClass {
+    /// Static evidence suggests a complete RIPR path to a strong oracle
+    /// that observes the changed sink.
     Exposed,
+    /// A path exists, but infection or discrimination appears weak.
     WeaklyExposed,
+    /// Related tests appear reachable, but no meaningful oracle was found.
     ReachableUnrevealed,
+    /// No static test path was found for the changed owner.
     NoStaticPath,
+    /// Reachability exists, but input or fixture evidence is opaque.
     InfectionUnknown,
+    /// The changed behavior crosses an opaque propagation boundary.
     PropagationUnknown,
+    /// Syntax-first analysis cannot make a credible judgment.
     StaticUnknown,
 }
 
@@ -115,14 +131,20 @@ impl ExposureClass {
         ExposureClass::StaticUnknown,
     ];
 
+    /// The stable snake_case wire token for this class (for example
+    /// `weakly_exposed`), as used in JSON output and configuration.
     pub fn as_str(&self) -> &'static str {
         profile::for_class(self).label
     }
 
+    /// The diagnostic severity associated with this class (`info`,
+    /// `warning`, or `note`).
     pub fn severity(&self) -> &'static str {
         profile::for_class(self).severity
     }
 
+    /// Whether a finding with this class must carry an explicit stop
+    /// reason explaining why static analysis could not judge further.
     pub fn requires_stop_reason(&self) -> bool {
         profile::for_class(self).requires_stop_reason
     }
@@ -140,6 +162,42 @@ impl ExposureClass {
             ExposureClass::InfectionUnknown
             | ExposureClass::PropagationUnknown
             | ExposureClass::StaticUnknown => "unknown",
+        }
+    }
+
+    /// #9373: the plain label for a row that lists a finding without room for a
+    /// full explanation (the default digest's `Hidden:` rows). The shared
+    /// `plain_label` (#8165) is unchanged; the three unknown classes keep the
+    /// word `unknown` and add which stage the analysis could not judge, so a
+    /// reader can tell them apart without rerunning `--format human-full`.
+    pub(crate) fn plain_label_with_stage(&self) -> &'static str {
+        match self {
+            ExposureClass::InfectionUnknown => "unknown: infection unclear",
+            ExposureClass::PropagationUnknown => "unknown: propagation unclear",
+            ExposureClass::StaticUnknown => "unknown: static analysis limited",
+            other => other.plain_label(),
+        }
+    }
+
+    /// #9373: a one-line plain meaning for this class, the vocabulary of
+    /// `plain_label_with_stage`. Prose only, no schema tokens.
+    pub(crate) fn plain_gloss(&self) -> &'static str {
+        match self {
+            ExposureClass::Exposed => "tests appear to notice the change",
+            ExposureClass::WeaklyExposed => "tests reach it but check it only loosely",
+            ExposureClass::ReachableUnrevealed => {
+                "tests reach it but nothing appears to notice a change"
+            }
+            ExposureClass::NoStaticPath => "no test path was found",
+            ExposureClass::InfectionUnknown => {
+                "ripr could not tell what input makes the change take effect"
+            }
+            ExposureClass::PropagationUnknown => {
+                "ripr could not follow the change through an opaque boundary"
+            }
+            ExposureClass::StaticUnknown => {
+                "reading the code was not enough for ripr to judge (analysis limited, not a verdict)"
+            }
         }
     }
 

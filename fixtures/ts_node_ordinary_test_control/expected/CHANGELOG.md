@@ -247,3 +247,57 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_node_ordinary_test_control (20)
+
+Reason:
+RIPR-SPEC-0122: plain-language wording for the default and human-full check views (#10691); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless ts_node_ordinary_test_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_node_ordinary_test_control (21)
+
+Reason:
+RIPR-SPEC-0088: TypeScript preview check JSON states top-level canonical_gap_id (#10709)
+
+Command:
+`cargo xtask goldens bless ts_node_ordinary_test_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_node_ordinary_test_control (22)
+
+Reason:
+RIPR-SPEC-0027 (#10704): an unmodeled TypeScript change shape (literal return, fallback/default literal, identity no-op, comment-only edit) reads infection_unknown with an infection_evidence_unknown stop reason and no repair packet instead of weakly_exposed/exposed decided by oracle strength alone; a changed line under an if arm no related test enters reads reachable_unrevealed with infection no
+
+Command:
+`cargo xtask goldens bless ts_node_ordinary_test_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+Note (#10700): `expected/human.txt` also moves its repair-refusal opening from the no-gap-id wording to `nothing to repair here`; that move is #10702/#10885 behavior, not caused by confidence_basis, and its transitional entry was removed in this bless.
+
+## Pending — ts_node_ordinary_test_control (23)
+
+Reason:
+RIPR-SPEC-0026: additive confidence_basis and Why capped line for TypeScript/JavaScript preview findings (#10700)
+
+Command:
+`cargo xtask goldens bless ts_node_ordinary_test_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

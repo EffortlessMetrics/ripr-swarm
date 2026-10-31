@@ -58,6 +58,68 @@ pub(super) struct EvidenceEntry {
     pub key: Option<Vec<u8>>,
 }
 
+/// The producer's fixed class-limitation sentence for `propagation_unknown`
+/// (`analysis/classify/decision.rs`), which names an "observable sink". The
+/// JSON `missing` list keeps that sentence byte-for-byte; the human surfaces
+/// say the same thing without the internal noun (#10691).
+pub(crate) const PROPAGATION_UNKNOWN_PRODUCER_SENTENCE: &str =
+    "No clear propagation path from changed behavior to an observable sink";
+
+/// Fixed producer phrases that name internal nouns (probe, observable sink).
+/// The producers keep them byte-for-byte for JSON and receipts; the human
+/// surfaces substitute plain words (#10691). A display mapping only: it
+/// decides nothing, and text containing none of these phrases is unchanged.
+const PLAIN_PHRASES: &[(&str, &str)] = &[
+    (
+        PROPAGATION_UNKNOWN_PRODUCER_SENTENCE,
+        "ripr could not follow the changed value to something a test can check (a return value or side effect)",
+    ),
+    (
+        "no assertion text references this probe's changed expression",
+        "no assertion text references the changed expression",
+    ),
+    (
+        "not mapped to a high-confidence probe family",
+        "not mapped to a high-confidence change type",
+    ),
+    (
+        "owner, related-test, oracle, and probe evidence",
+        "owner, related-test, oracle, and changed-behavior evidence",
+    ),
+];
+
+/// The classifier's fixed "nothing strong enough notices this" entry. JSON
+/// `missing`, `--format human-full` and the matching keys in this module keep
+/// its wording byte-for-byte; the default human lines say the same thing with
+/// the plain word for what a test supplies. Applied only where the default
+/// digest and the Hidden list print a `missing` entry.
+const STRONG_DISCRIMINATOR_ENTRY: &str = "No strong discriminator was detected";
+const STRONG_ASSERTION_ENTRY: &str = "No strong assertion was detected";
+
+pub(crate) fn plain_default_missing(text: &str) -> String {
+    text.replace(STRONG_DISCRIMINATOR_ENTRY, STRONG_ASSERTION_ENTRY)
+}
+
+/// The change-type token the default human lists print after `kind:`. Every
+/// family keeps its stable snake_case spelling except the catch-all, whose
+/// raw token is the banned state word; JSON and `human-full` keep it.
+pub(crate) fn plain_probe_family(family: &crate::domain::ProbeFamily) -> &'static str {
+    match family {
+        crate::domain::ProbeFamily::StaticUnknown => "unclear",
+        other => other.as_str(),
+    }
+}
+
+pub(crate) fn plain_internal_wording(text: &str) -> String {
+    let mut plain = text.to_string();
+    for (internal, replacement) in PLAIN_PHRASES {
+        if plain.contains(internal) {
+            plain = plain.replace(internal, replacement);
+        }
+    }
+    plain
+}
+
 /// #9244: the producer's reveal-stage summaries carry the machine marker
 /// `observation_unverified`, which consumers of the stage summary in JSON key
 /// on. The human window already says the same thing in words ("Discriminator
@@ -387,7 +449,7 @@ pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
         // #9929: the Python adapter's reason text carries the producer marker
         // `(observation_unverified)`; the human list drops it, JSON `missing`
         // keeps it.
-        .map(|missing| plain_observation_wording(missing))
+        .map(|missing| plain_internal_wording(&plain_observation_wording(missing)))
         .collect::<Vec<_>>();
     for discriminator in &finding.activation.missing_discriminators {
         lines.push(format!(

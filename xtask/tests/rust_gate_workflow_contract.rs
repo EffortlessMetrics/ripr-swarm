@@ -259,6 +259,7 @@ fn rust_gate_workflow_rejects_narrowing_explicit_clippy_coverage() {
 const FIXTURE_PREPARATION_NAME: &str = "name: Prepare locked owner-return fixture dependencies";
 const FALLIBLE_FETCH: &str = "cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml";
 const JSON_FETCH: &str = "cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml";
+const PROPTEST_FETCH: &str = "cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml";
 
 fn prepares_locked_owner_return_fixtures(workflow: &str) -> bool {
     let blocks: Vec<_> = workflow.split("\n      - ").skip(1).collect();
@@ -283,6 +284,7 @@ fn prepares_locked_owner_return_fixtures(workflow: &str) -> bool {
             "run: |",
             FALLIBLE_FETCH,
             JSON_FETCH,
+            PROPTEST_FETCH,
         ]
         && blocks[..*index]
             .iter()
@@ -292,13 +294,15 @@ fn prepares_locked_owner_return_fixtures(workflow: &str) -> bool {
                 .iter()
                 .any(|block| step_id(block) == Some(id))
         })
-        && [FALLIBLE_FETCH, JSON_FETCH].iter().all(|command| {
-            workflow
-                .lines()
-                .filter(|line| line.trim() == *command)
-                .count()
-                == 1
-        })
+        && [FALLIBLE_FETCH, JSON_FETCH, PROPTEST_FETCH]
+            .iter()
+            .all(|command| {
+                workflow
+                    .lines()
+                    .filter(|line| line.trim() == *command)
+                    .count()
+                    == 1
+            })
 }
 
 #[test]
@@ -309,7 +313,7 @@ fn rust_gate_workflow_prepares_both_locked_owner_return_fixtures_before_policy()
 #[test]
 fn rust_gate_workflow_rejects_missing_unlocked_late_or_suppressed_fixture_preparation() {
     let preparation = format!(
-        "      - {FIXTURE_PREPARATION_NAME}\n        run: |\n          {FALLIBLE_FETCH}\n          {JSON_FETCH}\n"
+        "      - {FIXTURE_PREPARATION_NAME}\n        run: |\n          {FALLIBLE_FETCH}\n          {JSON_FETCH}\n          {PROPTEST_FETCH}\n"
     );
     for changed in [
         WORKFLOW.replace(&preparation, ""),
@@ -335,6 +339,34 @@ fn rust_gate_workflow_rejects_missing_unlocked_late_or_suppressed_fixture_prepar
         format!("{}\n{preparation}", WORKFLOW.replace(&preparation, "")),
         format!("{WORKFLOW}\n{preparation}"),
     ] {
+        assert_ne!(
+            changed, WORKFLOW,
+            "negative fixture must change the workflow"
+        );
+        assert!(!prepares_locked_owner_return_fixtures(&changed));
+    }
+}
+
+#[test]
+fn rust_gate_workflow_rejects_missing_unlocked_suppressed_or_duplicate_property_preparation() {
+    for changed in [
+        WORKFLOW.replace(PROPTEST_FETCH, ""),
+        WORKFLOW.replace(PROPTEST_FETCH, &PROPTEST_FETCH.replace(" --locked", "")),
+        WORKFLOW.replace(PROPTEST_FETCH, &format!("{PROPTEST_FETCH} || true")),
+        WORKFLOW.replace(
+            PROPTEST_FETCH,
+            &format!("{PROPTEST_FETCH}\n          {PROPTEST_FETCH}"),
+        ),
+        // This leaves the closed preparation block intact and challenges
+        // the independent whole-workflow uniqueness requirement.
+        format!(
+            "{WORKFLOW}\n      - name: Duplicate property fetch\n        run: |\n          {PROPTEST_FETCH}\n"
+        ),
+    ] {
+        assert_ne!(
+            changed, WORKFLOW,
+            "negative fixture must change the workflow"
+        );
         assert!(!prepares_locked_owner_return_fixtures(&changed));
     }
 }
@@ -360,7 +392,12 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
     // cancelled or red shard and a non-disjoint or incomplete cover must all fail.
     for required in [
         "    needs: rust-test-shard\n    if: ${{ !cancelled() }}\n",
-        "cargo xtask verify-test-shards \\\n",
+        "\"$xtask\" verify-test-shards \\\n",
+        "xtask=\"$(find xtask-binary -type f -name xtask | sort -V | tail -n 1)\"\n",
+        "pattern: ${{ inputs.artifact-name }}-xtask-*\n          path: xtask-binary\n",
+        "name: ${{ inputs.artifact-name }}-xtask-${{ github.run_attempt }}\n          path: target/xtask-binary/xtask\n",
+        "        if: matrix.shard == 1\n        run: |\n          mkdir -p target/xtask-binary\n          strip --strip-debug -o target/xtask-binary/xtask target/debug/xtask\n",
+        "if-no-files-found: error\n          retention-days: 1\n",
         "            --shards 4 \\\n",
         "            --sha \"$(git rev-parse HEAD)\" \\\n",
         "            --run-id \"$GITHUB_RUN_ID\" \\\n",
@@ -434,7 +471,19 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
         ),
         ("fail-fast: false", "continue-on-error: true"),
         ("shard: [1, 2, 3, 4]", "shard: [1, 2, 3]"),
-        ("cargo xtask verify-test-shards", "true"),
+        ("\"$xtask\" verify-test-shards", "true"),
+        (
+            "find xtask-binary -type f -name xtask | sort -V | tail -n 1",
+            "find xtask-binary -type f -name xtask | head -n 1",
+        ),
+        (
+            "if-no-files-found: error\n          retention-days: 1",
+            "if-no-files-found: warn\n          retention-days: 1",
+        ),
+        (
+            "-xtask-${{ github.run_attempt }}\n          path: target",
+            "-xtask-0\n          path: target",
+        ),
         ("            --shards 4 \\\n", "            --shards 3 \\\n"),
         ("            --sha \"$(git rev-parse HEAD)\" \\\n", ""),
         (

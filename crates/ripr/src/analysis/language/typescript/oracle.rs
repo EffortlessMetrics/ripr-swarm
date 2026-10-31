@@ -1284,6 +1284,18 @@ pub(crate) fn expect_assertion_from_expression(
         // An error object this extraction could not read stays unresolved
         // (RIPR-SPEC-0250 reads only the returned object).
         (OracleKind::Unknown, OracleStrength::Unknown)
+    } else if !negated
+        && matcher == "toMatchObject"
+        && outer_call
+            .arguments
+            .first()
+            .is_some_and(is_scalar_literal_argument)
+    {
+        // RIPR-SPEC-0250 rule 4: a scalar literal is not an object subset.
+        // Vitest reads it as plain equality and Jest throws a matcher error
+        // for a non-object received value, so neither the relational "too
+        // weak" grade nor an exact grade is knowable from the source (#11256).
+        (OracleKind::Unknown, OracleStrength::Unknown)
     } else if inline_snapshot_is_literal(matcher, outer_call) {
         // RIPR-SPEC-0247 rule 3: the expected text is written in the test.
         (OracleKind::Snapshot, OracleStrength::Strong)
@@ -1355,6 +1367,14 @@ pub(crate) fn expect_assertion_from_expression(
         && oracle_kind == OracleKind::ExactValue
         && outer_call.arguments.len() == 1
         && expected_value_or_variant.is_some()
+        // A literal array is an equality expectation on the rejected reason
+        // that the rejection-literal credit does not model; keep it exact_value.
+        && outer_call
+            .arguments
+            .first()
+            .is_some_and(|argument| {
+            !is_literal_container_argument(argument) || is_literal_argument(argument)
+        })
         && bindings.runner_expects.iter().any(|name| name == "expect")
     {
         oracle_kind = OracleKind::ExactErrorVariant;
@@ -1481,7 +1501,13 @@ pub(crate) fn ava_assertion_from_expression(
         .first()
         .and_then(|arg| source_text_for_argument(arg, source));
     let expected_arg = call.arguments.get(1);
-    let expected_is_literal = expected_arg.is_some_and(|arg| is_literal_argument(arg));
+    // An all-literal array is a literal expectation only for `deepEqual`:
+    // `is` / `strictEqual` / `equal` compare by reference or loosely, so a
+    // fresh array literal is never the value a call returns and stays a
+    // dynamic argument there.
+    let expected_is_literal = expected_arg.is_some_and(|arg| {
+        is_literal_argument(arg) || (method == "deepEqual" && is_literal_array_argument(arg))
+    });
     let expected_value_or_variant = if expected_is_literal {
         expected_arg.and_then(|arg| source_text_for_argument(arg, source))
     } else {
@@ -1857,6 +1883,12 @@ impl TypeScriptAssertionBindings {
     /// identifier is `callee_root` (`test`, `it`, `test.only`): the
     /// `node:test` context assert is read only when that root is bound to
     /// `node:test` (RIPR-SPEC-0252), not merely because the file imports it.
+    /// Whether the registration root is bound to AVA's `test`, whose macro form
+    /// `test(title, macro, fn)` puts the callback at argument 2.
+    pub(crate) fn registration_is_ava(&self, callee_root: Option<&str>) -> bool {
+        callee_root.is_some_and(|root| self.ava_tests.iter().any(|local| local == root))
+    }
+
     pub(crate) fn for_registration(&self, callee_root: Option<&str>) -> Self {
         let mut bindings = self.clone();
         bindings.node_test_runner =
@@ -3178,6 +3210,96 @@ pub(crate) fn is_literal_argument(arg: &Argument<'_>) -> bool {
     }
 }
 
+/// A string, number, boolean or `null` literal, or a sign applied directly to
+/// a numeric literal: the scalar spellings of [`is_literal_argument`], without
+/// its object case.
+pub(crate) fn is_scalar_literal_argument(arg: &Argument<'_>) -> bool {
+    !matches!(arg, Argument::ObjectExpression(_)) && is_literal_argument(arg)
+}
+
+/// An array literal whose elements are all scalar literals or nested
+/// all-literal arrays. Holes, spreads, identifiers, calls and objects keep the
+/// array dynamic.
+pub(crate) fn is_literal_array_argument(arg: &Argument<'_>) -> bool {
+    match arg {
+        Argument::ArrayExpression(array) => literal_array_elements(array),
+        _ => false,
+    }
+}
+
+fn literal_array_elements(array: &oxc_ast::ast::ArrayExpression<'_>) -> bool {
+    use oxc_ast::ast::ArrayExpressionElement as Element;
+    array.elements.iter().all(|element| match element {
+        Element::StringLiteral(_)
+        | Element::NumericLiteral(_)
+        | Element::BooleanLiteral(_)
+        | Element::NullLiteral(_) => true,
+        Element::ArrayExpression(inner) => literal_array_elements(inner),
+        Element::UnaryExpression(unary) => {
+            matches!(
+                unary.operator,
+                oxc_ast::ast::UnaryOperator::UnaryNegation | oxc_ast::ast::UnaryOperator::UnaryPlus
+            ) && matches!(unary.argument, Expression::NumericLiteral(_))
+        }
+        _ => false,
+    })
+}
+
+/// An array or object literal built only from scalar literals, signed numeric
+/// literals and nested all-literal arrays and objects (#11255), such as
+/// `{ _: [], name: "John" }`, `{ a: { b: "c" } }` or `["~/a.jpg", "~b.jpg"]`.
+/// Identifiers, calls, spreads, holes, computed or shorthand keys, getters,
+/// methods, template literals, parenthesized or `as` expressions and a
+/// `__proto__` key keep the value dynamic.
+pub(crate) fn is_literal_container_argument(arg: &Argument<'_>) -> bool {
+    match arg {
+        Argument::ArrayExpression(array) => literal_container_array(array),
+        Argument::ObjectExpression(object) => literal_container_object(object),
+        _ => false,
+    }
+}
+
+fn literal_container_array(array: &oxc_ast::ast::ArrayExpression<'_>) -> bool {
+    array
+        .elements
+        .iter()
+        .all(|element| element.as_expression().is_some_and(literal_container_value))
+}
+
+fn literal_container_object(object: &oxc_ast::ast::ObjectExpression<'_>) -> bool {
+    object.properties.iter().all(|property| match property {
+        ObjectPropertyKind::ObjectProperty(property) => {
+            !property.computed
+                && !property.shorthand
+                && !property.method
+                && matches!(property.kind, oxc_ast::ast::PropertyKind::Init)
+                && safe_mock_expected_object_key(&property.key)
+                && !matches!(&property.key, PropertyKey::StaticIdentifier(id) if id.name == "__proto__")
+                && !matches!(&property.key, PropertyKey::StringLiteral(text) if text.value == "__proto__")
+                && literal_container_value(&property.value)
+        }
+        ObjectPropertyKind::SpreadProperty(_) => false,
+    })
+}
+
+fn literal_container_value(value: &Expression<'_>) -> bool {
+    match value {
+        Expression::StringLiteral(_)
+        | Expression::NumericLiteral(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::NullLiteral(_) => true,
+        Expression::UnaryExpression(unary) => {
+            matches!(
+                unary.operator,
+                oxc_ast::ast::UnaryOperator::UnaryNegation | oxc_ast::ast::UnaryOperator::UnaryPlus
+            ) && matches!(unary.argument, Expression::NumericLiteral(_))
+        }
+        Expression::ArrayExpression(array) => literal_container_array(array),
+        Expression::ObjectExpression(object) => literal_container_object(object),
+        _ => false,
+    }
+}
+
 /// Extract the expected value or variant from the first matcher argument.
 ///
 /// Returns `(Some(text), false)` when the argument is a concrete literal.
@@ -3225,7 +3347,10 @@ pub(crate) fn extract_matcher_expected_value(
         return (None, false);
     };
 
-    if is_literal_argument(first_arg) {
+    if is_literal_argument(first_arg)
+        || (matches!(matcher, "toEqual" | "toStrictEqual" | "toMatchObject")
+            && is_literal_container_argument(first_arg))
+    {
         let text = source_text_for_argument(first_arg, source);
         (text, false)
     } else {

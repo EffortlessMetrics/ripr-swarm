@@ -85,6 +85,134 @@ fn callback_parameters_shadow_the_runner_and_inner_rebinds_do_not() {
     }
 }
 
+/// #10987: a renamed require()-namespace pick the imports layer admits
+/// (`const { test: t } = runner`) indexes exactly like the member and
+/// unrenamed forms it is admitted beside, and so does a renamed runner
+/// import (`import { test as t }`). Entity identity, not token coincidence:
+/// the alias is the same registration target as the direct spelling.
+#[test]
+fn a_renamed_registration_alias_indexes_like_the_direct_forms() {
+    let file = Path::new("test/pick.test.ts");
+    let head = "import { inc } from '../src/calc.js';\nconst assert = require('node:assert');\nconst runner = require('node:test');\n";
+    let callback = "() => { assert.strictEqual(inc(1), 2); }";
+    let member =
+        format!("{head}const test = runner.test;\ntest('member pick pins inc', {callback});\n");
+    let unrenamed =
+        format!("{head}const {{ test }} = runner;\ntest('unrenamed pick pins inc', {callback});\n");
+    let renamed =
+        format!("{head}const {{ test: t }} = runner;\nt('renamed pick pins inc', {callback});\n");
+    let renamed_only = format!(
+        "{head}const {{ test: t }} = runner;\nt.only('renamed only pins inc', {callback});\n"
+    );
+    let renamed_import = format!(
+        "import {{ test as t }} from 'node:test';\nimport {{ inc }} from '../src/calc.js';\nconst assert = require('node:assert');\nt('renamed import pins inc', {callback});\n"
+    );
+    for (label, source) in [
+        ("member pick", &member),
+        ("unrenamed pick", &unrenamed),
+        ("renamed pick", &renamed),
+        ("renamed only", &renamed_only),
+        ("renamed import", &renamed_import),
+    ] {
+        let tests = extract_tests(file, source);
+        assert_eq!(
+            tests.len(),
+            1,
+            "{label} must register exactly one test: {source}"
+        );
+        assert_eq!(
+            tests[0].assertions.len(),
+            1,
+            "{label} must keep its assertion: {source}"
+        );
+        assert!(
+            detect_partial_test_extraction(file, source, &tests).is_none(),
+            "{label} must not be disclosed as unextracted: {source}"
+        );
+    }
+}
+
+/// #10987: a renamed `describe` pick walks its suite, so a renamed test pick
+/// inside it keeps its qualified name instead of vanishing with the suite.
+#[test]
+fn a_renamed_describe_pick_walks_its_suite() {
+    let file = Path::new("test/pick.test.ts");
+    let head = "import { inc } from '../src/calc.js';\nconst assert = require('node:assert');\nconst runner = require('node:test');\n";
+    let source = format!(
+        "{head}const {{ describe: d, test: t }} = runner;\nd('renamed suite', () => {{\n  t('pins inc', () => {{ assert.strictEqual(inc(1), 2); }});\n}});\n"
+    );
+    let tests = extract_tests(file, &source);
+    assert_eq!(tests.len(), 1, "{source}");
+    assert_eq!(tests[0].name, "renamed suite pins inc", "{source}");
+    assert_eq!(tests[0].assertions.len(), 1, "{source}");
+    assert!(detect_partial_test_extraction(file, &source, &tests).is_none());
+}
+
+/// #10987 controls: an alias credits only the registration target it names.
+/// `test` picked off node:assert and an alias of a non-runner member are no
+/// runner registrations, however they are spelled, and a local rebinding of
+/// the renamed spelling shadows the import entirely.
+#[test]
+fn a_renamed_alias_credits_only_the_registration_target_it_names() {
+    let file = Path::new("test/pick.test.ts");
+    let head = "import { inc } from '../src/calc.js';\nconst assert = require('node:assert');\nconst other = require('node:assert');\n";
+    let callback = "() => { assert.strictEqual(inc(1), 2); }";
+    for (label, pick, local) in [
+        (
+            "node:assert's `test` member under a renamed pick",
+            "const { test: t } = other;",
+            "t",
+        ),
+        (
+            "a non-runner member alias",
+            "const { deepEqual: eq } = other;",
+            "eq",
+        ),
+    ] {
+        let source = format!("{head}{pick}\n{local}('ties nothing', {callback});\n");
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{label} must register nothing: {source}");
+    }
+    let shadowed = format!(
+        "import {{ test as t }} from 'node:test';\nimport {{ inc }} from '../src/calc.js';\nconst assert = require('node:assert');\ndescribe('suite', () => {{\n  const t = (name, run) => run();\n  t('ties nothing', {callback});\n}});\n"
+    );
+    let tests = extract_tests(file, &shadowed);
+    assert!(
+        tests.is_empty(),
+        "a describe-body rebinding of the renamed spelling is not the runner: {shadowed}"
+    );
+}
+
+/// #10987 review: the literal spellings refuse inactive modifiers
+/// (`t.skip(...)`, `t.todo(...)`) and empty `.each` tables before a callback
+/// can donate assertions, and an aliased `.each` would lose the table-row
+/// fences. An alias must not read as a registration those spellings refuse:
+/// it registers only bare or through an active modifier (`t(...)`,
+/// `t.only(...)`).
+#[test]
+fn a_renamed_alias_owes_the_inactive_and_each_fences() {
+    let file = Path::new("test/pick.test.ts");
+    let head = "import { inc } from '../src/calc.js';\nconst assert = require('node:assert');\nconst runner = require('node:test');\n";
+    let callback = "() => { assert.strictEqual(inc(1), 2); }";
+    for (label, registration) in [
+        ("inactive modifier", format!("const {{ test: t }} = runner;\nt.skip('ties nothing', {callback});\n")),
+        ("todo modifier", format!("const {{ test: t }} = runner;\nt.todo('ties nothing', {callback});\n")),
+        ("empty aliased table", format!("const {{ test: t }} = runner;\nt.each([])('ties nothing', {callback});\n")),
+        (
+            "aliased each table",
+            "const { test: t } = runner;\nt.each([[1, 'gold']])('ties nothing', (n, tier) => { assert.strictEqual(inc(n), 2 + tier.length); });\n"
+                .to_string(),
+        ),
+    ] {
+        let source = format!("{head}{registration}");
+        let tests = extract_tests(file, &source);
+        assert!(
+            tests.is_empty(),
+            "{label} must register nothing through an alias: {source}"
+        );
+    }
+}
+
 #[test]
 fn awaited_mismatched_runner_kinds_keep_partial_extraction_disclosure() {
     let file = Path::new("test/nanoid.test.js");
@@ -600,6 +728,57 @@ test("adds", () => {
         detect_partial_test_extraction(Path::new("test/pricing.test.mjs"), source, &tests)
             .is_none(),
         "tests inside an options-object describe are extracted, not dropped"
+    );
+}
+
+/// AVA's macro form puts a named macro between the title and the callback
+/// (`test('x', withServer, async (t, server) => {})`, #10964); the callback
+/// is argument 2 and its assertions are read. A macro-looking second argument
+/// without a function third argument is not a callback shape and stays
+/// argument 1 (here an identifier body, nothing to read).
+#[test]
+fn reads_callback_after_a_named_macro() {
+    let source = r#"
+import test from "ava";
+test("adds", withServer, async (t, server) => {
+    t.is(add(1, 2), 3);
+});
+test("subtracts", macros.withServer, async (t) => {
+    t.is(subtract(3, 1), 2);
+});
+test("multiplies", runMultiply, 5000);
+"#;
+    let tests = extract_tests(Path::new("test/math.test.ts"), source);
+
+    let names: Vec<&str> = tests.iter().map(|test| test.name.as_str()).collect();
+    assert_eq!(names, vec!["adds", "subtracts", "multiplies"], "{tests:?}");
+    assert_eq!(tests[0].assertions.len(), 1, "{:?}", tests[0].assertions);
+    assert_eq!(tests[0].assertions[0].matcher, "is");
+    assert_eq!(tests[1].assertions.len(), 1, "{:?}", tests[1].assertions);
+    assert_eq!(tests[2].assertions.len(), 0, "{:?}", tests[2].assertions);
+    assert!(
+        detect_partial_test_extraction(Path::new("test/math.test.ts"), source, &tests).is_none(),
+        "macro-form registrations are extracted, not dropped"
+    );
+}
+
+/// Without AVA provenance a named second argument is not a macro: a
+/// `node:test` options object held in a variable may carry `skip`, so its
+/// callback is not credited as running (Devin review on #10966).
+#[test]
+fn a_named_options_object_is_not_read_as_an_ava_macro() {
+    let source = r#"
+import { test } from "node:test";
+const options = { skip: true };
+test("adds", options, (t) => {
+    t.assert.strictEqual(add(1, 2), 3);
+});
+"#;
+    let tests = extract_tests(Path::new("test/math.test.ts"), source);
+
+    assert!(
+        tests.iter().all(|test| test.assertions.is_empty()),
+        "{tests:?}"
     );
 }
 
@@ -1214,6 +1393,241 @@ test("own skip", async t => {
     assert_eq!(names, ["async parent", "plain parent"], "{tests:?}");
 }
 
+/// #10169: skipped suites are dormant because of the referenced runner
+/// binding, including aliases; an identical spelling is insufficient.
+#[test]
+fn skipped_suite_bindings_follow_imports_and_immutable_aliases() {
+    let file = Path::new("test/binding.test.ts");
+    for (prelude, suite) in [
+        ("", "describe.skip"),
+        (
+            "import { test } from '@playwright/test';",
+            "test.describe.serial.skip",
+        ),
+        (
+            "import { test } from '@playwright/test';",
+            "test.describe.parallel.skip",
+        ),
+        ("import { describe as group } from 'mocha';", "group.skip"),
+        (
+            "import { describe as group } from 'vitest'; const d = group;",
+            "d.skip",
+        ),
+        ("const d = describe; const alias = d;", "alias.only.skip"),
+        ("const skip = describe.skip;", "skip"),
+        ("import * as runner from 'mocha';", "runner.describe.skip"),
+        (
+            "import * as runner from 'vitest'; const { describe: d } = runner;",
+            "d.skip",
+        ),
+        ("const { describe: d } = require('node:test');", "d.skip"),
+        ("const d = describe; { const d = custom; }", "d.skip"),
+        (
+            "const d = describe; function shadow(d) { d = custom; }",
+            "d.skip",
+        ),
+        (
+            "const d = describe; { const describe = custom; describe.skip = run; }",
+            "d.skip",
+        ),
+    ] {
+        let source = format!("{prelude}\n{suite}('off', () => {{ it('nested', () => {{}}); }});");
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_keep_unrelated_and_shadowed_notices() {
+    let file = Path::new("test/binding.test.ts");
+    let nested = "it('nested', () => {});";
+    for source in [
+        format!(
+            "const describe = {{ skip: (_n, fn) => fn() }}; describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "import {{ describe }} from './helper'; describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "import {{ describe }} from 'mocha'; function register(describe) {{ describe.skip('runs', () => {{ {nested} }}); }}"
+        ),
+        format!(
+            "import {{ describe }} from 'mocha'; {{ const describe = custom; describe.skip('runs', () => {{ {nested} }}); }}"
+        ),
+        format!(
+            "const d = describe; function register(d) {{ d.skip('runs', () => {{ {nested} }}); }}"
+        ),
+        format!(
+            "try {{ run(); }} catch (describe) {{ describe.skip('runs', () => {{ {nested} }}); }}"
+        ),
+        format!(
+            "for (const describe of helpers) {{ describe.skip('runs', () => {{ {nested} }}); }}"
+        ),
+        format!(
+            "function register() {{ describe.skip('runs', () => {{ {nested} }}); var describe = custom; }}"
+        ),
+        format!(
+            "const describe = custom; describe('runs', {{ skip: true }}, () => {{ {nested} }});"
+        ),
+        format!(
+            "const describe = custom; const d = describe; d.skip('runs', () => {{ {nested} }});"
+        ),
+        format!("let d = describe; d = custom; d.skip('runs', () => {{ {nested} }});"),
+        format!("const d = describe; d.skip = custom; d.skip('runs', () => {{ {nested} }});"),
+        format!(
+            "const d = describe; (d.skip as any) = custom; d.skip('runs', () => {{ {nested} }});"
+        ),
+        format!("const d = describe; [d.skip] = [custom]; d.skip('runs', () => {{ {nested} }});"),
+        format!("function register(describe) {{ describe.skip('runs', () => {{ {nested} }}); }}"),
+        format!("{{ const describe = custom; describe.skip('runs', () => {{ {nested} }}); }}"),
+        format!("for (const describe of helpers) describe.skip('runs', () => {{ {nested} }});"),
+        format!(
+            "const group = {{ skip: (_n, fn) => fn() }}; namespace N {{ const group = describe; }} group.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "function shadow(describe) {{ globalThis.describe = custom; }} describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "import * as runner from 'mocha'; const globalThis = runner; globalThis.describe = custom; runner.describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "({{ describe }} = {{ describe: custom }}); describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!("({{ describe = custom }} = {{}}); describe.skip('runs', () => {{ {nested} }});"),
+        format!("let d = describe; d.skip = custom; describe.skip('runs', () => {{ {nested} }});"),
+        format!(
+            "let d; d = describe; d.skip = custom; describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "Object.assign(describe, {{ skip: custom }}); describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!(
+            "Object.defineProperty(describe, 'skip', {{ value: custom }}); describe.skip('runs', () => {{ {nested} }});"
+        ),
+        format!("customize(describe); describe.skip('runs', () => {{ {nested} }});"),
+        format!("describe = custom; describe.skip('runs', () => {{ {nested} }});"),
+    ] {
+        let allocator = Allocator::default();
+        let parsed = Parser::new(&allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('nested'")),
+            "{source}: {gap:?}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_preserve_evaluated_argument_and_sibling_notices() {
+    let file = Path::new("test/binding.test.ts");
+    for source in [
+        "const d = describe; d.skip('off', () => { it('dormant', () => {}); }); register(() => { it('live', () => {}); });",
+        "describe.skip((() => { it('live', () => {}); return 'off'; })(), () => { it('dormant', () => {}); });",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{tests:?}");
+        let gap = detect_partial_test_extraction(file, source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_cover_alias_options_and_block_locals() {
+    let file = Path::new("test/binding.test.ts");
+    for source in [
+        "const d = describe; d('off', { skip: true }, () => { it('dormant', () => {}); });",
+        "{ const d = describe; d.skip('off', () => { it('dormant', () => {}); }); }",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, source, &tests).is_none(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_isolate_mutation_provenance_and_dormant_values() {
+    let file = Path::new("test/binding.test.ts");
+    let mut diamond = String::from("let a0 = custom; ");
+    for index in 1..=28 {
+        diamond.push_str(&format!(
+            "let a{index} = a{}; a{index} = a{}; ",
+            index - 1,
+            index - 1
+        ));
+    }
+    diamond
+        .push_str("a28.skip = custom; describe.skip('off', () => { it('dormant', () => {}); });");
+    for source in [
+        diamond.as_str(),
+        "const d = {}; { const d = describe; } d.skip = custom; describe.skip('off', () => { it('dormant', () => {}); });",
+        "const d = {}; function f() { var d = describe; } d.skip = custom; describe.skip('off', () => { it('dormant', () => {}); });",
+        "describe.skip('off', flag ? () => { it('dormantA', () => {}); } : () => { it('dormantB', () => {}); });",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, source, &tests).is_none(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_keep_deep_mutation_and_nested_evaluation_notices() {
+    let file = Path::new("test/binding.test.ts");
+    let mut deep = String::from("let a0 = describe; ");
+    for index in 1..=34 {
+        deep.push_str(&format!("let a{index} = a{}; ", index - 1));
+    }
+    deep.push_str("a34.skip = custom; describe.skip('off', () => { it('live', () => {}); });");
+    for source in [
+        deep.as_str(),
+        "let d; [d = describe] = []; d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "let d; ({ value: d = describe } = {}); d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "describe.skip(new String((() => { it('live', () => {}); return 'off'; })()), () => { it('dormant', () => {}); });",
+        "let title; describe.skip(title = (() => { it('live', () => {}); return 'off'; })(), () => { it('dormant', () => {}); });",
+        "var d = describe; var d; d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "var d = describe; { var d; d.skip = custom; } describe.skip('off', () => { it('live', () => {}); });",
+        "var d = describe; d.skip = custom; var d; describe.skip('off', () => { it('live', () => {}); });",
+        "let d; (d as any) = describe; d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "let d; [d] = [describe]; d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "const box = {}; box.d = describe; box.d.skip = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "describe.skip((() => { it('live', () => {}); return () => 'off'; })()(), () => { it('dormant', () => {}); });",
+        "Object.assign(...[describe, { skip: custom }]); describe.skip('off', () => { it('live', () => {}); });",
+        "new Customizer(describe); describe.skip('off', () => { it('live', () => {}); });",
+        "const g = globalThis; g.describe = custom; describe.skip('off', () => { it('live', () => {}); });",
+        "describe.skip(String((() => { it('live', () => {}); return 'off'; })()), () => { it('dormant', () => {}); });",
+        "describe.skip(`${(() => { it('live', () => {}); return 'off'; })()}`, () => { it('dormant', () => {}); });",
+    ] {
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{tests:?}");
+        let gap = detect_partial_test_extraction(file, source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+}
+
 #[test]
 fn partial_extraction_disclosure_matches_every_extracted_start_in_a_large_file() {
     let file = Path::new("test/many.test.ts");
@@ -1239,4 +1653,370 @@ fn partial_extraction_disclosure_matches_every_extracted_start_in_a_large_file()
         Some(5_000 + 3),
         "the one registration inside a helper must still be disclosed"
     );
+}
+
+#[test]
+fn reassigned_hook_targets_withhold_setup_facts() {
+    let source = |setup: &str| {
+        format!(
+            "import {{ expect }} from 'chai';\nimport {{ Cart }} from '../src/cart';\ndescribe('cart', () => {{\nlet cart = {{ total: () => 1 }};\n{setup}\nbeforeEach(() => {{ cart = new Cart(); }});\nit('total', () => {{ expect(cart.total()).to.equal(1); }});\n}});\n"
+        )
+    };
+    for setup in [
+        "beforeEach = () => {};",
+        "globalThis.beforeEach = () => {};",
+        "globalThis['beforeEach'] = () => {};",
+        "globalThis[key] = () => {};",
+        "([beforeEach] = [() => {}]);",
+        "({ beforeEach } = { beforeEach: () => {} });",
+        "(beforeEach as any) = () => {};",
+        "beforeEach! = () => {};",
+        "for (beforeEach of [() => {}]) {}",
+        "beforeEach++;",
+        r"before\u0045ach = () => {};",
+    ] {
+        let tests = extract_tests(Path::new("tests/cart.test.ts"), &source(setup));
+        assert_eq!(tests.len(), 1, "{setup}: preserve the enabled test");
+        assert!(tests[0].setup_hook_bodies.is_empty(), "{setup}");
+        assert!(
+            tests[0]
+                .scope_bindings
+                .iter()
+                .all(|binding| binding.constructed_by.is_none()),
+            "{setup}: {:?}",
+            tests[0].scope_bindings
+        );
+    }
+    for setup in [
+        "",
+        "// beforeEach = () => {};",
+        r#"const note = "beforeEach = () => {};";"#,
+        r"const pattern = /beforeEach =/;",
+        "const other = {}; other.beforeEach = () => {};",
+    ] {
+        let tests = extract_tests(Path::new("tests/cart.test.ts"), &source(setup));
+        assert_eq!(tests.len(), 1, "{setup}");
+        assert_eq!(tests[0].setup_hook_bodies.len(), 1, "{setup}");
+        assert!(
+            tests[0].scope_bindings.iter().any(|binding| {
+                binding.name == "cart" && binding.constructed_by.as_deref() == Some("Cart")
+            }),
+            "{setup}: {:?}",
+            tests[0].scope_bindings
+        );
+    }
+}
+
+/// Call-mediated ambient-hook rebindings are outside the parsed-target model:
+/// RIPR-SPEC-0243 scopes the hook-write fact to "parsed assignment, update,
+/// destructuring and loop targets", so `Reflect.set`, `Object.defineProperty`
+/// and `Object.assign` on a known global root record no write and a later
+/// registration keeps its documented trust. This control pins that boundary so
+/// modeling any of these spellings later flips a test consciously instead of
+/// drifting (review thread on #10599; boundary is not a desired end state).
+#[test]
+fn call_mediated_hook_rebinding_keeps_documented_trust() {
+    let source = |setup: &str| {
+        format!(
+            "import {{ expect }} from 'chai';\nimport {{ Cart }} from '../src/cart';\ndescribe('cart', () => {{\nlet cart = {{ total: () => 1 }};\n{setup}\nbeforeEach(() => {{ cart = new Cart(); }});\nit('total', () => {{ expect(cart.total()).to.equal(1); }});\n}});\n"
+        )
+    };
+    for setup in [
+        "Reflect.set(globalThis, 'beforeEach', () => {});",
+        "Object.defineProperty(globalThis, 'beforeEach', { value: () => {} });",
+        "Object.assign(globalThis, { beforeEach: () => {} });",
+    ] {
+        let tests = extract_tests(Path::new("tests/cart.test.ts"), &source(setup));
+        assert_eq!(tests.len(), 1, "{setup}: preserve the enabled test");
+        assert_eq!(
+            tests[0].setup_hook_bodies.len(),
+            1,
+            "{setup}: the registration keeps its documented trust"
+        );
+        assert!(
+            tests[0].scope_bindings.iter().any(|binding| {
+                binding.name == "cart" && binding.constructed_by.as_deref() == Some("Cart")
+            }),
+            "{setup}: {:?}",
+            tests[0].scope_bindings
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_retain_thrown_runner_mutation() {
+    let file = Path::new("test/binding.test.ts");
+    let source = "try { throw describe; } catch (d) { d.skip = custom; } describe.skip('runs', () => { it('live', () => {}); });";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty(), "{tests:?}");
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.as_ref()
+            .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+        "{source}: {gap:?}"
+    );
+}
+
+#[test]
+fn skipped_suite_bindings_retain_evaluated_constructor_body() {
+    let file = Path::new("test/binding.test.ts");
+    let source = "describe.skip(new (function () { it('live', () => {}); })(), () => { it('dormant', () => {}); });";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty(), "{tests:?}");
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.as_ref()
+            .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+        "{source}: {gap:?}"
+    );
+}
+
+#[test]
+fn skipped_suite_bindings_retain_opaque_runner_escapes() {
+    let file = Path::new("test/binding.test.ts");
+    for prelude in [
+        "import * as runner from 'mocha'; const d = runner['describe']; d.skip = custom;",
+        "customize`${describe}`;",
+        "for (const d of [describe]) { d.skip = custom; }",
+        "async function customizeRunner() { const d = await describe; d.skip = custom; }",
+        "function* transfer() { yield describe; }",
+    ] {
+        let source =
+            format!("{prelude} describe.skip('runs', () => {{ it('live', () => {{}}); }});");
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+}
+
+/// #10169: an ordinary ambient global-object write targets one unrelated
+/// property. It must not strip dormancy from every skipped suite in the
+/// file, while a write to a runner name must still retain the notice.
+#[test]
+fn skipped_suite_bindings_treat_ambient_global_writes_precisely() {
+    let file = Path::new("test/binding.test.ts");
+    for prelude in [
+        "globalThis.fetch = mock;",
+        "window.matchMedia = () => false;",
+        "global.foo = 1;",
+        "globalThis['probe'] = 1;",
+        "const toTitle = (name) => name; toTitle('x');",
+    ] {
+        let source =
+            format!("{prelude} describe.skip('off', () => {{ it('dormant', () => {{}}); }});");
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{source}"
+        );
+    }
+    for prelude in [
+        "globalThis.describe = custom;",
+        "global['describe'] = custom;",
+        "const get = () => describe; get().skip = custom;",
+    ] {
+        let source =
+            format!("{prelude} describe.skip('runs', () => {{ it('live', () => {{}}); }});");
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+    // Qualified reads: an unrelated global write keeps a qualified skipped
+    // suite dormant, while a write to the runner name itself retains the
+    // notice through the same qualified spelling.
+    for source in [
+        "globalThis.fetch = mock; globalThis.describe.skip('off', () => { it('dormant', () => {}); });",
+        "globalThis.fetch = mock; window.describe.skip('off', () => { it('dormant', () => {}); });",
+    ] {
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, source, &tests).is_none(),
+            "{source}"
+        );
+    }
+    for source in [
+        "globalThis.describe = custom; globalThis.describe.skip('runs', () => { it('live', () => {}); });",
+        "globalThis.describe = custom; window.describe.skip('runs', () => { it('live', () => {}); });",
+        "window.describe = custom; globalThis.describe.skip('runs', () => { it('live', () => {}); });",
+        "globalThis['describe'] = custom; globalThis.describe.skip('runs', () => { it('live', () => {}); });",
+    ] {
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+}
+
+/// #10169: `x`-prefixed suite spellings are dormant runner roots, so a
+/// registration nested in one produces no partial-extraction notice.
+#[test]
+fn skipped_suite_bindings_treat_x_spelled_suites_as_dormant() {
+    let file = Path::new("test/binding.test.ts");
+    for callee in ["xdescribe", "xcontext", "xsuite"] {
+        let source = format!("{callee}('off', () => {{ it('nested', () => {{}}); }});");
+        let parsed_allocator = Allocator::default();
+        let parsed = Parser::new(&parsed_allocator, &source, source_type_for(file)).parse();
+        assert!(parsed.errors.is_empty(), "{source}: {:?}", parsed.errors);
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_keep_invocation_shadows_and_dormant_values_separate() {
+    let file = Path::new("test/binding.test.ts");
+    for expression in [
+        "new (function (it) { it('helper', () => {}); })(custom)",
+        "((it) => { it('helper', () => {}); })(custom)",
+        "(function (it) { it('helper', () => {}); })`title`",
+        "new (function () { function dormant() { it('dormant', () => {}); } })()",
+        "new (async function () { it('unconstructible', () => {}); })()",
+        "(function* () { it('dormant', () => {}); })`title`",
+        "new (function (it) { { const it = globalThis.it; } it('helper', () => {}); })(custom)",
+        "((it) => { { const it = globalThis.it; } it('helper', () => {}); })(custom)",
+        "(function (it) { { const it = globalThis.it; } it('helper', () => {}); })`title`",
+    ] {
+        let source =
+            format!("describe.skip({expression}, () => {{ it('dormant', () => {{}}); }});");
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{source}"
+        );
+    }
+    for expression in [
+        "new (function () { it('live', () => {}); })()",
+        "(function () { it('live', () => {}); })`title`",
+        "(() => { it('live', () => {}); })`title`",
+        "new (function (it) { { const it = globalThis.it; it('live', () => {}); } })(custom)",
+        "((it) => { { const it = globalThis.it; it('live', () => {}); } })(custom)",
+        "(function (it) { { const it = globalThis.it; it('live', () => {}); } })`title`",
+    ] {
+        let source =
+            format!("describe.skip({expression}, () => {{ it('dormant', () => {{}}); }});");
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+    let source = "try { throw custom; } catch (d) { d.skip = custom; } for (const d of [custom]) { d.skip = custom; } describe.skip('off', () => { it('dormant', () => {}); }); register(() => { it('live', () => {}); });";
+    let tests = extract_tests(file, source);
+    assert!(tests.is_empty(), "{tests:?}");
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.as_ref()
+            .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+        "{source}: {gap:?}"
+    );
+}
+
+#[test]
+fn skipped_suite_bindings_keep_loop_catch_and_switch_rebindings_local() {
+    let file = Path::new("test/binding.test.ts");
+    for body in [
+        "for (const it of [globalThis.it]) { it('live', () => {}); }",
+        "for (let it = globalThis.it; flag;) { it('live', () => {}); break; }",
+        "for (let it in values) { it = globalThis.it; it('live', () => {}); }",
+        "try { throw globalThis.it; } catch (it) { it('live', () => {}); }",
+        "switch (1) { case 1: const it = globalThis.it; case 2: it('live', () => {}); }",
+    ] {
+        let source = format!("register(function (it) {{ {body} }});");
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+    for body in [
+        "for (const it of [globalThis.it]) {}",
+        "for (let it = globalThis.it; flag;) { break; }",
+        "for (const it in values) {}",
+        "try { throw globalThis.it; } catch (it) {}",
+        "switch (1) { case 1: const it = globalThis.it; }",
+    ] {
+        let source = format!(
+            "register(function (it) {{ {body} it('helper', () => {{}}); }}); register(() => {{ it('live', () => {{}}); }});"
+        );
+        let tests = extract_tests(file, &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
+        let gap = detect_partial_test_extraction(file, &source, &tests);
+        assert!(
+            gap.as_ref()
+                .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+            "{source}: {gap:?}"
+        );
+    }
+}
+
+#[test]
+fn skipped_suite_bindings_keep_control_flow_function_values_dormant() {
+    let file = Path::new("test/binding.test.ts");
+    for body in [
+        "for (const x of [1]) { const dormant = () => { it('dormant', () => {}); }; }",
+        "if (true) { const dormant = () => { it('dormant', () => {}); }; }",
+        "try { const dormant = () => { it('dormant', () => {}); }; } finally {}",
+        "switch (1) { case 1: const dormant = () => { it('dormant', () => {}); }; }",
+        "if (true) { function dormant() { it('dormant', () => {}); } }",
+    ] {
+        for live in [false, true] {
+            let sibling = if live { "it('live', () => {});" } else { "" };
+            let source =
+                format!("describe.skip(new (function () {{ {body} {sibling} }})(), () => {{}});");
+            let tests = extract_tests(file, &source);
+            assert!(tests.is_empty(), "{source}: {tests:?}");
+            let gap = detect_partial_test_extraction(file, &source, &tests);
+            if live {
+                assert!(
+                    gap.as_ref()
+                        .is_some_and(|gap| gap.snippet.starts_with("it('live'")),
+                    "{source}: {gap:?}"
+                );
+            } else {
+                assert!(gap.is_none(), "{source}: {gap:?}");
+            }
+        }
+    }
 }

@@ -127,6 +127,103 @@ fn admission(index: &RustIndex) -> Result<bool, String> {
 const SHADOW: &str = "macro_rules! assert_eq { ($($t:tt)*) => {} }";
 
 #[test]
+fn binary_macro_boundaries_route_withheld_sources() -> Result<(), String> {
+    let source = "fuzz_target!(|bytes: &[u8]| { assert_eq!(bytes, bytes); });";
+    let fixture = fixture_from_files(
+        "withheld-fuzz",
+        &[
+            ("Cargo.toml", "[package]\nname='demo'\nversion='0.0.0'\n"),
+            ("src/lib.rs", WEIGHT_LIB),
+            (
+                "tests/pin.rs",
+                "use demo::weight;\n#[test]\nfn pin() { assert_eq!(weight(4), 12); }\n",
+            ),
+            (
+                "fuzz/Cargo.toml",
+                "[package]\nname='fuzz'\nversion='0.0.0'\n[workspace]\n[[bin]]\nname='parse'\npath='parse.rs'\n",
+            ),
+            ("fuzz/parse.rs", source),
+        ],
+    )?;
+    let mut index = fixture.index.clone();
+    assert!(index.remove_file(Path::new("fuzz/parse.rs")));
+    // Membership changes invalidate execution authority. Recompose the
+    // retained source set before exercising narrowed-index admission.
+    crate::analysis::facts::compose_fixture_source_roles(&mut index, &fixture.root);
+    assert!(index.execution_context(Path::new("tests/pin.rs")).is_some());
+    let mut withheld = WithheldMacroBindings::default();
+    assert!(!withheld.absorb_with_members(
+        Path::new("fuzz/parse.rs"),
+        source,
+        index.macro_scope_crates(),
+        &index.drop_in_manifests,
+        &index.member_crates,
+    ));
+    assert!(!withheld.trusted.contains("assert_eq"));
+    assert!(
+        withheld
+            .by_root
+            .get(Path::new("fuzz/parse.rs"))
+            .is_some_and(|names| names.contains("assert_eq"))
+    );
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.name == "pin")
+        .ok_or("missing test")?;
+    assert_eq!(test.assertions.len(), 1);
+    let syntax = OwnerPinSyntax::default().with_withheld(withheld);
+    assert_eq!(syntax.refusal(test, &test.assertions[0], &index), None);
+    Ok(())
+}
+
+#[test]
+fn composed_binary_macro_sites_return_to_workspace_scope() {
+    let source = "fuzz_target!(|bytes: &[u8]| { assert_eq!(bytes, bytes); });";
+    let binary_path = Path::new("fuzz/parse.rs");
+    let confined = || {
+        let mut withheld = WithheldMacroBindings::default();
+        withheld.confined_binaries.insert(binary_path.to_path_buf());
+        withheld
+            .by_root
+            .entry(binary_path.to_path_buf())
+            .or_default()
+            .insert("assert_eq".to_string());
+        let site = macro_binding_scan(
+            "macro_rules! assert_eq { ($($t:tt)*) => {} }",
+            &BTreeSet::new(),
+            &assertion_context_macros(),
+            &|_: &str| false,
+        )
+        .into_iter()
+        .next()
+        .map(|(_, site)| site);
+        (withheld, site, source)
+    };
+    for (composed, widened) in [
+        (&["other.rs"][..], false),
+        (&["parse.rs"][..], true),
+        (&["*"][..], true),
+    ] {
+        let (mut withheld, site, _) = confined();
+        if let Some(site) = site {
+            withheld.root_sites.insert(
+                ("assert_eq".to_string(), binary_path.to_path_buf()),
+                (binary_path.to_path_buf(), site),
+            );
+        }
+        let names = composed.iter().map(|name| name.to_string()).collect();
+        withheld.widen_composed(&names);
+        assert_eq!(
+            withheld.trusted.contains("assert_eq"),
+            widened,
+            "{composed:?}"
+        );
+        assert_eq!(withheld.by_root.contains_key(binary_path), !widened);
+    }
+}
+
+#[test]
 fn shared_assertion_requires_every_target_context() -> Result<(), String> {
     for (lib, main, admitted) in [("", "", true), (SHADOW, "", false), ("", SHADOW, false)] {
         let index = fixture(lib, main, false, false)?;
@@ -559,4 +656,68 @@ mod fixture_ownership {
         );
         Ok(())
     }
+}
+
+/// #11123: a glob in a file that composes only under another explicitly
+/// declared Cargo target is not a file of the test's crate, so it cannot bind
+/// the library's name there. Every control where the file may still be the
+/// test crate's keeps the glob binding.
+#[test]
+fn a_glob_under_another_declared_target_does_not_bind_the_test_crate_root() -> Result<(), String> {
+    const BASE: &str = "[package]\nname = \"demo\"\nversion = \"0.0.0\"\nedition = \"2024\"\n";
+    const DECLARED: &str = "\n[[bin]]\nname = \"tool\"\npath = \"tool/main.rs\"\n";
+    const MOUNT: &str = "#[path = \"../src/reader.rs\"]\nmod reader;\nfn main() {}\n";
+    const GLOB_READER: &str = "pub fn read() {}\n#[cfg(test)]\nmod tests {\n    use super::*;\n}\n";
+    const LIB: &str = "pub fn weight(x: u32) -> u32 { 3 * x }\n";
+    const TEST: &str = "#[test]\nfn pin() {\n    assert_eq!(demo::weight(4), 12);\n}\n";
+    const GLOB_TEST: &str =
+        "use std::collections::*;\n#[test]\nfn pin() {\n    assert_eq!(demo::weight(4), 12);\n}\n";
+    let binds = |manifest: &str, tests: &str, tool: &str, reader: &str| -> Result<bool, String> {
+        let manifest = format!("{BASE}{manifest}");
+        let fixture = fixture_from_files(
+            "declared-target-glob",
+            &[
+                ("Cargo.toml", manifest.as_str()),
+                ("src/lib.rs", LIB),
+                ("tests/it.rs", tests),
+                ("tool/main.rs", tool),
+                ("src/reader.rs", reader),
+            ],
+        )?;
+        let roots = TargetRoots::new(&fixture);
+        assert_eq!(
+            roots.root(Path::new("tests/it.rs"), &fixture),
+            Some(PathBuf::from("tests/it.rs")),
+            "the integration test is its own recognized root"
+        );
+        Ok(test_crate_may_bind(
+            Path::new("tests/it.rs"),
+            "demo",
+            &fixture,
+            &roots,
+        ))
+    };
+    // The tool root and its mounted module are unplaced to the autodiscovered
+    // layout. Declared, they are another crate's; undeclared, they may be any.
+    assert!(!binds(DECLARED, TEST, MOUNT, GLOB_READER)?);
+    assert!(!binds(
+        DECLARED,
+        TEST,
+        "use std::collections::*;\nfn main() {}\n",
+        ""
+    )?);
+    assert!(binds("", TEST, MOUNT, GLOB_READER)?);
+    assert!(binds(
+        "",
+        TEST,
+        "use std::collections::*;\nfn main() {}\n",
+        ""
+    )?);
+    // The test crate's own glob still binds beside a declared target.
+    assert!(binds(DECLARED, GLOB_TEST, MOUNT, "")?);
+    // A file the test crate also mounts is the test crate's.
+    let shared_mount = "#[path = \"../src/reader.rs\"]\nmod reader;\n";
+    let both = format!("{shared_mount}{TEST}");
+    assert!(binds(DECLARED, &both, MOUNT, GLOB_READER)?);
+    Ok(())
 }

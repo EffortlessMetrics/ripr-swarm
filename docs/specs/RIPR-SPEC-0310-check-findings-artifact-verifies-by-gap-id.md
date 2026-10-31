@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #9103
+- #11136
 
 Linked PRs:
 
@@ -69,6 +70,15 @@ could not be verified without trusting hand-authored JSON.
    after, or not `exposed` after is a named refusal (exit `3`, empty stdout).
    On success the verify document carries an additive `bound_gap` member.
    Over a `repo-exposure-json` snapshot `--gap-id` is an operational error.
+6. The findings completeness predicate (`check_findings_outcome_is_complete`)
+   has one owner. The verify and after phases and `ripr check`'s gap-bound
+   start admission all consult it, so a start is never printed for a run whose
+   before artifact the after phase will refuse (#11136). When it withholds the
+   start, `ripr check` says the analysis is incomplete and names the first
+   limitation and its recovery. When the after phase refuses an incomplete
+   artifact, the message names that limitation and the next step instead of
+   "regenerate it", which reproduces the same artifact. The validator is not
+   loosened.
 
 ## Required Evidence
 
@@ -124,14 +134,31 @@ could not be verified without trusting hand-authored JSON.
 
 - `crates/ripr/tests/installed_python_typescript_journeys.rs`:
   `typescript_check_findings_artifacts_verify_by_gap_id_and_reject_forgery`.
+- `crates/ripr/tests/agent_command_journey.rs`:
+  `gap_bound_verify_refuses_valid_repo_exposure_snapshots` (#9712: a valid
+  repo-exposure pair passes unbound verification; `--gap-id` then refuses it
+  with the before-side snapshot-kind diagnostic at exit 2).
 - `crates/ripr/src/agent/artifact.rs` tests: `check_findings_gaps_*`,
-  `gap_closure_*`, `verify_snapshot_dispatch_routes_only_the_declared_findings_kind`.
+  `gap_closure_*`, `verify_snapshot_dispatch_routes_only_the_declared_findings_kind`,
+  `gap_binding_over_a_non_findings_snapshot_is_operational_not_a_typed_refusal`
+  (before-side kind label), and
+  `gap_binding_over_a_non_findings_after_snapshot_names_the_after_artifact`
+  (after-side kind label; covered at unit level because pair comparability —
+  the canonical input identity includes the analysis format — refuses a
+  mixed-kind pair before the gap-kind gate can name the after artifact).
+  `check_findings_incomplete_refusal_names_the_limitation_not_regenerate`,
+  `check_findings_outcome_completeness_is_one_predicate`.
+- `crates/ripr/tests/installed_python_typescript_journeys.rs`:
+  `typescript_incomplete_analysis_withholds_the_gap_bound_start` (positive
+  control: a complete analysis still prints its start).
 
 ## Implementation Mapping
 
 - `crates/ripr/src/output/check_findings.rs`: producer.
 - `crates/ripr/src/agent/artifact.rs`: `validate_check_findings_artifact`,
-  `validate_verify_snapshot`, `evaluate_gap_closure`, `verify_gap_closure`.
+  `validate_verify_snapshot`, `evaluate_gap_closure`, `verify_gap_closure`,
+  `check_findings_outcome_is_complete`.
+- `crates/ripr/src/app/task_first.rs`: `gap_bound_route` (start admission).
 - `crates/ripr/src/cli/commands/agent.rs`: `render_agent_verify` (`--gap-id`).
 
 ## Metrics

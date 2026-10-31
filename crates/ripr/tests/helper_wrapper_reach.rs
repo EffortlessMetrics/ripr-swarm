@@ -524,9 +524,11 @@ fn return_value_behind_a_dropping_or_transforming_wrapper_is_not_credited() -> R
             "    let _ = unit_cents(qty);\n    qty",
             "        assert_eq!(order_cents(2), 2);",
         ),
+        // `+ 1` over integers is the one admitted shift (#9638,
+        // `free_call_return_pin`); a product is still a transform.
         (
-            "    unit_cents(qty) + 1",
-            "        assert_eq!(order_cents(2), 9);",
+            "    unit_cents(qty) * 2",
+            "        assert_eq!(order_cents(2), 16);",
         ),
     ] {
         let finding = family_finding(&unit_source(wrapper, tests), UNIT_DIFF, "return_value")?;
@@ -832,6 +834,46 @@ fn helper_side_effect_behind_a_discarding_wrapper_keeps_its_propagation() -> Res
     Ok(())
 }
 
+#[test]
+fn qualified_helper_effect_keeps_reach_without_propagation() -> Result<(), String> {
+    for (entry, imports, call) in [
+        (
+            "pub fn wrapper(out: &mut Vec<u32>) { crate::record(out); }",
+            "use super::wrapper;",
+            "wrapper(&mut out);",
+        ),
+        (
+            "pub struct Recorder {}\nimpl Recorder {\n    pub fn record_all(&self, out: &mut Vec<u32>) {\n        crate::record(out);\n    }\n}",
+            "use super::Recorder;",
+            "let recorder = Recorder {};\n        recorder.record_all(&mut out);",
+        ),
+    ] {
+        let source = format!(
+            "fn record(out: &mut Vec<u32>) {{\n    out.push(10);\n}}\n\n{entry}\n\n#[cfg(test)]\nmod tests {{\n    {imports}\n    #[test]\n    fn observes_record() {{\n        let mut out = Vec::new();\n        {call}\n        assert_eq!(out, vec![10]);\n    }}\n}}\n"
+        );
+        let report = all_findings(&source, RECORD_DIFF)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        let mut families = Vec::new();
+        for finding in findings {
+            assert_eq!(finding["probe"]["expression"], "out.push(10)", "{finding}");
+            assert_eq!(
+                relation_of(finding, "observes_record"),
+                Some("helper_owner_call"),
+                "{entry}: {finding}"
+            );
+            assert_not_forwarded(finding);
+            families.push(
+                finding["probe"]["family"]
+                    .as_str()
+                    .ok_or("missing family")?,
+            );
+        }
+        families.sort();
+        assert_eq!(families, ["call_deletion", "side_effect"], "{report}");
+    }
+    Ok(())
+}
+
 fn all_findings(source: &str, diff: &str) -> Result<Value, String> {
     let scratch = Scratch::create()?;
     std::fs::write(scratch.0.join("Cargo.toml"), MANIFEST).map_err(|error| error.to_string())?;
@@ -1034,8 +1076,8 @@ fn macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap() -> Result<()
 fn owner_named_only_in_a_wrapper_string_literal_does_not_abstain() -> Result<(), String> {
     // `banner` names `title` only inside its format string; the test calls
     // `title()` itself and pins `banner()`. No macro edge, no abstention.
-    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\npub fn banner() -> String {\n    format!(\"title\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn banner_reads_title() {\n        let _ = title();\n        assert_eq!(banner(), \"title\");\n    }\n}\n";
-    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    concat!(\"ri\", \"pr\")\n }\n";
+    let source = "fn title() -> &'static str {\n    stringify!(ripr)\n}\n\npub fn banner() -> String {\n    format!(\"title\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn banner_reads_title() {\n        let _ = title();\n        assert_eq!(banner(), \"title\");\n    }\n}\n";
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    stringify!(ripr)\n }\n";
     let finding = family_finding(source, diff, "return_value")?;
     assert_eq!(finding["probe"]["line"], 2, "{finding}");
     assert_eq!(finding["classification"], "weakly_exposed", "{finding}");
@@ -1047,11 +1089,11 @@ fn owner_named_only_in_a_wrapper_string_literal_does_not_abstain() -> Result<(),
     Ok(())
 }
 
-const TITLE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    concat!(\"ri\", \"pr\")\n }\n";
+const TITLE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    stringify!(ripr)\n }\n";
 
 fn banner_finding(wrapper: &str, test: &str) -> Result<Value, String> {
     let source = format!(
-        "fn title() -> &'static str {{\n    concat!(\"ri\", \"pr\")\n}}\n\npub fn banner() -> String {{\n    {wrapper}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
+        "fn title() -> &'static str {{\n    stringify!(ripr)\n}}\n\npub fn banner() -> String {{\n    {wrapper}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
     );
     let finding = family_finding(&source, TITLE_DIFF, "return_value")?;
     assert_eq!(
@@ -1136,7 +1178,7 @@ fn exact_or_mixed_oracle_behind_a_non_forwarding_hop_abstains() -> Result<(), St
 
 fn title_item_finding(items: &str, test: &str) -> Result<Value, String> {
     let source = format!(
-        "fn title() -> &'static str {{\n    concat!(\"ri\", \"pr\")\n}}\n\n{items}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
+        "fn title() -> &'static str {{\n    stringify!(ripr)\n}}\n\n{items}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
     );
     family_finding(&source, TITLE_DIFF, "return_value")
 }
@@ -1249,7 +1291,7 @@ fn caller_that_branches_on_the_owner_abstains_under_a_loose_check() -> Result<()
 
 #[test]
 fn test_local_helper_hop_is_part_of_the_oracle() -> Result<(), String> {
-    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn titled(suffix: &str) -> String {\n        format!(\"{}{}\", title(), suffix)\n    }\n\n    #[test]\n    fn banner_check() {\n        assert!(titled(\"!\").len() > 0);\n    }\n}\n";
+    let source = "fn title() -> &'static str {\n    stringify!(ripr)\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn titled(suffix: &str) -> String {\n        format!(\"{}{}\", title(), suffix)\n    }\n\n    #[test]\n    fn banner_check() {\n        assert!(titled(\"!\").len() > 0);\n    }\n}\n";
     let finding = family_finding(source, TITLE_DIFF, "return_value")?;
     assert_abstains_through_hop(&finding, "test-local helper");
     // The same data-carrying caller in production keeps the weak gap.
@@ -1631,6 +1673,22 @@ fn forwarder_method_relates_and_pairs_its_boundary_pin() -> Result<(), String> {
         "{finding}"
     );
     assert_eq!(finding["ripr"]["reach"]["state"], "yes", "{finding}");
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn qualified_hop_above_a_tested_method_keeps_the_lower_forwarder() -> Result<(), String> {
+    let finding = forwarder_finding(
+        "pub fn bridge(wanted: usize) -> Result<bool, Overflow> { Pool { spilled: false }.grow(wanted) }\npub fn above(wanted: usize) -> Result<bool, Overflow> { crate::bridge(wanted) }",
+        FORWARDING_METHOD,
+        GROW_TESTS,
+    )?;
+    assert_eq!(
+        relation_of(&finding, "grow_pins_the_boundary"),
+        Some("helper_owner_call"),
+        "{finding}"
+    );
     assert_eq!(finding["classification"], "exposed", "{finding}");
     Ok(())
 }

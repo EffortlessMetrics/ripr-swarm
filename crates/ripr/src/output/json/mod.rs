@@ -233,9 +233,9 @@ mod tests {
         let text = crate::output::human::render_finding(finding);
         let changed = text
             .split_once("\nChanged\n")
-            .and_then(|(_, tail)| tail.split_once("\nProbe\n"))
+            .and_then(|(_, tail)| tail.split_once("\nChange type\n"))
             .map(|(changed, _)| changed)
-            .ok_or("full human report needs Changed and Probe sections")?;
+            .ok_or("full human report needs Changed and Change type sections")?;
         assert_eq!(
             changed,
             "  expr:   `a``b``` | \\\"\n\t  next\\u{0d}\n\\u{00}\\u{1b}\\u{85}\\u{202e}🦀\n"
@@ -336,6 +336,7 @@ mod tests {
             uninspected_changed_lines_lower_bound: 120,
             stop_reason: crate::analysis::PartialDiffStopReason::LineBudget,
             next_file_changed_lines: Some(50),
+            whole_diff_budgets: None,
             partition_identity: "b".repeat(64),
         }
     }
@@ -1550,6 +1551,54 @@ mod tests {
         assert!(out.contains("\"oracle_kind\": \"exact_value\""));
     }
 
+    /// #11228: on an oracle-strength tie the JSON oracle summary describes the
+    /// same row the shared selector (card, packet, headline) names: the first.
+    #[test]
+    fn finding_json_oracle_summary_and_shared_selector_agree_on_a_tie() {
+        let row = |name: &str, line: usize, kind: OracleKind| RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/pricing.test.ts"),
+            line,
+            oracle: Some("expect(discount(200)).toBe(180)".to_string()),
+            oracle_kind: kind,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        };
+        let mut finding = unknown_finding();
+        finding.language = Some(crate::domain::LanguageId::TypeScript);
+        finding.related_tests = vec![
+            row("big", 5, OracleKind::ExactValue),
+            row("small", 6, OracleKind::ExactErrorVariant),
+        ];
+        let picked =
+            crate::output::related_test_miss::strongest_related_test(&finding.related_tests)
+                .map(|t| t.name.clone());
+        assert_eq!(picked.as_deref(), Some("big"));
+
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+        // The finding emits one `oracle_kind` per related-test row and then
+        // the summary. Two rows (exact_value, exact_error_variant) plus a
+        // summary naming the first tied row gives two exact_value and one
+        // exact_error_variant; a summary naming the last tied row flips the
+        // counts.
+        assert_eq!(
+            out.matches("\"oracle_kind\": \"exact_value\"").count(),
+            2,
+            "{out}"
+        );
+        assert_eq!(
+            out.matches("\"oracle_kind\": \"exact_error_variant\"")
+                .count(),
+            1,
+            "{out}"
+        );
+    }
+
     #[test]
     fn finding_json_formats_observed_value_context_labels() {
         let mut finding = unknown_finding();
@@ -2055,7 +2104,7 @@ mod tests {
         let actionability = &value["preview_actionability"];
         assert_eq!(actionability["authority_boundary"], "preview_advisory_only");
         assert_eq!(actionability["repair_packet_ready"], false);
-        assert_eq!(actionability["gap_state"], "advisory");
+        assert_eq!(actionability["gap_state"], "unknown");
         assert_eq!(
             actionability["actionability_category"],
             "incomplete_repair_packet"
@@ -2068,6 +2117,50 @@ mod tests {
         assert_eq!(actionability["raw_evidence_refs"][0]["line"], 2);
         assert!(value.get("repair_placement").is_none());
         assert!(value.get("python_repair_card").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn finding_json_states_typescript_preview_canonical_gap_id() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        add_typescript_preview_actionability(&mut finding);
+        finding.id = "probe:src_lib.ts:typescript_preview:1a2b3c4d".to_string();
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert_eq!(
+            value["canonical_gap_id"],
+            "gap:typescript:typescript_preview:1a2b3c4d"
+        );
+
+        // Negative: a finding without the TypeScript preview card, or whose id
+        // is not a TypeScript preview probe id, states no gap id.
+        let mut other_id = finding.clone();
+        other_id.id = "probe:src_lib.ts:other:1a2b3c4d".to_string();
+        let mut out = String::new();
+        finding_json(&mut out, &other_id, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+
+        let mut not_ts = finding.clone();
+        not_ts.language = None;
+        let mut out = String::new();
+        finding_json(&mut out, &not_ts, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+
+        // JavaScript shares the preview card and probe family but has no
+        // TypeScript gap identity (#10709 review).
+        let mut js = finding.clone();
+        js.language = Some(LanguageId::JavaScript);
+        let mut out = String::new();
+        finding_json(&mut out, &js, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
         Ok(())
     }
 
@@ -2119,7 +2212,7 @@ mod tests {
         finding.owner_kind = Some(OwnerKind::Function);
         finding.evidence = vec![
             "owner: discountedTotal".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
             "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),
@@ -2214,6 +2307,7 @@ mod tests {
     fn unknown_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {

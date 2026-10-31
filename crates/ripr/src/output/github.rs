@@ -719,6 +719,7 @@ mod tests {
             base_ref: "origin/main".to_string(),
             base_commit: Some("1a2b3c4d5e6f".to_string()),
             merge_base_commit: Some("9f8e7d6c5b4a".to_string()),
+            loaded_diff_origin: None,
             head_commit: Some("5d6e7f8a9b0c".to_string()),
             working_tree,
         }
@@ -1221,6 +1222,7 @@ mod tests {
             summary: Summary::default(),
             findings: vec![Finding {
                 analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
                 id: "probe:src_lib_rs:21:error_path".to_string(),
                 canonical_gap: None,
                 probe: Probe {
@@ -1300,6 +1302,7 @@ mod tests {
             summary: Summary::default(),
             findings: vec![Finding {
                 analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
                 id: "probe:src_lib_rs:34:weak_signal".to_string(),
                 canonical_gap: None,
                 probe: Probe {
@@ -1390,7 +1393,7 @@ mod tests {
         finding.language = Some(LanguageId::TypeScript);
         finding.language_status = Some(LanguageStatus::Preview);
         finding.evidence = vec![
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -1402,7 +1405,7 @@ mod tests {
         let rendered = render(&output);
 
         assert!(rendered.contains(
-            "Preview actionability: advisory/incomplete_repair_packet (advisory preview; no repair packet)."
+            "Preview actionability: unknown/incomplete_repair_packet (advisory preview; no repair packet)."
         ));
     }
 
@@ -1668,7 +1671,7 @@ mod tests {
 
         assert!(
             rendered.contains(
-                "Preview actionability: advisory/incomplete_repair_packet (advisory preview; no repair packet)."
+                "Preview actionability: unknown/incomplete_repair_packet (advisory preview; no repair packet)."
             ),
             "{rendered}"
         );
@@ -2033,6 +2036,7 @@ mod tests {
             summary: Summary::default(),
             findings: vec![Finding {
                 analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
                 id: "probe:src_lib_rs:13:static_unknown".to_string(),
                 canonical_gap: None,
                 probe: Probe {
@@ -2105,7 +2109,7 @@ mod tests {
         finding.probe.location = SourceLocation::new("src/lib.ts", 2, 1);
         finding.evidence = vec![
             "owner: applyDiscount".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -2391,6 +2395,7 @@ mod tests {
             summary: Summary::default(),
             findings: vec![Finding {
                 analysis_scope: crate::domain::AnalysisScope::Diff,
+                confidence_basis: Vec::new(),
                 id: "probe:src_pricing_ts:5:predicate".to_string(),
                 canonical_gap: None,
                 probe: Probe {

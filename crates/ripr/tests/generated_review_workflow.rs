@@ -165,6 +165,27 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
         "workflow step parser found no `Run RIPR` step; the template layout changed"
     );
     let runs = replay::run_workflow(&root, &base, &steps)?;
+    // #11145: no upload failed in the replay (it skips every `uses:` step), so
+    // the failed-upload explanation is skipped; its text, run on its own, is
+    // a valid workflow command that names the fix and exits 0.
+    assert!(
+        runs.iter()
+            .all(|run| run.name != "Explain failed SARIF upload"),
+        "the explanation must not run when no upload failed"
+    );
+    let explain = steps
+        .iter()
+        .find(|step| step.name == "Explain failed SARIF upload")
+        .and_then(|step| step.run.as_deref())
+        .ok_or("generated workflow has no `Explain failed SARIF upload` run step")?;
+    let explained = replay::bash(&root, explain, &[])?;
+    let explained_out = String::from_utf8_lossy(&explained.stdout);
+    assert!(explained.status.success(), "{explained_out}");
+    assert!(
+        explained_out.starts_with("::warning title=RIPR SARIF upload failed::")
+            && explained_out.contains("RIPR_UPLOAD_SARIF to false"),
+        "{explained_out}"
+    );
     // Precondition: the packet command printed its steps as log groups.
     assert!(
         runs.iter().filter(|run| run.name != "Run RIPR").count() > 20,
@@ -255,10 +276,11 @@ fn generated_workflow_replay_prints_only_runnable_next_steps() -> Result<(), Box
     // outside a collapsed block.
     let openers = summary.matches("<details><summary>Full report: ").count();
     assert!(openers > 0, "summary collapses no full report:\n{summary}");
+    // The governance fold is a `<details>` block too, so compare every opener.
     assert_eq!(
-        openers,
+        summary.matches("<details").count(),
         summary.matches("</details>").count(),
-        "every collapsed full report must close"
+        "every collapsed block must close"
     );
     let mut collapsed = false;
     for line in summary.lines() {
@@ -1768,6 +1790,76 @@ fn generated_comment_plan_withholds_write_permission_for_dependabot() -> Result<
     Ok(())
 }
 
+/// #11145: the generated `Explain failed SARIF upload` condition, evaluated by
+/// the replay's own condition model, runs when either upload step failed and
+/// not when both succeeded or were skipped; the evaluator rejects shapes it
+/// does not model instead of guessing.
+#[cfg(unix)]
+#[test]
+fn explain_failed_sarif_upload_condition_follows_the_upload_outcomes() -> Result<(), Box<dyn Error>>
+{
+    use std::collections::BTreeMap;
+    let base = replay::unique_temp_dir("sarif-explain")?;
+    let root = base.join("repo");
+    replay::write_pr_fixture(&root)?;
+    let init = replay::ripr(&root, &["init", "--root", ".", "--ci", "github"])?;
+    assert!(init.status.success());
+    let workflow = fs::read_to_string(root.join(".github/workflows/ripr.yml"))?;
+    let condition = replay::parse_steps(&workflow)
+        .into_iter()
+        .find(|step| step.name == "Explain failed SARIF upload")
+        .and_then(|step| step.condition)
+        .ok_or("no condition on the explain step")?;
+    let holds = |findings: Option<&str>, seams: Option<&str>| {
+        let mut env = BTreeMap::new();
+        if let Some(outcome) = findings {
+            env.insert(
+                "REPLAY_STEP_OUTCOME_sarif_findings".to_string(),
+                outcome.to_string(),
+            );
+        }
+        if let Some(outcome) = seams {
+            env.insert(
+                "REPLAY_STEP_OUTCOME_sarif_seams".to_string(),
+                outcome.to_string(),
+            );
+        }
+        replay::condition_holds(&condition, &root, &env)
+    };
+    let verdicts = (
+        holds(Some("failure"), Some("success"))?,
+        holds(Some("success"), Some("failure"))?,
+        holds(Some("failure"), Some("failure"))?,
+        holds(Some("success"), Some("success"))?,
+        holds(Some("skipped"), Some("skipped"))?,
+        holds(None, None)?,
+        holds(Some("cancelled"), Some("success"))?,
+    );
+    // Shapes the evaluator does not model are errors, not guesses.
+    let nested = replay::condition_holds(
+        "always() && ((steps.sarif_seams.outcome == 'failure'))",
+        &root,
+        &BTreeMap::new(),
+    );
+    let group_not_last = replay::condition_holds(
+        "always() && (steps.sarif_seams.outcome == 'failure') && always()",
+        &root,
+        &BTreeMap::new(),
+    );
+    let _ = fs::remove_dir_all(&base);
+    assert_eq!(
+        verdicts,
+        (true, true, true, false, false, false, false),
+        "(findings failed, seams failed, both failed, both ok, both skipped, default, cancelled)"
+    );
+    assert!(nested.is_err(), "nested groups must be refused");
+    assert!(
+        group_not_last.is_err(),
+        "a group that is not last must be refused"
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 mod replay {
     use std::collections::BTreeMap;
@@ -1817,7 +1909,7 @@ fn far_above_threshold_discounts() {
     #[derive(Debug, Default)]
     pub(super) struct Step {
         pub(super) name: String,
-        condition: Option<String>,
+        pub(super) condition: Option<String>,
         pub(super) run: Option<String>,
         env: Vec<(String, String)>,
     }
@@ -2122,14 +2214,50 @@ fn far_above_threshold_discounts() {
         if text == "github.actor" {
             return Ok("ripr-test-user".to_string());
         }
+        // The replay skips every `uses:` step, the SARIF uploads included, so
+        // by default no upload failed (#11145). A test sets the outcome with
+        // `REPLAY_STEP_OUTCOME_<id>` to drive the failure path.
+        if let Some(id) = text
+            .strip_prefix("steps.")
+            .and_then(|rest| rest.strip_suffix(".outcome"))
+            .filter(|id| matches!(*id, "sarif_findings" | "sarif_seams"))
+        {
+            return Ok(env
+                .get(&format!("REPLAY_STEP_OUTCOME_{id}"))
+                .cloned()
+                .unwrap_or_else(|| "success".to_string()));
+        }
         Err(format!("replay does not model the condition operand `{text}`").into())
     }
 
-    fn condition_holds(
+    pub(super) fn condition_holds(
         condition: &str,
         root: &Path,
         env: &BTreeMap<String, String>,
     ) -> TestResult<bool> {
+        // A conjunction whose last atom is one parenthesized disjunction:
+        // `always() && (a == 'x' || b == 'x')`. Only that shape is modeled:
+        // one group, last, with no nesting and no `&&` inside it.
+        if let Some((head, group)) = condition.split_once("&& (") {
+            let group = group
+                .trim()
+                .strip_suffix(')')
+                .ok_or_else(|| format!("replay: group is not last in `{condition}`"))?;
+            if group.contains(['(', ')']) || group.contains("&&") || head.contains("||") {
+                return Err(
+                    format!("replay models one flat `(a || b)` group, not `{condition}`").into(),
+                );
+            }
+            if !condition_holds(head, root, env)? {
+                return Ok(false);
+            }
+            for alternative in group.split("||") {
+                if condition_holds(alternative, root, env)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
         for atom in condition.split("&&").map(str::trim) {
             let holds = if atom == "always()" {
                 true
@@ -2786,7 +2914,7 @@ fn generated_capture_step_runs_end_to_end() -> Result<(), Box<dyn Error>> {
     );
     assert!(
         String::from_utf8_lossy(&run.stdout)
-            .contains("::error title=Capture pull request diff::ripr: cannot resolve base ref origin/nonexistent-base-branch"),
+            .contains("::error title=Capture pull request diff::ripr: the pull request base `origin/nonexistent-base-branch` is not in this checkout"),
         "missing base must name the failure; got:\n{}",
         String::from_utf8_lossy(&run.stdout)
     );
@@ -3451,6 +3579,167 @@ fn parse_warning(line: &str) -> Result<(String, String, String, String), String>
     ))
 }
 
+/// Text between `open` and the next `close` in `haystack`.
+fn between<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let rest = haystack.split_once(open)?.1;
+    rest.split_once(close).map(|(inside, _)| inside)
+}
+
+/// #5874: the executable twin of the unix bash replay below. It needs no
+/// shell, so it runs on Windows and Linux alike: it reads the generated
+/// Install-step and summary-step shell and evaluates only what the failure
+/// explanation depends on (the target `case`, the `why` and error templates,
+/// the cargo fallback pin, and the summary `printf`) with the same variable
+/// values the runner would supply. Corrupting the message in the template
+/// fails here on every host.
+#[test]
+fn generated_install_failure_explanation_is_consistent_on_every_host() -> Result<(), Box<dyn Error>>
+{
+    let base = std::env::temp_dir().join(format!(
+        "ripr-portable-failed-install-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
+    fs::create_dir_all(&base)?;
+    let init = run_ripr_init(&base)?;
+    assert!(
+        init.status.success(),
+        "ripr init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let workflow = fs::read_to_string(base.join(".github/workflows/ripr.yml"))?;
+    let install = workflow_step_block(&workflow, "Install ripr").ok_or("no `Install ripr` step")?;
+    let summary_step = workflow_step_block(&workflow, "Add RIPR advisory summary")
+        .ok_or("no `Add RIPR advisory summary` step")?;
+
+    // Both install routes pin one version: the generated pin.
+    let version = between(&install, "version=", "\n")
+        .map(str::trim)
+        .filter(|v| !v.is_empty() && !v.contains(' '))
+        .ok_or("install step names no version pin")?
+        .to_string();
+    let cargo_pin = between(&install, "cargo install ripr --version ", " ")
+        .ok_or("install step names no cargo fallback pin")?;
+    assert_eq!(
+        cargo_pin, version,
+        "prebuilt and cargo routes must pin the same version"
+    );
+
+    // Windows-X64 has no prebuilt archive: no `case` arm other than the
+    // catch-all (which sets an empty target) may match it.
+    let arms = install
+        .lines()
+        .filter_map(|line| line.trim().split_once(") target="))
+        .collect::<Vec<_>>();
+    assert!(!arms.is_empty(), "no target arms in {install}");
+    let target = arms
+        .iter()
+        .find(|(pattern, _)| *pattern == "Windows-X64")
+        .or_else(|| arms.iter().find(|(pattern, _)| *pattern == "*"))
+        .map(|(_, rest)| *rest)
+        .ok_or("no target arm or catch-all")?;
+    assert!(
+        target.trim_start().starts_with("\"\""),
+        "Windows-X64 now has a prebuilt target ({target}); update this twin and the unix replay together"
+    );
+
+    // The no-prebuilt reason, the no-cargo error and the cargo notice, with
+    // the runner's variable values.
+    let render = |template: &str, why: &str| {
+        template
+            .replace("$RUNNER_OS", "Windows")
+            .replace("$RUNNER_ARCH", "X64")
+            .replace("$version", &version)
+            .replace("$why", why)
+    };
+    let why_template =
+        between(&install, "why=\"", "\"").ok_or("no `why` reason in install step")?;
+    let why = render(why_template, "");
+    assert_eq!(why, format!("no prebuilt ripr {version} for Windows-X64"));
+    let error_template = between(
+        &install,
+        "echo \"::error::Cannot install ripr:",
+        "\"; exit 1",
+    )
+    .ok_or("no no-cargo error line in install step")?;
+    assert_eq!(
+        render(error_template, &why),
+        format!(
+            " no prebuilt ripr {version} for Windows-X64, and this runner has no cargo to build it. Install Rust on the runner (https://rustup.rs) or add a Rust toolchain step before Install ripr."
+        )
+    );
+    // The error path exits nonzero before any cargo invocation.
+    let (before_error, _) = install
+        .split_once("::error::Cannot install ripr:")
+        .ok_or("no error line")?;
+    let guard = before_error
+        .rsplit_once("command -v cargo")
+        .ok_or("no cargo guard before the error line")?
+        .1;
+    assert!(!guard.contains("cargo install"), "{install}");
+    // The guard is the negation: the error path runs only when cargo is absent.
+    assert!(
+        before_error.contains("if ! command -v cargo >/dev/null 2>&1; then"),
+        "{install}"
+    );
+    let notice_template = between(&install, "echo \"::notice::", "\"")
+        .ok_or("no cargo-fallback notice in install step")?;
+    assert_eq!(
+        render(notice_template, &why),
+        format!("no prebuilt ripr {version} for Windows-X64; building it with cargo install")
+    );
+    assert!(
+        install.contains(&format!("cargo install ripr --version {version} --locked")),
+        "{install}"
+    );
+
+    // The summary step after the failed install.
+    let format = between(&summary_step, "printf '", "' \"${RIPR_INSTALL_OUTCOME")
+        .ok_or("no summary printf in the summary step")?;
+    let rendered = format.replace("%s", "failure").replace("\\n", "\n");
+    assert!(
+        rendered.starts_with("## RIPR advisory summary\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("the pinned ripr is not installed (Install ripr step: failure), so this run produced no RIPR reports."),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("Next: open the Install ripr step log."),
+        "{rendered}"
+    );
+    assert!(
+        summary_step.contains(
+            "::error::the pinned ripr is not installed (Install ripr step: ${RIPR_INSTALL_OUTCOME:-not run})"
+        ),
+        "{summary_step}"
+    );
+    assert!(
+        summary_step.contains("RIPR_INSTALL_OUTCOME: ${{ steps.install.outcome }}"),
+        "{summary_step}"
+    );
+    // The explanation runs only when the install did not succeed, fails the
+    // step, and does so before the normal summary command.
+    let guard_at = summary_step
+        .find("if [ \"${RIPR_INSTALL_OUTCOME:-}\" != success ]; then")
+        .ok_or("no install-outcome guard in the summary step")?;
+    let printf_at = summary_step
+        .find("printf '## RIPR advisory summary")
+        .ok_or("no summary printf")?;
+    let exit_at = summary_step
+        .find("see that step's log.\"; exit 1")
+        .ok_or("summary error line does not exit 1")?;
+    let ci_summary_at = summary_step
+        .find("ripr reports ci-summary")
+        .ok_or("no ci-summary command")?;
+    assert!(
+        guard_at < printf_at && printf_at < exit_at && exit_at < ci_summary_at,
+        "{summary_step}"
+    );
+    Ok(())
+}
+
 /// One spawn site for the built-binary `ripr init` invocations below
 /// (process-policy bound).
 /// #5236 review: without a prebuilt binary the install falls back to
@@ -3890,12 +4179,24 @@ fn run_pr_comments_requests(
     Ok((requests, stdout))
 }
 
-fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+/// One spawn site for running `ripr` with `args` from `cwd` (process-policy
+/// bound).
+fn run_ripr_in(
+    cwd: &std::path::Path,
+    args: &[&str],
+) -> Result<std::process::Output, Box<dyn Error>> {
     Ok(Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["init", "--root"])
-        .arg(root)
-        .args(["--ci", "github"])
+        .current_dir(cwd)
+        .args(args)
         .output()?)
+}
+
+fn run_ripr_init(root: &std::path::Path) -> Result<std::process::Output, Box<dyn Error>> {
+    let root = root.to_string_lossy();
+    run_ripr_in(
+        std::path::Path::new("."),
+        &["init", "--root", root.as_ref(), "--ci", "github"],
+    )
 }
 
 /// One spawn site for executing extracted capture-step shell (process-policy
@@ -4025,5 +4326,57 @@ fn ci_summary_reads_the_workflow_settings_from_the_environment() -> Result<(), B
         "{unset}"
     );
     assert!(unset.contains("\n- Mode: `off`"), "{unset}");
+    Ok(())
+}
+
+/// A static-limitation card is a note, not a defect: the real
+/// `reports ci-packet` annotation step emits it as `::notice`, while the card
+/// that names a gap keeps `::warning` (#11142).
+#[test]
+fn ci_packet_annotations_emit_a_notice_for_a_static_limitation() -> Result<(), Box<dyn Error>> {
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-ci-packet-notice-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(root.join("target/ripr/review"))?;
+    fs::write(
+        root.join("target/ripr/review/comments.json"),
+        r#"{"comments":[
+            {"id":"limit","gap_state":"static_limitation","reason":"RIPR has no test to suggest here.","placement":{"path":"src/parse.rs","line":2}},
+            {"id":"gap","gap_state":"actionable","reason":"No test checks the boundary.","placement":{"path":"src/pricing.rs","line":4}}
+        ],"summary_only":[],"suppressed":[]}"#,
+    )?;
+
+    let output = run_ripr_in(
+        &root,
+        &[
+            "reports",
+            "ci-packet",
+            "--root",
+            ".",
+            "--step",
+            "Emit RIPR PR guidance annotations",
+        ],
+    )?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let _ = fs::remove_dir_all(&root);
+
+    let notices: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with("::notice "))
+        .collect();
+    let warnings: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with("::warning "))
+        .collect();
+    assert!(output.status.success(), "{stdout}");
+    assert_eq!(notices.len(), 1, "{stdout}");
+    assert!(notices[0].contains("file=src/parse.rs,line=2"), "{stdout}");
+    assert_eq!(warnings.len(), 1, "{stdout}");
+    assert!(
+        warnings[0].contains("file=src/pricing.rs,line=4"),
+        "{stdout}"
+    );
     Ok(())
 }

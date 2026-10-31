@@ -142,7 +142,7 @@ impl TypeScriptBoundaryFact {
 /// A JavaScript `number` holds integers exactly only within
 /// `Number.MAX_SAFE_INTEGER`; beyond it two distinct literals can run as one
 /// value, so an exact comparison there establishes nothing.
-fn is_safe_number_integer(value: i64) -> bool {
+pub(super) fn is_safe_number_integer(value: i64) -> bool {
     value.unsigned_abs() < (1 << 53)
 }
 
@@ -383,7 +383,7 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
     // The line tokenizer does not know literal or comment spans, so a string,
     // template, regular expression, or comment could carry a look-alike
     // comparison (`"over: amount >= LIMIT"`). Refuse any line that has one.
-    if line.contains(['"', '\'', '`', '/']) {
+    if line.contains(['"', '\'', '`']) || !slashes_are_plain_division(line) {
         return false;
     }
     let tokens = line_tokens(line);
@@ -429,6 +429,54 @@ pub(super) fn comparison_has_whole_sides(line: &str, parameter: &str, operand: &
     found == 1
 }
 
+/// Whether every `/` on the line is a plain division: it follows an
+/// identifier, number, `)` or `]` (never a keyword such as `return`), and the
+/// line has no `//` or `/*` comment opener. A regular expression literal can
+/// only start where a value is expected, so a `/` in division position cannot
+/// open one; any other `/` keeps the line refused (#11628).
+fn slashes_are_plain_division(line: &str) -> bool {
+    if line.contains("//") || line.contains("/*") {
+        return false;
+    }
+    const VALUE_KEYWORDS: &[&str] = &[
+        "return",
+        "typeof",
+        "case",
+        "do",
+        "else",
+        "in",
+        "instanceof",
+        "of",
+        "void",
+        "delete",
+        "throw",
+        "new",
+        "yield",
+        "await",
+    ];
+    line.char_indices()
+        .filter(|(_, ch)| *ch == '/')
+        .all(|(at, _)| {
+            let before = line[..at].trim_end();
+            match before.chars().next_back() {
+                Some(')' | ']') => true,
+                Some(ch) if ch.is_alphanumeric() || ch == '_' || ch == '$' => {
+                    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+                    // `rfind` yields the separator's start byte; step over its
+                    // whole UTF-8 width so a multibyte separator (`€`, `…`)
+                    // cannot split a character.
+                    let word_start = before
+                        .char_indices()
+                        .rev()
+                        .find(|(_, c)| !is_word(*c))
+                        .map_or(0, |(i, c)| i + c.len_utf8());
+                    !VALUE_KEYWORDS.contains(&&before[word_start..])
+                }
+                _ => false,
+            }
+        })
+}
+
 /// Whether `prefix`, the line tokens before a comparison's first side, is
 /// one of the statement openings that always evaluate it: `if (`, `return`,
 /// or `const|let|var NAME =`.
@@ -459,22 +507,22 @@ struct ModuleRequest {
 }
 
 #[derive(Clone, Copy)]
-struct Tok {
-    kind: Kind,
-    start: usize,
-    end: usize,
-    escaped: bool,
+pub(super) struct Tok {
+    pub(super) kind: Kind,
+    pub(super) start: usize,
+    pub(super) end: usize,
+    pub(super) escaped: bool,
 }
 
 impl Tok {
-    fn text<'s>(&self, source: &'s str) -> &'s str {
+    pub(super) fn text<'s>(&self, source: &'s str) -> &'s str {
         source.get(self.start..self.end).unwrap_or("")
     }
 }
 
 /// A plain decimal integer literal (`100`, `10_000`) as `i64`. Floats,
 /// exponents, bigints, radix prefixes, and signs are refused.
-fn integer_literal(raw: &str) -> Option<i64> {
+pub(super) fn integer_literal(raw: &str) -> Option<i64> {
     let raw = raw.trim();
     if raw.is_empty()
         || !raw.starts_with(|ch: char| ch.is_ascii_digit())
@@ -486,6 +534,38 @@ fn integer_literal(raw: &str) -> Option<i64> {
         return None;
     }
     raw.replace('_', "").parse::<i64>().ok()
+}
+
+/// The value of `name` in the module text `source` of `file` when it binds the
+/// name exactly once, at the top level, with an immutable
+/// `const NAME = <integer literal>` and every other occurrence is a plain
+/// read (#10707, #10706). The test file's own module-level constants resolve
+/// through this same rule the owner's module constants do. `None` for any
+/// parse error, other kind of binding, or value outside the safe-integer
+/// range.
+pub(super) fn ts_module_integer_constant(file: &Path, source: &str, name: &str) -> Option<i64> {
+    let name = name.to_string();
+    parse_on_worker(file, source, move |file, source, allocator| {
+        let ret = Parser::new(allocator, source, source_type_for(file))
+            .with_config(TokensParserConfig)
+            .parse();
+        if ret.panicked || !ret.errors.is_empty() {
+            return None;
+        }
+        let tokens: Vec<Tok> = ret
+            .tokens
+            .iter()
+            .map(|token| Tok {
+                kind: token.kind(),
+                start: token.start() as usize,
+                end: token.end() as usize,
+                escaped: token.escaped(),
+            })
+            .collect();
+        resolve_module_constant(&ret.program.body, source, &tokens, &name)
+            .filter(|value| is_safe_number_integer(*value))
+    })
+    .ok()?
 }
 
 /// The value of `name` when the module binds it exactly once, at the top
@@ -578,7 +658,7 @@ fn resolve_module_constant(
 
 /// `eval`, `with`, or an escaped identifier anywhere in the module can bind
 /// or spell a name the token rules do not see.
-fn module_is_opaque(source: &str, tokens: &[Tok]) -> bool {
+pub(super) fn module_is_opaque(source: &str, tokens: &[Tok]) -> bool {
     tokens.iter().any(|token| {
         token.kind == Kind::With
             || (token.kind.is_identifier_name() && (token.escaped || token.text(source) == "eval"))
@@ -834,7 +914,7 @@ fn enclosing_open(tokens: &[Tok], at: usize) -> Option<usize> {
 /// can continue that way) or when it is a whole argument of a call.
 /// Everything else — declarations, parameters, patterns, object keys, labels,
 /// type positions after `:` — fails closed.
-fn occurrence_is_plain_read(source: &str, tokens: &[Tok], at: usize) -> bool {
+pub(super) fn occurrence_is_plain_read(source: &str, tokens: &[Tok], at: usize) -> bool {
     let kind_at = |index: Option<usize>| index.and_then(|i| tokens.get(i)).map(|token| token.kind);
     let prev = kind_at(at.checked_sub(1));
     let next = kind_at(Some(at + 1));
@@ -999,7 +1079,7 @@ fn is_read_position_operator(kind: Kind) -> bool {
 /// Tokens that can only continue an expression after an operand — never a
 /// parameter, destructuring pattern, or catch binding. `in` is excluded:
 /// `for (NAME in obj)` assigns the name.
-fn continues_expression(kind: Kind) -> bool {
+pub(super) fn continues_expression(kind: Kind) -> bool {
     matches!(
         kind,
         Kind::Amp

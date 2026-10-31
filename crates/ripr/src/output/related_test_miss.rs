@@ -6,6 +6,46 @@
 
 use crate::domain::{ProbeFamily, RelatedTest, RelatedTestMiss, RelationReason};
 
+/// Why a TypeScript or JavaScript assertion's observation stays unconfirmed.
+const SCRIPT_OBSERVATION_UNCONFIRMED: &str =
+    "the preview adapter could not confirm that this assertion observes the changed behavior";
+
+/// The one related-test selection rule shared by the check headline, the
+/// preview card, the repair packet and the JSON oracle summary (#11228).
+///
+/// The strongest oracle wins; equal strength keeps the earliest row, which is
+/// the row the human `Related test` line names (`related_tests.first()`).
+/// `Iterator::max_by_key` returns the *last* maximum, which made the packet
+/// name a different test than the headline whenever two tests tied.
+pub(crate) fn strongest_related_test(tests: &[RelatedTest]) -> Option<&RelatedTest> {
+    let mut best: Option<&RelatedTest> = None;
+    for test in tests {
+        if best.is_none_or(|current| test.oracle_strength.rank() > current.oracle_strength.rank()) {
+            best = Some(test);
+        }
+    }
+    best
+}
+
+/// The row the human `Related test` headline names (#11228).
+///
+/// TypeScript and JavaScript findings use [`strongest_related_test`] so the
+/// headline, card, packet and oracle summary all name one row, including when
+/// a weak direct call precedes a strong re-exported one. Other languages keep
+/// the first row; moving them is a separate, golden-wide change.
+pub(crate) fn headline_related_test(
+    language: Option<crate::domain::LanguageId>,
+    tests: &[RelatedTest],
+) -> Option<&RelatedTest> {
+    if matches!(
+        language,
+        Some(crate::domain::LanguageId::TypeScript | crate::domain::LanguageId::JavaScript)
+    ) {
+        return strongest_related_test(tests);
+    }
+    tests.first()
+}
+
 /// Short reason the test misses the changed behavior, or `None` when the
 /// analyzer did not establish one.
 ///
@@ -37,7 +77,16 @@ pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily)
         // `assertion_not_observing` claims the assertion observes something
         // else.
         RelatedTestMiss::ObservationUnconfirmed => {
-            "ripr could not confirm that this assertion observes the changed behavior".to_string()
+            // #11229: a TypeScript or JavaScript row is read from file text by
+            // the preview adapter, which never runs the code. Say why the
+            // observation is unknown instead of repeating the generic
+            // sentence. Wording only: the verdict and credit are unchanged.
+            if is_script_file(&test.file) {
+                SCRIPT_OBSERVATION_UNCONFIRMED.to_string()
+            } else {
+                "ripr could not confirm that this assertion observes the changed behavior"
+                    .to_string()
+            }
         }
         // The wording of `missing_input` follows the finding's typed probe
         // family, never the punctuation of the support value: a guard the
@@ -229,6 +278,95 @@ mod tests {
             "assert_eq!(a,  b);"
         );
         assert_eq!(single_line_evidence_text(""), "");
+    }
+
+    /// #11228: two equally strong tests keep the first row (the one the
+    /// headline names); a strictly stronger later row still wins.
+    #[test]
+    fn strongest_related_test_keeps_the_first_of_equal_strength() {
+        let mut big = test_with(None, None);
+        big.name = "big".to_string();
+        big.line = 5;
+        let mut small = test_with(None, None);
+        small.name = "small".to_string();
+        small.line = 6;
+        let tied = [big.clone(), small.clone()];
+        assert_eq!(
+            strongest_related_test(&tied).map(|t| t.name.as_str()),
+            Some("big")
+        );
+        // Discriminating negative: a strictly stronger later row wins.
+        let mut weak = big.clone();
+        weak.oracle_strength = OracleStrength::Weak;
+        let mixed = [weak, small];
+        assert_eq!(
+            strongest_related_test(&mixed).map(|t| t.name.as_str()),
+            Some("small")
+        );
+        assert!(strongest_related_test(&[]).is_none());
+    }
+
+    /// #11228 (mixed strengths): a weak direct row precedes a strong
+    /// re-exported one. Script findings headline the strong row, as the card,
+    /// packet and JSON summary do; other languages keep the first row.
+    #[test]
+    fn headline_related_test_follows_the_shared_rule_for_script_findings_only() {
+        use crate::domain::LanguageId;
+        let mut weak = test_with(None, None);
+        weak.name = "direct weak".to_string();
+        weak.oracle_strength = OracleStrength::Weak;
+        let mut strong = test_with(None, None);
+        strong.name = "barrel strong".to_string();
+        let rows = [weak, strong];
+        for language in [LanguageId::TypeScript, LanguageId::JavaScript] {
+            assert_eq!(
+                headline_related_test(Some(language), &rows).map(|t| t.name.as_str()),
+                Some("barrel strong"),
+                "{language:?}"
+            );
+        }
+        for language in [Some(LanguageId::Rust), Some(LanguageId::Python), None] {
+            assert_eq!(
+                headline_related_test(language, &rows).map(|t| t.name.as_str()),
+                Some("direct weak"),
+                "{language:?}"
+            );
+        }
+        assert!(headline_related_test(Some(LanguageId::TypeScript), &[]).is_none());
+    }
+
+    #[test]
+    fn observation_unconfirmed_names_the_preview_adapter_only_for_script_files() {
+        assert!(
+            !SCRIPT_OBSERVATION_UNCONFIRMED.contains("branch")
+                && !SCRIPT_OBSERVATION_UNCONFIRMED.contains("reaches"),
+            "the unknown is observation, not reach or a branch"
+        );
+        // #11229: script rows explain why; Rust and Python keep the generic
+        // sentence, and the verdict-carrying `miss` is untouched.
+        for file in ["tests/a.test.ts", "web/a.spec.tsx", "t/a.mjs", "t/A.JS"] {
+            let mut test = test_with(Some(RelatedTestMiss::ObservationUnconfirmed), None);
+            test.file = PathBuf::from(file);
+            // Predicate and side-effect rows say the same thing: the
+            // unknown is observation, never reach or a branch.
+            for family in [ProbeFamily::Predicate, ProbeFamily::SideEffect] {
+                assert_eq!(
+                    reason(&test, &family).as_deref(),
+                    Some(SCRIPT_OBSERVATION_UNCONFIRMED),
+                    "{file}"
+                );
+            }
+            assert_eq!(test.miss, Some(RelatedTestMiss::ObservationUnconfirmed));
+        }
+        for file in ["tests/a.rs", "tests/test_a.py", "tests/a.pl"] {
+            let mut test = test_with(Some(RelatedTestMiss::ObservationUnconfirmed), None);
+            test.file = PathBuf::from(file);
+            assert_eq!(
+                reason(&test, &ProbeFamily::Predicate).as_deref(),
+                Some("ripr could not confirm that this assertion observes the changed behavior"),
+                "{file}"
+            );
+        }
     }
 
     fn test_with(miss: Option<RelatedTestMiss>, reason: Option<RelationReason>) -> RelatedTest {

@@ -123,7 +123,7 @@ fn implicit_git_boundary(dir: &Path) -> Result<Option<WorkTreeRootProbe>, String
 }
 
 fn manifest_declares_workspace(manifest: &Path) -> bool {
-    std::fs::read_to_string(manifest)
+    crate::bounded_input::read_metadata_toml(manifest)
         .ok()
         .and_then(|contents| toml::from_str::<toml::Value>(&contents).ok())
         .is_some_and(|document| document.get("workspace").is_some_and(toml::Value::is_table))
@@ -200,11 +200,20 @@ pub(super) fn resolve_project_root(
     Ok(None)
 }
 
+/// Read a probe file only when it is a regular file. Opening a FIFO named
+/// like a manifest would block this implicit-root probe forever (#11579).
+fn read_regular_file_to_string(path: &Path) -> std::io::Result<String> {
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(std::io::Error::other("not a regular file"));
+    }
+    std::fs::read_to_string(path)
+}
+
 fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     if dir.join("pnpm-workspace.yaml").is_file() {
         return Some(ImplicitRootReason::PnpmWorkspace);
     }
-    if std::fs::read_to_string(dir.join("package.json"))
+    if read_regular_file_to_string(&dir.join("package.json"))
         .ok()
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .as_ref()
@@ -212,7 +221,7 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     {
         return Some(ImplicitRootReason::PackageJsonWorkspaces);
     }
-    if std::fs::read_to_string(dir.join("pyproject.toml"))
+    if crate::bounded_input::read_metadata_toml(dir.join("pyproject.toml"))
         .ok()
         .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
         .is_some_and(|document| {
@@ -558,7 +567,10 @@ pub(super) fn refuse_check(
     let error = error.into();
     let rendered = match machine_refusal_document(envelope_input, format, &error) {
         Some(rendered) => rendered,
-        None => return error.to_string(),
+        // Human formats (and machine formats without an honest refusal shape)
+        // stay prose-only; an analysis_timeout refusal appends the same
+        // bounded recovery the JSON envelope carries (#10796).
+        None => return human_refusal_prose(&error),
     };
     match rendered {
         Ok(document) => {
@@ -567,6 +579,19 @@ pub(super) fn refuse_check(
             }
         }
         Err(render) => return render,
+    }
+    error.to_string()
+}
+
+/// The stderr refusal for a format with no machine refusal document. A timed
+/// run consumes the stashed input-context projection so native human
+/// consumers get the requested echo, the published facts, and the bounded
+/// retry; every other failure keeps its unchanged prose.
+fn human_refusal_prose(error: &CoreError) -> String {
+    if error.refusal_notice().identity == "analysis_timeout"
+        && let Some(projection) = app::timeout_refusal::take_stashed()
+    {
+        return format!("{error}\n{}", projection.human_recovery_text());
     }
     error.to_string()
 }
@@ -630,6 +655,56 @@ pub(super) fn machine_refusal_document(
     }
 }
 
+/// The invocation authority and failure state at the analysis-timeout site,
+/// bundled so the stash helper stays one coherent input.
+struct TimeoutRefusalSite<'a> {
+    input: &'a CheckInput,
+    error: &'a CoreError,
+    budget: Option<std::time::Duration>,
+    format: OutputFormat,
+    /// The explicit `--format VALUE` spelling from argv, when one was given.
+    format_explicit: Option<String>,
+    /// The explicit `--output-dir` destination, when the invocation named one.
+    output_dir: Option<PathBuf>,
+    /// The requested input source the CLI established before analysis.
+    source: crate::analysis::InputSource,
+    worktree_explicit: bool,
+    committed_explicit: bool,
+    candidate_tree: Option<String>,
+    candidate_base: Option<String>,
+    slot: &'a crate::analysis::InputFactsSlot,
+}
+
+/// Stash the availability-aware input-context projection when the budget
+/// fired (#10796), so the refusal renderer — JSON envelope or human stderr —
+/// can offer the requested echo, the published facts, and one bounded retry.
+/// Non-timeout failures never stash: their refusals stay byte-identical.
+fn stash_timeout_refusal(site: &TimeoutRefusalSite<'_>) {
+    use crate::core_error::CheckFailureKind;
+    if site.error.check_failure_kind() != Some(CheckFailureKind::AnalysisTimeout) {
+        return;
+    }
+    let Some(budget) = site.budget else {
+        return;
+    };
+    let projection = app::timeout_refusal::build(
+        site.input,
+        app::timeout_refusal::RequestedSourceContext {
+            source: site.source,
+            worktree_explicit: site.worktree_explicit,
+            committed_explicit: site.committed_explicit,
+            candidate_tree: site.candidate_tree.clone(),
+            candidate_base: site.candidate_base.clone(),
+        },
+        budget,
+        site.format == OutputFormat::Json,
+        site.format_explicit.clone(),
+        site.output_dir.clone(),
+        crate::analysis::published_input_facts(site.slot),
+    );
+    app::timeout_refusal::stash(projection);
+}
+
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     check_inner(args, None)
 }
@@ -646,6 +721,9 @@ fn check_inner(
     args: &[String],
     interrupt_flags: Option<crate::cli::interrupt::InterruptFlags>,
 ) -> Result<(), String> {
+    // #10796: one CLI invocation must never inherit a timed-out run's stashed
+    // input context on this thread.
+    app::timeout_refusal::clear_stashed();
     #[cfg(not(unix))]
     let _ = interrupt_flags;
     let mut input = CheckInput {
@@ -671,10 +749,15 @@ fn check_inner(
     // diff (`<base>...HEAD`) even when the working tree is dirty. Without it
     // or `--worktree`, a dirty tree is analyzed as a working tree.
     let mut committed_explicitly_provided = false;
+    let mut legend_requested = false;
     // #4535: the output selection that argv made, spelled as the user wrote
     // it, so a second selection that disagrees is refused by name instead of
     // silently winning.
     let mut format_selection: Option<String> = None;
+    // #10796: the explicit `--format VALUE` spelling, preserved for the
+    // timeout refusal's bounded retry (the `--json` spelling rides the
+    // resolved format instead).
+    let mut format_explicit: Option<String> = None;
     let mut root_explicitly_provided = false;
     // RIPR-SPEC-0140: explicit artifact sink for the explain/context reuse
     // pair. No implicit cache: the user names the artifact path.
@@ -737,6 +820,8 @@ fn check_inner(
                 scope_explicitly_provided = true;
                 worktree_explicitly_provided = true;
             }
+            // #10481: print the Evidence legend even after the first run.
+            "--legend" => legend_requested = true,
             "--committed" => {
                 // Not a scope provider: it picks how the default or explicit
                 // base is diffed, not what the base is.
@@ -771,6 +856,10 @@ fn check_inner(
                     format!("--format {value}"),
                     parse_format(value)?,
                 )?;
+                // #10796: the refusal's bounded retry must repeat the explicit
+                // non-JSON format spelling the user chose, not the resolved
+                // enum default.
+                format_explicit = Some(value.to_string());
             }
             "--gap-ledger" => {
                 i += 1;
@@ -1504,7 +1593,7 @@ fn check_inner(
     // diff-scoped path promises (`ripr progress: <stage> [<scope>]`,
     // throttled heartbeats included). Both the audit-path disclosure and the
     // stage lines are stderr-only and cannot change machine stdout.
-    let progress = (!quiet).then(|| {
+    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
         std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
             std::io::stderr().is_terminal(),
             crate::cli::progress::ProgressPolicy::STANDARD,
@@ -1553,7 +1642,10 @@ fn check_inner(
                         input.base.clone(),
                         &config,
                     )?
-                    .with_rust_corpus_key(report.corpus_key.as_ref());
+                    .with_rust_inventory(
+                        report.corpus_key.as_ref(),
+                        &report.analyzed_production_files,
+                    );
                 analysis::cancellation::begin_cli_publication()?;
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
@@ -1591,6 +1683,7 @@ fn check_inner(
     // Capture diff_file before input is moved into the analysis call; the
     // RIPR-SPEC-0112 disclosure gate after the analysis needs it.
     let input_diff_file_is_some = input.diff_file.is_some();
+    let diff_from_stdin = input.diff_file.as_deref() == Some(Path::new("-"));
     let limited_check_input = input.clone();
     // Analysis-phase snapshot: identical to the scope-guard input, so guard
     // envelopes and refusal envelopes echo the same invocation context.
@@ -1634,6 +1727,13 @@ fn check_inner(
     } else {
         app::AnalysisProgressScope::Diff
     };
+    // #10796: the capture slot a deadline refusal reads. The budget owner
+    // registers it on the worker thread and stamps the deadline when the
+    // budget starts, so the refusal retains only what producers published
+    // before that stamp. A run with no budgeted worker (repo seam formats)
+    // leaves the slot empty — the early-timeout case.
+    let input_facts_slot: crate::analysis::InputFactsSlot =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
     let output_result = if format.is_repo_seam_inventory() {
         // Repo seam-driven formats do not consume legacy repo `Findings`,
         // so skip `run_repo_analysis` and let `render_check` drive the
@@ -1642,11 +1742,15 @@ fn check_inner(
         Ok(app::repo_seam_inventory_input(input))
     } else {
         // #5369: bound the diff/worktree analysis by the wall-clock budget.
+        // The budget owner registers the input-facts capture on the worker
+        // thread and stamps the deadline, so a producer finishing inside the
+        // cancel grace is recorded post-deadline (#10796).
         let worker_config = config.clone();
         let worker_sink = progress.clone();
         let abandon_sink = progress.clone();
         super::check_budget::run_with_budget(
             check_timeout,
+            Some(&input_facts_slot),
             move || {
                 if let Some(sink) = &abandon_sink {
                     sink.abandon();
@@ -1667,6 +1771,32 @@ fn check_inner(
     let mut output = match output_result {
         Ok(output) => output,
         Err(err) => {
+            // The requested source selection the CLI established; the
+            // analysis effort mode rides separately in the projection and is
+            // never confused with it.
+            let source = if candidate_tree.is_some() {
+                crate::analysis::InputSource::GitCandidate
+            } else if input_diff_file_is_some {
+                crate::analysis::InputSource::SuppliedDiff
+            } else if worktree_run {
+                crate::analysis::InputSource::WorkingTree
+            } else {
+                crate::analysis::InputSource::Committed
+            };
+            stash_timeout_refusal(&TimeoutRefusalSite {
+                input: &envelope_input,
+                error: &err,
+                budget: check_timeout,
+                format: effective_format,
+                format_explicit: format_explicit.clone(),
+                output_dir: output_dir.clone(),
+                source,
+                worktree_explicit: worktree_explicitly_provided,
+                committed_explicit: committed_explicitly_provided,
+                candidate_tree: candidate_tree.clone(),
+                candidate_base: candidate_base.clone(),
+                slot: &input_facts_slot,
+            });
             return Err(super::check_fanout::refuse(
                 super::check_fanout::refusal_destination(
                     fanout_custody.as_ref(),
@@ -1782,7 +1912,8 @@ fn check_inner(
     if input_diff_file_is_some
         && output.findings.is_empty()
         && !format.is_repo_scope()
-        && let Some(hedge) = zero_findings_diff_hedge(output.analysis_outcome.as_ref())
+        && let Some(hedge) =
+            zero_findings_diff_hedge(output.analysis_outcome.as_ref(), diff_from_stdin)
     {
         eprintln!("{}", terminal_safe(hedge));
     }
@@ -1846,8 +1977,9 @@ fn check_inner(
     let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
         // #8547: both routes read seams of the selected finding's file
         // (the repair route adds its related-test evidence files); they
-        // share one bounded seam index built once for this invocation,
-        // repair first so its wider file set covers the stub route's.
+        // share a bounded seam index, repair first. Selected and listed
+        // hidden stub subjects reuse covered files; an uncovered file may
+        // replace the index. Hidden work is bounded by the displayed window.
         let mut seam_index = None;
         let repair_route = crate::app::task_first::check_repair_route(
             &limited_check_input.root,
@@ -1855,14 +1987,14 @@ fn check_inner(
             &output,
             &mut seam_index,
         );
-        let stub_route = app::test_stub::check_stub_route(
+        let stub_routes = app::test_stub::check_stub_routes(
             &limited_check_input.root,
             &config,
             &output,
             &mut seam_index,
         );
         navigation
-            .with_stub_route(stub_route)
+            .with_stub_routes(stub_routes)
             // #8166 Slice C: the repair line reuses the producer-owned
             // admission gate over the live seam inventory, for the same
             // live-files reason as the stub route above. Other formats
@@ -1942,26 +2074,25 @@ fn check_inner(
         }
         return Ok(());
     }
-    write_stdout_chunked(
-        &app::render_check_with_config_and_navigation_and_progress(
-            &output,
-            &format,
-            &config,
-            Some(&drill_in),
-            progress_sink,
-            provenance,
-        )
-        .map_err(|err| {
-            super::check_fanout::refuse(
-                super::check_fanout::refusal_destination(
-                    fanout_custody.as_ref(),
-                    output_dir.as_deref(),
-                ),
-                &envelope_input,
-                effective_format,
-                err,
-            )
-        })?,
+    // #10481: the ten-line Evidence legend explains the digest to a first-time
+    // reader; later runs keep one pointer line. "Seen" is a marker beside the
+    // reports, so a clean build tree sees the legend again.
+    let legend_marker = matches!(format, OutputFormat::Human)
+        .then(|| human_legend_marker(&limited_check_input.root))
+        .flatten();
+    let legend_seen = legend_marker
+        .as_ref()
+        .is_some_and(|marker| marker.is_file());
+    if legend_seen && !legend_requested {
+        config.reports.human_legend = crate::config::HumanLegend::Pointer;
+    }
+    let rendered = app::render_check_with_config_and_navigation_and_progress(
+        &output,
+        &format,
+        &config,
+        Some(&drill_in),
+        progress_sink,
+        provenance,
     )
     .map_err(|err| {
         super::check_fanout::refuse(
@@ -1974,6 +2105,28 @@ fn check_inner(
             err,
         )
     })?;
+    write_stdout_chunked(&rendered).map_err(|err| {
+        super::check_fanout::refuse(
+            super::check_fanout::refusal_destination(
+                fanout_custody.as_ref(),
+                output_dir.as_deref(),
+            ),
+            &envelope_input,
+            effective_format,
+            err,
+        )
+    })?;
+    // Record only a legend that was actually printed: a root whose name echoes
+    // a legend line must not count, so match the renderer's whole block.
+    // An explicit `--legend` is a lookup, not a first run: it must not write
+    // state, which also keeps pinned fixture workspaces free of `target/`.
+    if !legend_seen
+        && !legend_requested
+        && rendered.contains(crate::output::human::HUMAN_EVIDENCE_LEGEND)
+        && let Some(marker) = legend_marker.as_ref()
+    {
+        record_human_legend_seen(&limited_check_input.root, marker);
+    }
     // The producer's unsupported result is already on stdout. Keep that
     // report, including retained findings and coverage identity; appending a
     // refusal here would corrupt machine output. Genuine partial reports
@@ -1985,6 +2138,21 @@ fn check_inner(
         sink.commit_success();
     }
     Ok(())
+}
+
+/// Where `check` records that the Evidence legend was shown. `None` when the
+/// workspace output tree is not safe to write (a link resolving outside it).
+fn human_legend_marker(root: &Path) -> Option<PathBuf> {
+    crate::atomic_file::ensure_report_output_contained(root).ok()?;
+    Some(root.join("target/ripr/legend-seen"))
+}
+
+/// Best effort: a read-only tree just shows the legend again.
+fn record_human_legend_seen(root: &Path, marker: &Path) {
+    if crate::atomic_file::ensure_report_output_contained(root).is_err() {
+        return;
+    }
+    let _ = crate::atomic_file::write(marker, b"1\n", "legend marker");
 }
 
 /// The stderr warning for an empty default-base result when the default base
@@ -2031,9 +2199,14 @@ fn default_base_is_head_hedge(
 ///   "may not be a valid unified diff" hint.
 fn zero_findings_diff_hedge(
     outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+    from_stdin: bool,
 ) -> Option<String> {
     use crate::analysis_outcome::AnalysisLimitationKind;
-    let generic = "ripr: --diff produced zero findings. If the diff file is not a valid unified diff, this result is empty because nothing was parsed — not because all behavior is covered.";
+    let generic = if from_stdin {
+        "ripr: --diff produced zero findings. If the diff piped on stdin is not a valid unified diff, this result is empty because nothing was parsed — not because all behavior is covered."
+    } else {
+        "ripr: --diff produced zero findings. If the diff file is not a valid unified diff, this result is empty because nothing was parsed — not because all behavior is covered."
+    };
     let Some(outcome) = outcome else {
         return Some(generic.to_string());
     };
@@ -2130,6 +2303,14 @@ pub(super) fn gap_check_findings_snapshot(
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+#[path = "check_argv_refusal_tests.rs"]
+mod argv_refusal_tests;
+
+#[cfg(test)]
+#[path = "check_gap_ledger_legend_tests.rs"]
+mod gap_ledger_legend_tests;
 
 #[cfg(test)]
 mod candidate_tree_tests {
@@ -2504,7 +2685,7 @@ mod tests {
                 crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations,
                 "an excluded Rust adapter must not claim a complete analysis ({label})"
             );
-            let hedge = zero_findings_diff_hedge(Some(&outcome))
+            let hedge = zero_findings_diff_hedge(Some(&outcome), false)
                 .ok_or_else(|| format!("{label}: a typed exclusion must be named on stderr"))?;
             assert!(
                 hedge.contains("rust is not in the effective [languages].enabled set"),
@@ -2537,7 +2718,7 @@ mod tests {
         let outcome = result?
             .analysis_outcome
             .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
-        assert_eq!(zero_findings_diff_hedge(Some(&outcome)), None);
+        assert_eq!(zero_findings_diff_hedge(Some(&outcome), false), None);
         Ok(())
     }
 
@@ -2573,7 +2754,7 @@ mod tests {
                 )?,
             ],
         )?;
-        let hedge = zero_findings_diff_hedge(Some(&outcome))
+        let hedge = zero_findings_diff_hedge(Some(&outcome), false)
             .ok_or_else(|| "an unavailable adapter must be named on stderr".to_string())?;
         assert!(hedge.contains("perl changed 1 file(s)"), "{hedge}");
         assert!(!hedge.contains("not a valid unified diff"), "{hedge}");
@@ -2589,7 +2770,7 @@ mod tests {
             sample_diff_outcome("hedge-rust-enabled", vec![crate::domain::LanguageId::Rust])?;
         assert!(outcome.counts.changed_file_count > 0);
         assert!(
-            zero_findings_diff_hedge(Some(&outcome)).is_none(),
+            zero_findings_diff_hedge(Some(&outcome), false).is_none(),
             "a parsed diff must not be blamed for diff validity"
         );
         // Nothing parsed (or no outcome): the generic hint remains.
@@ -2600,9 +2781,19 @@ mod tests {
             Vec::new(),
         )?;
         for outcome in [Some(&empty), None] {
-            let hedge = zero_findings_diff_hedge(outcome)
+            let hedge = zero_findings_diff_hedge(outcome, false)
                 .ok_or_else(|| "an unparsed diff must keep the generic hint".to_string())?;
-            assert!(hedge.contains("not a valid unified diff"), "{hedge}");
+            assert!(
+                hedge.contains("the diff file is not a valid unified diff"),
+                "{hedge}"
+            );
+            let stdin_hedge = zero_findings_diff_hedge(outcome, true)
+                .ok_or_else(|| "an unparsed stdin diff must keep the generic hint".to_string())?;
+            assert!(
+                stdin_hedge.contains("the diff piped on stdin is not a valid unified diff"),
+                "{stdin_hedge}"
+            );
+            assert!(!stdin_hedge.contains("diff file"), "{stdin_hedge}");
         }
         Ok(())
     }

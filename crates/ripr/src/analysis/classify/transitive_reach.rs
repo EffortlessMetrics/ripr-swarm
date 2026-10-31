@@ -1103,6 +1103,92 @@ impl<'a> TransitiveReachIndex<'a> {
         })
     }
 
+    /// Trait-dispatch ambiguity for `owner_name` (RIPR-SPEC-0114, #11719): the
+    /// owner is called directly from an `impl Trait for X` method whose
+    /// implicit-dispatch name (`fmt`, `eq`, ...) is shared by two or more
+    /// trait impls in the crate, and the index holds a test. A test reaches
+    /// such an impl through `format!`, `==` or `to_string`, which leave no call
+    /// fact, and the name cannot say which impl, so ripr does not pick one:
+    /// the limit names the ambiguity and lists the calling impls. A name with
+    /// a single impl (the unique-impl rule), no calling impl, an owner that is
+    /// itself an implicit-dispatch method and a method outside
+    /// [`IMPLICIT_DISPATCH_METHODS`] give `None`. It is never a witness test.
+    pub(in crate::analysis) fn trait_dispatch_ambiguity(
+        &self,
+        owner_name: &str,
+    ) -> Option<TraitDispatchAmbiguity> {
+        if owner_name.is_empty() || IMPLICIT_DISPATCH_METHODS.contains(&owner_name) {
+            return None;
+        }
+        let graph = self.graph();
+        if graph.all_tests.is_empty() {
+            return None;
+        }
+        // The method with the most calling impls; ties by list order.
+        let mut best: Option<(&str, usize, Vec<&FunctionSummary>)> = None;
+        for method in IMPLICIT_DISPATCH_METHODS {
+            let impl_total = graph
+                .by_name
+                .get(method)
+                .into_iter()
+                .flatten()
+                .filter(|function| is_production_trait_impl_method(function))
+                .count();
+            if impl_total < 2 {
+                continue;
+            }
+            let mut callers: Vec<&FunctionSummary> = graph
+                .by_name
+                .get(method)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|function| {
+                    is_production_trait_impl_method(function)
+                        && calls_of(function)
+                            .any(|call| !is_macro_call(&call.name) && call.name == owner_name)
+                })
+                .collect();
+            callers.sort_by(|a, b| (&a.file, a.start_line).cmp(&(&b.file, b.start_line)));
+            let better = !callers.is_empty()
+                && best
+                    .as_ref()
+                    .is_none_or(|(_, _, current)| callers.len() > current.len());
+            if better {
+                best = Some((method, impl_total, callers));
+            }
+        }
+        let (method, method_impl_count, callers) = best?;
+        let impls: Vec<(&str, &str)> = callers
+            .iter()
+            .filter_map(|function| match &function.item.container {
+                FunctionContainer::TraitImpl {
+                    trait_path,
+                    self_ty,
+                } => Some((trait_path.as_str(), self_ty.as_str())),
+                _ => None,
+            })
+            .collect();
+        let one_trait = impls.windows(2).all(|pair| pair[0].0 == pair[1].0);
+        let mut candidates: Vec<String> = Vec::new();
+        for (trait_path, self_ty) in &impls {
+            let label = if one_trait {
+                (*self_ty).to_string()
+            } else {
+                format!("{trait_path} for {self_ty}")
+            };
+            if !candidates.contains(&label) {
+                candidates.push(label);
+            }
+        }
+        Some(TraitDispatchAmbiguity {
+            method: method.to_string(),
+            impl_count: callers.len(),
+            method_impl_count,
+            candidates,
+        })
+    }
+
     /// The best witnessing test among those calling a name in `reaching`.
     fn witness_through(
         &self,
@@ -1374,12 +1460,90 @@ impl<'a> TransitiveReachIndex<'a> {
         }
     }
 
+    /// Declaration context for display only. The lexical candidate walk is
+    /// unchanged; this does not establish runtime reach across this boundary.
+    pub(in crate::analysis) fn private_helper_boundary(
+        &self,
+        owner_id: &crate::domain::SymbolId,
+        owner_name: &str,
+        entry_name: &str,
+    ) -> Option<String> {
+        let owners = self
+            .graph()
+            .by_name
+            .get(owner_name)?
+            .iter()
+            .copied()
+            .filter(|function| &function.id == owner_id)
+            .collect::<Vec<_>>();
+        let [owner] = owners.as_slice() else {
+            return None;
+        };
+        let [entry] = self.graph().by_name.get(entry_name)?.as_slice() else {
+            return None;
+        };
+        if owner.item.container != FunctionContainer::Free
+            || entry.item.container != FunctionContainer::Free
+        {
+            return None;
+        }
+        let owner_visibility = declaration_visibility(self.index, owner)?;
+        if owner_visibility == "pub" || declaration_visibility(self.index, entry)? != "pub" {
+            return None;
+        }
+        let privacy = if owner_visibility.is_empty() {
+            "private"
+        } else {
+            "restricted-visibility"
+        };
+        Some(format!(
+            "{privacy} helper `{}` behind public entry point `{entry_name}`; candidate path only",
+            owner.name
+        ))
+    }
+
     /// Every production function, for checks that scan impl owners.
     pub(in crate::analysis) fn production_functions(
         &self,
     ) -> impl Iterator<Item = &'a FunctionSummary> + '_ {
         self.graph().by_name.values().flatten().copied()
     }
+}
+
+/// Read the exact indexed declaration, retaining unknown on malformed source,
+/// duplicate declarations, or a stale line/name. Never infer privacy from the
+/// function body's text: that slice starts at `fn` and omits `pub`.
+fn declaration_visibility(index: &RustIndex, function: &FunctionSummary) -> Option<String> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName, ast::HasVisibility};
+    let file = index.files().get(&function.file)?;
+    let tree = index.source_syntax.get(index, &function.file)?.tree()?;
+    let declarations = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|node| node.name().is_some_and(|name| name.text() == function.name))
+        .filter(|node| {
+            node.fn_token().is_some_and(|token| {
+                let offset = u32::from(token.text_range().start()) as usize;
+                file.source
+                    .bytes()
+                    .take(offset)
+                    .filter(|byte| *byte == b'\n')
+                    .count()
+                    + 1
+                    == function.start_line
+            })
+        })
+        .collect::<Vec<_>>();
+    let [declaration] = declarations.as_slice() else {
+        return None;
+    };
+    Some(
+        declaration
+            .visibility()
+            .map(|visibility| visibility.syntax().text().to_string())
+            .unwrap_or_default(),
+    )
 }
 
 /// Finds a deterministic macro-blocked witness for a `no_static_path` Rust
@@ -2915,6 +3079,111 @@ pub(in crate::analysis) const RUST_MACRO_REACH_MESSAGE: &str = "ripr saw a test 
      This is not a coverage assessment -- ripr cannot confirm or deny \
      that the macro-generated path observes the change.";
 
+/// The message emitted when the owner is called from several impls of one
+/// implicit-dispatch trait method (#11719). A named limitation, NOT a
+/// coverage claim and not a witness: no test is named.
+pub(in crate::analysis) const RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE: &str = "ripr saw production code that dispatches through a trait method toward this change, \
+     but the owner is called from several impls of that method and ripr does not guess which one a test reaches. \
+     This is not a coverage assessment -- ripr cannot confirm or deny \
+     that the change is observed.";
+
+/// Evidence-line prefix of the ambiguity statement.
+pub(in crate::analysis) const TRAIT_DISPATCH_AMBIGUITY_PREFIX: &str = "Trait-dispatch ambiguity: ";
+
+/// Candidate impls named on the ambiguity line; the rest are counted.
+const MAX_AMBIGUITY_CANDIDATES: usize = 5;
+
+/// Several `impl Trait for X` methods of one implicit-dispatch name call the
+/// owner ([`TransitiveReachIndex::trait_dispatch_ambiguity`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::analysis) struct TraitDispatchAmbiguity {
+    pub method: String,
+    /// Impl methods calling the owner (at least one).
+    pub impl_count: usize,
+    /// Trait impls of `method` in the crate (at least two).
+    pub method_impl_count: usize,
+    /// Distinct impl labels, in file/line order.
+    pub candidates: Vec<String>,
+}
+
+/// The candidate impls, at most [`MAX_AMBIGUITY_CANDIDATES`], then a count.
+fn bounded_candidates(ambiguity: &TraitDispatchAmbiguity) -> String {
+    let shown: Vec<&str> = ambiguity
+        .candidates
+        .iter()
+        .take(MAX_AMBIGUITY_CANDIDATES)
+        .map(String::as_str)
+        .collect();
+    let more = ambiguity.candidates.len() - shown.len();
+    if more == 0 {
+        shown.join(", ")
+    } else {
+        format!("{}, and {more} more", shown.join(", "))
+    }
+}
+
+/// A method of an `impl Trait for X` block that is not compiled out of
+/// production: a `#[cfg(test)]` impl block is test scaffolding, so it neither
+/// counts as an impl of the method name nor as a caller (#11719). The
+/// cfg-test reading is the shared `cfg_predicates` authority.
+fn is_production_trait_impl_method(function: &FunctionSummary) -> bool {
+    matches!(function.item.container, FunctionContainer::TraitImpl { .. })
+        && !function
+            .impl_attrs
+            .iter()
+            .any(|attr| crate::analysis::facts::cfg_predicates::attribute_requires_test(attr))
+}
+
+pub(in crate::analysis) fn trait_dispatch_ambiguity_pointer(
+    ambiguity: &TraitDispatchAmbiguity,
+    owner_name: &str,
+) -> String {
+    let calls = match ambiguity.impl_count {
+        1 => "1 impl".to_string(),
+        n => format!("{n} impls"),
+    };
+    format!(
+        "{}owner `{}` is called from {} of `{}` ({}), one of {} `{}` impls in this crate; ripr cannot tell whether any test reaches one of these impls. \
+         Inspect the tests that format or compare these types to judge whether this change is observed.",
+        TRAIT_DISPATCH_AMBIGUITY_PREFIX,
+        owner_name,
+        calls,
+        ambiguity.method,
+        bounded_candidates(ambiguity),
+        ambiguity.method_impl_count,
+        ambiguity.method
+    )
+}
+
+pub(in crate::analysis) fn trait_dispatch_ambiguity_detail_lines(
+    ambiguity: &TraitDispatchAmbiguity,
+    owner_name: &str,
+) -> [String; 4] {
+    [
+        format!(
+            "{}trait-impl method `{}` ({}) -> owner `{}`",
+            crate::domain::LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
+            ambiguity.method,
+            bounded_candidates(ambiguity),
+            owner_name
+        ),
+        format!(
+            "{}test -> one of {} `{}` impls (trait dispatch through syntax or macros) ripr does not resolve",
+            crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX,
+            ambiguity.method_impl_count,
+            ambiguity.method
+        ),
+        format!(
+            "{}analysis/rust-public-api-transitive-reach",
+            crate::domain::LIMITATION_ANALYZER_ROUTE_PREFIX
+        ),
+        format!(
+            "{}named limitation only; ripr cannot confirm or deny that any test reaches or observes the change",
+            crate::domain::LIMITATION_NON_CLAIM_PREFIX
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod declaration_tests {
     use super::*;
@@ -3062,6 +3331,108 @@ mod tests {
             workspace_authority: None,
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn limited_journey_private_helper_detail_requires_exact_declarations() -> Result<(), String> {
+        for (visibility, expected) in [
+            ("", Some("private helper")),
+            ("pub(crate)", Some("restricted-visibility helper")),
+            ("pub", None),
+        ] {
+            let source = format!("pub fn outer() {{ inner(); }}\n{visibility} fn inner() {{}}\n");
+            let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+                Path::new("src/lib.rs"),
+                &source,
+            )?;
+            let index = index_with_source(facts.functions, Vec::new(), source);
+            let reach = TransitiveReachIndex::new(&index);
+            let owner = SymbolId("src/lib.rs::inner".to_string());
+            let detail = reach.private_helper_boundary(&owner, "inner", "outer");
+            assert_eq!(detail.is_some(), expected.is_some(), "{detail:?}");
+            if let Some(expected) = expected {
+                assert!(
+                    detail.as_deref().is_some_and(|text| text.contains(expected)
+                        && text.contains("public entry point `outer`")
+                        && text.contains("candidate path only")),
+                    "{detail:?}"
+                );
+            }
+            assert_eq!(
+                reach.private_helper_boundary(
+                    &SymbolId("src/lib.rs::absent".to_string()),
+                    "inner",
+                    "outer"
+                ),
+                None
+            );
+            assert_eq!(
+                reach.private_helper_boundary(&owner, "inner", "absent"),
+                None
+            );
+            assert_eq!(
+                reach.private_helper_boundary(&owner, "absent", "outer"),
+                None
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn limited_journey_private_helper_detail_refuses_same_name_indexed_entries()
+    -> Result<(), String> {
+        for duplicate_entry in [false, true] {
+            let mut files = BTreeMap::new();
+            for (path, source) in [
+                ("src/lib.rs", "pub fn outer() { inner(); }\nfn inner() {}\n"),
+                ("src/sibling.rs", "pub fn outer() {}\n"),
+            ] {
+                if path == "src/sibling.rs" && !duplicate_entry {
+                    continue;
+                }
+                let path = PathBuf::from(path);
+                let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+                files.insert(path, facts);
+            }
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                files,
+                ..Default::default()
+            });
+            let reach = TransitiveReachIndex::new(&index);
+            let mut entries = reach
+                .production_functions()
+                .filter(|function| function.name == "outer")
+                .map(|function| {
+                    assert_eq!(
+                        declaration_visibility(&index, function).as_deref(),
+                        Some("pub")
+                    );
+                    function.id.0.as_str()
+                })
+                .collect::<Vec<_>>();
+            entries.sort_unstable();
+            let expected_entries = if duplicate_entry {
+                vec!["src/lib.rs::outer", "src/sibling.rs::outer"]
+            } else {
+                vec!["src/lib.rs::outer"]
+            };
+            assert_eq!(entries, expected_entries);
+            let owner = SymbolId("src/lib.rs::inner".to_string());
+            assert_eq!(
+                reach
+                    .private_helper_boundary(&owner, "inner", "outer")
+                    .as_deref(),
+                if duplicate_entry {
+                    None
+                } else {
+                    Some(
+                        "private helper `inner` behind public entry point `outer`; candidate path only",
+                    )
+                },
+                "duplicate indexed entry: {duplicate_entry}"
+            );
+        }
+        Ok(())
     }
 
     // (a) Candidate path found -> witness captured naming the test + entry symbol.

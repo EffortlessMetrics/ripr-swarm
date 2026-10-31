@@ -1,5 +1,6 @@
 mod all;
 mod allow_attributes;
+mod capability_cells;
 mod capability_docs;
 mod capability_producers;
 mod changelog_fragments;
@@ -9,8 +10,10 @@ mod dependency_expiry;
 pub(crate) mod distribution;
 mod doc_roles;
 pub(crate) mod droid_review;
+pub(crate) mod evidence_state_literals;
 mod executable_files;
 mod file_policy;
+mod fold_changelog;
 mod local_context;
 mod network;
 mod no_panic;
@@ -21,6 +24,7 @@ mod product_copy;
 pub(crate) mod proof_packs;
 mod release_selection;
 mod release_targets;
+mod user_text;
 
 pub(crate) use release_targets::{CandidateAuthoritySnapshot, capture_candidate_authority};
 mod static_language;
@@ -30,6 +34,7 @@ mod workflows;
 
 pub(crate) use all::check_policy_all;
 pub(crate) use allow_attributes::check_allow_attributes;
+pub(crate) use capability_cells::check_capability_cells;
 pub(crate) use capability_docs::capability_docs;
 pub(crate) use capability_producers::check_capability_producers;
 pub(crate) use changelog_fragments::{
@@ -42,6 +47,7 @@ pub(crate) use doc_roles::check_doc_roles;
 pub(crate) use droid_review::check_droid_review_config;
 pub(crate) use executable_files::check_executable_files;
 pub(crate) use file_policy::{check_file_policy, is_covered_by_instrument_failure};
+pub(crate) use fold_changelog::fold_changelog;
 pub(crate) use local_context::check_local_context;
 pub(crate) use network::check_network_policy;
 pub(crate) use no_panic::check_no_panic_family;
@@ -52,6 +58,7 @@ pub(crate) use product_copy::check_product_copy;
 pub(crate) use proof_packs::check_proof_packs;
 pub(crate) use static_language::check_static_language;
 pub(crate) use text_encoding::check_text_encoding;
+pub(crate) use user_text::{check_user_text, check_user_text_full, check_user_text_with_args};
 pub(crate) use workflows::check_workflows;
 
 pub(crate) fn check_release_targets() -> Result<(), String> {

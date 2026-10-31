@@ -1,6 +1,6 @@
 pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci github, a non-blocking advisory workflow.
 
-Usage: ripr init [--root PATH] [--ci github] [--mcp] [--dry-run] [--force]
+Usage: ripr init [--root PATH] [--ci github] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
 
 `ripr init` is optional. It writes the built-in defaults to a repo-local
 ripr.toml so teams can commit, review, and tune policy. Missing ripr.toml is
@@ -18,14 +18,24 @@ Options:
                    ripr.toml and --force does not reset it. Codex config is
                    user-global and is never written: init prints the
                    `codex mcp add` command.
-  --dry-run        Show the plan and the file bodies without writing anything.
+  --agents TARGET  Also add a short ripr loop (find a gap, write a test, verify,
+                   explicit done and stop rules) for your coding agent: claude
+                   -> CLAUDE.md, codex -> AGENTS.md, cursor ->
+                   .cursor/rules/ripr.mdc, all -> all three. Repeatable. The
+                   text goes in a marked section appended to your file; your
+                   other content is never touched, a rerun changes nothing,
+                   and an edited section is kept unless --force refreshes it.
+                   A symlink, an unreadable file or an unterminated marker is
+                   refused. With cursor, --mcp also writes .cursor/mcp.json.
+                   Guide: docs/AGENT_QUICKSTART.md.
+  --dry-run       Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root
                    that is not a directory) instead of reporting success.
   --force          Replace what init would otherwise refuse or keep. Plain `ripr init --force`
-                   resets an existing ripr.toml. With --ci or --mcp, ripr.toml is
-                   always kept; --force then only replaces the generated workflow
-                   or the `ripr` entry in .mcp.json.
+                   resets an existing ripr.toml. With --ci, --mcp or --agents, ripr.toml is
+                   always kept; --force then only replaces the generated workflow,
+                   the `ripr` entry in .mcp.json, or the marked agent section.
 
 Generated config:
   - uses draft analysis mode and includes unchanged tests
@@ -86,13 +96,15 @@ Progress:
   `--quiet` turns this stream off.
 
 Environment variables:
-  RIPR_PILOT_SEAM_BUDGET        Maximum seams written to pilot artifacts (repo-exposure.json,
+  RIPR_PILOT_SEAM_BUDGET        Maximum gaps written to pilot artifacts (repo-exposure.json,
                                  agent-seam-packets.json). Default: 2000. Set to 0 to disable
                                  the budget and write all seams (may produce very large files).
                                  When the budget is applied, both artifacts include a
                                  limitations[] disclosure naming the env var and a repair route.
-  RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum seams analyzed and ranked in one pilot run.
-                                 Default: 10000. Set to 0 to analyze every seam. When the
+  RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum gaps analyzed and ranked in one pilot run.
+                                 Default: the pilot seam budget (2000), so pilot does not
+                                 classify seams it would not rank; `ripr check` keeps 10000.
+                                 Set to 0 to analyze every seam. When the
                                  limit cuts the ranking, the terminal and summary state
                                  "ranked N of M seams" and actionable seam totals become
                                  lower bounds until you raise or remove the limit.
@@ -103,7 +115,7 @@ Environment variables:
                                  (pilot keeps fixed phrases for determinism; the
                                  machine-readable git_invocation_timeout name is what
                                  `ripr check` reports). 0 disables the deadline.
-                                 Invalid values fail closed. Default: 300 (5 minutes).
+                                 Invalid values are rejected. Default: 300 (5 minutes).
 
 Outputs:
   - repo-exposure.json and repo-exposure.md
@@ -124,7 +136,7 @@ run reads as success (#9368).
 "#;
 pub(super) const OUTCOME_HELP: &str = r#"Compare before/after static evidence after adding a focused test.
 
-Usage: ripr outcome --before PATH --after PATH [--format md|json] [--out PATH]
+Usage: ripr outcome --before PATH --after PATH [--format md|markdown|text|json] [--out PATH]
 
 Options:
   --before PATH    Static snapshot before the focused test: repo exposure or check JSON.
@@ -190,7 +202,7 @@ findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
   ripr check
-  ripr check --base origin/main --json
+  ripr check --base origin/main --json --quiet   (--json alone still prints progress)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
@@ -251,6 +263,11 @@ Options:
                            output then notes that those edits were not
                            analyzed. Cannot be combined with --worktree,
                            --diff, --candidate-tree, or repo-scope formats.
+  --legend                 Print the Evidence stage and summary definitions in
+                           the human output (a lookup: it does not record the
+                           first run). They are shown on the first run in a
+                           build tree; later runs keep one pointer line. No
+                           effect on other formats.
   --mode MODE              How much of the workspace is indexed: instant
                            (changed files only, cheapest), draft (packages the
                            diff touches; the default), fast (same as draft for
@@ -265,6 +282,7 @@ Options:
                            Choose by task: eye review -> human (the default);
                            every finding with drill-in commands -> human-full;
                            machine consumer (jq, CI scripts) -> json (--json);
+                           compact report for a coding agent -> agent;
                            file annotations in Actions logs -> github; code
                            scanning upload -> sarif; README badge ->
                            repo-badge-shields (repo ledger); PR/CI status
@@ -272,10 +290,10 @@ Options:
                            inventory -> repo-exposure-json; agent repair
                            evidence -> agent-seam-packets-json. Groups:
                              Analysis (diff-scoped):
-                               human, human-full, json, github, sarif,
+                               human, human-full, json, github, sarif, agent,
                                check-findings-json (identified snapshot
                                for `agent verify`)
-                             Badge (diff-scoped, for README status):
+                             Badge (diff-scoped, for PR/CI status):
                                badge-json, badge-shields,
                                badge-plus-json, badge-plus-shields
                              Repo-scope (full-repo analysis):
@@ -334,7 +352,7 @@ Options:
                            never a gate, badge, or proof input. Diff-scoped
                            findings runs only, including --worktree runs
                            (the recorded base-to-worktree diff is re-resolved
-                           at reuse time; worktree drift fails closed on the
+                           at reuse time; a changed worktree is refused by the
                            diff bytes hash); not supported for repo-scoped
                            formats, --gap-ledger, or managed [perl] producer
                            packet generation (pass --perl-facts PATH
@@ -369,7 +387,7 @@ Exit status:
   `unsupported_input` reports exit 2 after the original report is written;
   limitations and recovery routes remain available in that report. Usage and
   operational errors also exit 2.
-  Empty input is complete no_scope (exit 0). Read the typed outcome to
+  Empty input is complete no_scope (exit 0). Read the outcome in the JSON to
   distinguish partial analysis from complete analysis; a successful exit
   alone does not establish complete scope or a clean gate. Blocking belongs
   to `ripr gate evaluate` (exit 3 on `blocked`). Do not build a CI gate on
@@ -384,26 +402,28 @@ Progress:
   Machine formats (json, sarif, github) keep stdout byte-clean;
   they do not disable stderr progress. Unknown totals never become a
   percentage or ETA. Progress does not mean analysis is faster or
-  that the command will succeed. `--quiet` turns this stream off.
+  that the command will succeed. `--quiet` turns this stream off; agents
+  and scripts reading json should pass it. Setting `RIPR_QUIET` to anything
+  but empty, `0` or `false` does the same.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
-                                          before check fails closed as
+                                          before check stops with
                                           diff_scope_oversized. With --json, stdout
                                           carries a non-consumable limited artifact.
                                           Default: 2000.
   RIPR_MAX_DIFF_CHANGED_PYTHON_LINES      Maximum added plus removed Python diff
-                                          lines before check fails closed as
+                                          lines before check stops with
                                           diff_scope_oversized (the Rust guard's
                                           memory bound for the Python adapter).
                                           Default: 2000.
   RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES  Maximum added plus removed TypeScript
                                           diff lines (the routed .ts/.tsx/.mts/
                                           .cts/.js/.jsx/.mjs/.cjs family) before
-                                          check fails closed as diff_scope_oversized.
+                                          check stops with diff_scope_oversized.
                                           Default: 2000.
   RIPR_MAX_DIFF_INDEX_FILES               Maximum Rust files loaded into the diff
-                                          index before check fails closed as
+                                          index before check stops with
                                           diff_scope_oversized (a memory guard).
                                           With --json, stdout carries a
                                           non-consumable limited artifact.
@@ -425,7 +445,7 @@ Environment variables:
                                           named stop reason; gate/baseline/badge/Zero
                                           ineligible. Overrides above the effective
                                           limit are clamped with disclosure. Invalid
-                                          values fail closed as partial_budget_invalid.
+                                          values are rejected as partial_budget_invalid.
                                           Default: 200.
   RIPR_PARTIAL_DIFF_LINE_BUDGET           Changed lines analyzed before check
                                           returns limited_partial_scope. The first
@@ -433,21 +453,26 @@ Environment variables:
                                           when it alone exceeds the budget.
                                           Overrides above the effective limit are
                                           clamped with disclosure. Invalid values
-                                          fail closed as partial_budget_invalid.
+                                          are rejected as partial_budget_invalid.
                                           Default: 1000.
   RIPR_CHECK_FINDINGS_BYTES               Byte budget for the findings array in
                                           `check --format json`; a render above the
-                                          budget fails the run closed instead of
+                                          budget stops the run instead of
                                           emitting an unusable document. Set to 0
                                           to remove the cap (unbounded); an
                                           unparseable value fails the run.
                                           Default: 1000000 (1 MB).
+  RIPR_QUIET                              Silence the stderr `ripr progress:` stream
+                                          like --quiet (check, explain, context,
+                                          pilot). Any value except empty, 0 or
+                                          false silences it; stdout, exit codes and
+                                          errors are unchanged.
   RIPR_GIT_TIMEOUT                        Cooperative deadline in seconds for each
                                           git invocation in the diff-load path. A
                                           git command that exceeds the deadline is
                                           terminated and the error names
                                           git_invocation_timeout. 0 disables the
-                                          deadline. Invalid values fail closed.
+                                          deadline. Invalid values are rejected.
                                           Default: 300 (5 minutes).
   RIPR_REPO_EXPOSURE_LATENCY_TRACE        When present, emits diagnostic phase/cache
                                           trace lines for repo-exposure analysis.
@@ -489,7 +514,7 @@ Options:
   --no-unchanged-tests     Limit the index to changed Rust files.
 
 The diff report emits changed files, changed seams, static evidence for those
-seams, the typed diff runtime status, an explicit full-repo-limited context
+seams, the diff runtime status, an explicit full-repo-limited context
 status, and a receipt path hint. It does not run mutation testing, edit files,
 or turn the full-repo limitation into a success state.
 
@@ -529,7 +554,7 @@ Options:
                analysis. The artifact's recorded diff source is re-resolved
                and its identity is re-verified; any mismatch (diff, root,
                mode, languages, analysis options, config identity, or
-               analyzer version) fails closed with a typed error naming the
+               analyzer version) stops with an error naming the
                mismatched fields. --diff/--base passed alongside --from are
                assertions verified against the recording, not overrides.
                Stdin (--diff -) cannot verify a recorded diff identity;
@@ -543,7 +568,7 @@ Options:
                artifact written with this flag is consumable only when the
                same setting resolves here (flag or ripr.toml).
   --perl-facts PATH
-               Use the explicit Perl facts packet for replay.
+               Use this Perl facts file for replay.
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
 
@@ -585,7 +610,7 @@ Options:
                `ripr check --worktree` (see `ripr explain --help`).
   --from PATH  Load findings from a check artifact written by
                `ripr check --write-artifact PATH` instead of re-running the
-               analysis (same fail-closed identity gate as explain --from).
+               analysis (same identity check as explain --from).
                Stdin (--diff -) cannot verify a recorded diff identity;
                create and reuse the artifact with a named --diff PATH.
                --max-related-tests is a render-time knob honored fresh,
@@ -600,7 +625,7 @@ Options:
                Limit the index to changed Rust files. With --from, feeds
                the identity recomputation (see `ripr explain --help`).
   --perl-facts PATH
-               Use the explicit Perl facts packet for replay.
+               Use this Perl facts file for replay.
   --suppression-policy PATH
                Apply the explicit suppression policy for replay.
 
@@ -624,10 +649,11 @@ Options:
                    docs/status/SUPPORT_TIERS.md (whole table; not with
                    --json or --language).
 
-Each cell names a language, framework, mode (diff or repo) and family
-(static_facts or repair_routing) with one closed support state, a tier
-ceiling, the limit or fallback to honor, and the specs that define the claim.
-A combination with no cell is not_proven.
+The default screen is one plain sentence per language. `--json` and
+`--markdown` carry the full table: each cell names a language, framework, mode
+(diff or repo) and family (static_facts or repair_routing) with one closed
+support state, a tier ceiling, the limit or fallback to honor, and the specs
+that define the claim. A combination with no cell is not_proven.
 
 This is a static registry for this build. Adapter availability (compiled or
 not) is reported separately and never changes a cell. It does not say whether
@@ -662,7 +688,7 @@ Environment variables:
 Default human output fits one 80x24 screen: failures first, each with a Fix
 line, then compact passing groups. `-v`/`--verbose` prints binary identity,
 config defaults, test surfaces, Perl preview, known limitations, and start-here
-detail. `--json` remains the complete typed report minus the volatile timing
+detail. `--json` remains the full JSON report minus the volatile timing
 fields; pass `--timings` with `--json` to include them.
 
 The JSON report is machine-readable advisory setup evidence. A `fail` status
@@ -708,7 +734,7 @@ First-run diagnosis:
     "test framework not detected" rather than guessing. Printed with
     `-v`/`--verbose`.
   - Known limitations: static notes on preview coverage, cross-language
-    oracle visibility (fail-closed), large-repo scan bounds, and advisory
+    oracle visibility (unknown is never assumed safe), large-repo scan bounds, and advisory
     nature of preview-language evidence. Printed with `-v`/`--verbose`.
   - Recommended first command (analysis profile; not printed for --profile
     source-build): ripr check (no base: the loader resolves this
@@ -754,6 +780,8 @@ Server-executed commands (workspace/executeCommand), with their arguments:
   ripr.collectWorkspaceStatus   no arguments
   ripr.collectTopLimitation     no arguments
   ripr.collectReceiptStatus     no arguments
+  ripr.showRelatedTest          one object: {"uri": "file:///...", "line": N, "input_identity": "..."};
+                                asks the client to open the related test via window/showDocument
 
   Copy ids and evidence_identity from a ripr diagnostic's data. A shape the
   server cannot read, or an id missing from the current snapshot, is a

@@ -120,6 +120,42 @@ can only hint that a caller "may lead here" without changing anything.
   still abstains, except an `unwrap_or_else` whose handler is a diverging
   workspace function (the diverging unwrap tail below); `mut self` (by value)
   is not admitted.
+- Free-call entry pin (#9638): a return-value owner reached through free
+  direct calls is pinned by an exact assertion on the entry, as a method hop
+  is, when every observed hop is a plain bare-name call the workspace
+  resolves to exactly one item: the callee is the one workspace function of
+  its name, declared in the caller's own file and enclosing block scopes; it
+  is not imported (a `use` of the name, a glob import or a
+  `macro_rules!` of it refuses), rebound by the caller through any pattern,
+  `let`, `const`, `static`, block-level `use` or nested `fn`, or a parameter
+  (plain or pattern) of the caller; and no hop is a method call, a macro
+  argument or a path-qualified call (`a::inner(x)`, `crate::inner(x)`). The
+  entry is called by the test as a bare name, or (#9638) through the
+  package's own library path with no `use` (`pkg::entry(..)`,
+  `pkg::module::entry(..)`) when the relation's own-crate authority
+  (`related_tests::own_crate_qualified_entry_path`) establishes that spelling: the
+  test is a `tests/` crate root of the root package, the entry is an item of
+  its library at that module path, and nothing in the test file or body can
+  rebind the crate name (a local module, import, rename, glob import, item
+  macro, `include!` or `let` of it refuses). The pin reads the established path as
+  the entry's operand and adds no resolver of its own. The assertion keeps the
+  same one-call,
+  whole-operand, exact-value form the method pin requires. A hop
+  tail forwards the call unchanged, or shifts it by a decimal integer
+  literal (`inner(x) + 1`, `1 + inner(x)`, `inner(x) - 1`) when the owner and
+  every observed hop caller declare a builtin integer return type that no
+  workspace type or `use` item (an import or rename of the name, or a glob import other
+  than a `super::*` / `self::*` glob in a scope that does not enclose the
+  function, such as an inline `mod tests`) shadows: adding or subtracting a constant is injective on an
+  integer type, so the exact value at the entry moves with the owner's.
+  Multiplication, division, remainder, bit operations, negation, `1 - call`,
+  a second operand that is not a literal, `as` casts, literal suffixes,
+  method projections (`.min(..)`), a branch around the call, a swallowed
+  result and a float, string or custom type (`impl Add<i64>`) keep the
+  abstention (`propagation_unknown`). Cross-file and cross-crate owners,
+  re-exports, aliases and module-qualified hop calls are not admitted: the
+  bare name is only trusted where one scope declares it. Only the test's call
+  of the entry may be crate-qualified.
 - Diverging unwrap tail (#9638): a hop caller whose tail is exactly
   `<hop call>.unwrap_or_else(<handler>)` forwards the owner's result when
   `<handler>` is a path to a workspace function that only diverges, so the
@@ -254,6 +290,27 @@ can only hint that a caller "may lead here" without changing anything.
   take this only when every observed hop is a local-macro argument hop
   (RIPR-SPEC-0117 example 7), whose unexpanded body is not checked for
   data carrying; a plain fn hop above it keeps the target-passing rule.
+- Exact oracle behind a data-carrying hop (#11248): for a return-value
+  probe, an exact value at the entry pins the owner's value through
+  a hop when the owner and every observed hop caller declare a std string
+  or scalar return type that no workspace type or import shadows, and the
+  caller is one tail expression the weak-oracle rule above accepts as
+  carrying its callee as data. Only an injective carry counts: every
+  string literal in the caller uses plain `{}` placeholders, so a width,
+  precision, radix or `{:?}` spec (which can drop or re-render the value),
+  a positional or named argument, a bitwise `&` on the value
+  (`format!("{}", base() & 1)`), the callee nested in its own arguments, a
+  parameter that shares a method's name and a user `Display`/`From` impl keep
+  the abstention. The free-call chain identity rule and the owner-call entry
+  pin still apply. A whole-body bare parenthesized `concat!(...)` with one or more readable
+  string literals, totaling at most 512 decoded bytes, is evaluated only if the workspace cannot rebind the macro; its exact
+  return receives a direct witness. Nested macros, nonliteral and non-string
+  operands, empty, bracketed or braced calls, qualified calls and ambiguous
+  bindings stay opaque.
+  Corpus: `spec0117-external-std-macro`, `format-forward-to-string-credits`
+  and `old-title-through-format-macro` credit;
+  `format-forward-precision-hides-value` and
+  `format-forward-bitand-hides-value` keep abstaining.
 - Effect propagation (#6780): a `side_effect` or `call_deletion` probe
   acts on state rather than on a returned value, so it is not judged by
   result forwarding. Under the same chain-only reach and the same
@@ -512,6 +569,75 @@ helpers, let-bound or transformed projections, aliases, custom impls, generated
 code, test-helper wrappers, or general interprocedural evaluation. It does not
 change punctuation extraction. Existing direct-field observation remains valid.
 
+## A public inherent method entry and a module-qualified hop (#8999)
+
+A changed private helper (`matches_caret`) that integration tests reach only
+through a public method (`req.matches(&version)`) read "no test is seen
+calling the helper": the chain entry is a method, not a free function, and the
+hop into the helper layer is spelled `eval::matches_req(..)`, a path-qualified
+call that name identity alone does not bind (#3296 review B1). Two additions
+close that gap, both reach-only and both fail-closed:
+
+- **Module-qualified hop.** A hop whose caller spells the call
+  `<qualifier>::<callee>(..)` binds when the callee is the one function of its
+  name, a module-level `fn` with a body, caller and callee both items of the
+  root package's library (composing under `src/lib.rs`, no `#[path]` remap,
+  every module segment declared once), the caller mentions the name exactly
+  once, and the qualifier (`crate::`, `self::`, `super::` or a child module of
+  the caller's module; no import, crate alias, type alias, generic parameter,
+  local declaration or item expansion can rebind a bare first segment) resolves to the callee's module path. Anything else keeps the
+  "not statically splittable" stop. The bound hop carries the same positional
+  arguments as a direct call.
+- **Inherent method entry.** A test relates to the helper as
+  `helper_owner_call` when it calls a hop caller that is a plain inherent
+  method taking `self` (not a `fmt` owner, which keeps its own route) on a
+  receiver the established receiver rules bind to the impl's self type (a
+  struct literal or a `let` annotated with the type). Constructor calls and
+  `Type::method(..)` paths remain unbound on this route. The
+  method's name must be defined exactly once in the index, every hop from the
+  helper up through that method must be an identity-bound non-macro call (a macro-argument hop
+  carries reach only), the test must be in the owner's package, and the test
+  must not rebind the type (a same-named type in its module scope or an
+  out-of-line parent module, or a `use .. as Type` rename).
+
+The receiver name must resolve through the shared call-identity authority to
+one nongeneric declared struct, enum or union in the method impl's own module. The
+root-package library declaration path and the test's import must be established;
+foreign unrenamed imports, sibling namesakes, aliases, generic self types and
+unreadable or generated bindings decline. Qualified type references and
+constructor calls in the test decline even beside a genuine unused import.
+Method sites must use a plain ASCII receiver name bound by a distinct top-level
+`let` with a direct record literal or a whole bare type annotation, taking the
+value rather than a reference pattern. The inherent method must take `&self`;
+the shared owner-pin prelude-method veto also applies. Visible imports must name
+unique unconditional data declarations in the owner's module, without competing
+declarations or imports. Source attributes must satisfy the shared source-item
+preservation rule (with the built-in `#[test]` admitted); unsupported attributes,
+including derives, remain outside this narrow route. Foreign, renamed (including
+`as _`), glob and unresolved imports, and local trait declarations, decline.
+Local item bindings, field/path suffixes, inline/parenthesized receivers, non-ASCII identifiers, nested,
+closure, destructuring and later shadow bindings remain unestablished. The receiver route permits only unrebound bare standard assertion and `vec!`
+macros; pattern macros and stringified tokens establish no reach. Qualified-hop
+callers with any macro invocation decline. These checks share the helper-transfer
+macro binding and invocation authority, with a narrower entry allowlist.
+This bounded route intentionally does not infer factory return types or re-export
+chains. Non-ASCII qualified helper paths decline without slicing inside UTF-8.
+
+A chain prefix containing a module-qualified hop uses only these stricter
+method-entry rules. Ordinary direct/self-method forwarders retain the separate
+rule in examples 10 and 11; that route cannot restore a refused qualified
+entry. A qualified hop above a tested lower entry does not change that lower
+entry's authority. The qualified-hop provenance also refuses result forwarding and effect-target
+propagation; the existing bare-call effect rule cannot restore either.
+
+This is reach only. The helper's result is not shown to be forwarded to the
+test's assertion, so findings remain below `exposed`; the version-requirement
+example reads `infection_unknown` with `helper_result_not_forwarded`. Named limit: the route does not
+look at how a hop uses the callee; a call inside a loop, a branch or a `match`
+arm still reads as reached because the chain records one call site and no
+control-flow condition. That is acceptable only because the route credits
+reach and nothing else.
+
 ## Relation to RIPR-SPEC-0114
 
 The 0114 transitive-reach walk is **lexical** (name-match only) and
@@ -584,8 +710,10 @@ Reach on that rewritten finding is `unknown` and the stop reason is
 4. Reject: relating through a method call site (`gauge.span_of(input)`)
    in a hop's callee position; a test's receiver-call entry into a method
    forwarder (`pool.grow(4)`) is the separate rule in examples 10 and 11.
-5. Reject: relating through a path-qualified call site
-   (`meter::reach_of(input)`).
+5. Reject: relating through a path-qualified call site whose qualifier
+   is not shown to name the callee's own module (`meter::reach_of(input)`
+   where `meter` is imported, or names another module). A qualifier that
+   resolves to the one callee's module binds (#8999).
 6. Reject: relating through a partial index.
 7. Reject: relating through recursion.
 8. Reject: relating through multiple callers.
@@ -622,8 +750,32 @@ Reach on that rewritten finding is `unknown` and the stop reason is
     non-diverging, conditional, ambiguous, module-qualified, shadowed or
     external handler: none is credited
     (`helper_wrapper_reach`, `unwrap_tail_*`).
+14. Accept: an entry `plus_one(x)` returning `plus_one_inner(x) + 1`, with
+    an integer owner, called by an integration test that pins `plus_one(5)`
+    to `11` (`free-call-offset-plus`, `free-call-offset-minus`). The verdict
+    is `exposed`.
+15. Reject: an entry that clamps the owner's result (`.min(10)`), swallows it
+    (`let _ = inner(x); 10`) or takes the callee as a parameter
+    (`fn passed_in(x, shift: fn(i64) -> i64)`): none is credited
+    (`free-call-clamped-tail`, `free-call-swallowed-owner`,
+    `free-call-parameter-shadow`; `free_call_return_pin`).
+16. Accept: an entry `plus_one(x)` returning `plus_one_inner(x) + 1`, or an
+    entry `tiers::bumped(x)` returning `bumped_inner(x) + 2` in a child
+    module, called by an integration test that pins `crate_pin::plus_one(5)`
+    or `crate_pin::tiers::bumped(3)` with no `use` (`qualified-pin-root-entry`,
+    `qualified-pin-module-entry`). The verdict is `exposed`.
+17. Reject: the same qualified pin when the entry swallows the owner's result,
+    the test declares, imports, globs or macro-defines a module of the crate's
+    name, or two modules declare the entry's name
+    (`qualified-pin-swallowed-owner`, `qualified-pin-local-module-shadow`,
+    `qualified-pin-glob-shadow`, `qualified-pin-macro-shadow`,
+    `qualified-pin-twin-entry`; `crate_qualified_free_call_pin`): none is
+    credited.
 
 ## Test Mapping
+
+`crates/ripr/tests/concat_literal_return.rs` covers direct and forwarded
+literal returns and opaque or shadowed macro refusals.
 
 `analysis/classify/helper_transfer.rs` `tests`;
 `analysis/classifier.rs` (`given_helper_chain_refused_for_non_unique_entry_when_tests_call_it_then_static_unknown`,
@@ -646,8 +798,25 @@ unselected `match_arm` control);
 entry credit and its swallowed, transformed, shared-name, two-candidate,
 shadowed, path-call, unwrap-tail (including shadowed-name, other-module, other-file and custom-type controls), std-receiver, unestablished-receiver, same-named-type, root-package-member, external-trait-impl,
 `#[cfg(test)]`, no-self, macro-hop and other-package controls);
+`crates/ripr/tests/free_call_return_pin.rs` (the free-call entry pin and its
+offset, type, name-binding, scope, test-form and trait-entry controls);
+`crates/ripr/tests/crate_qualified_free_call_pin.rs` (the qualified free-call
+entry pin: crate-root and child-module positives, and the swallowed,
+reshaped, non-pinning-test, rebound-crate-name, duplicated-name, wrong-module,
+trait-entry and cfg-variant controls);
 `crates/ripr/tests/crate_qualified_entry_reach.rs` (own-crate qualified
 entry call, `[lib] name` and hyphen spellings, and each refusal above).
+`crates/ripr/tests/helper_wrapper_reach.rs` (qualified effect refusal and lower
+forwarder preservation), `helper_transfer.rs::tests::method_entry_checks_only_the_prefix_the_test_enters`;
+fixture `rust_qualified_helper_effect_reach` and its honesty-corpus rows;
+`crates/ripr/tests/pub_api_method_entry_reach.rs` (#8999 public inherent
+method entry through a module-qualified hop: typed-receiver positives, and the
+untyped/constructor-factory, `str::matches`, second-method, foreign/renamed
+imports, foreign UFCS, sibling namesakes, crate/type aliases and Unicode
+qualifier refusals; the class stays below `exposed`);
+`analysis/classify/helper_transfer/qualified_hop.rs` `tests` (the qualifier
+resolution and each decline); corpus cases `spec-b-0159-path-qualified-call-site` (accept shape of
+example 5) and `spec-b-0159-path-qualified-imported-module` (reject shape).
 
 ## Non-Goals
 
@@ -663,8 +832,15 @@ entry call, `[lib] name` and hyphen spellings, and each refusal above).
 
 ## Implementation Mapping
 
+- `analysis/classify/propagation_witness.rs` — bounded literal `concat!`
+  return evaluation and direct witness; `analysis/classifier/finding.rs`
+  removes the macro opacity reason only for the admitted return.
+
 - `analysis/classify/helper_transfer.rs` — the authority.
 - `analysis/classify/related_tests.rs` — the relation branch.
+- `analysis/classify/helper_transfer/qualified_hop.rs` — the module-qualified
+  hop (#8999); `analysis/classify/related_tests.rs` `method_entry_hops` and
+  `calls_helper_method_entry` — the inherent method entry (#8999).
 - `analysis/classify/activation.rs` — transferred rows, call operands.
 - `analysis/classify/context.rs` — the chain on `ProbeContext`.
 - `analysis/classifier/evidence.rs` — the hop-propagation stop

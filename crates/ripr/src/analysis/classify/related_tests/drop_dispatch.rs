@@ -148,7 +148,11 @@ pub(super) fn test_drops_owner_value(
 /// Whether the test's file may bind `drop` or `mem` to something other than
 /// the standard function: a `fn drop` that is not a `Drop` impl's method, a
 /// `mod mem`, or a `use` that renames or imports another `drop`.
-fn standard_drop_may_be_shadowed(source: &str, file: &std::path::Path, index: &RustIndex) -> bool {
+pub(super) fn standard_drop_may_be_shadowed(
+    source: &str,
+    file: &std::path::Path,
+    index: &RustIndex,
+) -> bool {
     let masked = mask_comments_and_strings(source);
     let declared = masked.matches("fn drop").count();
     let impl_methods = index
@@ -479,5 +483,64 @@ mod tests {
         assert_eq!(blocks("for _ in 0..1 { let g = G; }"), 0);
         assert_eq!(blocks("let f = || { let g = G; };"), 0);
         assert_eq!(blocks("unsafe { let g = G; }"), 0);
+    }
+
+    use crate::analysis::rust_index::summarize_file;
+    use std::path::PathBuf;
+
+    /// Whether the one test of `source` drops a `Guard` before asserting, read
+    /// through the real index and the production entry point.
+    fn relates(source: &str) -> bool {
+        let path = PathBuf::from("src/lib.rs");
+        let facts = summarize_file(path.clone(), source.to_string());
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.extend_tests(facts.tests.iter().cloned());
+        index.insert_file_only(path, facts);
+        assert_eq!(index.tests().len(), 1, "fixture must hold one test");
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "drop");
+        assert!(owner.is_some(), "the Drop impl must be indexed");
+        let Some(owner) = owner else { return false };
+        let drop = drop_owner(owner, &index);
+        assert!(
+            drop.is_some(),
+            "the fixture owner must read as a standard Drop impl"
+        );
+        let Some(drop) = drop else { return false };
+        test_drops_owner_value(index.tests().at(0), owner, &drop, Some(source), &index)
+    }
+
+    fn fixture(prelude: &str) -> String {
+        format!(
+            "pub struct Guard(pub std::rc::Rc<std::cell::Cell<u32>>);\n\
+             impl Drop for Guard {{ fn drop(&mut self) {{ self.0.set(self.0.get() + 1); }} }}\n\
+             #[test]\n\
+             fn t() {{\n    let c = std::rc::Rc::new(std::cell::Cell::new(0));\n    \
+             let g = Guard(c.clone());\n    {prelude}\n    drop(g);\n    \
+             assert_eq!(c.get(), 1);\n}}\n"
+        )
+    }
+
+    #[test]
+    fn an_early_return_before_the_drop_yields_no_relation() {
+        // Positive control: the same test without the exit is related.
+        assert!(relates(&fixture("")));
+        // #10805: the drop may never run when the test returns first.
+        assert!(!relates(&fixture("if c.get() == 0 { return; }")));
+        assert!(!relates(&fixture("let v = Some(1).ok_or(())?;")));
+    }
+
+    #[test]
+    fn exit_words_in_strings_and_comments_do_not_refuse() {
+        // The masker blanks string and comment contents before the guard reads.
+        assert!(relates(&fixture(
+            "let s = \"return? panic!()\"; // return ?"
+        )));
+        assert!(relates(&fixture(
+            "/* if c { return; } */ let _n = 1; // x?"
+        )));
     }
 }

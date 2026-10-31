@@ -609,6 +609,118 @@ fn given_same_quote_nesting_in_a_single_line_f_string_field_then_the_rest_stays_
     ));
 }
 
+#[test]
+fn given_a_single_line_f_string_the_quote_pairing_cannot_follow_then_the_rest_stays_hidden() {
+    // Valid on CPython 3.12 with no Call node: `helper(1)` is string text.
+    for body in [
+        "x = f\"{ \"helper(1)\" }\"\n",
+        "x = f\"{y[\"helper(1)\"]}\"\n",
+        "x = f'{ 'helper(1)' }'\n",
+        "x = rf\"{y[\"helper(1)\"]}\"\n",
+        "assert F\"{y[\"helper(1)\"]}\" == x\n",
+        "x = f\"{\n    y\n}  helper(1)\"\n",
+        "x = f'{\n    y\n}  helper(1)'\n",
+        "x = f\"{y:{w}}{ \"helper(1)\" }\"\n",
+    ] {
+        assert!(!sees_call(body), "{body:?}");
+    }
+}
+
+#[test]
+fn given_an_f_string_the_quote_pairing_can_follow_then_a_real_call_stays_visible() {
+    for body in [
+        // Ordinary and different-quote nesting pair cleanly.
+        "assert f\"{x}\" == helper(1)\n",
+        "assert f\"{d['k']}\" == helper(1)\n",
+        "assert f'{d[\"k\"]}' == helper(1)\n",
+        "assert f\"{{\" == helper(1)\n",
+        "assert f\"{x:{w}}\" == helper(1)\n",
+        "assert f\"{x}\" + f\"{y}\" == helper(1)\n",
+        // A plain string is never an f-string: no field, no ambiguity.
+        "assert \"{ \" + helper(1) == x\n",
+        "assert perf\"{x}\" == helper(1)\n",
+        // A field closed on its own line within a triple-quoted f-string.
+        "assert f\"\"\"v\n{\n    helper(1)\n}\"\"\" == x\n",
+    ] {
+        assert!(sees_call(body), "{body:?}");
+    }
+}
+
+#[test]
+fn given_a_single_line_f_string_the_quote_pairing_can_follow_then_the_classifier_credits_a_real_call()
+-> Result<(), String> {
+    // Controls: the fix must not withhold credit for a real call after an
+    // f-string that pairs cleanly.
+    for body in [
+        "    assert f\"{x}\" == str(helper(1))\n",
+        "    assert f\"{d['k']}\" == str(helper(1))\n",
+    ] {
+        let body = indent_into_test_body(body);
+        let tests = format!("from src.version import helper\n\n\ndef test_x():\n{body}");
+        let finding = direct_call_finding(&tests)?;
+        assert!(call_credit(&finding), "{body:?}: {finding:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn given_degenerate_single_line_f_string_text_then_the_ambiguity_scan_never_panics() {
+    // (text, ambiguous): only a nested own quote or a newline inside a field
+    // is ambiguous; unterminated or empty input is not (the open-string rule
+    // hides it).
+    for (text, ambiguous) in [
+        ("", false),
+        ("f\"", false),
+        ("f\"{", false),
+        ("f\"{\"", false),
+        ("f\"\\", false),
+        ("f\"{\\", false),
+        ("f\"}}{{", false),
+        ("f'{'", false),
+        ("\"{ \"", true),
+        ("'{\n", true),
+    ] {
+        assert_eq!(
+            static_limits::single_line_fstring_is_ambiguous(text.chars()),
+            ambiguous,
+            "{text:?}"
+        );
+        let _ = static_limits::python_prefix_hides_code(text);
+        let _ = related_tests::contains_call_name(text, "helper");
+    }
+}
+
+#[test]
+fn given_an_ambiguous_single_line_f_string_in_the_line_prefix_then_the_prefix_check_hides_it() {
+    // Direct pin of the `python_prefix_hides_code` hunk: the prefix is
+    // balanced by naive quote pairing yet the f-string is ambiguous.
+    for prefix in [
+        "x = f\"{ \"",
+        "x = f\"{y[\"",
+        "x = rf'{ '",
+        "assert F\"{ \"a\" }\" == ",
+    ] {
+        assert!(
+            static_limits::python_prefix_hides_code(prefix),
+            "{prefix:?}"
+        );
+    }
+    // Controls: cleanly paired f-strings, a plain string and a longer name
+    // ending in `f` leave what follows visible.
+    for prefix in [
+        "x = f\"{y}\" + ",
+        "x = f\"{d['k']}\" + ",
+        "x = f\"{{\" + ",
+        "x = \"{ \" + ",
+        "x = perf\"{y}\" + ",
+    ] {
+        assert!(
+            !static_limits::python_prefix_hides_code(prefix),
+            "{prefix:?}"
+        );
+    }
+}
+
 fn nested_f_strings(levels: usize) -> String {
     let mut inner = "helper(1)".to_string();
     for level in (1..=levels).rev() {
@@ -820,4 +932,49 @@ fn given_an_ordinary_literal_after_an_identifier_suffix_then_it_is_never_scanned
     assert!(sees_call(
         "x = 1 if f\"\"\"\n{\nhelper(1)\n}\n\"\"\" else 2\n"
     ));
+}
+
+#[test]
+fn given_a_large_test_set_then_the_parallel_scan_keeps_the_first_caller_per_test()
+-> Result<(), String> {
+    // Above the parallel threshold the per-caller scan runs on the rayon
+    // workers; the fold must still credit each test to the first caller in
+    // hop order and list every reaching test once.
+    let source = "def leaf(x):\n    return x > 0\n\n\ndef mid(x):\n    return leaf(x)\n\n\ndef top(x):\n    return mid(x)\n";
+    let mut tests = String::from("from src.version import mid, top\n\n");
+    for index in 0..600 {
+        let call = match index % 3 {
+            0 => "mid(1)",
+            1 => "top(1)",
+            _ => "1 == 1",
+        };
+        tests.push_str(&format!("\ndef test_{index:03}():\n    assert {call}\n\n"));
+    }
+    tests.push_str("\ndef test_both():\n    assert mid(1)\n    assert top(1)\n");
+    let owners = extract_owners(Path::new("src/version.py"), source);
+    let parsed = extract_tests(Path::new("tests/test_version.py"), &tests);
+    assert_eq!(parsed.len(), 601, "fixture must parse every test");
+    let leaf = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "leaf")
+        .ok_or("fixture must parse owner `leaf`")?;
+    let before = related_tests::PARALLEL_HELPER_SCANS.with(std::cell::Cell::get);
+    let found = related_tests::helper_owner_call_candidates(leaf, &owners, &parsed);
+    assert_eq!(
+        related_tests::PARALLEL_HELPER_SCANS.with(std::cell::Cell::get) - before,
+        2,
+        "each of the two callers must scan on the rayon workers"
+    );
+
+    assert_eq!(found.len(), 401, "200 mid + 200 top + test_both");
+    let callers: std::collections::BTreeMap<&str, &str> = found
+        .iter()
+        .map(|helper| (helper.candidate.test.name.as_str(), helper.caller.as_str()))
+        .collect();
+    assert_eq!(callers.len(), 401, "each test is listed once");
+    assert_eq!(callers.get("test_both"), Some(&"mid"));
+    assert_eq!(callers.get("test_000"), Some(&"mid"));
+    assert_eq!(callers.get("test_001"), Some(&"top"));
+    assert_eq!(callers.get("test_002"), None);
+    Ok(())
 }

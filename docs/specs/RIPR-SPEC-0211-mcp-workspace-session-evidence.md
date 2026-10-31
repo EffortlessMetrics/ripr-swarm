@@ -13,6 +13,9 @@ Linked issues:
 
 - #7314 (optional tool arguments reject explicit null consistently with
   their advertised non-null input types)
+- #9895 (a SIGTERM (or SIGINT) arriving mid-refresh must not leave the
+  in-flight git child behind: the server entry installs cooperative
+  process-lifetime interrupts on Unix)
 - #9895 (a client-supplied pagination cursor on the static catalog lists
   fails closed instead of being accepted and silently ignored)
 - #3089 (this slice: status, refresh, bounded gap list, and evidence
@@ -23,6 +26,8 @@ Linked issues:
 - #6022 (post-initialize `ping` with handshake `params._meta` returns an
   empty result; pre-init ping+_meta and discovery-lifecycle ping
   rejection stay with #5267 / ADR 0022)
+- #9360 (the text companion of `structuredContent` is selectable: lossless
+  JSON copy by default, opt-in digest via `RIPR_MCP_TEXT_CONTENT=summary`)
 - #6021 (the tool envelope must not fail a budget-approved listing on the
   wire: one calibrated envelope, paging on `ripr_list_gaps`)
 - #3087 (parent standard MCP server epic)
@@ -102,6 +107,36 @@ official SDK transport:
   session for one message; a normal `initialize` still completes afterwards,
   and stdin EOF remains the clean exit. Each attempt consumes at least one
   inbound frame, so recovery always makes progress and never spins.
+- External termination requests settle instead of orphaning children
+  (#9895, Unix). The server entry installs process-lifetime cooperative
+  interrupts for SIGINT and SIGTERM before serving: the first signal of
+  either kind requests cancellation of the in-flight bounded attempt — the
+  child waits (git probes, the Perl exporter, cat-file batch reads)
+  observe the flag at their poll cadence, terminate the owned process
+  tree, and unwind, so no git child outlives an interrupted `ripr_refresh`
+  — and the refresh settles on the same session with the typed failure in
+  its `attempt` block (a completed document, `isError` false per the #5254
+  commit contract).
+  A sequential repeated signal before attempt settlement restores native
+  termination as the escape; process exit itself stays transport-owned
+  (stdin EOF). One atomic terminal exchange consumes the attempt's signal:
+  a signal observed during final projection converts an otherwise successful
+  result to the typed cancellation, and a signal after that boundary belongs
+  to the next attempt. Configuration refusals also settle the pending signal.
+  Repeated native death can bypass cooperative cleanup and leave active children;
+  it is an escape, not a cleanup guarantee. Process-group containment covers
+  descendants that remain in the owned group, not deliberate group/session escape.
+  Later refreshes remain usable. Installation is serialized and idempotent.
+  Only MCP attempt tokens opt into Unix process groups; captured analysis
+  workers retain that choice and other callers preserve their prepared groups.
+  Cleanup observes leader exit without reaping, signals the owned group, then
+  reaps and disarms further group signals. This also settles pipe holders when
+  a primary exits early. Targets lacking the safe non-reaping observation
+  refuse contained spawn before creating a child. On non-Unix targets the
+  install is a no-op: containment there is the job-object ownership in
+  `process_owner`, whose std API cannot express kill-on-job-close, so an
+  abrupt external termination can still outlive a git child (recorded
+  residual).
 - After a successful `initialize` handshake, `ping` is routed by method
   name. A request whose `params._meta` carries the handshake fields this
   server requires pre-init (`io.modelcontextprotocol/protocolVersion`,
@@ -204,24 +239,115 @@ official SDK transport:
     sequence cannot reuse the other kind's result. The identity is as strong
     as the producer's outcome identity (a diff-byte commitment) plus the
     canonical items; it is not a complete consumed-source commitment.
-  - A worktree snapshot discloses that limit instead of claiming
-    currentness: its `scope` always exists, with `analyzed` naming the
-    saved tracked-worktree diff, `uncommitted_edits: "saved tracked edits
-    included"`, `consumed_source_commitment: "not_established"` and
-    `repair_cards: "withheld"`. Because no consumed-source commitment spans
-    the findings and the later live-file seam inventory, a worktree refresh
-    gathers no inventory and binds no card producers: every item's
-    `repair_packet_ready` is false. Otherwise-ready items receive the typed
-    `worktree_source_not_committed` reason; existing finding-level refusal
-    reasons retain precedence. `ripr_prepare_repair` therefore creates no
-    attempt, and `ripr_get_repair_card` refuses with the
-    existing `incomplete_inventory` code and a detail naming the
-    tracked-worktree source. Findings, list and gap evidence are served as
-    for a committed snapshot. Committing the change and refreshing without
-    `source` restores cards and readiness. Establishing worktree repair
-    cards, same-HEAD edit invalidation by consumed bytes and
-    source-movement-between-producers controls remain open under #7357's
-    producer-seam prerequisites (#1765 / #1602).
+  - Producer custody (#7357). A worktree refresh runs the shared findings
+    producer and then the same diff-scoped seam inventory a committed refresh
+    runs, over the live saved files. The findings producer already records a
+    private SHA-256 of each raw Rust buffer it loads, before parsing or fact
+    cache access; the seam inventory records the same observation for each
+    corpus buffer while it is live in its hashing pass, which its index pass
+    must reproduce or the run fails. On a memory or persisted result reuse the
+    carrier is this invocation's validated observation, never an earlier
+    one. The two carriers are compared by the one shared source authority
+    (`ConsumedRustSources::establish_agreement`): every path the findings
+    producer consumed must be captured by both with the same digest, and every
+    inventory observation must be a captured one. A missing, unavailable,
+    conflicting, out-of-root or moved observation, a findings producer that
+    recorded nothing, or a `HEAD` that differs from the head the findings
+    producer observed, leaves custody not established. The server adds no Git
+    or worktree digest and never rescans the tree to mint one.
+  - Established custody enables exactly the committed path: the shared
+    seam-level repair validator, the owner-discriminated card bindings, card
+    reads and `ripr_prepare_repair`, all behind their existing per-item
+    gates. The producer's conservative Rust-context commitment (a digest over
+    the sorted per-path digests of everything the inventory read, so an edit
+    to any consumed helper or test changes it even when findings and the diff
+    are equal) is bound into the worktree snapshot identity. It is not a
+    complete portable dependency identity: it covers Rust sources only and
+    nothing outside the inventory corpus.
+  - Not-established custody (a source or head that moved between the two
+    producers, or any unobserved input) withholds readiness and cards instead:
+    every item's `repair_packet_ready` is false with the typed
+    `worktree_source_not_committed` reason (existing finding-level refusal
+    reasons retain precedence) whose detail names the cause,
+    `ripr_prepare_repair` creates no attempt, and `ripr_get_repair_card`
+    refuses with the existing `incomplete_inventory` code. Findings, list and
+    gap evidence are still served. A fresh refresh over the settled bytes
+    recovers.
+  - A worktree snapshot's `scope` always exists, with `analyzed` naming the
+    saved tracked-worktree diff and `uncommitted_edits: "saved tracked edits
+    included"`. `consumed_source_commitment` is `established` with
+    `repair_cards: "available"` when custody holds, and `not_established`
+    with `repair_cards: "withheld"` otherwise; the note names the cause.
+    Unsaved buffers and gitignored files stay outside either way, and
+    untracked files are never analyzed as findings; the seam inventory walks
+    disk, so an untracked Rust file it reads is bound into the commitment (see
+    the residuals). The server still does not watch the worktree. If the seam
+    inventory cannot be gathered after the findings producer ran, the refresh
+    still serves the findings with custody `not_established` and the failure
+    named, rather than failing the whole refresh (a cancelled attempt still
+    fails). A committed snapshot whose producers agree
+    makes no custody claim and keeps its unchanged contract.
+  - A committed refresh with findings reads committed bytes for the findings
+    and live checkout bytes for the inventory. On every such refresh the
+    shared `establish_agreement` owner compares what the findings producer
+    consumed with what the inventory read, whether or not the checkout was
+    dirty when the findings ran (an edit landing after the findings is caught
+    too), and a head the findings producer observed that differs from the
+    inventory's also withholds (an unobserved head is not compared on the
+    committed path, an existing residual). Because the agreement only covers
+    paths the findings consumed while the inventory reads its own selected Rust
+    files, any dirty tracked or untracked Rust-routed path (a `.rs` file,
+    including a helper or test outside the findings scope) also withholds when
+    there are Rust findings; if that list cannot be established the refresh
+    withholds (and its remedy is to refresh again). A dirty non-Rust file
+    (README, `.py`) does not withhold Rust cards, and with no findings no
+    custody claim is made. Withholding refuses `ripr_get_repair_card` with
+    `incomplete_inventory` and the `scope` adds
+    `consumed_source_commitment: "not_established"` and
+    `repair_cards: "withheld"`. Per item, an item that was repair-ready
+    becomes `repair_packet_ready: false` with the typed
+    `worktree_source_not_committed` reason; an item already not ready keeps
+    its first-failing finding-level reason. The cause names the moved path
+    when the owner can (a consumed file edited, staged or deleted, or an
+    untracked Rust file the committed findings could not capture) and
+    otherwise says an uncommitted Rust source or test file is read by the
+    inventory. Findings, list and gap evidence are still served; the remedy is
+    to commit the uncommitted Rust source or test files (untracked ones
+    included) and refresh again, or refresh with source `worktree`. No
+    commitment is bound into a committed identity.
+  - Card currentness at request time (#7357). The refresh-time git-status
+    probe and custody are not re-run per read, and the server does not watch
+    the worktree, so `ripr_get_repair_card` re-verifies, on every read, the
+    captured SHA-256 of only the files the card's evidence is bound to (the
+    seam file, its related tests and the recommended test file) through the one
+    shared `ConsumedRustSources::first_drift` owner. A captured file whose
+    bytes now differ, or that can no longer be read, refuses with the existing
+    `stale_snapshot` code (carrying `current_snapshot_id`), names the path, and
+    says to run `ripr_refresh` again; this covers an uncommitted edit, a commit
+    made after the refresh, and a deletion, for committed and worktree
+    snapshots alike. Files with no captured commitment (non-Rust, outside the
+    inventory corpus) make no claim, edits to unrelated files keep the card,
+    and restored bytes keep it. The clean path costs one read-and-hash of those
+    few files and runs no git child. Residual: only the evidence-bound Rust
+    files are re-verified; a `HEAD` move that changes no bound file is not
+    detected per read, and the card's `currentness.basis` remains the
+    refresh-time statement.
+  - Residuals under #7357 / #1765 / #1602, worktree mode: a Rust file
+    that only the inventory read and the findings producer did not (a new file
+    or one the findings scope did not select) is bound into the commitment but
+    cannot contradict the findings; an untracked (not intent-to-add) Rust file
+    is not analyzed as a finding but is read by the inventory, so editing it
+    changes the commitment and snapshot identity. In committed mode those same
+    tracked-dirty and untracked files withhold instead (see above). Both
+    modes: gitignored Rust files can be read by the inventory (workspace
+    discovery does not apply `.gitignore`) but are not claimed; committed mode
+    does not list them because their enumeration is capped and would
+    over-withhold clean checkouts. Unsupported, generated,
+    `include!` and mixed-language dependencies are not claimed; a deleted or
+    renamed tracked Rust file in the findings scope has no captured bytes and
+    may refuse custody (fail-closed, cards withheld with the cause). A
+    non-normal (empty, absolute or escaping) observed path is recorded as an
+    uncaptured observation and refuses.
 - The snapshot identity is `snapshot:sha256:` over the typed outcome digest,
   the sorted canonical item identities, and each item's evidence digest:
   equivalent roots at equivalent inputs share one portable identity, while
@@ -255,7 +381,12 @@ official SDK transport:
   ready; otherwise the typed first failing gate), matching `ripr_get_gap`.
   `continuation.next_page.arguments` pins the snapshot, filters, and explicit
   limit; replay cannot cross a completed refresh that replaced the snapshot.
-- Gap-list success and refusal documents use `ripr-mcp-gap-list-v3`.
+- Gap-list success and refusal documents use `ripr-mcp-gap-list-v4`.
+  v4 adds `omitted_page` and the `omitted_offset` argument (#9360): the
+  omission disclosure pages on its own axis, at most 200 identities and 16 KiB per response, so
+  a large truncated selection no longer fails the listing with
+  `result_too_large`. `continuation.next_omitted_page` replays the snapshot pin, filters, item
+  window and limit, and `next_page` keeps `omitted_offset`; walking `omitted_page.next_offset` covers every omission once.
   The former v1 success schema closed its top level with
   `additionalProperties: false`, so adding `filtered` and `filters` cannot
   retain strict v1 compatibility. Clients must rediscover `tools/list`, accept
@@ -263,8 +394,8 @@ official SDK transport:
   remain compatible for callers omitting filters; strict v1 output readers
   require migration. Other MCP document versions are unchanged.
 - The tool envelope carries the document once at full fidelity (#6021):
-  `content[0].text` is the compact JSON serialization of the structured
-  document (no pretty-print inflation), and `structuredContent` repeats
+  by default `content[0].text` is the compact JSON serialization of the
+  structured document (no pretty-print inflation), and `structuredContent` repeats
   the same document in every successful response. Every tool advertises an
   `outputSchema`, so a success whose structured copy is absent is an
   undeclared contract break: when the complete double-carry envelope does
@@ -280,6 +411,23 @@ official SDK transport:
   reservation applies to the paging fit decision, so a page that passes it
   still carries `structuredContent` on the wire whatever id the client
   sent.
+- The text companion is selectable per server process (#9360).
+  `structuredContent` is the single complete result and is identical in
+  every mode. `RIPR_MCP_TEXT_CONTENT` unset, `full` or any unrecognized value
+  keeps `content[0].text` the compact JSON copy above, so a host that reads
+  only text content loses nothing. `summary` (ASCII case-insensitive, trimmed)
+  makes `content[0].text` a digest that states it is not a copy and names
+  `structuredContent` and `RIPR_MCP_TEXT_CONTENT=full`, then lists one line per
+  top-level field: scalars verbatim (strings over 200 characters clipped with
+  a marker pointing back to `structuredContent`), arrays as entry counts plus
+  at most five leading `canonical_id` values, objects as field names. The
+  digest is a projection of the document and adds no fact. The size guard,
+  paging and `result_too_large` measure the complete double-carry envelope in
+  both modes, so refusal boundaries do not depend on the mode; typed failures
+  (`isError: true`) and the status tool's recovery sentence are unchanged. The
+  default is not flipped because a host that hands only text content to its
+  model would silently lose the result; revisiting it is a compatibility
+  change for text-only hosts.
 - `ripr_list_gaps` accepts `offset` (default 0) and `limit` (minimum 1)
   over the narrowed (filtered) items in snapshot order. When the narrowed set
   would exceed the wire-calibrated tool-document ceiling (half the
@@ -519,6 +667,13 @@ unknown route into a recognized one.
 
 ## Test Mapping
 
+- `crates/ripr/src/mcp/workspace.rs::tests::omission_disclosure_pages_independently_of_items`
+  — with more omitted identities than one window, each response carries at
+  most 200, `omitted_page`/`continuation.next_omitted_page` walk every
+  omission exactly once, and a past-end window is empty and closed (#9360).
+  `long_omitted_identities_are_byte_fitted_and_fully_walked` and
+  `continuation_routes_preserve_the_other_axis` pin the byte budget and the
+  two-axis replay.
 - `crates/ripr/src/mcp/workspace.rs::tests::status_serves_per_language_completeness_from_the_view`
   and `status_without_a_view_keeps_the_unchanged_shape` — literal
   `language_completeness` rows and absence without a view.
@@ -614,6 +769,18 @@ unknown route into a recognized one.
 - `crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio`
   — the #7314 schema/dispatch contract for all six optional argument
   positions, with omission, valid-type, wrong-type and recovery controls.
+- `crates/ripr/tests/mcp_interrupts.rs::cooperative_interrupt_lifecycle`
+  (Linux) — real stdio and gated git children cover SIGINT, SIGTERM,
+  early-primary pipe holders, typed failure, last-good retention, same-session
+  recovery and an independently owned surviving sentinel. Identity-pinned
+  process handles and adopted descendant wait statuses distinguish product
+  settlement from harness cleanup.
+- `crates/ripr/src/cli/interrupt.rs::tests` — isolated native signal controls,
+  concurrent installation, repeated mixed/TERM escape, terminal signal epochs
+  and bounded adverse harness controls.
+- `crates/ripr/src/process_owner.rs::tests` — non-reaping cleanup ordering,
+  successful output/status, refusal after custody loss, repeated cleanup and
+  preservation of caller process groups.
 - `crates/ripr/tests/mcp_stdio.rs::catalog_list_cursors_fail_closed_over_stdio`
   — a `cursor` on `tools/list`, `prompts/list`, `resources/list`, or
   `resources/templates/list` is a `-32602` whose message explains the list
@@ -666,5 +833,6 @@ with an explicit non-command limitation rather than truncating executable text.
 For failed saved-worktree refresh, MCP retry examples retain the requested
 worktree source when the operator corrects or omits a base. Discovery states
 the committed default separately from opt-in saved tracked edits. Unsaved and
-untracked exclusions, withheld worktree cards/readiness and the consumed-source
-commitment limitation remain unchanged.
+untracked exclusions remain unchanged. Worktree cards and readiness follow the
+producer-custody rules above: offered only with an established agreement,
+withheld with the cause otherwise.

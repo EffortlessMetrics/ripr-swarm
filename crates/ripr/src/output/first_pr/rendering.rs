@@ -85,10 +85,8 @@ pub(super) fn start_here_cli_summary(
     let mut out = String::new();
     out.push_str(&format!("Start here: {}\n", display_path(markdown_path)));
     out.push_str(&format!("State: {}\n", cli_state_label(&state)));
-    out.push_str(&format!(
-        "Output state: {}\n",
-        selected_output_state(selected, &state)
-    ));
+    // The snake_case `output_state` token stays in the JSON and Markdown packet
+    // (#10696); the `State:` line above already says the same in words.
     if let Some(limit) = cli_evidence_limit(selected) {
         out.push_str(&format!("Evidence boundary: {limit}\n"));
     }
@@ -115,10 +113,10 @@ pub(super) fn start_here_cli_summary(
                 out.push_str(&format!("Current evidence strength: {strength}\n"));
             }
             if let Some(discriminator) = string_path(selected, &["missing_discriminator"]) {
-                out.push_str(&format!("Missing discriminator: {discriminator}\n"));
+                out.push_str(&format!("Missing check: {discriminator}\n"));
             }
             if let Some(intent) = string_path(selected, &["focused_proof_intent"]) {
-                out.push_str(&format!("Focused proof intent: {intent}\n"));
+                out.push_str(&format!("Test to add: {intent}\n"));
             }
             // The carried review-card repair start (#3906) leads the proof
             // path; its before phase prints the after-phase command, which
@@ -158,11 +156,9 @@ pub(super) fn start_here_cli_summary(
                     "{RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n"
                 ));
             }
-            out.push_str(&format!(
-                "Receipt path: `{}`\n",
-                string_path(selected, &["receipt_path"])
-                    .unwrap_or_else(|| "not_available".to_string())
-            ));
+            if let Some(path) = string_path(selected, &["receipt_path"]) {
+                out.push_str(&format!("Receipt path: `{path}`\n"));
+            }
         }
         "missing_artifact" => {
             let artifact = selected.get("artifact").unwrap_or(&Value::Null);
@@ -174,27 +170,15 @@ pub(super) fn start_here_cli_summary(
             if let Some(command) = string_path(selected, &["regeneration_command"]) {
                 push_recovery_command(&mut out, "Regeneration command", &command);
             }
-            if let Some(also_missing) = selected.get("also_missing").and_then(Value::as_array) {
-                for artifact in also_missing {
-                    let label = string_path(artifact, &["label"])
-                        .unwrap_or_else(|| "Required artifact".to_string());
-                    let path =
-                        string_path(artifact, &["path"]).unwrap_or_else(|| "unknown".to_string());
-                    out.push_str(&format!("Also missing: {label} at `{path}`\n"));
-                    if let Some(command) = string_path(artifact, &["regeneration_command"]) {
-                        push_recovery_command(&mut out, "Then run", &command);
-                    }
-                }
+            if let Some(line) = later_steps_line(selected) {
+                out.push_str(&line);
+                out.push('\n');
             }
-            out.push_str("Receipt path: `not_applicable`\n");
         }
         "empty_diff" | "no_action" => {
             if let Some(reason) = string_path(selected, &["reason"]) {
                 out.push_str(&format!("Reason: {reason}\n"));
             }
-            out.push_str("Verify command: `not_applicable`\n");
-            out.push_str("Receipt command: `not_applicable`\n");
-            out.push_str("Receipt path: `not_applicable`\n");
         }
         _ => {
             if let Some(message) = string_path(selected, &["message"]) {
@@ -203,7 +187,6 @@ pub(super) fn start_here_cli_summary(
             if let Some(command) = string_path(selected, &["next_command"]) {
                 push_recovery_command(&mut out, "Next command", &command);
             }
-            out.push_str("Receipt path: `not_applicable`\n");
         }
     }
     out.push_str(&format!(
@@ -211,7 +194,11 @@ pub(super) fn start_here_cli_summary(
         display_path(json_path),
         display_path(markdown_path)
     ));
-    out.push_str(&format!("Boundary: {STATIC_EVIDENCE_BOUNDARY}\n"));
+    // The Markdown packet keeps the full boundary sentence (#10696); the screen
+    // says the same in everyday words.
+    out.push_str(
+        "Note: ripr reads code; it does not run your tests. This is not proof your tests are good enough and not approval to merge.\n",
+    );
     out
 }
 
@@ -236,7 +223,7 @@ pub(super) fn expected_output_state_for_selected(state: &str, selected: &Value) 
 
 fn cli_state_label(state: &str) -> &'static str {
     match state {
-        "top_gap" => "top_gap",
+        "top_gap" => "top gap",
         "missing_artifact" => "missing artifact",
         "malformed_artifact" => "malformed artifact",
         "stale_artifact" => "stale evidence",
@@ -257,7 +244,14 @@ fn cli_safe_next_action(state: &str, selected: &Value, preflight_needs_attention
                 .unwrap_or_else(|| "the selected gap".to_string());
             let intent = string_path(selected, &["focused_proof_intent"])
                 .unwrap_or_else(|| "add one focused proof for the selected gap".to_string());
-            format!("repair one named gap `{identity}`: {intent}")
+            match string_path(selected, &["recommended_repair_command"]) {
+                // #10709: one recommended route, stated once; the by-hand
+                // proof path below is the one named alternative.
+                Some(command) => format!(
+                    "repair one named gap `{identity}`: {intent} Recommended: start the repair with `{command}` (commit any uncommitted production change first; the start refuses otherwise); alternative, by hand: add the test yourself and use the verify and receipt commands below."
+                ),
+                None => format!("repair one named gap `{identity}`: {intent}"),
+            }
         }
         "missing_artifact" => "regenerate the missing artifact before repair work".to_string(),
         "malformed_artifact" => "regenerate the malformed artifact before repair work".to_string(),
@@ -413,6 +407,16 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         "- Safe next action: repair one named {}.\n",
         top_gap_language_label(selected)
     ));
+    // #10709: the same single recommended route the CLI Safe next action names.
+    if let Some(command) = string_path(selected, &["recommended_repair_command"]) {
+        out.push_str(&format!("- Recommended repair start: `{command}`\n"));
+        out.push_str(
+            "- Commit any uncommitted production change first; the start refuses otherwise.\n",
+        );
+        out.push_str(
+            "- Alternative, by hand: add the test yourself and use the verify and receipt commands below.\n",
+        );
+    }
     let kind = selected
         .get("kind")
         .and_then(Value::as_str)
@@ -704,6 +708,36 @@ fn top_gap_language_label(selected: &Value) -> &'static str {
     }
 }
 
+fn needed_when_suffix(artifact: &Value) -> String {
+    string_path(artifact, &["needed_when"])
+        .map(|condition| format!(" (needed when {condition})"))
+        .unwrap_or_default()
+}
+
+/// #11298: a fresh repo gets one next command, not the whole regeneration
+/// chain. The later inputs are named without commands so the operator knows
+/// they exist; rerunning first-pr prints each command when it becomes next.
+/// The packet JSON keeps the full `also_missing` chain for machine readers.
+fn later_steps_line(selected: &Value) -> Option<String> {
+    let names: Vec<String> = selected
+        .get("also_missing")
+        .and_then(Value::as_array)?
+        .iter()
+        .map(|artifact| {
+            let label = string_path(artifact, &["label"])
+                .unwrap_or_else(|| "Required artifact".to_string());
+            format!("{label}{}", needed_when_suffix(artifact))
+        })
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Later steps (rerun `ripr first-pr` after the command above; it prints each next command): {}",
+        names.join("; ")
+    ))
+}
+
 fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     out.push_str("## Start Here\n\n");
     out.push_str("- State: `missing_artifact`\n");
@@ -725,18 +759,8 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     if let Some(command) = selected.get("regeneration_command").and_then(Value::as_str) {
         push_recovery_command(out, "- Regeneration command", command);
     }
-    if let Some(also_missing) = selected.get("also_missing").and_then(Value::as_array) {
-        for artifact in also_missing {
-            let label = artifact
-                .get("label")
-                .and_then(Value::as_str)
-                .unwrap_or("required artifact");
-            let path = artifact.get("path").and_then(Value::as_str).unwrap_or("");
-            out.push_str(&format!("- Also missing: {label} at `{path}`\n"));
-            if let Some(command) = artifact.get("regeneration_command").and_then(Value::as_str) {
-                push_recovery_command(out, "- Then run", command);
-            }
-        }
+    if let Some(line) = later_steps_line(selected) {
+        out.push_str(&format!("- {line}\n"));
     }
 }
 
@@ -782,9 +806,22 @@ fn render_blocked_markdown(selected: &Value, out: &mut String) {
         "- Output state: `{}`\n",
         selected_output_state(selected, state)
     ));
-    out.push_str(
-        "- Safe next action: resolve this fail-closed state before assigning repair work.\n",
-    );
+    if selected.get("reason_code").and_then(Value::as_str) == Some("source_currentness_unavailable")
+    {
+        if selected
+            .get("next_command")
+            .and_then(Value::as_str)
+            .is_some()
+        {
+            out.push_str("- Safe next action: inspect a fresh check of the selected workspace; do not infer no action while corpus currentness is unavailable.\n");
+        } else {
+            out.push_str("- Safe next action: establish a checkout at the selected head and inspect its intended analysis; do not infer no action while corpus currentness is unavailable.\n");
+        }
+    } else {
+        out.push_str(
+            "- Safe next action: resolve this fail-closed state before assigning repair work.\n",
+        );
+    }
     let message = selected
         .get("message")
         .and_then(Value::as_str)

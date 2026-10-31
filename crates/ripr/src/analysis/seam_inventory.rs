@@ -47,6 +47,7 @@ use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::RiprConfig;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 const REPO_EXPOSURE_SEAM_LIMIT_ENV: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
@@ -66,6 +67,110 @@ pub(crate) const PILOT_SEAM_BUDGET_ENV: &str = "RIPR_PILOT_SEAM_BUDGET";
 /// stay comfortably below 10 MB at typical per-seam evidence sizes.
 /// Operators can raise or remove the cap via `RIPR_PILOT_SEAM_BUDGET`.
 pub(crate) const DEFAULT_PILOT_SEAM_BUDGET: usize = 2_000;
+
+/// Default inventory cap while a pilot run is active; `0` means no pilot run.
+static PILOT_INVENTORY_DEFAULT: AtomicUsize = AtomicUsize::new(0);
+
+/// Scopes the built-in inventory cap of one `ripr pilot` run to the pilot
+/// artifact budget (#10726). Pilot ranks and writes at most
+/// `DEFAULT_PILOT_SEAM_BUDGET` seams, so classifying the other
+/// `DEFAULT_REPO_EXPOSURE_SEAM_LIMIT - DEFAULT_PILOT_SEAM_BUDGET` seams only
+/// to discard them tripled the wall time on a mid-size repo (tokio: 38 s vs
+/// 12 s) for an identical summary. Seams of the current change past the cap
+/// are still classified by the change supplement, and an explicit
+/// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` (including `0`) still wins: only the
+/// built-in default moves, and it keeps reporting `source: default`.
+/// Dropping the guard restores the product default.
+///
+/// The cap is process-wide (a static, not thread-local, because inventory work
+/// runs on worker threads): one pilot run at a time per process. The guard
+/// restores the value it replaced, so nested guards unwind in order. The only
+/// holder is `ripr pilot`, whose entry point is private to the CLI adapter module and is
+/// reached from the CLI dispatch alone: the LSP and MCP adapters never call it
+/// and xtask runs the pilot binary as a subprocess, so no other in-process
+/// analysis shares the lowered default.
+#[must_use = "the pilot inventory default lasts only while the guard is held"]
+pub(crate) struct PilotInventoryDefault {
+    previous: usize,
+}
+
+impl PilotInventoryDefault {
+    /// Validates `RIPR_PILOT_SEAM_BUDGET` (#4529) and scopes the default.
+    pub(crate) fn enter() -> Result<Self, String> {
+        let cap = pilot_seam_budget()?.map_or(0, |(budget, _)| {
+            budget.min(DEFAULT_REPO_EXPOSURE_SEAM_LIMIT)
+        });
+        let previous = PILOT_INVENTORY_DEFAULT.swap(cap, Ordering::Relaxed);
+        Ok(Self { previous })
+    }
+}
+
+/// Serializes widened-cap holders so overlapping holders (concurrent MCP
+/// worker threads) cannot restore out of order and strand the cap.
+static WIDEN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Guard that holds a repair-widened built-in inventory cap (#1887).
+#[must_use = "the widened inventory cap lasts only while the guard is held"]
+pub(crate) struct WidenedInventoryCap {
+    previous: usize,
+    // Fields drop after `Drop::drop` runs, so the lock is released after the
+    // cap is restored.
+    _exclusive: std::sync::MutexGuard<'static, ()>,
+}
+
+impl PilotInventoryDefault {
+    /// Raises the built-in inventory cap to `cap` for the guard's lifetime, so
+    /// an in-process rerun can cover a repository the product default cut. An
+    /// explicit `RIPR_REPO_EXPOSURE_SEAM_LIMIT` still wins. Holders are
+    /// mutually exclusive, so each restores exactly the value it replaced even
+    /// when MCP worker threads widen concurrently; a second holder waits for
+    /// the first to finish its rerun.
+    pub(crate) fn widen_to(cap: usize) -> WidenedInventoryCap {
+        let exclusive = WIDEN_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let previous = PILOT_INVENTORY_DEFAULT.swap(cap, Ordering::Relaxed);
+        WidenedInventoryCap {
+            previous,
+            _exclusive: exclusive,
+        }
+    }
+}
+
+impl Drop for WidenedInventoryCap {
+    fn drop(&mut self) {
+        PILOT_INVENTORY_DEFAULT.store(self.previous, Ordering::Relaxed);
+    }
+}
+
+impl PilotInventoryDefault {
+    /// Re-labels an inventory cut made by the pilot-scoped default cap as the
+    /// pilot budget cut it stands in for: same analyzed and total counts, the
+    /// budget's own source. `None` for any other cut (an explicit
+    /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT`, or a cap equal to the product default).
+    pub(crate) fn as_budget_cut(info: Option<&SeamLimitInfo>) -> Option<SeamLimitInfo> {
+        let cap = PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed);
+        let info = info?;
+        if cap == 0
+            || cap >= DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
+            || info.source != SeamLimitSource::Default
+        {
+            return None;
+        }
+        let (_, source) = pilot_seam_budget().ok()??;
+        Some(SeamLimitInfo {
+            analyzed: info.analyzed,
+            total: info.total,
+            source,
+        })
+    }
+}
+
+impl Drop for PilotInventoryDefault {
+    fn drop(&mut self) {
+        PILOT_INVENTORY_DEFAULT.store(self.previous, Ordering::Relaxed);
+    }
+}
 
 /// Walk production Rust files at `root` and emit the raw seam inventory.
 /// Used by the `repo-seams-*` formats; the classified inventory used by
@@ -182,6 +287,9 @@ pub(crate) struct ClassifiedSeamsReport {
     /// its consumed corpus identity avoids a later renderer hashing new
     /// workspace bytes for old classifications. Synthetic reports have none.
     pub(crate) corpus_key: Option<RepoSeamCacheKey>,
+    /// Production-role files admitted by this run's discovery, independent of
+    /// surviving seams. Recomputed before cache lookup, never inferred from gaps.
+    pub(crate) analyzed_production_files: Vec<PathBuf>,
     /// This run's selected inputs differ from ordinary repo exposure, including
     /// evidence-only files. Recomputed at discovery, never reused from cache.
     pub(crate) diff_bound_corpus: bool,
@@ -267,6 +375,7 @@ fn inventory_classified_seams_report_collect(
         }
     };
     let rust_files = corpus.analyzable;
+    let analyzed_production_files = production_files_with_role(root, config, &rust_files);
     let fingerprint = corpus.fingerprint;
     let skipped_generated = corpus.skipped_generated;
     let naming_only_skips = corpus.naming_only_skips;
@@ -301,6 +410,7 @@ fn inventory_classified_seams_report_collect(
                 return Ok(ClassifiedSeamsReport {
                     classified: cached,
                     corpus_key: Some(key),
+                    analyzed_production_files,
                     diff_bound_corpus,
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
@@ -363,6 +473,7 @@ fn inventory_classified_seams_report_collect(
             return Ok(ClassifiedSeamsReport {
                 classified: cached,
                 corpus_key: Some(key),
+                analyzed_production_files,
                 diff_bound_corpus,
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
@@ -386,7 +497,11 @@ fn inventory_classified_seams_report_collect(
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
     let (classified, limit_info, lexical_fallback_files) =
-        match inventory_classified_seams_from_state_with_config(&state, config) {
+        match inventory_classified_seams_from_state_with_config(
+            &state,
+            config,
+            &analyzed_production_files,
+        ) {
             Ok(pair) => {
                 trace_latency_phase("cold_compute", "ok", compute_started.elapsed());
                 pair
@@ -442,6 +557,7 @@ fn inventory_classified_seams_report_collect(
     Ok(ClassifiedSeamsReport {
         classified,
         corpus_key: key.is_reusable().then_some(key),
+        analyzed_production_files,
         diff_bound_corpus,
         limit_info,
         skipped_generated,
@@ -459,7 +575,26 @@ pub(crate) fn workspace_cache_key_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<super::seam_cache::RepoSeamCacheKey, String> {
+    workspace_cache_key_for_corpus(root, config, scan_corpus_fingerprint(root, config)?)
+}
+
+/// Current corpus identity and production membership from the same discovery
+/// and role authority as the full inventory, without running the classifier.
+pub(crate) fn workspace_cache_key_and_production_files_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<(RepoSeamCacheKey, Vec<PathBuf>), String> {
     let corpus = scan_corpus_fingerprint(root, config)?;
+    let production_files = production_files_with_role(root, config, &corpus.analyzable);
+    let key = workspace_cache_key_for_corpus(root, config, corpus)?;
+    Ok((key, production_files))
+}
+
+fn workspace_cache_key_for_corpus(
+    root: &Path,
+    config: &RiprConfig,
+    corpus: AnalyzableRustCorpus,
+) -> Result<RepoSeamCacheKey, String> {
     let inputs = workspace_key_inputs(root, config);
     // Fingerprint fast path (issue #2108): a stored mapping yields the
     // byte-identical key without reading any file contents.
@@ -934,8 +1069,8 @@ type ClassifiedSeamInventory = (Vec<ClassifiedSeam>, Option<SeamLimitInfo>, Vec<
 fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
+    production_files: &[PathBuf],
 ) -> Result<ClassifiedSeamInventory, String> {
-    let production_files = production_files_from_state_with_role(state, config);
     let build_started = Instant::now();
     trace_latency_phase(
         "file_fact_cache",
@@ -964,7 +1099,7 @@ fn inventory_classified_seams_from_state_with_config(
     // inventory work, rather than after; every other behavior is unchanged.
     let limit_and_source = repo_exposure_seam_limit()?;
     let limit = limit_and_source.as_ref().map(|(limit, _)| *limit);
-    let bounded = inventory_seams_from_index_bounded(&production_files, &cached.index, limit)?;
+    let bounded = inventory_seams_from_index_bounded(production_files, &cached.index, limit)?;
     cancellation::checkpoint()?;
     // The retained-object peak is production-observable here (issue #4997):
     // the retained prefix stays within K while the trace reports the peak
@@ -1044,6 +1179,12 @@ pub(crate) struct ScopedClassifiedSeamInventory {
     /// was not asked for it or took the no-impact fast path (no index built);
     /// `Some(Err)` is an invalid seam-limit override.
     pub(crate) repo_seam_limit: Option<Result<Option<SeamLimitInfo>, String>>,
+    /// Raw Rust bytes this invocation's corpus pass observed (#7357), recorded
+    /// while each buffer was live and before parsing or any cache access. It is
+    /// never replayed from a memory or persisted result: those paths attach
+    /// the observations of the invocation that validated the corpus. Empty on
+    /// the no-impact fast path, which reads no Rust content.
+    pub(crate) consumed_sources: super::consumed_source::ConsumedRustSources,
 }
 
 /// Two-stage evidence for the diff-scoped inventory.
@@ -1507,6 +1648,7 @@ fn try_no_impact_fast_path(
             unevaluated_seams: 0,
             absent_changed_files: Vec::new(),
             repo_seam_limit: None,
+            consumed_sources: Default::default(),
         },
     )))
 }
@@ -1798,7 +1940,11 @@ mod bound_inventory_reuse {
         if entries.len() >= CAPACITY {
             entries.pop_front();
         }
-        entries.push_back((key.clone(), identity.to_vec(), inventory.clone()));
+        // A stored result never carries observations: the next reader attaches
+        // its own invocation's carrier.
+        let mut stored = inventory.clone();
+        stored.consumed_sources = Default::default();
+        entries.push_back((key.clone(), identity.to_vec(), stored));
     }
 }
 
@@ -1907,6 +2053,8 @@ mod persisted_bound_inventory {
             unevaluated_seams: persisted.unevaluated_seams,
             absent_changed_files: Vec::new(),
             repo_seam_limit,
+            // Never replayed: the caller attaches this invocation's carrier.
+            consumed_sources: Default::default(),
         }
     }
 }
@@ -2240,6 +2388,8 @@ fn inventory_diff_scoped_classified_seams_inner(
         );
         reused.absent_changed_files = absent_changed_files;
         // The entry is for the hashed corpus; confirm it is still those bytes.
+        // The carrier is this invocation's own observation of that corpus.
+        reused.consumed_sources = state.consumed.clone();
         state.verify_corpus_unchanged()?;
         cancellation::checkpoint()?;
         return Ok(reused);
@@ -2261,6 +2411,8 @@ fn inventory_diff_scoped_classified_seams_inner(
         persisted.absent_changed_files = absent_changed_files;
         // The disk entry is for the hashed corpus; confirm the corpus is
         // still those bytes before accepting it or seeding the process.
+        // The carrier is this invocation's own observation of that corpus.
+        persisted.consumed_sources = state.consumed.clone();
         state.verify_corpus_unchanged()?;
         cancellation::checkpoint()?;
         bound_inventory_reuse::store(&workspace_cache_key, identity, &persisted);
@@ -2291,6 +2443,9 @@ fn inventory_diff_scoped_classified_seams_inner(
     );
     let mut cached = state.build_index(config)?;
     // The index and cache key own their data; the state is not needed past here.
+    // `build_index` just re-read the corpus and refused any bytes other than
+    // the ones this carrier observed, so the observations are validated.
+    let consumed_sources = state.consumed.clone();
     drop(state);
     trace_latency_phase(
         "file_fact_cache",
@@ -2358,6 +2513,7 @@ fn inventory_diff_scoped_classified_seams_inner(
 
     cancellation::checkpoint()?;
     let inventory = ScopedClassifiedSeamInventory {
+        consumed_sources,
         classified,
         classified_seams_considered,
         file_fact_cache: cached.file_fact_cache,
@@ -2643,9 +2799,14 @@ fn normalize_scope_key_bytes(bytes: &[u8]) -> Vec<u8> {
 /// - Anything else → `Err` naming the variable (#4529). Only an explicit `0`
 ///   removes the cap, so a typo never turns the memory guard off.
 pub(crate) fn repo_exposure_seam_limit() -> Result<Option<(usize, SeamLimitSource)>, String> {
+    let pilot_default = PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed);
     seam_limit_from_env(
         REPO_EXPOSURE_SEAM_LIMIT_ENV,
-        DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+        if pilot_default == 0 {
+            DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
+        } else {
+            pilot_default
+        },
         std::env::var(REPO_EXPOSURE_SEAM_LIMIT_ENV),
     )
 }
@@ -2845,13 +3006,12 @@ fn production_files_from_state_with_role(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
 ) -> Vec<PathBuf> {
-    let context = production_role_context(
-        &state.workspace_root,
-        config,
-        state.files.iter().map(PathBuf::as_path),
-    );
-    state
-        .files
+    production_files_with_role(&state.workspace_root, config, &state.files)
+}
+
+fn production_files_with_role(root: &Path, config: &RiprConfig, files: &[PathBuf]) -> Vec<PathBuf> {
+    let context = production_role_context(root, config, files.iter().map(PathBuf::as_path));
+    files
         .iter()
         .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
         .cloned()
@@ -2917,16 +3077,21 @@ fn collect_workspace_state_from_files(
     let mut sorted_files = rust_files;
     sorted_files.sort();
     let mut builder = FilesContentHashBuilder::new();
+    let mut consumed = super::consumed_source::ConsumedRustSources::default();
     for path in &sorted_files {
         cancellation::checkpoint()?;
         let bytes = std::fs::read(root.join(path))
             .map_err(|err| format!("read {} failed: {err}", path.display()))?;
         builder.push(path, &bytes);
+        // #7357: the raw buffer is observed here, before any parse or cache
+        // lookup; the later index read is refused unless it hashes the same.
+        consumed.record(path, Some(&bytes));
         // `bytes` drops here, before the next file is read.
     }
     #[cfg(test)]
     between_passes::run(root);
     Ok(OwnedWorkspaceState {
+        consumed,
         workspace_root: root.to_path_buf(),
         files: sorted_files,
         files_content_hash: builder.finish(),
@@ -3090,6 +3255,8 @@ fn read_optional(path: &Path) -> Option<String> {
 /// compile-time bound: reintroducing a retained corpus breaks the
 /// `workspace_state_holds_no_source_bytes` test build.
 struct OwnedWorkspaceState {
+    /// Per-path digests of the raw bytes the hashing pass read (#7357).
+    consumed: super::consumed_source::ConsumedRustSources,
     workspace_root: PathBuf,
     files: Vec<PathBuf>,
     files_content_hash: String,
@@ -3754,6 +3921,21 @@ pub(crate) fn seam_kind_for_probe_family(family: &str) -> Option<SeamKind> {
     .into_iter()
     .find(|kind| kind.as_str() == family)
     .and_then(seam_kind_from_probe_shape)
+}
+
+/// The `ripr agent stub --kind` probe family a seam of `kind` answers to: the
+/// inverse of [`seam_kind_for_probe_family`], so a printed stub command
+/// selects the seam it was printed for (#10978).
+pub(crate) fn probe_family_for_seam_kind(kind: SeamKind) -> &'static str {
+    match kind {
+        SeamKind::PredicateBoundary => ProbeShapeKind::Predicate.as_str(),
+        SeamKind::ReturnValue => ProbeShapeKind::ReturnValue.as_str(),
+        SeamKind::ErrorVariant => ProbeShapeKind::ErrorPath.as_str(),
+        SeamKind::FieldConstruction => ProbeShapeKind::FieldConstruction.as_str(),
+        SeamKind::SideEffect => ProbeShapeKind::SideEffect.as_str(),
+        SeamKind::MatchArm => ProbeShapeKind::MatchArm.as_str(),
+        SeamKind::CallPresence => ProbeShapeKind::CallDeletion.as_str(),
+    }
 }
 
 fn seam_kind_from_probe_shape(kind: ProbeShapeKind) -> Option<SeamKind> {
@@ -8488,6 +8670,62 @@ marker = "libtest_mimic::Trial"
     }
 
     #[test]
+    fn changed_production_files_partition_parsed_from_parser_declined() -> Result<(), String> {
+        // #9734: a changed production file the parser declines (nesting
+        // budget, non-UTF-8) falls back to lexical facts and yields no seams,
+        // so it is reported as declined, never as covered. Unchanged declined
+        // files and changed non-production files appear in neither list.
+        let root = make_tempdir("covered-declined-partition")?;
+        let nested = format!(
+            "pub fn deep() {{ {}{} }}\n",
+            "{".repeat(400),
+            "}".repeat(400)
+        );
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub mod ok;\npub mod deep;\npub mod raw;\npub mod stale;\n",
+        )?;
+        write_file(
+            &root.join("src/ok.rs"),
+            "pub fn early(n: i32) -> bool { n >= 10 }\n",
+        )?;
+        write_file(&root.join("src/deep.rs"), &nested)?;
+        write_file(&root.join("src/stale.rs"), &nested)?;
+        std::fs::write(
+            root.join("src/raw.rs"),
+            b"pub fn raw(n: i32) -> bool { n >= 3 } // \xff\xfe\n",
+        )
+        .map_err(|err| format!("write raw.rs: {err}"))?;
+        write_file(
+            &root.join("tests/boundary.rs"),
+            "#[test] fn boundary() { assert!(early(10)); }\n",
+        )?;
+        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+            &[
+                PathBuf::from("src/ok.rs"),
+                PathBuf::from("src/deep.rs"),
+                PathBuf::from("src/raw.rs"),
+                PathBuf::from("tests/boundary.rs"),
+            ],
+            &[],
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            inventory.changed_production_files,
+            [PathBuf::from("src/ok.rs")]
+        );
+        let mut declined = inventory.parser_declined_files.clone();
+        declined.sort();
+        assert_eq!(
+            declined,
+            [PathBuf::from("src/deep.rs"), PathBuf::from("src/raw.rs")]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn scoped_sets_match_exactly_one_valid_sibling() -> Result<(), String> {
         // Portable control for the invalid-byte regression below: with
         // ordinary names, scoping one sibling never pulls in the other.
@@ -8922,6 +9160,103 @@ marker = "libtest_mimic::Trial"
         let _ = std::fs::remove_dir_all(&root);
         assert!(evaluated > 0, "a content change must recompute");
         assert_ne!(scoped_projection(&warm)?, scoped_projection(&cold)?);
+        Ok(())
+    }
+
+    /// #7357: the inventory's consumed-source carrier is this invocation's own
+    /// observation of the raw corpus bytes on every path: computed, served from
+    /// the process-wide result, and served from the persisted result. A reused
+    /// result never replays an earlier carrier, and an edit changes it.
+    #[test]
+    fn bound_seams_inventory_attaches_this_invocations_consumed_bytes_on_every_path()
+    -> Result<(), String> {
+        use crate::analysis::consumed_source::ConsumedRustSources;
+        let root = make_tempdir("bound-seams-consumed-carrier")?;
+        bound_seams_layout(&root)?;
+        let config = RiprConfig::default();
+        let changed = [PathBuf::from("src/pricing.rs")];
+        let owners = ["discounted_total".to_string()];
+        let corpus = crate::analysis::workspace::discover_rust_files(&root)?;
+        assert!(!corpus.is_empty(), "the fixture must hold a Rust corpus");
+        let expected = |root: &Path| -> Result<ConsumedRustSources, String> {
+            let mut expected = ConsumedRustSources::default();
+            for path in &corpus {
+                let bytes = std::fs::read(root.join(path)).map_err(|error| error.to_string())?;
+                expected.record(path, Some(&bytes));
+            }
+            Ok(expected)
+        };
+        let assert_observes = |inventory: &ScopedClassifiedSeamInventory,
+                               root: &Path,
+                               path: &str|
+         -> Result<(), String> {
+            let expected = expected(root)?;
+            for file in &corpus {
+                if inventory.consumed_sources.digest(file) != expected.digest(file) {
+                    return Err(format!(
+                        "{path}: carrier lost or misattributed the bytes of {}",
+                        file.display()
+                    ));
+                }
+                if expected.digest(file).is_none() {
+                    return Err(format!("{path}: expected carrier is empty"));
+                }
+            }
+            Ok(())
+        };
+        let identity = {
+            let keys = changed
+                .iter()
+                .map(|path| inventory_scope_key(path))
+                .collect::<BTreeSet<_>>();
+            let names = owners.iter().map(String::as_str).collect::<BTreeSet<_>>();
+            bound_seams_reuse_identity(&keys, &names)
+        };
+
+        evaluation_probe::reset();
+        let cold =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        assert!(evaluation_probe::evaluated() > 0, "the cold run computes");
+        assert_observes(&cold, &root, "computed")?;
+
+        evaluation_probe::reset();
+        let memory =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        assert_eq!(evaluation_probe::evaluated(), 0, "the warm run is a reuse");
+        assert_observes(&memory, &root, "process-wide reuse")?;
+
+        bound_inventory_reuse::forget(&cold.workspace_cache_key, &identity);
+        evaluation_probe::reset();
+        let persisted =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        assert_eq!(
+            evaluation_probe::evaluated(),
+            0,
+            "the persisted run is a reuse"
+        );
+        assert_observes(&persisted, &root, "persisted reuse")?;
+
+        // An edit to a consumed file the changed scope does not name changes
+        // the corpus: the carrier follows the new bytes, not the cached ones.
+        let helper = root.join("src/unrelated.rs");
+        write_file(&helper, "pub fn unrelated_value() -> i32 {\n    41\n}\n")?;
+        let edited =
+            inventory_diff_scoped_bound_seams_at_with_config(&root, &config, &changed, &owners)?;
+        let after_edit = expected(&root)?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            edited
+                .consumed_sources
+                .digest(Path::new("src/unrelated.rs")),
+            after_edit.digest(Path::new("src/unrelated.rs")),
+        );
+        assert_ne!(
+            edited
+                .consumed_sources
+                .digest(Path::new("src/unrelated.rs")),
+            cold.consumed_sources.digest(Path::new("src/unrelated.rs")),
+            "the carrier must not replay the earlier observation"
+        );
         Ok(())
     }
 
@@ -10201,6 +10536,25 @@ pub fn check_b(x: i32) -> bool { x < 0 }
     }
 
     // -- Pilot seam budget tests ---------------------------------------------
+
+    #[test]
+    fn built_in_inventory_default_is_the_product_cap_without_a_pilot_guard() {
+        // No lib test holds `PilotInventoryDefault`, so non-pilot callers keep
+        // the product default; an explicit value still wins and is configured.
+        if std::env::var_os(REPO_EXPOSURE_SEAM_LIMIT_ENV).is_none() {
+            assert_eq!(
+                repo_exposure_seam_limit(),
+                Ok(Some((
+                    DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+                    SeamLimitSource::Default
+                )))
+            );
+        }
+        assert_eq!(
+            seam_limit_from_env(REPO_EXPOSURE_SEAM_LIMIT_ENV, 2_000, Ok("7".to_string())),
+            Ok(Some((7, SeamLimitSource::Configured)))
+        );
+    }
 
     #[test]
     fn pilot_seam_budget_default_constant_is_smaller_than_repo_exposure_cap() {

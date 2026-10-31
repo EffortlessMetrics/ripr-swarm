@@ -273,6 +273,25 @@ the corpus counts. The summary is therefore a function of the rows: the dx
 scoreboard (`verdict-corpus:` sources) and the public proof receipt derive
 it from the committed rows, so parallel case PRs share no line.
 
+A live case is scored only when its `ripr check --json` output establishes
+the measurement (#11272). The harness fixes two facts before ripr runs: the
+language the case's anchor file dispatches to, and the digest of the diff
+bytes it hands over. The output must then carry an `analysis_outcome` whose
+kind is `complete_with_findings`, `complete_no_findings`,
+`no_behavioral_candidates` or `partial_with_limitations`, whose
+`identity.input_identity` equals `sha256:` plus that digest, and whose
+`summary.changed_files_by_language` routes the diff to the expected language
+exactly once. Empty findings, exit code 0, an enabled configuration, the
+adapter's own file count and the absence of a `language_runs` row (a
+successful run is omitted by design) are not completion evidence. A missing
+block, another language's output, a stale or unbound digest, duplicate routing
+and the outcomes `no_scope`, `no_changed_lines`, `unsupported_input` and
+`analysis_failed` fail the run as an unestablished measurement; they are never
+a silent verdict. An explicit non-`ok` Perl `language_runs` row for a packet
+case keeps its own refusal, and a sibling language's row is left in the output.
+This reads the existing producer outcome and does not add a field or change
+`language_runs`.
+
 ### Spec-example coverage
 
 The coverage unit is one numbered item (`1. `, `2. `, ...) written at the
@@ -426,6 +445,17 @@ issue. A whole-corpus `check` fails on a false row that is not listed and on a
 listed row that is no longer false, so a bless cannot absorb a new false
 verdict and a fixed row cannot return unnoticed. A `--case` subset is never
 gated on it.
+
+A diff cannot list its own regression (#10986). When the merge base is
+readable (`RIPR_VERDICT_CORPUS_BASE`, else the merge base with `origin/main` or
+`main`), a whole-corpus `check` also fails on a `known-false/<case>.toml` that
+the diff adds for a row that was not a false verdict at the base. The entry
+passes only with `accepted_growth = <issue>`, an accepted-cost issue that names
+the case, and the case id in its `reason`. That keeps the acceptance a visible
+line in the reviewed diff; the check cannot read the issue, so it makes growth
+explicit and does not approve it. An entry already listed at the base, or for a
+row already false there, is not growth. In a hosted run (`GITHUB_ACTIONS=true`)
+an unreadable base fails; elsewhere it is reported as not established.
 
 Missed credit, an `abstained` row whose truth is `discriminated` (tests that
 catch the change while ripr says unknown), is accepted one row per block:

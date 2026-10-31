@@ -315,8 +315,30 @@ impl AgentStatusReport {
             })
     }
 
+    /// #10984: a current gap-bound attempt that finished with its own retained
+    /// receipt showing the gap closed. A gap-bound route never writes the
+    /// legacy seam workflow files, so their absence says nothing about it.
+    /// Only a non-legacy gap binding, a `finished` disposition at a current
+    /// head and a receipt issued from retained terminal evidence qualify;
+    /// every pending, refused, stale, unconfirmed or unavailable attempt
+    /// keeps absent legacy artifacts counted.
+    fn has_current_finished_gap_attempt(&self) -> bool {
+        self.repair_attempts.iter().any(|attempt| {
+            attempt.gap_base.is_some()
+                && !attempt.legacy_gap_binding
+                && attempt.disposition == "finished"
+                && attempt.head_current == Some(true)
+                && matches!(
+                    &attempt.receipt,
+                    AgentStatusAttemptReceipt::Issued { reading, .. } if reading.shows_gap_closed()
+                )
+        })
+    }
+
     pub(crate) fn status(&self) -> &'static str {
-        if self.next_command.is_some() || self.artifacts.iter().any(|artifact| !artifact.present) {
+        let artifact_absent = self.artifacts.iter().any(|artifact| !artifact.present)
+            && !self.has_current_finished_gap_attempt();
+        if self.next_command.is_some() || artifact_absent {
             "incomplete"
         } else if self.warnings.is_empty() {
             "complete"
@@ -986,13 +1008,14 @@ fn finished_attempt_warnings(
                 kind: "repair_receipt_stale".to_string(),
                 artifact: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
                 message: format!(
-                    "the receipt for repair attempt `{}` (seam `{}`) reports static grip improved (receipt advisory) at HEAD `{}`, the head its after phase recorded, but {}; its static evidence is stale against HEAD, so status does not report the loop complete. Re-read the current HEAD with `ripr check --root {}` before relying on it",
+                    "the receipt for repair attempt `{}` (seam `{}`) reports static grip improved (receipt advisory) at HEAD `{}`, the head its after phase recorded, but {}; status does not report the loop complete. Re-read the current inputs with `ripr check --root {}` before relying on it",
                     attempt.attempt_id,
                     attempt.seam_id,
                     attempt.evidence_head,
-                    match current_head {
-                        Some(head) => format!("the repository HEAD is now `{head}`"),
-                        None => "the current Git HEAD could not be read".to_string(),
+                    match (current_head, attempt.head_current) {
+                        (Some(head), _) if head != attempt.evidence_head => format!("the repository HEAD is now `{head}` and its static evidence is stale against HEAD"),
+                        (Some(_), Some(false)) => "bound inputs no longer match the recorded evidence".to_string(),
+                        _ => "currentness of the bound evidence could not be established".to_string(),
                     },
                     shell_arg(root_display)
                 ),
@@ -1001,7 +1024,7 @@ fn finished_attempt_warnings(
                 kind: "repair_receipt_unconfirmed".to_string(),
                 artifact: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
                 message: format!(
-                    "repair attempt `{}` (seam `{}`) passed the edit cage, but {}; status does not report the loop complete{}{}",
+                    "repair `{}` (gap `{}`) changed only the files the repair allows, but {}; status does not report the loop complete{}{}",
                     attempt.attempt_id,
                     attempt.seam_id,
                     unconfirmed_receipt_reason(attempt),
@@ -1243,7 +1266,7 @@ fn select_next_command(
         .filter(|attempt| attempt.disposition == "resumable")
         .collect::<Vec<_>>();
     let resumable_decision = if resumable.is_empty() {
-        Err("no resumable attempt".to_string())
+        Err("no resumable attempt; start one with `ripr agent start`".to_string())
     } else {
         canonical_next_action_for_inventory(root_display, &store, &resumable, &[])
     };
@@ -1262,7 +1285,7 @@ fn select_next_command(
                     refused_after_phase_reason(&attempt.attempt_id, &attempt.seam_id, refusal)
                 }
                 None => format!(
-                    "repair attempt `{}` for seam `{}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded",
+                    "repair `{}` for gap `{}` is waiting for your test; once the test is in place, run the next command the repair printed",
                     attempt.attempt_id, attempt.seam_id
                 ),
             };
@@ -1297,7 +1320,7 @@ fn select_next_command(
             kind: "repair_attempt_head_unknown".to_string(),
             artifact: store.locator.to_string(),
             message: format!(
-                "the current Git HEAD could not be read or related to the head its attempt was prepared at, so status cannot tell whether {} awaiting repair attempt(s) are still current",
+                "the current Git HEAD could not be read or related to the head its attempt was prepared at, so status cannot tell whether {} repair(s) in progress are still current",
                 head_unknown.len()
             ),
         });
@@ -1327,7 +1350,7 @@ fn select_next_command(
     }
     let open_seam_ids = open.keys().copied().collect::<Vec<_>>();
     let open_decision = if open_seam_ids.is_empty() {
-        Err("no open seam".to_string())
+        Err("no open gap in the attempt inventory; start one with `ripr agent start`".to_string())
     } else {
         canonical_next_action_for_inventory(root_display, &store, &[], &open_seam_ids)
     };
@@ -1574,7 +1597,7 @@ fn pilot_python_repair_card_message(
         return message;
     }
     message.push_str(&format!(
-        "; `ripr agent repair` targets ranked seams only, and running pilot again unchanged records the same card. Follow the card from `ripr first-pr --root {root}`, which names the test to strengthen and its verify command",
+        "; status could not confirm a gap-bound start, and running pilot again unchanged records the same card. Run `ripr check --root {root}` for the current route and any reason it is unavailable; the card from `ripr first-pr --root {root}` names the test and its verify command",
         root = shell_arg(root_display)
     ));
     if let Some(verify) = &card.verify_command {
@@ -1817,8 +1840,8 @@ struct PilotCheckRoutes {
 /// Reads the retained pilot summary (#4216, Python and TypeScript
 /// re-walks): `status: complete`, empty `top_actionable_seams`, an explicit
 /// null `next.repair_command`, `language_routes.state: required` (pilot
-/// itself sends the code to `ripr check`, which offers no `ripr agent
-/// repair` start), and no repair card (`python_first_use` absent, null, or
+/// itself sends the code to `ripr check`), and no repair card
+/// (`python_first_use` absent, null, or
 /// a no-repair-card status). Sending the user back to pilot then only routes
 /// them to `ripr check` again, for any routed language. A missing,
 /// unreadable, timed-out, seam-ranking, repair-card-bearing,
@@ -1905,9 +1928,9 @@ fn routed_code_phrase(languages: &[String]) -> String {
 /// print, or `None` (#10001). Status consults the same admission check uses
 /// ([`default_check_gap_start`], which ends in the shared agent-packet
 /// validator) rather than assuming the route offers no start; only a
-/// TypeScript-family or Python route can be admitted (#10373), and anything
-/// undecidable keeps
-/// the "offers no start" wording (fail-closed).
+/// TypeScript-family or Python route can be admitted (#10373). An unconfirmed
+/// route is reported as such instead of claiming there is no
+/// start (fail-closed).
 ///
 /// [`default_check_gap_start`]: crate::app::gap_bound_repair::default_check_gap_start
 fn pilot_routed_gap_start(
@@ -1988,7 +2011,7 @@ fn pilot_routed_to_check_message(
                 ))
             }
             None => message.push_str(&format!(
-                ": it routed {code} to {commands}, which reviews changes diff-first and offers no `ripr agent repair` start, and running pilot again unchanged routes there again. Read the findings from {commands}, add or strengthen a test for the changed behavior by hand, then rerun {commands} to see whether static evidence now finds a discriminator"
+                ": it routed {code} to {commands}, which reviews changes diff-first; status could not confirm a gap-bound start. Running pilot again unchanged routes there again. Run {commands} for the current finding and any reason a start is unavailable"
             )),
         }
     }
@@ -2144,6 +2167,21 @@ fn legacy_next_command(
             });
             return None;
         }
+        // #11395: `ripr pilot` refuses a root with no Cargo.toml and no source
+        // to inspect, so status must not recommend it there. The verdict is the
+        // one pilot itself uses; `ripr doctor` names the same missing manifest.
+        if crate::analysis::root_has_no_inspectable_workspace(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "no_workspace_to_inspect".to_string(),
+                artifact: root_display.to_string(),
+                message: format!(
+                    "{} has no Cargo.toml and no source files to inspect, so there is nothing to repair yet. Run `ripr doctor --root {}` to see what is missing, or pass `--root <dir>` for the directory that contains your workspace",
+                    root_display,
+                    shell_arg(root_display)
+                ),
+            });
+            return None;
+        }
         return Some(AgentStatusCommand {
             step: "select_seam".to_string(),
             artifact: "target/ripr/pilot".to_string(),
@@ -2276,11 +2314,10 @@ fn attempt_condition(attempt: &AgentStatusRepairAttempt) -> String {
                 reading.status.as_deref().unwrap_or("unknown"),
                 reading.movement.as_deref().unwrap_or("unknown")
             );
-            if attempt.head_current != Some(true) {
-                condition.push_str(&format!(
-                    ", and its evidence is stale against HEAD (recorded at `{}`)",
-                    attempt.evidence_head
-                ));
+            match attempt.head_current {
+                Some(false) => condition.push_str(", and its evidence is no longer current"),
+                None => condition.push_str(", and its evidence currentness is unknown"),
+                Some(true) => {}
             }
             if let Some(action) = &reading.recommended_action {
                 condition.push_str(&format!(
@@ -2326,12 +2363,12 @@ fn attempt_outcome(attempt: &AgentStatusRepairAttempt) -> String {
     if attempt.receipt != AgentStatusAttemptReceipt::NotApplicable {
         match attempt.head_current {
             Some(true) => {}
-            Some(false) => parts.push("evidence stale against HEAD".to_string()),
-            None => parts.push("HEAD unknown".to_string()),
+            Some(false) => parts.push("evidence no longer current".to_string()),
+            None => parts.push("evidence currentness unknown".to_string()),
         }
     }
     if attempt.last_after_refusal.is_some() {
-        parts.push("last after phase refused".to_string());
+        parts.push("last step refused".to_string());
     }
     if parts.is_empty() {
         "-".to_string()
@@ -2393,7 +2430,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
             rendered.push('\n');
             rendered
         })
-        .map_err(|err| format!("failed to render agent status JSON: {err}"))
+        .map_err(|err| format!("failed to render agent status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String {
@@ -2401,8 +2438,14 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
     rendered.push_str("# RIPR Agent Status\n\n");
     rendered.push_str(&format!("Status: {}\n", report.status()));
     rendered.push_str(&format!("Root: {}\n", report.root));
+    // #10696: before any repair step has run there is no gap or artifact to
+    // report, so say that in a sentence instead of a table of `missing` rows.
+    let nothing_started = report.seam.is_none()
+        && report.repair_attempts.is_empty()
+        && report.artifacts.iter().all(|artifact| !artifact.present);
     match &report.seam {
         Some(seam) => rendered.push_str(&format!("Seam: {} ({})\n", seam.seam_id, seam.source)),
+        None if nothing_started => rendered.push_str("No repair in progress.\n"),
         None => rendered.push_str("Seam: unknown\n"),
     }
     if let Some(reading) = report.unrun_test_receipt() {
@@ -2412,19 +2455,21 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
         ));
     }
 
-    rendered.push_str("\n## Artifacts\n\n");
-    rendered.push_str("| Artifact | State | Path |\n");
-    rendered.push_str("| --- | --- | --- |\n");
-    for artifact in &report.artifacts {
-        let state = if artifact.present {
-            "present"
-        } else {
-            "missing"
-        };
-        rendered.push_str(&format!(
-            "| {} | {} | `{}` |\n",
-            artifact.label, state, artifact.path
-        ));
+    if !nothing_started {
+        rendered.push_str("\n## Artifacts\n\n");
+        rendered.push_str("| Artifact | State | Path |\n");
+        rendered.push_str("| --- | --- | --- |\n");
+        for artifact in &report.artifacts {
+            let state = if artifact.present {
+                "present"
+            } else {
+                "missing"
+            };
+            rendered.push_str(&format!(
+                "| {} | {} | `{}` |\n",
+                artifact.label, state, artifact.path
+            ));
+        }
     }
 
     if !report.repair_attempts.is_empty() {
@@ -2907,10 +2952,13 @@ pub(crate) fn build_agent_attempt_status(
     let mut limitations = manifest.limitations.clone();
     limitations.extend(resolved.limitations().iter().cloned());
     if view.head_current.is_none() {
-        limitations.push(
+        limitations.push(if current_head.is_none() {
             "the current Git HEAD could not be read; this attempt's currentness is unknown"
-                .to_string(),
-        );
+                .to_string()
+        } else {
+            "this attempt's currentness could not be established from its bound evidence"
+                .to_string()
+        });
     }
     Ok(AgentAttemptStatusReport {
         root: root_display,
@@ -3204,12 +3252,12 @@ fn refused_after_phase_reason(id: &str, seam: &str, refusal: &AgentStatusAfterRe
     let reason = refusal.reason.trim_end_matches('.');
     if refusal.retry_budget_exhausted {
         return format!(
-            "the after phase of repair attempt `{id}` for seam `{seam}` was refused {} times and its retry budget is spent; the latest refusal was: {reason}. Stop retrying this attempt: its after phase now refuses without running. Inspect the recorded refusal history in the attempt manifest, fix the cause, then start a new attempt while the gap is still open",
+            "the last step of repair `{id}` for gap `{seam}` was refused {} times and its retry limit is used up; the latest refusal was: {reason}. Stop retrying this repair: it now refuses without running. Inspect the recorded refusal history in the repair's manifest, fix the cause, then start a new repair while the gap is still open",
             refusal.refusal_count
         );
     }
     format!(
-        "the last after phase of repair attempt `{id}` for seam `{seam}` was refused: {reason} (refusal {} of a {}-refusal retry budget). The attempt still awaits the focused test edit; the command below repeats that after phase and refuses again until the cause the refusal names is resolved",
+        "the last step of repair `{id}` for gap `{seam}` was refused: {reason} (refusal {} of a {}-refusal retry limit). The repair still waits for your test; the command below repeats that step and refuses again until the cause the refusal names is resolved",
         refusal.refusal_count,
         crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
     )
@@ -3226,7 +3274,7 @@ fn after_attempt_command(
     let reason = match &view.last_after_refusal {
         Some(refusal) => refused_after_phase_reason(id, seam, refusal),
         None => format!(
-            "repair attempt `{id}` for seam `{seam}` is awaiting the focused test edit; once the test is in place, run the after phase its before phase recorded"
+            "repair `{id}` for gap `{seam}` is waiting for your test; once the test is in place, run the next command the repair printed"
         ),
     };
     AgentStatusCommand {
@@ -3308,10 +3356,10 @@ fn restart_attempt_command(
             "repair attempt `{id}` for seam `{seam}` ended incomparable; start a new attempt while the gap is still open"
         )),
         "failed" => restart(format!(
-            "repair attempt `{id}` for seam `{seam}` ended failed; start a new attempt while the gap is still open"
+            "repair `{id}` for gap `{seam}` ended failed; start a new repair while the gap is still open"
         )),
         "limited" if view.disposition == "retry_budget_spent" => restart(format!(
-            "repair attempt `{id}` for seam `{seam}` spent its after-phase retry budget, so its after phase now refuses without running; start a new attempt while the gap is still open"
+            "repair `{id}` for gap `{seam}` used up its retry limit, so it now refuses without running; start a new repair while the gap is still open"
         )),
         "limited" => match &view.receipt {
             AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open() => {
@@ -3393,7 +3441,7 @@ pub(crate) fn render_agent_attempt_status_json(
             rendered.push('\n');
             rendered
         })
-        .map_err(|err| format!("failed to render agent attempt status JSON: {err}"))
+        .map_err(|err| format!("failed to render agent attempt status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusReport) -> String {
@@ -3793,6 +3841,70 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
+    /// #11395: a root with no Cargo.toml and no source is not something
+    /// `ripr pilot` will inspect, so status must not recommend it. The positive
+    /// control (a Cargo.toml root) still gets the pilot command.
+    #[test]
+    fn status_does_not_recommend_pilot_where_pilot_refuses() -> Result<(), String> {
+        let empty = unique_agent_status_test_dir("no-workspace");
+        write_file(&empty.join("README.md"), "hi\n")?;
+        let report = build_agent_status_report(&empty, Path::new("."));
+        assert!(report.next_command.is_none(), "{:?}", report.next_command);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "no_workspace_to_inspect")
+            .ok_or_else(|| "expected a no_workspace_to_inspect warning".to_string())?;
+        assert!(
+            warning.message.contains("ripr doctor"),
+            "{}",
+            warning.message
+        );
+        assert!(warning.message.contains("--root"), "{}", warning.message);
+        // The suggested doctor command is bound to the selected root (a root
+        // with a space is shell-quoted), not left to default to `.`.
+        let spaced = unique_agent_status_test_dir("no workspace spaced");
+        write_file(&spaced.join("README.md"), "hi\n")?;
+        let spaced_display = spaced.to_string_lossy().into_owned();
+        let report = build_agent_status_report(&spaced, &spaced);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "no_workspace_to_inspect")
+            .ok_or_else(|| "expected a warning for the spaced root".to_string())?;
+        assert!(
+            warning.message.contains(&format!(
+                "`ripr doctor --root {}`",
+                shell_arg(&spaced_display)
+            )),
+            "{}",
+            warning.message
+        );
+        assert!(
+            shell_arg(&spaced_display).starts_with('\''),
+            "the spaced root must be quoted: {spaced_display}"
+        );
+        std::fs::remove_dir_all(&spaced).map_err(|err| format!("remove: {err}"))?;
+
+        let cargo = unique_agent_status_test_dir("with-cargo");
+        write_file(&cargo.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
+        let report = build_agent_status_report(&cargo, Path::new("."));
+        let next = report
+            .next_command
+            .as_ref()
+            .ok_or_else(|| "a Cargo workspace keeps the pilot route".to_string())?;
+        assert_eq!(next.step, "select_seam");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == "no_workspace_to_inspect")
+        );
+        std::fs::remove_dir_all(&empty).map_err(|err| format!("remove: {err}"))?;
+        std::fs::remove_dir_all(&cargo).map_err(|err| format!("remove: {err}"))?;
+        Ok(())
+    }
+
     fn unique_agent_status_test_dir(label: &str) -> PathBuf {
         let stamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -3848,6 +3960,8 @@ mod tests {
     #[test]
     fn agent_status_reports_missing_artifacts_and_next_commands() -> Result<(), String> {
         let root = unique_agent_status_test_dir("missing");
+        // #11395: status withholds the pilot route for a root pilot would refuse.
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
 
         let report = build_agent_status_report(&root, Path::new("."));
@@ -4847,6 +4961,8 @@ mod tests {
             attempt_id: legacy.repair_attempt_id.clone(),
             repository_head: stored.repository_head.clone(),
             delta_sha256: "sha256:fixture-delta".to_string(),
+            delta_binding: None,
+            receipt_projection_predecessor: None,
             packet_sha256: "sha256:fixture-packet".to_string(),
             current: true,
             verdict: EditCageVerdict {
@@ -5007,6 +5123,8 @@ mod tests {
                 attempt_id,
                 repository_head: head,
                 delta_sha256: "sha256:delta".to_string(),
+                delta_binding: None,
+                receipt_projection_predecessor: None,
                 packet_sha256: "sha256:packet".to_string(),
                 current: true,
                 verdict: EditCageVerdict {
@@ -5149,9 +5267,35 @@ mod tests {
         Ok(())
     }
 
+    /// #10696 review: the artifact table is hidden only while nothing has
+    /// started; one present artifact brings it (and the `Seam:` line) back.
+    #[test]
+    fn agent_status_markdown_keeps_artifact_table_once_an_artifact_exists() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("table-returns");
+        let workflow = root.join("target/ripr/workflow");
+        std::fs::create_dir_all(&workflow).map_err(|err| format!("create workflow: {err}"))?;
+        std::fs::write(workflow.join("before.repo-exposure.json"), "{}")
+            .map_err(|err| format!("write artifact: {err}"))?;
+
+        let report = build_agent_status_report(&root, Path::new("."));
+        let rendered = render_agent_status_markdown(&report);
+
+        assert!(!rendered.contains("No repair in progress."), "{rendered}");
+        assert!(rendered.contains("Seam: unknown"), "{rendered}");
+        assert!(
+            rendered.contains("| before snapshot | present |"),
+            "{rendered}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
     #[test]
     fn agent_status_markdown_names_next_command_and_limits() -> Result<(), String> {
         let root = unique_agent_status_test_dir("markdown");
+        // #11395: status withholds the pilot route for a root pilot would refuse.
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
 
         let report = build_agent_status_report(&root, Path::new("."));
@@ -5159,7 +5303,10 @@ mod tests {
 
         assert!(rendered.contains("# RIPR Agent Status"));
         assert!(rendered.contains("Status: incomplete"));
-        assert!(rendered.contains("| before snapshot | missing |"));
+        // #10696: nothing has run yet, so no table of `missing` rows.
+        assert!(rendered.contains("No repair in progress."), "{rendered}");
+        assert!(!rendered.contains("| before snapshot |"), "{rendered}");
+        assert!(!rendered.contains("Seam: unknown"), "{rendered}");
         assert!(rendered.contains("## Next Command"));
         assert!(rendered.contains(&pilot_select_command(&bound_root("."))));
         assert!(rendered.contains("No runtime mutation execution."));
@@ -5812,12 +5959,12 @@ mod tests {
 
         // Dirty-premise start refusal: the recipe is the tail of a clause and
         // a later sentence must survive.
-        let dirty = "repair attempt cannot start: tracked file(s) differ from HEAD: src/lib.rs. to recover: commit the listed file(s) (for example `git commit -- src/lib.rs`), or restore them, then rerun `ripr agent repair --root '/r' --seam-id abc --phase before`. No workflow was prepared and no repair attempt was started.";
+        let dirty = "ripr repair needs your source changes committed first, so it can tell your new test apart from them. Uncommitted: src/lib.rs. Commit them (for example `git commit -- src/lib.rs`) or restore them, then rerun `ripr agent repair --root '/r' --seam-id abc --phase before`. A test file you are still editing is fine. Nothing was started.";
         let cleaned = without_start_recipe(dirty);
         assert!(
             !cleaned.contains("--phase before")
                 && cleaned.contains("or restore them")
-                && cleaned.contains("No workflow was prepared and no repair attempt was started.")
+                && cleaned.contains("Nothing was started.")
                 && cleaned.contains(cut),
             "{cleaned}"
         );
@@ -6003,6 +6150,8 @@ mod tests {
     #[test]
     fn agent_status_continues_from_the_pilot_repair_start() -> Result<(), String> {
         let root = unique_agent_status_test_dir("after-pilot");
+        // #11395: status withholds the pilot route for a root pilot would refuse.
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
         let command = "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before";
         write_file(
             &root.join(PILOT_SUMMARY_ARTIFACT),
@@ -6097,6 +6246,8 @@ mod tests {
     #[test]
     fn agent_status_stops_when_pilot_routed_changed_code_to_check() -> Result<(), String> {
         let root = unique_agent_status_test_dir("pilot-routed-to-check");
+        // #11395: status withholds the pilot route for a root pilot would refuse.
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
         let enabled_routes = r#"[{"language": "typescript", "enabled": true, "command": "ripr check --root ."}, {"language": "python", "enabled": true, "command": "ripr check --root ."}]"#;
         let summary = |status: &str, state: &str, first_use: &str, routes: &str, repair: &str| {
             format!(
@@ -6148,7 +6299,7 @@ mod tests {
             // hint status generates binds the selected root (#4000).
             for expected in [
                 "routed the typescript, python code to `ripr check --root .`".to_string(),
-                "add or strengthen a test for the changed behavior by hand, then rerun `ripr check --root .`".to_string(),
+                "status could not confirm a gap-bound start".to_string(),
                 format!(
                     "If the workspace changed since that run, rerun `{}`",
                     pilot_select_command(&bound_root("."))
@@ -6615,6 +6766,8 @@ mod tests {
     #[test]
     fn agent_status_routes_a_pilot_python_repair_card_to_first_pr() -> Result<(), String> {
         let root = unique_agent_status_test_dir("pilot-python-card");
+        // #11395: status withholds the pilot route for a root pilot would refuse.
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
         let summary = |status: &str, seams: &str, first_use: &str, repair: &str| {
             format!(
                 r#"{{"status": "{status}", "top_actionable_seams": {seams}, "python_first_use": {first_use}, "language_routes": {{"state": "required", "routes": [{{"language": "python", "enabled": true, "command": "ripr check --root ."}}]}}, "next": {{"repair_command": {repair}}}}}"#
@@ -6701,14 +6854,21 @@ mod tests {
         let commit = "git -C . --literal-pathspecs commit -m \"<message>\" -- src/pricing.py";
 
         // A decoy-cwd user needs the commit anchored at the analyzed root.
+        // The expectation goes through the same production quoting the
+        // producer uses (`shell_arg` renders console-quoted on Windows and
+        // single-quoted on Unix, the #10833 expectation pattern), so the
+        // anchored commit step stays discriminated on both hosts (#10996).
         let anchored = PilotGapStart::from_route("/repo root", &route(&["src/[ab].py"]));
         let anchored_message =
             pilot_routed_to_check_message(&routes, "/repo root", Some(&anchored));
+        let anchored_commit = format!(
+            "git -C {} --literal-pathspecs commit -m \"<message>\" -- {}",
+            shell_arg("/repo root"),
+            shell_arg("src/[ab].py")
+        );
         assert!(
-            anchored_message.contains(
-                "git -C '/repo root' --literal-pathspecs commit -m \"<message>\" -- 'src/[ab].py'"
-            ),
-            "{anchored_message}"
+            anchored_message.contains(&anchored_commit),
+            "Expected message to contain:\n{anchored_commit}\n\nActual message:\n{anchored_message}"
         );
 
         let clean_routed = pilot_routed_to_check_message(&routes, ".", Some(&clean));
@@ -6910,6 +7070,95 @@ mod tests {
             verification_status: None,
             test_changed: None,
         }
+    }
+
+    /// #10984: the aggregate status of a current finished gap-bound attempt
+    /// is not `incomplete` solely because legacy seam files are absent, and
+    /// every unconfirmed variant keeps the absence counted.
+    #[test]
+    fn finished_gap_attempt_is_not_incomplete_for_absent_legacy_artifacts() {
+        let improved = || AgentReceiptReading {
+            movement: Some("improved".to_string()),
+            receipt_state: crate::output::receipt_lifecycle::RECEIPT_MOVEMENT_IMPROVED.to_string(),
+            ..open_gap_reading()
+        };
+        assert!(
+            improved().shows_gap_closed(),
+            "positive reading must close the gap"
+        );
+        assert!(
+            !open_gap_reading().shows_gap_closed(),
+            "unchanged reading must not close the gap"
+        );
+        let finished = || {
+            let mut attempt = canonical_test_view();
+            attempt.gap_base = Some("0d2028aa".to_string());
+            attempt.state = "ready_to_finish";
+            attempt.disposition = "finished";
+            attempt.command = None;
+            attempt.receipt = AgentStatusAttemptReceipt::Issued {
+                path: "receipt.json".to_string(),
+                reading: improved(),
+            };
+            attempt
+        };
+        let report = |attempt: AgentStatusRepairAttempt| AgentStatusReport {
+            root: ".".to_string(),
+            seam: None,
+            artifacts: vec![AgentStatusArtifact {
+                name: "agent_brief".to_string(),
+                label: "agent brief".to_string(),
+                path: "target/ripr/workflow/agent-brief.md".to_string(),
+                present: false,
+                bytes: None,
+                modified: None,
+            }],
+            repair_attempts: vec![attempt],
+            missing_commands: Vec::new(),
+            next_command: None,
+            warnings: Vec::new(),
+        };
+        assert_eq!(report(finished()).status(), "complete");
+
+        let mut seam_bound = finished();
+        seam_bound.gap_base = None;
+        assert_eq!(report(seam_bound).status(), "incomplete");
+
+        let mut legacy = finished();
+        legacy.legacy_gap_binding = true;
+        assert_eq!(report(legacy).status(), "incomplete");
+
+        let mut historical = finished();
+        historical.head_current = Some(false);
+        assert_eq!(report(historical).status(), "incomplete");
+
+        let mut unknown_head = finished();
+        unknown_head.head_current = None;
+        assert_eq!(report(unknown_head).status(), "incomplete");
+
+        let mut unavailable = finished();
+        unavailable.receipt = AgentStatusAttemptReceipt::Unavailable {
+            path: None,
+            reason: "retained terminal evidence is missing".to_string(),
+        };
+        assert_eq!(report(unavailable).status(), "incomplete");
+
+        let mut not_advisory = finished();
+        not_advisory.receipt = AgentStatusAttemptReceipt::Issued {
+            path: "receipt.json".to_string(),
+            reading: AgentReceiptReading {
+                status: Some("invalid".to_string()),
+                ..improved()
+            },
+        };
+        assert_eq!(report(not_advisory).status(), "incomplete");
+
+        let mut open_gap = finished();
+        open_gap.receipt = AgentStatusAttemptReceipt::Issued {
+            path: "receipt.json".to_string(),
+            reading: open_gap_reading(),
+        };
+        assert_eq!(report(open_gap).status(), "incomplete");
     }
 
     /// Every status class routes its arm through the canonical decision:

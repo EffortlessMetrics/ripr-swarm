@@ -43,6 +43,7 @@ pub(crate) fn snapshot_seam(
 pub(crate) fn mint_repo_exposure_snapshot(root: &Path, seams: Value) -> Result<String, String> {
     let context = crate::agent::artifact::RepoExposureArtifactContext {
         corpus_key: None,
+        analyzed_production_files: None,
         root: root.to_path_buf(),
         mode: "draft".to_string(),
         base_revision: None,
@@ -270,9 +271,13 @@ pub(crate) fn mint_canonical_verify(
         before.display().to_string(),
         after.display().to_string(),
     )?;
+    let before_produced_from_dirty = before_identity.historical_produced_from_dirty();
+    let after_produced_from_dirty = after_identity.historical_produced_from_dirty();
     let binding = crate::output::outcome::AgentVerifyArtifactBinding {
         before_content_sha256: before_identity.content_sha256,
         after_content_sha256: after_identity.content_sha256,
+        before_produced_from_dirty,
+        after_produced_from_dirty,
     };
     crate::output::outcome::render_agent_verify_json_with_currentness(
         &report,

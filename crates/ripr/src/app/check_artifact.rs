@@ -146,7 +146,7 @@ pub(crate) fn write_check_artifact(
         findings: rewrite_non_utf8_finding_paths(findings),
     };
     let json = serde_json::to_string_pretty(&artifact)
-        .map_err(|err| format!("failed to serialize check artifact: {err}"))?;
+        .map_err(|err| format!("failed to serialize check artifact: {err}; this is a ripr bug, report it with the command you ran"))?;
     crate::atomic_file::write(path, json.as_bytes(), "check artifact")
 }
 
@@ -243,6 +243,13 @@ pub(crate) fn load_findings_for_reuse_core(
         .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
     verify_identity(&artifact, &current, path)
         .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
+    if artifact.findings.iter().any(|finding| {
+        finding.alignment_reason.as_deref() == Some(crate::domain::LIVE_PYTHON_TRUTHINESS_ALIGNMENT)
+    }) {
+        return Err(crate::core_error::CoreError::check_artifact_unusable(
+            "Python truthiness evidence requires a fresh physical source audit; run `ripr explain` or `ripr context` without `--from`",
+        ));
+    }
     Ok(artifact.findings)
 }
 
@@ -315,7 +322,10 @@ fn build_identity_at_load(
 }
 
 /// Compare the recomputed identity against the recording, field by field,
-/// and fail closed naming every mismatched field.
+/// and fail closed naming every mismatched field. An `analyzer_version`
+/// mismatch names both identities, recorded and current, so a binary
+/// swapped between the artifact's write and read execs is self-describing
+/// (#11197).
 fn verify_identity(
     artifact: &CheckArtifactV1,
     current: &CheckArtifactIdentityV1,
@@ -354,18 +364,26 @@ fn verify_identity(
     if recorded.config_identity_hash != current.config_identity_hash {
         mismatched.push("config_identity_hash");
     }
-    if artifact.analyzer_version != crate::build_identity::cache_identity() {
+    let current_analyzer_version = crate::build_identity::cache_identity();
+    if artifact.analyzer_version != current_analyzer_version {
         mismatched.push("analyzer_version");
     }
     if mismatched.is_empty() {
         return Ok(());
+    }
+    let mut fields = mismatched.join(", ");
+    if mismatched.contains(&"analyzer_version") {
+        fields.push_str(&format!(
+            " (analyzer_version recorded `{}` vs current `{}`)",
+            artifact.analyzer_version, current_analyzer_version
+        ));
     }
     Err(format!(
         "check artifact at {} cannot be reused: identity mismatch on {}. \
          The artifact was produced from a different analysis input; \
          re-run `ripr check --write-artifact` with the current input.",
         path.display(),
-        mismatched.join(", ")
+        fields
     ))
 }
 
@@ -473,12 +491,12 @@ fn resolve_diff_bytes(
         DiffSourceIdentity::BaseHead { base, .. } => {
             crate::analysis::load_diff(root, base.as_deref(), None, git_timeout)
                 .map(String::into_bytes)
-                .map_err(|err| format!("recorded base/head diff could not be re-resolved: {err}"))
+                .map_err(|err| format!("recorded base/head diff could not be re-resolved: {err}; fetch the recorded base and head commits, or regenerate the artifact with `ripr check`"))
         }
         DiffSourceIdentity::Worktree { base } => {
             crate::analysis::load_worktree_diff(root, base.as_deref(), git_timeout)
                 .map(String::into_bytes)
-                .map_err(|err| format!("recorded worktree diff could not be re-resolved: {err}"))
+                .map_err(|err| format!("recorded worktree diff could not be re-resolved: {err}; restore the recorded worktree state, or regenerate the artifact with `ripr check`"))
         }
     }
 }
@@ -571,9 +589,12 @@ fn resolved_enabled_languages(config: &RiprConfig, perl_facts_present: bool) -> 
 /// be resolved.
 fn canonical_optional_path(path: Option<&Path>) -> Result<Option<PathBuf>, String> {
     match path {
-        Some(path) => std::fs::canonicalize(path)
-            .map(Some)
-            .map_err(|err| format!("failed to canonicalize {}: {err}", path.display())),
+        Some(path) => std::fs::canonicalize(path).map(Some).map_err(|err| {
+            format!(
+                "failed to canonicalize {}: {err}; check the path exists",
+                path.display()
+            )
+        }),
         None => Ok(None),
     }
 }
@@ -582,7 +603,12 @@ fn canonical_optional_path(path: Option<&Path>) -> Result<Option<PathBuf>, Strin
 fn canonical_root(root: &Path) -> Result<String, String> {
     std::fs::canonicalize(root)
         .map(|path| path.to_string_lossy().to_string())
-        .map_err(|err| format!("failed to canonicalize root {}: {err}", root.display()))
+        .map_err(|err| {
+            format!(
+                "failed to canonicalize root {}: {err}; pass `--root` with an existing directory",
+                root.display()
+            )
+        })
 }
 
 #[cfg(test)]
@@ -605,6 +631,7 @@ mod raw_path_tests {
         let raw = PathBuf::from(OsStr::from_bytes(b"pricing_\xff.rs"));
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:pricing:1:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {

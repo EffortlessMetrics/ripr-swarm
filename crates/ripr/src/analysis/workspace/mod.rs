@@ -9,15 +9,17 @@ mod select;
 mod source_role;
 
 pub(crate) use assertion_dependency::{
-    AnyhowIdentity, LiteralJsonIdentity, config_snapshot_identity, eligible_json_root,
-    eligible_manifest, verified_anyhow_identity, verified_json_identity,
+    AnyhowIdentity, JsonRootEligibilityMemo, LiteralJsonIdentity, MetadataProbeFailure,
+    config_snapshot_identity, eligible_json_root, eligible_manifest, eligible_proptest_root,
+    verified_anyhow_identity, verified_json_identity, verified_proptest_identity,
+    verified_proptest_identity_result,
 };
 pub(crate) use cargo_input_identity::cargo_input_identity;
 pub(crate) use cargo_targets::{
     CargoHarnessVerdict, ManifestInventory, context_for_files,
     declared_crate_root_paths_from_manifest,
 };
-pub(crate) use module_graph::apply_module_graph_evidence;
+pub(crate) use module_graph::{apply_module_graph_evidence, target_manifest_directories};
 pub(crate) use path_dependencies::{
     PathDependencyAdjacency, PathDependencyGraphStatus, reverse_dependent_scope_expansion,
 };
@@ -29,6 +31,7 @@ pub(crate) use source_role::{
 pub(crate) use classify::{normalize_path, package_root};
 pub(crate) use discover::UnlinkedPythonTests;
 pub use discover::discover_rust_files;
+pub(crate) use discover::path_enters_ignored_dir;
 pub(crate) use discover::{
     changed_source_files_absent_from_worktree, discover_preview_language_files,
     discover_python_test_files, discover_routed_language_files, discover_unanalyzed_source_files,

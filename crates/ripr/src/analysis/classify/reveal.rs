@@ -16,8 +16,9 @@ use super::super::rust_index::{
 
 use super::arm_selection::ArmSelector;
 use super::builder_override::{
-    EarlierWrite, KeyedFallback, OwnerCall, is_literal_key, literals_equal, overridden_fields_read,
-    setter_names, struct_literal_fields,
+    EarlierWrite, KeyedFallback, OwnerCall, changed_struct_literal_fields, is_literal_key,
+    literals_equal, overridden_fields_read, setter_names, struct_literal_field_texts,
+    struct_literal_fields,
 };
 use super::propagation_witness::{
     assertion_field_collection_reads, assertion_keyed_getter_reads,
@@ -35,8 +36,12 @@ use crate::domain::*;
 /// execution/macro decision also gates predicate boundary pairing; it applies
 /// before token, strength, observation, or owner-pin confirmation.
 pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
-    /// A changed whole returned closure needs its admitted applied owner pin;
-    /// token coincidence cannot establish that the closure ran discriminatingly.
+    /// #9766: the trait double demonstrably retains this call's argument in
+    /// the exact subsequently asserted field. It grants neither reach nor strength.
+    pub(in crate::analysis) recording_double_observed:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// A changed returned closure or unsafe Display format edit needs its
+    /// admitted owner pin; token coincidence cannot confirm discrimination.
     pub(in crate::analysis) returned_closure_pin_required: bool,
     pub(in crate::analysis) owner_return_pin: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// #9870: a Result.map callback runs only on Ok. Token coincidence in
@@ -150,6 +155,7 @@ fn reveal_evidence(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            recording_double_observed: &|_, _| false,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
@@ -195,6 +201,7 @@ fn reveal_evidence_with_exit(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            recording_double_observed: &|_, _| false,
             assertion_has_known_implicit_observer: &|_, _| None,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
@@ -243,6 +250,7 @@ fn reveal_evidence_proximity_reach(
         &|_, _| false,
         &|_, _| false,
         &ReturnOracleAdmission {
+            recording_double_observed: &|_, _| false,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
             owner_return_pin: &|_, _| false,
@@ -312,6 +320,10 @@ pub(in crate::analysis) struct RevealOutcome {
     pub(in crate::analysis) discriminate: StageEvidence,
     pub(in crate::analysis) related: Vec<RelatedTest>,
     pub(in crate::analysis) related_total: usize,
+    /// Complete admitted assertion rows, before the display window drops any.
+    /// This licenses only a named macro limitation, never oracle credit.
+    pub(in crate::analysis) complete_proximity_oracles_only: bool,
+    pub(in crate::analysis) direct_rows: Vec<RelatedTest>,
     /// #6692: an assertion credited to this probe pinned the owner's
     /// return value through `ReturnOracleAdmission::owner_return_pin`
     /// after every reveal gate (name-only relations next to a
@@ -357,6 +369,8 @@ pub(in crate::analysis) fn reveal_outcome(
             ),
             related: Vec::new(),
             related_total: 0,
+            complete_proximity_oracles_only: false,
+            direct_rows: Vec::new(),
             owner_pin_credited: false,
         };
     }
@@ -371,9 +385,10 @@ pub(in crate::analysis) fn reveal_outcome(
         return_admission,
         arm_selector,
     );
+    let complete_proximity_oracles_only = only_proximity_oracles(&analysis.related);
     let owner_calls = owner_call_demoted_rows(probe, related_tests);
-    let (related, related_tests_total) =
-        finalize_related_tests_with_owner_calls(analysis.related, diff_touched, &owner_calls);
+    let (related, related_tests_total, direct_rows) =
+        finalize_related_tests_with_direct_rows(analysis.related, diff_touched, &owner_calls);
     let observe = build_observe_evidence(analysis.matched_any, analysis.refused_context);
     let discriminate = if analysis.refused_context && !analysis.matched_any {
         StageEvidence::new(
@@ -424,6 +439,8 @@ pub(in crate::analysis) fn reveal_outcome(
         discriminate,
         related,
         related_total: related_tests_total,
+        complete_proximity_oracles_only,
+        direct_rows,
         owner_pin_credited: analysis.owner_pin_credited,
     }
 }
@@ -1999,7 +2016,16 @@ fn analyze_related_assertions(
     return_admission: &ReturnOracleAdmission<'_>,
     arm_selector: Option<&ArmSelector>,
 ) -> RevealAssertionAnalysis {
-    let probe_tokens = if is_effect_family(&probe.family) {
+    let probe_tokens = if let Some(fields) = changed_literal_fields(probe) {
+        // The diff changed some initializers of a struct literal and left the
+        // rest: only the changed fields' text names the behavior, so an
+        // assertion on an untouched field (`url` beside a changed
+        // `timeout_ms`) observes nothing the diff moved.
+        fields
+            .iter()
+            .flat_map(|(name, text)| extract_identifier_tokens(&format!("{name} {text}")))
+            .collect()
+    } else if is_effect_family(&probe.family) {
         // An effect target rooted at a binding the owner itself introduces
         // (`let table = ..; table.validate()?;`) names a value no test can
         // hold: a test's same-named local is a different binding, so the
@@ -2010,7 +2036,21 @@ fn analyze_related_assertions(
             .filter(|token| !owner_local_bindings.contains(token))
             .collect()
     } else {
-        extract_identifier_tokens(analysis_expression)
+        // #10479: a literal-only integer expression (`8 * 100`) returns its
+        // folded value (`800`), which an exact-value assertion pins. Digit
+        // tokens stay owner-scoped below, so the fold confirms only an
+        // assertion bound to the owner's result. A value of one or two digits
+        // is no token, as for a bare literal: `1` or `2` would match any
+        // assertion that mentions them (`one() + 1 == 2`).
+        let mut tokens = extract_identifier_tokens(analysis_expression);
+        // The folded value goes through the same token reader, so the one
+        // token-length rule in `extract_identifier_tokens` decides.
+        tokens.extend(
+            super::value_transfer::fold_literal_integer(analysis_expression)
+                .into_iter()
+                .flat_map(|folded| extract_identifier_tokens(&folded)),
+        );
+        tokens
     };
     let effect_literals = if is_effect_family(&probe.family) {
         rust_string_literals(analysis_expression)
@@ -2176,7 +2216,9 @@ fn analyze_related_assertions(
     // reads the field only after the test overwrote it on the owner's result.
     let override_fields: Vec<String> = match probe.family {
         ProbeFamily::ReturnValue => {
-            let fields = struct_literal_fields(&probe.expression);
+            let fields = changed_literal_fields(probe)
+                .map(|fields| fields.into_iter().map(|(name, _)| name).collect())
+                .unwrap_or_else(|| struct_literal_fields(&probe.expression));
             if !fields.is_empty() {
                 fields
             } else if constructed_field.is_some() {
@@ -2188,7 +2230,9 @@ fn analyze_related_assertions(
         ProbeFamily::FieldConstruction => {
             constructed_field.map(str::to_string).into_iter().collect()
         }
-        _ => Vec::new(),
+        _ => changed_literal_fields(probe)
+            .map(|fields| fields.into_iter().map(|(name, _)| name).collect())
+            .unwrap_or_default(),
     };
     let override_owner = probe
         .owner
@@ -2573,7 +2617,15 @@ fn analyze_related_assertions(
                     parameter,
                 ) && super::expression_writes_parameter(&probe.expression, parameter)
             });
+            let recording_double_read = credits_oracle
+                && *reason == RelationReason::DirectOwnerCall
+                && !import_defeats_owner
+                && !cross_package_defeats_owner
+                && !match_context.owner_shadowed
+                && !test_is_should_panic(test)
+                && (return_admission.recording_double_observed)(test, assertion);
             let matched = matched
+                || recording_double_read
                 || field_collection_read
                 || collection_argument_read
                 || out_parameter.is_some()
@@ -2746,6 +2798,7 @@ fn analyze_related_assertions(
                             ) || field_collection_read
                                 || collection_argument_read
                                 || out_parameter_confirmed
+                                || recording_double_read
                                 || (direct_collection_mutation_receiver(&probe.expression)
                                     .is_none()
                                     && ((has_token_match && field_write.is_none())
@@ -3172,6 +3225,21 @@ struct RevealMatchContext<'a> {
 /// The field a `field_construction` expression assigns: the identifier
 /// before a single `:` (`total: a + b`), or the whole shorthand
 /// identifier (`storage,`).
+/// The `(field, initializer)` pairs a probe on a struct literal expression
+/// changed, when the diff touched only some of its fields
+/// ([`changed_struct_literal_fields`]).
+fn changed_literal_fields(probe: &Probe) -> Option<Vec<(String, String)>> {
+    let before = probe.before.as_deref()?;
+    let names = changed_struct_literal_fields(before, &probe.expression)?;
+    let after = struct_literal_field_texts(&probe.expression);
+    Some(
+        after
+            .into_iter()
+            .filter(|(name, _)| names.contains(name))
+            .collect(),
+    )
+}
+
 fn constructed_field_name(expression: &str) -> Option<&str> {
     let expression = expression.trim().trim_end_matches(',').trim();
     let head = match expression.find(':') {
@@ -4112,8 +4180,27 @@ fn assertion_matches_probe_detail_with_literals(
     // owner-scoped token counts only when the assertion is bound to the
     // owner's result: it calls the owner, or names a test `let` bound from
     // an owner call (`let value = score(1); assert!(matches!(value, 2))`).
+    // Scope this lexical token confirmation to return assertion operands,
+    // not diagnostics. Keep full text for association and rendering.
+    let top_level_assertion = [
+        "assert!(",
+        "assert_eq!(",
+        "assert_ne!(",
+        "debug_assert!(",
+        "debug_assert_eq!(",
+        "debug_assert_ne!(",
+        "assert_matches!(",
+        "debug_assert_matches!(",
+        "ensure!(",
+    ]
+    .iter()
+    .any(|prefix| assertion.text.trim_start().starts_with(prefix));
+    let return_operands = (matches!(family, ProbeFamily::ReturnValue) && top_level_assertion)
+        .then(|| crate::analysis::extract::assertion_oracle_text(&assertion.text))
+        .flatten();
+    let confirmation_text = return_operands.as_deref().unwrap_or(&assertion.text);
     let confirming_token_match = probe_tokens.iter().any(|token| {
-        contains_as_whole_word(&assertion.text, token)
+        contains_as_whole_word(confirmation_text, token)
             && (owner_bound || !owner_scoped_tokens.contains(token))
     });
     let effect_literal_match = !effect_literals.is_empty()
@@ -4551,6 +4638,13 @@ pub(in crate::analysis) struct FileUseStatements {
     macro_defined: crate::analysis::sync_memo::SyncMemo<
         std::collections::BTreeMap<(std::path::PathBuf, String), bool>,
     >,
+    /// Each file's macro sites, parsed once however many names ask.
+    macro_sites: crate::analysis::sync_memo::SyncMemo<
+        std::collections::BTreeMap<
+            std::path::PathBuf,
+            std::sync::Arc<super::macro_item_names::MacroSites>,
+        >,
+    >,
 }
 
 impl FileUseStatements {
@@ -4563,11 +4657,17 @@ impl FileUseStatements {
         source: &str,
         callee: &str,
     ) -> bool {
-        let key = (file.to_path_buf(), callee.to_string());
+        let file = file.to_path_buf();
+        let key = (file.clone(), callee.to_string());
         if let Some(known) = self.macro_defined.borrow().get(&key) {
             return *known;
         }
-        let defined = super::macro_item_names::macro_may_define_item_named(source, callee);
+        // Build the scan outside the memo lock: a full-file parse behind the
+        // guard would serialize workers that first query different files.
+        let sites = self
+            .macro_sites
+            .get_or_build(&file, || super::macro_item_names::MacroSites::scan(source));
+        let defined = sites.may_define(callee);
         self.macro_defined.borrow_mut().insert(key, defined);
         defined
     }
@@ -4961,6 +5061,30 @@ pub(in crate::analysis) fn contains_as_whole_word(text: &str, token: &str) -> bo
     false
 }
 
+/// Every recognized oracle is proximity-only, and at least one reaching test
+/// has neither a recognized nor a refused assertion. Read admitted reveal
+/// rows, never raw assertion counts or a truncated display window.
+pub(in crate::analysis) fn only_proximity_oracles(related: &[RelatedTest]) -> bool {
+    let mut direct_seen = false;
+    let mut proximity_oracle_seen = false;
+    for related in related.iter().filter(|related| related.is_contributing()) {
+        let direct = related.relation_reason.is_some_and(|reason| {
+            !super::is_proximity_only(reason) && reason != RelationReason::OwnerNamedTest
+        });
+        if related.relation_reason.is_none() || direct {
+            if related.oracle.is_some()
+                || related.miss == Some(RelatedTestMiss::AssertionNotCredited)
+            {
+                return false;
+            }
+            direct_seen |= direct;
+        } else if related.oracle.is_some() {
+            proximity_oracle_seen = true;
+        }
+    }
+    direct_seen && proximity_oracle_seen
+}
+
 /// Dedup, rank and cap the related-test rows.
 ///
 /// #8387: tests the diff touches may now lead the capped render window ahead
@@ -5114,11 +5238,22 @@ fn retain_owner_calling_rows(
     window.splice(at..at, lifted.into_iter().take(take));
 }
 
+#[cfg(test)]
 fn finalize_related_tests_with_owner_calls(
-    mut related: Vec<RelatedTest>,
+    related: Vec<RelatedTest>,
     diff_touched: Option<&super::DiffTouchedTests>,
     owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
 ) -> (Vec<RelatedTest>, usize) {
+    let (rows, total, _) =
+        finalize_related_tests_with_direct_rows(related, diff_touched, owner_calls);
+    (rows, total)
+}
+
+fn finalize_related_tests_with_direct_rows(
+    mut related: Vec<RelatedTest>,
+    diff_touched: Option<&super::DiffTouchedTests>,
+    owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
+) -> (Vec<RelatedTest>, usize, Vec<RelatedTest>) {
     related.sort_by(|a, b| {
         a.name
             .cmp(&b.name)
@@ -5159,6 +5294,14 @@ fn finalize_related_tests_with_owner_calls(
     // Same post-dedup row unit as before; retain the total separately without
     // exposing discarded rows to downstream evidence/target selection.
     let matched_total = oracle_rows.len() + unmatched.len();
+    let mut seen_direct = std::collections::BTreeSet::new();
+    let direct_rows = oracle_rows
+        .iter()
+        .chain(&unmatched)
+        .filter(|row| row.relation_reason == Some(RelationReason::DirectOwnerCall))
+        .filter(|row| seen_direct.insert((row.name.clone(), row.file.clone(), row.line)))
+        .cloned()
+        .collect();
     // JSON/human renderers cap at eight rows. When one test's assertions would
     // fill that window, unique tests go first (#4760). Under the cap, keep
     // per-assertion rows so existing goldens and #1728 witnesses stay intact.
@@ -5171,7 +5314,7 @@ fn finalize_related_tests_with_owner_calls(
     }
     let free = RELATED_TESTS_RENDER_CAP.saturating_sub(oracle_rows.len());
     oracle_rows.extend(unmatched.into_iter().take(free));
-    (oracle_rows, matched_total)
+    (oracle_rows, matched_total, direct_rows)
 }
 
 const RELATED_TESTS_RENDER_CAP: usize = 8;
@@ -6082,6 +6225,7 @@ mod tests {
             )
         };
         let admission = ReturnOracleAdmission {
+            recording_double_observed: &|_, _| false,
             assertion_has_known_implicit_observer: &|_, _| None,
             owner_return_pin_required: false,
             returned_closure_pin_required: false,
@@ -6434,6 +6578,35 @@ mod tests {
             oracle_kind: OracleKind::SmokeOnly,
             oracle_strength: OracleStrength::Smoke,
             ..related(name, line, Some(RelationReason::DirectOwnerCall))
+        }
+    }
+
+    #[test]
+    fn complete_proximity_scope_rejects_a_hidden_direct_or_refused_oracle() {
+        let mut direct = related("snapshot", 1, Some(RelationReason::DirectOwnerCall));
+        direct.oracle = None;
+        direct.miss = Some(RelatedTestMiss::NoAssertion);
+        let mut rows = vec![direct.clone()];
+        rows.extend((0..12).map(|n| {
+            related(
+                &format!("sibling{n}"),
+                n + 2,
+                Some(RelationReason::SameTestFile),
+            )
+        }));
+        assert!(super::only_proximity_oracles(&rows));
+        for hidden in [
+            related("hidden", 100, Some(RelationReason::DirectOwnerCall)),
+            RelatedTest {
+                name: "refused".to_string(),
+                miss: Some(RelatedTestMiss::AssertionNotCredited),
+                ..direct.clone()
+            },
+            related("unknown_relation", 101, None),
+        ] {
+            let mut control = rows.clone();
+            control.push(hidden);
+            assert!(!super::only_proximity_oracles(&control));
         }
     }
 
@@ -7526,6 +7699,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 assertion_has_known_implicit_observer: &|_, _| None,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
@@ -7622,6 +7796,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     assertion_has_known_implicit_observer: &|_, _| None,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
@@ -7805,6 +7980,7 @@ mod tests {
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
@@ -7915,6 +8091,7 @@ mod tests {
                 import,
                 package,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &pin,
@@ -8338,6 +8515,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -8430,6 +8608,7 @@ mod tests {
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -8462,6 +8641,33 @@ mod tests {
             related.iter().all(|test| test.is_contributing()),
             "the miss is outside the window: {related:?}"
         );
+    }
+
+    #[test]
+    fn return_lexical_confirmation_uses_operands_not_diagnostics() {
+        let tokens = vec!["verifies".to_string()];
+        for (text, expected) in [
+            ("assert_eq!(value, \"verifies\");", true),
+            ("assert_eq!(value, \"other\", \"verifies\");", false),
+            (
+                "wrapper!(assert_eq!(value, \"other\", \"verifies\"));",
+                true,
+            ),
+        ] {
+            let assertion = oracle(text, OracleKind::ExactValue, OracleStrength::Strong);
+            let (matched, confirmed) = assertion_matches_probe_detail(
+                &tokens,
+                &[],
+                &[],
+                None,
+                &ProbeFamily::ReturnValue,
+                &assertion,
+                1,
+                None,
+            );
+            assert!(matched, "assertion stays associated: {text}");
+            assert_eq!(confirmed, expected, "{text}");
+        }
     }
 
     #[test]
@@ -10207,6 +10413,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10278,6 +10485,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(without_import, callee, &own_crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10320,6 +10528,7 @@ return Err(\"typed pin\".into());
             },
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10381,6 +10590,7 @@ return Err(\"typed pin\".into());
             &|_, callee| file_imports_foreign_callee_name(aliased_import, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10444,6 +10654,7 @@ return Err(\"typed pin\".into());
             &|_test, callee| file_imports_foreign_callee_name(test_source, callee, &crate_names),
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10651,6 +10862,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| true,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10696,6 +10908,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -10810,6 +11023,53 @@ return Err(\"typed pin\".into());
             assert_eq!(discriminate.summary, BUILDER_OVERRIDE_UNOBSERVED_SUMMARY);
             assert!(discriminate.summary.contains("(observation_unverified)"));
         }
+    }
+
+    /// #10916: the diff moved one initializer of a returned struct literal.
+    /// An assertion on an untouched field (`url`, `retries`) observes nothing
+    /// the diff changed, so it cannot confirm the literal; one on the changed
+    /// field still can.
+    #[test]
+    fn untouched_field_assertion_does_not_confirm_a_partly_changed_literal() {
+        let mut probe = builder_override_probe(
+            ProbeFamily::ReturnValue,
+            "RetryBuilder { attempts: 4, delay_ms: 100 }",
+        );
+        probe.before = Some("RetryBuilder { attempts: 3, delay_ms: 100 }".to_string());
+        let untouched = builder_override_test(
+            "let retry = RetryBuilder::new().build();",
+            "assert_eq!(retry.delay_ms, 100);",
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
+        assert_ne!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+        let changed = builder_override_test(
+            "let retry = RetryBuilder::new().build();",
+            "assert_eq!(retry.attempts, 4);",
+        );
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&changed, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
+        // Control: with no `before`, every field stays in play.
+        probe.before = None;
+        let (_, discriminate, _) =
+            reveal_evidence(&probe, &[(&untouched, RelationReason::DirectOwnerCall)]);
+        assert_eq!(
+            discriminate.state,
+            StageState::Yes,
+            "{}",
+            discriminate.summary
+        );
     }
 
     /// Controls for the builder override: reading the default with no
@@ -11111,6 +11371,7 @@ return Err(\"typed pin\".into());
                     &|_, _| false,
                     &|_, _| false,
                     &ReturnOracleAdmission {
+                        recording_double_observed: &|_, _| false,
                         expected_operand_value: &|_, _| None,
                         call_cannot_store: &|_, _, _, _| None,
                         constructor_starts_empty: &|_, _, _| false,
@@ -11191,6 +11452,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     expected_operand_value: &|_, _| None,
                     call_cannot_store: &|_, _, _, _| None,
                     constructor_starts_empty: &|_, _, _| false,
@@ -11290,6 +11552,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
@@ -11581,6 +11844,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -11687,6 +11951,7 @@ return Err(\"typed pin\".into());
                 &|_, _| false,
                 &|_, _| false,
                 &ReturnOracleAdmission {
+                    recording_double_observed: &|_, _| false,
                     owner_return_pin_required: false,
                     returned_closure_pin_required: false,
                     owner_return_pin: &|_, _| false,
@@ -11736,6 +12001,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -12236,6 +12502,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,
@@ -12784,6 +13051,7 @@ return Err(\"typed pin\".into());
             &|_, _| false,
             &|_, _| false,
             &ReturnOracleAdmission {
+                recording_double_observed: &|_, _| false,
                 owner_return_pin_required: false,
                 returned_closure_pin_required: false,
                 owner_return_pin: &|_, _| false,

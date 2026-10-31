@@ -542,9 +542,9 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
         return Err("SDK metadata changed application identity or analysis authority".into());
     }
     let tools = &server.tools;
-    if tools.tools.len() != 9 {
+    if tools.tools.len() != 10 {
         return Err(format!(
-            "SDK descriptor must expose the nine-tool slice surface, got {} tools",
+            "SDK descriptor must expose the ten-tool slice surface, got {} tools",
             tools.tools.len()
         ));
     }
@@ -1753,6 +1753,151 @@ fn mcp_doc_error_table_matches_vocabulary_and_resource_failure_mapping() -> Resu
                 error.code.0
             ));
         }
+    }
+    Ok(())
+}
+
+/// #11132: a panic inside a language adapter during `ripr_refresh` is a typed
+/// `analysis_failed` tool failure. The server answers it, keeps serving the
+/// next request, and the refresh after the failure analyzes normally, so a
+/// contained failure never ends the MCP process or leaves a half-committed
+/// snapshot behind.
+async fn worktree_refresh(
+    server: &McpServer,
+) -> Result<rmcp::model::CallToolResponse, rmcp::model::ErrorData> {
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("source".to_string(), Value::String("worktree".to_string()));
+    server
+        .refresh_tool(Some(arguments), super::super::MAX_RESPONSE_BYTES)
+        .await
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn refresh_contains_a_language_adapter_panic() -> Result<(), String> {
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-adapter-panic-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mcp-panic\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool { flag }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let run_git = |args: &[&str]| -> Result<(), String> {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .map_err(|error| format!("git {args:?}: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    };
+    run_git(&["init"])?;
+    run_git(&["config", "user.email", "ripr@example.invalid"])?;
+    run_git(&["config", "user.name", "RIPR Test"])?;
+    run_git(&["add", "Cargo.toml", "src/lib.rs"])?;
+    run_git(&["commit", "-m", "base"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+
+    let server = McpServer::new(
+        WorkspaceStatus::resolve_with_root(Some(root.clone())).0,
+        Some(root.clone()),
+    )
+    .map_err(|error| error.to_string())?;
+    let text = |response: CallToolResponse| -> Result<String, String> {
+        let rmcp::model::CallToolResponse::Complete(result) = response else {
+            return Err("tool call did not complete".to_string());
+        };
+        serde_json::to_string(&result).map_err(|error| error.to_string())
+    };
+
+    {
+        let _armed = crate::analysis::injected_adapter_panic::arm(
+            &root,
+            crate::analysis::language::LanguageId::Rust,
+        );
+        let failed = text(
+            worktree_refresh(&server)
+                .await
+                .map_err(|error| format!("refresh must answer, not error: {error:?}"))?,
+        )?;
+        assert!(
+            failed.contains("analysis_failed"),
+            "typed analysis_failed failure expected, got {failed}"
+        );
+    }
+
+    // The server is still alive and the same request now succeeds.
+    server
+        .status_tool(super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map_err(|error| format!("status after contained failure: {error:?}"))?;
+    let recovered = text(
+        worktree_refresh(&server)
+            .await
+            .map_err(|error| format!("recovered refresh: {error:?}"))?,
+    )?;
+    assert!(
+        !recovered.contains("analysis_failed"),
+        "the refresh after a contained panic must analyze normally, got {recovered}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+/// #9360: a typed failure is never digested. `RIPR_MCP_TEXT_CONTENT=summary`
+/// only changes the text companion of a success; a refusal keeps its
+/// `isError: true` shape with the code and recovery in text.
+#[test]
+fn summary_mode_never_digests_a_typed_failure() -> Result<(), String> {
+    let mut server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
+        .map_err(|error| error.to_string())?;
+    server.text_mode = protocol::TextContentMode::Summary;
+    let oversized = serde_json::json!({ "rows": "x".repeat(super::super::MAX_RESPONSE_BYTES) });
+    let response = server
+        .bounded_tool_result(
+            oversized,
+            workspace::SESSION_SCHEMA_VERSION,
+            "serialize refusal fixture",
+            workspace::RECOVERY_STATUS_TOO_LARGE,
+            super::super::MAX_RESPONSE_BYTES,
+        )
+        .map_err(|error| error.to_string())?;
+    let rmcp::model::CallToolResponse::Complete(result) = response else {
+        return Err("refusal did not complete".into());
+    };
+    let wire = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+    let text = wire
+        .pointer("/content/0/text")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("refusal lost its text: {wire}"))?;
+    if wire["isError"] != serde_json::json!(true)
+        || !text.starts_with(workspace::CODE_RESULT_TOO_LARGE)
+        || text.contains("ripr summary")
+        || wire.pointer("/structuredContent/failure/code")
+            != Some(&serde_json::json!(workspace::CODE_RESULT_TOO_LARGE))
+    {
+        return Err(format!("a typed failure must not be digested: {wire}"));
     }
     Ok(())
 }

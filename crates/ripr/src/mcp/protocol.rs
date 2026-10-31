@@ -2,7 +2,7 @@ use crate::workspace_status::{WorkspaceState, WorkspaceStatus};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::gaps::GAP_SCHEMA_VERSION;
+use super::gaps::{GAP_SCHEMA_VERSION, LIMITATION_SCHEMA_VERSION};
 use super::repair::{
     CODE_ATTEMPT_INVALID, CODE_ATTEMPT_NOT_FOUND, RECEIPT_STATUS_SCHEMA_VERSION, RECEIPT_TEMPLATE,
     REPAIR_ATTEMPT_SCHEMA_VERSION, REPAIR_ATTEMPT_TEMPLATE, REPAIR_PACKET_SCHEMA_VERSION,
@@ -21,12 +21,14 @@ pub(super) const STATUS_TOOL_NAME: &str = "ripr_workspace_status";
 pub(super) const REFRESH_TOOL_NAME: &str = "ripr_refresh";
 pub(super) const LIST_GAPS_TOOL_NAME: &str = "ripr_list_gaps";
 pub(super) const GET_GAP_TOOL_NAME: &str = "ripr_get_gap";
+pub(super) const GET_TOP_LIMITATION_TOOL_NAME: &str = "ripr_get_top_limitation";
 pub(super) const PREPARE_REPAIR_TOOL_NAME: &str = "ripr_prepare_repair";
 pub(super) const GET_REPAIR_ATTEMPT_TOOL_NAME: &str = "ripr_get_repair_attempt";
 pub(super) const GET_RECEIPT_STATUS_TOOL_NAME: &str = "ripr_get_receipt_status";
 pub(super) const STATUS_RESOURCE_URI: &str = "ripr://workspace/status";
 pub(super) const SNAPSHOT_RESOURCE_TEMPLATE: &str = "ripr://snapshot/{snapshot_id}";
 pub(super) const GAP_RESOURCE_TEMPLATE: &str = "ripr://gap/{canonical_id}";
+pub(super) const LIMITATION_RESOURCE_TEMPLATE: &str = "ripr://gap/{canonical_id}/limitation";
 /// The typed-failure vocabulary every evidence tool can return. Codes a
 /// tool cannot reach in this slice stay named (reserved) so the wire
 /// contract is stable when the owning slice lands; each tool description
@@ -66,17 +68,21 @@ pub(super) const INSTRUCTIONS: &str = "Flow: call `ripr_workspace_status` for ro
 
 const STATUS_TOOL_DESCRIPTION: &str = "Report the RIPR workspace and session state — call this first in a session: it is the root-discovery, authority, and session read. Covers repository-root discovery state (validated or unavailable; root error detail names why), launch-trust and authority facts (source edit, verification execution, mutation execution, and model provider are all none), and a session block: desired input, attempt state (no_snapshot, in_flight, completed, failed), last completed snapshot identity, last-known-good, freshness, typed AnalysisOutcome, and profile facts (project_config loaded, built-in defaults, or detected_not_loaded). `workspace_state: ready` means only that a repository root was discovered — not that analysis ran or that no issues were found. This tool returns session facts only: no gap evidence. It never edits source, runs tests or mutation, executes verification commands. To run analysis, call ripr_refresh.";
 
-const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the default-branch diff (optional `base` selects another revision) through shared check authority; commit its completed session snapshot. `source: \"worktree\"` opts into saved tracked edits, with no repair cards. Call this when the session has no current snapshot or the selected input changed since the last one. Blocks until: completed (snapshot identity returned), failed (typed code, bounded detail, recovery; last-known-good kept), in_flight (another attempt is running — wait and retry), or workspace_unavailable (restart with `--root <repository>`). An unresolvable default branch fails with analysis_failed naming candidate branches; retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits; a superseded attempt is never committed. Unsupported profiles fail closed with unsupported_profile. It never edits source, executes verification or mutation commands, or prepares a repair. By default: committed input only; saved tracked edits require `source: \"worktree\"`; unsaved buffers and untracked files remain outside — the INSTRUCTIONS scope block details the `--committed`/`--worktree`/`--diff` routes.";
+const REFRESH_TOOL_DESCRIPTION: &str = "Run one bounded static analysis of the default-branch diff (optional `base` selects another revision) through shared check authority; commit its completed session snapshot. `source: \"worktree\"` opts into saved tracked edits, with no repair cards. Call this when the session has no current snapshot or the selected input changed since the last one. The result has fresh_for_working_tree and a verify route (re-check after editing tests). Blocks until: completed (snapshot identity returned), failed (isError; typed code, detail, recovery; last-known-good kept), in_flight (another attempt is running — wait and retry), or workspace_unavailable (restart with `--root <repository>`). An unresolvable default branch fails with analysis_failed naming candidate branches; retry with `base`. A `base` starting with `-` or naming no commit fails closed; omitting `base` returns to the default branch. A cancelled attempt still commits as a completed snapshot when it finishes and only transport teardown abandons one before it commits; a superseded attempt is never committed. Unsupported profiles fail closed with unsupported_profile. It never edits source, executes verification or mutation commands, or prepares a repair. By default: committed input only; saved tracked edits require `source: \"worktree\"`; unsaved buffers and untracked files remain outside; see INSTRUCTIONS for the scope routes.";
 
 const LIST_GAPS_TOOL_DESCRIPTION: &str = "Return the deterministic bounded working set of canonical items for the current completed snapshot (optional snapshot_id must match, else stale_snapshot). Call this after ripr_refresh to choose which items merit a detail read. The response carries counts, omitted identities with reasons, the selection basis, and one small summary per selected item (fields in the outputSchema). Selection is the shared CLI/LSP budget authority: MCP does not re-rank, never truncates silently, and infers no business risk; overflow is disclosed with reasons. Optional file, class, language, and repair_ready filters narrow the stored selection conjunctively before paging; offset and limit page the narrowed set in snapshot order, disclosed through page.has_more and page.next_offset. Fails closed with no_snapshot before the first successful ripr_refresh, workspace_unavailable on an unavailable root (restart with --root <repository>), and result_too_large on an over-bound page. Per-item detail: ripr_get_gap or ripr://gap/{canonical_id}.";
 
 const GET_GAP_TOOL_DESCRIPTION: &str = "Return one canonical item's complete bounded analysis evidence from the current completed snapshot (optional snapshot_id must match or the call fails closed with stale_snapshot). This is the read for analysis evidence when no repair intent exists — prefer ripr_get_repair_card when the intent is to repair; this evidence never authorizes an edit. repair_packet_ready now reports the committed producer repair-readiness facts. Unknown ids fail closed with item_not_found; a document over the response bound fails with result_too_large — follow the failure's captured-root/base/source CLI recovery outside MCP (a bounded summary, not immutable snapshot replay); retrying ripr_get_gap cannot shrink the item. Fails closed with no_snapshot before the first successful ripr_refresh and workspace_unavailable on an unavailable root. The resource ripr://gap/{canonical_id} returns the same document.";
 
-const PREPARE_REPAIR_TOOL_DESCRIPTION: &str = "When every committed producer repair-readiness gate reads established, create — or replay — one bounded in-memory repair transaction for one canonical item of the current completed snapshot. Call this when the agent intends to repair an item from ripr_list_gaps; the readiness gates are on that item's evidence. Inputs: canonical_id (required, from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The outputSchema enumerates the complete document. Repeating the call for the same snapshot, item, and root replays the identical document — never a second transaction. When a gate is not established the tool returns repair_packet_ready: false with the typed ineligibility reason and attempt: null — it never guesses a missing field and never creates a misleading attempt. This tool never edits source, never launches a process, and never executes verification or mutation commands; the external client's approval and sandbox policy remains authoritative. Fails closed with no_snapshot before the first successful ripr_refresh, workspace_unavailable on an unavailable root, and item_not_found on unknown canonical ids.";
+const GET_TOP_LIMITATION_TOOL_DESCRIPTION: &str = "Return the earliest committed producer limitation that prevents a safe repair route for one canonical item of the current completed snapshot (optional snapshot_id must match, else stale_snapshot): kind, stage, reason, recovery, restart identity, retryable, and the stronger claim that stays prohibited. Producer static limits outrank readiness gates; an item with none returns kind no_limitation_established, never null. Reads committed facts only, with no analysis rerun. Fails closed with item_not_found, no_snapshot, and workspace_unavailable. The resource ripr://gap/{canonical_id}/limitation returns the same document.";
+
+const PREPARE_REPAIR_TOOL_DESCRIPTION: &str = "When every committed producer repair-readiness gate reads established, create — or replay — one bounded in-memory repair transaction for one canonical item of the current completed snapshot. Call this when the agent intends to repair an item from ripr_list_gaps; the readiness gates are on that item's evidence. Inputs: canonical_id (required, from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The outputSchema enumerates the complete document. Repeating the call for the same snapshot, item, and root replays the identical document — never a second transaction. When a gate is not established the tool returns isError: true, repair_packet_ready: false, the typed ineligibility reason, a next step and attempt: null — it never guesses a missing field and never creates a misleading attempt. This tool never edits source, never launches a process, and never executes verification or mutation commands; the external client's approval and sandbox policy remains authoritative. Fails closed with no_snapshot before the first successful ripr_refresh, workspace_unavailable on an unavailable root, and item_not_found on unknown canonical ids.";
 
 const GET_REPAIR_ATTEMPT_TOOL_DESCRIPTION: &str = "Read one repair transaction by its attempt identity, without executing anything it names. Call this with an attempt id from ripr_prepare_repair or the durable store, before acting on it. Session transactions from ripr_prepare_repair answer first: immutable packet, awaiting_edit state, snapshot and root identity binding, resource links. Otherwise the shared repair-attempt authority reads the durable attempt store of this root: a valid manifest projects state, repository head, seam identity, artifact digest bindings, follow-up command display string, and typed CommandSpec routes when the retained packet carries valid ones — the human display is never execution authority and shell_required or manual modes are visibly non-direct; the host-local root path is never projected. A manifest that fails canonical validation fails closed with attempt_invalid; an unknown identity fails closed with attempt_not_found. An attempt bound to a stale snapshot fails closed with the reserved superseded state and the current snapshot identity. Superseded tombstones older than the 64-entry session bound read attempt_not_found instead. Never edits source, launches a process, or executes verification or mutation commands. The resource ripr://repair-attempt/{attempt_id} returns the same document.";
 
 const GET_RECEIPT_STATUS_TOOL_DESCRIPTION: &str = "Read the current receipt state for one attempt identity (receipt ids are attempt-bound: one retained receipt per durable attempt). Call this after external verification finished to learn whether the attempt improved, regressed, or stayed unchanged — and before trusting an old receipt that the snapshot may have outrun. The status vocabulary is awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, and invalid. Session transactions report awaiting_edit with an explicit null receipt: RIPR performs no verification and issues no receipt. Durable attempts report their producer state mapped onto the same vocabulary; the terminal mapping is owned by the same reading as CLI status and is documented on the outputSchema status field. A finished digest-bound terminal receipt projects the receipt document with exact byte bindings — and receipt presence alone never reports closed; a manifest or receipt that fails canonical validation reports invalid or attempt_invalid rather than a reconstructed state. Status binds exact before/after/verify bytes, repository identity, candidate item, and currentness, re-validated on every read — never mtime or latest-file convention. Static movement and focused runtime test execution remain separate evidence axes — this document reports static receipt state only. This read edits nothing and executes nothing. The resource ripr://receipt/{receipt_id} returns the same document.";
+
+const LIMITATION_RESOURCE_TEMPLATE_DESCRIPTION: &str = "One canonical item's earliest producer limitation, the same document ripr_get_top_limitation returns: typed kind, stage, reason, recovery, retryable, restart identity, and the prohibited stronger claim. The item must exist in the current completed snapshot (else item_not_found).";
 
 const STATUS_RESOURCE_DESCRIPTION: &str = "Bounded, read-only workspace discovery, authority, and session status: repository-root discovery state, configuration presence, launch-trust and authority facts, and the current analysis session (attempt state, last completed snapshot identity, typed AnalysisOutcome, profile facts). No gap evidence detail is exposed here; run ripr_refresh, then read items through ripr_get_gap. On an unavailable root the payload carries the same recovery sentence as the ripr_workspace_status tool result as a second text content entry, naming the cause and the restart route (`ripr mcp --stdio --root <repository>`).";
 
@@ -88,9 +94,9 @@ const REPAIR_ATTEMPT_TEMPLATE_DESCRIPTION: &str = "One repair transaction, as re
 
 const RECEIPT_TEMPLATE_DESCRIPTION: &str = "The receipt status document for one attempt identity, identical to the ripr_get_receipt_status tool result: the status vocabulary (awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, invalid), the digest-bound receipt document when a durable attempt retained one, and the currentness basis. Receipt issuance is external authority — RIPR performs no verification and executes nothing on this read.";
 
-const REPAIR_CARD_TEMPLATE_DESCRIPTION: &str = "One canonical item's bounded repair card, the same document ripr_get_repair_card returns: the repair_card.v1 document `ripr agent card` and the language server project assemble from the committed snapshot by the shared authority. The card names the seam, witness, fix instruction, edit cage, attempt state, and typed next action. The item must exist in the current snapshot with an owner-discriminated seam binding (else item_not_found or seam_not_found).";
+const REPAIR_CARD_TEMPLATE_DESCRIPTION: &str = "One canonical item's bounded repair card, the same document ripr_get_repair_card returns: the repair_card.v1 document `ripr agent card` and the language server project assemble from the committed snapshot by the shared authority. The card names the seam, witness, fix instruction, edit cage, attempt state, and typed next action. The item must exist in the current snapshot with an owner-discriminated seam binding (else item_not_found, seam_not_found, or policy_omitted).";
 
-const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "Project the bounded repair card for one canonical item of the current completed snapshot: the same versioned repair_card.v1 document `ripr agent card` and the standard language server project, assembled by the shared application authority. Route disambiguation: prefer this card over ripr_get_gap when the agent intends to repair; ripr_get_gap is the lighter read when only analysis evidence is wanted. Inputs: canonical_id (required, from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The document carries the verbatim card plus the claim boundary and resource links. The durable attempt store is re-read at card-read time, so the attempt block matches `ripr agent status` at this moment; in-memory session transactions never ride a card. The card edits nothing, executes nothing, and is never a repair authorization: the external client's approval and sandbox policy remains authoritative for the command the next action names, and the display binds the portable root `.` (never the host-local path). Reachable failures: no_snapshot, analysis_in_flight, stale_snapshot, item_not_found, seam_not_found, identity_unnameable, budget_overflow, incomplete_inventory, result_too_large, workspace_unavailable, analysis_failed; policy_omitted and witness_unavailable stay named on the wire for stability. The resource ripr://repair-card/{canonical_id} returns the same document.";
+const GET_REPAIR_CARD_TOOL_DESCRIPTION: &str = "Project the bounded repair card for one canonical item of the current completed snapshot: the same versioned repair_card.v1 document `ripr agent card` and the standard language server project, assembled by the shared application authority. Route disambiguation: prefer this card over ripr_get_gap when the agent intends to repair; ripr_get_gap is the lighter read when only analysis evidence is wanted. Inputs: canonical_id (required, from ripr_list_gaps) and optional snapshot_id, which must match the current snapshot or the call fails closed with stale_snapshot. The document carries the verbatim card plus the claim boundary and resource links. The durable attempt store is re-read at card-read time, so the attempt block matches `ripr agent status` at this moment; in-memory session transactions never ride a card. The card edits nothing, executes nothing, and is never a repair authorization: the external client's approval and sandbox policy remains authoritative for the command the next action names, and the display binds the portable root `.` (never the host-local path). Reachable failures: no_snapshot, analysis_in_flight, stale_snapshot, item_not_found, seam_not_found, identity_unnameable, budget_overflow, incomplete_inventory, policy_omitted, result_too_large, workspace_unavailable, analysis_failed; witness_unavailable stays named on the wire for stability. The resource ripr://repair-card/{canonical_id} returns the same document.";
 
 pub(super) fn tools_list_result() -> Value {
     // #9852 context-sink budget: this payload rides every session start, so
@@ -118,6 +124,7 @@ pub(super) fn tools_list_result() -> Value {
         refresh_tool_descriptor(),
         list_gaps_tool_descriptor(),
         get_gap_tool_descriptor(),
+        get_top_limitation_tool_descriptor(),
         prepare_repair_tool_descriptor(),
         get_repair_attempt_tool_descriptor(),
         get_receipt_status_tool_descriptor(),
@@ -144,6 +151,13 @@ pub(super) fn resource_templates_list_result() -> Value {
             "name": "ripr-gap-evidence",
             "title": "RIPR gap evidence",
             "description": GAP_RESOURCE_TEMPLATE_DESCRIPTION,
+            "mimeType": "application/json",
+        },
+        {
+            "uriTemplate": LIMITATION_RESOURCE_TEMPLATE,
+            "name": "ripr-gap-limitation",
+            "title": "RIPR gap limitation",
+            "description": LIMITATION_RESOURCE_TEMPLATE_DESCRIPTION,
             "mimeType": "application/json",
         },
         {
@@ -181,9 +195,9 @@ struct McpStatusDocument<'a> {
 #[derive(Serialize)]
 struct McpSurfaceStatus {
     transport: &'static str,
-    tools: [&'static str; 9],
+    tools: [&'static str; 10],
     resources: [&'static str; 1],
-    resource_templates: [&'static str; 5],
+    resource_templates: [&'static str; 6],
     bounds: McpBoundsStatus,
 }
 
@@ -212,6 +226,7 @@ pub(super) fn status_document(
                 REFRESH_TOOL_NAME,
                 LIST_GAPS_TOOL_NAME,
                 GET_GAP_TOOL_NAME,
+                GET_TOP_LIMITATION_TOOL_NAME,
                 PREPARE_REPAIR_TOOL_NAME,
                 GET_REPAIR_ATTEMPT_TOOL_NAME,
                 GET_RECEIPT_STATUS_TOOL_NAME,
@@ -222,6 +237,7 @@ pub(super) fn status_document(
             resource_templates: [
                 SNAPSHOT_RESOURCE_TEMPLATE,
                 GAP_RESOURCE_TEMPLATE,
+                LIMITATION_RESOURCE_TEMPLATE,
                 REPAIR_ATTEMPT_TEMPLATE,
                 RECEIPT_TEMPLATE,
                 REPAIR_CARD_TEMPLATE,
@@ -257,6 +273,7 @@ pub(super) fn status_tool_result(
     max_message_bytes: usize,
     max_response_bytes: usize,
     max_envelope_bytes: usize,
+    text_mode: TextContentMode,
 ) -> Result<Value, String> {
     let document = status_document(
         status,
@@ -265,7 +282,7 @@ pub(super) fn status_tool_result(
         max_message_bytes,
         max_response_bytes,
     );
-    let mut envelope = tool_result(document, max_envelope_bytes)?;
+    let mut envelope = tool_result_with(document, max_envelope_bytes, text_mode)?;
     if let Some(recovery) = unavailable_recovery(status)
         && let Some(content) = envelope.get_mut("content").and_then(Value::as_array_mut)
     {
@@ -293,13 +310,79 @@ pub(super) fn status_tool_result(
 /// pre-shrink their pages against the same budget
 /// ([`structured_envelope_overflows`]); single-item producers refuse
 /// through their document guard and this envelope guard.
+#[cfg(test)]
 pub(super) fn tool_result(document: Value, max_envelope_bytes: usize) -> Result<Value, String> {
+    tool_result_with(document, max_envelope_bytes, TextContentMode::Full)
+}
+
+/// Environment variable that selects [`TextContentMode`] for one server
+/// process (set it in the MCP host's server `env`).
+pub(super) const TEXT_CONTENT_ENV: &str = "RIPR_MCP_TEXT_CONTENT";
+
+/// What `content[0].text` carries on a successful tool result. The complete
+/// document is always in `structuredContent`; this only selects the text
+/// companion the MCP specification asks for on behalf of hosts that do not
+/// read structured results (#9360).
+///
+/// `Full` (the default) is the compact JSON serialization of the document, so
+/// a host that reads only text content loses nothing. `Summary` is an opt-in
+/// token saver for hosts known to read `structuredContent`: a short digest
+/// that states plainly it is not a copy and how to get the full text. The
+/// default is not flipped because a host that feeds only text content to its
+/// model would silently lose the result, which is a worse failure than the
+/// duplicated tokens.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum TextContentMode {
+    #[default]
+    Full,
+    Summary,
+}
+
+impl TextContentMode {
+    /// `summary` (ASCII case-insensitive, surrounding whitespace ignored)
+    /// selects [`TextContentMode::Summary`]. Every other value, including a
+    /// typo, keeps the lossless default: an unrecognized spelling must never
+    /// shrink what a text-only host receives.
+    pub(super) fn from_env_value(value: Option<&str>) -> Self {
+        match value.map(str::trim) {
+            Some(value) if value.eq_ignore_ascii_case("summary") => Self::Summary,
+            _ => Self::Full,
+        }
+    }
+
+    pub(super) fn from_env() -> Self {
+        Self::from_env_value(std::env::var(TEXT_CONTENT_ENV).ok().as_deref())
+    }
+}
+
+/// [`tool_result`] with an explicit text companion. The size guard always
+/// measures the complete double-carry envelope, so a document is admitted or
+/// refused identically in both modes (paging and `result_too_large` do not
+/// depend on the mode); `Summary` only replaces `content[0].text` afterward.
+pub(super) fn tool_result_with(
+    document: Value,
+    max_envelope_bytes: usize,
+    mode: TextContentMode,
+) -> Result<Value, String> {
+    tool_result_flagged(document, max_envelope_bytes, mode, false)
+}
+
+/// [`tool_result_with`] with an explicit `isError`. A refusal or a failed
+/// attempt keeps its typed document in `structuredContent` (the advertised
+/// output schema still describes it) but must not read as a success to a
+/// host that keys on `isError` (agent-experience MCP audit findings 4a, 6).
+pub(super) fn tool_result_flagged(
+    document: Value,
+    max_envelope_bytes: usize,
+    mode: TextContentMode,
+    is_error: bool,
+) -> Result<Value, String> {
     let text = serde_json::to_string(&document)
         .map_err(|error| format!("render tool document: {error}"))?;
-    let structured = json!({
+    let mut structured = json!({
         "content": [{ "type": "text", "text": text }],
         "structuredContent": document,
-        "isError": false,
+        "isError": is_error,
     });
     let bytes = envelope_bytes(&structured)?;
     if bytes > max_envelope_bytes {
@@ -308,7 +391,112 @@ pub(super) fn tool_result(document: Value, max_envelope_bytes: usize) -> Result<
             super::MAX_RESPONSE_BYTES
         ));
     }
+    if mode == TextContentMode::Summary {
+        let summary = structured
+            .get("structuredContent")
+            .map(summary_text)
+            .ok_or_else(|| "tool envelope lost structuredContent".to_string())?;
+        if let Some(slot) = structured.pointer_mut("/content/0/text") {
+            *slot = Value::String(summary);
+        }
+    }
     Ok(structured)
+}
+
+const SUMMARY_STRING_CHARS: usize = 200;
+const SUMMARY_LISTED_IDS: usize = 5;
+const SUMMARY_LISTED_FIELDS: usize = 12;
+
+/// The opt-in text digest of a document: a header that says this is not the
+/// full result, then one line per top-level field — scalars verbatim (long
+/// strings truncated with a marker), arrays as counts (plus the first few
+/// `canonical_id`s so a text-only agent can still call `ripr_get_gap`), and
+/// objects as their field names. No fact is invented or reworded; every line
+/// is a projection of the structured document.
+fn summary_text(document: &Value) -> String {
+    let mut lines = Vec::new();
+    let schema = document
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .map_or_else(|| "unknown schema".to_string(), escape_summary);
+    lines.push(format!(
+        "ripr summary ({schema}). This text is a digest, not a copy: the complete result is `structuredContent`. A host that reads only text content should start the server with {TEXT_CONTENT_ENV}=full to receive the full JSON here."
+    ));
+    let Some(object) = document.as_object() else {
+        return lines.join("\n");
+    };
+    for (raw_key, value) in object {
+        if raw_key == "schema_version" {
+            continue;
+        }
+        let key = escape_summary(raw_key);
+        lines.push(match value {
+            Value::Null => format!("{key}: null"),
+            Value::Bool(flag) => format!("{key}: {flag}"),
+            Value::Number(number) => format!("{key}: {number}"),
+            Value::String(text) => format!("{key}: {}", clip_summary_string(text)),
+            Value::Array(entries) => {
+                let ids: Vec<String> = entries
+                    .iter()
+                    .filter_map(|entry| entry.get("canonical_id").and_then(Value::as_str))
+                    .take(SUMMARY_LISTED_IDS)
+                    .map(escape_summary)
+                    .collect();
+                if ids.is_empty() {
+                    format!("{key}: {} entries", entries.len())
+                } else {
+                    format!(
+                        "{key}: {} entries; first canonical_id values: {}",
+                        entries.len(),
+                        ids.join(", ")
+                    )
+                }
+            }
+            Value::Object(fields) => {
+                let names: Vec<String> = fields
+                    .keys()
+                    .map(|name| escape_summary(name))
+                    .take(SUMMARY_LISTED_FIELDS)
+                    .collect();
+                let more = fields.len().saturating_sub(names.len());
+                if more == 0 {
+                    format!("{key}: object with fields {}", names.join(", "))
+                } else {
+                    format!(
+                        "{key}: object with fields {} and {more} more",
+                        names.join(", ")
+                    )
+                }
+            }
+        });
+    }
+    lines.join("\n")
+}
+
+/// Control characters (newlines above all) are escaped so a document string
+/// can never start a new digest line and forge a `key: value` entry.
+fn escape_summary(text: &str) -> String {
+    text.chars()
+        .flat_map(|character| {
+            let escaped: Vec<char> = if character.is_control() {
+                character.escape_default().collect()
+            } else {
+                vec![character]
+            };
+            escaped
+        })
+        .collect()
+}
+
+fn clip_summary_string(text: &str) -> String {
+    if text.chars().count() <= SUMMARY_STRING_CHARS {
+        return escape_summary(text);
+    }
+    let clipped: String = text.chars().take(SUMMARY_STRING_CHARS).collect();
+    format!(
+        "{}... (truncated; full text in structuredContent)",
+        escape_summary(&clipped)
+    )
 }
 
 fn envelope_bytes(envelope: &Value) -> Result<usize, String> {
@@ -503,6 +691,11 @@ fn list_gaps_tool_descriptor() -> Value {
                     "minimum": 0,
                     "description": "Start index within the narrowed items, in snapshot order. Default 0."
                 },
+                "omitted_offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Start index within the omitted identities, which page on their own axis (bounded by count and bytes per response). Follow continuation.next_omitted_page. Default 0."
+                },
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
@@ -565,6 +758,76 @@ fn get_gap_tool_descriptor() -> Value {
             "idempotentHint": true,
             "openWorldHint": false
         }
+    })
+}
+
+fn get_top_limitation_tool_descriptor() -> Value {
+    json!({
+        "name": GET_TOP_LIMITATION_TOOL_NAME,
+        "title": "RIPR top limitation",
+        "description": GET_TOP_LIMITATION_TOOL_DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "canonical_id": { "type": "string", "minLength": 1 },
+                "snapshot_id": { "type": "string" }
+            },
+            "required": ["canonical_id"],
+            "additionalProperties": false
+        },
+        "outputSchema": limitation_output_schema(),
+        "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "idempotentHint": true,
+            "openWorldHint": false
+        }
+    })
+}
+
+fn limitation_output_schema() -> Value {
+    json!({
+        "oneOf": [
+            {
+                "type": "object",
+                "properties": {
+                    "schema_version": { "type": "string", "const": LIMITATION_SCHEMA_VERSION },
+                    "snapshot_id": { "type": "string" },
+                    "canonical_id": { "type": "string" },
+                    "class": { "type": "string" },
+                    "limitation": {
+                        "type": "object",
+                        "properties": {
+                            "kind": { "type": "string" },
+                            "stage": {
+                                "type": "string",
+                                "enum": ["producer_static_limit", "seam_admission", "repair_readiness", "none"]
+                            },
+                            "reason": { "type": "string" },
+                            "recovery": { "type": "string" },
+                            "retryable": { "type": "boolean" },
+                            "prohibited_claim": { "type": "string" },
+                            "restart": {
+                                "type": "object",
+                                "properties": {
+                                    "snapshot_id": { "type": "string" },
+                                    "canonical_id": { "type": "string" },
+                                    "route": { "type": "string" }
+                                },
+                                "required": ["snapshot_id", "canonical_id", "route"]
+                            }
+                        },
+                        "required": ["kind", "stage", "reason", "recovery", "retryable", "prohibited_claim", "restart"]
+                    },
+                    "links": { "type": "object" },
+                    "claim_boundary": { "type": "string" },
+                    "limitations": { "type": "array", "items": { "type": "string" } }
+                },
+                "required": ["schema_version", "snapshot_id", "canonical_id", "limitation", "claim_boundary", "limitations"],
+                "additionalProperties": false
+            },
+            typed_failure_document_schema(LIMITATION_SCHEMA_VERSION)
+        ]
     })
 }
 
@@ -677,6 +940,8 @@ fn repair_card_output_schema() -> Value {
                     "requested_snapshot_id": { "type": ["string", "null"] },
                     "item": { "type": "object" },
                     "card": { "type": "object" },
+                    "finding_guidance": { "type": "object" },
+                    "mcp_detail_routes": { "type": "array", "items": { "type": "object" } },
                     "currentness": { "type": "object" },
                     "claim_boundary": { "type": "string" },
                     "limitations": {
@@ -765,8 +1030,8 @@ fn scope_disclosure_schema() -> Value {
                 "enum": ["outside this analysis", "saved tracked edits included"]
             },
             "note": { "type": "string" },
-            "consumed_source_commitment": { "type": "string", "const": "not_established" },
-            "repair_cards": { "type": "string", "const": "withheld" },
+            "consumed_source_commitment": { "type": "string", "enum": ["not_established", "established"] },
+            "repair_cards": { "type": "string", "enum": ["withheld", "available"] },
             "untracked_edits": {
                 "type": "object",
                 "properties": {
@@ -1067,8 +1332,8 @@ pub(super) fn status_success_schema() -> Value {
                     "tools": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "minItems": 9,
-                        "maxItems": 9
+                        "minItems": 10,
+                        "maxItems": 10
                     },
                     "resources": {
                         "type": "array",
@@ -1079,8 +1344,8 @@ pub(super) fn status_success_schema() -> Value {
                     "resource_templates": {
                         "type": "array",
                         "items": { "type": "string" },
-                        "minItems": 5,
-                        "maxItems": 5
+                        "minItems": 6,
+                        "maxItems": 6
                     },
                     "bounds": {
                         "type": "object",
@@ -1127,7 +1392,19 @@ fn refresh_output_schema() -> Value {
                         "additionalProperties": false
                     },
                     "scope": scope_disclosure_schema(),
+                    "fresh_for_working_tree": { "type": ["boolean", "null"] },
+                    "verify": { "type": "object" },
                     "requested_base": { "type": "string" },
+                    "empty_scope_hint": {
+                        "type": "object",
+                        "properties": {
+                            "why": { "type": "string" },
+                            "pass_base": { "type": "string" },
+                            "pass_source": { "type": "string" }
+                        },
+                        "required": ["why", "pass_base", "pass_source"],
+                        "additionalProperties": false
+                    },
                     "requested_source": { "type": "string", "enum": ["committed", "worktree"] },
                     "captured_source": { "type": ["string", "null"], "enum": ["committed", "worktree", null] },
                     "snapshot": { "type": ["object", "null"] },
@@ -1250,6 +1527,20 @@ fn gap_list_output_schema() -> Value {
                         "additionalProperties": false
                     },
                     "omitted_items": { "type": "array" },
+                    "omitted_page": {
+                        "type": "object",
+                        "properties": {
+                            "offset": { "type": "integer", "minimum": 0 },
+                            "returned": { "type": "integer", "minimum": 0 },
+                            "has_more": { "type": "boolean" },
+                            "next_offset": {
+                                "type": ["integer", "null"],
+                                "minimum": 0
+                            }
+                        },
+                        "required": ["offset", "returned", "has_more", "next_offset"],
+                        "additionalProperties": false
+                    },
                     "continuation": { "type": "object" },
                     "claim_boundary": { "type": "string" },
                     "limitations": {
@@ -1278,6 +1569,7 @@ fn gap_list_output_schema() -> Value {
                     "items",
                     "page",
                     "omitted_items",
+                    "omitted_page",
                     "continuation",
                     "claim_boundary",
                     "limitations"
@@ -1329,6 +1621,8 @@ fn repair_packet_output_schema() -> Value {
                     "requested_snapshot_id": { "type": ["string", "null"] },
                     "repair_packet_ready": { "type": "boolean" },
                     "ineligibility": { "type": "object" },
+                    "finding_guidance": { "type": "object" },
+                    "next": { "type": "object" },
                     "recovery": { "type": "string" },
                     "item": { "type": "object" },
                     "attempt": { "type": ["object", "null"] },
@@ -1478,7 +1772,7 @@ mod tests {
     -> Result<(), String> {
         let rows = |count: usize| {
             json!({
-                "schema_version": "ripr-mcp-gap-list-v3",
+                "schema_version": "ripr-mcp-gap-list-v4",
                 "rows": (0..count)
                     .map(|index| {
                         json!({
@@ -1519,7 +1813,7 @@ mod tests {
         }
         let reparsed: Value = serde_json::from_str(small_text)
             .map_err(|error| format!("text copy is not JSON: {error}"))?;
-        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v3")) {
+        if reparsed.get("schema_version") != Some(&json!("ripr-mcp-gap-list-v4")) {
             return Err(format!("text copy drifted from the document: {reparsed}"));
         }
 
@@ -1642,6 +1936,234 @@ mod tests {
         Ok(())
     }
 
+    /// #9360: the text companion is selectable, `structuredContent` is the
+    /// single full result in both modes, and the guard is mode-independent.
+    #[test]
+    fn summary_text_mode_keeps_structured_content_whole_and_shrinks_only_the_text()
+    -> Result<(), String> {
+        let rows = |count: usize| {
+            json!({
+                "schema_version": "ripr-mcp-gap-list-v4",
+                "claim_boundary": "Static exposure evidence only.",
+                "selected": count,
+                "overflowed": false,
+                "requested_snapshot_id": Value::Null,
+                "filters": { "class": "weakly_exposed", "language": "rust" },
+                "items": (0..count)
+                    .map(|index| {
+                        json!({
+                            "canonical_id": format!("gap:rust:src/m{index}.rs:owner:predicate_boundary:p{index}"),
+                            "note": "n".repeat(300),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            })
+        };
+        let budget = super::super::MAX_RESPONSE_BYTES;
+        let full = tool_result_with(rows(40), budget, TextContentMode::Full)?;
+        let summary = tool_result_with(rows(40), budget, TextContentMode::Summary)?;
+        if full != tool_result(rows(40), budget)? {
+            return Err("tool_result must stay the lossless Full mode".to_string());
+        }
+        if full["structuredContent"] != summary["structuredContent"]
+            || summary["structuredContent"] != rows(40)
+        {
+            return Err("structuredContent must be the one full document in both modes".into());
+        }
+        if full["isError"] != summary["isError"] || summary["isError"] != json!(false) {
+            return Err("summary mode must not change isError".into());
+        }
+        let full_text = full
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or("full text missing")?;
+        if serde_json::from_str::<Value>(full_text).ok() != Some(rows(40)) {
+            return Err("Full text must remain the JSON copy of the document".into());
+        }
+        let text = summary
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or("summary text missing")?;
+        if summary["content"].as_array().map(Vec::len) != Some(1) {
+            return Err("summary mode keeps exactly one text content item".into());
+        }
+        if serde_json::from_str::<Value>(text).is_ok() {
+            return Err("summary text must not masquerade as the JSON document".into());
+        }
+        // The text-only pointer, the identity of the document, the counts
+        // and the first identities (so a text-only agent can continue).
+        for needle in [
+            "ripr-mcp-gap-list-v4",
+            "not a copy",
+            "structuredContent",
+            "RIPR_MCP_TEXT_CONTENT=full",
+            "selected: 40",
+            "overflowed: false",
+            "requested_snapshot_id: null",
+            "claim_boundary: Static exposure evidence only.",
+            "filters: object with fields class, language",
+            "items: 40 entries; first canonical_id values: gap:rust:src/m0.rs",
+            "gap:rust:src/m4.rs",
+        ] {
+            if !text.contains(needle) {
+                return Err(format!("summary text lost {needle:?}: {text}"));
+            }
+        }
+        if text.contains("gap:rust:src/m5.rs") || text.contains(&"n".repeat(50)) {
+            return Err(format!(
+                "summary must bound ids and drop row bodies: {text}"
+            ));
+        }
+        let (full_bytes, summary_bytes) = (full_text.len(), text.len());
+        if summary_bytes * 10 > full_bytes {
+            return Err(format!(
+                "summary text should be an order of magnitude smaller: {summary_bytes} vs {full_bytes}"
+            ));
+        }
+        // A long scalar is clipped with a marker that points back.
+        let long = tool_result_with(
+            json!({ "schema_version": "s", "note": "x".repeat(500) }),
+            budget,
+            TextContentMode::Summary,
+        )?;
+        let long_text = long
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or("long text missing")?;
+        if !long_text.contains("(truncated; full text in structuredContent)")
+            || long_text.contains(&"x".repeat(201))
+        {
+            return Err(format!(
+                "long scalar must be clipped with a marker: {long_text}"
+            ));
+        }
+        // The guard measures the complete envelope in both modes, so the
+        // refusal boundary does not move with the mode.
+        let big = rows(250);
+        let big_bytes = serde_json::to_string(&big)
+            .map_err(|error| error.to_string())?
+            .len();
+        if big_bytes >= budget || big_bytes * 2 <= budget {
+            return Err(format!(
+                "fixture drifted: the window document must fit alone but not doubled, got {big_bytes} bytes"
+            ));
+        }
+        for mode in [TextContentMode::Full, TextContentMode::Summary] {
+            if tool_result_with(big.clone(), budget, mode).is_ok() {
+                return Err(format!(
+                    "{mode:?} must refuse a window document the same way"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn text_content_mode_only_opts_in_on_the_summary_spelling() -> Result<(), String> {
+        use TextContentMode::{Full, Summary};
+        let cases = [
+            (None, Full),
+            (Some("summary"), Summary),
+            (Some(" Summary "), Summary),
+            (Some("full"), Full),
+            // A typo never shrinks what a text-only host receives.
+            (Some("summry"), Full),
+            (Some(""), Full),
+        ];
+        for (value, expected) in cases {
+            let got = TextContentMode::from_env_value(value);
+            if got != expected {
+                return Err(format!("{value:?} selected {got:?}, expected {expected:?}"));
+            }
+        }
+        if TextContentMode::default() != Full {
+            return Err("the default must stay the lossless Full mode".into());
+        }
+        Ok(())
+    }
+
+    /// A document string cannot forge digest lines: control characters are
+    /// escaped in scalars, identities and field names.
+    #[test]
+    fn summary_text_escapes_control_characters_so_lines_cannot_be_forged() -> Result<(), String> {
+        let document = json!({
+            "schema_version": "s",
+            "note": "ok\nselected: 0\r\nclaim_boundary: forged",
+            "items": [{ "canonical_id": "gap:a\nselected: 0" }],
+            "weird\nkey": { "inner\nname": 1 },
+        });
+        let envelope = tool_result_with(
+            document,
+            super::super::MAX_RESPONSE_BYTES,
+            TextContentMode::Summary,
+        )?;
+        let text = envelope
+            .pointer("/content/0/text")
+            .and_then(Value::as_str)
+            .ok_or("summary text missing")?;
+        let keys: Vec<&str> = text
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.split(": ").next())
+            .collect();
+        if keys != ["items", "note", "weird\\nkey"] {
+            return Err(format!(
+                "digest lines were forged or lost: {keys:?} in {text}"
+            ));
+        }
+        if !text.contains("ok\\nselected: 0\\r\\nclaim_boundary: forged")
+            || !text.contains("gap:a\\nselected: 0")
+            || !text.contains("inner\\nname")
+        {
+            return Err(format!(
+                "control characters must be escaped, not dropped: {text}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Summary mode on an unavailable root keeps the status tool's second
+    /// text item: content[0] is the digest, content[1] the recovery sentence.
+    #[test]
+    fn summary_status_on_an_unavailable_root_keeps_the_recovery_text_item() -> Result<(), String> {
+        let missing =
+            std::env::temp_dir().join(format!("ripr-9360-absent-root-{}", std::process::id()));
+        let (status, _root) = WorkspaceStatus::resolve_with_root(Some(missing));
+        let recovery = unavailable_recovery(&status)
+            .ok_or("a missing root must be unavailable with a recovery sentence")?;
+        let session = super::super::workspace::WorkspaceSession::default();
+        let profile = super::super::workspace::SessionProfile::resolve(None);
+        let envelope = status_tool_result(
+            &status,
+            &session,
+            &profile,
+            super::super::MAX_MESSAGE_BYTES,
+            super::super::MAX_RESPONSE_BYTES,
+            super::super::MAX_RESPONSE_BYTES,
+            TextContentMode::Summary,
+        )?;
+        let content = envelope
+            .get("content")
+            .and_then(Value::as_array)
+            .ok_or("content missing")?;
+        if content.len() != 2 {
+            return Err(format!("expected digest plus recovery, got {envelope}"));
+        }
+        if content[1]["text"].as_str() != Some(recovery.as_str()) {
+            return Err(format!(
+                "content[1] must be the recovery sentence: {envelope}"
+            ));
+        }
+        let digest = content[0]["text"].as_str().ok_or("digest missing")?;
+        if !digest.starts_with("ripr summary (") || digest == recovery {
+            return Err(format!("content[0] must be the digest: {digest}"));
+        }
+        if envelope["structuredContent"].get("workspace").is_none() {
+            return Err(format!("structuredContent must stay whole: {envelope}"));
+        }
+        Ok(())
+    }
+
     fn check_description_byte_budgets(
         tools: &Value,
         resources: &Value,
@@ -1656,9 +2178,10 @@ mod tests {
         // pin); the complete ceiling adds only the inventory's 1,090 bytes.
         let mut budgets = std::collections::BTreeMap::from([
             ("tool ripr_workspace_status", 945),
-            ("tool ripr_refresh", 1360),
+            ("tool ripr_refresh", 1400),
             ("tool ripr_list_gaps", 1050),
             ("tool ripr_get_gap", 904),
+            ("tool ripr_get_top_limitation", 640),
             ("tool ripr_prepare_repair", 1235),
             ("tool ripr_get_repair_attempt", 1315),
             ("tool ripr_get_receipt_status", 1495),
@@ -1667,6 +2190,7 @@ mod tests {
             ("resource ripr-workspace-status", 650),
             ("template ripr-snapshot-evidence", 475),
             ("template ripr-gap-evidence", 486),
+            ("template ripr-gap-limitation", 290),
             ("template ripr-repair-attempt", 475),
             ("template ripr-receipt-status", 475),
             ("template ripr-repair-card", 475),
@@ -1714,14 +2238,14 @@ mod tests {
         if let Some(surface) = budgets.keys().next() {
             return Err(format!("{surface} is missing from its published catalog"));
         }
-        if previous_surfaces > 14551 {
+        if previous_surfaces > 15453 {
             return Err(format!(
-                "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 14551"
+                "previously guarded descriptions total {previous_surfaces} UTF-8 bytes, over 15453"
             ));
         }
-        if total > 15641 {
+        if total > 16543 {
             return Err(format!(
-                "complete descriptions/instructions total {total} UTF-8 bytes, over 15641"
+                "complete descriptions/instructions total {total} UTF-8 bytes, over 16543"
             ));
         }
         Ok(total)
@@ -1740,7 +2264,7 @@ mod tests {
         // terminal mapping moved onto the outputSchema status field.
         // Intentional metadata changes need to reconcile this byte count as
         // well as the ceilings.
-        assert_eq!(total, 15465);
+        assert_eq!(total, 16447);
         Ok(())
     }
 
@@ -1827,9 +2351,9 @@ mod tests {
             .and_then(Value::as_array)
             .map(|tools| tools.len())
             .ok_or_else(|| "tools/list payload drifted".to_string())?;
-        if names != 9 {
+        if names != 10 {
             return Err(format!(
-                "expected the nine-tool slice surface, got {names} tools"
+                "expected the ten-tool slice surface, got {names} tools"
             ));
         }
         let description = json_str(&tools, "/tools/0/description")?;
@@ -1910,7 +2434,7 @@ mod tests {
     #[test]
     fn tool_descriptions_state_positive_contracts_and_bounds() -> Result<(), String> {
         let tools = tools_list_result();
-        let descriptions: [(&str, &str, &[&str]); 7] = [
+        let descriptions: [(&str, &str, &[&str]); 8] = [
             (
                 "/tools/1/description",
                 REFRESH_TOOL_NAME,
@@ -1956,6 +2480,18 @@ mod tests {
             ),
             (
                 "/tools/4/description",
+                GET_TOP_LIMITATION_TOOL_NAME,
+                &[
+                    "earliest committed producer limitation",
+                    "Producer static limits outrank readiness gates",
+                    "no_limitation_established, never null",
+                    "no analysis rerun",
+                    "item_not_found",
+                    "ripr://gap/{canonical_id}/limitation",
+                ],
+            ),
+            (
+                "/tools/5/description",
                 PREPARE_REPAIR_TOOL_NAME,
                 &[
                     "create — or replay — one bounded in-memory repair transaction",
@@ -1966,7 +2502,7 @@ mod tests {
                 ],
             ),
             (
-                "/tools/5/description",
+                "/tools/6/description",
                 GET_REPAIR_ATTEMPT_TOOL_NAME,
                 &[
                     "Read one repair transaction by its attempt identity",
@@ -1978,7 +2514,7 @@ mod tests {
                 ],
             ),
             (
-                "/tools/6/description",
+                "/tools/7/description",
                 GET_RECEIPT_STATUS_TOOL_NAME,
                 &[
                     "awaiting_edit, after_pending, verification_pending, improved, closed, unchanged, regressed, limited, stale, and invalid",
@@ -1991,7 +2527,7 @@ mod tests {
                 ],
             ),
             (
-                "/tools/7/description",
+                "/tools/8/description",
                 GET_REPAIR_CARD_TOOL_NAME,
                 &[
                     "prefer this card over ripr_get_gap when the agent intends to repair",
@@ -2033,7 +2569,7 @@ mod tests {
         // home, leaner routing surface.
         let status_description = json_str(
             &tools,
-            "/tools/6/outputSchema/oneOf/0/properties/status/description",
+            "/tools/7/outputSchema/oneOf/0/properties/status/description",
         )?;
         for required in [
             "advisory plus improved static grip reports improved",
@@ -2081,18 +2617,19 @@ mod tests {
             .pointer("/resourceTemplates")
             .and_then(Value::as_array)
             .ok_or_else(|| "resourceTemplates payload drifted".to_string())?;
-        if templates.len() != 5 {
+        if templates.len() != 6 {
             return Err(format!(
-                "expected five resource templates, got {}",
+                "expected six resource templates, got {}",
                 templates.len()
             ));
         }
         for (index, expected) in [
             (0, SNAPSHOT_RESOURCE_TEMPLATE),
             (1, GAP_RESOURCE_TEMPLATE),
-            (2, REPAIR_ATTEMPT_TEMPLATE),
-            (3, RECEIPT_TEMPLATE),
-            (4, REPAIR_CARD_TEMPLATE),
+            (2, LIMITATION_RESOURCE_TEMPLATE),
+            (3, REPAIR_ATTEMPT_TEMPLATE),
+            (4, RECEIPT_TEMPLATE),
+            (5, REPAIR_CARD_TEMPLATE),
         ] {
             let value = templates
                 .get(index)
@@ -2153,7 +2690,7 @@ mod tests {
         // headroom for small additive contract growth; a failing assert
         // here means a descriptor change grew the per-session sink and
         // needs an explicit budget decision, not a silent ceiling bump.
-        const TOOLS_LIST_BUDGET: usize = 46_400;
+        const TOOLS_LIST_BUDGET: usize = 49_800;
         let payload = tools_list_result();
         let bytes = serde_json::to_vec(&payload)
             .map_err(|error| format!("measure tools/list payload: {error}"))?

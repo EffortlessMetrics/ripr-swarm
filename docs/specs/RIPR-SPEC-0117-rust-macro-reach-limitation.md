@@ -167,6 +167,19 @@ owner; the separate mixed weak-direct rule below can still name an independent
 unresolved macro path. The subprocess-binary and property-macro limits stay
 `no_static_path`-only.
 
+#### `infection_unknown` with an owner-named test (#11481)
+
+The same trigger also admits an `infection_unknown` finding with `weak` reach
+whose related tests are all proximity-only or `owner_named_test` (a test
+related only by naming the owner; it never has to call it). Only the
+`infection_unknown` class admits `owner_named_test`: a `weakly_exposed`
+finding related solely by `owner_named_test`, and any set that also holds a
+non-proximity relation (`import_path_affinity`, `fixture_owner_affinity`, a
+direct or helper owner call), stays unlimited. The `weakly_exposed` asymmetry is
+deliberate for this change; extending the admission to it is a follow-up. The
+witness walk is name-only, so a same-named function in another module can name
+the limit; the finding stays advisory.
+
 ### Weak direct test beside a macro witness (#7542)
 
 A weak direct oracle must not erase a possible test path behind a macro. The
@@ -310,6 +323,18 @@ definition mentions `test` is resolved at all. `build.rs`, `main.rs` and
 `lib.rs` are crate roots. Parents are followed up to four modules, and
 `#[macro_use]` modules down to about four.
 
+A text precheck may avoid the generator-call parse only when it cannot hide
+a call established by the parser. Identifier boundaries, Unicode whitespace,
+comments between the name and `!`, raw names (including overlapping text in
+token trees), and qualified paths must retain the parser route. Inert spellings
+may still cause a parse; the parser and existing resolver decide whether any
+definition is imported. This optimization preserves the complete imported
+definitions, import names and blanked path ranges, including grouped imports.
+The parser owner already skips sources without a generator-name substring;
+the visibility precheck additionally rejects incidental identifier hits.
+Performance comparisons retain that existing substring gate in the reference
+and distinguish absent names, incidental hits and real calls on identical inputs.
+
 A module resolves only to one file: `name.rs` or `name/mod.rs` under the
 declaring file's anchor (a crate root, `mod.rs`, or a file directly in
 `tests`, `benches` or `examples` has its children beside it; any other file
@@ -436,6 +461,111 @@ code outside the definition's byte extent keeps normal seeding, and lines in an
 inline test module stay test evidence. Only `macro_rules!` is covered (including
 raw-identifier names); macros 2.0 are not. An unclosed definition runs to the
 end of the file, which is an approximation for an edit in progress.
+
+## Audited proptest singleton profile (#10839, partial #6643)
+
+The #5051 quarantine remains the default. One separate positive producer may
+admit a function-form property only when all of the following are established:
+
+1. The importing package's actual resolved Cargo edge selects crates.io
+   `proptest 1.11.0`, with lock checksum
+   `4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744`.
+   The existing registry/configuration receipt owner supplies this proof.
+   Renaming, path/git/substituted providers, optional/conditional edges,
+   nondefault dependency declarations and unaudited feature unions refuse.
+   Cargo executable and ordinary registry-cache integrity remain instrument
+   assumptions; a manifest or lockfile spelling alone supplies no authority.
+2. The file is a current Cargo `lib` or integration `test` target root with
+   ordinary test collection. Harness/test disabling, required-feature targets,
+   custom target layouts that cannot be established, and proc-macro libraries
+   refuse. The macro is an item at the source file's root, outside inline
+   modules. Generated functions have no original AST function; line-based
+   scope fallback cannot establish a same-line module's value namespace.
+   The property carries exactly `#[test]`; source-role provenance also holds.
+3. Calls use canonical `proptest::proptest!`, `proptest::strategy::Just` and
+   `proptest::prop_assert`/`proptest::prop_assert_eq` paths (optionally leading
+   `::`). The initial closed
+   source binding context excludes imports, macro definitions, out-of-line
+   modules, root/attribute rebinding and unknown item attributes/expansions.
+   Raw-spelled declarations and bindings also refuse, including property
+   names and parameters: the current scope producer retains `r#name` literally,
+   so it cannot prove its equivalence to the ordinary `name` spelling.
+   Each property has one simple bool or explicitly suffixed primitive integer
+   literal `Just` parameter (a negative literal requires a signed suffix), a
+   one-line declaration header and one-line assertion invocations. At most 32
+   properties per 64 KiB macro and 16 statements per body are read.
+   Unsuffixed integers refuse: copying a single inferred parameter into
+   multiple call/comparison contexts could select different numeric types.
+4. The source uses the audited default runner configuration. Every ambient
+   `PROPTEST_*` override and every applicable Cargo `[env]` property override
+   refuses, including nonzero overrides: function macros call
+   `contextualize_config` after cloning the source configuration. A literal
+   `with_cases` alone would not prove a nonzero run. Config/lock/environment
+   identity participates in classified-cache lookup, including every resolved
+   in-root lib/test target's source-directory configuration consulted at
+   admission. Nested `tests/.cargo` and member-local configuration cannot
+   retain a stale favorable classified result. Property admission is recomputed
+   from raw cached facts when an index is reconstructed or reused.
+5. The body is straight-line direct `prop_assert!` on a bool owner call (or its
+   negation), or `prop_assert_eq!` with one owner-call operand
+   and one independent integer/bool literal or the known `Just` value. Call
+   arguments are those same literals. Exact arity is required; diagnostics can
+   execute on failure and return `Ok(())`, so they are not discarded silently.
+   A parameter shadowing the callee, a self-comparison, model expression,
+   helper result, closure, loop, early return, filter or other strategy refuses.
+   `prop_assert_ne!` remains unsupported: it evaluates `!=`, whereas
+   `std::assert_ne!` negates `==`; custom `PartialEq::ne` can distinguish them.
+
+The provider's function macro wraps the body in a result-returning callback
+and turns runner failure into test failure. That audited path permits a short
+ordinary-assertion interpretation, with original source lines retained. It
+does **not** make `prop_assert*` non-returning macros outside this callback.
+A generation-owned receipt binds the exact generated TestFact and its local
+interpretation; raw cached or deserialized facts cannot manufacture it. The
+registration key remains distinct from that exact authority: if later oracle
+policy changes the generated fact, diff and repository relation discovery
+withhold it instead of treating a missing exact receipt as an ordinary test.
+The original matching receipt is still required for both source and namespace
+interpretation.
+The receipt also retains the normalized function-body scope and the original
+file-root bindings. Qualified owner-call input rows use the existing resolver
+with those scopes: a generated function has no original AST function, while a
+standalone synthetic file would incorrectly erase root module/type shadows.
+Raw-spelled module/type shadows receive no generated test or activation input
+row; a later non-exposed verdict alone would not establish that boundary.
+The existing owner identity, operand, equality-dispatch, activation, propagation
+and discriminator rules still decide the result. In particular, registration
+of a nonzero/inequality check does not make it an exact discriminator.
+Diff and repository evidence additionally bind every owner-name call in an
+admitted property through the existing free-owner authority before any evidence stage.
+The covered positive uses a canonical library-qualified owner call. Bare,
+`self`/`super`, method/associated, generic, re-exported or otherwise unresolved
+forms stay withheld wherever that authority cannot establish them; registration
+and `Just` spelling alone do not grant owner credit. A mixed property cannot
+lend a different function's boundary input to a legitimate owner call.
+
+Admission is atomic for a macro's properties. Refused properties retain the
+existing `rust_macro_reach_unresolved` limitation, and a supported ordinary
+assertion beside them remains available. CLI, JSON and MCP consume the same
+facts and evidence; the Rust capability limit describes this exact profile.
+No new repair route or support-tier promotion follows from it.
+
+The retained integration fixture and
+`crates/ripr/tests/registered_proptest_profile.rs` enforce provider/target/
+environment currentness, cold/warm behavior, independent ordinary evidence,
+classified-cache hit/edit/cold-parity/revert behavior, same-line module shadow
+and custom inequality refusals, and native original/wrong-owner, zero-cases,
+diagnostic-return and weak-check controls. Native runtime truth stays separate
+from static exposure.
+
+This is a foundational subset with **no unchanged real-repository positive
+established**. The real Perl-LSP position property at
+`6ffb36a1d2eff471407badf15721452696850d68` uses `proptest::prelude::*`, string
+strategies, model helpers and loops. Its recorded runtime witness does not
+qualify this source profile. Prelude/import authority, ranges and strings,
+relational/model flow, the non-macro bool-helper corpus row, QuickCheck,
+`TestRunner::run/run_one`, repair and installed daily-use acceptance remain
+open under #6643 and its supporting issues.
 
 ## Wire Format
 
@@ -580,6 +710,7 @@ end of the file, which is an approximation for an edit in progress.
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_macro_names_the_macro_limit`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_weak_direct_test_preserves_the_unresolved_macro_witness`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_without_a_witness_keeps_the_gap`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::the_owner_named_admission_is_limited_to_infection_unknown_all_owner_named`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_helper_names_the_transitive_limit`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::repetition_shadowing_scope_and_order_refuse`

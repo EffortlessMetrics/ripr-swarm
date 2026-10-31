@@ -43,11 +43,19 @@ reading raw logs.
 
 ## Draft to Ready handoff
 
-Publish a coherent candidate as Draft. The delivery owner completes this order
-before spending the `merge-ready`-requested `Ripr Rust Small Result` qualification:
+Publish a coherent candidate as Draft. The review, repair and evidence boundaries
+below apply to candidate preparation. The label-request sequence describes the
+installed legacy route until verified migration; after verified queue activation,
+use [the native-queue procedure](MERGE_FLOW.md#selected-native-queue-procedure-after-verified-activation)
+for qualification and conditional landing authorization instead. For the legacy
+route, the delivery owner completes this order before spending the
+`merge-ready`-requested `Ripr Rust Small Result` qualification:
 
-1. Bind the exact candidate head and integration basis. Complete independent
-   substantive review through `review-pr`, disposition every known finding, and
+1. Bind the exact candidate head and integration basis. Complete directed
+   substantive review through `review-pr` inline in the owning session's main
+   context, using distinct criteria and counterexamples. Subagents and bot input
+   are optional additional evidence; preserve actual required reviews and checks.
+   Disposition every known finding and
    compose accepted repairs into that candidate while Draft.
 2. Run applicable, available local proof on the composed head and refresh affected review.
    Follow changed expectations into their consumers: corpus rows can change a
@@ -104,8 +112,10 @@ head with a queued or running required run: it cancels it. Retain its run link a
 ### PR-native continuation record
 
 Keep one current block in the existing PR body or owned issue/PR comment. Edit
-it at a transition; link the underlying reviews and reports instead of repeating
-their prose. Live GitHub metadata remains authoritative over a stale block.
+it at a meaningful transition; link the underlying reviews and reports instead of
+repeating their prose. Tracking is support work, not an additional delivery gate
+or a parent payload approval requirement. Live GitHub metadata remains authoritative
+over a stale block; an unavailable read is an evidence limit, not invented state.
 
 ```text
 Owner / governing claim:
@@ -122,6 +132,79 @@ record to the capable delivery owner. A fresh worker reads the native objects
 and takes the earliest missing judgment; no separate tracker or idle polling
 worker is needed. [Continuation scenarios](agent-context/delivery-continuation-scenarios.md)
 exercise both proceed and hold decisions without claiming actual CI or merge.
+
+## Multi-actor ownership signaling
+
+Several autonomous actors can converge on the same PR from the same review
+corpus. The merge-flow one-writer rule
+([who owns the change](MERGE_FLOW.md#who-owns-the-change)) names the owner;
+this section makes that ownership discoverable across actor boundaries, and
+[the PR convergence runbook](agent-context/convergence-runbook.md) carries the
+matching merge mechanics and push guards. Racing is the dominant waste: the
+campaign logs — and the runbook's ownership section — record one 14-lane wave
+in which 11 lanes were raced mid-flight by another actor implementing the same
+repair. Racing also destroys candidate identity. The #10297 branch carries
+another lane's TypeScript fix (`a3baa97f53`, merged in through
+`1ad5cd8111`), and its `2d7762b549` push admits in its own commit message:
+"Not yet compiled or run locally (shared disk exhausted); needs hosted
+proof." Uncoordinated pushes leave the owning lane re-establishing what is on
+its head and which proof still applies.
+
+### Claim before substantive work
+
+Before pushing, re-blessing goldens, or changing labels on an existing PR, an
+actor records its claim:
+
+- Add a single PR comment `Converging this PR: <actor id>, started <UTC
+  timestamp>`, or reuse an existing owned-convergence comment by editing it.
+  Keep one current claim comment per actor, edited at transitions — the same
+  discipline as the PR-native continuation record above.
+- Treat any other actor's claim younger than 4 hours as ownership. While a
+  live claim is held, do not push to the branch, re-bless, or change labels.
+  This coordinates writers; it does not replace `stackable = false`,
+  `blocked_by`, review or qualification routes.
+- A claim alone does not keep ownership. Judge liveness from actual activity
+  (next subsection), and record a stale-claim takeover in the claim comment
+  you edit in.
+- Before every push, run the runbook's writer guard: `git ls-remote` the head
+  branch and reconcile a mismatch instead of pushing over it.
+
+### Judging activity
+
+The commits API is the truth signal: `commit.author.date` from
+`GET /repos/{owner}/{repo}/pulls/{number}/commits` shows the last real push.
+`updatedAt` is bot-polluted — any comment, label edit, review submission, or
+linked check event advances it with no writer action — so it overstates
+activity and can never establish that an actor went idle. Every PR sampled on
+the 2026-10-31 open board showed `updatedAt` minutes past its last commit
+(for example #11499: last commit 11:58:00Z, `updatedAt` 12:09:54Z). Use
+author dates and claim comments to judge activity; do not declare a rival
+idle from `updatedAt`.
+
+### Yield on contact
+
+On discovering another actor's live claim or a fresh push you did not make:
+
+1. Stop pushing. Never force-push another writer's branch.
+2. Preserve proven work as a named branch or ref before yielding — the
+   campaign's preserved-candidate pattern. #11112 retains its #11109/#11110
+   predecessors as incorporated Drafts until the selected candidate lands.
+3. Leave one handback comment listing what is preserved and where.
+4. Return to the parent goal and the next ready claim. Do not poll the branch
+   or hover as a second writer.
+
+### Honor recorded dispositions
+
+When a fleet records a candidate disposition, actors honor it and record only
+verification evidence. #11112's candidate-relationships record is the working
+example: "#11109 and #11110 remain open Drafts for provenance and must not be
+independently qualified or merged." That disposition forbids independently
+qualifying, merging, or re-implementing the incorporated predecessors. Useful
+actor work there is verification against the named successor, not a rival
+candidate.
+
+These conventions coordinate writers; they are not a gate. They add no
+required check, no workflow, and no qualification route.
 
 ## Current Commands
 
@@ -182,6 +265,7 @@ cargo xtask check-supply-chain
 cargo xtask check-support-tiers
 cargo xtask check-test-oracles
 cargo xtask check-traceability
+cargo xtask check-user-text [--ripr <path>] [--ratchet] [--full]
 cargo xtask check-verification-contracts [--check]
 cargo xtask check-workflows
 cargo xtask check-workspace-shape
@@ -203,7 +287,7 @@ cargo xtask fix-pr
 cargo xtask fixtures [name]
 cargo xtask gh-pr-status --pr <number>
 cargo xtask golden-drift
-cargo xtask goldens bless <name> --reason <reason>
+cargo xtask goldens bless <name> --reason "RIPR-SPEC-NNNN: <reviewed change>"
 cargo xtask goldens check
 cargo xtask impacted-evidence [--pr-evidence <path>] [--label <label>] [--labels <csv>] [--check]
 cargo xtask install-hooks
@@ -252,7 +336,7 @@ cargo xtask route-quality [--attempt-ledger <path>]
 cargo xtask rust-conversion-candidates
 cargo xtask rust-repair-trust-report
 cargo xtask sarif-policy --current <path> [--baseline <path>]
-cargo xtask schema-producer-sweep [--rev REV] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
+cargo xtask schema-producer-sweep [--rev REV] [--live-replay [--ripr BINARY]] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
 cargo xtask shape
 cargo xtask specs next
 cargo xtask suggested-fixes
@@ -622,10 +706,40 @@ fixture directories exist yet.
 outputs without mutating checked-in files. It also writes
 `target/ripr/reports/golden-drift.md` and
 `target/ripr/reports/golden-drift.json` so reviewers can inspect semantic drift
-before any blessing. `goldens bless <fixture> --reason <reason>` requires the
-reason to cite an existing `RIPR-SPEC-NNNN` under `docs/specs/`, then records
+before any blessing. `goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"` requires both placeholders filled with the fixture name, a governing spec id from `docs/specs/`, and a short reviewed change description; the reason must cite an existing `RIPR-SPEC-NNNN`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
-appends the fixture expected-output changelog.
+appends the fixture expected-output changelog. Bless from the Linux arbiter
+platform, never from a Windows host; the sanctioned route is documented in
+[Validation commands](agent-context/validation.md#golden-fixtures-and-the-blessing-platform).
+
+Human goldens (`human.txt`, `human-full.txt`) mask only the explanatory prose
+of the line `no repair start offered: <reason>`. Pinned: the line's presence and
+position, the fixed opening that identifies the refusal variant (no gap ID, no seam or no binding seam, several binding seams, Rust files only, seam
+budget, unreadable config, classification failure, static evidence incomplete,
+still missing, related test already reaches the boundary), and the
+`still missing:` / `It is also still missing:` evidence lists. Masked as
+`<reason>`: the wording around those pins, such as the trailing "follow the Next
+step" advice, the Rust-files-only explanation and the boundary-variant
+explanation. A reason that matches no known variant opening is compared
+verbatim, so a new or heavily reworded variant is drift to re-bless and add to
+`REPAIR_REFUSAL_RULES` in `xtask/src/reports/fixtures.rs`. `check.json` is never
+masked. The prose has focused tests of its own, and comparing it verbatim turned
+every rewording into one re-blessed line in hundreds of fixtures (#10702). A
+repair start that flips to a refusal, a refusal that appears or disappears, and
+a change of variant or missing-evidence list are still drift.
+
+Transitional (#10702): `xtask/src/reports/fixtures/transitional.rs` lists the
+exact `fixture/surface` human goldens (253) whose expected refusal opening is
+one of four retired openings (no gap ID, no binding seam, seam
+inventory, still missing) and may now open "nothing to repair here" (only when
+the expected golden itself says `Static exposure: exposed`), "found N seams …
+could not tie one … changed line" (43 no-seam surfaces) or "`ripr check` reads a
+gap or limit for this change" (93 no-seam surfaces whose seam the whole-seam view
+grips). Each listed surface approves exactly one new opening, taken from its
+unaliased output. An unlisted fixture, another surface, another pair, the other
+target on a listed surface and `check.json` are still compared strictly. This keeps the check-side
+change under the admission file cap; each follow-up re-bless batch deletes its
+entries and the file is removed once empty (tracking issue #10885).
 
 `golden-drift` writes the same advisory drift reports without failing merely
 because output drift exists. It still reports fixture execution errors as
@@ -806,8 +920,12 @@ Current:
 ```bash
 cargo xtask shape
 cargo xtask fix-pr
-cargo xtask goldens bless <fixture> --reason "..."
+cargo xtask goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"
 ```
+
+Replace `<fixture>`, `RIPR-SPEC-NNNN`, and `<reviewed change>` with the fixture
+you blessed, its governing spec under `docs/specs/`, and what you reviewed.
+Ellipsis or a description without a spec id is rejected before fixture execution.
 
 There are no `--write` variants of `metrics`, `docs-index`, or
 `capability-matrix`; earlier revisions of this section listed them as future

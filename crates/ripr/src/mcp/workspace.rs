@@ -67,6 +67,7 @@ pub(crate) const RECOVERY_GAP_LIST_FILTER_TOO_LARGE: &str = "the echoed filter v
 pub(crate) const RECOVERY_REFRESH_TOO_LARGE: &str = "the refresh result exceeds the MCP response bound; read session state with ripr_workspace_status";
 pub(crate) const RECOVERY_STATUS_TOO_LARGE: &str =
     "the status document exceeds the MCP response bound; there is no narrower status read";
+pub(crate) const RECOVERY_LIMITATION_TOO_LARGE: &str = "this item's limitation document exceeds the MCP response bound; its canonical id is too long to echo, so read the bounded list summary with ripr_list_gaps";
 pub(crate) const RECOVERY_REPAIR_TOO_LARGE: &str = "this repair document exceeds the MCP response bound; there is no narrower MCP read of this record";
 /// Reserved typed-failure vocabulary for later slices. This slice fails
 /// closed before any of these states can occur; they are named so the wire
@@ -91,7 +92,23 @@ pub(crate) const RECOVERY_TOO_LONG: &str = "literal recovery is unavailable beca
 pub(crate) struct GapListWindow {
     pub(crate) offset: usize,
     pub(crate) limit: Option<usize>,
+    /// Start index within the stored omission disclosure (#9360). The
+    /// omission list pages on its own axis, [`OMITTED_WINDOW`] entries at a
+    /// time, so a large truncated selection cannot make the shell outgrow
+    /// the wire bound.
+    pub(crate) omitted_offset: usize,
 }
+
+/// Omitted identities disclosed inline per response. Each entry is a short
+/// identity plus a reason token, so this keeps the omission window well under
+/// the page ceiling; the remainder is reached through `omitted_page`.
+pub(crate) const OMITTED_WINDOW: usize = 200;
+
+/// Serialized-byte budget for one omission window. The entry cap alone does
+/// not bound size (canonical identities embed paths and qualified owners), so
+/// the window also stops once this many bytes are emitted; the first entry
+/// always ships so the walk makes progress.
+pub(crate) const OMITTED_WINDOW_BYTES: usize = 16 * 1024;
 
 /// Caller-narrowed filters over already-projected commit-time facts
 /// (#7464): `file` (exact, prefix, or trailing-segment match after `./`
@@ -206,6 +223,8 @@ struct GapListScope<'a> {
 /// full stored-selection count while `page.returned` counts this page.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct GapPage {
+    /// Requested start of the omission window; see [`GapListWindow`].
+    omitted_offset: usize,
     offset: usize,
     limit: Option<usize>,
     returned: usize,
@@ -389,6 +408,40 @@ impl RefreshSource {
     }
 }
 
+/// The producer-custody state of a snapshot's source bytes (#7357).
+///
+/// `Established` is minted only from an agreement between the bytes the
+/// findings producer recorded and the bytes the seam inventory recorded; the
+/// commitment is bound into the snapshot identity. Anything else keeps repair
+/// readiness and cards withheld and says why.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SourceCustody {
+    /// A committed snapshot: unchanged contract, no worktree custody claim.
+    NotApplicable,
+    /// A worktree snapshot whose producers were not shown to agree.
+    NotEstablished { reason: String },
+    /// A committed snapshot taken over a checkout whose tracked source or test
+    /// files carry uncommitted edits: the findings read HEAD content while the
+    /// seam inventory and cards read the live files, and the two were not
+    /// shown to be the same bytes (#7357). Findings stay served; repair
+    /// readiness and cards are withheld.
+    CommittedOverUncommitted { reason: String },
+    /// A worktree snapshot whose findings and inventory consumed the same
+    /// Rust context.
+    Established { commitment: String },
+}
+
+impl SourceCustody {
+    fn commitment(&self) -> Option<&str> {
+        match self {
+            Self::Established { commitment } => Some(commitment),
+            Self::NotApplicable
+            | Self::NotEstablished { .. }
+            | Self::CommittedOverUncommitted { .. } => None,
+        }
+    }
+}
+
 /// The completed-snapshot authority for one MCP session. Immutable once
 /// committed: refresh replaces the whole snapshot, never mutates it.
 pub(crate) struct Snapshot {
@@ -422,11 +475,14 @@ pub(crate) struct Snapshot {
     pub(crate) base: Option<String>,
     /// The source the analysis was actually captured under (#7357). Worktree
     /// snapshots carry it in the snapshot identity; committed identities are
-    /// unchanged. A worktree snapshot binds no seam inventory and no card
-    /// producers: no consumed-source commitment spans the findings and
-    /// those later live-file producers, so cards and repair readiness are
-    /// withheld rather than claimed current.
+    /// unchanged. A worktree snapshot binds seam inventory, card producers
+    /// and repair readiness only when `custody` is established; otherwise
+    /// they are withheld rather than claimed current.
     pub(crate) source: RefreshSource,
+    /// Whether the findings and the later live-file seam inventory were shown
+    /// to have consumed the same Rust bytes (#7357). Committed snapshots make
+    /// no such claim and keep their unchanged contract.
+    pub(crate) custody: SourceCustody,
     /// Private CLI fallback bound when the producer output is captured. It is
     /// not part of portable identity or ordinary success documents. Newer
     /// requested inputs cannot relabel recovery for retained evidence.
@@ -474,6 +530,25 @@ impl Snapshot {
         root_identity: Option<&str>,
         admission: &super::repair_admission::SeamAdmission,
         source: RefreshSource,
+    ) -> Result<Self, AttemptFailure> {
+        let custody = match source {
+            RefreshSource::Committed => SourceCustody::NotApplicable,
+            RefreshSource::Worktree => SourceCustody::NotEstablished {
+                reason: "no producer agreement on consumed source bytes was evaluated".to_string(),
+            },
+        };
+        Self::from_output_with_custody(output, root_identity, admission, source, custody)
+    }
+
+    /// [`Self::from_output_admitted`] with the snapshot's source custody. An
+    /// established commitment is bound into the snapshot identity, so equal
+    /// findings over different consumed Rust bytes never share an identity.
+    pub(crate) fn from_output_with_custody(
+        output: &crate::app::CheckOutput,
+        root_identity: Option<&str>,
+        admission: &super::repair_admission::SeamAdmission,
+        source: RefreshSource,
+        custody: SourceCustody,
     ) -> Result<Self, AttemptFailure> {
         let outcome = output
             .analysis_outcome
@@ -531,9 +606,10 @@ impl Snapshot {
         items.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
 
         let scope = ScopeFacts::from_output(output);
-        let snapshot_id = snapshot_identity(&outcome, &items, &scope, source).map_err(|error| {
-            AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
-        })?;
+        let snapshot_id = snapshot_identity(&outcome, &items, &scope, source, custody.commitment())
+            .map_err(|error| {
+                AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+            })?;
         let profile_identity = format!(
             "mcp:{}:profile:diff:draft",
             root_identity.unwrap_or("root:unavailable")
@@ -567,6 +643,7 @@ impl Snapshot {
             scope,
             base: None,
             source,
+            custody,
             gap_item_recovery: gap_item_recovery(output, source),
             language_view: None,
         })
@@ -609,6 +686,7 @@ fn snapshot_identity(
     items: &[GapItem],
     scope: &ScopeFacts,
     source: RefreshSource,
+    custody_commitment: Option<&str>,
 ) -> Result<String, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
@@ -635,6 +713,13 @@ fn snapshot_identity(
     // unchanged, so existing committed identities do not move.
     if source == RefreshSource::Worktree {
         payload["source"] = json!(source.as_str());
+    }
+    // #7357: an established producer commitment to the consumed Rust context
+    // is load-bearing identity. Equal-result edits to a consumed helper or
+    // test change it, so a snapshot pinned before the edit goes stale. The
+    // outcome's own diff-byte identity cannot see such an edit.
+    if let Some(commitment) = custody_commitment {
+        payload["consumed_source_commitment"] = json!(commitment);
     }
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
@@ -788,6 +873,10 @@ impl WorkspaceSession {
         // item summaries; its measured size sets the page budget. The
         // reserve absorbs the small byte difference between this shell's
         // zeroed page fields and the filled ones the caller receives.
+        let shell_page = GapPage {
+            omitted_offset: window.omitted_offset,
+            ..GapPage::default()
+        };
         let shell = {
             let scope = GapListScope {
                 selection,
@@ -795,7 +884,7 @@ impl WorkspaceSession {
                 filter,
                 filtered,
             };
-            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
+            self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
         let shell_bytes = document_bytes(&shell)?;
         // The same shell with an empty filter echo isolates the echo's
@@ -811,7 +900,7 @@ impl WorkspaceSession {
                 filter: &GapListFilter::default(),
                 filtered,
             };
-            self.gap_list_document(snapshot, &scope, Vec::new(), &GapPage::default())?
+            self.gap_list_document(snapshot, &scope, Vec::new(), &shell_page)?
         };
         let shell_without_filter_bytes = document_bytes(&shell_without_filter)?;
         let shell_envelope_overflows =
@@ -881,6 +970,7 @@ impl WorkspaceSession {
         // keep it whole when it fits; only then bisect the strictly
         // monotone continuation prefixes for the largest fitting page.
         let page_fields = |count: usize| GapPage {
+            omitted_offset: window.omitted_offset,
             // The window echoes the requested offset; a past-end request is
             // an empty disclosed page at that offset, not a renumbered one.
             offset: window.offset,
@@ -995,21 +1085,63 @@ impl WorkspaceSession {
             "tool": "ripr_get_gap",
             "resource_template": "ripr://gap/{canonical_id}",
         });
-        if let Some(next_offset) = page.next_offset {
-            // The generated route pins the snapshot identity and the caller
-            // filters: a refresh between pages fails closed with
-            // stale_snapshot instead of silently mixing snapshots, and the
-            // narrowed walk resumes narrowed (#6021 review, #7464).
+        // The omission list is windowed independently of the item page: a
+        // past-end offset is an empty disclosed window, never a renumbered
+        // one (#9360).
+        let omitted_start = page.omitted_offset.min(selection.omitted.len());
+        let mut omitted_window = Vec::new();
+        let mut omitted_bytes = 0usize;
+        for item in &selection.omitted[omitted_start..] {
+            let entry = json!({
+                "canonical_id": item.canonical_id,
+                "reason": omitted_reason_as_str(item.reason),
+            });
+            // One byte per joining comma keeps the accounting exact.
+            let cost = document_bytes(&entry)?.saturating_add(1);
+            if omitted_window.len() >= OMITTED_WINDOW
+                || (!omitted_window.is_empty()
+                    && omitted_bytes.saturating_add(cost) > OMITTED_WINDOW_BYTES)
+            {
+                break;
+            }
+            omitted_bytes = omitted_bytes.saturating_add(cost);
+            omitted_window.push(entry);
+        }
+        let omitted_end = omitted_start + omitted_window.len();
+        let omitted_next = (omitted_end < selection.omitted.len()).then_some(omitted_end);
+        // Both continuation routes replay the caller's whole request and
+        // advance only their own axis: the snapshot pin, filters, and the
+        // limit carry over so following either route never silently changes
+        // the other window (#9360 review).
+        let replay_arguments = |offset: usize, omitted_offset: usize| {
             let mut arguments = json!({
                 "snapshot_id": snapshot.snapshot_id,
-                "offset": next_offset,
+                "offset": offset,
             });
+            if omitted_offset > 0 {
+                arguments["omitted_offset"] = json!(omitted_offset);
+            }
             for (name, value) in filter.arguments().as_object().cloned().unwrap_or_default() {
                 arguments[name] = value;
             }
             if let Some(limit) = page.limit {
                 arguments["limit"] = json!(limit);
             }
+            arguments
+        };
+        if let Some(next_omitted) = omitted_next {
+            continuation["next_omitted_page"] = json!({
+                "tool": "ripr_list_gaps",
+                "arguments": replay_arguments(page.offset, next_omitted),
+            });
+        }
+        if let Some(next_offset) = page.next_offset {
+            // The generated route pins the snapshot identity and the caller
+            // filters: a refresh between pages fails closed with
+            // stale_snapshot instead of silently mixing snapshots, and the
+            // narrowed walk resumes narrowed (#6021 review, #7464). It also
+            // keeps the requested omission window (#9360 review).
+            let arguments = replay_arguments(next_offset, page.omitted_offset);
             continuation["next_page"] = json!({
                 "tool": "ripr_list_gaps",
                 "arguments": arguments,
@@ -1059,14 +1191,13 @@ impl WorkspaceSession {
                 "has_more": page.has_more,
                 "next_offset": page.next_offset,
             },
-            "omitted_items": selection
-                .omitted
-                .iter()
-                .map(|item| json!({
-                    "canonical_id": item.canonical_id,
-                    "reason": omitted_reason_as_str(item.reason),
-                }))
-                .collect::<Vec<_>>(),
+            "omitted_items": omitted_window,
+            "omitted_page": {
+                "offset": page.omitted_offset,
+                "returned": omitted_window.len(),
+                "has_more": omitted_next.is_some(),
+                "next_offset": omitted_next,
+            },
             "continuation": continuation,
             "claim_boundary": "Bounded working-set projection over one completed snapshot. Selection is the shared CLI/LSP budget authority; omitted identities and reasons are disclosed, never silently truncated, and no business-risk ranking is inferred. Filters narrow the stored selection over commit-time facts before paging; they never widen it.",
             "limitations": [
@@ -1119,6 +1250,37 @@ impl WorkspaceSession {
         let document = self.get_gap(canonical_id, requested)?;
         let snapshot = self.active_snapshot(requested)?;
         Ok((document, snapshot.gap_item_recovery.clone()))
+    }
+
+    /// Whether the current completed snapshot holds an item with exactly this
+    /// canonical id. Route disambiguation only; it reports no failure.
+    pub(crate) fn has_current_item(&self, canonical_id: &str) -> bool {
+        self.active_snapshot(None)
+            .is_ok_and(|snapshot| snapshot.item(canonical_id).is_some())
+    }
+
+    /// The earliest producer limitation for one canonical item of the current
+    /// completed snapshot (`ripr_get_top_limitation`,
+    /// `ripr://gap/{canonical_id}/limitation`). Reads committed facts only:
+    /// the same stale-snapshot and unknown-item failures as the gap read, and
+    /// no analysis rerun.
+    pub(crate) fn get_limitation(
+        &self,
+        canonical_id: &str,
+        requested: Option<&str>,
+    ) -> Result<Value, AttemptFailure> {
+        let snapshot = self.active_snapshot(requested)?;
+        let Some(item) = snapshot.item(canonical_id) else {
+            return Err(AttemptFailure::new(
+                CODE_ITEM_NOT_FOUND,
+                format!("no canonical item {canonical_id} exists in the current snapshot"),
+                "list the current canonical ids with ripr_list_gaps, then retry",
+            ));
+        };
+        bounded_document(
+            item.limitation_document(&snapshot.snapshot_id),
+            RECOVERY_LIMITATION_TOO_LARGE,
+        )
     }
 
     /// The `ripr://snapshot/{snapshot_id}` evidence resource: snapshot
@@ -1367,10 +1529,14 @@ fn scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
 }
 
 /// The scope disclosure for a saved tracked-worktree snapshot (#7357). It
-/// always exists: the snapshot never covers unsaved editor buffers, untracked
-/// files or gitignored files, and it carries no consumed-source commitment,
-/// so a clean or empty result is never an all-clear and no currentness is
-/// claimed beyond the refresh that produced it.
+/// always exists: the snapshot never covers unsaved editor buffers or
+/// gitignored files, and never analyzes untracked files as findings (the seam
+/// inventory reads untracked Rust files and binds their bytes into the
+/// commitment), so a clean or empty result is never an all-clear. When the findings and the seam inventory were shown to have
+/// consumed the same Rust source bytes it says so and repair cards stay
+/// available behind their per-item gates; otherwise it names why custody is
+/// not established, withholds cards and claims no currentness beyond the
+/// refresh that produced it.
 fn worktree_scope_disclosure(snapshot: &Snapshot) -> Value {
     const NAMED_PATHS: usize = 3;
     let scope = &snapshot.scope;
@@ -1378,13 +1544,32 @@ fn worktree_scope_disclosure(snapshot: &Snapshot) -> Value {
         Some(base) => format!("saved tracked-worktree diff against base `{base}`"),
         None => "saved tracked-worktree diff against the default branch".to_string(),
     };
-    let mut disclosure = json!({
-        "analyzed": analyzed,
-        "uncommitted_edits": "saved tracked edits included",
-        "note": "this snapshot analyzed saved staged and unstaged tracked edits as the producer read them during the refresh; unsaved editor buffers, untracked files and gitignored files are outside it. It carries no consumed-source commitment, so edits after the refresh are not detected (refresh again) and repair cards and repair readiness are withheld",
-        "consumed_source_commitment": "not_established",
-        "repair_cards": "withheld",
-    });
+    let mut disclosure = match &snapshot.custody {
+        SourceCustody::Established { .. } => json!({
+            "analyzed": analyzed,
+            "uncommitted_edits": "saved tracked edits included",
+            "note": "this snapshot analyzed saved staged and unstaged tracked edits. The findings producer and the seam inventory recorded the same raw Rust source bytes for the analyzed files, and that commitment is part of the snapshot identity, so a repair card or readiness never mixes two saved states; unsaved editor buffers and gitignored files are outside it, and untracked files are never analyzed as findings (the seam inventory reads untracked Rust files, so their bytes are bound into the commitment). The server does not watch the worktree: edits after the refresh are not detected, so refresh again",
+            "consumed_source_commitment": "established",
+            "repair_cards": "available",
+        }),
+        SourceCustody::NotEstablished { .. }
+        | SourceCustody::NotApplicable
+        | SourceCustody::CommittedOverUncommitted { .. } => json!({
+            "analyzed": analyzed,
+            "uncommitted_edits": "saved tracked edits included",
+            "note": format!(
+                "this snapshot analyzed saved staged and unstaged tracked edits as the producer read them during the refresh; unsaved editor buffers and gitignored files are outside it, and untracked files are never analyzed as findings. The consumed source bytes of the findings and the seam inventory were not shown to agree{}, so edits after the refresh are not detected (refresh again) and repair cards and repair readiness are withheld",
+                match &snapshot.custody {
+                    SourceCustody::NotEstablished { reason } => format!(" ({reason})"),
+                    SourceCustody::Established { .. }
+                    | SourceCustody::NotApplicable
+                    | SourceCustody::CommittedOverUncommitted { .. } => String::new(),
+                }
+            ),
+            "consumed_source_commitment": "not_established",
+            "repair_cards": "withheld",
+        }),
+    };
     if !scope.untracked.is_empty() {
         let named = scope
             .untracked
@@ -1449,6 +1634,46 @@ fn analyzed_label(snapshot: &Snapshot) -> String {
 }
 
 fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    let facts = tracked_scope_facts_disclosure(snapshot);
+    let SourceCustody::CommittedOverUncommitted { reason } = &snapshot.custody else {
+        return facts;
+    };
+    // The checkout can change after the findings ran even when it was clean
+    // then, so the withheld state is disclosed without an uncommitted-edit fact.
+    let mut disclosure = facts.unwrap_or_else(|| {
+        json!({
+            "analyzed": analyzed_label(snapshot),
+            "uncommitted_edits": "outside this analysis",
+            "note": "this snapshot reads each file as committed at HEAD",
+        })
+    });
+    let note = disclosure
+        .get("note")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim_end_matches('.')
+        .to_string();
+    let withheld = format!(
+        "Repair cards and repair readiness are withheld for this snapshot because the findings read committed content while the seam inventory reads the checkout's current Rust files ({reason}). {}",
+        committed_withheld_remedy(reason)
+    );
+    let withheld_note = json!(if note.is_empty() {
+        withheld
+    } else {
+        format!("{note}. {withheld}")
+    });
+    if let Some(object) = disclosure.as_object_mut() {
+        object.insert("note".to_string(), withheld_note);
+        object.insert(
+            "consumed_source_commitment".to_string(),
+            json!("not_established"),
+        );
+        object.insert("repair_cards".to_string(), json!("withheld"));
+    }
+    Some(disclosure)
+}
+
+fn tracked_scope_facts_disclosure(snapshot: &Snapshot) -> Option<Value> {
     let scope = &snapshot.scope;
     const NAMED_PATHS: usize = 3;
     if !scope.uncommitted_edits {
@@ -1496,6 +1721,39 @@ fn tag_source(mut summary: Value, snapshot: &Snapshot) -> Value {
     summary
 }
 
+/// #11213: a committed snapshot that analyzed nothing (`no_scope`,
+/// `no_changed_lines`, `no_behavioral_candidates` with zero items) reads like
+/// an all-clear unless it says why and which arguments widen it. The hint is
+/// additive and never changes the outcome kind or any verdict: it names the
+/// two honest causes (the default base resolved to the analyzed commit, or the
+/// diff holds no analyzable change) and the `base`/`source` arguments to pass.
+fn empty_scope_hint(session: &WorkspaceSession) -> Option<Value> {
+    let snapshot = session.last_good.as_ref()?;
+    let empty_kind = matches!(
+        snapshot.outcome.kind,
+        AnalysisOutcomeKind::NoScope
+            | AnalysisOutcomeKind::NoChangedLines
+            | AnalysisOutcomeKind::NoBehavioralCandidates
+    );
+    if !empty_kind || !snapshot.items.is_empty() || snapshot.source != RefreshSource::Committed {
+        return None;
+    }
+    let why = match &session.desired_base {
+        Some(base) => format!(
+            "the committed diff against requested base `{base}` holds no analyzable behavior change; this is not an all-clear for changes outside that diff"
+        ),
+        None => match snapshot.outcome.kind {
+            AnalysisOutcomeKind::NoBehavioralCandidates => "no base was passed, so the default base was used; the diff has changed lines but none holds a behavior candidate to analyze (a different base may widen it). This is not an all-clear".to_string(),
+            _ => "no base was passed, so the default base was used; when it resolves to the analyzed commit (detached HEAD, or origin/HEAD pointing at HEAD) the diff is empty and nothing was analyzed. This is not an all-clear".to_string(),
+        },
+    };
+    Some(json!({
+        "why": why,
+        "pass_base": "retry ripr_refresh with `base` set to the revision your change branches from, for example {\"base\": \"origin/main\"}",
+        "pass_source": "for saved uncommitted tracked edits retry with {\"source\": \"worktree\"}; repair cards and readiness are offered only when the findings and the seam inventory are shown to have consumed the same source bytes, and are withheld with the cause otherwise",
+    }))
+}
+
 /// The refresh-time attempt document returned by `ripr_refresh`.
 pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
     let snapshot = session.last_good.as_ref().map(|snapshot| {
@@ -1539,8 +1797,24 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
             "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits (#5254 item 2)",
         ],
     });
+    // Top-level currentness so an agent need not parse `scope`: `true` only
+    // when the snapshot's source is the saved worktree or the working tree
+    // had no uncommitted edits outside the analysis; `false` after a failed
+    // attempt or with edits the analysis cannot see; `null` with no snapshot
+    // (audit finding 2).
+    document["fresh_for_working_tree"] = match (&session.last_good, &session.last_failure) {
+        (None, _) => Value::Null,
+        (Some(_), Some(_)) => json!(false),
+        (Some(snapshot), None) => {
+            json!(snapshot.source == RefreshSource::Worktree || !snapshot.scope.uncommitted_edits)
+        }
+    };
+    document["verify"] = super::repair::verify_after_editing_tests();
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
+    }
+    if let Some(hint) = empty_scope_hint(session) {
+        document["empty_scope_hint"] = hint;
     }
     // #7357: requested and captured source are distinct facts. Both appear
     // only once a worktree source is involved, so source-less callers keep
@@ -1689,65 +1963,124 @@ pub(crate) fn run_check(
     base: Option<&str>,
     source: RefreshSource,
 ) -> Result<Snapshot, AttemptFailure> {
-    let config = crate::config::load_for_root(root).map_err(|error| {
-        AttemptFailure::new(
-            CODE_CONFIG_INVALID,
-            format!("the workspace configuration could not be loaded: {error}"),
-            format!(
-                "address the configuration error above (the detail names the cause), then {}",
-                check_retry_recovery(root, base, source)
-            ),
-        )
-    })?;
-    let input = crate::app::CheckInput {
-        root: PathBuf::from(root),
-        base: base.map(str::to_string),
-        git_timeout: Some(crate::app::default_cli_git_timeout()),
-        ..Default::default()
+    // Config refusal is a terminal attempt too: install its context before
+    // loading configuration so a pending signal cannot poison later retries.
+    let attempt = || -> Result<Snapshot, AttemptFailure> {
+        let config = crate::config::load_for_root(root).map_err(|error| {
+            AttemptFailure::new(
+                CODE_CONFIG_INVALID,
+                format!("the workspace configuration could not be loaded: {error}"),
+                format!(
+                    "address the configuration error above (the detail names the cause), then {}",
+                    check_retry_recovery(root, base, source)
+                ),
+            )
+        })?;
+        let input = crate::app::CheckInput {
+            root: PathBuf::from(root),
+            base: base.map(str::to_string),
+            git_timeout: Some(crate::app::default_cli_git_timeout()),
+            ..Default::default()
+        };
+        if source == RefreshSource::Worktree {
+            return run_worktree_check(input, &config, root_identity, base);
+        }
+        let (output, language_view, findings_sources) =
+            crate::app::check_workspace_with_config_typed(input, &config)
+                .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
+        // The seam inventory is gathered once inside this bounded attempt and
+        // feeds both consumers: the shared repair validator that decides each
+        // item's repair readiness (#8717) and the repair-card seam bindings
+        // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
+        // is computed, so the identity binds the admission decision.
+        #[cfg(test)]
+        after_worktree_findings_hook::run();
+        let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
+        // A committed refresh reads committed content for the findings but live
+        // files for the inventory (#7357); only the shared custody owner may
+        // say they agree.
+        if let Some(reason) =
+            committed_over_uncommitted_refusal(&output, &findings_sources, &inventory, || {
+                dirty_rust_routed_paths(Path::new(root))
+            })
+        {
+            let admission = super::repair_admission::SeamAdmission::withheld(
+                &output.findings,
+                super::repair_admission::SEAM_WORKTREE_SOURCE,
+                &committed_card_withheld_detail(&reason),
+            );
+            let mut snapshot = Snapshot::from_output_with_custody(
+                &output,
+                root_identity,
+                &admission,
+                RefreshSource::Committed,
+                SourceCustody::CommittedOverUncommitted { reason },
+            )?;
+            snapshot.base = base.map(str::to_string);
+            snapshot.language_view = language_view;
+            return Ok(snapshot);
+        }
+        let admission = super::repair_admission::SeamAdmission::evaluate(
+            &output.findings,
+            &inventory.candidate_seams,
+            crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
+            &inventory.completeness,
+            Path::new(root),
+        );
+        let mut snapshot = Snapshot::from_output_admitted(
+            &output,
+            root_identity,
+            &admission,
+            RefreshSource::Committed,
+        )?;
+        snapshot.base = base.map(str::to_string);
+        snapshot.language_view = language_view;
+        // Bind the repair-card producers inside the same bounded attempt, after
+        // the shared check authority completed: the snapshot commits complete —
+        // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
+        // The card producers consume the same resolved workspace configuration
+        // as the findings (#6825 review), so one committed snapshot cannot
+        // disagree with itself across the two producers.
+        super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
+        Ok(snapshot)
     };
-    if source == RefreshSource::Worktree {
-        return run_worktree_check(input, &config, root_identity, base);
+    #[cfg(unix)]
+    if let Some(interrupted) = crate::cli::interrupt::server_interrupt_flag() {
+        use crate::analysis::cancellation::{
+            self, AnalysisAbortKind, AnalysisCancellation, AnalysisCancellationToken,
+        };
+        let token = AnalysisCancellationToken::with_server_interrupt(interrupted.clone());
+        let result = cancellation::with_token(&token, attempt);
+        // This exchange is the terminal boundary. A signal observed even after
+        // the final child/checkpoint refuses success; a later signal remains
+        // pending for the next attempt. Preserve a prior diagnostic on errors.
+        return crate::cli::interrupt::settle_server_attempt(&interrupted, result, || {
+            check_failure(
+                &AnalysisCancellation {
+                    kind: AnalysisAbortKind::Cancelled,
+                }
+                .into(),
+                root,
+                base,
+                source,
+            )
+        });
     }
-    let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
-        .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
-    // The seam inventory is gathered once inside this bounded attempt and
-    // feeds both consumers: the shared repair validator that decides each
-    // item's repair readiness (#8717) and the repair-card seam bindings
-    // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
-    // is computed, so the identity binds the admission decision.
-    let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
-    let admission = super::repair_admission::SeamAdmission::evaluate(
-        &output.findings,
-        &inventory.candidate_seams,
-        crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
-        &inventory.completeness,
-    );
-    let mut snapshot = Snapshot::from_output_admitted(
-        &output,
-        root_identity,
-        &admission,
-        RefreshSource::Committed,
-    )?;
-    snapshot.base = base.map(str::to_string);
-    snapshot.language_view = language_view;
-    // Bind the repair-card producers inside the same bounded attempt, after
-    // the shared check authority completed: the snapshot commits complete —
-    // items, findings, head, and card seams — or not at all (RIPR-SPEC-0215).
-    // The card producers consume the same resolved workspace configuration
-    // as the findings (#6825 review), so one committed snapshot cannot
-    // disagree with itself across the two producers.
-    super::repair_card::bind_snapshot_card_producers(root, inventory, &mut snapshot)?;
-    Ok(snapshot)
+    attempt()
 }
 
 /// The saved tracked-worktree refresh (#7357): the shared worktree check
-/// producer's findings, bound into a snapshot tagged `worktree`. It
-/// deliberately gathers no seam inventory and binds no card producers. Those
-/// producers read live files after the findings pass and no shared
-/// consumed-source commitment spans the two, so a worktree snapshot could
-/// pair findings from one saved state with seams from another. Repair
-/// readiness is refused for every finding and the card read discloses
-/// unavailability instead of claiming currentness.
+/// producer's findings, then the same seam inventory and card producers a
+/// committed refresh binds, over one source the two producers must agree on.
+///
+/// The findings producer records the raw Rust bytes it consumed and the
+/// inventory records the raw Rust bytes it read while each buffer was live;
+/// [`crate::analysis::consumed_source::ConsumedRustSources::establish_agreement`]
+/// compares the two carriers. Only an established agreement enables the shared
+/// admission and card binding, and its commitment rides the snapshot identity.
+/// Any missing, conflicting or moved observation, or a moved `HEAD`, keeps
+/// readiness and cards withheld with the cause named. No digest is minted
+/// from a later filesystem rescan or by this adapter.
 fn run_worktree_check(
     input: crate::app::CheckInput,
     config: &crate::config::RiprConfig,
@@ -1755,28 +2088,253 @@ fn run_worktree_check(
     base: Option<&str>,
 ) -> Result<Snapshot, AttemptFailure> {
     let root = input.root.clone();
-    let (output, language_view) =
+    let (output, language_view, findings_sources) =
         crate::app::check_workspace_worktree_with_config_typed(input, config)
             .map_err(|error| check_failure(&error, &root, base, RefreshSource::Worktree))?;
-    let admission = super::repair_admission::SeamAdmission::withheld(
-        &output.findings,
-        super::repair_admission::SEAM_WORKTREE_SOURCE,
-        WORKTREE_CARD_WITHHELD_DETAIL,
-    );
-    let mut snapshot = Snapshot::from_output_admitted(
-        &output,
-        root_identity,
-        &admission,
-        RefreshSource::Worktree,
-    )?;
+    #[cfg(test)]
+    after_worktree_findings_hook::run();
+    // An inventory failure must not drop findings the producer already
+    // computed: it degrades to a withheld custody carrying the cause.
+    let custody = super::repair_card::gather_seam_inventory(&root, config, &output.findings)
+        .map_err(|failure| {
+            if crate::analysis::cancellation::current_abort_kind().is_some() {
+                Err(failure)
+            } else {
+                Ok(format!(
+                    "the seam inventory could not be gathered ({}): {}",
+                    failure.code, failure.detail
+                ))
+            }
+        });
+    // A cancelled attempt still fails; any other inventory failure degrades.
+    let custody = match custody {
+        Err(Err(failure)) => return Err(failure),
+        Err(Ok(reason)) => Err(reason),
+        Ok(inventory) => worktree_custody(&output, &findings_sources, &inventory)
+            .map(|commitment| (commitment, inventory)),
+    };
+    let mut snapshot = match custody {
+        Ok((commitment, inventory)) => {
+            let admission = super::repair_admission::SeamAdmission::evaluate(
+                &output.findings,
+                &inventory.candidate_seams,
+                crate::app::agent_brief::AgentBriefPolicy::from_config(config),
+                &inventory.completeness,
+                &root,
+            );
+            let mut snapshot = Snapshot::from_output_with_custody(
+                &output,
+                root_identity,
+                &admission,
+                RefreshSource::Worktree,
+                SourceCustody::Established { commitment },
+            )?;
+            snapshot.base = base.map(str::to_string);
+            snapshot.language_view = language_view;
+            super::repair_card::bind_snapshot_card_producers(&root, inventory, &mut snapshot)?;
+            return Ok(snapshot);
+        }
+        Err(reason) => {
+            let admission = super::repair_admission::SeamAdmission::withheld(
+                &output.findings,
+                super::repair_admission::SEAM_WORKTREE_SOURCE,
+                &worktree_card_withheld_detail(&reason),
+            );
+            Snapshot::from_output_with_custody(
+                &output,
+                root_identity,
+                &admission,
+                RefreshSource::Worktree,
+                SourceCustody::NotEstablished { reason },
+            )?
+        }
+    };
     snapshot.base = base.map(str::to_string);
     snapshot.language_view = language_view;
     Ok(snapshot)
 }
 
+/// Compare what the findings producer and the seam inventory consumed.
+/// `Ok` carries the established commitment; `Err` names why custody is not
+/// established. Withholding is the default: nothing here upgrades weaker
+/// evidence.
+fn worktree_custody(
+    output: &crate::app::CheckOutput,
+    findings_sources: &crate::analysis::consumed_source::ConsumedRustSources,
+    inventory: &super::repair_card::SeamInventory,
+) -> Result<String, String> {
+    if output.findings.is_empty() {
+        return Err(
+            "the refresh produced no findings, so no consumed-source claim was needed or bound"
+                .to_string(),
+        );
+    }
+    // The card binds the head the inventory resolved; the producer observed
+    // its own. A head the producer did not observe, or one that moved between
+    // the two, cannot be called coherent.
+    let producer_head = output
+        .analyzed_revisions
+        .as_ref()
+        .and_then(|revisions| revisions.head_commit.as_deref());
+    if producer_head != Some(inventory.repository_head.as_str()) {
+        return Err(
+            "the repository head the findings producer observed does not match the head the seam inventory bound, or was not observed"
+                .to_string(),
+        );
+    }
+    crate::analysis::consumed_source::ConsumedRustSources::establish_agreement(
+        findings_sources,
+        &inventory.consumed_sources,
+    )
+    .map(|commitment| commitment.as_str().to_string())
+    .map_err(|refusal| refusal.describe())
+}
+
+/// Why a committed refresh cannot vouch that its findings (committed content)
+/// and its live-file seam inventory consumed the same Rust bytes (#7357), or
+/// `None` when no finding needs a card or the producers agree.
+///
+/// The shared [`ConsumedRustSources::establish_agreement`] owner decides on
+/// every committed refresh with findings, so a checkout that changed after the
+/// findings ran is caught even when it was clean at that time, and it names the
+/// moved path when it can. The agreement only covers paths the findings
+/// consumed, but the inventory reads its own selected Rust files, so with
+/// Rust findings any dirty tracked or untracked Rust-routed path also withholds
+/// (`dirty_rust` lists them; it is evaluated only when needed and an
+/// unestablishable list fails closed). Dirty non-Rust files never withhold, and
+/// gitignored Rust files are a stated residual, not claimed. A
+/// head the findings producer observed that differs from the inventory's also
+/// withholds; an unobserved head is not compared on the committed path.
+///
+/// [`ConsumedRustSources::establish_agreement`]: crate::analysis::consumed_source::ConsumedRustSources::establish_agreement
+fn committed_over_uncommitted_refusal(
+    output: &crate::app::CheckOutput,
+    findings_sources: &crate::analysis::consumed_source::ConsumedRustSources,
+    inventory: &super::repair_card::SeamInventory,
+    dirty_rust: impl FnOnce() -> Result<Vec<String>, String>,
+) -> Option<String> {
+    use crate::analysis::consumed_source::{ConsumedRustSources, CustodyRefusal};
+    if output.findings.is_empty() {
+        return None;
+    }
+    let producer_head = output
+        .analyzed_revisions
+        .as_ref()
+        .and_then(|revisions| revisions.head_commit.as_deref());
+    if producer_head.is_some_and(|head| head != inventory.repository_head) {
+        return Some(COMMITTED_HEAD_MOVED_REASON.to_string());
+    }
+    match ConsumedRustSources::establish_agreement(findings_sources, &inventory.consumed_sources) {
+        Ok(_) | Err(CustodyRefusal::FindingsObservedNothing) => {}
+        Err(refusal) => return Some(refusal.describe()),
+    }
+    let rust_findings = output
+        .findings
+        .iter()
+        .any(|finding| finding.language == Some(crate::domain::LanguageId::Rust));
+    if !rust_findings {
+        return None;
+    }
+    match dirty_rust() {
+        Err(error) => Some(format!("{COMMITTED_DIRTY_LIST_UNESTABLISHED} ({error})")),
+        Ok(paths) if paths.is_empty() => None,
+        Ok(paths) => {
+            let named = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+            let more = paths.len().saturating_sub(3);
+            let listing = if more > 0 {
+                format!("{named} and {more} more")
+            } else {
+                named
+            };
+            Some(format!(
+                "uncommitted Rust source or test files ({listing}) are read by the seam inventory and the committed findings never saw them"
+            ))
+        }
+    }
+}
+
+/// The dirty tracked and untracked Rust-routed paths of the checkout, from the
+/// same committed-source probe the committed findings producer uses. Gitignored
+/// files are excluded (see the comment below).
+fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
+    let overlay =
+        crate::analysis::committed_source::probe(root, Some(crate::app::default_cli_git_timeout()))
+            .map_err(|error| error.to_string())?;
+    let Some(overlay) = overlay else {
+        return Ok(Vec::new());
+    };
+    // Gitignored Rust files are deliberately not listed: the inventory can
+    // read them, but their enumeration is capped and descends into skipped
+    // directories, so including them would over-withhold clean checkouts. They
+    // are a stated residual (RIPR-SPEC-0211), as in worktree mode.
+    let mut paths = overlay.dirty_source_paths();
+    paths.extend(overlay.untracked_source_paths());
+    paths.retain(|path| {
+        crate::analysis::language::route(Path::new(path)) == Some(crate::domain::LanguageId::Rust)
+    });
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+/// The reason a committed refresh withholds when the head moved between the
+/// findings and the inventory.
+const COMMITTED_HEAD_MOVED_REASON: &str = "the repository head the findings producer observed does not match the head the seam inventory bound";
+
+/// The reason prefix when the dirty Rust path list could not be established.
+const COMMITTED_DIRTY_LIST_UNESTABLISHED: &str =
+    "the checkout's uncommitted Rust files could not be established";
+
+/// The recovery that matches a committed withheld reason: a moved head or an
+/// unestablishable list needs another refresh, uncommitted Rust files need
+/// committing first.
+fn committed_withheld_remedy(reason: &str) -> &'static str {
+    if reason == COMMITTED_HEAD_MOVED_REASON {
+        "Run ripr_refresh again once the repository head settles"
+    } else if reason.starts_with(COMMITTED_DIRTY_LIST_UNESTABLISHED) {
+        "Run ripr_refresh again; if it keeps failing, check that git can read the repository"
+    } else {
+        "Commit the uncommitted Rust source or test files (untracked ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+    }
+}
+
+/// Why a committed snapshot whose findings and checkout were not shown to
+/// agree carries no repair readiness or repair card (#7357).
+pub(crate) fn committed_card_withheld_detail(reason: &str) -> String {
+    format!(
+        "this snapshot analyzed committed content, but its findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. {}",
+        committed_withheld_remedy(reason)
+    )
+}
+
+/// Test-only barrier between the findings producer and the seam inventory, so
+/// a test can move the saved source exactly where a concurrent edit would.
+#[cfg(test)]
+pub(crate) mod after_worktree_findings_hook {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static HOOK: RefCell<Option<Box<dyn FnOnce()>>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn install(hook: impl FnOnce() + 'static) {
+        HOOK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
+    }
+
+    pub(super) fn run() {
+        if let Some(hook) = HOOK.with(|slot| slot.borrow_mut().take()) {
+            hook();
+        }
+    }
+}
+
 /// Why a saved tracked-worktree snapshot carries no repair readiness or
-/// repair card (#7357).
-pub(crate) const WORKTREE_CARD_WITHHELD_DETAIL: &str = "this snapshot analyzed saved tracked-worktree edits; no consumed-source commitment spans its findings and the live seam inventory that repair readiness and cards need, so they are withheld rather than claimed current. Commit the change and run ripr_refresh without `source` for repair cards";
+/// repair card when its source custody is not established (#7357).
+pub(crate) fn worktree_card_withheld_detail(reason: &str) -> String {
+    format!(
+        "this snapshot analyzed saved tracked-worktree edits, but the findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. Edits settle by refreshing again; commit the change and run ripr_refresh without `source` for committed repair cards"
+    )
+}
 
 /// Project a shared-check refusal into the attempt failure. The recovery
 /// names routes this server can actually take: base resolution is retried
@@ -2341,12 +2899,21 @@ mod tests {
     /// shared gaps test finding with per-index identities. No analysis runs:
     /// the session contract is exercised against typed producer output.
     fn session_with_findings(count: usize) -> Result<WorkspaceSession, String> {
+        session_with_padded_findings(count, 0)
+    }
+
+    /// Like [`session_with_findings`], with `id_pad` filler bytes in every
+    /// canonical gap identity so omission windows can be byte-bound.
+    fn session_with_padded_findings(
+        count: usize,
+        id_pad: usize,
+    ) -> Result<WorkspaceSession, String> {
         let findings = (0..count)
             .map(|index| {
                 let mut finding = gaps::test_finding()?;
                 finding.id = format!("finding:test:{index}");
                 if let Some(gap) = finding.canonical_gap.as_mut() {
-                    gap.id = format!("gap:test:{index}");
+                    gap.id = format!("gap:test:{index}:{}", "x".repeat(id_pad));
                 }
                 finding.probe.id = crate::domain::ProbeId(format!("probe:test:{index}"));
                 // Distinct files: the shared budget caps items per document,
@@ -2799,6 +3366,7 @@ mod tests {
                 GapListWindow {
                     offset: 0,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &file("src/checkout.rs"),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -2836,6 +3404,7 @@ mod tests {
                 GapListWindow {
                     offset: 1,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &file("src/checkout.rs"),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3024,6 +3593,197 @@ mod tests {
         Ok(())
     }
 
+    /// #9360: the omission disclosure pages on its own axis. A selection with
+    /// more omitted identities than one window used to render all of them
+    /// inside the non-pageable shell, so enough omissions failed the whole
+    /// listing with `result_too_large`. Now each response carries at most
+    /// [`OMITTED_WINDOW`] identities and `omitted_page` walks the rest
+    /// exactly once.
+    #[test]
+    fn omission_disclosure_pages_independently_of_items() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let list = |omitted_offset: usize| -> Result<Value, String> {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow {
+                        limit: Some(1),
+                        omitted_offset,
+                        ..GapListWindow::default()
+                    },
+                    &GapListFilter::default(),
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| failure.detail)
+        };
+        let first = list(0)?;
+        let total = first["omitted"].as_u64().ok_or("missing omitted count")? as usize;
+        if total <= OMITTED_WINDOW {
+            return Err(format!(
+                "fixture must omit more than one window ({OMITTED_WINDOW}), got {total}"
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        let mut document = first;
+        let mut windows = 0usize;
+        loop {
+            let ids = document["omitted_items"]
+                .as_array()
+                .ok_or("omitted_items must be an array")?;
+            if ids.len() > OMITTED_WINDOW {
+                return Err(format!("window exceeded the cap: {}", ids.len()));
+            }
+            if document["omitted_page"]["returned"] != json!(ids.len()) {
+                return Err(format!("returned must count the window: {document}"));
+            }
+            for item in ids {
+                let id = item["canonical_id"].as_str().ok_or("omitted id")?;
+                if !seen.insert(id.to_string()) {
+                    return Err(format!("omitted identity repeated across windows: {id}"));
+                }
+            }
+            windows += 1;
+            let page = &document["omitted_page"];
+            match page["next_offset"].as_u64() {
+                Some(next) => {
+                    if page["has_more"] != json!(true)
+                        || document["continuation"]["next_omitted_page"]["arguments"]["omitted_offset"]
+                            != json!(next)
+                    {
+                        return Err(format!(
+                            "continuation must name the next window: {document}"
+                        ));
+                    }
+                    document = list(next as usize)?;
+                }
+                None => {
+                    if page["has_more"] != json!(false)
+                        || !document["continuation"]["next_omitted_page"].is_null()
+                    {
+                        return Err(format!("last window must close the route: {document}"));
+                    }
+                    break;
+                }
+            }
+        }
+        if seen.len() != total || windows < 2 {
+            return Err(format!(
+                "walk must cover every omission once: saw {} of {total} in {windows} windows",
+                seen.len()
+            ));
+        }
+        // A past-end window is an empty disclosed window at the echoed offset.
+        let past = list(total + 50)?;
+        if past["omitted_items"] != json!([])
+            || past["omitted_page"]["offset"] != json!(total + 50)
+            || past["omitted_page"]["has_more"] != json!(false)
+        {
+            return Err(format!("past-end window must be empty and closed: {past}"));
+        }
+        Ok(())
+    }
+
+    /// #9360 review: the omission window is byte-bound as well as
+    /// count-bound. Long canonical identities used to make a 200-entry
+    /// window outgrow the document ceiling; now the window stops at its byte
+    /// budget and the walk still covers every omission once.
+    #[test]
+    fn long_omitted_identities_are_byte_fitted_and_fully_walked() -> Result<(), String> {
+        let session = session_with_padded_findings(700, 600)?;
+        let list = |omitted_offset: usize| -> Result<Value, String> {
+            session
+                .list_gaps(
+                    None,
+                    GapListWindow {
+                        limit: Some(1),
+                        omitted_offset,
+                        ..GapListWindow::default()
+                    },
+                    &GapListFilter::default(),
+                    crate::mcp::MAX_RESPONSE_BYTES,
+                )
+                .map_err(|failure| format!("window at {omitted_offset} failed: {}", failure.detail))
+        };
+        let mut document = list(0)?;
+        let total = document["omitted"]
+            .as_u64()
+            .ok_or("missing omitted count")?;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut shortened = false;
+        loop {
+            let ids = document["omitted_items"]
+                .as_array()
+                .ok_or("omitted_items must be an array")?;
+            if ids.is_empty() {
+                return Err(format!("a window must make progress: {document}"));
+            }
+            shortened |=
+                ids.len() < OMITTED_WINDOW && document["omitted_page"]["has_more"] == json!(true);
+            for item in ids {
+                let id = item["canonical_id"].as_str().ok_or("omitted id")?;
+                if !seen.insert(id.to_string()) {
+                    return Err(format!("omitted identity repeated: {id}"));
+                }
+            }
+            match document["omitted_page"]["next_offset"].as_u64() {
+                Some(next) => {
+                    let next = usize::try_from(next).map_err(|error| error.to_string())?;
+                    document = list(next)?;
+                }
+                None => break,
+            }
+        }
+        if !shortened {
+            return Err("fixture must exercise the byte budget, not only the count cap".into());
+        }
+        if seen.len() as u64 != total {
+            return Err(format!("walk saw {} of {total} omissions", seen.len()));
+        }
+        Ok(())
+    }
+
+    /// #9360 review: each continuation route replays the whole request and
+    /// advances only its own axis. Following `next_page` keeps the requested
+    /// omission window; following `next_omitted_page` keeps the filters and
+    /// item window.
+    #[test]
+    fn continuation_routes_preserve_the_other_axis() -> Result<(), String> {
+        let session = session_with_findings(700)?;
+        let filter = GapListFilter {
+            file: Some("src".to_string()),
+            ..GapListFilter::default()
+        };
+        let document = session
+            .list_gaps(
+                None,
+                GapListWindow {
+                    offset: 1,
+                    limit: Some(2),
+                    omitted_offset: 5,
+                },
+                &filter,
+                crate::mcp::MAX_RESPONSE_BYTES,
+            )
+            .map_err(|failure| failure.detail)?;
+        let next_page = &document["continuation"]["next_page"]["arguments"];
+        if next_page["omitted_offset"] != json!(5) || next_page["file"] != json!("src") {
+            return Err(format!(
+                "next_page lost the omission window or filter: {next_page}"
+            ));
+        }
+        let next_omitted = &document["continuation"]["next_omitted_page"]["arguments"];
+        if next_omitted["offset"] != json!(1)
+            || next_omitted["limit"] != json!(2)
+            || next_omitted["file"] != json!("src")
+            || next_omitted["snapshot_id"] != document["snapshot_id"]
+        {
+            return Err(format!(
+                "next_omitted_page lost the item window or filter: {next_omitted}"
+            ));
+        }
+        Ok(())
+    }
+
     /// #6021: an aggregate listing too large for one wire response degrades
     /// to disclosed pages. The old behavior returned the whole budget-
     /// approved document and let the tool envelope fail `result_too_large`
@@ -3141,6 +3901,7 @@ mod tests {
                     GapListWindow {
                         offset,
                         limit: None,
+                        ..GapListWindow::default()
                     },
                     &GapListFilter::default(),
                     crate::mcp::MAX_RESPONSE_BYTES,
@@ -3192,6 +3953,7 @@ mod tests {
                 GapListWindow {
                     offset: 0,
                     limit: Some(1),
+                    ..GapListWindow::default()
                 },
                 &GapListFilter::default(),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3215,6 +3977,7 @@ mod tests {
                 GapListWindow {
                     offset: requested_offset,
                     limit: None,
+                    ..GapListWindow::default()
                 },
                 &GapListFilter::default(),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3291,6 +4054,7 @@ mod tests {
                 GapListWindow {
                     offset: 10,
                     limit: None,
+                    ..GapListWindow::default()
                 },
                 &GapListFilter::default(),
                 crate::mcp::MAX_RESPONSE_BYTES,
@@ -3365,6 +4129,7 @@ mod tests {
         let window = |offset: usize| GapListWindow {
             offset,
             limit: None,
+            ..GapListWindow::default()
         };
         let echo = |len: usize| GapListFilter {
             file: Some("x".repeat(len)),
@@ -3845,6 +4610,15 @@ mod tests {
         };
 
         let refresh = refresh_document(&session);
+        // The audit's silent-staleness case: an uncommitted edit the analysis
+        // cannot see is a top-level `false`, with the worktree re-check named.
+        if refresh["fresh_for_working_tree"] != json!(false)
+            || refresh["verify"]["mcp"]["arguments"]["source"] != "worktree"
+        {
+            return Err(format!(
+                "a dirty-tree committed refresh must say it is not fresh: {refresh}"
+            ));
+        }
         if refresh.pointer("/scope/analyzed").and_then(Value::as_str)
             != Some("committed default-branch diff")
         {
@@ -4044,7 +4818,7 @@ mod tests {
         let admission = super::super::repair_admission::SeamAdmission::withheld(
             &equal.findings,
             super::super::repair_admission::SEAM_WORKTREE_SOURCE,
-            WORKTREE_CARD_WITHHELD_DETAIL,
+            &worktree_card_withheld_detail("test: agreement not evaluated"),
         );
         let worktree = Snapshot::from_output_admitted(
             &equal,
@@ -4093,6 +4867,143 @@ mod tests {
             "no worktree item is repair ready"
         );
         assert!(worktree.card_producers.is_none());
+        Ok(())
+    }
+
+    fn refusal_inputs(
+        language: crate::domain::LanguageId,
+        producer_head: Option<&str>,
+        findings_digest: &[u8],
+        inventory_digest: &[u8],
+    ) -> Result<
+        (
+            crate::app::CheckOutput,
+            crate::analysis::consumed_source::ConsumedRustSources,
+            super::super::repair_card::SeamInventory,
+        ),
+        String,
+    > {
+        let mut out = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        let mut finding = crate::mcp::gaps::test_finding()?;
+        finding.language = Some(language);
+        out.findings = vec![finding];
+        out.analyzed_revisions = producer_head.map(|head| crate::analysis::AnalyzedRevisions {
+            head_commit: Some(head.to_string()),
+            ..Default::default()
+        });
+        let mut findings = crate::analysis::consumed_source::ConsumedRustSources::default();
+        findings.record(Path::new("src/lib.rs"), Some(findings_digest));
+        let mut inventory_sources =
+            crate::analysis::consumed_source::ConsumedRustSources::default();
+        inventory_sources.record(Path::new("src/lib.rs"), Some(inventory_digest));
+        let inventory = super::super::repair_card::SeamInventory {
+            repository_head: "head-a".to_string(),
+            candidate_seams: Vec::new(),
+            completeness: Default::default(),
+            config: crate::config::RiprConfig::default(),
+            consumed_sources: inventory_sources,
+        };
+        Ok((out, findings, inventory))
+    }
+
+    /// #7357: the committed custody decision itself, with the agreement Ok so
+    /// the dirty-Rust rule is the only thing that can withhold.
+    #[test]
+    fn committed_refusal_dirty_rust_rule_is_isolated_from_the_agreement() -> Result<(), String> {
+        use crate::domain::LanguageId::{Python, Rust};
+        let reason = |language, head, dirty: Result<Vec<String>, String>| {
+            let (out, findings, inventory) = refusal_inputs(language, head, b"a", b"a")?;
+            Ok::<_, String>(committed_over_uncommitted_refusal(
+                &out,
+                &findings,
+                &inventory,
+                || dirty,
+            ))
+        };
+        // Agreement Ok, a dirty Rust path: withheld by the dirty rule's own text.
+        let dirty = reason(Rust, Some("head-a"), Ok(vec!["src/h.rs".to_string()]))?
+            .ok_or("a dirty Rust path must withhold")?;
+        if !dirty.contains("uncommitted Rust source or test files") || !dirty.contains("src/h.rs") {
+            return Err(format!("unexpected dirty reason: {dirty}"));
+        }
+        // An unestablishable list fails closed.
+        let failed = reason(Rust, Some("head-a"), Err("git failed".to_string()))?
+            .ok_or("an unestablishable dirty list must withhold")?;
+        if !failed.contains("could not be established")
+            || committed_withheld_remedy(&failed).contains("Commit the uncommitted")
+        {
+            return Err(format!("unexpected probe-failure reason: {failed}"));
+        }
+        // Rust findings and no dirty path: no withholding.
+        if reason(Rust, Some("head-a"), Ok(Vec::new()))?.is_some() {
+            return Err("a clean Rust checkout must not withhold".to_string());
+        }
+        // An unobserved producer head is not compared.
+        if reason(Rust, None, Ok(Vec::new()))?.is_some() {
+            return Err("an unobserved head is not a mismatch".to_string());
+        }
+        // A producer head that differs from the inventory's withholds.
+        let moved =
+            reason(Rust, Some("head-b"), Ok(Vec::new()))?.ok_or("a moved head must withhold")?;
+        if moved != COMMITTED_HEAD_MOVED_REASON
+            || committed_withheld_remedy(&moved).contains("Commit the uncommitted")
+        {
+            return Err(format!("the head remedy must be a plain refresh: {moved}"));
+        }
+        // Non-Rust findings never consult the dirty list.
+        let (out, findings, inventory) = refusal_inputs(Python, Some("head-a"), b"a", b"a")?;
+        let consulted = std::cell::Cell::new(false);
+        let python = committed_over_uncommitted_refusal(&out, &findings, &inventory, || {
+            consulted.set(true);
+            Ok(vec!["src/h.rs".to_string()])
+        });
+        if python.is_some() || consulted.get() {
+            return Err("non-Rust findings must not consult the dirty-Rust list".to_string());
+        }
+        // No findings never consult it either.
+        let (mut out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"a")?;
+        out.findings.clear();
+        let none = committed_over_uncommitted_refusal(&out, &findings, &inventory, || {
+            consulted.set(true);
+            Ok(vec!["src/h.rs".to_string()])
+        });
+        if none.is_some() || consulted.get() {
+            return Err("no findings must not consult the dirty-Rust list".to_string());
+        }
+        // The agreement still names a moved consumed path first.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"b")?;
+        let moved_path =
+            committed_over_uncommitted_refusal(&out, &findings, &inventory, || Ok(Vec::new()))
+                .ok_or("a moved consumed path must withhold")?;
+        if !moved_path.contains("src/lib.rs") || !moved_path.contains("changed between") {
+            return Err(format!("the owner must name the moved path: {moved_path}"));
+        }
+        Ok(())
+    }
+
+    /// #7357: an established consumed-source commitment is load-bearing
+    /// snapshot identity; absent, the payload is the unchanged worktree one.
+    #[test]
+    fn established_custody_commitment_is_load_bearing_snapshot_identity() -> Result<(), String> {
+        let mut equal = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        equal.findings.push(gaps::test_finding()?);
+        let snapshot = Snapshot::from_output(&equal, Some("root:sha256:test"))
+            .map_err(|failure| failure.detail)?;
+        let id = |commitment: Option<&str>| {
+            snapshot_identity(
+                &snapshot.outcome,
+                &snapshot.items,
+                &snapshot.scope,
+                RefreshSource::Worktree,
+                commitment,
+            )
+        };
+        let none = id(None)?;
+        let one = id(Some("sha256:one"))?;
+        let two = id(Some("sha256:two"))?;
+        assert_ne!(none, one, "an established commitment must move identity");
+        assert_ne!(one, two, "different commitments must not share identity");
+        assert_eq!(one, id(Some("sha256:one"))?, "identity is deterministic");
         Ok(())
     }
 
@@ -4174,6 +5085,7 @@ mod tests {
                 &original_items,
                 &snapshot.scope,
                 RefreshSource::Committed,
+                None,
             )?;
             assert_eq!(snapshot.snapshot_id, original_id);
 
@@ -4261,6 +5173,70 @@ mod tests {
             Some(&json!(1)),
             "{dirty}"
         );
+        Ok(())
+    }
+
+    /// #11213: an empty committed snapshot says why and what to pass; a
+    /// populated or complete-clean one invents no hint.
+    #[test]
+    fn refresh_document_explains_an_empty_scope() -> Result<(), String> {
+        for kind in [
+            AnalysisOutcomeKind::NoScope,
+            AnalysisOutcomeKind::NoChangedLines,
+            AnalysisOutcomeKind::NoBehavioralCandidates,
+        ] {
+            let counts = if kind == AnalysisOutcomeKind::NoBehavioralCandidates {
+                AnalysisOutcomeCounts {
+                    changed_file_count: 1,
+                    changed_line_count: 2,
+                    ..Default::default()
+                }
+            } else {
+                AnalysisOutcomeCounts::default()
+            };
+            let mut empty = output(AnalysisOutcomeKind::CompleteNoFindings, 0, Vec::new())?;
+            empty.analysis_outcome = Some(AnalysisOutcome::new(
+                kind,
+                Default::default(),
+                counts,
+                Vec::new(),
+            )?);
+            let snapshot = Snapshot::from_output(&empty, Some("root:sha256:test"))
+                .map_err(|failure| failure.detail)?;
+            let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+            session.last_good = Some(Arc::new(snapshot));
+            let document = refresh_document(&session);
+            let hint = document
+                .get("empty_scope_hint")
+                .ok_or_else(|| format!("{kind:?} must carry a hint: {document}"))?;
+            let text = hint.to_string();
+            if !text.contains("default base")
+                || !text.contains("\\\"base\\\"")
+                || !text.contains("worktree")
+            {
+                return Err(format!("hint must name why, base and source: {text}"));
+            }
+            let default_why = document["empty_scope_hint"]["why"].to_string();
+            if (kind == AnalysisOutcomeKind::NoBehavioralCandidates)
+                == default_why.contains("the diff is empty")
+            {
+                return Err(format!("why must match the outcome kind: {default_why}"));
+            }
+            session.desired_base = Some("origin/main".to_string());
+            let named = refresh_document(&session)["empty_scope_hint"]["why"].to_string();
+            if !named.contains("origin/main") {
+                return Err(format!("requested base must be named: {named}"));
+            }
+        }
+        for (kind, findings) in [
+            (AnalysisOutcomeKind::CompleteNoFindings, 0),
+            (AnalysisOutcomeKind::CompleteWithFindings, 1),
+        ] {
+            let document = refresh_document(&session_with(kind, findings)?);
+            if document.get("empty_scope_hint").is_some() {
+                return Err(format!("{kind:?} must not carry a hint: {document}"));
+            }
+        }
         Ok(())
     }
 }

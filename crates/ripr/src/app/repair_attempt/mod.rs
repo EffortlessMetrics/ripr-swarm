@@ -36,6 +36,8 @@ const REPAIR_ATTEMPT_ID_HEX_LEN: usize = 24;
 pub(crate) const TERMINAL_RECEIPT_ROLE: &str = "agent_receipt";
 /// Role of the verify document the after phase used to produce that receipt.
 pub(crate) const TERMINAL_VERIFY_ROLE: &str = "agent_verify";
+/// The exact gap producer snapshot used by the retained verify/receipt pair.
+pub(crate) const TERMINAL_GAP_AFTER_ROLE: &str = "after_check_findings";
 /// Cargo's default build directory, relative to the workspace root.
 const CARGO_DEFAULT_BUILD_OUTPUT_DIR: &str = "target";
 /// The lockfile Cargo writes at the workspace root when it resolves
@@ -288,12 +290,31 @@ pub(crate) struct RepairAttemptAfterRefusal {
     pub(crate) recorded_unix_ms: u64,
 }
 
+/// Custody for the one compatibility receipt replaced after the delta bind.
+/// No arbitrary path or directory is accepted. The predecessor is resolved
+/// only in this attempt's store and must retain a valid issued receipt pair.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ReceiptProjectionPredecessor {
+    pub(crate) attempt_id: RepairAttemptId,
+    pub(crate) kind: crate::edit_cage::AttemptPathChangeKind,
+    pub(crate) executable: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RepairAttemptAfter {
     pub(crate) attempt_id: RepairAttemptId,
     pub(crate) repository_head: String,
     pub(crate) delta_sha256: String,
+    /// Version of the delta's post-change identity commitment. Older
+    /// attempts did not bind the bytes of an already changed path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) delta_binding: Option<String>,
+    /// An already-bound issued receipt that this producer replaces with its
+    /// own receipt. Absent for legacy, unowned, or ineligible projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) receipt_projection_predecessor: Option<ReceiptProjectionPredecessor>,
     pub(crate) packet_sha256: String,
     pub(crate) current: bool,
     pub(crate) verdict: EditCageVerdict,
@@ -494,7 +515,36 @@ pub(crate) fn receipt_binding_from(
     }
     let (verdict, binding_holds) = recompute_after_verdict_binding(&root, &manifest, after)?;
     if !binding_holds {
-        return Err("repair attempt after verdict binding is tampered or stale".to_string());
+        // Name what is known and the route for each caller. The after phase
+        // reaches this refusal after it recorded its verdict, so only a new
+        // attempt recovers it; a receipt retry recovers by undoing the change.
+        let store_flag = quoted_store_flag_from_identity(manifest.store.as_ref());
+        let status = format!(
+            "ripr agent status --root {}{store_flag}",
+            shell_arg(&root_display)
+        );
+        let restart = crate::app::gap_bound_repair::repair_start_command(
+            &root_display,
+            &store_flag,
+            &manifest.seam_id,
+            manifest
+                .gap_binding
+                .as_ref()
+                .map(|binding| binding.base.as_str()),
+        );
+        return Err(format!(
+            "repair attempt after verdict binding is tampered or stale: the recorded binding no longer matches the attempt.\n\
+             Causes: command output redirected into a repository file during the run (stdout or stderr, including under `target/ripr`), or a path outside `target/ripr` that changed after the after phase bound it.\n\
+             Next: `{status}` reads the attempt's state.\n\
+             From `ripr agent receipt`: remove the stray file or the later edit (keep a copy first, so you do not revert your bound repair edit) and rerun.\n\
+             From the after phase: the verdict is already recorded, so a rerun reports the attempt as already finished and only a new attempt recovers it.\n\
+             The restart refuses while your repair edit is present, because that edit already reads the gap as exposed.\n\
+             To restart: 1. Copy your edited test file(s) outside the repository and check the copy is complete before overwriting anything.\n\
+             2. Restore each file's pre-edit content yourself; a newly created test file has no pre-edit content, so move it aside or remove it. Restoring bytes can leave the repair staged, so unstage it if needed (`git restore --staged <file>`).\n\
+             3. Run `{restart}`; if it fails, put your copy back.\n\
+             4. Re-apply your edit and run the new --attempt command it prints.\n\
+             Write command output outside the repository."
+        ));
     }
     validate_trusted_head_surface(
         &root,
@@ -547,6 +597,9 @@ fn recompute_after_verdict_binding(
     manifest: &RepairAttemptManifest,
     after: &RepairAttemptAfter,
 ) -> Result<(crate::edit_cage::EditCageVerdict, bool), String> {
+    if after.delta_binding.as_deref() != Some("path-state-v1") {
+        return Err("repair attempt has no post-change path identity binding; currentness cannot be established".to_string());
+    }
     let baseline_artifact = find_manifest_artifact(manifest, "edit_cage_baseline")?;
     let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
         .map_err(|error| format!("read staged edit-cage baseline failed: {error}"))?;
@@ -558,24 +611,318 @@ fn recompute_after_verdict_binding(
     // Recomputed under the admitting rule: for an attempt whose head did not
     // move it is identical to the exact-head rule, and an attempt whose finish
     // required the exact head and saw it move is already refused as stale.
-    let (delta, _) = evaluate_repository_edit_cage_with_head_movement(
+    let (mut delta, _) = evaluate_repository_edit_cage_with_head_movement(
         &baseline,
         HeadMovement::AdmitDescendantCommits,
+    )?;
+    crate::edit_cage::omit_attempt_manifest_identity(
+        &mut delta,
+        &baseline,
+        &manifest_relative_path(manifest),
     )?;
     // The after phase, a rerun of `ripr agent receipt`, and `ripr agent
     // status` write command-owned files under `target/ripr` after the finish
     // bound its verdict. Those later operational writes are not part of the
     // attempt; any other movement still breaks the binding.
-    let delta = crate::edit_cage::without_later_operational_writes(
-        baseline.policy(),
-        &delta,
-        &after.verdict.changed_paths,
-    );
-    let verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
-    let delta_bytes = serde_json::to_vec(&delta)
-        .map_err(|error| format!("serialize repair delta failed: {error}"))?;
-    let holds = sha256_bytes(&delta_bytes) == after.delta_sha256 && verdict == after.verdict;
-    Ok((verdict, holds))
+    let protected = if manifest.gap_binding.is_some() {
+        GAP_WORKFLOW_PROJECTIONS.as_slice()
+    } else {
+        &[]
+    };
+    let normalize = |delta: &crate::edit_cage::AttemptDelta| {
+        crate::edit_cage::without_later_operational_writes_protecting(
+            baseline.policy(),
+            delta,
+            &after.verdict.changed_paths,
+            protected,
+        )
+    };
+    let matches = |delta: &crate::edit_cage::AttemptDelta| -> Result<_, String> {
+        let verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), delta);
+        let delta_bytes = serde_json::to_vec(delta)
+            .map_err(|error| format!("serialize repair delta failed: {error}"))?;
+        Ok((
+            verdict.clone(),
+            sha256_bytes(&delta_bytes) == after.delta_sha256 && verdict == after.verdict,
+        ))
+    };
+    // A declared retained gap snapshot is terminal evidence on every
+    // accepting route, including exact receipt replacement and missing
+    // projections. An exact live delta must not bypass its validation.
+    let validate_terminal = || -> Result<(), String> {
+        if find_terminal_artifact_by_role(manifest, TERMINAL_GAP_AFTER_ROLE).is_some()
+            && !matches!(
+                load_attempt_terminal_receipt(root, manifest),
+                AttemptTerminalReceipt::Issued { .. }
+            )
+        {
+            return Err("retained gap terminal evidence is unavailable".to_string());
+        }
+        Ok(())
+    };
+    let delta = normalize(&delta);
+    let (verdict, holds) = matches(&delta)?;
+    if holds {
+        validate_terminal()?;
+        return Ok((verdict, true));
+    }
+    // Historical custody does not require A to remain current and never
+    // recurses into currentness. Load the pair once, not once per missing
+    // projection's executable-bit candidate. Missing custody disables only
+    // receipt reconstruction, not an otherwise exact projection match.
+    let receipt_projection =
+        after
+            .receipt_projection_predecessor
+            .as_ref()
+            .and_then(|predecessor| {
+                let locator = manifest
+                    .store
+                    .as_ref()
+                    .map(|store| Path::new(&store.locator));
+                let (_, _, prior) = open_attempt(root, locator, &predecessor.attempt_id).ok()?;
+                Some((
+                    issued_terminal_receipt_bytes(root, &prior).ok()?,
+                    issued_terminal_receipt_bytes(root, manifest).ok()?,
+                ))
+            });
+    let matches_with_receipt = |candidate: &crate::edit_cage::AttemptDelta| -> Result<_, String> {
+        let (verdict, holds) = matches(candidate)?;
+        if holds {
+            validate_terminal()?;
+            return Ok((verdict, true));
+        }
+        let (Some(predecessor), Some((prior, issued))) =
+            (&after.receipt_projection_predecessor, &receipt_projection)
+        else {
+            return Ok((verdict, false));
+        };
+        let mut reconstructed = candidate.clone();
+        if !crate::edit_cage::reconstruct_receipt_projection(
+            &mut reconstructed,
+            &baseline,
+            predecessor.kind,
+            predecessor.executable,
+            prior,
+            issued,
+        ) {
+            return Ok((verdict, false));
+        }
+        let (verdict, holds) = matches(&reconstructed)?;
+        if holds {
+            validate_terminal()?;
+        }
+        Ok((verdict, holds))
+    };
+    let (receipt_verdict, holds) = matches_with_receipt(&delta)?;
+    if holds {
+        return Ok((receipt_verdict, true));
+    }
+    let projections = match retained_missing_gap_projections(root, manifest) {
+        Ok(projections) if !projections.is_empty() => projections,
+        _ => return Ok((verdict, false)),
+    };
+    let mut matching = None;
+    let mut count = 0u32;
+    crate::edit_cage::visit_reconstructed_workflow_deltas(
+        &baseline,
+        HeadMovement::AdmitDescendantCommits,
+        &projections,
+        |mut candidate| {
+            crate::edit_cage::omit_attempt_manifest_identity(
+                &mut candidate,
+                &baseline,
+                &manifest_relative_path(manifest),
+            )?;
+            let candidate = normalize(&candidate);
+            // The absent gap projection and present A-to-B receipt slot
+            // are disjoint identities; both may need reconstruction before
+            // the one whole-delta comparison. Count this candidate once.
+            let (candidate_verdict, holds) = matches_with_receipt(&candidate)?;
+            if holds {
+                count += 1;
+                matching = Some(candidate_verdict);
+            }
+            Ok(())
+        },
+    )?;
+    if count == 1 {
+        return Ok((
+            matching.ok_or("matching projection candidate disappeared")?,
+            true,
+        ));
+    }
+    Ok((verdict, false))
+}
+
+const GAP_WORKFLOW_PROJECTIONS: [&str; 6] = [
+    "target/ripr/workflow/before.check-findings.json",
+    "target/ripr/workflow/gap-repair-packet.json",
+    "target/ripr/workflow/attempt-baseline.json",
+    "target/ripr/workflow/after.check-findings.json",
+    "target/ripr/workflow/agent-verify.json",
+    "target/ripr/workflow/analysis-outcome.json",
+];
+
+/// Return only absent projections whose exact producer bytes are anchored in
+/// this attempt. A legacy pair or incomplete retention supplies no custody.
+fn retained_missing_gap_projections(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Result<Vec<crate::edit_cage::MissingWorkflowProjection>, String> {
+    if manifest.gap_binding.is_none() {
+        return Ok(Vec::new());
+    }
+    let receipt = match load_attempt_terminal_receipt(root, manifest) {
+        AttemptTerminalReceipt::Issued { value, .. } => value,
+        _ => return Ok(Vec::new()),
+    };
+    let read_role = |role: &str, terminal: bool| -> Result<Vec<u8>, String> {
+        let artifact = if terminal {
+            find_terminal_artifact_by_role(manifest, role)
+                .ok_or_else(|| format!("missing terminal role {role}"))?
+        } else {
+            find_manifest_artifact(manifest, role)?
+        };
+        if artifact.bytes > crate::edit_cage::MAX_CAPTURE_FILE_BYTES {
+            return Err(format!("retained role {role} is too large"));
+        }
+        read_attempt_artifact_bytes_with_limit(
+            root,
+            manifest,
+            artifact,
+            crate::edit_cage::MAX_CAPTURE_FILE_BYTES,
+        )
+    };
+    let verify = read_role(TERMINAL_VERIFY_ROLE, true)?;
+    let after = read_role(TERMINAL_GAP_AFTER_ROLE, true)?;
+    validate_retained_gap_after(
+        root,
+        manifest,
+        &receipt,
+        &verify,
+        &after,
+        RetainedGapAfterUse::CurrentEvidence,
+    )?;
+    let recorded_root = receipt
+        .pointer("/provenance/repo_root")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("retained receipt has no root")?;
+    if !recorded_workflow_path_matches(
+        root,
+        recorded_root,
+        receipt
+            .pointer("/provenance/verify_artifact/path")
+            .and_then(serde_json::Value::as_str),
+        GAP_WORKFLOW_PROJECTIONS[4],
+    )? {
+        return Err("retained verify path is not the workflow projection".to_string());
+    }
+    let before = read_role(
+        crate::app::gap_bound_repair::GAP_BOUND_BEFORE_SNAPSHOT_ROLE,
+        false,
+    )?;
+    let packet = read_role("agent_packet", false)?;
+    let baseline = read_role("edit_cage_baseline", false)?;
+    let sources = [before, packet, baseline, after.clone(), verify, after];
+    let mut missing = Vec::new();
+    let mut total = 0u64;
+    for (path, bytes) in GAP_WORKFLOW_PROJECTIONS.iter().zip(sources) {
+        match std::fs::symlink_metadata(root.join(path)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                total += bytes.len() as u64;
+                if total > 64 * 1024 * 1024 {
+                    return Err("missing projection custody exceeds the capture budget".to_string());
+                }
+                missing.push(crate::edit_cage::MissingWorkflowProjection {
+                    path: PathBuf::from(*path),
+                    bytes,
+                });
+            }
+            Ok(_) => {}
+            Err(error) => {
+                return Err(format!(
+                    "inspect workflow projection {path} failed: {error}"
+                ));
+            }
+        }
+    }
+    Ok(missing)
+}
+
+/// The retained pair, not a JSON attempt id or canonical pathname, supplies
+/// producer custody. Bound the reads before historical validation.
+fn issued_terminal_receipt_bytes(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+) -> Result<Vec<u8>, String> {
+    for role in [TERMINAL_RECEIPT_ROLE, TERMINAL_VERIFY_ROLE] {
+        let artifact = find_terminal_artifact_by_role(manifest, role)
+            .ok_or("issued receipt pair is missing")?;
+        if artifact.bytes > crate::edit_cage::MAX_CAPTURE_FILE_BYTES {
+            return Err("issued receipt pair exceeds capture limit".to_string());
+        }
+    }
+    if !matches!(
+        load_attempt_terminal_receipt(root, manifest),
+        AttemptTerminalReceipt::Issued { .. }
+    ) {
+        return Err("receipt predecessor is not a validated issued pair".to_string());
+    }
+    let artifact = find_terminal_artifact_by_role(manifest, TERMINAL_RECEIPT_ROLE)
+        .ok_or("issued receipt disappeared")?;
+    read_terminal_artifact_bytes(root, manifest, artifact)
+}
+
+fn receipt_projection_predecessor(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    baseline: &AttemptBaseline,
+    delta: &crate::edit_cage::AttemptDelta,
+) -> Option<ReceiptProjectionPredecessor> {
+    use std::io::Read as _;
+    let path = root.join(crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT);
+    let file = crate::output::file_write::open_regular_read(&path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(crate::edit_cage::MAX_CAPTURE_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let (kind, executable) =
+        crate::edit_cage::receipt_projection_identity(delta, baseline, &bytes)?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let attempt_id = RepairAttemptId::parse(
+        value
+            .pointer("/repair_attempt/attempt_id")?
+            .as_str()?
+            .to_string(),
+    )
+    .ok()?;
+    if attempt_id == manifest.repair_attempt_id {
+        return None;
+    }
+    let locator = manifest
+        .store
+        .as_ref()
+        .map(|store| Path::new(&store.locator));
+    let (_, _, prior) = open_attempt(root, locator, &attempt_id).ok()?;
+    if issued_terminal_receipt_bytes(root, &prior).ok()? != bytes {
+        return None;
+    }
+    Some(ReceiptProjectionPredecessor {
+        attempt_id,
+        kind,
+        executable,
+    })
+}
+
+fn manifest_relative_path(manifest: &RepairAttemptManifest) -> PathBuf {
+    Path::new(
+        manifest
+            .store
+            .as_ref()
+            .map_or(REPAIR_ATTEMPT_DIRECTORY, |store| store.locator.as_str()),
+    )
+    .join(manifest.repair_attempt_id.as_str())
+    .join(REPAIR_ATTEMPT_MANIFEST)
 }
 
 /// Resolve the retained before snapshot a verify document must name, and read
@@ -838,6 +1185,212 @@ pub(crate) fn validate_issued_receipt_evidence(
     Ok(())
 }
 
+/// Bind a retained gap snapshot to the same attempt-local verify and receipt.
+/// This establishes origin at the recorded after head, not applicability at
+/// the live HEAD. A later currentness check still evaluates the whole delta.
+#[derive(Clone, Copy)]
+enum RetainedGapAfterUse {
+    CurrentEvidence,
+    IssuedHistory,
+}
+
+fn validate_retained_gap_after(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    receipt: &serde_json::Value,
+    verify_bytes: &[u8],
+    after_bytes: &[u8],
+    usage: RetainedGapAfterUse,
+) -> Result<(), String> {
+    let gap = manifest
+        .gap_binding
+        .as_ref()
+        .ok_or("gap snapshot retained by a seam attempt")?;
+    let base_commit = gap
+        .base_commit
+        .as_deref()
+        .ok_or("gap snapshot has no immutable base commit")?;
+    let after = manifest
+        .after
+        .as_ref()
+        .ok_or("gap snapshot has no after verdict")?;
+    validate_issued_receipt_evidence(root, manifest, receipt, verify_bytes)?;
+    fn field<'a>(value: &'a serde_json::Value, pointer: &str) -> Option<&'a str> {
+        value.pointer(pointer).and_then(serde_json::Value::as_str)
+    }
+    for (pointer, expected) in [
+        ("/repair_attempt/attempt_id", after.attempt_id.as_str()),
+        ("/repair_attempt/after_head", after.repository_head.as_str()),
+        ("/repair_attempt/delta_sha256", after.delta_sha256.as_str()),
+        (
+            "/repair_attempt/packet_sha256",
+            after.packet_sha256.as_str(),
+        ),
+        ("/repair_attempt/gap_binding/base", gap.base.as_str()),
+        ("/repair_attempt/gap_binding/base_commit", base_commit),
+    ] {
+        if field(receipt, pointer) != Some(expected) {
+            return Err(format!("retained gap receipt does not bind {pointer}"));
+        }
+    }
+    let verify: serde_json::Value = serde_json::from_slice(verify_bytes)
+        .map_err(|error| format!("decode retained verify failed: {error}"))?;
+    let recorded_root =
+        field(receipt, "/provenance/repo_root").ok_or("retained receipt has no root")?;
+    if !recorded_workflow_path_matches(
+        root,
+        recorded_root,
+        field(&verify, "/inputs/after"),
+        GAP_WORKFLOW_PROJECTIONS[3],
+    )? || !recorded_workflow_path_matches(
+        root,
+        recorded_root,
+        field(receipt, "/provenance/after_artifact/path"),
+        GAP_WORKFLOW_PROJECTIONS[3],
+    )? || field(receipt, "/provenance/after_artifact/sha256")
+        != Some(sha256_bytes(after_bytes).as_str())
+    {
+        return Err(
+            "retained gap snapshot path, root or raw digest is not bound to the receipt"
+                .to_string(),
+        );
+    }
+    let raw = std::str::from_utf8(after_bytes)
+        .map_err(|error| format!("retained gap snapshot is not UTF-8: {error}"))?;
+    let snapshot = match usage {
+        RetainedGapAfterUse::CurrentEvidence => {
+            let live = crate::agent::artifact::validate_check_findings_artifact(
+                root,
+                raw,
+                "retained after",
+            )?
+            .artifact;
+            crate::agent::artifact::IssuedCheckFindingsCommitment {
+                repository_head: live.repository_head,
+                base_revision: live.base_revision,
+                content_sha256: live.content_sha256,
+            }
+        }
+        RetainedGapAfterUse::IssuedHistory => {
+            crate::agent::artifact::validate_issued_check_findings_commitment(
+                root,
+                raw,
+                "retained after",
+                &manifest.producer_version,
+            )?
+        }
+    };
+    if snapshot.repository_head != after.repository_head
+        || snapshot.base_revision.as_deref() != Some(base_commit)
+        || field(&verify, "/inputs/after_content_sha256") != Some(snapshot.content_sha256.as_str())
+        || crate::agent::artifact::recompute_content_commitment(raw)? != snapshot.content_sha256
+    {
+        return Err(
+            "retained gap snapshot does not match the verify, base or after head".to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Compare a producer-recorded path using the root spelling that producer
+/// recorded. Relative roots are meaningful at the producer's invocation, not
+/// necessarily at this reader's cwd; the independently validated snapshot
+/// binds the canonical repository root. No missing projection is canonicalized.
+fn recorded_workflow_path_matches(
+    root: &Path,
+    recorded_root: &str,
+    actual: Option<&str>,
+    relative: &str,
+) -> Result<bool, String> {
+    fn lexical(path: &Path) -> Option<PathBuf> {
+        use std::path::Component;
+        let mut normalized = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::ParentDir => match normalized.components().next_back() {
+                    Some(Component::Normal(_)) => {
+                        normalized.pop();
+                    }
+                    Some(Component::RootDir | Component::Prefix(_)) => return None,
+                    _ => normalized.push(".."),
+                },
+                other => normalized.push(other.as_os_str()),
+            }
+        }
+        Some(normalized)
+    }
+    if recorded_root.is_empty() {
+        return Ok(false);
+    }
+    let recorded_root = Path::new(recorded_root);
+    if recorded_root.is_absolute() {
+        let canonical = match recorded_root.canonicalize() {
+            Ok(path) => path,
+            Err(_) => return Ok(false),
+        };
+        if canonical != root {
+            return Ok(false);
+        }
+    }
+    let expected = lexical(&recorded_root.join(relative));
+    let observed = actual.and_then(|path| lexical(Path::new(path)));
+    Ok(expected.is_some() && expected == observed)
+}
+
+#[cfg(test)]
+mod recorded_workflow_path_tests {
+    use super::recorded_workflow_path_matches;
+
+    #[test]
+    fn producer_root_spellings_and_escape_decoys_are_distinct() -> Result<(), String> {
+        let root = std::env::current_dir()
+            .and_then(|path| path.canonicalize())
+            .map_err(|error| error.to_string())?;
+        let relative = "target/ripr/workflow/after.check-findings.json";
+        for (recorded, actual) in [
+            (".", relative),
+            (
+                "./project",
+                "project/target/ripr/workflow/after.check-findings.json",
+            ),
+            (
+                "../project",
+                "../project/target/ripr/workflow/after.check-findings.json",
+            ),
+        ] {
+            if !recorded_workflow_path_matches(&root, recorded, Some(actual), relative)? {
+                return Err(format!("valid spelling {recorded} was refused"));
+            }
+        }
+        let absolute = root.join(relative);
+        let root_text = root.to_str().ok_or("root is not UTF-8")?;
+        let actual = absolute.to_str().ok_or("path is not UTF-8")?;
+        let other_root = root.parent().ok_or("root has no parent")?;
+        let other_text = other_root.to_str().ok_or("other root is not UTF-8")?;
+        let other_path = other_root.join(relative);
+        let other_path = other_path.to_str().ok_or("other path is not UTF-8")?;
+        if !recorded_workflow_path_matches(&root, root_text, Some(actual), relative)?
+            || recorded_workflow_path_matches(
+                &root,
+                ".",
+                Some("../target/ripr/workflow/after.check-findings.json"),
+                relative,
+            )?
+            || recorded_workflow_path_matches(
+                &root,
+                ".",
+                Some("target/ripr/workflow/other.json"),
+                relative,
+            )?
+            || recorded_workflow_path_matches(&root, other_text, Some(other_path), relative)?
+        {
+            return Err("root or escape decoy compared incorrectly".to_string());
+        }
+        Ok(())
+    }
+}
+
 /// The closure half of a gap-bound attempt's receipt binding (#9103): the
 /// verify document must carry `bound_gap` for the attempt's gap with
 /// `closed: true`, and the receipt must repeat it exactly. A receipt over a
@@ -965,6 +1518,10 @@ pub(crate) fn canonically_admit_terminal_pair(
     for document in [&mut supplied, &mut expected] {
         if let Some(object) = document.as_object_mut() {
             object.remove("artifact_currentness");
+            // #3056: derived from the same read-time Historical
+            // classification, so it is equally a HEAD observation.
+            object.remove("before_produced_from_dirty");
+            object.remove("after_produced_from_dirty");
         }
     }
     if supplied == expected {
@@ -1575,7 +2132,35 @@ pub(crate) fn load_attempt_terminal_receipt(
         }
     };
     match read_bound_terminal_receipt(root, manifest, receipt_artifact, &verify_bytes) {
-        Ok((path, value)) => AttemptTerminalReceipt::Issued { path, value },
+        Ok((path, value)) => {
+            if let Some(after_artifact) =
+                find_terminal_artifact_by_role(manifest, TERMINAL_GAP_AFTER_ROLE)
+            {
+                let checked = read_attempt_artifact_bytes_with_limit(
+                    root,
+                    manifest,
+                    after_artifact,
+                    crate::edit_cage::MAX_CAPTURE_FILE_BYTES,
+                )
+                .and_then(|after| {
+                    validate_retained_gap_after(
+                        root,
+                        manifest,
+                        &value,
+                        &verify_bytes,
+                        &after,
+                        RetainedGapAfterUse::IssuedHistory,
+                    )
+                });
+                if let Err(reason) = checked {
+                    return AttemptTerminalReceipt::Unavailable {
+                        path: Some(after_artifact.path.clone()),
+                        reason,
+                    };
+                }
+            }
+            AttemptTerminalReceipt::Issued { path, value }
+        }
         Err(reason) => AttemptTerminalReceipt::Unavailable {
             path: Some(receipt_artifact.path.clone()),
             reason,
@@ -1638,6 +2223,20 @@ fn read_terminal_artifact_bytes(
     manifest: &RepairAttemptManifest,
     artifact: &RepairAttemptArtifact,
 ) -> Result<Vec<u8>, String> {
+    read_attempt_artifact_bytes_with_limit(
+        root,
+        manifest,
+        artifact,
+        crate::bounded_input::MAX_CLI_INPUT_BYTES,
+    )
+}
+
+fn read_attempt_artifact_bytes_with_limit(
+    root: &Path,
+    manifest: &RepairAttemptManifest,
+    artifact: &RepairAttemptArtifact,
+    limit: u64,
+) -> Result<Vec<u8>, String> {
     if artifact.path.is_empty() || Path::new(&artifact.path).is_absolute() {
         return Err(format!(
             "repair attempt terminal artifact path is not a relative attempt path: {}",
@@ -1672,7 +2271,9 @@ fn read_terminal_artifact_bytes(
             artifact.path
         ));
     }
-    let bytes = std::fs::read(&canonical)
+    let file = crate::output::file_write::open_regular_read(&canonical)
+        .map_err(|error| format!("open terminal artifact {} failed: {error}", artifact.path))?;
+    let bytes = crate::bounded_input::read_reader_with_limit(file, limit)
         .map_err(|error| format!("read terminal artifact {} failed: {error}", artifact.path))?;
     if u64::try_from(bytes.len()).map_err(|error| error.to_string())? != artifact.bytes
         || sha256_bytes(&bytes) != artifact.sha256
@@ -1736,7 +2337,10 @@ pub(crate) fn retain_terminal_evidence_from(
                 source.role
             ));
         }
-        if source.role != TERMINAL_RECEIPT_ROLE && source.role != TERMINAL_VERIFY_ROLE {
+        if source.role != TERMINAL_RECEIPT_ROLE
+            && source.role != TERMINAL_VERIFY_ROLE
+            && source.role != TERMINAL_GAP_AFTER_ROLE
+        {
             return Err(format!(
                 "repair attempt terminal artifact role `{}` is not a retained after-phase result",
                 source.role
@@ -1769,19 +2373,34 @@ pub(crate) fn retain_terminal_evidence_from(
                 file_name.to_string_lossy()
             ));
         }
-        let bytes = std::fs::read(&source_path).map_err(|error| {
-            format!(
-                "read {} failed: {error}",
-                crate::output::path::human_path(&source_path)
-            )
-        })?;
+        let limit = if source.role == TERMINAL_GAP_AFTER_ROLE {
+            crate::edit_cage::MAX_CAPTURE_FILE_BYTES
+        } else {
+            crate::bounded_input::MAX_CLI_INPUT_BYTES
+        };
+        let source_file =
+            crate::output::file_write::open_regular_read(&source_path).map_err(|error| {
+                format!(
+                    "open {} failed: {error}",
+                    crate::output::path::human_path(&source_path)
+                )
+            })?;
+        let bytes =
+            crate::bounded_input::read_reader_with_limit(source_file, limit).map_err(|error| {
+                format!(
+                    "read {} failed: {error}",
+                    crate::output::path::human_path(&source_path)
+                )
+            })?;
         let digest = sha256_bytes(&bytes);
         let size = u64::try_from(bytes.len()).map_err(|error| {
             format!("repair attempt terminal artifact size does not fit u64: {error}")
         })?;
         let destination = destination_directory.join(&file_name);
         if destination.exists() {
-            let existing = std::fs::read(&destination)
+            let file = crate::output::file_write::open_regular_read(&destination)
+                .map_err(|error| format!("open {} failed: {error}", destination.display()))?;
+            let existing = crate::bounded_input::read_reader_with_limit(file, limit)
                 .map_err(|error| format!("read {} failed: {error}", destination.display()))?;
             if sha256_bytes(&existing) != digest {
                 if !manifest.terminal_artifacts.is_empty() {
@@ -1812,6 +2431,37 @@ pub(crate) fn retain_terminal_evidence_from(
         });
     }
     retained.sort_by(|left, right| left.role.cmp(&right.role));
+    if retained
+        .iter()
+        .any(|artifact| artifact.role == TERMINAL_GAP_AFTER_ROLE)
+    {
+        let role = |name: &str| {
+            retained
+                .iter()
+                .find(|artifact| artifact.role == name)
+                .ok_or_else(|| format!("retained gap snapshot requires terminal role `{name}`"))
+        };
+        let receipt_bytes =
+            read_terminal_artifact_bytes(&root, &manifest, role(TERMINAL_RECEIPT_ROLE)?)?;
+        let verify_bytes =
+            read_terminal_artifact_bytes(&root, &manifest, role(TERMINAL_VERIFY_ROLE)?)?;
+        let after_bytes = read_attempt_artifact_bytes_with_limit(
+            &root,
+            &manifest,
+            role(TERMINAL_GAP_AFTER_ROLE)?,
+            crate::edit_cage::MAX_CAPTURE_FILE_BYTES,
+        )?;
+        let receipt: serde_json::Value = serde_json::from_slice(&receipt_bytes)
+            .map_err(|error| format!("decode retained receipt failed: {error}"))?;
+        validate_retained_gap_after(
+            &root,
+            &manifest,
+            &receipt,
+            &verify_bytes,
+            &after_bytes,
+            RetainedGapAfterUse::CurrentEvidence,
+        )?;
+    }
     if !manifest.terminal_artifacts.is_empty() && manifest.terminal_artifacts != retained {
         return Err(format!(
             "repair attempt {} already retained different terminal evidence; committed results are not replaced",
@@ -1932,21 +2582,26 @@ pub(crate) fn complete_pending_terminal_retention_from(
     if validate_issued_receipt_evidence(&root, &manifest, &receipt, &verify_bytes).is_err() {
         return Ok(false);
     }
-    retain_terminal_evidence_from(
-        &root,
-        locator,
-        &attempt_id,
-        &[
-            BeforeArtifactSource {
-                role: TERMINAL_RECEIPT_ROLE,
-                path: &receipt_path,
-            },
-            BeforeArtifactSource {
-                role: TERMINAL_VERIFY_ROLE,
-                path: &verify_path,
-            },
-        ],
-    )?;
+    let gap_after_path = root
+        .join("target/ripr/workflow")
+        .join(crate::app::gap_bound_repair::GAP_BOUND_AFTER_SNAPSHOT_FILE);
+    let mut sources = vec![
+        BeforeArtifactSource {
+            role: TERMINAL_RECEIPT_ROLE,
+            path: &receipt_path,
+        },
+        BeforeArtifactSource {
+            role: TERMINAL_VERIFY_ROLE,
+            path: &verify_path,
+        },
+    ];
+    if manifest.gap_binding.is_some() {
+        sources.push(BeforeArtifactSource {
+            role: TERMINAL_GAP_AFTER_ROLE,
+            path: &gap_after_path,
+        });
+    }
+    retain_terminal_evidence_from(&root, locator, &attempt_id, &sources)?;
     Ok(true)
 }
 
@@ -2078,8 +2733,9 @@ pub(crate) fn edit_cage_policy_from_packet(
     packet: &str,
     seam_id: &str,
 ) -> Result<EditCagePolicy, String> {
-    let value: serde_json::Value = serde_json::from_str(packet)
-        .map_err(|error| format!("decode repair packet for edit cage failed: {error}"))?;
+    let value: serde_json::Value = serde_json::from_str(packet).map_err(|error| {
+        format!("decode repair packet for the allowed-files check failed: {error}")
+    })?;
     if value.get("packets").is_none()
         && value.get("seam_id").and_then(serde_json::Value::as_str) != Some(seam_id)
     {
@@ -2152,7 +2808,7 @@ pub(crate) fn edit_cage_policy_from_packet(
         && is_inline_test_module_candidate(selected_target_text);
     if !is_test_surface_path(selected_target_text) && !inline_test_module_target {
         return Err(format!(
-            "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a production file is never the authored edit target and no edit cage is constructed",
+            "repair packet selected edit target `{selected_target_text}` is not a test surface ({}); a source file is never the test to edit, so no allowed-files list is built",
             test_surface_requirement()
         ));
     }
@@ -2273,8 +2929,32 @@ pub(crate) fn include_explicit_store_operational_write(
     root: &Path,
     store: Option<&Path>,
 ) -> Result<(), String> {
-    let Some(store) = store else {
+    let Some(locator) = explicit_store_locator(root, store)? else {
         return Ok(());
+    };
+    if policy
+        .expected_operational_writes
+        .iter()
+        .any(|rule| rule.matches(locator.path()))
+    {
+        return Ok(());
+    }
+    policy.expected_operational_writes.push(locator);
+    Ok(())
+}
+
+/// The explicit store's operational-write locator, shared by the policy
+/// constructor above and the dirty-premise preflight
+/// (`conservative_dirty_premise_violations`) so the two cannot disagree on
+/// which subtree the store covers (#11458). `None` means the
+/// repository-local default, which stays covered by the `target/ripr`
+/// subtree without a second rule.
+fn explicit_store_locator(
+    root: &Path,
+    store: Option<&Path>,
+) -> Result<Option<crate::edit_cage::CagePathRule>, String> {
+    let Some(store) = store else {
+        return Ok(None);
     };
     let relative = if store.is_absolute() {
         store
@@ -2290,16 +2970,7 @@ pub(crate) fn include_explicit_store_operational_write(
     } else {
         store.to_path_buf()
     };
-    let locator = crate::edit_cage::CagePathRule::subtree(&relative)?;
-    if policy
-        .expected_operational_writes
-        .iter()
-        .any(|rule| rule.matches(locator.path()))
-    {
-        return Ok(());
-    }
-    policy.expected_operational_writes.push(locator);
-    Ok(())
+    Ok(Some(crate::edit_cage::CagePathRule::subtree(&relative)?))
 }
 
 /// Captures the edit-cage baseline and writes it to a workflow compatibility
@@ -2544,6 +3215,24 @@ pub(crate) fn finish_repair_attempt_from(
     packet_path: &Path,
     movement: HeadMovement,
 ) -> Result<RepairAttemptAfter, String> {
+    finish_repair_attempt_with_workflow_backups_from(
+        root,
+        store,
+        attempt_id,
+        packet_path,
+        movement,
+        &[],
+    )
+}
+
+pub(crate) fn finish_repair_attempt_with_workflow_backups_from(
+    root: &Path,
+    store: Option<&Path>,
+    attempt_id: &RepairAttemptId,
+    packet_path: &Path,
+    movement: HeadMovement,
+    backups: &[(PathBuf, String, bool)],
+) -> Result<RepairAttemptAfter, String> {
     let root_argument = root;
     let (store, manifest_path, base_bytes, mut manifest) =
         open_attempt_with_bytes(root, store, attempt_id)?;
@@ -2599,8 +3288,14 @@ pub(crate) fn finish_repair_attempt_from(
     // swap inside the window is undetectable by commit comparison alone,
     // so the reflog fingerprint makes `current` robust to it (#5930).
     let before = crate::agent::artifact::current_git_head_identity(&root)?;
-    let (delta, mut verdict) =
-        evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    let (mut delta, _) = evaluate_repository_edit_cage_with_head_movement(&baseline, movement)?;
+    crate::edit_cage::omit_attempt_manifest_identity(
+        &mut delta,
+        &baseline,
+        &manifest_relative_path(&manifest),
+    )?;
+    crate::edit_cage::omit_owned_workflow_backups(&mut delta, &baseline, backups)?;
+    let mut verdict = crate::edit_cage::evaluate_edit_cage(baseline.policy(), &delta);
     let (current, current_head) =
         after_phase_window_is_current(&root, &before, &manifest.repository_head, movement)?;
     if !current {
@@ -2608,10 +3303,14 @@ pub(crate) fn finish_repair_attempt_from(
     }
     let delta_bytes = serde_json::to_vec(&delta)
         .map_err(|error| format!("serialize repair delta failed: {error}"))?;
+    let receipt_projection_predecessor =
+        receipt_projection_predecessor(&root, &manifest, &baseline, &delta);
     let after = RepairAttemptAfter {
         attempt_id: manifest.repair_attempt_id.clone(),
         repository_head: current_head,
         delta_sha256: sha256_bytes(&delta_bytes),
+        delta_binding: Some("path-state-v1".to_string()),
+        receipt_projection_predecessor,
         packet_sha256,
         current,
         verdict,
@@ -3000,7 +3699,7 @@ impl DivergedHeadRecovery {
     pub(crate) fn lines(&self) -> Vec<String> {
         vec![
             self.cause.clone(),
-            "the attempt was not finished and is still awaiting the focused test edit.".to_string(),
+            "the attempt was not finished and is still waiting for your test.".to_string(),
             self.reset.clone(),
             self.restart.clone(),
         ]
@@ -3221,9 +3920,7 @@ fn select_awaiting_repair_attempt_by_seam(
             .collect::<Vec<_>>()
             .join(", ");
         let detail = if matches.is_empty() {
-            format!(
-                "no awaiting repair attempt exists for seam `{seam_id}`; start one with `{restart}`"
-            )
+            format!("no repair is in progress for this gap; start one with `{restart}`")
         } else {
             format!(
                 "found {}: {ids}; pass --attempt <id> to select the prepared work exactly",
@@ -3231,7 +3928,7 @@ fn select_awaiting_repair_attempt_by_seam(
             )
         };
         return Err(format!(
-            "expected exactly one awaiting repair attempt for seam `{seam_id}`: {detail}"
+            "expected exactly one repair in progress for gap `{seam_id}`: {detail}"
         ));
     }
     matches.pop().ok_or_else(|| "missing attempt".to_string())
@@ -3668,6 +4365,34 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
         return Err("repair attempt state/after boundary is inconsistent".to_string());
     }
     if manifest
+        .after
+        .as_ref()
+        .and_then(|after| after.delta_binding.as_deref())
+        .is_some_and(|binding| binding != "path-state-v1")
+    {
+        return Err("repair attempt delta binding version is not recognized".to_string());
+    }
+    if let Some(after) = &manifest.after
+        && let Some(predecessor) = &after.receipt_projection_predecessor
+    {
+        RepairAttemptId::parse(predecessor.attempt_id.as_str().to_string())?;
+        if predecessor.attempt_id == manifest.repair_attempt_id
+            || !after
+                .verdict
+                .changed_paths
+                .iter()
+                .any(|path| path == crate::agent::loop_commands::WORKFLOW_AGENT_RECEIPT_ARTIFACT)
+            || after.delta_binding.as_deref() != Some("path-state-v1")
+            || !matches!(
+                predecessor.kind,
+                crate::edit_cage::AttemptPathChangeKind::Added
+                    | crate::edit_cage::AttemptPathChangeKind::Modified
+            )
+        {
+            return Err("repair receipt projection predecessor is invalid".to_string());
+        }
+    }
+    if manifest
         .last_after_refusal
         .as_ref()
         .is_some_and(|refusal| refusal.reason.trim().is_empty())
@@ -3711,6 +4436,23 @@ fn validate_manifest(manifest: &RepairAttemptManifest) -> Result<(), String> {
     }) {
         return Err(
             "repair attempt manifest contains duplicate or colliding terminal artifact identity"
+                .to_string(),
+        );
+    }
+    let has_terminal_role = |role: &str| {
+        manifest
+            .terminal_artifacts
+            .iter()
+            .any(|artifact| artifact.role == role)
+    };
+    if has_terminal_role(TERMINAL_GAP_AFTER_ROLE)
+        && (manifest.gap_binding.is_none()
+            || terminal_roles.len() != 3
+            || !has_terminal_role(TERMINAL_RECEIPT_ROLE)
+            || !has_terminal_role(TERMINAL_VERIFY_ROLE))
+    {
+        return Err(
+            "gap after retention requires exactly the gap snapshot, receipt and verify roles"
                 .to_string(),
         );
     }
@@ -3822,13 +4564,8 @@ pub(crate) const TRUSTED_SURFACE_REFUSAL_TAIL: &str = "outside trusted edit surf
 /// HEAD to refuse a dirty production premise before any attempt exists
 /// (#5262), where a dirty allowed-surface test file stays allowed because the
 /// loop expects the focused test edit.
-pub(crate) fn trusted_head_surface_violations(
-    root: &Path,
-    policy: &EditCagePolicy,
-    observed_changes: &[String],
-    head: &str,
-) -> Result<Vec<String>, String> {
-    let tracked = git_paths(
+fn tracked_dirty_paths(root: &Path, head: &str) -> Result<Vec<String>, String> {
+    git_paths(
         root,
         &[
             "diff",
@@ -3839,7 +4576,124 @@ pub(crate) fn trusted_head_surface_violations(
             head,
             "--",
         ],
-    )?;
+    )
+}
+
+/// Policy-free early subset of [`trusted_head_surface_violations`] (#11458):
+/// tracked dirty paths that cannot be any seam's repair target, so the before
+/// phase can refuse a dirty production premise before the classified-seam
+/// inventory. The subset property is anchored on the policy's own
+/// authorities: every packet-allowed edit path satisfies
+/// `is_test_surface_path` or is the confined #5210 target
+/// (`edit_cage_policy_from_packet`), and every operational write lives under
+/// `target/ripr` or the explicit store subtree. Anything outside all of those
+/// (modulo the unreadable/oversized fall-through below) is refused late by
+/// the exact check too. Conservative extras: preview test-support naming
+/// (`conftest.*`) that a future packet could target, and files containing an
+/// inline `#[cfg(test)]` module.
+pub(crate) fn conservative_dirty_premise_violations(
+    root: &Path,
+    head: &str,
+    store: Option<&Path>,
+) -> Result<Vec<String>, String> {
+    let operational = operational_write_rules(root, store)?;
+    Ok(tracked_dirty_paths(root, head)?
+        .into_iter()
+        .filter(|path| {
+            !operational.iter().any(|rule| rule.matches(path))
+                && dirty_path_cannot_be_repair_target(root, path)
+        })
+        .collect())
+}
+
+/// The tracked subtrees the exact policy check always allows as operational
+/// writes: the default `target/ripr` subtree plus the explicit store
+/// subtree when one is configured outside it. Built with the same rules the
+/// policy constructor uses (see `explicit_store_locator`), so the preflight
+/// cannot refuse early what the exact check would allow late.
+fn operational_write_rules(
+    root: &Path,
+    store: Option<&Path>,
+) -> Result<Vec<crate::edit_cage::CagePathRule>, String> {
+    // Mirrors `edit_cage_policy_from_packet`: command-declared generated or
+    // receipt writes that may occur alongside the authored test edit.
+    let mut rules = vec![crate::edit_cage::CagePathRule::subtree("target/ripr")?];
+    if let Some(locator) = explicit_store_locator(root, store)?
+        && !rules.iter().any(|rule| rule.matches(locator.path()))
+    {
+        rules.push(locator);
+    }
+    Ok(rules)
+}
+
+fn dirty_path_cannot_be_repair_target(root: &Path, path: &str) -> bool {
+    // Canonical test-surface recognition first: the policy constructor
+    // admits only `is_test_surface_path` targets (or the confined #5210
+    // target below), so anything the analyzer calls test surface can be a
+    // repair target. This also carries every TypeScript adapter convention
+    // (`*.test.*`, `*.spec.*`, `test-*`, `*.test-d.*`, `*.cy.*`, `__tests__`)
+    // without forking that taxonomy here.
+    if is_test_surface_path(path) {
+        return false;
+    }
+    let candidate = Path::new(path);
+    if candidate.components().any(|part| {
+        matches!(
+            part.as_os_str().to_str(),
+            Some("tests" | "test" | "__tests__")
+        )
+    }) {
+        return false;
+    }
+    let Some(name) = candidate.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    let stem = lower.split('.').next().unwrap_or(&lower);
+    if stem == "conftest" {
+        // pytest fixture support is test routing, never a production seam
+        // target; matching the stem keeps every `conftest.*` spelling on the
+        // same fall-through path.
+        return false;
+    }
+    // #5210 confined target: a production Rust file carrying the governed
+    // inline test module is the allowed edit region, so any file containing
+    // the marker falls through for the exact check to admit or refuse.
+    let candidate_path = root.join(candidate);
+    // A symlink or other non-regular entry is not content this sniff may
+    // follow: defer it to the later checks, which can name the more specific
+    // cause (for example unavailable analysis context) instead of reporting
+    // it as a dirty production edit. `symlink_metadata` does not follow links.
+    if std::fs::symlink_metadata(&candidate_path)
+        .map(|metadata| {
+            !metadata.file_type().is_file()
+                || metadata.len() > DIRTY_PREMISE_PREFLIGHT_MAX_SNIFF_BYTES
+        })
+        .unwrap_or(true)
+    {
+        return false;
+    }
+    match std::fs::read_to_string(&candidate_path) {
+        Ok(content) => !content
+            .lines()
+            .any(|line| crate::analysis::attribute_is_plain_test_gate(line.trim())),
+        Err(_) => false,
+    }
+}
+
+/// Upper bound for the preflight's content sniff above: the marker search
+/// must not load an arbitrarily large dirty file into memory. An oversized
+/// candidate falls through to the exact policy check, which never reads
+/// file content, so the bound only costs earliness, never correctness.
+const DIRTY_PREMISE_PREFLIGHT_MAX_SNIFF_BYTES: u64 = 256 * 1024;
+
+pub(crate) fn trusted_head_surface_violations(
+    root: &Path,
+    policy: &EditCagePolicy,
+    observed_changes: &[String],
+    head: &str,
+) -> Result<Vec<String>, String> {
+    let tracked = tracked_dirty_paths(root, head)?;
     let untracked = git_paths(root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
     let observed = observed_changes
         .iter()
@@ -4368,7 +5222,7 @@ mod tests {
         for needle in [
             "src/production.py",
             "is not a test surface",
-            "no edit cage is constructed",
+            "no allowed-files list is built",
         ] {
             if !error.contains(needle) {
                 return Err(format!("refusal did not name `{needle}`: {error}"));
@@ -4572,6 +5426,8 @@ mod tests {
             repository_head: manifest.repository_head.clone(),
             delta_sha256: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                 .to_string(),
+            delta_binding: None,
+            receipt_projection_predecessor: None,
             packet_sha256:
                 "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
                     .to_string(),
@@ -4631,6 +5487,27 @@ mod tests {
             .ok_or_else(|| "schema after required list missing".to_string())?;
         if !required.iter().any(|value| value == "attempt_id") {
             return Err("schema after omitted durable attempt_id".to_string());
+        }
+        let versions = schema["$defs"]["after"]["properties"]["delta_binding"]["enum"]
+            .as_array()
+            .ok_or_else(|| "schema delta binding enum missing".to_string())?;
+        if !versions.iter().any(|value| value == "path-state-v1")
+            || !versions.iter().any(serde_json::Value::is_null)
+        {
+            return Err("schema does not admit the current and legacy binding forms".to_string());
+        }
+        let witness =
+            &schema["$defs"]["after"]["properties"]["receipt_projection_predecessor"]["anyOf"][1];
+        if witness["additionalProperties"] != false
+            || witness["properties"]["kind"]["enum"] != serde_json::json!(["added", "modified"])
+            || witness["required"] != serde_json::json!(["attempt_id", "kind", "executable"])
+            || required
+                .iter()
+                .any(|value| value == "receipt_projection_predecessor")
+        {
+            return Err(
+                "schema must carry the optional exact receipt predecessor contract".to_string(),
+            );
         }
         Ok(())
     }
@@ -5259,6 +6136,162 @@ mod tests {
         std::fs::remove_dir_all(&root)
             .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
         Ok(())
+    }
+
+    /// #11458: the pre-inventory preflight names only plain production
+    /// paths. Canonical test surfaces, the `tests`/`test`/`__tests__`
+    /// layout, `conftest.*`, an inline `#[cfg(test)]` module, and any
+    /// unreadable or oversized path fall through to the exact policy check,
+    /// so the preflight can only refuse early what that check would refuse
+    /// late.
+    #[test]
+    fn dirty_premise_preflight_only_names_plain_production_paths() -> Result<(), String> {
+        let root = test_repo_root("dirty-preflight")?;
+        let result = (|| -> Result<(), String> {
+            for (name, content) in [
+                ("src/lib.rs", "pub fn f() {}\n"),
+                ("src/main.py", "def f():\n    return 1\n"),
+                ("src/pricing.ts", "export function f() { return 1; }\n"),
+            ] {
+                let path = root.join(name);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(&path, content).map_err(|e| e.to_string())?;
+                if !dirty_path_cannot_be_repair_target(&root, name) {
+                    return Err(format!("preflight must name {name}"));
+                }
+            }
+            for name in [
+                "src/inline.rs",
+                "tests/pricing.rs",
+                "src/lib_test.rs",
+                "conftest.py",
+                "conftest.pyc",
+                "src/missing.rs",
+            ] {
+                if dirty_path_cannot_be_repair_target(&root, name) {
+                    return Err(format!("preflight must not name {name}"));
+                }
+            }
+            // An oversized production-shaped file falls through instead of
+            // being sniffed: the bound only costs earliness, never correctness.
+            let big = root.join("src/big.rs");
+            std::fs::write(&big, "x\n".repeat(300 * 1024)).map_err(|e| e.to_string())?;
+            if dirty_path_cannot_be_repair_target(&root, "src/big.rs") {
+                return Err("preflight must not name src/big.rs".to_string());
+            }
+            // A symlinked production path is not followed by the sniff: the
+            // later checks name the more specific cause (decision recorded
+            // on #11734).
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(root.join("src/main.py"), root.join("src/linked.py"))
+                    .map_err(|e| e.to_string())?;
+                if dirty_path_cannot_be_repair_target(&root, "src/linked.py") {
+                    return Err("preflight must not name symlinked src/linked.py".to_string());
+                }
+            }
+            // The inline `#[cfg(test)]` module reads as a test target even
+            // though the file itself is production-shaped (#5210).
+            std::fs::write(root.join("src/inline.rs"), "#[cfg(test)]\nmod t {}\n")
+                .map_err(|e| e.to_string())?;
+            if dirty_path_cannot_be_repair_target(&root, "src/inline.rs") {
+                return Err("preflight must not name src/inline.rs".to_string());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// #11458: TypeScript adapter test conventions (`*.spec.*`, `test-*`,
+    /// `*.test-d.*`, `*.cy.*`) defer to the canonical `is_test_surface_path`
+    /// taxonomy rather than a second local list. Gated on the adapter
+    /// feature: without it these names are production-shaped in that build,
+    /// matching what its policy gate would refuse.
+    #[cfg(feature = "lang-typescript")]
+    #[test]
+    fn dirty_premise_preflight_defers_to_adapter_test_conventions() -> Result<(), String> {
+        let root = test_repo_root("dirty-preflight-ts")?;
+        let result = (|| -> Result<(), String> {
+            for name in [
+                "src/pricing.spec.ts",
+                "src/test-cart.ts",
+                "src/cart.test-d.ts",
+                "src/cart.cy.ts",
+            ] {
+                let path = root.join(name);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(&path, "export function f() { return 1; }\n")
+                    .map_err(|e| e.to_string())?;
+                if dirty_path_cannot_be_repair_target(&root, name) {
+                    return Err(format!("preflight must not name {name}"));
+                }
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// #11458: tracked dirt under the default `target/ripr` operational
+    /// subtree or the configured explicit store subtree defers to the exact
+    /// policy check, which allows both. The store contrast pins the
+    /// exemption to the parameter: with no store the same tracked store
+    /// file is named.
+    #[test]
+    fn dirty_premise_preflight_defers_to_operational_write_subtrees() -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok;
+        let root = test_repo_root("dirty-preflight-ops")?;
+        let result = (|| -> Result<(), String> {
+            for (name, content) in [
+                ("src/lib.rs", "pub fn f() {}\n"),
+                (".ripr/attempts/id/attempt.json", "{}\n"),
+                ("target/ripr/workflow/snap.json", "{}\n"),
+            ] {
+                let path = root.join(name);
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                std::fs::write(&path, content).map_err(|e| e.to_string())?;
+            }
+            fixture_git_ok(&root, &["add", "-A"])?;
+            fixture_git_ok(&root, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+            std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\npub fn g() {}\n")
+                .map_err(|e| e.to_string())?;
+            std::fs::write(root.join(".ripr/attempts/id/attempt.json"), "{\"a\":1}\n")
+                .map_err(|e| e.to_string())?;
+            std::fs::write(root.join("target/ripr/workflow/snap.json"), "{\"b\":2}\n")
+                .map_err(|e| e.to_string())?;
+            let head = crate::agent::artifact::current_git_head(&root)?;
+            let plain = conservative_dirty_premise_violations(
+                &root,
+                &head,
+                Some(Path::new(".ripr/attempts")),
+            )?;
+            if !plain.contains(&"src/lib.rs".to_string())
+                || plain.iter().any(|path| path != "src/lib.rs")
+            {
+                return Err(format!("only the production path may be named: {plain:?}"));
+            }
+            let unstored = conservative_dirty_premise_violations(&root, &head, None)?;
+            if !unstored.contains(&"src/lib.rs".to_string())
+                || !unstored.contains(&".ripr/attempts/id/attempt.json".to_string())
+                || unstored
+                    .iter()
+                    .any(|path| path != "src/lib.rs" && path != ".ripr/attempts/id/attempt.json")
+            {
+                return Err(format!(
+                    "without the store the store file is named: {unstored:?}"
+                ));
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     /// The receipt's tracked-surface check compares with the prepared head,
@@ -6325,6 +7358,9 @@ mod tests {
         let root = test_repo_root("worktree-drift-currentness")?;
         let result = (|| -> Result<(), String> {
             let prepared = prepare_sample_attempt(&root, "seam:sample", "drift")?;
+            let unrelated = root.join("target/ripr/unrelated.txt");
+            std::fs::write(&unrelated, "prior unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
             let finished = finish_sample_attempt(&root, &prepared)?;
             if finished.state != RepairAttemptState::ReadyToFinish {
                 return Err(format!("expected a finished attempt: {:?}", finished.state));
@@ -6335,6 +7371,128 @@ mod tests {
                 return Err(format!(
                     "undrifted finished attempt must read current: {reading:?}"
                 ));
+            }
+
+            std::fs::write(&unrelated, "different unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("changed unrelated operational path remained current".to_string());
+            }
+            std::fs::write(&unrelated, "prior unrelated bytes\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err(
+                    "restored unrelated operational path did not recover currentness".to_string(),
+                );
+            }
+
+            let mut legacy = finished.clone();
+            if let Some(after) = legacy.after.as_mut() {
+                after.delta_binding = None;
+            }
+            let legacy_reading = repair_attempt_head_reading(&root, &legacy, Some(&head));
+            if legacy_reading.head_current.is_some() {
+                return Err(format!(
+                    "legacy path-only binding must be unknown: {legacy_reading:?}"
+                ));
+            }
+            let mut invalid = legacy.clone();
+            if let Some(after) = invalid.after.as_mut() {
+                after.delta_binding = Some("unknown-version".to_string());
+            }
+            if validate_manifest(&invalid).is_ok() {
+                return Err("unknown delta binding version was accepted".to_string());
+            }
+            let manifest_bytes =
+                std::fs::read(&prepared.manifest_path).map_err(|error| error.to_string())?;
+            let mut legacy_json: serde_json::Value =
+                serde_json::from_slice(&manifest_bytes).map_err(|error| error.to_string())?;
+            legacy_json["after"]
+                .as_object_mut()
+                .ok_or("missing after")?
+                .remove("delta_binding");
+            let mut null_json = legacy_json.clone();
+            null_json["after"]["delta_binding"] = serde_json::Value::Null;
+            let null_manifest: RepairAttemptManifest =
+                serde_json::from_value(null_json).map_err(|error| error.to_string())?;
+            validate_manifest(&null_manifest)?;
+            if repair_attempt_head_reading(&root, &null_manifest, Some(&head))
+                .head_current
+                .is_some()
+            {
+                return Err("null delta binding must remain unknown".to_string());
+            }
+            std::fs::write(
+                &prepared.manifest_path,
+                serde_json::to_vec(&legacy_json).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| error.to_string())?;
+            let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
+            let attempt = finished.repair_attempt_id.as_str();
+            match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
+                Err(error) if error.contains("no post-change path identity binding") => {}
+                other => return Err(format!("legacy receipt must be unavailable: {other:?}")),
+            }
+            std::fs::write(&prepared.manifest_path, manifest_bytes)
+                .map_err(|error| error.to_string())?;
+
+            // The selected path already appears in the finished delta. A
+            // second edit keeps its kind (Added) but changes its identity.
+            let selected = root.join("tests/target.rs");
+            let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::write(&selected, b"#[test]\nfn focused() { assert!(false); }\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("second edit to bound selected path remained current".to_string());
+            }
+            match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
+                Err(error) if error.contains("tampered or stale") => {}
+                other => return Err(format!("receipt must refuse changed test bytes: {other:?}")),
+            }
+            std::fs::write(&selected, original).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restored selected path did not recover currentness".to_string());
+            }
+
+            run_git(&root, &["add", "tests/target.rs"])?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("staging the selected path remained current".to_string());
+            }
+            run_git(&root, &["reset", "-q", "HEAD", "--", "tests/target.rs"])?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restoring the index did not recover currentness".to_string());
+            }
+            let selected_bytes = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::remove_file(&selected).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("deleting the selected path remained current".to_string());
+            }
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink("../README.md", &selected)
+                    .map_err(|error| error.to_string())?;
+                if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current
+                    == Some(true)
+                {
+                    return Err(
+                        "replacing the selected path with a symlink remained current".to_string(),
+                    );
+                }
+                std::fs::remove_file(&selected).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(&selected, selected_bytes).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err(
+                    "restoring the deleted selected path did not recover currentness".to_string(),
+                );
             }
 
             // Drift: an uncommitted production edit outside the allowed
@@ -6353,8 +7511,6 @@ mod tests {
             }
             // The authority path refuses the same state, and issues the
             // receipt before the drift.
-            let packet = root.join(&find_manifest_artifact(&finished, "agent_packet")?.path);
-            let attempt = finished.repair_attempt_id.as_str();
             match receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt)) {
                 Err(error) if error.contains("tampered or stale") => {}
                 other => return Err(format!("receipt must refuse drift: {other:?}")),
@@ -6368,6 +7524,40 @@ mod tests {
                 ));
             }
             receipt_binding_from(&root, None, "seam:sample", &packet, Some(attempt))?;
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    #[test]
+    fn ignored_selected_test_uses_content_identity_for_currentness() -> Result<(), String> {
+        let root = test_repo_root("ignored-bound-test")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(root.join(".gitignore"), "tests/target.rs\n")
+                .map_err(|error| error.to_string())?;
+            run_git(&root, &["add", ".gitignore"])?;
+            run_git(&root, &["commit", "-q", "-m", "ignore selected test"])?;
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "ignored")?;
+            let finished = finish_sample_attempt(&root, &prepared)?;
+            let head = crate::agent::artifact::current_git_head(&root)?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("ignored selected test was not initially current".to_string());
+            }
+            let selected = root.join("tests/target.rs");
+            let original = std::fs::read(&selected).map_err(|error| error.to_string())?;
+            std::fs::write(&selected, b"#[test]\nfn changed() {}\n")
+                .map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current == Some(true)
+            {
+                return Err("changed ignored selected test remained current".to_string());
+            }
+            std::fs::write(&selected, original).map_err(|error| error.to_string())?;
+            if repair_attempt_head_reading(&root, &finished, Some(&head)).head_current != Some(true)
+            {
+                return Err("restored ignored test did not recover currentness".to_string());
+            }
             Ok(())
         })();
         let _ = std::fs::remove_dir_all(&root);
@@ -7712,6 +8902,85 @@ mod tests {
         Ok(())
     }
 
+    /// #3056: `before_produced_from_dirty` / `after_produced_from_dirty` are
+    /// read-time Historical observations like `artifact_currentness`, so a
+    /// verify document minted before they existed (or when the artifact was
+    /// still current) must stay admitted after the artifact became
+    /// historical-and-dirty-produced. Dropping the two `remove()` strips in
+    /// `canonically_admit_terminal_pair` makes the flagless pair refused.
+    #[test]
+    fn terminal_pair_minted_without_produced_from_dirty_stays_admitted() -> Result<(), String> {
+        let root = test_repo_root("produced-from-dirty-strip")?;
+        let dirty_source = root.join("src/lib.rs");
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("create src failed: {error}"))?;
+        std::fs::write(&dirty_source, "pub fn sample() {}\n")
+            .map_err(|error| format!("write {} failed: {error}", dirty_source.display()))?;
+        let seams = || {
+            serde_json::json!([crate::testing::verify_fixture::snapshot_seam(
+                "seam:sample",
+                "predicate_boundary",
+                "src/lib.rs",
+                1,
+                "weakly_gripped",
+            )])
+        };
+        // Before snapshot minted while the worktree is dirty (untracked Rust
+        // source), then HEAD advances so it classifies as Historical.
+        let before_path = root.join("before.json");
+        let before =
+            crate::testing::verify_fixture::mint_repo_exposure_snapshot(root.as_path(), seams())?;
+        std::fs::write(&before_path, before.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", before_path.display()))?;
+        run_git(&root, &["add", "src/lib.rs"])?;
+        run_git(&root, &["commit", "--no-gpg-sign", "-m", "advance"])?;
+        let after_path = root.join("after.json");
+        let after =
+            crate::testing::verify_fixture::mint_repo_exposure_snapshot(root.as_path(), seams())?;
+        std::fs::write(&after_path, after.as_bytes())
+            .map_err(|error| format!("write {} failed: {error}", after_path.display()))?;
+        let verify = crate::testing::verify_fixture::mint_canonical_verify(
+            root.as_path(),
+            &before_path,
+            &after_path,
+        )?;
+        let mut flagged: serde_json::Value = serde_json::from_str(&verify)
+            .map_err(|error| format!("parse canonical verify failed: {error}"))?;
+        // Precondition: the current canonical render really carries the flag,
+        // otherwise the strip would be vacuous.
+        if flagged["before_produced_from_dirty"] != serde_json::json!(true) {
+            return Err("canonical render must carry before_produced_from_dirty".to_string());
+        }
+        // Control: the flagged document is admitted as-is.
+        match canonically_admit_terminal_pair(root.as_path(), verify.as_bytes()) {
+            CanonicalAdmission::Admitted => {}
+            other => return Err(format!("flagged pair must be admitted, got {other:?}")),
+        }
+        // A document minted without the flag is admitted too.
+        if let Some(object) = flagged.as_object_mut() {
+            object.remove("before_produced_from_dirty");
+            object.remove("after_produced_from_dirty");
+        }
+        let flagless = serde_json::to_vec_pretty(&flagged)
+            .map_err(|error| format!("serialize flagless verify failed: {error}"))?;
+        match canonically_admit_terminal_pair(root.as_path(), &flagless) {
+            CanonicalAdmission::Admitted => {}
+            other => return Err(format!("flagless pair must be admitted, got {other:?}")),
+        }
+        // Negative control: the strip is scoped to the two flags; any other
+        // divergence is still refused.
+        flagged["summary"]["unchanged"] = serde_json::json!(99);
+        let tampered = serde_json::to_vec_pretty(&flagged)
+            .map_err(|error| format!("serialize tampered verify failed: {error}"))?;
+        match canonically_admit_terminal_pair(root.as_path(), &tampered) {
+            CanonicalAdmission::Refused { .. } => {}
+            other => return Err(format!("tampered pair must be refused, got {other:?}")),
+        }
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        Ok(())
+    }
+
     /// #5256 review: a pending projection whose verify names a missing
     /// after snapshot must stay unconfirmed. The validator binds digest,
     /// seam, verdict, and status but does not check after-path existence,
@@ -8113,6 +9382,176 @@ mod tests {
         ] {
             if validate_gap_bound_receipt_closure(true, gap, &verify, &receipt).is_ok() {
                 return Err(format!("{label}: a gap-bound receipt was accepted"));
+            }
+        }
+        Ok(())
+    }
+
+    fn refusal_fixture(reason: &str, recorded_unix_ms: u64) -> RepairAttemptAfterRefusal {
+        RepairAttemptAfterRefusal {
+            reason: reason.to_string(),
+            repository_head: None,
+            recorded_unix_ms,
+        }
+    }
+
+    /// The retry budget and the capped history are separate bounds: the
+    /// budget trips at exactly the fifth refusal, while the history keeps only
+    /// the newest entries without letting the count fall behind.
+    #[test]
+    fn refusal_budget_trips_at_the_fifth_refusal_and_history_drops_the_oldest() -> Result<(), String>
+    {
+        let root = test_root("refusal-budget-cap")?;
+        let mut manifest = sample_manifest(&root)?;
+        let budget = REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET;
+        for n in 1..budget {
+            push_after_refusal(
+                &mut manifest,
+                refusal_fixture(&format!("r{n}"), u64::from(n)),
+            );
+        }
+        if after_refusal_budget_exhausted(&manifest) {
+            return Err(format!("budget exhausted early at {}", budget - 1));
+        }
+        push_after_refusal(&mut manifest, refusal_fixture("r5", 5));
+        if !after_refusal_budget_exhausted(&manifest) {
+            return Err("budget did not trip at the budgeted refusal".to_string());
+        }
+        for n in (budget + 1)..=10 {
+            push_after_refusal(
+                &mut manifest,
+                refusal_fixture(&format!("r{n}"), u64::from(n)),
+            );
+        }
+        let reasons = manifest
+            .after_refusal_history
+            .iter()
+            .map(|refusal| refusal.reason.as_str())
+            .collect::<Vec<_>>();
+        let last = manifest
+            .last_after_refusal
+            .as_ref()
+            .map(|refusal| refusal.reason.as_str());
+        let expected = ["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"];
+        if manifest.after_refusal_count != 10
+            || reasons != expected
+            || reasons.len() != REPAIR_ATTEMPT_REFUSAL_HISTORY_MAX
+            || last != Some("r10")
+        {
+            return Err(format!(
+                "capped history wrong: count {} {reasons:?} last {last:?}",
+                manifest.after_refusal_count
+            ));
+        }
+        validate_manifest(&manifest)?;
+        // Single-change negative control: a history longer than the cap is
+        // rejected by the same validator that accepted the capped one.
+        manifest
+            .after_refusal_history
+            .insert(0, refusal_fixture("overflow", 0));
+        if validate_manifest(&manifest).is_ok() {
+            return Err("an over-cap refusal history was accepted".to_string());
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// A refusal reason is trimmed, left alone at the byte bound, and cut on a
+    /// character boundary one byte past it.
+    #[test]
+    fn bounded_refusal_reason_cuts_on_a_character_boundary_only_past_the_bound()
+    -> Result<(), String> {
+        if bounded_refusal_reason("  spaced out \n") != "spaced out" {
+            return Err("reason was not trimmed".to_string());
+        }
+        // The 4096-byte bound is pinned literally, not through the constant.
+        let exact = "a".repeat(4096);
+        if bounded_refusal_reason(&exact) != exact {
+            return Err("a reason at the bound was altered".to_string());
+        }
+        let over = "a".repeat(4097);
+        let cut = bounded_refusal_reason(&over);
+        if cut != format!("{} [truncated]", "a".repeat(4096)) {
+            return Err(format!("over-bound reason cut wrong: {} bytes", cut.len()));
+        }
+        // 'é' is two bytes; the bound lands inside the last one.
+        let multibyte = format!("{}é", "a".repeat(4095));
+        let cut = bounded_refusal_reason(&multibyte);
+        let expected = format!("{} [truncated]", "a".repeat(4095));
+        if cut != expected {
+            return Err(format!(
+                "multibyte cut was not on a boundary: {} bytes",
+                cut.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Each verdict status maps to its own durable state, and a non-current
+    /// after phase is always stale whatever the verdict says.
+    #[test]
+    fn finish_state_follows_verdict_status_and_currentness() -> Result<(), String> {
+        use crate::edit_cage::EditCageVerdictStatus as Status;
+        let root = test_root("finish-state")?;
+        let manifest = sample_manifest(&root)?;
+        let after_with = |current: bool, status: Status| RepairAttemptAfter {
+            attempt_id: manifest.repair_attempt_id.clone(),
+            repository_head: manifest.repository_head.clone(),
+            delta_sha256: String::new(),
+            delta_binding: None,
+            receipt_projection_predecessor: None,
+            packet_sha256: String::new(),
+            current,
+            verdict: crate::edit_cage::EditCageVerdict {
+                status,
+                changed_paths: Vec::new(),
+                violations: Vec::new(),
+            },
+        };
+        let cases = [
+            (true, Status::Compliant, RepairAttemptState::ReadyToFinish),
+            (true, Status::Violated, RepairAttemptState::Failed),
+            (true, Status::Incomparable, RepairAttemptState::Incomparable),
+            (false, Status::Compliant, RepairAttemptState::Stale),
+            (false, Status::Violated, RepairAttemptState::Stale),
+            (false, Status::Incomparable, RepairAttemptState::Stale),
+        ];
+        for (current, status, expected) in cases {
+            let got = repair_attempt_state_for_finish(&after_with(current, status));
+            if got != expected {
+                return Err(format!(
+                    "current {current} {status:?}: expected {expected:?}, got {got:?}"
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// Only Cargo manifests, the workspace lockfile and the root config feed
+    /// the analysis input identity; near-miss names do not.
+    #[test]
+    fn analysis_input_paths_are_exact_file_names() -> Result<(), String> {
+        for path in [
+            crate::config::CONFIG_FILE_NAME,
+            "Cargo.toml",
+            "crates/a/Cargo.toml",
+            CARGO_WORKSPACE_LOCKFILE,
+            "nested/Cargo.lock",
+        ] {
+            if !is_analysis_input_path(path) {
+                return Err(format!("{path} should be an input"));
+            }
+        }
+        for path in [
+            "Cargo.toml.bak",
+            "crates/a/MyCargo.toml",
+            "crates/a/src/lib.rs",
+            "docs/ripr.toml",
+            "Cargo.toml/readme.md",
+        ] {
+            if is_analysis_input_path(path) {
+                return Err(format!("{path} should not be an input"));
             }
         }
         Ok(())

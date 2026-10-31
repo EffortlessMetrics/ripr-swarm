@@ -3,12 +3,17 @@ mode: fast
 root: fixtures/python_dynamic_namespace_renamed_delattr/input
 config: <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/input/ripr.toml
 
-Summary: 2 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
 
 Changed file(s) by language: python = 2
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
-  Counts: 2 changed file(s), 4 changed line(s), 2 candidate line(s), 2 probe(s), 2 finding(s)
+  Counts: 2 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 WARNING shop/pricing.py:5
   id: probe:shop_pricing.py:python_preview:b9038d35
@@ -16,11 +21,12 @@ WARNING shop/pricing.py:5
 Changed
   after:      if amount >= DISCOUNT_THRESHOLD:
 
-Probe
+Change type
+  a condition or comparison changed
   family: predicate
-  delta:  control
+  delta:  control (changes which code path runs)
   owner:  python:shop/pricing.py::discounted_total
-  canonical gap: gap:python:shop/pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
+  gap id (for scripts): gap:python:shop/pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold
 
 Language
   language: python
@@ -32,7 +38,7 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `discounted_total`
-  - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
+  - infection weak: Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary
   - propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink
   - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
@@ -41,13 +47,13 @@ Evidence
   - source function argument value amount = 20000 at line 9
 
 Weakness
-  - A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. No strong related test call places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000; observed DISCOUNT_THRESHOLD values: unresolved
+  - A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary of `amount >= DISCOUNT_THRESHOLD`
 
 Repair placement
   suggested file: tests/test_pricing.py
   suggested test: test_discount
   pytest node: tests/test_pricing.py::test_discount
-  verify: python -m pytest tests/test_pricing.py::test_discount (high)
+  verify (Bash): (cd -P -- <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/input && python -m pytest tests/test_pricing.py::test_discount) (high)
 Drill in:
   ripr explain --root <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/input --diff <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/diff.patch --mode fast probe:shop_pricing.py:python_preview:b9038d35
   ripr context --root <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/input --diff <cwd>/fixtures/python_dynamic_namespace_renamed_delattr/diff.patch --mode fast --at probe:shop_pricing.py:python_preview:b9038d35
@@ -58,9 +64,10 @@ NOTE shop/route.py:7
 Changed
   after:      response.status_code = 400
 
-Probe
+Change type
+  a constructed field changed
   family: field_construction
-  delta:  value
+  delta:  value (changes a computed value)
   owner:  python:shop/route.py::checkout
 
 Language
@@ -83,7 +90,7 @@ Weakness
   - Static limit `mocked_module`: a related Python test reloads the module or replaces its names (`response`) by assignment, `setattr`, `__setattr__` or `delattr`; the preview adapter does not resolve which object an imported name reads afterwards
 
 Stop reasons:
-  - static_probe_unknown — ripr could not model this change well enough to classify it
+  - ripr could not model this change well enough to classify it (static_probe_unknown)
     Next: Add a test that calls the changed code and asserts an exact result.
 
 Static limitation

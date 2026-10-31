@@ -346,6 +346,20 @@ bound, typed failure past that, and `ripr_list_gaps` byte-fills pages to
 `MAX_TOOL_DOCUMENT_BYTES` (half the response bound — worst-case JSON
 escaping doubles the text copy). When changing a wire shape, measure the
 final envelope, not the document.
+
+## 2026-10-30: Do not flip a wire default on an assumption about the host (#9360)
+
+The MCP tool result carries the document in `content[0].text` and in
+`structuredContent`, doubling the tokens an agent pays. Replacing the text with
+a digest looks free, but whether a host hands `structuredContent` or the text to
+its model is a host property the server cannot observe: a text-only host given a
+digest silently loses the result, while a structured host given the copy only
+pays tokens. Make the lossy side an explicit per-process opt-in
+(`RIPR_MCP_TEXT_CONTENT=summary`), keep the lossless copy the default, make an
+unrecognized value fall back to the lossless side, and measure refusal
+boundaries on the double-carry envelope in both modes so paging does not depend
+on the mode. Flip the default only after a host's behavior is observed.
+
 ## 2026-10-07: Windows spawn and path spellings that tests must not assume (#6855)
 
 Windows `CreateProcess` resolves the executable through the parent's PATH
@@ -3186,6 +3200,22 @@ Durable rules:
   wrapper listing and a compile attempt that uses it - before writing that a
   capability is unavailable.
 
+## 2026-10-25: Receiver and helper admission needs execution and declaration identity (#8004)
+
+An assertion operand parsed in a synthetic function must not borrow the outer
+receiver through an operand-local item: `struct value;` introduces a value
+constructor, and aliases, enums and modules can replace nominal type paths.
+Refuse operand items as a class and exempt the synthetic wrapper by syntax
+identity, never its name. This is a refusal boundary, not type resolution.
+
+Direct, helper and repository calls must share one admission boundary; audit
+every consumer when extending it. Descendant syntax is not execution: an
+uncalled nested fn, closure or async body can hold a perfect assertion without
+running the owner. A helper-name graph supplies candidates, not identities, so
+resolve each hop's free call in its own module/import scope and keep boundary
+tests on the candidate route, not a vacuous negative. Repeated parsing is
+performance work under #8005.
+
 ## 2026-10-16: Per-macro full-file `use` scans hang dogfood PR evidence
 
 `cargo xtask ripr-pr` builds this branch's `ripr` and runs `ripr check` on
@@ -3269,3 +3299,40 @@ both disabled, and there the same deny is enforced. The sharded workflow
 therefore runs the real-ACL tests in a pwsh step and excludes them from the
 bash shards. `File::create` was never affected (the `(WD)` deny was
 enforced). The failure message still records the privilege state.
+
+## 2026-10-31: Goldens blessed on one platform fail on the Linux arbiter platform
+
+`goldens check` is the merge arbiter for output contracts, and hosted Linux
+is the arbiter for goldens: the repo is continuously validated on Linux only,
+and the advisory Windows lane deliberately runs no golden gate and no
+blessing (#2337; `docs/CI.md`, "Advisory Windows Lane"). A bless rendered on
+Windows fails on that arbiter in recorded shapes: 43 local Windows drift
+entries against 35 hosted Linux entries for the same tree, so the eight
+Windows-only fixtures must never be blessed from a Windows run (#8437);
+Windows renders a base-side evidence suffix the committed Linux goldens do
+not carry (#8525); and a bless from a CRLF working tree embedded
+`input_identity` hashes that no `eol=lf` checkout reproduces, burning a
+hosted qualification run on PR #8559 (run 39072364336) until the fixtures
+were re-blessed from an LF tree (#8614; the bless-time guard now refuses that
+shape, `xtask/src/reports/fixtures.rs`).
+
+Durable rules:
+
+- Never bless or hand-edit golden expected-files from a Windows host. The
+  re-bless route is WSL Ubuntu with the pinned toolchain
+  (`rust-toolchain.toml`, channel 1.95.0) or hosted Linux qualification —
+  never a Windows renderer. Run the failing check under WSL, confirm the
+  drift is `formatting_only` (or semantically justified per the output
+  contract), then bless from the WSL checkout so expected-file bytes come
+  from the Linux renderer.
+- A renderer-wording re-bless records classifications unchanged: diff the
+  blessed fixtures' `expected/check.json` and keep it empty, citing the
+  landed renderer change in the blessing reason. A `check.json` change is
+  semantic drift and needs the fixture's own justification;
+  `check-evidence-promotion-honesty` (RIPR-SPEC-0108) still rejects a
+  dishonest re-bless.
+- Attribute the cost lines correctly: the three blocked merge-ref
+  qualification runs on PR #10532 (runs 41000730801, 41008685127,
+  41022609903) are the #11197 binary-swap class (in-suite xtask builds
+  replacing `target/debug/ripr` mid-run), not a golden bless; the recorded
+  Windows-bless qualification cost is #8614/PR #8559.

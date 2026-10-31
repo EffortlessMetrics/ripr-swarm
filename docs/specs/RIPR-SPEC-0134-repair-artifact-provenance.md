@@ -123,7 +123,7 @@ live check share one probe. A worktree is dirty when Git reports a tracked
 change or when an untracked, non-ignored `*.rs` file exists, because the static
 analysis reads those sources and a clean claim would otherwise hide analyzed
 input. Untracked non-Rust files and gitignored Rust files do not count.
-`untracked_rust_sources_make_the_worktree_dirty` covers both sides with those
+`untracked_rust_sources_make_the_worktree_dirty` covers both sides, including a nested source under a spaced path, with those
 controls.
 
 Reachability (#3229): a fully current pair (both artifacts current at the
@@ -314,7 +314,9 @@ an unsupported schema fails before movement calculation.
   (#3229): the reachable current-before/historical-after descendant pair is
   accepted with its token, and a before artifact that declares a dirty
   worktree still renders `historical_before_current_after` once the
-  repository moves past it.
+  repository moves past it, and (#3056) additionally carries
+  `before_produced_from_dirty: true`, which a clean-produced historical
+  before artifact does not.
 - `xtask/src/reports/release_negative.rs` (#2824) is the integrated
   installed-candidate negative corpus: it shares the release-readiness
   package/install and authentic-journey helpers (the installed binary stays

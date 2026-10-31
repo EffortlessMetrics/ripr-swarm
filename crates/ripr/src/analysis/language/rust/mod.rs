@@ -19,6 +19,7 @@ mod dependent_scope;
 pub(crate) mod oracles;
 mod probe_shape;
 pub(crate) mod probes;
+mod proof_harness;
 
 pub(crate) use probe_shape::producer_gap_names_seam_shape;
 pub(crate) use probes::{
@@ -826,6 +827,14 @@ pub struct PartialDiffScope {
     /// instruction needs it: a line budget raised only just above its current
     /// value can still reject that file.
     pub next_file_changed_lines: Option<usize>,
+    /// The file and line budgets at which this diff selects no partition and
+    /// the run analyzes the whole diff, or `None` when either exceeds its
+    /// effective analysis-cost limit and so cannot be granted (#10894), or
+    /// when the files the whole diff's changed packages index already exceed
+    /// the index guard. It selects the whole diff; dependent packages that
+    /// join the wider run can still meet that guard, which refuses with its
+    /// own repair route.
+    pub whole_diff_budgets: Option<(usize, usize)>,
     /// Lowercase hex sha256 of the canonical partition form (decision 7).
     pub partition_identity: String,
 }
@@ -851,8 +860,10 @@ impl PartialDiffScope {
     /// one more file than was selected, and the selected line count plus the
     /// next file's lines. When no enabled file was left out (an oversized
     /// first file analyzed alone), the line minimum is the selected line
-    /// count, which makes the run complete. No run-shape tail: the caller
-    /// names the route (a CLI re-run, or an LSP sidecar restart, #5999).
+    /// count, which makes the run complete. When the whole diff fits the
+    /// analysis-cost limits, each raise also names the budget that analyzes
+    /// all of it (#10894). No run-shape tail: the caller names the route (a
+    /// CLI re-run, or an LSP sidecar restart, #5999).
     pub(crate) fn budget_raise_instruction(&self) -> String {
         let next_lines = self.next_file_changed_lines.unwrap_or(0);
         let file_min = self
@@ -860,10 +871,35 @@ impl PartialDiffScope {
             .len()
             .saturating_add(usize::from(self.next_file_changed_lines.is_some()));
         let line_min = self.selected_changed_lines.saturating_add(next_lines);
-        let file_raise = (file_min > self.file_budget)
-            .then(|| format!("{PARTIAL_DIFF_FILE_BUDGET_ENV} to at least {file_min}"));
-        let line_raise = (line_min > self.line_budget)
-            .then(|| format!("{PARTIAL_DIFF_LINE_BUDGET_ENV} to at least {line_min}"));
+        // The next-file minimum alone can leave the run partial again, so the
+        // budget that analyzes the whole diff rides along when it can be
+        // granted (#10894).
+        let raise = |env: &str, min: usize, whole: Option<usize>, budget: usize| {
+            let larger_whole = whole.filter(|value| *value > budget.max(min));
+            if min > budget {
+                Some(match larger_whole {
+                    Some(value) => {
+                        format!("{env} to at least {min} ({value} to select the whole diff)")
+                    }
+                    None => format!("{env} to at least {min}"),
+                })
+            } else {
+                larger_whole.map(|value| format!("{env} to {value} to select the whole diff"))
+            }
+        };
+        let (whole_files, whole_lines) = self.whole_diff_budgets.unzip();
+        let file_raise = raise(
+            PARTIAL_DIFF_FILE_BUDGET_ENV,
+            file_min,
+            whole_files,
+            self.file_budget,
+        );
+        let line_raise = raise(
+            PARTIAL_DIFF_LINE_BUDGET_ENV,
+            line_min,
+            whole_lines,
+            self.line_budget,
+        );
         let raises: Vec<String> = match self.stop_reason {
             PartialDiffStopReason::FileBudget => [file_raise, line_raise],
             PartialDiffStopReason::LineBudget
@@ -937,12 +973,17 @@ pub(crate) struct PartialDiffBudgets {
     pub(crate) file_budget: usize,
     pub(crate) line_budget: usize,
     pub(crate) disclosures: Vec<String>,
+    /// The effective analysis-cost limits the budgets are clamped to. A
+    /// whole-diff budget above either one cannot be granted, so the widen
+    /// instruction names one only when it fits (#10894).
+    pub(crate) file_limit: usize,
+    pub(crate) line_limit: usize,
 }
 
 pub(crate) fn partial_diff_budgets() -> Result<PartialDiffBudgets, String> {
     partial_diff_budgets_from_env(
-        std::env::var(PARTIAL_DIFF_FILE_BUDGET_ENV),
-        std::env::var(PARTIAL_DIFF_LINE_BUDGET_ENV),
+        diff_limit_env(PARTIAL_DIFF_FILE_BUDGET_ENV),
+        diff_limit_env(PARTIAL_DIFF_LINE_BUDGET_ENV),
         diff_index_file_limit()?,
         diff_changed_rust_line_limit()?,
     )
@@ -980,6 +1021,8 @@ fn partial_diff_budgets_from_env(
         file_budget,
         line_budget,
         disclosures,
+        file_limit: effective_file_limit,
+        line_limit: effective_line_limit,
     })
 }
 
@@ -1205,6 +1248,14 @@ fn select_partial_diff_partition_with_identity(
     // budget the file rule fires, over the line budget some file must cross
     // the remaining budget (or the first-file exception fired).
     let stop_reason = stop_reason?;
+    // Disabled files are never selected and never stop the walk, so budgets
+    // that admit every enabled file complete the run (#10894 review).
+    let (enabled_files, enabled_lines) = candidates
+        .iter()
+        .filter(|candidate| candidate.enabled)
+        .fold((0usize, 0usize), |(files, lines), candidate| {
+            (files + 1, lines.saturating_add(candidate.changed_lines))
+        });
     // Selection is a prefix of the enabled candidates, so the next file the
     // widen instruction must admit is the enabled candidate after it.
     let next_file_changed_lines = candidates
@@ -1251,6 +1302,9 @@ fn select_partial_diff_partition_with_identity(
         uninspected_changed_lines_lower_bound: total_lines.saturating_sub(selected_lines),
         stop_reason,
         next_file_changed_lines,
+        whole_diff_budgets: (enabled_files <= budgets.file_limit
+            && enabled_lines <= budgets.line_limit)
+            .then_some((enabled_files, enabled_lines)),
         partition_identity: sha256_hex(canonical.as_bytes()),
     })
 }
@@ -1323,6 +1377,7 @@ fn apply_probe_and_oracle_limits(
     probe: &Probe,
     index: &RustIndex,
     binding_relation: Option<&crate::analysis::probes::ChangedBindingPredicateUse>,
+    pre_cap_syntax_only: Option<bool>,
 ) {
     // #7089 matches a bare `owner(` call, which for a method owner
     // (`impl Cart::total`) or a trait default method can only be some other
@@ -1367,7 +1422,7 @@ fn apply_probe_and_oracle_limits(
     // RIPR-SPEC-0240: an operator, `Drop`, iterator or dyn call a test makes
     // may run the owner without naming it.
     classify::withhold_destructor_credit(finding, index);
-    classify::withhold_implicit_call_gap(finding, index);
+    classify::withhold_implicit_call_gap(finding, index, pre_cap_syntax_only);
     // RIPR-SPEC-0240: an owner passed as a function value, generated by an
     // item macro, or called inside an executor helper has no call ripr can
     // pair with the assertion; that is a limit, not a missing assertion.
@@ -1392,7 +1447,8 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
         && finding.static_limit_kind.is_none()
 }
 
-/// Whether a `weakly_exposed` or `reachable_unrevealed` finding's only reach is proximity: every
+/// Whether a `weakly_exposed`, `reachable_unrevealed` or `infection_unknown`
+/// (#11481) finding's only reach is proximity: every
 /// related test shares the owner's file, module or a name token. With reach
 /// `weak`, the reach stage has already found no test calling the owner, so
 /// the weak reach rests on ripr not tracing a path, the same unresolved
@@ -1401,7 +1457,9 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
 fn needs_proximity_reach_limit(finding: &Finding) -> bool {
     matches!(
         finding.class,
-        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        ExposureClass::WeaklyExposed
+            | ExposureClass::ReachableUnrevealed
+            | ExposureClass::InfectionUnknown
     )
         && finding.static_limit_kind.is_none()
         && finding.ripr.reach.state == crate::domain::StageState::Weak
@@ -1409,8 +1467,15 @@ fn needs_proximity_reach_limit(finding: &Finding) -> bool {
         // The list is capped; reach `weak` was computed from the full
         // relation set, so no dropped row calls the owner.
         && finding.related_tests.iter().all(|test| {
-            test.relation_reason
-                .is_some_and(classify::is_proximity_only)
+            test.relation_reason.is_some_and(|reason| {
+                classify::is_proximity_only(reason)
+                    // #11481: a test related to an `infection_unknown`
+                    // finding only by naming the owner never has to call it
+                    // (RelationReason::establishes_reach is false), so it is
+                    // as unresolved as a shared file or token.
+                    || (finding.class == ExposureClass::InfectionUnknown
+                        && reason == crate::domain::RelationReason::OwnerNamedTest)
+            })
         })
 }
 
@@ -1461,7 +1526,7 @@ fn apply_rust_no_static_path_limit(
 
     if let Some(witness) = transitive_reach.transitive_witness(&owner_name) {
         replace_witnessed_no_path_infection_summary(finding);
-        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
     } else if let Some(witness) = transitive_reach.macro_reach_witness(&owner_name) {
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_macro_reach_limit(finding, &owner_name, &witness);
@@ -1487,7 +1552,7 @@ fn apply_rust_no_static_path_limit(
         // Last: a chain past five hops never displaces a shallower or more
         // specific witness (#8047).
         replace_witnessed_no_path_infection_summary(finding);
-        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
     } else if let Some(context) = dependency_edges
         && let Some(owner) = probe
             .owner
@@ -1499,7 +1564,45 @@ fn apply_rust_no_static_path_limit(
         // displaced by this broader structural one.
         replace_witnessed_no_path_infection_summary(finding);
         apply_rust_facade_reach_limit(finding, &owner_name, &witness);
+    } else if let Some(harness) = proof_harness::harness_calling_owner(index, &owner_name) {
+        // RIPR-SPEC-0367: last, so any traced test path wins. A proof
+        // harness is not a test; the finding stays `no_static_path` and says
+        // a harness exists that ripr does not evaluate.
+        replace_witnessed_no_path_infection_summary(finding);
+        proof_harness::apply_limit(finding, &owner_name, &harness);
+    } else if let Some(ambiguity) = transitive_reach.trait_dispatch_ambiguity(&owner_name) {
+        // #11719: last, so no traced or structural witness is displaced.
+        replace_witnessed_no_path_infection_summary(finding);
+        apply_rust_trait_dispatch_ambiguity_limit(finding, &owner_name, &ambiguity);
     }
+}
+
+/// RIPR-SPEC-0114 (#11719): the owner is called from several impls of one
+/// implicit-dispatch trait method, so ripr names the ambiguity and lists
+/// candidate impls instead of guessing one. No witness test, no reach
+/// credit, no related-test relation, no class change.
+fn apply_rust_trait_dispatch_ambiguity_limit(
+    finding: &mut Finding,
+    owner_name: &str,
+    ambiguity: &classify::TraitDispatchAmbiguity,
+) {
+    finding.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    finding
+        .stop_reasons
+        .push(StopReason::TransitiveReachUnresolved);
+    finding
+        .evidence
+        .push(classify::RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE.to_string());
+    finding
+        .evidence
+        .push(classify::trait_dispatch_ambiguity_pointer(
+            ambiguity, owner_name,
+        ));
+    finding
+        .evidence
+        .extend(classify::trait_dispatch_ambiguity_detail_lines(
+            ambiguity, owner_name,
+        ));
 }
 
 /// #9982: the same named limitation a traced integration-test witness gets,
@@ -1569,7 +1672,7 @@ fn apply_rust_proximity_reach_limit(
         .transitive_witness(&owner_name)
         .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
     {
-        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
         unresolved_reach_next_step(
             finding,
             &witness.test_name,
@@ -1591,7 +1694,7 @@ fn apply_rust_proximity_reach_limit(
         .deep_transitive_witness(&owner_name)
         .filter(|witness| admits(&witness.test_file, &witness.entry_symbol))
     {
-        apply_rust_transitive_reach_limit(finding, &owner_name, &witness);
+        apply_rust_transitive_reach_limit(finding, &owner_name, &witness, transitive_reach);
         unresolved_reach_next_step(
             finding,
             &witness.test_name,
@@ -1607,6 +1710,7 @@ fn apply_rust_transitive_reach_limit(
     finding: &mut Finding,
     owner_name: &str,
     witness: &classify::TransitiveWitness,
+    transitive_reach: &classify::TransitiveReachIndex<'_>,
 ) {
     finding.static_limit_kind = Some(classify::transitive_reach_limit_kind(&witness.test_file));
     finding
@@ -1623,6 +1727,14 @@ fn apply_rust_transitive_reach_limit(
         .extend(classify::transitive_reach_limitation_detail_lines(
             witness, owner_name,
         ));
+    if let Some(boundary) = finding.probe.owner.as_ref().and_then(|owner| {
+        transitive_reach.private_helper_boundary(owner, owner_name, &witness.entry_symbol)
+    }) {
+        finding.evidence.push(format!(
+            "{}{boundary}",
+            crate::domain::LIMITATION_HELPER_BOUNDARY_PREFIX
+        ));
+    }
 }
 
 /// Shared typed macro limitation projection. It adds neither reach credit
@@ -2007,7 +2119,7 @@ impl RustAdapter {
         // failing closed with zero findings. A malformed override fails closed
         // as `partial_budget_invalid`.
         let partial_budgets = partial_diff_budgets()?;
-        let partial_scope = select_partial_diff_partition_with_identity(
+        let mut partial_scope = select_partial_diff_partition_with_identity(
             &analyzable_changed_files,
             changed_files,
             &partial_budgets,
@@ -2028,6 +2140,30 @@ impl RustAdapter {
             .into_iter()
             .filter(|path| !generated_sources.contains(path))
             .collect::<Vec<_>>();
+        // #10894 review: a whole-diff retry indexes at least every file the
+        // mode selects for all changed Rust files, before any dependent
+        // package joins. When that floor is over the index guard the retry
+        // is refused, so the hint names no whole-diff figure.
+        if let Some(scope) = partial_scope.as_mut()
+            && scope.whole_diff_budgets.is_some()
+        {
+            let whole_diff_rust_paths = analyzable_changed_files
+                .iter()
+                .filter(|file| self.accepts_path(&file.path))
+                .map(|file| file.path.clone())
+                .collect::<Vec<_>>();
+            let floor = workspace::select_rust_files_for_mode_with_dependent_packages(
+                &analyzable_rust_files,
+                &whole_diff_rust_paths,
+                options.mode,
+                options.include_unchanged_tests,
+                &BTreeSet::new(),
+                &[],
+            );
+            if floor.len() > diff_index_file_limit()? {
+                scope.whole_diff_budgets = None;
+            }
+        }
         // Authoritative source-role context (#3283): declared Cargo
         // test/bench targets confirm evidence role outside the default
         // layouts, and the repository opt-in restores production-like
@@ -2432,6 +2568,7 @@ impl RustAdapter {
         // limitation.
         let mut files_with_findings = std::collections::BTreeSet::new();
         let mut seeded_probes = Vec::new();
+        let mut panicked_files: BTreeSet<PathBuf> = BTreeSet::new();
         for changed in analyzable_changed_files
             .iter()
             .filter(|file| self.accepts_path(&file.path))
@@ -2460,6 +2597,12 @@ impl RustAdapter {
             if absent_changed_set.contains(&workspace::normalize_path(&changed.path)) {
                 continue;
             }
+            // RIPR-SPEC-0367: lines changed inside a proof harness seed no
+            // production probe; the run names them instead of reading clean.
+            limitations.extend(proof_harness::edit_limitations(
+                std::iter::once(changed),
+                &index,
+            )?);
             // Cooperative cancellation (#1972): check once per changed file
             // and once per probe so a superseded or deadline-expired refresh
             // exits the classify loop promptly.
@@ -2492,36 +2635,60 @@ impl RustAdapter {
         // Workers inherit this thread's cancellation token and
         // committed-source overlay; a cancelled worker drops its probe and the
         // checkpoint after the pass discards the partial result.
-        let classified: Vec<Option<Finding>> = if seeded_probes.is_empty() {
+        let classified: Vec<ClassifiedProbe> = if seeded_probes.is_empty() {
             Vec::new()
         } else {
             let related_test_candidate_index = classify::RelatedTestCandidateIndex::new(&index)
                 .with_analysis_root(&options.root)
                 .with_withheld_macro_bindings(std::mem::take(&mut withheld_macro_bindings))
-                .with_diff_touched(diff_touched.clone());
+                .with_diff_touched(diff_touched.clone())
+                .with_changed_consts(classify::ChangedConsts::from_changed_files(
+                    &analyzable_changed_files,
+                ));
             let token = cancellation::current_token();
             let overlay = committed_source::current_overlay();
             let graph_counter = classify::InheritedGraphCounter::capture();
-            let classify_one =
-                |(_, seeded): &(&ChangedFile, crate::analysis::probes::SeededProbe)| {
-                    cancellation::with_optional_token(token.as_ref(), || {
-                        committed_source::with_overlay(overlay.clone(), || {
-                            graph_counter.run(|| {
-                                cancellation::checkpoint().ok()?;
-                                Some(classifier::classify_probe_with_candidate_index_and_origins(
-                                    &seeded.probe,
-                                    &index,
-                                    workspace_index_complete,
-                                    dependency_edges.as_ref(),
-                                    &related_test_candidate_index,
-                                    &transitive_reach,
-                                    seeded.propagation_origin.as_ref(),
-                                    Some(&value_origins),
-                                ))
+            let classify_one = |(_, seeded): &(
+                &ChangedFile,
+                crate::analysis::probes::SeededProbe,
+            )| {
+                cancellation::with_optional_token(token.as_ref(), || {
+                    committed_source::with_overlay(overlay.clone(), || {
+                        graph_counter.run(|| {
+                                if cancellation::checkpoint().is_err() {
+                                    return ClassifiedProbe::Dropped;
+                                }
+                                // #11116: one probe's internal failure must not
+                                // unwind the pool and abort every other file's
+                                // result. The payload is not kept in findings: it can
+                                // quote repository text. A panic hook may
+                                // still report it separately.
+                                let contained =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        #[cfg(test)]
+                                        injected_classify_panic::fire(
+                                            &options.root,
+                                            &seeded.probe.location.file,
+                                        );
+                                        classifier::classify_probe_with_candidate_index_and_origins_with_direct_rows(
+                                            &seeded.probe,
+                                            &index,
+                                            workspace_index_complete,
+                                            dependency_edges.as_ref(),
+                                            &related_test_candidate_index,
+                                            &transitive_reach,
+                                            seeded.propagation_origin.as_ref(),
+                                            Some(&value_origins),
+                                        )
+                                    }));
+                                match contained {
+                                    Ok((finding, pre_cap_syntax_only)) => ClassifiedProbe::Classified(Box::new((finding, pre_cap_syntax_only))),
+                                    Err(_payload) => ClassifiedProbe::Panicked,
+                                }
                             })
-                        })
                     })
-                };
+                })
+            };
             // Classification recurses over source nesting, so it runs on a
             // pool with the stack the `--budget` analysis thread gets, not
             // the 2 MiB default of the global pool's workers. If the pool
@@ -2540,17 +2707,31 @@ impl RustAdapter {
                     // scan would run it in line on one worker while the rest
                     // sleep on the memo lock. Pay it here, before any probe
                     // is queued, so it fans out over this pool.
-                    cancellation::with_optional_token(token.as_ref(), || {
-                        committed_source::with_overlay(overlay.clone(), || {
-                            related_test_candidate_index.prime_workspace_macro_scan(&index);
+                    let primed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        cancellation::with_optional_token(token.as_ref(), || {
+                            committed_source::with_overlay(overlay.clone(), || {
+                                #[cfg(test)]
+                                injected_classify_panic::fire(&options.root, &options.root);
+                                related_test_candidate_index.prime_workspace_macro_scan(&index);
+                            });
                         });
-                    });
-                    seeded_probes
-                        .par_iter()
-                        .map_init(crate::analysis::syntax::run_memo::enter, |_, probe| {
-                            classify_one(probe)
-                        })
-                        .collect()
+                    }));
+                    if primed.is_err() {
+                        // The shared scan may have left its memo incomplete or
+                        // poisoned. Do not classify against it: every queued
+                        // probe depends on the same workspace scan.
+                        seeded_probes
+                            .iter()
+                            .map(|_| ClassifiedProbe::Panicked)
+                            .collect()
+                    } else {
+                        seeded_probes
+                            .par_iter()
+                            .map_init(crate::analysis::syntax::run_memo::enter, |_, probe| {
+                                classify_one(probe)
+                            })
+                            .collect()
+                    }
                 }),
                 Err(_) => {
                     let _run_memo = crate::analysis::syntax::run_memo::enter();
@@ -2562,11 +2743,32 @@ impl RustAdapter {
 
         {
             for ((changed, seeded), classified) in seeded_probes.into_iter().zip(classified) {
-                let Some(mut finding) = classified else {
-                    // A worker only drops its probe when the run was
-                    // cancelled, which the checkpoint above has reported.
-                    cancellation::checkpoint()?;
-                    continue;
+                let (mut finding, pre_cap_syntax_only) = match classified {
+                    ClassifiedProbe::Classified(finding) => *finding,
+                    ClassifiedProbe::Dropped => {
+                        // A worker only drops its probe when the run was
+                        // cancelled, which the checkpoint above has reported.
+                        cancellation::checkpoint()?;
+                        continue;
+                    }
+                    ClassifiedProbe::Panicked => {
+                        // #11116: fail closed. The probe keeps a
+                        // `static_unknown` stand-in with no gap, no related
+                        // test and no repair signal, and none of the
+                        // reach/limit shaping below runs on it, so it can
+                        // never be promoted to `exposed` or actionable.
+                        let mut finding =
+                            classifier::classification_incomplete_finding(&seeded.probe);
+                        finding.language = Some(LanguageId::Rust);
+                        finding.source_currentness =
+                            analysis_probes::resolve_probe_source_currentness(
+                                changed,
+                                &seeded.probe,
+                            );
+                        panicked_files.insert(changed.path.clone());
+                        push_retained_finding(&mut findings, finding);
+                        continue;
+                    }
                 };
                 let probe = seeded.probe;
                 let binding_relation = seeded.binding_relation;
@@ -2701,6 +2903,7 @@ impl RustAdapter {
                     &probe,
                     &index,
                     binding_relation.as_ref(),
+                    pre_cap_syntax_only,
                 );
                 probes::attach_changed_binding_return_evidence(
                     &mut finding,
@@ -2725,6 +2928,10 @@ impl RustAdapter {
                 push_retained_finding(&mut findings, finding);
             }
         }
+
+        // #11116: a file whose probe classification panicked is incomplete
+        // even though its stand-in finding is retained.
+        limitations.extend(classification_panic_limitations(&panicked_files)?);
 
         // #4775: unchanged lexical-fallback test files are a separate
         // language-scope limitation. Compose with #4722 rather than
@@ -2790,6 +2997,7 @@ impl RustAdapter {
                 .collect(),
             rust_diagnostic_origins,
             rust_consumed_sources,
+            preview_fact_cache: Default::default(),
         })
     }
 }
@@ -2896,6 +3104,96 @@ fn unreached_module_limitations<'a>(
                 )
         })
         .collect()
+}
+
+/// Outcome of classifying one seeded probe on the classify pool (#11116).
+enum ClassifiedProbe {
+    Classified(Box<(Finding, Option<bool>)>),
+    /// The run was cancelled before this probe was classified.
+    Dropped,
+    /// Classification panicked; contained to this probe.
+    Panicked,
+}
+
+/// One `producer_failure` limitation per changed Rust file whose probe
+/// classification panicked (#11116), so the run reads incomplete and names the
+/// file instead of presenting the stand-in `static_unknown` rows as complete.
+fn classification_panic_limitations(
+    files: &BTreeSet<PathBuf>,
+) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    let mut limitations = Vec::new();
+    for path in files {
+        let portable = path.to_string_lossy().replace('\\', "/");
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::InspectFailure,
+                "Report the failure with the file and diff, then re-run; the affected findings are static_unknown until it is fixed.",
+            )?,
+        )
+        .with_detail(
+            format!(
+                "{portable}: classification stopped on an internal error (classification_incomplete); \
+                 the affected findings are static_unknown stand-ins that make no exposure claim."
+            )
+            .chars()
+            .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+            .collect::<String>(),
+        )?;
+        let limitation = match limitation.clone().with_path(&portable) {
+            Ok(with_path) => with_path,
+            Err(_) => limitation,
+        };
+        limitations.push(limitation);
+    }
+    Ok(limitations)
+}
+
+/// Test-only fault injection for the classify pool (#11116): raise a panic
+/// while classifying a probe in an armed `(root, file)`, so tests drive the
+/// production containment. Keyed by root and file so concurrent tests never
+/// see each other's arming.
+#[cfg(test)]
+pub(crate) mod injected_classify_panic {
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    static ARMED: Mutex<BTreeSet<(PathBuf, PathBuf)>> = Mutex::new(BTreeSet::new());
+
+    /// Disarms on drop.
+    pub(crate) struct Armed(PathBuf, PathBuf);
+
+    impl Drop for Armed {
+        fn drop(&mut self) {
+            if let Ok(mut armed) = ARMED.lock() {
+                armed.remove(&(self.0.clone(), self.1.clone()));
+            }
+        }
+    }
+
+    pub(crate) fn arm(root: &Path, file: &Path) -> Armed {
+        let key = (root.to_path_buf(), file.to_path_buf());
+        if let Ok(mut armed) = ARMED.lock() {
+            armed.insert(key.clone());
+        }
+        Armed(key.0, key.1)
+    }
+
+    pub(super) fn fire(root: &Path, file: &Path) {
+        let due = ARMED
+            .lock()
+            .map(|armed| armed.contains(&(root.to_path_buf(), file.to_path_buf())))
+            .unwrap_or(false);
+        if due {
+            std::panic::resume_unwind(Box::new("injected classify panic (#11116)"));
+        }
+    }
 }
 
 /// One typed limitation per changed Rust file whose facts came from the
@@ -3189,16 +3487,17 @@ impl RustAdapter {
                         classify::RelatedTestCandidateIndex::new(&index)
                             .with_analysis_root(&options.root)
                     });
-                let mut finding = classifier::classify_probe_with_candidate_index_and_origins(
-                    &probe,
-                    &index,
-                    true,
-                    Some(&dependency_edges),
-                    related_test_candidate_index,
-                    &transitive_reach,
-                    None,
-                    Some(&value_origins),
-                );
+                let (mut finding, pre_cap_syntax_only) =
+                    classifier::classify_probe_with_candidate_index_and_origins_with_direct_rows(
+                        &probe,
+                        &index,
+                        true,
+                        Some(&dependency_edges),
+                        related_test_candidate_index,
+                        &transitive_reach,
+                        None,
+                        Some(&value_origins),
+                    );
                 finding.language = Some(LanguageId::Rust);
                 // Repo mode seeds probes from the current tree, so every
                 // finding's source is candidate-side by construction
@@ -3216,7 +3515,13 @@ impl RustAdapter {
                     Some(&dependency_edges),
                 );
                 classifier::withhold_proc_macro_no_path_as_unknown(&mut finding, &index);
-                apply_probe_and_oracle_limits(&mut finding, &probe, &index, None);
+                apply_probe_and_oracle_limits(
+                    &mut finding,
+                    &probe,
+                    &index,
+                    None,
+                    pre_cap_syntax_only,
+                );
                 // #5268: same producer-owned canonical gap identity as the
                 // diff loop, behind the same typed static-limitation gate.
                 if finding.static_limit_kind.is_none() {
@@ -3282,7 +3587,7 @@ mod tests {
     use crate::analysis::diff::{ChangedFile, ChangedLine};
     use crate::analysis::facts::{FunctionSourceRole, FunctionSummary, RustIndex, TestFact};
     use crate::analysis::language::{LanguageAdapter, LanguageId};
-    use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
+    use crate::analysis::{AnalysisMode, AnalysisOptions, classify, diff, rust_index};
     use crate::config::OraclePolicy;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, OracleKind,
@@ -3524,6 +3829,145 @@ mod tests {
             finding.canonical_gap
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn repo_operator_cap_uses_uncapped_direct_relations() -> Result<(), String> {
+        for (label, named, ignored, call, lift) in [
+            (
+                "hidden-named",
+                true,
+                false,
+                "let result = Money::add(Money(1), Money(1));\n        assert_eq!(result.0, 2);",
+                true,
+            ),
+            ("operator-only", false, false, "", false),
+            (
+                "ignored-named",
+                true,
+                true,
+                "let result = Money::add(Money(1), Money(1));\n        assert_eq!(result.0, 2);",
+                false,
+            ),
+            (
+                "foreign",
+                true,
+                false,
+                "let n = 1i64.add(1);\n        assert_eq!(n, 2);",
+                false,
+            ),
+            (
+                "constructor",
+                true,
+                false,
+                "let result = Money(1).add(Money(1));\n        assert_eq!(result.0, 2);",
+                true,
+            ),
+            (
+                "binding",
+                true,
+                false,
+                "let money = Money(1);\n        let result = money.add(Money(1));\n        assert_eq!(result.0, 2);",
+                true,
+            ),
+            (
+                "mixed",
+                true,
+                false,
+                "let n = 1i64.add(1);\n        let result = Money(1).add(Money(1));\n        assert_eq!(n, 2);\n        assert_eq!(result.0, 2);",
+                true,
+            ),
+            (
+                "type-path",
+                true,
+                false,
+                "let result = Money::add(Money(1), Money(1));\n        assert_eq!(result.0, 2);",
+                true,
+            ),
+        ] {
+            let root = temp_root(label)?;
+            fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+            fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = \"repo-operator-cap\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
+            ).map_err(|error| error.to_string())?;
+            let mut source = "use std::ops::*;\n#[derive(Debug, Clone, Copy, PartialEq)]\npub struct Money(pub i64);\nimpl Add for Money {\n    type Output = Money;\n    fn add(self, other: Money) -> Money {\n        Self(other.0 + self.0)\n    }\n}\n#[cfg(test)] mod tests {\n    use super::*;\n".to_string();
+            let count = if named && !ignored { 8 } else { 9 };
+            for n in 0..count {
+                source.push_str(&format!("    #[test]\n    fn a{n:02}_operator() {{\n        let sum = Money(1) + Money(1);\n        assert_eq!(sum.0, 2);\n    }}\n"));
+            }
+            if named {
+                source.push_str("    #[test]\n");
+                if ignored {
+                    source.push_str("    #[ignore]\n");
+                }
+                source.push_str(&format!("    fn zz_named() {{\n        let sum = Money(1) + Money(1);\n        {call}\n        assert_eq!(sum.0, 2);\n    }}\n"));
+            }
+            source.push_str("}\n");
+            fs::write(root.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+            let options = AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            };
+            let result = RustAdapter.analyze_repo(&options, &OraclePolicy::default())?;
+            let findings: Vec<_> = result
+                .findings
+                .iter()
+                .filter(|finding| finding.probe.expression == "Self(other.0 + self.0)")
+                .collect();
+            assert!(!findings.is_empty(), "{label}: expected operator findings");
+            let files = vec![(PathBuf::from("src/lib.rs"), source.into_bytes())];
+            let mut index =
+                rust_index::build_analysis_index_from_loaded_files(&root, &files, &[])?.index;
+            rust_index::apply_oracle_policy(&mut index, &OraclePolicy::default());
+            for finding in findings {
+                assert!(
+                    finding
+                        .related_tests_matched_total
+                        .is_some_and(|total| total > 8),
+                    "{label}"
+                );
+                assert_eq!(finding.related_tests.len(), 8, "{label}");
+                assert!(
+                    finding
+                        .related_tests
+                        .iter()
+                        .all(|test| test.name != "zz_named"),
+                    "{label}"
+                );
+                if lift {
+                    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+                    assert!(finding.static_limit_kind.is_none(), "{label}");
+                    let mut fallback = finding.clone();
+                    assert!(
+                        classify::withhold_implicit_call_gap(&mut fallback, &index, None),
+                        "{label}"
+                    );
+                    assert_eq!(fallback.class, ExposureClass::StaticUnknown, "{label}");
+                } else {
+                    assert_eq!(finding.class, ExposureClass::StaticUnknown, "{label}");
+                    assert_eq!(
+                        finding.static_limit_kind.map(|kind| kind.as_str()),
+                        Some("rust_implicit_call_unresolved"),
+                        "{label}"
+                    );
+                }
+            }
+            fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
         Ok(())
     }
 
@@ -4225,6 +4669,118 @@ mod tests {
             .iter()
             .map(|path| path.to_string_lossy().replace('\\', "/"))
             .collect()
+    }
+
+    /// #10191: exercise the real name-admission path, with a nonempty
+    /// withheld binary, instead of only Ready's whole-workspace index.
+    /// Credit agrees even when narrowed composition is an analyzer limit,
+    /// while the full index establishes a real shadow (RIPR-SPEC-0240).
+    #[test]
+    fn binary_macro_boundaries_preserve_credit_with_withheld_binary() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        for shared in [false, true] {
+            let root = temp_root("binary-macro-dependent-scope")?;
+            for (path, source) in [
+                (
+                    "Cargo.toml",
+                    "[workspace]\nmembers=['a','b','island']\nresolver='2'\n",
+                ),
+                (
+                    "a/Cargo.toml",
+                    "[package]\nname='scope_a'\nversion='0.0.0'\nedition='2024'\n",
+                ),
+                ("a/src/lib.rs", "pub fn answer() -> u8 {\n    7\n}\n"),
+                (
+                    "b/Cargo.toml",
+                    "[package]\nname='macro_binary'\nversion='0.0.0'\nedition='2024'\n[[bin]]\nname='parse'\npath='parse.rs'\n[dependencies]\nscope_a={path='../a'}\n",
+                ),
+                (
+                    "b/parse.rs",
+                    "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\nfn main() {}\n",
+                ),
+                (
+                    "island/Cargo.toml",
+                    "[package]\nname='island'\nversion='0.0.0'\n",
+                ),
+                ("island/src/lib.rs", "pub fn unrelated() {}\n"),
+            ] {
+                write(&root.join(path), source)?;
+            }
+            let prefix = if shared {
+                "#[macro_use]\n#[path = \"../../b/parse.rs\"]\nmod shadow;\n"
+            } else {
+                ""
+            };
+            write(
+                &root.join("a/tests/pin.rs"),
+                &format!(
+                    "{prefix}use scope_a::answer;\n#[test]\nfn pin() {{ assert_eq!(answer(), 7); }}\n"
+                ),
+            )?;
+            let changed = diff::parse_unified_diff(
+                "diff --git a/a/src/lib.rs b/a/src/lib.rs\n--- a/a/src/lib.rs\n+++ b/a/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn answer() -> u8 {\n-    6\n+    7\n }\n",
+            );
+            let run = |mode| {
+                dependent_scope::with_forced_mode(mode, || {
+                    let result = RustAdapter.analyze_diff(
+                        &diff_options(root.clone(), AnalysisMode::Draft),
+                        &OraclePolicy::default(),
+                        &changed,
+                    )?;
+                    let mut findings = result.findings.into_iter().filter(|finding| {
+                        finding.probe.family == ProbeFamily::ReturnValue
+                            && finding.probe.expression == "7"
+                    });
+                    let finding = findings.next().ok_or("missing changed return")?;
+                    assert!(findings.next().is_none(), "one changed return");
+                    Ok::<_, String>((finding, dependent_scope::observed_main_files()))
+                })
+            };
+            let (full, full_main) = run(DependentScopeMode::Full)?;
+            let (named, main) = run(DependentScopeMode::NameAdmitted)?;
+            assert!(full_main.is_none(), "full control must not narrow");
+            let main = slash_paths(&main.ok_or("named control must actually narrow")?);
+            assert!(main.contains(&"a/tests/pin.rs".to_string()), "{main:?}");
+            assert!(
+                !main.contains(&"b/parse.rs".to_string()),
+                "binary must be withheld: {main:?}"
+            );
+            assert_eq!(named.related_tests.len(), 1);
+            assert_eq!(full.related_tests.len(), 1);
+            if shared {
+                assert_eq!(full.class, ExposureClass::ReachableUnrevealed);
+                assert_eq!(named.class, ExposureClass::StaticUnknown);
+                assert_eq!(
+                    named.static_limit_kind,
+                    Some(StaticLimitKind::RustAssertionContextUnresolved)
+                );
+                assert!(full.static_limit_kind.is_none());
+                for finding in [&full, &named] {
+                    assert_eq!(finding.ripr.reveal.observe.state, StageState::No);
+                    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::No);
+                    let test = &finding.related_tests[0];
+                    assert!(test.oracle.is_none());
+                    assert_eq!(test.oracle_kind, OracleKind::Unknown);
+                    assert_eq!(test.oracle_strength, OracleStrength::None);
+                    assert_eq!(
+                        test.miss,
+                        Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+                    );
+                }
+            } else {
+                for finding in [&full, &named] {
+                    assert_eq!(finding.class, ExposureClass::Exposed);
+                    assert_eq!(finding.ripr.reveal.observe.state, StageState::Yes);
+                    assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+                    assert_eq!(
+                        finding.related_tests[0].oracle_strength,
+                        OracleStrength::Strong
+                    );
+                }
+            }
+            fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     /// #5320: the name-admitted scope indexes `a` plus the one dependent file
@@ -5898,6 +6454,8 @@ fn absent_delimiter_boundary_returns_head() {
             file_budget,
             line_budget,
             disclosures: Vec::new(),
+            file_limit: usize::MAX,
+            line_limit: usize::MAX,
         }
     }
 
@@ -6186,7 +6744,7 @@ fn absent_delimiter_boundary_returns_head() {
         assert_eq!(stopped.selected_files, vec!["src/a.rs"]);
         assert_eq!(
             stopped.widen_instruction(),
-            "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run"
+            "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65 (95 to select the whole diff), then re-run"
         );
         let widened = require_partial(
             select_partial_diff_partition(&files, &budgets(7, 65), ALL_LANGUAGES),
@@ -6205,14 +6763,199 @@ fn absent_delimiter_boundary_returns_head() {
         )?;
         assert_eq!(
             file_stopped.widen_instruction(),
-            "raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2 and \
-             RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run"
+            "raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2 (3 to select the whole diff) and \
+             RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65 (95 to select the whole diff), then re-run"
         );
         let file_widened = require_partial(
             select_partial_diff_partition(&files, &budgets(2, 65), ALL_LANGUAGES),
             "rerun at both printed minimums",
         )?;
         assert_eq!(file_widened.selected_files, vec!["src/a.rs", "src/b.rs"]);
+        // #10894: the whole-diff budgets the hint names select no partition,
+        // so one re-run at them analyzes the whole diff; one line less does not.
+        assert!(select_partial_diff_partition(&files, &budgets(3, 95), ALL_LANGUAGES).is_none());
+        assert!(select_partial_diff_partition(&files, &budgets(3, 94), ALL_LANGUAGES).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn partial_widen_names_the_whole_diff_only_when_its_limits_can_grant_it() -> Result<(), String>
+    {
+        // #10894: a whole-diff budget above the effective analysis-cost limit
+        // would be clamped back and stay partial, so the hint omits it.
+        let files = [
+            changed_file("src/a.rs", 35, 0),
+            changed_file("src/b.rs", 30, 0),
+            changed_file("src/c.rs", 30, 0),
+        ];
+        let capped = |line_limit| PartialDiffBudgets {
+            line_limit,
+            ..budgets(7, 40)
+        };
+        let over = require_partial(
+            select_partial_diff_partition(&files, &capped(94), ALL_LANGUAGES),
+            "whole diff over the line limit",
+        )?;
+        assert_eq!(over.whole_diff_budgets, None);
+        assert_eq!(
+            over.widen_instruction(),
+            "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run"
+        );
+        let fits = require_partial(
+            select_partial_diff_partition(&files, &capped(95), ALL_LANGUAGES),
+            "whole diff at the line limit",
+        )?;
+        assert_eq!(fits.whole_diff_budgets, Some((3, 95)));
+        // A budget the next file fits under but the whole diff does not is
+        // still raised, to its whole-diff value.
+        let file_stop = require_partial(
+            select_partial_diff_partition(&files, &budgets(1, 70), ALL_LANGUAGES),
+            "file stop under a roomy line budget",
+        )?;
+        assert_eq!(
+            file_stop.widen_instruction(),
+            "raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2 (3 to select the whole diff) and \
+             RIPR_PARTIAL_DIFF_LINE_BUDGET to 95 to select the whole diff, then re-run"
+        );
+        // The next file already completes the run: no separate whole-diff
+        // figure, and a raise the next file does not need is still named.
+        let two = [
+            changed_file("src/a.rs", 35, 0),
+            changed_file("src/b.rs", 30, 0),
+        ];
+        let last = require_partial(
+            select_partial_diff_partition(&two, &budgets(7, 40), ALL_LANGUAGES),
+            "next file is the last file",
+        )?;
+        assert_eq!(
+            last.widen_instruction(),
+            "raise RIPR_PARTIAL_DIFF_LINE_BUDGET to at least 65, then re-run"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn partial_widen_counts_every_language_against_the_line_clamp() -> Result<(), String> {
+        // #10894 review: the partial line budget is one aggregate over every
+        // routed language, clamped to the Rust line limit. A mixed diff whose
+        // Rust lines fit that limit but whose total does not cannot complete
+        // by raising the budget: the raised budget is clamped and the run
+        // stays partial, so no whole-diff figure is named.
+        let files = [
+            changed_file("src/a.rs", 35, 0),
+            changed_file("pkg/b.py", 30, 0),
+            changed_file("web/c.ts", 30, 0),
+        ];
+        let raised = partial_diff_budgets_from_env(
+            Err(std::env::VarError::NotPresent),
+            Ok("95".to_string()),
+            10_000,
+            94,
+        )?;
+        assert_eq!(raised.line_budget, 94);
+        let clamped = require_partial(
+            select_partial_diff_partition(&files, &raised, ALL_LANGUAGES),
+            "a whole-diff line budget above the Rust line limit",
+        )?;
+        assert_eq!(clamped.whole_diff_budgets, None);
+        let within = PartialDiffBudgets {
+            line_limit: 95,
+            ..budgets(7, 40)
+        };
+        let fits = require_partial(
+            select_partial_diff_partition(&files, &within, ALL_LANGUAGES),
+            "a mixed whole diff at the line limit",
+        )?;
+        assert_eq!(fits.whole_diff_budgets, Some((3, 95)));
+        // Files of a disabled language are never selected and never stop
+        // the walk, so the whole-diff figure counts enabled files only, and
+        // budgets equal to it complete the run.
+        let rust_files = [
+            changed_file("src/a.rs", 35, 0),
+            changed_file("src/b.rs", 30, 0),
+            changed_file("pkg/c.py", 30, 0),
+        ];
+        let rust_only = require_partial(
+            select_partial_diff_partition(&rust_files, &budgets(1, 40), &[LanguageId::Rust]),
+            "a diff with disabled preview files",
+        )?;
+        assert_eq!(rust_only.whole_diff_budgets, Some((2, 65)));
+        assert_eq!(
+            select_partial_diff_partition(&rust_files, &budgets(2, 65), &[LanguageId::Rust]),
+            None
+        );
+        assert!(
+            select_partial_diff_partition(&rust_files, &budgets(2, 64), &[LanguageId::Rust])
+                .is_some()
+        );
+        Ok(())
+    }
+
+    /// #10894 review: three crates of five files, one changed file each.
+    /// The partial run indexes one crate; the whole diff would index all
+    /// fifteen files, so under a 7-file guard the hint names no whole-diff
+    /// figure, and under a 15-file guard it names the figure that completes.
+    #[test]
+    fn partial_widen_omits_the_whole_diff_when_its_packages_exceed_the_index_guard()
+    -> Result<(), String> {
+        let root = temp_root("partial-widen-index-guard")?;
+        let members = ["p0", "p1", "p2"];
+        write(
+            &root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"p0\", \"p1\", \"p2\"]\nresolver = \"2\"\n",
+        )?;
+        let mut diff_text = String::new();
+        for member in members {
+            write(
+                &root.join(format!("{member}/Cargo.toml")),
+                &format!(
+                    "[package]\nname = \"{member}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"
+                ),
+            )?;
+            let mut lib = String::new();
+            for module in 1..=4 {
+                lib.push_str(&format!("mod m{module};\n"));
+                write(
+                    &root.join(format!("{member}/src/m{module}.rs")),
+                    &format!("pub fn f{module}() -> u8 {{\n    {module}\n}}\n"),
+                )?;
+            }
+            lib.push_str("pub fn gate(flag: bool) -> bool {\n    flag\n}\n");
+            write(&root.join(format!("{member}/src/lib.rs")), &lib)?;
+            diff_text.push_str(&format!(
+                "diff --git a/{member}/src/lib.rs b/{member}/src/lib.rs\n\
+                 --- a/{member}/src/lib.rs\n\
+                 +++ b/{member}/src/lib.rs\n\
+                 @@ -5,3 +5,3 @@\n\
+                 \x20pub fn gate(flag: bool) -> bool {{\n\
+                 -    !flag\n\
+                 +    flag\n\
+                 \x20}}\n"
+            ));
+        }
+        let changed = diff::parse_unified_diff(&diff_text);
+        assert_eq!(changed.len(), 3, "three changed files: {changed:?}");
+        let run = |index_limit: &str| {
+            with_forced_diff_limit_env(
+                &[
+                    (DIFF_INDEX_FILE_LIMIT_ENV, index_limit),
+                    (PARTIAL_DIFF_FILE_BUDGET_ENV, "1"),
+                    (PARTIAL_DIFF_LINE_BUDGET_ENV, "3"),
+                ],
+                || {
+                    RustAdapter.analyze_diff(
+                        &diff_options(root.clone(), AnalysisMode::Draft),
+                        &OraclePolicy::default(),
+                        &changed,
+                    )
+                },
+            )
+        };
+        let guarded = require_partial(run("7")?.partial_scope, "a 7-file index guard")?;
+        assert_eq!(guarded.selected_files.len(), 1, "{guarded:?}");
+        assert_eq!(guarded.whole_diff_budgets, None);
+        let roomy = require_partial(run("15")?.partial_scope, "a 15-file index guard")?;
+        assert_eq!(roomy.whole_diff_budgets, Some((3, 6)));
         Ok(())
     }
 
@@ -7159,6 +7902,7 @@ fn absent_delimiter_boundary_returns_head() {
         let stage = |state| StageEvidence::new(state, Confidence::Low, "stage");
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -9282,7 +10026,7 @@ fn absent_delimiter_boundary_returns_head() {
             ..Default::default()
         });
         let probe = finding.probe.clone();
-        apply_probe_and_oracle_limits(&mut finding, &probe, &rust_index, None);
+        apply_probe_and_oracle_limits(&mut finding, &probe, &rust_index, None, None);
         assert_eq!(
             finding.static_limit_kind,
             Some(StaticLimitKind::WrapperErrorBindingUnresolved),
@@ -9299,7 +10043,7 @@ fn absent_delimiter_boundary_returns_head() {
             ..Default::default()
         });
         let probe = ffi_finding.probe.clone();
-        apply_probe_and_oracle_limits(&mut ffi_finding, &probe, &ffi_index, None);
+        apply_probe_and_oracle_limits(&mut ffi_finding, &probe, &ffi_index, None, None);
         assert_eq!(
             ffi_finding.static_limit_kind,
             Some(StaticLimitKind::CrossLanguageOracleVisibilityUnresolved),
@@ -9308,6 +10052,8 @@ fn absent_delimiter_boundary_returns_head() {
     }
 }
 
+#[cfg(test)]
+mod classify_panic_tests;
 #[cfg(test)]
 mod facade_reach_tests;
 #[cfg(test)]

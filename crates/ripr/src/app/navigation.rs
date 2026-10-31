@@ -101,13 +101,32 @@ impl GapRepairRoute {
 /// the state instead of leaving the repair line's absence silent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RepairRouteRefusal {
+    GapRouteUnavailable {
+        reason: &'static str,
+    },
+    /// The run's analysis is incomplete (#11136): the after phase refuses a
+    /// before artifact like that, so no gap-bound start is printed.
+    /// `limitation` names the cause and the recovery.
+    AnalysisIncomplete {
+        limitation: String,
+    },
     /// The finding has no canonical gap to bind a seam from.
     NoCanonicalGap,
+    /// A TypeScript/JavaScript preview finding whose repair packet is not
+    /// complete: the delegated loop starts from a complete packet's gap id,
+    /// not from a Rust seam, so the absent seam is not the reason.
+    PreviewPacketNotComplete {
+        language: String,
+        reason: String,
+    },
     /// The finding's file belongs to a language adapter whose findings the
     /// seam inventory behind `ripr repair` cannot bind (#9102). The
     /// inventory is built from the Rust index only, so no seam exists for
     /// this file; a terminal state, not a stale id.
-    NoSeamInventory { language: String, file: String },
+    NoSeamInventory {
+        language: String,
+        file: String,
+    },
     /// The root's typed config could not be loaded.
     ConfigUnreadable,
     /// Classifying seams in the finding's file failed.
@@ -116,7 +135,20 @@ pub(crate) enum RepairRouteRefusal {
     /// candidate set exceeded the configured limit.
     SeamLimit,
     /// No classified seam in the finding's file binds this finding.
-    NoBindingSeam,
+    /// `seams_in_file` is how many classified seams the file holds, so the
+    /// advisory never says "no seam" where `ripr repair` lists seams (#10702).
+    NoBindingSeam {
+        seams_in_file: usize,
+    },
+    /// The finding itself is `exposed`: the related tests already notice the
+    /// change, so there is nothing to repair whatever the seam view says
+    /// (#10702).
+    FindingAlreadyExposed,
+    /// `check` reads a gap or limitation for this change, while the
+    /// repository-wide seam view `ripr repair` reads already counts the bound
+    /// seam as gripped. The advisory names that one difference instead of
+    /// quoting repair's "no gap remains" beside check's gap (#10702).
+    SeamGrippedFindingNot,
     /// Several classified seams bind this finding; the check screen never
     /// picks one silently.
     SeveralBindingSeams,
@@ -147,11 +179,22 @@ impl RepairRouteRefusal {
     pub(crate) fn advisory(&self, full_gate_command: &str) -> String {
         let gate = || format!("run `{full_gate_command}` for the full gate's answer");
         match self {
+            Self::GapRouteUnavailable { reason } => format!(
+                "no repair start offered: {reason}; inspect the current workspace and rerun `ripr check`"
+            ),
+            Self::AnalysisIncomplete { limitation } => format!(
+                "no repair start offered: the analysis is incomplete ({limitation}), so a repair started now could not be verified afterward; resolve that, rerun `ripr check`, or add the missing test by hand from the packet above"
+            ),
             Self::NoCanonicalGap => {
-                "no repair start offered: this finding has no canonical gap, so there is \
+                "no repair start offered: this finding has no gap ID, so there is \
                  no seam to start a repair from; follow the Next step above"
                     .to_string()
             }
+            Self::PreviewPacketNotComplete { language, reason } => format!(
+                "no repair start offered: ripr has no complete repair packet for this {language} \
+                 finding ({reason}); add or strengthen the test by hand as the Next step above \
+                 says, then rerun `ripr check`"
+            ),
             Self::NoSeamInventory { language, file } => format!(
                 "no repair start offered: {}",
                 super::task_first::no_seam_inventory_reason(language, file)
@@ -169,9 +212,27 @@ impl RepairRouteRefusal {
                     super::task_first::WIDEN_SEAM_BUDGET
                 )
             }
-            Self::NoBindingSeam => "no repair start offered: ripr found no seam in this \
+            Self::NoBindingSeam { seams_in_file: 0 } => {
+                "no repair start offered: ripr found no seam in this \
                  finding's file to bind it to, so there is no seam to start a repair from; \
                  follow the Next step above"
+                    .to_string()
+            }
+            Self::NoBindingSeam { seams_in_file } => format!(
+                "no repair start offered: ripr found {seams_in_file} {} in this finding's \
+                 file, but could not tie one to this finding's changed line, so it cannot pick one \
+                 for you; `ripr pilot` lists them, or follow the Next step above",
+                if *seams_in_file == 1 { "seam" } else { "seams" }
+            ),
+            Self::FindingAlreadyExposed => "no repair start offered: nothing to repair here; \
+                 the related tests already notice this change (exposed)"
+                .to_string(),
+            Self::SeamGrippedFindingNot => "no repair start offered: `ripr check` reads a gap \
+                 or limit for this change, but `ripr repair` judges the whole seam and finds \
+                 its tests already notice changes there (exposed), so it has no gap to start \
+                 from. The two read different evidence (your changed lines versus the whole \
+                 seam) and ripr does not start a repair on conflicting evidence; follow the \
+                 Next step above"
                 .to_string(),
             Self::SeveralBindingSeams => {
                 "no repair start offered: several seams bind this finding \
@@ -262,9 +323,9 @@ pub(crate) struct FindingNavigation {
     repair_suffix: String,
     /// The analyzed root as the printed commands spell it (`.` for legacy).
     root_display: String,
-    /// The `ripr agent stub` decision the check pipeline computed for its
-    /// selected finding (#5471). Absent means no route is printed.
-    stub_route: Option<StubRoute>,
+    /// Resolver decisions for the selected finding and typed ambiguities
+    /// within the displayed hidden window, each keyed by finding identity.
+    stub_routes: Vec<StubRoute>,
     /// The repair route the check pipeline computed for its selected
     /// finding (#8166 Slice C). Absent means no route is printed.
     repair_route: Option<RepairRoute>,
@@ -287,7 +348,7 @@ impl FindingNavigation {
             stub_prefix: "ripr agent stub".to_string(),
             repair_suffix: String::new(),
             root_display: ".".to_string(),
-            stub_route: None,
+            stub_routes: Vec::new(),
             repair_route: None,
             gap_repair_route: None,
             repair_route_refusal: None,
@@ -295,8 +356,8 @@ impl FindingNavigation {
     }
 
     /// Carry the check pipeline's stub-route decision to the renderer.
-    pub(crate) fn with_stub_route(mut self, stub_route: Option<StubRoute>) -> Self {
-        self.stub_route = stub_route;
+    pub(crate) fn with_stub_routes(mut self, stub_routes: Vec<StubRoute>) -> Self {
+        self.stub_routes = stub_routes;
         self
     }
 
@@ -362,9 +423,9 @@ impl FindingNavigation {
     /// The stub-route decision for `finding_id`, when one was computed for
     /// that finding.
     pub(crate) fn stub_route_for(&self, finding_id: &str) -> Option<&StubRouteDecision> {
-        self.stub_route
-            .as_ref()
-            .filter(|route| route.finding_id == finding_id)
+        self.stub_routes
+            .iter()
+            .find(|route| route.finding_id == finding_id)
             .map(|route| &route.decision)
     }
 
@@ -380,6 +441,10 @@ impl FindingNavigation {
     /// runnable test (#5355). It reads the working tree at the same root.
     /// `kind` is the finding's probe family, so the stub targets the seam
     /// the finding reported when its line holds several (#5471).
+    pub(crate) fn stub_seam_command(&self, seam_id: &str) -> String {
+        format!("{} --seam-id {}", self.stub_prefix, shell_arg(seam_id))
+    }
+
     pub(crate) fn stub_command(&self, file: &str, line: usize, kind: &str) -> String {
         format!(
             "{} --at {} --kind {}",
@@ -445,7 +510,7 @@ pub(crate) fn finding_navigation_with_worktree(
             shell_arg(&bound_root(&input.root.display().to_string()))
         ),
         root_display: bound_root(&input.root.display().to_string()),
-        stub_route: None,
+        stub_routes: Vec::new(),
         repair_route: None,
         gap_repair_route: None,
         repair_route_refusal: None,
@@ -569,11 +634,21 @@ mod tests {
             let command = route
                 .commit_prerequisite(&root_text)
                 .ok_or("no commit step")?;
+            // The root anchors at the analyzed tree with the shared quoting
+            // (`shell_arg`: console quotes on Windows, single quotes on
+            // Unix), and the glob-lookalike pathspec stays literal — the
+            // quote form is owned by `shell_arg`, not spelled here (#10996).
+            let expected_prefix = format!("git -C {}", shell_arg(&root_text));
             assert!(
-                command.starts_with("git -C '") && command.contains("--literal-pathspecs commit"),
-                "{command}"
+                command.starts_with(&expected_prefix)
+                    && command.contains("--literal-pathspecs commit"),
+                "Expected command to start with '{expected_prefix}' and contain '--literal-pathspecs commit'. Actual command: {command}"
             );
-            assert!(command.ends_with("-- 'src/[ab].py'"), "{command}");
+            let expected_suffix = format!("-- {}", shell_arg("src/[ab].py"));
+            assert!(
+                command.ends_with(&expected_suffix),
+                "Expected command to end with '{expected_suffix}'. Actual command: {command}"
+            );
             let command = command.replace("<message>", "hint");
             let status = std::process::Command::new("sh")
                 .arg("-c")
@@ -851,12 +926,25 @@ mod tests {
                 && !unverified.contains("still missing"),
             "non-RouteNotReady kinds keep their reason and gate pointer: {unverified}"
         );
+        // A TypeScript/JavaScript preview finding names its packet state, not
+        // a Rust seam it can never have.
+        let preview = RepairRouteRefusal::PreviewPacketNotComplete {
+            language: "TypeScript".to_string(),
+            reason: "its repair packet is not complete".to_string(),
+        }
+        .advisory(gate);
+        assert!(
+            preview.starts_with("no repair start offered: ripr has no complete repair packet")
+                && preview.contains("TypeScript finding")
+                && !preview.contains("no seam"),
+            "preview refusal must name the packet, not a seam: {preview}"
+        );
         // #9244: a finding with no canonical gap would get the same refusal
         // from the full gate, so the advisory names its own recovery.
         let no_gap = RepairRouteRefusal::NoCanonicalGap.advisory(gate);
         assert_eq!(
             no_gap,
-            "no repair start offered: this finding has no canonical gap, so there is no \
+            "no repair start offered: this finding has no gap ID, so there is no \
              seam to start a repair from; follow the Next step above"
         );
         assert!(
@@ -865,7 +953,7 @@ mod tests {
         );
         // #9244: with no binding seam the advisory names the Next step
         // instead of routing back to the gate.
-        let unbound = RepairRouteRefusal::NoBindingSeam.advisory(gate);
+        let unbound = RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 }.advisory(gate);
         assert_eq!(
             unbound,
             "no repair start offered: ripr found no seam in this finding's file to bind it \
@@ -874,6 +962,34 @@ mod tests {
         assert!(
             !unbound.contains("ripr repair") && !unbound.contains("full gate's answer"),
             "no-binding-seam must not route back to the gate: {unbound}"
+        );
+        // #10702: seams exist in the file, so the advisory must not claim there are none.
+        let counted = RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 }.advisory(gate);
+        assert!(
+            counted.contains("found 3 seams in this finding's file")
+                && !counted.contains("no seam in this finding's file")
+                && !counted.contains("found no seam"),
+            "{counted}"
+        );
+        let one = RepairRouteRefusal::NoBindingSeam { seams_in_file: 1 }.advisory(gate);
+        assert_eq!(
+            one,
+            "no repair start offered: ripr found 1 seam in this finding's file, but could not \
+             tie one to this finding's changed line, so it cannot pick one for you; `ripr \
+             pilot` lists them, or follow the Next step above"
+        );
+        let exposed = RepairRouteRefusal::FindingAlreadyExposed.advisory(gate);
+        assert_eq!(
+            exposed,
+            "no repair start offered: nothing to repair here; the related tests already \
+             notice this change (exposed)"
+        );
+        let disagree = RepairRouteRefusal::SeamGrippedFindingNot.advisory(gate);
+        assert!(
+            disagree.contains("`ripr check` reads a gap or limit")
+                && disagree.contains("conflicting evidence")
+                && !disagree.contains("no static gap remains"),
+            "{disagree}"
         );
         let config = RepairRouteRefusal::ConfigUnreadable.advisory(gate);
         assert!(

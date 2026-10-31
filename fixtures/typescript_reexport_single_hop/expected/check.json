@@ -12,9 +12,15 @@
   "findings": [
     {
       "id": "probe:src_util.ts:typescript_preview:5a933676",
+      "canonical_gap_id": "gap:typescript:typescript_preview:5a933676",
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_util.ts:typescript_preview:5a933676",
         "family": "return_value",
@@ -92,8 +98,8 @@
         "probe_family": "return_value",
         "related_test": {
           "file": "test/util.test.ts",
-          "line": 8,
-          "name": "isRawNetworkError returns false for non-Error values"
+          "line": 3,
+          "name": "isRawNetworkError returns true for network fetch errors"
         },
         "repair_packet_ready": false,
         "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",

@@ -36,6 +36,8 @@ Linked issues:
 - #9182 (`var`/`let` CommonJS runner bindings)
 - #9435 (exact oracle ignored on five changed-line shapes)
 - #9497 (skipped or unexercised tests credited as exposed; rules 17 and 18)
+- #11196 (start rate: a conditional assertion in an unconsulted test no longer
+  marks a finding's analysis incomplete; rule 11)
 
 Linked PRs:
 
@@ -251,11 +253,13 @@ descended. The dropped-registration disclosure no longer fires for these shapes.
 **Rule 22. A test inside `describe.skipIf(cond)` / `describe.runIf(cond)` is reached, never credited (#10629).**
 Vitest's conditional suite factories take a runtime condition static analysis
 does not evaluate. A `describe.skipIf(cond)('name', () => { ... })` or
-`describe.runIf(cond)(...)` is indexed for reach with the
+`describe.runIf(cond)(...)` — including the untitled callback-only form
+`describe.runIf(cond)(() => { ... })` (#10982) — is indexed for reach with the
 factory call as its guard (`describe.skipIf(!existsSync(dist))`; nested guards
 join with `&&`). Its tests keep no assertion, their admission stays
 unresolved, and findings read as under Rule 20. A non-literal title is named
-as for any suite; another root (`runner.skipIf`) is not descended. An options
+as for any suite; an untitled suite is named like a non-literal title; another
+root (`runner.skipIf`) is not descended. An options
 object that skips the suite (`{ skip: true }`) is honored as for `describe`, and
 strict mode is read from the callback, not the title.
 
@@ -309,6 +313,27 @@ The resolved test/suite kind must agree with the supported local spelling.
 Mismatched aliases (`describe as test` or `test as describe`) receive no trusted
 test record and retain a typed partial-extraction limitation, including an
 assertion-only callback with no nested test call. This does not expand aliases.
+
+Skipped-suite disclosure resolves the referenced lexical runner binding, not
+its spelling (#10169). Known runner imports and immutable aliases (including
+namespace members) may establish a dormant suite callback. Parameters,
+block/catch/loop/namespace locals, unrelated imports, writes and opaque code
+cannot establish that fact. Only the dormant callback is omitted; evaluated
+registration arguments and later siblings remain eligible for a partial
+extraction notice. This disclosure rule does not expand test extraction or
+oracle credit. Computed aliases, mutable aliases and unresolved flows retain
+the conservative notice.
+
+Runner values escaping through throws, iterable values, arrow returns, tagged
+substitutions or computed member reads cannot establish dormancy. An ambient
+global-object write removes only the written property name from runner
+identity, for both bare and qualified reads of that name; a write through a
+global-object name shadowed by a local still counts as a whole-file mutation.
+The `x`-prefixed spellings (`xdescribe`, `xcontext`, `xsuite`, `xit`, `xtest`,
+`xspecify`) are dormant runner roots.
+Evaluated inline ordinary
+function constructors and tags retain body registration notices; their parameter
+shadows and uncalled function values remain separate from runner registrations.
 
 ### Assertion collection
 
@@ -666,8 +691,64 @@ passes on the old code reaches it and fails on the edit. Both cases need the cha
   smoke, and unknown otherwise. A non-literal matcher argument (including
   a regex) adds `typescript_dynamic_assertion_unresolved` and does not
   change the class.
+  (Amended 2026-10-30, #10682: the limitation is added only for an assertion
+  in the changed seam's oracle family (RIPR-SPEC-0104
+  `ts_oracle_kind_matches_seam`); a dynamic error-family expectation on a
+  value or predicate seam, and the reverse, adds nothing, because it cannot
+  hide that seam's discriminator. An all-literal array (`[]`, `[1, 'a', [2]]`)
+  is a concrete expected value for deep-equality matchers only (AVA
+  `deepEqual`; Jest `toEqual` / `toStrictEqual`), so those assertions read
+  `typescript_oracle_confidence: high`; `toBe`, `toMatchObject`, AVA
+  `is` / `strictEqual` / `equal` and arrays holding an identifier, call,
+  spread, hole, object or `-x` stay dynamic. `typescript_table_case_unresolved`
+  keeps its own unconditional rule. A pinned `[]` / all-zero-like array does not
+  witness a field update, and an array expectation is a dead witness against
+  scalar changed arms and scalar branch values.
+  Amended (#11255): the Jest/Vitest matchers `toEqual`, `toStrictEqual` and
+  `toMatchObject` also accept an all-literal object or array, nested to any
+  depth, as a concrete expected value (`{ _: [], name: "John", admin: true }`,
+  `{ a: { b: "c" } }`, `["~/a.jpg", "~b.jpg"]`, `[]`, `{}`). One identifier,
+  call, spread, hole, computed or shorthand key, accessor, method, template
+  literal, parenthesized or `as` expression, `__proto__` key or `-x` anywhere
+  in the value keeps it dynamic; `toBe`, `toHaveProperty` and every other
+  matcher, and AVA `deepEqual` arrays holding an object, are unchanged. An
+  empty or all-zero-like container at every depth (`{}`, `{ list: [] }`) does
+  not witness a field update, an object expectation is a dead witness against
+  scalar branch values and scalar ternary arms like an array, and a container
+  is not a rejection literal (`rejects.toEqual` earns no error-path credit).
+  `toMatchObject` keeps its relational grade unless RIPR-SPEC-0250 credits a
+  flat object; a nested or array expectation only removes the dynamic limit.)
 
 ### Reach
+
+Setup-derived receiver identity requires a known hook callable at the registration
+call. Parsed assignment, update, destructuring and loop targets affect subsequent
+registrations of that binding, including properties of known global roots.
+A local root can alias the actual global object: only a `const` binding to an
+empty object literal in that lexical frame proves a disjoint root here. Parameters,
+mutable bindings and other initializers keep possible ambient writes; nonempty
+literals may contain forwarding setters and remain unresolved.
+Parameter-default effects resolve in the parameter/outer environment before
+body-local declarations or empty-object proofs become visible. A default value
+does not itself prove a parameter's object identity; uncertain effects stay
+conservative without a parameter-value evaluator.
+All suite-call arguments are evaluated before its synchronous callback, including
+that callback's parameter defaults and body. A later write cannot revoke an
+already registered callback. A separate lexical binding or ambient property does
+not rebind an imported identifier; direct runner imports retain that identity.
+Mocha's named `before` and `beforeEach` exports additionally look up their ambient
+hook at invocation, so preceding or argument-time ambient writes withhold their
+setup evidence too.
+An unreadable computed global target withholds affected ambient hook identities.
+Only ordinary statements and admitted synchronous suite callbacks have ordered
+registration facts. Helper bodies, conditional/repeated registration order and
+restoration remain conservative. Self-referencing callbacks and hook-binding
+writes during argument evaluation keep unknown registration facts. Comments,
+strings, regexes and an ordinary
+object's same-named property are not hook-binding writes. Per-call identity is
+shared with Mocha setup-body admission. Existing duplicate-hook/race summaries,
+receiver rebinding and scope resolution retain their independent limits; filtering
+an ineligible hook cannot erase those summaries or add oracle credit.
 
 Candidates come from the first non-empty tier:
 
@@ -1522,6 +1603,87 @@ the masker.
     no removed counterpart, which a count sees), or a value that decides
     how many calls run (a count sees both), an aliased or optional-chained count,
     and `mock.calls[0].arguments` pins, which keep their reading.
+23. **Factory-built getter receivers (2026-10-30, #10402).** Adopted: a getter
+    owner is related to a test that binds `const box = factory(...)` once and
+    asserts `expect(box.<getter>)`, when the owner's module exports `factory`
+    and every `return` the factory runs is `new Class(...)` of the getter's own
+    class (not async or a generator, ending in a return or throw, never naming
+    the class except as `new Class`, and the only declaration of its name,
+    never reassigned). The test reaches the factory through a resolved named,
+    renamed or default import, or a resolved namespace import; a same-file
+    callee is not followed. The class and every same-file ancestor must be
+    unable to replace the getter on an instance: no instance field of that
+    name, `this.<getter> =`, constructor that returns a value, repeated or
+    reassigned class name (cast and non-null targets included), or second
+    getter of the name; an ancestor that is imported or not a plain
+    identifier refuses. The owner file is scanned with a closed rule: ANY
+    mention of `defineProperty`, `defineProperties`, `setPrototypeOf`,
+    `replaceProperty`, `__proto__` or `Class.prototype` refuses, whatever the
+    arguments or spacing. The relation is refused when
+    the receiver is declared twice, written again, bound by a catch, function,
+    arrow or loop parameter, or mentioned outside the block that declares it;
+    when the factory call is not the whole initializer; when the read is not
+    the subject of an `expect(...)`; when the test file mentions `defineProperty`,
+    `defineProperties`, `setPrototypeOf`, `replaceProperty`, `__proto__`,
+    `replaceGetter`, `replaceSetter`, `proxyquire`, `rewire` or
+    `createStubInstance` at all (or `td.replace` / `testdouble.replace`),
+    contains a `spyOn` that is not a call with a plain string-literal member
+    name, a `mocked` of anything but an identifier path, an index assignment,
+    or an argument list past the scan bound (the closed rule refuses every
+    name); when the arguments of any `spyOn`, `mock`, `doMock`, `stubGlobal`,
+    `stub`, `replace`, `mockImplementation` or `mockReturnValue` call, or a
+    `.name =` assignment target, name the getter, the class or the factory,
+    whatever its fabrication form; when the owner module is mocked;
+    and for computed access. The relation reads like a constructed receiver
+    (`receiver_owner_call`), so it lends reach and the assertion's oracle, and
+    the classifier then decides the class exactly as it does for
+    `new Class(...)`: the factory adds no strength of its own, and a changed
+    line the oracle discriminates can read `exposed` as it would with a
+    constructed receiver. Rejected: following a factory that returns a
+    subclass or a union, crediting a receiver declared outside the test body,
+    and crediting a call of the factory without a getter read. Known limit: an
+    `expect(...)` on a different object elsewhere in the same test can still
+    donate its oracle, as for a constructed receiver. A class or accessor
+    decorator refuses; a decorator on another declaration is not examined. Helper or setup
+    modules (an imported local helper, jest `setupFilesAfterEnv`, vitest
+    `setupFiles`, an owner-module `patch()` export) that patch the prototype
+    are not scanned, as for a constructed receiver; obfuscated spellings
+    (`Object["define" + "Property"]`) and a mid-line shadow of the factory
+    name are not detected. Also not detected, with the same parity for
+    constructed receivers: a module patched through `Object.assign` or
+    `Reflect.set` on a CommonJS namespace, a prototype getter removed with
+    `delete` or `Reflect.deleteProperty` (including an owner-side
+    `delete (Cached as any).prototype.value`), and rebinds spelled through
+    `eval`.
+
+### Counted removal receiver witness (#10157)
+
+This bounded successor to #9667's removed-call rule 19 adds call-deletion
+credit for a whole `receiver.method(...)` statement replaced by `void local;`.
+The complete file diff must contain exactly one removed line and one added line
+at the same replacement coordinate. Multi-edit files and unavailable full diff
+facts withhold this bounded credit, so multiple old invocations cannot borrow
+a count-of-one witness from a replacement owner with no calls.
+A direct imported owner must run on a straight-line path after a `node:test`
+spy registration and before an exact positive count of one. The receiver is
+either a parsed const object passed in the receiver parameter position, or
+a direct exported const binding with an unshadowed named import resolved to the owner's complete module identity
+through the existing import resolver. Parsed declarations handle legal
+whitespace. Reassignment, enclosing shadows, reset/restore, intervening calls,
+conditional execution and unresolved identity withhold this additional credit.
+The owner module contains only the direct exported function and optional
+receiver object; the test file contains only trusted imports and one direct,
+two-argument `test` registration with a literal title. Extra setup/imports,
+suites and sibling functions/tests are outside this bounded witness.
+Nonreceiver arguments must be primitive literals; owner statements cannot
+replace the receiver or invoke opaque code. Removed-call identifier arguments
+must be initialized parameters or admitted earlier locals at the unique changed
+statement; unknown and later bindings withhold credit. The selected mocked
+method must exist exactly once. A default spy admits only a synchronous,
+nonthrowing no-op original (no default/destructured/rest parameters or opaque
+statements); an explicit admitted no-op replacement can bypass the original
+body check, but cannot supply a missing method. This does not change generic
+call-count oracle projection (#10174).
 
 ## Required Evidence
 
@@ -1645,6 +1807,19 @@ keys); do not take the next number.
     Assertions before the `try` and in its finalizer stay
     credited. The one shared predicate also bounds the conditional-credit
     probe and walker.
+    The limitation is scoped to the tests the findings consulted (#11196). The
+    walker records every unevaluated branch in a test file with the test
+    registration calls enclosing it, and the outcome keeps a branch only when
+    a registered test enclosing it is one a finding listed as a related test,
+    or when no registered test encloses it (a hook, a helper, a describe-level
+    branch). A branch inside a different test of the same file cannot hide the
+    oracle of a consulted test, so `src/f.ts` pinned by an unconditional test
+    does not read incomplete because `tests/mixed.test.ts` holds a different
+    test with `if (ok) { expect(g(2)).toBe(4); }`; a finding that rests on the
+    conditional test keeps the limitation. A gap without recorded sites and a
+    file whose tests came from an expanded suite factory keep the whole file's
+    disclosure. The scoping does not change any classification, and the
+    gap-bound repair start still consults the unchanged completeness predicate.
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, formatted with the
     `throw` on its own line, which is the changed line: `"empty"` changed
@@ -1886,6 +2061,19 @@ keys); do not take the next number.
   reading and its controls. Corpus row `ts-trap-mocked-send` moves from
   credited to gap.
 
+- #10157: `call_removal_tests.rs::counted_removal_receiver_identity_controls`
+  covers the four executable controls from #9667 comment 6371144187 and the
+  passed-parameter and same-module positives. `counted_removal_refuses_unresolved_execution`
+  covers wrong arguments, resets, conditional registration and zero counts.
+  The same module's remaining tests pin early returns/default parameters,
+  opaque reads, export aliases, mock API replacement and registration argument
+  effects; `counted_removal_retained_corpus_shape_is_exposed` reuses the retained
+  corpus source and test without rewriting their spy. The target-method and
+  removed-argument regressions pin throwing/absent/duplicate methods, imported
+  and parameter receivers, valid explicit replacements, and earlier/later local
+  bindings. Four dedicated call-removal fixtures also pin `weakly_exposed` in
+  the cross-language evidence-promotion-honesty corpus.
+
 - #9435 (rule 15): `crates/ripr/src/analysis/language/typescript/tests/returned_dataflow_tests.rs`
   pins each shape's credit and the fallbacks that reach the rule (a weak
   oracle, a curried or comparing arrow, a branch, a second return, another
@@ -1952,6 +2140,13 @@ keys); do not take the next number.
   with a discriminating negative each; `error_payload_guard.rs` unit tests pin the readers. The corpus cases
   `mocha-throw-class-changed`, `mocha-throw-message-reworded`,
   `node-match-anchored-slug` and `node-retry-last-error` read `credited`.
+- #10170: the same `assertion_form_tests.rs` pins rule 20's whole-owner
+  lexical scan: nested callback calls and later nested throws withhold credit,
+  an uncaught parameter callback withholds credit despite another caught call,
+  and a neighboring owner before or after the changed owner does not affect
+  its guard. Matched positive controls keep credit. The forwarded-local
+  controls require literal absence from the new `String(err)`, including its
+  class prefix; a different message still containing the literal stays weak.
 - Existing: `crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs`
   and the `tests/` modules beside it: `mock_form_tests.rs`,
   `scope_receiver_tests.rs`, `reexport_chain_tests.rs`.
@@ -2024,6 +2219,9 @@ keys); do not take the next number.
   `ts-trap-wrapped-swallow` stay `gap`.
 
 ## Implementation Mapping
+
+- #10157: `call_removal_guard.rs` owns parsed receiver/order witnesses;
+  `classifier.rs` admits only its additional call-deletion credit.
 
 - #9685 (decision 20): `oracle.rs` (`catch_only_rethrows_caught_error` in
   the `TryStatement` arm) and `rethrow_wrapper.rs` (`expand_rethrow_wrappers`,

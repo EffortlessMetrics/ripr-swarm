@@ -17,6 +17,18 @@ const DEFAULT_IGNORED_DIRS: &[&str] = &[
     "node_modules",
 ];
 
+/// Whether any directory component of a repo-relative `/`-separated path is
+/// one the workspace walk never enters. The single owner of that rule, so a
+/// consumer deciding "would the producer have analyzed this file" cannot drift
+/// from `visit` (#9599).
+pub(crate) fn path_enters_ignored_dir(path: &str) -> bool {
+    let mut components = path.split('/').collect::<Vec<_>>();
+    components.pop();
+    components
+        .iter()
+        .any(|component| DEFAULT_IGNORED_DIRS.contains(component))
+}
+
 /// Changed source files that are not regular files in the working tree.
 ///
 /// Sparse checkout, local deletes and symlinks drop these from disk walks, so the
@@ -440,10 +452,10 @@ fn visit(
     out: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
     let entries =
-        std::fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
+        std::fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}; check the directory is readable, or narrow the scan with --root", dir.display()))?;
     for entry in entries {
         cancellation::checkpoint()?;
-        let entry = entry.map_err(|err| format!("failed to read dir entry: {err}"))?;
+        let entry = entry.map_err(|err| format!("failed to read dir entry: {err}; check the workspace directories are readable and retry"))?;
         let path = entry.path();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         // `file_type` does not follow links. A committed `src/x.rs` symlink

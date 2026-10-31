@@ -3,13 +3,15 @@ mode: fast
 root: fixtures/ts_full_repo_guidance/input
 config: <cwd>/fixtures/ts_full_repo_guidance/input/ripr.toml
 
-Summary: 0 probes analyzed; 0 findings unsuppressed
+Summary: 0 changed behaviors checked
+
+Changed file(s) by language: typescript = 1
 
 Analysis outcome: limitations below (analysis incomplete)
   Zero findings is not a clean result because the analyzed scope is incomplete.
-  Limitation: no analyzer is available for a changed language during language analysis; affected items: 1; recovery: enable the language — Enable the typescript preview adapter and re-run the analysis.
+  Not analyzed: 1 changed file(s) in a language ripr is not set up to analyze (see the note below).
 
-No diff-derived static exposure probes found.
+No findings reported: the analysis was incomplete, so this is not a clean result.
 
 Note: this diff contains 1 TypeScript file. The TypeScript adapter is preview and not enabled, so these files were not analyzed — this is NOT a clean Rust-grade result. Enable it in ripr.toml [languages] to analyze them.
 

@@ -28,13 +28,17 @@
 
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
-    expr_ending_at_has_type, impl_self_type_name, let_binding_certain_type_head,
-    let_binding_mentions_type, owner_trait_name, stringified_ranges,
+    expr_ending_at_has_type, impl_self_type_name, inherent_receiver_call_resolves,
+    let_binding_certain_type_head, let_binding_mentions_type, owner_trait_name, stringified_ranges,
 };
 use super::reveal::contains_as_whole_word;
 use crate::analysis::facts::TestFact;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex};
 use crate::domain::*;
+use ra_ap_syntax::{
+    AstNode, ast,
+    ast::{HasModuleItem, HasName},
+};
 
 const LIMIT: StaticLimitKind = StaticLimitKind::RustImplicitCallUnresolved;
 const FIRST_UNRESOLVED_EDGE: &str = "whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method";
@@ -103,6 +107,7 @@ const OWNED_ELSEWHERE_TRAITS: [&str; 14] = [
 pub(in crate::analysis) fn withhold_implicit_call_gap(
     finding: &mut Finding,
     index: &RustIndex,
+    pre_cap_syntax_only: Option<bool>,
 ) -> bool {
     if finding.static_limit_kind.is_some()
         || !matches!(
@@ -137,7 +142,8 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     if finding.ripr.reach.state != StageState::Weak
         && !(matches!(kind, ImplicitCall::Syntax(_))
             && only_discrimination_unconfirmed(finding)
-            && reached_only_through_syntax(finding, owner, index))
+            && pre_cap_syntax_only
+                .unwrap_or_else(|| reached_only_through_syntax(finding, owner, index, None)))
     {
         return false;
     }
@@ -182,7 +188,10 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
 /// at scope end and cannot be named, so a test never calls it; every route to
 /// `exposed` (a reach the scope-end relation set, a name match on the free
 /// `drop`) credits an assertion no authority ties to that scope end, whichever
-/// probe family the changed line is (#10553). Returns `true` when rewritten.
+/// probe family the changed line is (#10553). The one exception is the
+/// scope-end carrier (#10814): when every strong contributing test ends the
+/// guard's scope over a handle its assertion reads, the verdict stands.
+/// Returns `true` when rewritten.
 pub(in crate::analysis) fn withhold_destructor_credit(
     finding: &mut Finding,
     index: &RustIndex,
@@ -202,6 +211,11 @@ pub(in crate::analysis) fn withhold_destructor_credit(
         return false;
     };
     if !super::is_drop_destructor(owner, index) {
+        return false;
+    }
+    // #10814: an assertion the scope-end carrier ties to this destructor's
+    // write stands; every other route to `exposed` is still withheld.
+    if super::destructor_credit_established(finding, owner, index) {
         return false;
     }
     let next_step = format!(
@@ -231,6 +245,38 @@ fn only_discrimination_unconfirmed(finding: &Finding) -> bool {
         && matches!(ripr.propagate.state, StageState::Yes | StageState::Weak)
 }
 
+/// Compute the syntax-only decision while the admitted pre-cap rows are in scope.
+/// Retaining this compact result avoids carrying an unbounded row set for every
+/// probe while diff classification waits for its serial limit pass.
+pub(in crate::analysis) fn pre_cap_syntax_only(
+    finding: &Finding,
+    index: &RustIndex,
+    direct_rows: &[crate::domain::RelatedTest],
+) -> Option<bool> {
+    if finding.static_limit_kind.is_some()
+        || !matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+    {
+        return None;
+    }
+    let owner_id = finding.probe.owner.as_ref()?;
+    let line = finding.probe.location.line;
+    let owner = index.functions().iter().find(|function| {
+        function.id == *owner_id && function.start_line <= line && line <= function.end_line
+    })?;
+    if !matches!(ImplicitCall::of_owner(owner), Some(ImplicitCall::Syntax(_))) {
+        return None;
+    }
+    Some(reached_only_through_syntax(
+        finding,
+        owner,
+        index,
+        Some(direct_rows),
+    ))
+}
+
 /// Whether every test related to the owner by a direct call reaches it only
 /// through syntax: none of them calls `.name(` on the owner's method, so the relation
 /// came from an operator, loop or scope exit the language runs. A finding with
@@ -240,9 +286,10 @@ fn reached_only_through_syntax(
     finding: &Finding,
     owner: &FunctionSummary,
     index: &RustIndex,
+    direct_rows: Option<&[crate::domain::RelatedTest]>,
 ) -> bool {
-    let mut direct = finding
-        .related_tests
+    let mut direct = direct_rows
+        .unwrap_or(&finding.related_tests)
         .iter()
         .filter(|related| related.relation_reason == Some(RelationReason::DirectOwnerCall))
         .peekable();
@@ -250,33 +297,224 @@ fn reached_only_through_syntax(
         return false;
     }
     let path_owner = type_path_owner(owner, index);
-    // The related rows are capped for display. When some were cut, a test that
-    // names the owner may be among them, and which tests survive depends on
-    // test names, so the cut finding is never judged syntax-only on the rows
-    // that happen to remain (#10551): it stays withheld, whatever the order.
-    if finding
+    let capped = finding
         .related_tests_matched_total
-        .is_some_and(|total| finding.related_tests.len() < total)
-    {
+        .is_some_and(|total| finding.related_tests.len() < total);
+    // Fallback callers without pre-cap evidence must still fail closed.
+    if direct_rows.is_none() && capped {
         return true;
     }
+    // Large capped relation sets must not scan the full test index once per
+    // row. Preserve `find`'s first-match behavior for duplicate identities.
+    // Small sets retain the cheap linear path without building a map.
+    let lookup = (capped && direct_rows.is_some_and(|rows| rows.len() > 8)).then(|| {
+        let mut lookup = std::collections::HashMap::new();
+        for test in index.tests().iter() {
+            lookup
+                .entry((test.name.as_str(), test.file.as_path(), test.start_line))
+                .or_insert(test);
+        }
+        lookup
+    });
     direct.all(|related| {
-        index
-            .tests()
-            .iter()
-            .find(|test| {
+        let test = if let Some(lookup) = &lookup {
+            lookup
+                .get(&(related.name.as_str(), related.file.as_path(), related.line))
+                .copied()
+        } else {
+            index.tests().iter().find(|test| {
                 test.name == related.name
                     && test.file == related.file
                     && test.start_line == related.line
             })
-            .is_some_and(|test| {
-                let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
-                !calls_method_named(&code, &owner.name)
-                    && !path_owner
-                        .as_ref()
-                        .is_some_and(|path| calls_by_type_path(&code, &owner.name, path))
-            })
+        };
+        test.is_none_or(|test| {
+            if is_ignored(test) {
+                return true;
+            }
+            let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
+            let scope_is_clear =
+                |path: &TypePathOwner| type_path_scope_is_clear(test, owner, index, path);
+            // Previously a capped finding was withheld outright. Do not
+            // lift that safety on a same-named call of another receiver.
+            // Preserve the existing uncapped reading.
+            let names_method = calls_method_named(&code, &owner.name)
+                && (!capped
+                    || path_owner.as_ref().is_some_and(|path| {
+                        path.sole_method
+                            && path.trait_unique
+                            && scope_is_clear(path)
+                            && inherent_receiver_call_resolves(
+                                test,
+                                &owner.name,
+                                &path.self_type,
+                                Some(index),
+                                Some(owner),
+                            )
+                    }));
+            !names_method
+                && !path_owner.as_ref().is_some_and(|path| {
+                    scope_is_clear(path) && calls_by_type_path(&code, &owner.name, path)
+                })
+        })
     })
+}
+
+/// Check only the scopes enclosing this test, not sibling modules. An
+/// unresolved import is not proof that a bare type or trait names the owner.
+fn type_path_scope_is_clear(
+    test: &TestFact,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    path: &TypePathOwner,
+) -> bool {
+    if test.file != owner.file {
+        return false;
+    }
+    let Some(snapshot) = index.source_syntax.get(index, &test.file) else {
+        return false;
+    };
+    let (Some(scopes), Some(tree)) = (snapshot.lexical_items(), snapshot.tree()) else {
+        return false;
+    };
+    let mut tests = scopes.functions.iter().filter(|f| {
+        f.name == test.name && f.start_line <= test.end_line && test.start_line <= f.end_line
+    });
+    let Some(test_scope) = tests.next() else {
+        return false;
+    };
+    if tests.next().is_some() {
+        return false;
+    }
+    let mut owners = scopes.functions.iter().filter(|f| {
+        f.name == owner.name && f.start_line <= owner.start_line && owner.start_line <= f.end_line
+    });
+    let Some(owner_scope) = owners.next() else {
+        return false;
+    };
+    if owners.next().is_some() {
+        return false;
+    }
+    let owner_module = owner_scope.modules.first().copied();
+    if owner_module.is_some_and(|module| !test_scope.modules.contains(&module)) {
+        return false;
+    }
+    let root = tree.syntax();
+    let plain_self_type = impl_self_type_is_unqualified(&owner.id.0);
+    let clear = |item: ast::Item, module, parent| {
+        let owner_path = |value: &str| {
+            value.strip_prefix("super::") == Some(path.self_type.as_str()) && parent == owner_module
+        };
+        if let ast::Item::Use(ref item) = item {
+            return super::reveal::flattened_use_paths(&item.syntax().text().to_string())
+                .iter()
+                .all(|import| {
+                    // In `use a::T::{self}`, the leaf binds `T`, not `self`.
+                    // Retain the flattened path's existing contract for its
+                    // other consumers; normalize only this binding check.
+                    let target = import.path.strip_suffix("::self").unwrap_or(&import.path);
+                    let bound = import
+                        .alias
+                        .as_deref()
+                        .unwrap_or_else(|| target.rsplit("::").next().unwrap_or(""));
+                    let bound = bound.strip_prefix("r#").unwrap_or(bound);
+                    if bound == "*" {
+                        return matches!(
+                            import.path.as_str(),
+                            "super::*" | "self::*" | "std::ops::*" | "core::ops::*"
+                        );
+                    }
+                    if bound == path.self_type {
+                        return owner_path(target);
+                    }
+                    if bound == path.trait_name {
+                        return target
+                            .strip_prefix("std::ops::")
+                            .or_else(|| target.strip_prefix("core::ops::"))
+                            == Some(path.trait_name.as_str());
+                    }
+                    true
+                });
+        }
+        if let ast::Item::Module(ref module) = item {
+            return !module.name().is_some_and(|name| {
+                let name = name.text().to_string();
+                name.strip_prefix("r#").unwrap_or(&name) == path.self_type
+            });
+        }
+        let text =
+            crate::analysis::extract::mask_comments_and_strings(&item.syntax().text().to_string());
+        if matches!(item, ast::Item::Fn(_) | ast::Item::Impl(_)) {
+            return true;
+        }
+        if matches!(item, ast::Item::MacroRules(_) | ast::Item::MacroDef(_)) {
+            return !contains_as_whole_word(&text, &path.self_type)
+                && !contains_as_whole_word(&text, &path.trait_name);
+        }
+        if matches!(item, ast::Item::MacroCall(_)) {
+            // A macro invocation is unresolved: its expansion can introduce
+            // any binding without naming it at the invocation site, so any
+            // invocation in an enclosing scope refuses the lift.
+            return false;
+        }
+        let rebinds =
+            rebinds_type_name(&text, &path.self_type) || rebinds_type_name(&text, &path.trait_name);
+        if module == owner_module {
+            // The owner's own module defines the impl type, so a `struct`,
+            // `enum` or `union` of that name is the genuine definition, but
+            // only when the impl header spells its self type unqualified. A
+            // qualified header (`impl Add for other::Money`) leaves a same-
+            // module `type Money = i64` or `struct Money` free to shadow it.
+            // Any other rebinding of the type or trait name is refused.
+            return !rebinds
+                || (plain_self_type
+                    && matches!(
+                        item,
+                        ast::Item::Struct(_) | ast::Item::Enum(_) | ast::Item::Union(_)
+                    )
+                    && !rebinds_type_name(&text, &path.trait_name));
+        }
+        !rebinds
+    };
+    if !tree.items().all(|item| clear(item, None, None)) {
+        return false;
+    }
+    let mut enclosing: Vec<_> = scopes
+        .modules
+        .iter()
+        .filter(|m| test_scope.modules.contains(&m.range))
+        .collect();
+    enclosing.sort_by_key(|m| m.range.start());
+    let mut parent = None;
+    for module in enclosing {
+        let node = module.item.to_node(root);
+        if !node.item_list().is_some_and(|items| {
+            items
+                .items()
+                .all(|item| clear(item, Some(module.range), parent))
+        }) {
+            return false;
+        }
+        parent = Some(module.range);
+    }
+    true
+}
+
+/// Whether the impl header of an owner id spells its self type as a bare name
+/// (`impl Add for Money`, `impl Add for &Money`), not a path
+/// (`impl Add for other::Money`) or anything else the id cannot show plainly.
+fn impl_self_type_is_unqualified(owner_id: &str) -> bool {
+    let Some(impl_rest) = owner_id.split("::impl ").nth(1) else {
+        return false;
+    };
+    let Some((impl_body, _)) = impl_rest.rsplit_once("::") else {
+        return false;
+    };
+    let self_ty = impl_body
+        .rsplit_once(" for ")
+        .map_or(impl_body, |(_, ty)| ty);
+    let bare = self_ty.trim_start_matches('&').trim();
+    !bare.is_empty() && bare.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
 }
 
 /// How the language reaches the owner without a call that names it.

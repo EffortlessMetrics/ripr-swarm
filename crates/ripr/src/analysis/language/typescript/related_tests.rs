@@ -53,6 +53,10 @@ pub(crate) struct ReExportIndex {
     local_exports: HashMap<String, HashSet<String>>,
     /// Normalized module paths of every workspace file seen by the index.
     modules: HashSet<String>,
+    /// Modules whose export facts were actually available. Missing, refused,
+    /// or unparsable sources cannot establish the absence of a competing star
+    /// export. Kept separate from discovery, which still owns path precedence.
+    indexed_modules: HashSet<String>,
     /// Extension stripping can collapse distinct real files. General owner
     /// discovery keeps its existing behavior; strict enum identity refuses.
     ambiguous_enum_modules: HashSet<String>,
@@ -121,6 +125,7 @@ impl ReExportIndex {
             index.modules.insert(module.clone());
             index.local_exports.entry(module).or_default().insert(name);
         }
+        index.indexed_modules = index.modules.clone();
         index
     }
 
@@ -158,6 +163,7 @@ impl ReExportIndex {
             .iter()
             .map(|file| normalized_module_path(file))
             .collect();
+        let mut indexed_modules = modules.clone();
         let mut module_files = HashMap::new();
         let mut ambiguous_enum_modules = HashSet::new();
         for file in workspace_files {
@@ -171,10 +177,13 @@ impl ReExportIndex {
             }
         }
         for relative in workspace_files {
+            let module = normalized_module_path(relative);
             if is_test(relative) {
+                indexed_modules.remove(&module);
                 continue;
             }
             let Some(source) = sources.get(relative) else {
+                indexed_modules.remove(&module);
                 continue;
             };
             // Per-file facts come from the content-keyed combined cache
@@ -188,6 +197,7 @@ impl ReExportIndex {
                 workspace_root,
                 alias_map,
             ) else {
+                indexed_modules.remove(&module);
                 continue;
             };
             for (key, value) in file_facts.entries {
@@ -197,7 +207,6 @@ impl ReExportIndex {
             for (key, target) in file_facts.namespace_exports {
                 namespace_exports.entry(key).or_insert(target);
             }
-            let module = normalized_module_path(relative);
             for (name, members) in file_facts.enum_bindings {
                 enum_bindings.insert((module.clone(), name), members);
             }
@@ -221,6 +230,7 @@ impl ReExportIndex {
             namespace_exports,
             local_exports,
             modules,
+            indexed_modules,
             ambiguous_enum_modules,
             enum_bindings,
             enum_imports,
@@ -584,6 +594,11 @@ impl ReExportIndex {
         enum_context: Option<&EnumBindingContext<'_>>,
     ) -> ExportResolution {
         let module = self.canonical_module(module);
+        if !self.indexed_modules.contains(&module) {
+            // Unknown is contagious across star siblings; NotFound would
+            // falsely make a known sibling's binding unique on a partial index.
+            return ExportResolution::Unknown;
+        }
         if mocked(&module)
             || (enum_context.is_some() && self.ambiguous_enum_modules.contains(&module))
             || (enum_context.is_some_and(|context| context.check_stability)
@@ -1008,7 +1023,7 @@ fn mock_names_module(test: &TypeScriptTest, mocked_modules: &[String], module: &
 }
 
 /// Export facts of one parsed module, collected on the parse worker.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModuleExportFacts {
     pub(crate) entries: Vec<((String, String), (String, String))>,
     pub(crate) star_edges: Vec<(String, String)>,
@@ -1017,6 +1032,12 @@ pub(crate) struct ModuleExportFacts {
     pub(crate) enum_bindings: Vec<(String, Vec<String>)>,
     pub(crate) enum_imports: Vec<TypeScriptImport>,
     pub(crate) unstable_enum_roots: Vec<String>,
+    /// Whether the module has a value-level `export ... from` (#10725
+    /// review). Its target resolves on disk and can resolve back to this
+    /// very module (`export { a as b } from './'`), so the entries alone
+    /// cannot tell a re-export from an own rename.
+    #[serde(default)]
+    pub(crate) re_exports_from_source: bool,
 }
 
 impl ModuleExportFacts {
@@ -1153,6 +1174,7 @@ pub(crate) fn module_export_facts(
                 if export_all.export_kind == ImportOrExportKind::Type {
                     continue;
                 }
+                facts.re_exports_from_source = true;
                 let star_source = export_all.source.value.to_string();
                 let Some(resolved) = normalized_relative_import_module(
                     relative,
@@ -1209,6 +1231,7 @@ pub(crate) fn module_export_facts(
                     }
                     continue;
                 };
+                facts.re_exports_from_source = true;
                 let source_str = re_source.value.to_string();
                 // Resolve the source module relative to the intermediate
                 // file's dir. Pass alias_map so tsconfig-aliased paths can be
@@ -1694,6 +1717,11 @@ fn module_entry_relation(
         return None;
     }
     for entry in &owner.module_entries {
+        // An instance factory is reached by reading the getter on its product,
+        // not by calling it (`factory_built_getter_read`).
+        if entry.instance_factory {
+            continue;
+        }
         let entry_owner = module_entry_owner(owner, entry);
         if owner_call_relation(
             test,
@@ -1949,9 +1977,334 @@ pub(crate) fn receiver_owner_call_relation(
     if owner.method_kind == TypeScriptMethodKind::Getter {
         return receiver_names
             .iter()
-            .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name));
+            .any(|receiver| contains_member_read_name(&test.body_text, receiver, &owner.name))
+            || factory_built_getter_read(test, owner, alias_map, workspace_root);
     }
     false
+}
+
+/// Getter owner reached through an exported factory that returns a fresh
+/// instance of the owner's class (`instance_factories`, #10402): the test
+/// binds `const box = factory(...)` once and reads `box.<getter>`.
+///
+/// Fail-closed identity gates: the factory is one the owner's module establishes
+/// (`TypeScriptModuleEntry::instance_factory`) and the test reaches it through
+/// a resolved named, renamed or default import or a resolved namespace import;
+/// the callee is not rebound; the receiver is bound once in the test body, is
+/// never written again, is not a catch, function, arrow or loop binding, and
+/// is mentioned only inside the block that declares it; the whole initializer
+/// is the factory call (no member access, index or operator applied to its
+/// result); the read is the subject of an `expect(...)`; no spy, mock,
+/// `defineProperty`, `setPrototypeOf`, `__proto__` or member assignment
+/// anywhere in the test file names the getter or the factory; and the owner
+/// module is not mocked. Computed access (`box["value"]`), receivers declared
+/// outside the test body and reads outside an `expect(...)` subject stay
+/// uncredited.
+fn factory_built_getter_read(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let factories: Vec<&TypeScriptModuleEntry> = owner
+        .module_entries
+        .iter()
+        .filter(|entry| entry.instance_factory)
+        .collect();
+    if factories.is_empty() || !is_safe_javascript_identifier(&owner.name) {
+        return false;
+    }
+    let masked = super::classifier::ts_mask_literals_and_comments(&test.body_text);
+    let body = masked.as_str();
+    // Whole-file replacement facts: a spy, mock, redefinition or member
+    // assignment anywhere in the test file (a `beforeEach`, a top-level
+    // `Object.defineProperty(Class.prototype, ...)`) may replace the getter or
+    // the factory, and `__proto__` can rewire any instance.
+    let replaced = |name: &str| test.member_replacements_in_file.iter().any(|n| n == name);
+    if replaced(super::tests_extract::MEMBER_REPLACEMENT_ANY)
+        || replaced(&owner.name)
+        || test_spies_owner_with_fabrication_for_owner(test, &owner.name, false)
+        || class_entries::assigns_member_named(body, &owner.name)
+        || spies_on_member_named(&test.body_text, &owner.name)
+    {
+        return false;
+    }
+    let mut callees: Vec<String> = Vec::new();
+    for factory in &factories {
+        // Any spy, mock or assignment naming the factory refuses it, not only
+        // the fabrication shapes (`mockReturnValueOnce` and kin replace the
+        // product as well).
+        if replaced(&factory.name)
+            || spies_on_member_named(&test.body_text, &factory.name)
+            || test_spies_owner_with_fabrication_for_owner(
+                test,
+                &factory.name,
+                factory.exported_as_default,
+            )
+            || class_entries::assigns_member_named(body, &factory.name)
+        {
+            continue;
+        }
+        for import in &test.imports_in_file {
+            if !import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root) {
+                continue;
+            }
+            if import.namespace {
+                if !factory.exported_as_default {
+                    push_unique_string(&mut callees, format!("{}.{}", import.local, factory.name));
+                }
+            } else if import.imported.as_deref() == Some(factory.name.as_str())
+                || (factory.exported_as_default && import.imported.as_deref() == Some("default"))
+            {
+                push_unique_string(&mut callees, import.local.clone());
+            }
+        }
+    }
+    // A callee root the test scope or body rebinds names something else.
+    callees.retain(|callee| {
+        let root = callee.split('.').next().unwrap_or(callee);
+        !test
+            .scope_bindings
+            .iter()
+            .any(|binding| binding.name == root)
+            && !local_identifier_declared_in_test_body(&test.body_text, root)
+    });
+    if callees.is_empty() {
+        return false;
+    }
+    factory_receiver_names(body, &callees)
+        .iter()
+        .any(|receiver| {
+            !enclosing_scope_shadows(test, receiver)
+                && !body_binds_shadow_identifier(&test.body_text, receiver)
+                && !method_parameter_binds(body, receiver)
+                && expect_actual_references_member(body, receiver, &owner.name)
+        })
+}
+
+/// `true` when any `spyOn(` call (call-through included, accessor spies such as
+/// `spyOn(obj, 'name', 'get')` included) names `name` as a quoted argument in
+/// its opening window: the getter may then be replaced or observed through
+/// the spy rather than run as written. Fail-closed on the raw text, strings
+/// included.
+fn spies_on_member_named(body_text: &str, name: &str) -> bool {
+    body_text.match_indices("spyOn(").any(|(idx, _)| {
+        let window: String = body_text[idx..].chars().take(160).collect();
+        ['\'', '"', '`']
+            .iter()
+            .any(|quote| window.contains(&format!("{quote}{name}{quote}")))
+    })
+}
+
+/// Locals the body binds exactly once to a bare factory call: `const box =
+/// callee(...)` where nothing follows the call's closing parenthesis on its
+/// statement, and the local is never written again or declared twice.
+fn factory_receiver_names(body: &str, callees: &[String]) -> Vec<String> {
+    let writes = super::tests_extract::strict_identifier_writes(body);
+    let mut receivers = Vec::new();
+    for keyword in ["const", "let", "var"] {
+        for (idx, _) in body.match_indices(keyword) {
+            let before = body[..idx].chars().next_back();
+            if before.is_some_and(|ch| is_javascript_identifier_char(ch) || ch == '.') {
+                continue;
+            }
+            let Some(after) = body[idx + keyword.len()..].strip_prefix(char::is_whitespace) else {
+                continue;
+            };
+            let after = after.trim_start();
+            let name_len: usize = after
+                .chars()
+                .take_while(|ch| is_javascript_identifier_char(*ch))
+                .map(char::len_utf8)
+                .sum();
+            let name = &after[..name_len];
+            let Some(initializer) = after[name_len..].trim_start().strip_prefix('=') else {
+                continue;
+            };
+            if !is_safe_javascript_identifier(name)
+                || initializer.starts_with(['=', '>'])
+                || !initializer_is_bare_factory_call(initializer, callees)
+            {
+                continue;
+            }
+            if !mentioned_only_in_declaring_block(body, body.len() - after.len(), name) {
+                continue;
+            }
+            let declarations = ["const", "let", "var"]
+                .iter()
+                .map(|kw| word_declaration_count(body, kw, name))
+                .sum::<usize>();
+            let written = writes.iter().filter(|(written, _)| written == name).count();
+            if declarations == 1 && written == 1 {
+                push_unique_string(&mut receivers, name.to_string());
+            }
+        }
+    }
+    receivers
+}
+
+/// `true` when a method definition inside `body` (an object-literal or class
+/// method `m(box) { ... }`, with an optional return type) takes `name` among
+/// its parameters, so a read inside it is another binding. Control statements
+/// (`if (...) {`) and `function`/`catch` heads are not methods.
+fn method_parameter_binds(body: &str, name: &str) -> bool {
+    const NOT_METHODS: [&str; 8] = [
+        "if", "for", "while", "switch", "catch", "with", "function", "return",
+    ];
+    body.match_indices(')').any(|(close, _)| {
+        let rest = &body[close + 1..];
+        let Some(brace) = rest.find('{') else {
+            return false;
+        };
+        let between = rest[..brace].trim();
+        if !(between.is_empty()
+            || (between.starts_with(':') && !between.replace("=>", "->").contains([';', '='])))
+        {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut open = None;
+        for (at, ch) in body[..=close].char_indices().rev() {
+            match ch {
+                ')' => depth += 1,
+                '(' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        open = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(open) = open else {
+            return true;
+        };
+        let head = body[..open].trim_end();
+        let word: String = head
+            .chars()
+            .rev()
+            .take_while(|ch| is_javascript_identifier_char(*ch))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if NOT_METHODS.contains(&word.as_str()) {
+            return false;
+        }
+        let params = &body[open + 1..close];
+        params.match_indices(name).any(|(idx, _)| {
+            params[..idx]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+                && params[idx + name.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_javascript_identifier_char(ch))
+        })
+    })
+}
+
+/// `true` when every mention of `name` in `body` lies inside the innermost
+/// `{ }` block that holds the declaration at byte `declared_at`: a block-scoped
+/// declaration never reaches a later mention outside its block, where the name
+/// is another binding.
+fn mentioned_only_in_declaring_block(body: &str, declared_at: usize, name: &str) -> bool {
+    let mut open: Vec<usize> = Vec::new();
+    for (idx, ch) in body.char_indices() {
+        if idx >= declared_at {
+            break;
+        }
+        match ch {
+            '{' => open.push(idx),
+            '}' => {
+                open.pop();
+            }
+            _ => {}
+        }
+    }
+    let start = open.last().copied().unwrap_or(0);
+    let mut depth = 0usize;
+    let mut end = body.len();
+    if !open.is_empty() {
+        for (offset, ch) in body[start..].char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        end = start + offset;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    body.match_indices(name).all(|(idx, _)| {
+        let before = body[..idx].chars().next_back();
+        let after = body[idx + name.len()..].chars().next();
+        let mention = before.is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+            && after.is_none_or(|ch| !is_javascript_identifier_char(ch));
+        !mention || (idx >= start && idx < end)
+    })
+}
+
+/// Occurrences of `keyword name` as a declaration head in `body`.
+fn word_declaration_count(body: &str, keyword: &str, name: &str) -> usize {
+    body.match_indices(keyword)
+        .filter(|(idx, _)| {
+            body[..*idx]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !is_javascript_identifier_char(ch) && ch != '.')
+        })
+        .filter(|(idx, _)| {
+            body[idx + keyword.len()..]
+                .strip_prefix(char::is_whitespace)
+                .map(str::trim_start)
+                .and_then(|rest| rest.strip_prefix(name))
+                .is_some_and(|rest| {
+                    rest.chars()
+                        .next()
+                        .is_none_or(|ch| !is_javascript_identifier_char(ch))
+                })
+        })
+        .count()
+}
+
+/// `true` when `initializer` (the text after `=`) is exactly one call to one
+/// of `callees`, with nothing chained or combined after the call.
+fn initializer_is_bare_factory_call(initializer: &str, callees: &[String]) -> bool {
+    let initializer = initializer.trim_start();
+    callees.iter().any(|callee| {
+        let Some(rest) = initializer.strip_prefix(callee.as_str()) else {
+            return false;
+        };
+        let Some(args) = rest.trim_start().strip_prefix('(') else {
+            return false;
+        };
+        let Some(close) = super::classifier::balanced_close_offset(args) else {
+            return false;
+        };
+        let tail = &args[close + 1..];
+        let trimmed = tail.trim_start();
+        let crossed_newline = tail[..tail.len() - trimmed.len()].contains('\n');
+        match trimmed.chars().next() {
+            None | Some(';' | '}') => true,
+            // ASI ends the statement at a newline unless the next line
+            // continues the expression.
+            Some(next) => {
+                crossed_newline
+                    && !".?[(`+-*/%<>=&|,:!^".contains(next)
+                    && !trimmed.starts_with("as ")
+                    && !trimmed.starts_with("satisfies ")
+                    && !trimmed.starts_with("instanceof ")
+                    && !trimmed.starts_with("in ")
+            }
+        }
+    })
 }
 
 /// The receivers the test authenticates for a method owner: locals built from
@@ -3086,7 +3439,7 @@ fn contains_member_reference(body_text: &str, object_name: &str, property_name: 
     })
 }
 
-fn is_object_literal_key(body_text: &str, start: usize, end: usize) -> bool {
+pub(super) fn is_object_literal_key(body_text: &str, start: usize, end: usize) -> bool {
     let next_is_colon = body_text[end..]
         .trim_start()
         .strip_prefix(':')
@@ -3609,7 +3962,12 @@ pub(crate) fn normalized_relative_import_module(
     // (`require('..')`, #4546) exactly like `./` and `../` prefixes do.
     if is_relative_specifier(source) {
         // Standard relative resolution.
-        let mut parts = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")))
+        // An absolute test file keeps its leading `/` (#4207), matching the
+        // alias branch and `normalized_module_path`, so both sides of a
+        // module comparison spell the same file identically.
+        let parent_path = normalized_path(test_file.parent().unwrap_or_else(|| Path::new("")));
+        let absolute = parent_path.starts_with('/');
+        let mut parts = parent_path
             .split('/')
             .filter(|part| !part.is_empty() && *part != ".")
             .map(ToString::to_string)
@@ -3630,8 +3988,10 @@ pub(crate) fn normalized_relative_import_module(
         // Directory resolution only for an extensionless specifier whose
         // join stayed inside the workspace root; otherwise the historical
         // lexical module is kept.
+        // An absolute join is not workspace-relative, so root probes are skipped.
         if let Some(root) = workspace_root
             && !escaped_root
+            && !absolute
             && module == joined
             && let Some(resolved) = resolve_directory_module(root, &module)
         {
@@ -3644,6 +4004,7 @@ pub(crate) fn normalized_relative_import_module(
         // directory, or a symlink to something else (#4800 review).
         if let Some(root) = workspace_root
             && !escaped_root
+            && !absolute
             && let Some(out_dir_map) = out_dir_map_for(root)
             && out_dir_map.contains(&joined)
             && std::fs::symlink_metadata(root.join(&joined)).is_err()
@@ -3652,14 +4013,18 @@ pub(crate) fn normalized_relative_import_module(
         {
             return Some(source_module);
         }
-        return Some(module);
+        return Some(if absolute {
+            format!("/{module}")
+        } else {
+            module
+        });
     }
 
     // Non-relative specifier — consult alias map if available.
     let alias_map = alias_map?;
     let root = workspace_root?;
     let _ = root; // root is captured by alias_map already
-    let resolved_path = alias_map.resolve(source)?;
+    let resolved_path = run_cached_alias_resolution(alias_map, source)?;
     // Normalize the resolved workspace-relative path to a module string.
     let normalized = normalized_path(&resolved_path);
     Some(strip_typescript_module_extension(&normalized))
@@ -3743,6 +4108,8 @@ fn out_dir_map_for(root: &Path) -> Option<TsOutDirMap> {
 struct RunResolverCache {
     directory_modules: HashMap<(PathBuf, String), Option<String>>,
     out_dir_maps: HashMap<PathBuf, Option<TsOutDirMap>>,
+    /// Alias-map answers keyed by `(alias-map digest, specifier)` (#10925).
+    alias_resolutions: HashMap<((u64, u64), String), Option<PathBuf>>,
     /// The committed-snapshot reader's verdict per config directory
     /// (RIPR-SPEC-0258, #7708): `Some(mentions_vitest)` when the directory's
     /// configs are clean, `None` when one refuses. Keyed by the directory and
@@ -3750,6 +4117,65 @@ struct RunResolverCache {
     config_directories: HashMap<(PathBuf, bool), Option<bool>>,
     /// Tracked `*.snap` files per analysis root (`None`: unknown).
     tracked_snapshots: HashMap<PathBuf, Option<std::sync::Arc<HashSet<String>>>>,
+    /// Per-body shadow indexes (#10925), keyed by the body text itself so a
+    /// hit can never answer for different source. Bounded by
+    /// `MAX_RUN_SHADOW_INDEXES`; past it bodies fall back to the exact
+    /// per-identifier path.
+    shadow_indexes: HashMap<String, std::rc::Rc<super::shadow_index::BodyShadowIndex>>,
+}
+
+const MAX_RUN_SHADOW_INDEXES: usize = 4096;
+
+#[cfg(test)]
+thread_local! {
+    /// Alias-map resolutions actually computed (not served from the run memo).
+    pub(crate) static ALIAS_RESOLUTIONS_COMPUTED: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+/// `alias_map.resolve(specifier)`, memoized for one analysis run (#10925).
+///
+/// A non-relative specifier is resolved against the same immutable alias map
+/// and package table for every owner x test x import combination (about 65k
+/// calls over ~200 distinct specifiers on zod), and each uncached answer
+/// scans the package table and probes source paths. The key carries the
+/// map's content digest, so two maps in one scope never answer for each
+/// other. Outside a [`DirectoryModuleCacheScope`] nothing is stored and every
+/// call resolves afresh, like the directory-module memo beside it.
+fn run_cached_alias_resolution(alias_map: &TsAliasMap, specifier: &str) -> Option<PathBuf> {
+    run_memoized(
+        &(alias_map.cache_digest(), specifier.to_string()),
+        |cache| &mut cache.alias_resolutions,
+        || {
+            #[cfg(test)]
+            ALIAS_RESOLUTIONS_COMPUTED.with(|count| count.set(count.get() + 1));
+            alias_map.resolve(specifier)
+        },
+    )
+}
+
+/// The per-body shadow index for `body_text`, built once per analysis run
+/// (#10925). `None` outside a [`DirectoryModuleCacheScope`] or past the
+/// bound: the caller then runs the exact per-identifier scan, so no index
+/// outlives the run that built it.
+fn run_cached_shadow_index(
+    body_text: &str,
+) -> Option<std::rc::Rc<super::shadow_index::BodyShadowIndex>> {
+    RUN_RESOLVER_CACHE.with(|cache| {
+        let mut cache = cache.try_borrow_mut().ok()?;
+        let cache = cache.as_mut()?;
+        if let Some(index) = cache.shadow_indexes.get(body_text) {
+            return Some(std::rc::Rc::clone(index));
+        }
+        if cache.shadow_indexes.len() >= MAX_RUN_SHADOW_INDEXES {
+            return None;
+        }
+        let index = std::rc::Rc::new(super::shadow_index::BodyShadowIndex::build(body_text));
+        cache
+            .shadow_indexes
+            .insert(body_text.to_string(), std::rc::Rc::clone(&index));
+        Some(index)
+    })
 }
 
 /// Memoize `compute` for one analysis run, keyed by `key`, in the field
@@ -4113,6 +4539,13 @@ pub(crate) struct BodyLexicalScan {
     pub(crate) uses: Vec<usize>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Count of full lexical shadow scans (#10925): the absent-name early-out
+    /// must leave it untouched.
+    pub(crate) static SHADOW_SCAN_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Lexical states for the shadow-check walk.
 #[derive(Clone, Copy)]
 enum BodyScanState {
@@ -4144,6 +4577,35 @@ enum BodyScanState {
 /// a same-function use outside that block stays unshadowed (over-credit
 /// direction, retained under the cross-block interval rules).
 pub(crate) fn local_identifier_declared_in_test_body(body_text: &str, identifier: &str) -> bool {
+    // #10925: every shadow shape below (line-start declarator, catch / arrow /
+    // function parameter, loop header) needs `identifier`'s exact bytes in the
+    // body: the lexer matches `starts_with(identifier)` or a declarator part
+    // equal to it, and the masked scans (the mask only keeps original
+    // characters or blanks them) search for the identifier text. A body that
+    // never spells the name is therefore never shadowing it, so skip the
+    // lexer walk and the OXC-backed literal mask. Candidate names that a body
+    // never mentions are the bulk of the per-identifier calls.
+    if !body_text.contains(identifier) {
+        return false;
+    }
+    // #10925: inside an analysis run, answer from the body's once-built
+    // shadow index; the index returns `None` for names outside its exact
+    // domain, and those (and any out-of-run call) keep the per-identifier scan.
+    if let Some(index) = run_cached_shadow_index(body_text)
+        && let Some(shadowed) = index.shadows(body_text, identifier)
+    {
+        return shadowed;
+    }
+    local_identifier_declared_in_test_body_scanned(body_text, identifier)
+}
+
+/// The full lexical shadow decision, run only for bodies that spell the name.
+pub(crate) fn local_identifier_declared_in_test_body_scanned(
+    body_text: &str,
+    identifier: &str,
+) -> bool {
+    #[cfg(test)]
+    SHADOW_SCAN_RUNS.with(|runs| runs.set(runs.get() + 1));
     let scan = scan_body_lexical_facts(body_text, identifier);
     if scan.uses.iter().any(|use_offset| {
         scan.declarations.iter().any(|declaration| {
@@ -4394,7 +4856,7 @@ fn body_has_arrow_or_function_param_binding(masked: &str, identifier: &str) -> b
 /// not a binding: `((f = price) => ...)` reads `price` and
 /// `((x): typeof price => ...)` names a type; neither rebinds it
 /// (PR #7651 review).
-fn params_bind_identifier(masked_params: &str, identifier: &str) -> bool {
+pub(super) fn params_bind_identifier(masked_params: &str, identifier: &str) -> bool {
     // The pattern is everything before the element's first top-level `=`
     // (default) or `:` (type annotation); both are depth-aware so braces and
     // brackets inside destructuring patterns never cut the pattern.
@@ -4506,7 +4968,7 @@ fn body_has_loop_header_binding(masked: &str, identifier: &str) -> bool {
 /// a `let|var|const` declarator in the C-style init clause, or the left side
 /// of `for-of`/`for-in`/`for-await`. References in the condition or update
 /// clause are uses, never bindings.
-fn header_declares_identifier(header: &str, identifier: &str) -> bool {
+pub(super) fn header_declares_identifier(header: &str, identifier: &str) -> bool {
     // Top-level `;` separates the C-style init clause (depth-aware; the
     // header is already literal/comment-masked).
     let mut depth = 0usize;
@@ -4611,13 +5073,74 @@ pub(crate) fn innermost_scope_containing(
 /// every local declaration of `identifier`, and every use of it. See
 /// `local_identifier_declared_in_test_body` for the full lexical contract.
 pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> BodyLexicalScan {
+    let mut uses: Vec<usize> = Vec::new();
+    let mut declarations: Vec<BodyDeclaration> = Vec::new();
+    let scopes = walk_body_lexical(body_text, |event| match event {
+        BodyWalkEvent::DeclarationLine {
+            line,
+            name_start,
+            scope,
+        } => {
+            if declaration_line_declares_identifier(line, identifier) {
+                declarations.push(BodyDeclaration { name_start, scope });
+            }
+        }
+        BodyWalkEvent::CodePosition { idx } => {
+            // A use of the identifier: a call or bare reference with the
+            // module's reference boundaries — never a member access
+            // (`x.owner`), object-literal key, or the declared name token
+            // itself. Comment/string occurrences cannot reach this event
+            // (the state machine skips them).
+            if body_text[idx..].starts_with(identifier)
+                && has_member_call_boundary(body_text, idx)
+                && body_text[idx + identifier.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !is_javascript_identifier_char(ch))
+                && !is_object_literal_key(body_text, idx, idx + identifier.len())
+                && declarations
+                    .last()
+                    .is_none_or(|declaration| declaration.name_start != idx)
+            {
+                uses.push(idx);
+            }
+        }
+    });
+    BodyLexicalScan {
+        scopes,
+        declarations,
+        uses,
+    }
+}
+
+/// An identifier-independent event from [`walk_body_lexical`].
+pub(super) enum BodyWalkEvent<'a> {
+    /// A line-leading `const|let|var|function` declaration line.
+    /// `name_start` is the first non-blank offset after the keyword.
+    DeclarationLine {
+        line: &'a str,
+        name_start: usize,
+        scope: Option<usize>,
+    },
+    /// A byte offset the walk visited in plain code (not a comment, string
+    /// or template text, and not a brace).
+    CodePosition { idx: usize },
+}
+
+/// The conservative lexer shared by the per-identifier scan and the
+/// per-body shadow index (#10925): one definition of comments, strings,
+/// templates, brace scopes and line-start declarations, with the identifier
+/// left to the visitor. `DeclarationLine` fires before `CodePosition` for the
+/// same offset. Returns the scope table (see [`BodyLexicalScan::scopes`]).
+pub(super) fn walk_body_lexical<'a>(
+    body_text: &'a str,
+    mut visit: impl FnMut(BodyWalkEvent<'a>),
+) -> Vec<(usize, usize)> {
     // Scope table: (open-brace offset, close-brace offset; `usize::MAX` while
     // the scope is still open). Entries are kept after closing so a nested
     // declaration can be tested for enclosing a specific use.
     let mut scopes: Vec<(usize, usize)> = Vec::new();
     let mut open_scopes: Vec<usize> = Vec::new();
-    let mut uses: Vec<usize> = Vec::new();
-    let mut declarations: Vec<BodyDeclaration> = Vec::new();
     let mut state = BodyScanState::Code;
     // Depths whose closing `}` returns the walk from a template
     // interpolation (which opened a pseudo-scope) to its template literal.
@@ -4683,41 +5206,22 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
                         let line_end = body_text[idx..]
                             .find('\n')
                             .map_or(body_text.len(), |relative| idx + relative);
-                        let line = &body_text[idx..line_end];
-                        if declaration_line_declares_identifier(line, identifier) {
-                            // Skip the declaration's own name token when
-                            // collecting uses (leading whitespace after the
-                            // keyword included).
-                            let name_start = body_text[idx + keyword.len()..]
-                                .char_indices()
-                                .find(|(_, ch)| !ch.is_whitespace())
-                                .map_or(idx + keyword.len(), |(relative, _)| {
-                                    idx + keyword.len() + relative
-                                });
-                            declarations.push(BodyDeclaration {
-                                name_start,
-                                scope: open_scopes.last().copied(),
+                        // Skip the declaration's own name token when
+                        // collecting uses (leading whitespace after the
+                        // keyword included).
+                        let name_start = body_text[idx + keyword.len()..]
+                            .char_indices()
+                            .find(|(_, ch)| !ch.is_whitespace())
+                            .map_or(idx + keyword.len(), |(relative, _)| {
+                                idx + keyword.len() + relative
                             });
-                        }
+                        visit(BodyWalkEvent::DeclarationLine {
+                            line: &body_text[idx..line_end],
+                            name_start,
+                            scope: open_scopes.last().copied(),
+                        });
                     }
-                    // A use of the identifier: a call or bare reference with
-                    // the module's reference boundaries — never a member
-                    // access (`x.owner`), object-literal key, or the declared
-                    // name token itself. Comment/string occurrences cannot
-                    // reach this arm (the state machine skips them).
-                    if body_text[idx..].starts_with(identifier)
-                        && has_member_call_boundary(body_text, idx)
-                        && body_text[idx + identifier.len()..]
-                            .chars()
-                            .next()
-                            .is_none_or(|ch| !is_javascript_identifier_char(ch))
-                        && !is_object_literal_key(body_text, idx, idx + identifier.len())
-                        && declarations
-                            .last()
-                            .is_none_or(|declaration| declaration.name_start != idx)
-                    {
-                        uses.push(idx);
-                    }
+                    visit(BodyWalkEvent::CodePosition { idx });
                     at_line_start = false;
                 }
             },
@@ -4762,14 +5266,18 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
             }
         }
     }
-    BodyLexicalScan {
-        scopes,
-        declarations,
-        uses,
-    }
+    scopes
 }
 
 fn declaration_line_declares_identifier(line: &str, identifier: &str) -> bool {
+    declaration_line_declared_names(line).contains(&identifier)
+}
+
+/// Every name a declaration line declares through a PLAIN declarator;
+/// `declaration_line_declares_identifier` is membership in this list, and the
+/// per-body shadow index (#10925) reads it once per line instead of once per
+/// candidate identifier.
+pub(super) fn declaration_line_declared_names(line: &str) -> Vec<&str> {
     // #7507: every PLAIN declarator of the list counts, not just the first:
     // `const x = 1, cost = (a) => 140` rebinds `cost` exactly like a
     // single-declarator `const cost = ...`. Destructuring patterns
@@ -4782,34 +5290,37 @@ fn declaration_line_declares_identifier(line: &str, identifier: &str) -> bool {
     ["const ", "let ", "var ", "function "]
         .into_iter()
         .filter_map(|keyword| line.strip_prefix(keyword))
-        .any(|after| {
+        .flat_map(|after| {
             // A pattern-led declaration (`{ cost } = ...`, `[cost] = ...`)
             // belongs to the source-aware destructure checks, not here.
             if after.trim_start().starts_with(['{', '[']) {
-                return false;
+                return Vec::new();
             }
-            split_top_level_declarators(after).iter().any(|declarator| {
-                // A declarator whose own pattern opens a destructuring
-                // (`x = 1, { cost } = h`) is source-aware too; only a plain
-                // leading identifier counts here. Cut at `(` as well so a
-                // `function price(a) {` declarator is not mistaken for a
-                // destructuring because of its body brace.
-                let pattern = declarator
-                    .split(['=', ':', '('])
-                    .next()
-                    .unwrap_or("")
-                    .trim();
-                if pattern.starts_with(['{', '[']) {
-                    return false;
-                }
-                declarator
-                    .split(|ch: char| {
-                        ch == ':' || ch == '=' || ch == '(' || ch == ';' || ch.is_whitespace()
-                    })
-                    .find(|part| !part.is_empty())
-                    .is_some_and(|declared| declared == identifier)
-            })
+            split_top_level_declarators(after)
+                .into_iter()
+                .filter_map(|declarator| {
+                    // A declarator whose own pattern opens a destructuring
+                    // (`x = 1, { cost } = h`) is source-aware too; only a
+                    // plain leading identifier counts here. Cut at `(` as
+                    // well so a `function price(a) {` declarator is not
+                    // mistaken for a destructuring because of its body brace.
+                    let pattern = declarator
+                        .split(['=', ':', '('])
+                        .next()
+                        .unwrap_or("")
+                        .trim();
+                    if pattern.starts_with(['{', '[']) {
+                        return None;
+                    }
+                    declarator
+                        .split(|ch: char| {
+                            ch == ':' || ch == '=' || ch == '(' || ch == ';' || ch.is_whitespace()
+                        })
+                        .find(|part| !part.is_empty())
+                })
+                .collect::<Vec<_>>()
         })
+        .collect()
 }
 
 /// Split a `const|let|var` declaration remainder (`x = 1, cost = f, ...`)
@@ -5170,6 +5681,41 @@ mod module_extension_tests {
                     "{source} from {test_file} resolved to {resolved}, not the {owner_file} owner module {EXPECTED}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// #4207: an absolute test file keeps its leading `/` on the relative
+    /// branch, so it matches an absolute owner module identity exactly as the
+    /// alias branch and `normalized_module_path` spell it. A different absolute
+    /// module still resolves to a different identity, so a negative assertion
+    /// cannot pass vacuously because the two sides can never be equal.
+    #[test]
+    fn normalized_relative_import_module_keeps_leading_slash_for_absolute_inputs()
+    -> Result<(), String> {
+        let resolved = normalized_relative_import_module(
+            Path::new("/ws/pkg/tests/cart.test.mts"),
+            "../src/cart.mjs",
+            None,
+            None,
+        )
+        .ok_or("absolute relative import must resolve")?;
+        if resolved != "/ws/pkg/src/cart" {
+            return Err(format!("expected /ws/pkg/src/cart, got {resolved}"));
+        }
+        let owner = normalized_module_path(Path::new("/ws/pkg/src/cart.mts"));
+        if resolved != owner {
+            return Err(format!("{resolved} must equal owner module {owner}"));
+        }
+        let other = normalized_relative_import_module(
+            Path::new("/ws/pkg/tests/cart.test.mts"),
+            "../src/basket.mjs",
+            None,
+            None,
+        )
+        .ok_or("absolute relative import must resolve")?;
+        if other == owner {
+            return Err("a different module must not equal the owner".to_string());
         }
         Ok(())
     }
