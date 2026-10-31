@@ -2,6 +2,10 @@
 
 use super::*;
 
+#[path = "tests_extract_hook_identity.rs"]
+mod hook_identity;
+use hook_identity::HookCalls;
+
 #[derive(Clone, Copy)]
 enum TestDeclarationRoot {
     Test,
@@ -222,13 +226,16 @@ fn extract_tests_expanding_suite_factories(
         let imports = extract_imports_for_test_file(&ret.program.body);
         let mocks = extract_mocks_from_statements(&ret.program.body, &imports);
         let mut tests = Vec::new();
+        let admission = TypeScriptAdmissionContext::of_program(&ret.program, &imports, file);
+        let hook_calls = HookCalls::of_program(&ret.program, &imports, &admission);
         let mut scope = TestScope {
             assertion_bindings: TypeScriptAssertionBindings::from_program(
                 &ret.program.body,
                 &imports,
             )
             .with_strict_matchers(strict_equality_matchers(&ret.program.body, source)),
-            admission: TypeScriptAdmissionContext::of_program(&ret.program, &imports, file),
+            admission,
+            hook_calls,
             ..TestScope::default()
         };
         scope.fixtures = super::fixture_receivers::PlaywrightFixtures::of_program(
@@ -308,6 +315,13 @@ fn extract_tests_expanding_suite_factories(
                 test.written_locals_in_file = rewritten.clone();
             }
         }
+        let replacements = member_replacement_names(source);
+        if !replacements.is_empty() {
+            let replacements: Shared<_> = replacements.into();
+            for test in &mut tests {
+                test.member_replacements_in_file = replacements.clone();
+            }
+        }
         let factories = mock_factories(&ret.program.body, &code);
         if !factories.is_empty() {
             let factories: Shared<_> = factories.into();
@@ -326,13 +340,9 @@ fn extract_tests_expanding_suite_factories(
         // no credited assertion means the walker cannot disclose anything.
         let conditional_credit_gap = if tests.iter().any(|test| !test.assertions.is_empty()) {
             let source_text = SourceText::new(source);
-            let mut sample = None;
+            let mut sample = CreditSites::default();
             find_conditional_assertion_credit(&ret.program.body, &source_text, source, &mut sample);
-            sample.map(|(sample_line, condition)| TypeScriptConditionalCreditGap {
-                file: file.to_path_buf(),
-                sample_line,
-                condition,
-            })
+            sample.into_gap(file)
         } else {
             None
         };
@@ -926,6 +936,7 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
     // level. Collected before any test so a hook written after a test still
     // counts, as it does at runtime.
     let mut level = Vec::new();
+    let mut untrusted_hook_entries = Vec::new();
     let mut sites = Vec::new();
     let mut iterables = Vec::new();
     let mut returned = false;
@@ -942,6 +953,8 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
             &mut level,
             &mut sites,
             scope.admission.block_functions_are_lexical,
+            &scope.hook_calls,
+            &mut untrusted_hook_entries,
         );
         // After a possible early `return`, a binding may never run.
         if returned {
@@ -950,6 +963,12 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
                 .for_each(|entry| entry.1 = ScopeValue::Other);
         }
         returned |= may_return(stmt, source);
+    }
+    // Keep duplicate-hook race summaries from the original collection. Only
+    // actual callback contributions receive the call-identity downgrade.
+    for index in untrusted_hook_entries {
+        level[index].1 = ScopeValue::Other;
+        level[index].2 = Phase::Interleaved;
     }
     // A destructuring or hoisted declaration can also shadow `undefined` at a
     // registration. Nested blocks contribute only names visible after them
@@ -1314,7 +1333,7 @@ fn collect_mocha_setup_hooks(
             import.local == hook
                 && !(import.source == "mocha" && import.imported.as_deref() == Some(hook))
         });
-        if declared || imported_elsewhere {
+        if declared || imported_elsewhere || !scope.hook_calls.contains(call) {
             continue;
         }
         let Some(argument) = call.arguments.last() else {
@@ -1400,6 +1419,8 @@ const TEST_RUNNER_MODULES: [&str; 4] = ["vitest", "@jest/globals", "bun:test", "
 /// The enclosing scopes of the statements being walked.
 #[derive(Default)]
 pub(crate) struct TestScope {
+    /// The callable identity captured at each hook registration.
+    hook_calls: HookCalls,
     /// Describe names, outermost first.
     describe_names: Vec<String>,
     /// Name bindings of the file and each enclosing describe, outermost first.
@@ -1555,6 +1576,8 @@ fn collect_scope_bindings(
     out: &mut Vec<ScopeEntry>,
     sites: &mut Vec<usize>,
     block_functions_are_lexical: bool,
+    hook_calls: &HookCalls,
+    untrusted_hook_entries: &mut Vec<usize>,
 ) {
     match stmt {
         // `declare` forms are erased before the test runs: no runtime binding.
@@ -1635,6 +1658,8 @@ fn collect_scope_bindings(
                         &mut locals,
                         &mut Vec::new(),
                         block_functions_are_lexical,
+                        hook_calls,
+                        &mut Vec::new(),
                     );
                 }
                 locals.retain(|(_, _, phase)| *phase == Phase::Declaration);
@@ -1689,7 +1714,11 @@ fn collect_scope_bindings(
                     })
                     .map(|(name, _, _)| name.clone())
                     .collect();
+                let start = out.len();
                 out.extend(writes);
+                if phase != Phase::Interleaved && !hook_calls.contains(call) {
+                    untrusted_hook_entries.extend(start..out.len());
+                }
                 out.extend(
                     raced
                         .into_iter()
@@ -3398,6 +3427,7 @@ pub(crate) fn test_from_statement<'s, 'a>(
         identity_helpers_in_file: Default::default(),
         default_member_only_locals_in_file: Default::default(),
         written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
         mock_factories_in_file: Default::default(),
         mock_spread_sources_in_file: Default::default(),
         // Replaced by `collect_tests_from_statements`, which has the file's
@@ -5388,13 +5418,9 @@ pub(crate) fn detect_conditional_assertion_credit(
             return None;
         }
         let source = SourceText::new(source);
-        let mut sample = None;
+        let mut sample = CreditSites::default();
         find_conditional_assertion_credit(&ret.program.body, &source, &source, &mut sample);
-        sample.map(|(sample_line, condition)| TypeScriptConditionalCreditGap {
-            file: file.to_path_buf(),
-            sample_line,
-            condition,
-        })
+        sample.into_gap(file)
     }) else {
         return None;
     };
@@ -5410,6 +5436,39 @@ fn branch_statements_hold_assertion(statements: &[Statement<'_>], source: &Sourc
     statements_collect_assertion_probe(statements, source)
 }
 
+/// Every unevaluated-condition branch the walker finds in one test file, in
+/// source order, with the registration calls enclosing each (RIPR-SPEC-0243
+/// rule 11): which test a conditional assertion belongs to decides whether a
+/// finding that never consulted that test is affected by it.
+#[derive(Default)]
+struct CreditSites {
+    sites: Vec<TypeScriptCreditSite>,
+    /// Start lines of the call expressions the walker is currently inside.
+    calls: Vec<usize>,
+}
+
+impl CreditSites {
+    fn record(&mut self, line: usize, condition: String) {
+        self.sites.push(TypeScriptCreditSite {
+            line,
+            condition,
+            enclosing_call_lines: self.calls.clone(),
+        });
+    }
+
+    /// The file's gap: the first site as the displayed sample, all sites for
+    /// attribution. `None` when the file has no unevaluated branch.
+    fn into_gap(self, file: &Path) -> Option<TypeScriptConditionalCreditGap> {
+        let first = self.sites.first()?;
+        Some(TypeScriptConditionalCreditGap {
+            file: file.to_path_buf(),
+            sample_line: first.line,
+            condition: first.condition.clone(),
+            sites: self.sites,
+        })
+    }
+}
+
 /// Recursive statement walk mirroring the collection walker: blocks,
 /// `if`/`else`, loops, labels, `switch`, `try`/`catch`/`finally` and `with`.
 /// Records the first branch (in source order) whose condition is not a
@@ -5421,11 +5480,8 @@ fn find_conditional_assertion_credit(
     statements: &[Statement<'_>],
     source: &SourceText<'_>,
     raw: &str,
-    sample: &mut Option<(usize, String)>,
+    sample: &mut CreditSites,
 ) {
-    if sample.is_some() {
-        return;
-    }
     // Statements after an unconditional exit are dead; the collector withholds
     // their assertions, so no live conditional credit can sit there.
     let live_len = statements
@@ -5478,11 +5534,11 @@ fn find_conditional_assertion_credit(
                                 if_stmt.test.span().start as usize,
                                 if_stmt.test.span().end as usize,
                             );
-                            *sample = Some((
+                            sample.record(
                                 source.line_for_offset(if_stmt.span().start as usize),
                                 condition,
-                            ));
-                            return;
+                            );
+                            continue;
                         }
                         find_conditional_assertion_credit(
                             std::slice::from_ref(&if_stmt.consequent),
@@ -5522,11 +5578,11 @@ fn find_conditional_assertion_credit(
                         while_stmt.test.span().start as usize,
                         while_stmt.test.span().end as usize,
                     );
-                    *sample = Some((
+                    sample.record(
                         source.line_for_offset(while_stmt.span().start as usize),
                         condition,
-                    ));
-                    return;
+                    );
+                    continue;
                 }
                 find_conditional_assertion_credit(
                     std::slice::from_ref(&while_stmt.body),
@@ -5573,11 +5629,11 @@ fn find_conditional_assertion_credit(
                             )
                         })
                         .unwrap_or_default();
-                    *sample = Some((
+                    sample.record(
                         source.line_for_offset(for_stmt.span().start as usize),
                         condition,
-                    ));
-                    return;
+                    );
+                    continue;
                 }
                 find_conditional_assertion_credit(
                     std::slice::from_ref(&for_stmt.body),
@@ -5607,21 +5663,12 @@ fn find_conditional_assertion_credit(
             Statement::SwitchStatement(switch) => {
                 for case in &switch.cases {
                     find_conditional_assertion_credit(&case.consequent, source, raw, sample);
-                    if sample.is_some() {
-                        return;
-                    }
                 }
             }
             Statement::TryStatement(try_stmt) => {
                 find_conditional_assertion_credit(&try_stmt.block.body, source, raw, sample);
-                if sample.is_some() {
-                    return;
-                }
                 if let Some(handler) = &try_stmt.handler {
                     find_conditional_assertion_credit(&handler.body.body, source, raw, sample);
-                    if sample.is_some() {
-                        return;
-                    }
                 }
                 if let Some(finalizer) = &try_stmt.finalizer {
                     find_conditional_assertion_credit(&finalizer.body, source, raw, sample);
@@ -5642,9 +5689,6 @@ fn find_conditional_assertion_credit(
                 for declarator in &var.declarations {
                     if let Some(init) = &declarator.init {
                         find_conditional_assertion_credit_in_expression(init, source, raw, sample);
-                        if sample.is_some() {
-                            return;
-                        }
                     }
                 }
             }
@@ -5675,11 +5719,8 @@ fn find_conditional_assertion_credit_in_expression(
     expression: &Expression<'_>,
     source: &SourceText<'_>,
     raw: &str,
-    sample: &mut Option<(usize, String)>,
+    sample: &mut CreditSites,
 ) {
-    if sample.is_some() {
-        return;
-    }
     match expression {
         Expression::ArrowFunctionExpression(arrow) => {
             find_conditional_assertion_credit(&arrow.body.statements, source, raw, sample);
@@ -5690,22 +5731,22 @@ fn find_conditional_assertion_credit_in_expression(
             }
         }
         Expression::CallExpression(call) => {
+            // The call's start line is what a registered test reports as its
+            // own line, so a site records which registrations enclose it.
+            sample
+                .calls
+                .push(source.line_for_offset(call.span.start as usize));
             for argument in &call.arguments {
                 if let Some(expr) = argument.as_expression() {
                     find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                 }
-                if sample.is_some() {
-                    return;
-                }
             }
+            sample.calls.pop();
         }
         Expression::NewExpression(call) => {
             for argument in &call.arguments {
                 if let Some(expr) = argument.as_expression() {
                     find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
-                }
-                if sample.is_some() {
-                    return;
                 }
             }
         }
@@ -5715,9 +5756,6 @@ fn find_conditional_assertion_credit_in_expression(
         Expression::SequenceExpression(sequence) => {
             for expr in &sequence.expressions {
                 find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
-                if sample.is_some() {
-                    return;
-                }
             }
         }
         Expression::LogicalExpression(logical) => {
@@ -5750,9 +5788,6 @@ fn find_conditional_assertion_credit_in_expression(
                     if let Some(expr) = argument.as_expression() {
                         find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                     }
-                    if sample.is_some() {
-                        return;
-                    }
                 }
             }
         }
@@ -5773,9 +5808,6 @@ fn find_conditional_assertion_credit_in_expression(
                 if let Some(expr) = element.as_expression() {
                     find_conditional_assertion_credit_in_expression(expr, source, raw, sample);
                 }
-                if sample.is_some() {
-                    return;
-                }
             }
         }
         Expression::ObjectExpression(object) => {
@@ -5787,9 +5819,6 @@ fn find_conditional_assertion_credit_in_expression(
                         raw,
                         sample,
                     );
-                }
-                if sample.is_some() {
-                    return;
                 }
             }
         }
@@ -5803,4 +5832,216 @@ fn find_conditional_assertion_credit_in_expression(
         }
         _ => {}
     }
+}
+
+/// Marker in [`member_replacement_names`]: the file does something to member
+/// definitions the scan cannot attribute to a name, so every name is replaced.
+pub(crate) const MEMBER_REPLACEMENT_ANY: &str = "*";
+
+/// Names a test file may replace, for the factory-built getter relation
+/// (#10402). A closed, fail-closed rule over the raw text (whitespace before
+/// `(` is tolerated; comments, strings and templates are not skipped, which
+/// can only withhold a relation):
+///
+/// - the file mentions `defineProperty`, `defineProperties`, `setPrototypeOf`,
+///   `replaceProperty` or `__proto__` anywhere: every name is replaced
+///   ([`MEMBER_REPLACEMENT_ANY`]);
+/// - each `spyOn` must be a call whose second argument is a plain string
+///   literal, which is recorded (every identifier of the arguments is recorded
+///   too); any other `spyOn` (an alias, a variable or computed key, an
+///   unparsed call) replaces every name;
+/// - each `mocked` must be a call of a plain identifier path, which is
+///   recorded; anything else replaces every name;
+/// - `mock`, `doMock` and `stubGlobal` calls record every identifier of their
+///   arguments, and one that is not a call replaces every name;
+/// - every `.name =` target is recorded, and an index assignment
+///   (`target[key] = ...`) replaces every name;
+/// - an argument list longer than the scan bound replaces every name.
+pub(crate) fn member_replacement_names(source: &str) -> Vec<String> {
+    const ANY_MENTION: [&str; 5] = [
+        "defineProperty",
+        "defineProperties",
+        "setPrototypeOf",
+        "replaceProperty",
+        "__proto__",
+    ];
+    // Other stubbing libraries (sinon, testdouble, proxyquire, rewire).
+    const TOOL_MENTION: [&str; 5] = [
+        "replaceGetter",
+        "replaceSetter",
+        "proxyquire",
+        "rewire",
+        "createStubInstance",
+    ];
+    // Calls whose arguments are scanned for names; a bare mention is ignored.
+    const CALL_ONLY: [&str; 4] = ["stub", "replace", "mockImplementation", "mockReturnValue"];
+    const MAX_ARGUMENT_BYTES: usize = 8192;
+    let mut names = std::collections::BTreeSet::new();
+    if ANY_MENTION
+        .iter()
+        .chain(TOOL_MENTION.iter())
+        .any(|word| source.contains(word))
+    {
+        return vec![MEMBER_REPLACEMENT_ANY.to_string()];
+    }
+    let refuse_all = || vec![MEMBER_REPLACEMENT_ANY.to_string()];
+    let mut add_tokens = |text: &str| {
+        for token in text.split(|ch: char| !is_javascript_identifier_char(ch)) {
+            if !token.is_empty() {
+                names.insert(token.to_string());
+            }
+        }
+    };
+    for word in [
+        "spyOn",
+        "mocked",
+        "mock",
+        "doMock",
+        "stubGlobal",
+        "stub",
+        "replace",
+        "mockImplementation",
+        "mockReturnValue",
+    ] {
+        for (idx, _) in source.match_indices(word) {
+            let before = source[..idx].chars().next_back();
+            let after = source[idx + word.len()..].chars().next();
+            if before.is_some_and(is_javascript_identifier_char)
+                || after.is_some_and(is_javascript_identifier_char)
+            {
+                continue;
+            }
+            let rest = &source[idx + word.len()..];
+            // testdouble's `td.replace('../module')` swaps a whole module.
+            if word == "replace"
+                && (source[..idx].ends_with("td.") || source[..idx].ends_with("testdouble."))
+            {
+                return refuse_all();
+            }
+            let Some(args) = rest.trim_start().strip_prefix('(') else {
+                if CALL_ONLY.contains(&word) {
+                    continue;
+                }
+                return refuse_all();
+            };
+            let Some(end) = super::classifier::balanced_close_offset(args) else {
+                return refuse_all();
+            };
+            if end > MAX_ARGUMENT_BYTES {
+                return refuse_all();
+            }
+            let args = &args[..end];
+            match word {
+                "spyOn" => {
+                    let Some(member) = second_argument_literal(args) else {
+                        return refuse_all();
+                    };
+                    add_tokens(member);
+                }
+                "mocked" => {
+                    let path = args.trim();
+                    if path.is_empty()
+                        || !path
+                            .chars()
+                            .all(|ch| is_javascript_identifier_char(ch) || ch == '.')
+                    {
+                        return refuse_all();
+                    }
+                }
+                _ => {}
+            }
+            add_tokens(args);
+        }
+    }
+    for (idx, _) in source.match_indices('.') {
+        let rest = &source[idx + 1..];
+        let len: usize = rest
+            .chars()
+            .take_while(|ch| is_javascript_identifier_char(*ch))
+            .map(char::len_utf8)
+            .sum();
+        if len == 0 {
+            continue;
+        }
+        if assignment_follows(&rest[len..]) {
+            add_tokens(&rest[..len]);
+        }
+    }
+    for (idx, _) in source.match_indices(']') {
+        if !assignment_follows(&source[idx + 1..]) {
+            continue;
+        }
+        // `const [a] = x` destructures; `target[key] = x` assigns a member.
+        let mut depth = 0usize;
+        let mut open = None;
+        for (at, ch) in source[..=idx].char_indices().rev() {
+            match ch {
+                ']' => depth += 1,
+                '[' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        open = Some(at);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let indexes_a_value = open
+            .and_then(|at| source[..at].chars().next_back())
+            .is_none_or(|ch| is_javascript_identifier_char(ch) || ch == ')' || ch == ']');
+        if indexes_a_value {
+            return refuse_all();
+        }
+    }
+    names.into_iter().collect()
+}
+
+/// `true` when `after` (the text following a target) starts a plain or
+/// compound assignment rather than a comparison or an arrow.
+fn assignment_follows(after: &str) -> bool {
+    let after = after.trim_start();
+    let compound = [
+        "+=", "-=", "*=", "/=", "%=", "**=", "||=", "&&=", "??=", "<<=", ">>=", "&=", "|=", "^=",
+    ];
+    (after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>"))
+        || compound.iter().any(|op| after.starts_with(op))
+}
+
+/// The content of the second top-level argument of `args` when it is a plain
+/// string literal (no template interpolation), else `None`.
+fn second_argument_literal(args: &str) -> Option<&str> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut starts = vec![0usize];
+    for (offset, ch) in args.char_indices() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => starts.push(offset + 1),
+            _ => {}
+        }
+    }
+    let start = *starts.get(1)?;
+    let end = starts.get(2).map_or(args.len(), |next| next - 1);
+    let argument = args.get(start..end)?.trim();
+    let quote = argument
+        .chars()
+        .next()
+        .filter(|ch| matches!(ch, '"' | '\'' | '`'))?;
+    let inner = argument.strip_prefix(quote)?.strip_suffix(quote)?;
+    let interpolated = quote == '`' && inner.contains("${");
+    (!inner.contains(quote) && !inner.contains('\\') && !interpolated).then_some(inner)
 }

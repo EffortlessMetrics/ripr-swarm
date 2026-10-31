@@ -1321,6 +1321,7 @@ mod shared;
 mod triage;
 
 pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
+pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
 pub(crate) use sections::render_finding_with_config;
 pub(crate) use triage::unresolved_boundary_operand;
 
@@ -7511,6 +7512,38 @@ mod tests {
             digest.lines().all(|line| line.chars().count() <= 180),
             "the compact stage line stays within the display budget; got:\n{digest}"
         );
+    }
+
+    /// #10481: after the first run the legend collapses to one pointer line;
+    /// every other digest line, including the Evidence stage line, is kept.
+    #[test]
+    fn bounded_evidence_legend_collapses_to_one_pointer_line() {
+        let output = bounded_output_with_findings(vec![sample_finding()]);
+        let full = super::render_bounded_with_config(&output, &RiprConfig::default());
+        let mut config = RiprConfig::default();
+        config.reports.human_legend = crate::config::HumanLegend::Pointer;
+        let pointer = super::render_bounded_with_config(&output, &config);
+
+        assert!(full.contains("    Stages (static evidence):"), "{full}");
+        assert!(!pointer.contains("Stages (static evidence)"), "{pointer}");
+        assert!(!pointer.contains("Summary terms:"), "{pointer}");
+        assert_eq!(
+            pointer.matches("    Terms: rerun with `--legend`").count(),
+            1,
+            "{pointer}"
+        );
+        let evidence = full
+            .lines()
+            .find(|line| line.starts_with("  Evidence: reach "))
+            .map(str::to_string);
+        assert!(evidence.is_some(), "{full}");
+        assert!(
+            pointer
+                .lines()
+                .any(|line| Some(line) == evidence.as_deref()),
+            "{pointer}"
+        );
+        assert_eq!(full.lines().count() - 9, pointer.lines().count());
     }
 
     /// #9373 item 1: stage names and conservative state words are explained

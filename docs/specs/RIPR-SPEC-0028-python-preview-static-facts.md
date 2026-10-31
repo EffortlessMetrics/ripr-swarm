@@ -628,6 +628,18 @@ A workspace assignment to a function's `__code__`, `__defaults__`, `__kwdefaults
 `__closure__` can replace a reader without rebinding its name, so it withholds the module
 constant's credit for scalar and table constants alike (#10626).
 
+A changed line whose old and new text differ only in a trailing `#` comment or
+in whitespace between tokens emits no probe (#10706). Both lines are lexed and
+compared by the source spelling of each token, so the statement is the same
+code; a `#` inside a string, a respelling (`0x1` to `1`, a requoted string), a
+changed token or a changed indentation is still an edit, and a line that does
+not lex alone (part of a multi-line construct) stays analyzed. A line inside a
+string literal that crosses a line break is string content, so the guard does
+not apply there, on either the new line or its paired old line (read from the
+reconstructed old source); a file that cannot be lexed to rule that out gets no
+guard. No gap id or
+discriminator can then embed comment text.
+
 A one-line module-level dict literal of unique `str` or `int` keys and scalar
 values (#9619) is a constant of the same kind, read only by a module function
 through `NAME.get(key[, default])` or `NAME[key]`; a test reading the table
@@ -1496,6 +1508,31 @@ argument or a helper with control flow stays `no_static_path`.
 This differs from `helper_assertions` (#9419, #9711): it is a same-file,
 literal-argument, multi-assert source rewrite that runs first, so
 `helper_assertions` then sees no call to resolve.
+
+## Predicate Swap Amendment (2026-10-30, #9186)
+
+A changed predicate that swaps one single-operand test of an owner parameter
+for another (`x is None` to `not x`) is `weakly_exposed`, not `exposed`, when
+every strong related call binds that parameter to a literal on which both
+tests agree. The rule is a closed allow-list that keeps the existing verdict
+on anything unrecognized: the parameter may be mentioned in the owner body
+only in plain read statements (the changed line included), and a related test
+body may make only recognized calls (the owner, the `assert` statement, named
+`self.assert*` methods, known builtins and `pytest` helpers) with no
+non-ASCII identifier letters, f-strings in the owner, subscript or call-result
+callees, f-strings, or non-call mentions of the owner. A function owner is
+recognized only under its imported name or a module alias the reader
+resolves, never through a receiver alias (`m = src.lib; m.pick(0, 3)`,
+`self.lib.pick(0, 3)`); an owner docstring holding `>>>` refuses. The test
+file source is not read, so these shapes are known limits: an owner call at
+module level (`R = pick(0, 3)`), in a class attribute, in `setUp`, in a
+decorator (`@pytest.mark.parametrize('v', [pick(0, 3)])`), or in a conftest
+or autouse fixture, a module-docstring, README or `.txt` doctest, a
+`--doctest-modules` run over test or source files, a helper or runner table defined at module level
+and seen only through its call in the test body, a discriminating call under
+a non-strong oracle (`assert not pick(0, 3)`), and an owner doctest the
+reader does not see. The change is only `exposed` to `weakly_exposed`, the
+conservative direction.
 
 ## Metrics
 

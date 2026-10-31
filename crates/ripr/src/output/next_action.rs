@@ -84,6 +84,63 @@ pub(crate) fn render_next_action_human_at_root(
     render_next_action_human_inner(action, Some(bound.as_str()))
 }
 
+/// The plain-words next step of a canonical action, for a reader who has not
+/// learned ripr's vocabulary: one `Next:` line naming a command to run, or why
+/// there is none. The producer, subject, transition and non-claim rows stay in
+/// [`render_next_action_human_at_root`] (`--verbose`) and in the JSON; this
+/// view never changes the action, only how it is spoken.
+pub(crate) fn render_next_action_plain_at_root(
+    action: &CanonicalNextActionV1,
+    root: Option<&Path>,
+) -> Vec<String> {
+    let bound = root.map(|root| bound_root(&root.to_string_lossy()));
+    let bound = bound.as_deref();
+    let mut out = Vec::new();
+    if let Some(command) = action.command() {
+        let display = bind_route_root(&command.display, bound);
+        out.push(format!("  Next: {display}"));
+        if bound.is_some()
+            && let Some(pair) = powershell_pair_line(&display)
+        {
+            out.push(pair);
+        }
+        return out;
+    }
+    let route_line = |lead: &str, route: &str| -> Vec<String> {
+        let route = bind_route_root(route, bound);
+        let mut lines = vec![format!("  Next: {lead}: {route}")];
+        if bound.is_some()
+            && let Some(pair) = powershell_pair_line(&route)
+        {
+            lines.push(pair);
+        }
+        lines
+    };
+    match action.stop() {
+        Some(
+            NextActionStop::RefreshCurrentness { restart_route, .. }
+            | NextActionStop::RefreshConfig { restart_route, .. },
+        ) => out.extend(route_line(
+            "ripr's results are out of date; rerun",
+            restart_route,
+        )),
+        Some(NextActionStop::RestartAttempt { restart_route, .. }) => {
+            out.extend(route_line("start this repair again", restart_route));
+        }
+        Some(NextActionStop::InspectTarget { detail_route }) if !detail_route.is_empty() => {
+            out.extend(route_line("look at the details first", detail_route));
+        }
+        Some(NextActionStop::TerminalComplete { .. }) => {
+            out.push("  Next: nothing; this repair is already complete.".to_string());
+        }
+        _ => out.push(
+            "  Next: ripr has no ready command for this gap (add --verbose to see why)."
+                .to_string(),
+        ),
+    }
+    out
+}
+
 fn render_next_action_human_inner(action: &CanonicalNextActionV1, bound: Option<&str>) -> String {
     let mut out = format!("  next action: {}\n", action.action_class().as_str());
     out.push_str(&format!("  producer: {}\n", action.producer().as_str()));

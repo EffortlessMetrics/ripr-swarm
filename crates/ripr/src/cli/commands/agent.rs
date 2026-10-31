@@ -2009,6 +2009,10 @@ impl SharedWorkflowArtifacts {
                         })?
                         .permissions();
                     if permissions.readonly() {
+                        #[expect(
+                            clippy::permissions_set_readonly_false,
+                            reason = "Windows-only backup cleanup clears FILE_ATTRIBUTE_READONLY, not Unix write permission bits."
+                        )]
                         permissions.set_readonly(false);
                         std::fs::set_permissions(backup, permissions).map_err(|error| {
                             format!("make backup {} removable failed: {error}", backup.display())
@@ -2815,20 +2819,31 @@ fn run_agent_repair_phase(
                 // projection above can be replaced by a later finish; this
                 // retain is the surviving authority for this attempt.
                 if receipt_result.is_ok() {
+                    let receipt_path = root.join("target/ripr/reports/agent-receipt.json");
+                    let gap_after_path = root
+                        .join("target/ripr/workflow")
+                        .join(crate::app::gap_bound_repair::GAP_BOUND_AFTER_SNAPSHOT_FILE);
+                    let mut sources = vec![
+                        crate::app::repair_attempt::BeforeArtifactSource {
+                            role: crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
+                            path: &receipt_path,
+                        },
+                        crate::app::repair_attempt::BeforeArtifactSource {
+                            role: crate::app::repair_attempt::TERMINAL_VERIFY_ROLE,
+                            path: &verify_json,
+                        },
+                    ];
+                    if gap_bound {
+                        sources.push(crate::app::repair_attempt::BeforeArtifactSource {
+                            role: crate::app::repair_attempt::TERMINAL_GAP_AFTER_ROLE,
+                            path: &gap_after_path,
+                        });
+                    }
                     crate::app::repair_attempt::retain_terminal_evidence_from(
                         &root,
                         store_ref,
                         &attempt.attempt_id,
-                        &[
-                            crate::app::repair_attempt::BeforeArtifactSource {
-                                role: crate::app::repair_attempt::TERMINAL_RECEIPT_ROLE,
-                                path: &root.join("target/ripr/reports/agent-receipt.json"),
-                            },
-                            crate::app::repair_attempt::BeforeArtifactSource {
-                                role: crate::app::repair_attempt::TERMINAL_VERIFY_ROLE,
-                                path: &verify_json,
-                            },
-                        ],
+                        &sources,
                     )?;
                 }
 
@@ -5799,22 +5814,34 @@ mod repair_summary_tests {
         std::fs::create_dir_all(path.parent().ok_or("missing parent")?)
             .map_err(|error| error.to_string())?;
         std::fs::write(&path, b"prior").map_err(|error| error.to_string())?;
-        let mut permissions = std::fs::metadata(&path)
+        let original_permissions = std::fs::metadata(&path)
             .map_err(|error| error.to_string())?
             .permissions();
+        let mut permissions = original_permissions.clone();
         permissions.set_readonly(true);
         std::fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
         let tracked = SharedWorkflowArtifacts::track(&root, true)?;
-        tracked.resolve(true, false, false)?;
         let backup = path.with_extension("json.ripr-preattempt-backup");
+        if !std::fs::metadata(&backup)
+            .map_err(|error| error.to_string())?
+            .permissions()
+            .readonly()
+        {
+            return Err("readonly backup premise was not established".to_string());
+        }
+        tracked.resolve(true, false, false)?;
         if backup.exists() {
             return Err("readonly backup remained".to_string());
         }
-        let mut permissions = std::fs::metadata(&path)
-            .map_err(|error| error.to_string())?
-            .permissions();
-        permissions.set_readonly(false);
-        std::fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
+        if std::fs::read(&path).map_err(|error| error.to_string())? != b"prior"
+            || !std::fs::metadata(&path)
+                .map_err(|error| error.to_string())?
+                .permissions()
+                .readonly()
+        {
+            return Err("unchanged readonly projection was modified".to_string());
+        }
+        std::fs::set_permissions(&path, original_permissions).map_err(|error| error.to_string())?;
         std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }

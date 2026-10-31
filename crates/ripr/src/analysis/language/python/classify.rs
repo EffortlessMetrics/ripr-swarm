@@ -16,8 +16,8 @@ use super::message_pin;
 use super::module_value::{ModuleEdit, module_constant_credits};
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
-    is_annotation_only_var_change, is_new_def_header_without_defaults, is_python_no_behavior_line,
-    is_structural_def_header_text,
+    is_annotation_only_var_change, is_comment_or_whitespace_only_change,
+    is_new_def_header_without_defaults, is_python_no_behavior_line, is_structural_def_header_text,
 };
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape_with_old, python_flow_sink_for,
@@ -124,6 +124,10 @@ pub(super) fn classify_change_with_source(
 pub(super) struct PythonNoBehaviorContext {
     pub(super) new_line_in_docstring: bool,
     pub(super) old_line_in_docstring: bool,
+    /// The changed line lies inside a string literal that crosses a line
+    /// break, or the file could not be lexed to rule that out. A spacing or
+    /// comment-looking change there edits the string (#10706).
+    pub(super) new_line_in_multiline_string: bool,
     /// The changed line is the first line of its enclosing owner, and that
     /// owner's span carries at least one other added behavior line.
     pub(super) opens_owner_with_added_body: bool,
@@ -256,6 +260,16 @@ fn classify_change_full<'a>(
     let old_is_noop = old_line_text
         .is_none_or(|old| no_behavior.old_line_in_docstring || is_python_no_behavior_line(old));
     if new_is_noop && old_is_noop {
+        return None;
+    }
+    // Trailing-comment / inter-token-whitespace guard (#10706): the same
+    // statement with a comment or spacing added runs identically, so there is
+    // no behavior delta and no probe. The gap id and discriminator would
+    // otherwise embed the comment text.
+    if let Some(old) = old_line_text
+        && !no_behavior.new_line_in_multiline_string
+        && is_comment_or_whitespace_only_change(old, line_text)
+    {
         return None;
     }
     // Structural `def`-header guard: `self,`, `key,`, `):` inside a
