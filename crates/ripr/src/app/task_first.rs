@@ -178,7 +178,7 @@ pub(crate) fn decide_repair_start(
             .subject()
             .item
             .clone()
-            .ok_or_else(|| "repair-start decision bound no subject".to_string())?;
+            .ok_or_else(|| "repair-start decision bound no subject; this is a ripr bug, report it with the command you ran".to_string())?;
         return Ok(RepairStartDecision::Start { seam_id });
     }
     // Describe exactly the candidates the stop lists, in the stop's order; its
@@ -759,7 +759,7 @@ pub(crate) fn resolve_repair_start(
         && info.is_truncated()
     {
         return Err(format!(
-            "repair start refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
+            "repair start refused: the seam inventory is truncated ({} of {} seams); next step: {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
@@ -1428,7 +1428,7 @@ pub(crate) fn resolve_repair_subject_outcome(
         && info.is_truncated()
     {
         return Err(format!(
-            "repair item refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
+            "repair item refused: the seam inventory is truncated ({} of {} seams); next step: {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
