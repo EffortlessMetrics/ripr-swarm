@@ -298,7 +298,7 @@ fn is_repository_boundary(directory: &Path) -> bool {
     }
 
     let manifest = directory.join("Cargo.toml");
-    let Ok(contents) = std::fs::read_to_string(manifest) else {
+    let Ok(contents) = crate::bounded_input::read_metadata_toml(manifest) else {
         return false;
     };
     if !contents.contains("workspace") {
@@ -314,7 +314,7 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
     let Some(path) = discover_config_path(root) else {
         return default_config_for_root(root);
     };
-    let text = crate::bounded_input::read_to_string(&path)
+    let text = crate::bounded_input::read_metadata_toml(&path)
         .map_err(|err| config_load_read_error_for_host(&path, &err, cfg!(windows)))?;
     let mut config = parse_config(&text)
         .map_err(|err| config_load_parse_error_for_host(&path, &err, cfg!(windows)))?;
