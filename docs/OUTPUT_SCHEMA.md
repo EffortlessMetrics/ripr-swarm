@@ -138,7 +138,10 @@ The MCP tool envelopes carry the schema-versioned document as
 double-carry envelope cannot fit the id-aware response bound refuses typed
 with `result_too_large` instead of shipping a success without
 `structuredContent` (#7768; details in
-[MCP workspace status server](interop/mcp.md)).
+[MCP workspace status server](interop/mcp.md)). `content[0].text` is the
+compact JSON copy by default; `RIPR_MCP_TEXT_CONTENT=summary` opts a server
+process into a digest instead while `structuredContent` stays the one
+complete result (#9360).
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -9796,7 +9799,11 @@ Field contract:
   already-current items.
 - `skip_reason` is `mode_off`, `summary_only`, `suppressed`,
   `inline_comment_cap_reached`, `comment_body_too_large`, `unchanged_tests`,
-  `not_publishable`, or `already_current`.
+  `not_publishable`, or `already_current`. A `comments[]` item whose
+  `gap_state` is anything other than `actionable` (a named `static_limitation`,
+  `already_observed`, `internal_only`, or no `gap_state` at all) offers no test to add and is recorded in
+  `skipped[]` as `not_publishable` instead of an operation, so it never
+  becomes an inline review comment or uses a slot of the cap.
 - Each untrusted field of `operations[].body` is bounded before rendering:
   1,000 characters for a code-span field (changed behavior, verify or repair
   start command), 2,000 for prose (why this matters, repair, reason), and 200
