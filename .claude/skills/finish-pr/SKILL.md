@@ -1,6 +1,6 @@
 ---
 name: finish-pr
-description: Publish or resume one PR, require substantive exact-head review, address current review and CI evidence, perform the protected merge when ready, and reconcile after merge. Use when a coherent candidate exists or a PR already owns the claim.
+description: Publish or resume one PR, require substantive exact-head review, address current review and CI evidence, arm merge when ready, and reconcile after merge. Use when a coherent candidate exists or a PR already owns the claim.
 ---
 
 # Useful result
@@ -23,9 +23,9 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 
 `finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass.
 
-A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can publish the PR and obtain remote evidence. Independent source review and applicable warm local proof may establish `SOURCE_REVIEW_READY` while hosted qualification remains missing; they do not establish final `REVIEW_READY`. Select the candidate intended to land before requesting expensive qualification. Before merging, the exact published PR head must have a current `REVIEW_READY` result from `review-pr`, actual required proof and a separate final integration and product judgment. When the head changes materially, re-enter `review-pr` for affected currentness dimensions. Do not use a merge queue or auto-merge.
+A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can publish the PR and obtain remote evidence. Before arming auto-merge or merging, the exact published PR head must have a current `REVIEW_READY` result from `review-pr`. When the head changes materially, re-enter `review-pr` for affected currentness dimensions.
 
-Routine publication and convergence inside the selected repository claim—push ordinary branch, open/update PR, reply to review, repair CI, resolve addressed threads, request qualification for the selected candidate, use protected expected-head squash merge, and clean lane-created state—do not require another owner approval. Separate authorization remains required for force-push/shared-history rewriting, settings/rulesets/secrets, public tags/releases/publication/signing/credentials, durable-evidence deletion, or work outside the selected goal.
+Routine publication and convergence inside the selected repository claim—push ordinary branch, open/update PR, reply to review, repair CI, resolve addressed threads, arm normal auto-merge, use protected squash merge, and clean lane-created state—do not require another owner approval. Separate authorization remains required for force-push/shared-history rewriting, settings/rulesets/secrets, public tags/releases/publication/signing/credentials, durable-evidence deletion, or work outside the selected goal.
 
 # Procedure
 
@@ -57,11 +57,11 @@ change settings to obtain a merge.
    - missing proof/review;
    - not established.
 6. Repair valid findings through the same candidate. For an incorrect finding, reply with source-backed evidence. Resolve only after the reply or repair exists.
-7. Collect the read-only [review conversation inventory](references/review-conversations.md) before disposition and refresh it with the final merge gates. Keep outdated unresolved threads visible; a failed or partial lookup is unknown, not an empty list. As merge preparation, resolve every thread that now holds a landed repair or a source-backed reply. Unresolved threads are a merge blocker in their own right, separate from whether review was sufficient: a candidate can hold `REVIEW_READY`, pass every required check, and still be refused. This does not soften the previous step. A thread with neither a repair nor a reply stays open, and resolving in order to clear a blocker rather than because the finding is addressed is a false-confidence action. Read each thread's state back after acting; a rejected call or a thread still reported unresolved keeps merge preparation blocked, and neither may be assumed to have succeeded. The reply and the resolve are independent operations that fail independently—confirm the reply exists before issuing the resolve and leave the thread open when that confirmation fails.
+7. As merge preparation, resolve every thread that now holds a landed repair or a source-backed reply. Unresolved threads are a merge blocker in their own right, separate from whether review was sufficient: a candidate can hold `REVIEW_READY`, pass every required check, and still be refused. This does not soften the previous step. A thread with neither a repair nor a reply stays open, and resolving in order to clear a blocker rather than because the finding is addressed is a false-confidence action. Read each thread's state back after acting; a rejected call or a thread still reported unresolved keeps merge preparation blocked, and neither may be assumed to have succeeded. The reply and the resolve are independent operations that fail independently—confirm the reply exists before issuing the resolve and leave the thread open when that confirmation fails.
 8. Refresh only proof and review dimensions affected by the repair, then obtain a new or amended `review-pr` disposition for the exact head.
 9. Distinguish candidate-head proof from integration proof:
    - the PR head is the implementation/review subject;
-   - current `main` and any actual prerequisite composition are the integration basis;
+   - current `main` or queued predecessors are the integration basis;
    - the ordinary squash result is the combined-tree subject.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
@@ -97,20 +97,18 @@ The root selects the smallest useful repair route and one writer per candidate:
 
 Record the exact parent/head, child-only delta, writer, proof basis, and landing
 route for a stack. Parent/child CI is stack-local evidence, not protected-main
-acceptance. Never merge a child into an unprotected feature branch to bypass
+acceptance. Never arm child auto-merge into an unprotected feature branch to bypass
 that boundary. A contiguous independently safe, reviewed, and proved prefix may
 land normally; do not flatten every stack into a giant PR. Preserve unique work
 and findings across squash, retarget, and incorporation, and close only the
 acceptance actually satisfied by the landed result.
 
-A new material finding withdraws readiness even on an unchanged head. Contain any
-existing pending merge authority; if inherited auto-merge is already armed, disarm
-it through the available authorized GitHub operation and verify the readback before
-resolving the blocking thread. This recovery grants no authority to arm it again.
-An unavailable or failed disarm is an integration-control blocker; do not claim the
-merge is contained. After repair, refresh affected proof and cumulative review
-before another qualification request or final merge decision. Old green, an
-unrelated later comment, or a completed agent run cannot restore readiness.
+A new material finding withdraws readiness even on an unchanged head. If auto-merge
+is armed, disarm it through the available authorized GitHub operation and verify the
+readback before resolving the blocking thread. An unavailable or failed disarm is
+an integration-control blocker; do not claim the merge is contained. After repair,
+affected proof and cumulative rereview must restore `REVIEW_READY` before arming.
+Old green, an unrelated later comment, or a completed agent run cannot restore it.
 
 Keep disjoint work moving. For the selected claim, usable repair/proof work outranks
 passive waiting; genuine remote waits name their owner and decision-changing event
@@ -135,6 +133,7 @@ Quota, unavailable, skipped, failed, or stale review-provider output is missing 
 
 - `PR_MERGED`
 - `PR_IN_FLIGHT`
+- `AUTO_MERGE_ARMED`
 - `WAITING_REQUIRED_CHECKS`
 - `WAITING_EXTERNAL_REVIEW`
 - `WAITING_INTEGRATION_PROOF`
