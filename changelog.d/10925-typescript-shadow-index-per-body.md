@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The TypeScript shadow check (`local_identifier_declared_in_test_body`) now builds one identifier-independent index per test body per analysis run (declared names with their scopes, plain-code identifier tokens, and the catch / arrow / function-parameter / `for`-header regions) and answers each candidate name by lookup, instead of re-walking and re-masking the body for every name it spells. Names outside the exact domain, and calls outside a run, keep the per-identifier scan; `ripr check` output is unchanged (#10925).

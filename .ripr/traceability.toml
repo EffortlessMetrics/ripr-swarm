@@ -10404,6 +10404,12 @@ id = "RIPR-SPEC-0120"
 name = "rust macro-wrapped assertion limitation"
 spec = "docs/specs/RIPR-SPEC-0120-rust-macro-wrapped-assertion-limitation.md"
 tests = [
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::nested_expected_macro_keeps_the_local_helper_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::helper_and_expected_names_cannot_supply_exposed_credit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::only_owner_calls_outside_nested_macro_inputs_supply_the_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::a_literal_expected_operand_retains_its_existing_limit",
+  "crates/ripr/tests/local_snapshot_helper_limit.rs::complete_proximity_evidence_survives_the_display_cap",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::complete_proximity_scope_rejects_a_hidden_direct_or_refused_oracle",
   "crates/ripr/src/analysis/language/rust/oracles.rs::tests::macro_wrapped_assertion_limit_names_reachable_unobserved_assertion_macro",
   "crates/ripr/tests/local_macro_assertion_limit.rs::a_local_wrapper_beside_a_proximity_oracle_reads_as_the_macro_limit",
   "crates/ripr/tests/local_macro_assertion_limit.rs::a_wrapper_with_no_local_definition_is_not_credited_or_limited",
@@ -12352,6 +12358,7 @@ id = "RIPR-SPEC-0159"
 name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
+  "crates/ripr/tests/concat_literal_return.rs",
   "crates/ripr/tests/pub_api_method_entry_reach.rs",
   "crates/ripr/tests/helper_wrapper_reach.rs::qualified_helper_effect_keeps_reach_without_propagation",
   "crates/ripr/tests/helper_wrapper_reach.rs::qualified_hop_above_a_tested_method_keeps_the_lower_forwarder",
@@ -16201,6 +16208,11 @@ tests = [
   "crates/ripr/src/app/task_first.rs::tests::wrapper_match_is_exact_and_never_looser",
   "crates/ripr/tests/check_repair_agree.rs::bare_repair_does_not_list_an_unchanged_seams_missing_evidence_for_the_change",
   "crates/ripr/tests/check_repair_agree.rs::whole_repository_refusals_name_the_seam_each_reason_is_about",
+  "crates/ripr/tests/check_repair_agree.rs::exposed_change_refusal_says_nothing_to_do",
+  "crates/ripr/tests/check_repair_agree.rs::change_with_no_repairable_code_says_so_first",
+  "crates/ripr/tests/check_repair_agree.rs::async_route_refusal_does_not_offer_a_stub_that_refuses",
+  "crates/ripr/tests/mcp_cli_repair_parity.rs::async_owner_refusal_names_the_stub_refusal_on_both_surfaces",
+  "crates/ripr/src/app/task_first.rs::tests::opaque_refusal_names_what_could_not_be_established",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_types_a_missing_attempt_instead_of_erroring",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_uses_only_the_selected_store",
   "crates/ripr/src/app/agent_status.rs::tests::agent_attempt_status_never_claims_resumable_past_a_moved_head",
@@ -17787,6 +17799,12 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::message_only_change_fails_open_on_unreadable_patterns_and_assertions",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::message_only_change_stays_exposed_when_a_bound_comparison_rejects_the_old_message",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::exception_class_change_is_not_a_message_only_change",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::local_message_change_under_a_pattern_that_fits_both_messages_is_weakly_exposed",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::local_message_change_stays_exposed_when_a_pattern_rejects_the_old_message",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::local_message_change_fails_open_on_unreadable_patterns",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::local_message_change_stays_unresolved_unless_the_raise_is_the_only_use",
+  "crates/ripr/src/analysis/language/python/message_pin.rs::tests::raised_through_local_resolves_only_a_single_raise_of_the_name",
+  "crates/ripr/src/analysis/language/python/message_pin.rs::tests::assigned_message_reads_only_one_name_and_literal",
   "crates/ripr/src/analysis/language/python/message_pin.rs::tests::pattern_matches_reads_literals_and_the_dot_wildcard",
   "crates/ripr/src/analysis/language/python/message_pin.rs::tests::single_raise_message_reads_only_one_literal_argument",
   "crates/ripr/src/analysis/language/python/message_pin.rs::tests::literal_message_pattern_reads_both_assertion_forms",
@@ -18426,6 +18444,20 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_isolate_mutation_provenance_and_dormant_values",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_retain_thrown_runner_mutation",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_retain_evaluated_constructor_body",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_retain_opaque_runner_escapes",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_treat_ambient_global_writes_precisely",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_treat_x_spelled_suites_as_dormant",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_invocation_shadows_and_dormant_values_separate",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_loop_catch_and_switch_rebindings_local",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_control_flow_function_values_dormant",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_deep_mutation_and_nested_evaluation_notices",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_follow_imports_and_immutable_aliases",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_keep_unrelated_and_shadowed_notices",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_preserve_evaluated_argument_and_sibling_notices",
+  "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_cover_alias_options_and_block_locals",
   "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_credits_a_forwarded_throw_replaced_by_another_error",
   "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_the_new_error_satisfies_stays_weak",
   "crates/ripr/src/analysis/language/typescript/assertion_form_tests.rs::rejects_substring_regex_sole_throw_scans_nested_callback_calls",
@@ -18797,6 +18829,7 @@ fixtures = [
   "fixtures/ts_class_getter_factory_rebound",
 ]
 code = [
+  "crates/ripr/src/analysis/language/typescript/declaration_bindings.rs",
   "crates/ripr/src/analysis/language/typescript/tests_extract_hook_identity.rs",
   "crates/ripr/src/analysis/language/typescript/call_removal_guard.rs",
   "crates/ripr/src/analysis/language/typescript/mod.rs",
@@ -19050,6 +19083,9 @@ tests = [
   "crates/ripr/tests/operator_call_credit.rs::an_operator_inside_stringify_is_text_not_a_call",
   "crates/ripr/tests/operator_call_credit.rs::an_owned_operand_reaches_the_owned_impl_beside_a_reference_impl",
   "crates/ripr/tests/operator_call_credit.rs::a_credit_no_assertion_confirms_is_withheld_not_a_gap",
+  "crates/ripr/tests/operator_call_credit.rs::capped_rows_do_not_hide_a_named_operator_call",
+  "crates/ripr/tests/operator_call_credit.rs::capped_method_call_must_bind_the_operator_owner",
+  "crates/ripr/src/analysis/language/rust/mod.rs::tests::repo_operator_cap_uses_uncapped_direct_relations",
   "crates/ripr/tests/operator_call_credit.rs::module_type_bindings_do_not_name_the_operator_owner",
   "crates/ripr/tests/operator_call_credit.rs::grouped_self_import_binds_the_enclosing_type_name",
   "crates/ripr/tests/operator_call_credit.rs::an_unresolved_macro_invocation_in_the_test_scope_withholds_the_credit",
