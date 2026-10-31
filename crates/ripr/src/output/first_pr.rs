@@ -231,7 +231,7 @@ fn run_missing_artifact_chain(repo: &Path, options: &FirstPrOptions) -> Result<(
             println!("run-chain: nothing to run; the chain artifacts already exist.");
             Ok(())
         }
-        run_chain::ChainPlan::Steps(steps) => run_chain::run_steps(&steps),
+        run_chain::ChainPlan::Steps(steps) => run_chain::run_steps(&root, options, &steps),
     }
 }
 
@@ -6302,6 +6302,49 @@ mod tests {
     fn packet_for_repo(repo: &Path) -> Result<Value, String> {
         write_first_pr(repo, &FirstPrOptions::default())?;
         read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))
+    }
+
+    /// #11720: `--run-chain` runs the review cards only when the ordinary
+    /// selection would ask for them (the packet's `needed_when`).
+    #[test]
+    fn run_chain_gates_the_review_cards_on_the_ledger_naming_no_repair_start() -> Result<(), String>
+    {
+        let options = FirstPrOptions::default();
+        let planned_cards = |repo: &Path| -> Result<bool, String> {
+            match run_chain::plan_chain(repo, &options)? {
+                run_chain::ChainPlan::Steps(steps) => Ok(steps
+                    .iter()
+                    .any(|step| step.label == "review cards" && step.only_when_cards_needed)),
+                run_chain::ChainPlan::NotApplicable(reason) => Err(reason),
+            }
+        };
+
+        // A ledger that names a repair start: cards are missing but not needed.
+        let repair = temp_repo("first-pr-run-chain-gate-repair")?;
+        write_json(
+            &repair.join(DEFAULT_GAP_LEDGER),
+            ledger_with_repairable_gap(),
+        )?;
+        assert!(
+            planned_cards(&repair)?,
+            "the step is planned, conditionally"
+        );
+        assert!(!run_chain::review_cards_needed(&repair, &options));
+        cleanup(&repair)?;
+
+        // A ledger with no repair start: first-pr would ask for the cards.
+        let none = temp_repo("first-pr-run-chain-gate-none")?;
+        write_json(
+            &none.join(DEFAULT_GAP_LEDGER),
+            ledger_with_repo_scoped_gap_only(),
+        )?;
+        assert!(run_chain::review_cards_needed(&none, &options));
+        cleanup(&none)?;
+
+        // No ledger at all: nothing to decide from, so not needed.
+        let absent = temp_repo("first-pr-run-chain-gate-absent")?;
+        assert!(!run_chain::review_cards_needed(&absent, &options));
+        cleanup(&absent)
     }
 
     /// #3905 negative (a): the `status == "missing"` filter. Repo exposure

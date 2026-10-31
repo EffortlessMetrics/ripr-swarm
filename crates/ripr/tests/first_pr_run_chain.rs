@@ -102,7 +102,7 @@ fn run_chain_takes_a_fresh_repo_to_a_non_missing_state_in_one_invocation() -> Re
         "{stdout}"
     );
     assert!(
-        stdout.contains("run-chain step 3/3: review cards:"),
+        stdout.contains("run-chain step 3/3: review cards: ripr "),
         "{stdout}"
     );
     // The disclosure is honest about the cost under the flag.
@@ -190,25 +190,29 @@ fn run_chain_steps_are_exactly_the_commands_the_default_prints() -> Result<(), S
 #[test]
 fn a_failing_step_stops_the_chain_and_writes_no_packet() -> Result<(), String> {
     let root = fresh_repo("negative")?;
-    // The review-cards output directory cannot be created: step 3 fails
-    // after steps 1 and 2 succeed.
-    fs::create_dir_all(root.join("target/ripr")).map_err(|err| err.to_string())?;
-    fs::write(root.join("target/ripr/review"), "not a directory").map_err(|err| err.to_string())?;
+    // The gap ledger's Markdown companion path is a directory: step 2 fails
+    // after step 1 succeeded, and the cards step must never run.
+    fs::create_dir_all(root.join("target/ripr/reports/gap-decision-ledger.md"))
+        .map_err(|err| err.to_string())?;
     let output = ripr(&root, &["first-pr", "--base", "main", "--run-chain"])?;
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
     assert_eq!(output.status.code(), Some(2), "{stderr}");
     assert!(
-        stderr.contains("first-pr --run-chain stopped at step 3/3 (review cards)"),
+        stderr.contains("first-pr --run-chain stopped at step 2/3 (gap ledger)"),
         "{stderr}"
     );
+    // The reason is the step's own last diagnostic, never a stray "{".
+    assert!(stderr.contains("failed (exit "), "{stderr}");
+    assert!(!stderr.contains("failed (exit 2); {"), "{stderr}");
     assert!(
         stderr.contains("no start-here packet was written"),
         "{stderr}"
     );
     assert!(
-        root.join("target/ripr/reports/gap-decision-ledger.json")
+        root.join("target/ripr/reports/repo-exposure.json")
             .is_file()
     );
+    assert!(!root.join("target/ripr/review/comments.json").exists());
     assert!(!root.join("target/ripr/reports/start-here.json").exists());
     assert!(!root.join("target/ripr/reports/start-here.md").exists());
     Ok(())
@@ -273,5 +277,44 @@ fn run_chain_is_refused_with_check_and_with_check_output() -> Result<(), String>
             .contains("--run-chain cannot be combined with --check-output"),
     );
     assert!(!root.join("target").exists());
+    Ok(())
+}
+
+#[test]
+fn run_chain_works_for_a_root_that_is_not_the_cwd_and_has_a_space() -> Result<(), String> {
+    let root = fresh_repo("sp ace")?;
+    let elsewhere = std::env::temp_dir();
+    assert_ne!(elsewhere, root);
+    let root_arg = root.to_string_lossy().to_string();
+    let output = ripr(
+        &elsewhere,
+        &[
+            "first-pr",
+            "--root",
+            &root_arg,
+            "--base",
+            "main",
+            "--run-chain",
+        ],
+    )?;
+    let stdout = stdout_of(&output);
+    assert!(
+        output.status.success(),
+        "stdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("run-chain step 1/"), "{stdout}");
+    for artifact in [
+        "target/ripr/reports/repo-exposure.json",
+        "target/ripr/reports/gap-decision-ledger.json",
+        "target/ripr/reports/start-here.json",
+    ] {
+        assert!(
+            root.join(artifact).is_file(),
+            "missing {artifact}: {stdout}"
+        );
+    }
+    // Nothing leaked into the cwd.
+    assert!(!elsewhere.join("target/ripr").exists());
     Ok(())
 }

@@ -256,10 +256,12 @@ names no repair start; rerun first-pr after each command to get the next one
 (#11298). The packet JSON `selected.also_missing` keeps every later step with its
 literal command. By default first-pr reads artifact presence only and runs none
 of these commands itself. `ripr first-pr --run-chain` (#11720) is the opt-in that
-runs the missing ones for you, in that order, each exactly as printed with the
-resolved `--base` and `--head`, then composes the packet. It runs analysis and
+runs the missing ones for you, in that order (the review cards only when the
+gap ledger names no repair start), each exactly as printed with the resolved
+`--base` and `--head`, then composes the packet. It runs analysis and
 writes the missing artifacts under `target/ripr/`; it stops at the first failing
-step (exit 2, no packet) and never regenerates an artifact that already exists.
+step, or a step that exits 0 without a non-empty parseable JSON artifact (exit 2,
+no packet), and never regenerates an artifact that already exists.
 Only current cards that carry no repair start, or cards rendered from the gap
 ledger, end in no-action; the reason says which.
 
