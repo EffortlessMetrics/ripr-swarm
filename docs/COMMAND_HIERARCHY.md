@@ -43,8 +43,9 @@ command it prints. `ripr repair` accepts a seam ID, a `ripr check` finding ID
 starts the before phase when the item maps to exactly one repair-eligible seam.
 A finding ID the current seams no longer map, or that maps ambiguously, is
 refused with a recovery route instead of a guessed seam. Without an item,
-`ripr repair` starts only when exactly one eligible seam is visible and
-otherwise lists the choices. IDs from different namespaces are not universally
+`ripr repair` starts only when exactly one eligible seam is visible; several
+eligible seams print a selection list with a retry command, and none prints
+setup or limitation guidance. IDs from different namespaces are not universally
 interchangeable. Pilot is optional broader exploration; when it supplies a
 supported repair it prints the seam ID and the equivalent advanced
 `ripr agent repair` spelling.
