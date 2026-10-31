@@ -344,7 +344,7 @@ impl AnalysisLimitation {
 
     pub(crate) fn with_affected_items(mut self, affected_items: u64) -> Result<Self, String> {
         if affected_items == 0 {
-            return Err("analysis limitation affected_items must be positive".to_string());
+            return Err("analysis limitation affected_items must be positive; report this as a ripr bug with the command that produced it".to_string());
         }
         self.affected_items = Some(affected_items);
         Ok(self)
@@ -363,7 +363,7 @@ impl AnalysisLimitation {
             self.path = Some(normalize_portable_analysis_path(&path)?);
         }
         if self.affected_items == Some(0) {
-            return Err("analysis limitation affected_items must be positive".to_string());
+            return Err("analysis limitation affected_items must be positive; report this as a ripr bug with the command that produced it".to_string());
         }
         normalize_optional_bounded_text("analysis limitation detail", &mut self.bounded_detail)?;
         self.recovery.normalize()
@@ -453,12 +453,12 @@ impl AnalysisOutcome {
     /// constructor sorts and deduplicates limitations before hashing.
     pub(crate) fn semantic_digest(&self) -> Result<String, String> {
         let bytes = serde_json::to_vec(self)
-            .map_err(|error| format!("serialize analysis outcome for digest failed: {error}"))?;
+            .map_err(|error| format!("serialize analysis outcome for digest failed: {error}; report this as a ripr bug with the command that produced it"))?;
         let digest = Sha256::digest(bytes);
         let mut hex = String::with_capacity(digest.len() * 2);
         for byte in digest {
             write!(&mut hex, "{byte:02x}")
-                .map_err(|error| format!("format analysis outcome digest failed: {error}"))?;
+                .map_err(|error| format!("format analysis outcome digest failed: {error}; report this as a ripr bug with the command that produced it"))?;
         }
         Ok(format!("sha256:{hex}"))
     }
@@ -473,7 +473,7 @@ pub(crate) fn normalize_portable_analysis_path(path: &str) -> Result<String, Str
     let has_drive_prefix = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
     if without_current.is_empty() || without_current.starts_with('/') || has_drive_prefix {
         return Err(format!(
-            "analysis limitation path must be repository-relative: {path}"
+            "analysis limitation path must be repository-relative: {path}; report this as a ripr bug with the command that produced it"
         ));
     }
 
@@ -483,7 +483,7 @@ pub(crate) fn normalize_portable_analysis_path(path: &str) -> Result<String, Str
             "" | "." => {}
             ".." => {
                 return Err(format!(
-                    "analysis limitation path contains parent traversal: {path}"
+                    "analysis limitation path contains parent traversal: {path}; report this as a ripr bug with the command that produced it"
                 ));
             }
             value => segments.push(value),
@@ -491,7 +491,7 @@ pub(crate) fn normalize_portable_analysis_path(path: &str) -> Result<String, Str
     }
     if segments.is_empty() {
         return Err(format!(
-            "analysis limitation path has no portable segments: {path}"
+            "analysis limitation path has no portable segments: {path}; report this as a ripr bug with the command that produced it"
         ));
     }
     Ok(segments.join("/"))
@@ -507,7 +507,9 @@ fn normalize_optional_bounded_text(field: &str, value: &mut Option<String>) -> R
 fn bounded_nonempty_text(field: &str, value: String) -> Result<String, String> {
     let value = value.trim().to_string();
     if value.is_empty() {
-        return Err(format!("{field} must not be empty"));
+        return Err(format!(
+            "{field} must not be empty; report this as a ripr bug with the command that produced it"
+        ));
     }
     let count = value.chars().count();
     if count > MAX_ANALYSIS_LIMITATION_DETAIL_CHARS {
@@ -541,7 +543,7 @@ fn validate_outcome(
             .any(|limitation| limitation.kind != AnalysisLimitationKind::EolOnlyChurn)
     {
         return Err(format!(
-            "analysis outcome {kind:?} cannot carry incomplete-analysis limitations"
+            "analysis outcome {kind:?} cannot carry incomplete-analysis limitations; report this as a ripr bug with the command that produced it"
         ));
     }
 
@@ -553,14 +555,14 @@ fn validate_outcome(
     );
     if limited_or_failed && limitations.is_empty() {
         return Err(format!(
-            "analysis outcome {kind:?} requires at least one typed limitation"
+            "analysis outcome {kind:?} requires at least one typed limitation; report this as a ripr bug with the command that produced it"
         ));
     }
 
     match kind {
         AnalysisOutcomeKind::NoScope => {
             if counts != AnalysisOutcomeCounts::default() {
-                return Err("analysis outcome NoScope requires every count to be zero".to_string());
+                return Err("analysis outcome NoScope requires every count to be zero; report this as a ripr bug with the command that produced it".to_string());
             }
         }
         AnalysisOutcomeKind::NoChangedLines => {
@@ -570,7 +572,7 @@ fn validate_outcome(
                 || counts.finding_count != 0
             {
                 return Err(
-                    "analysis outcome NoChangedLines requires zero changed-line, candidate, probe, and finding counts"
+                    "analysis outcome NoChangedLines requires zero changed-line, candidate, probe, and finding counts; report this as a ripr bug with the command that produced it"
                         .to_string(),
                 );
             }
@@ -582,7 +584,7 @@ fn validate_outcome(
                 || counts.finding_count != 0
             {
                 return Err(format!(
-                    "no_behavioral_candidates requires changed lines and zero candidate, probe, and finding counts (changed_line_count={}, candidate_line_count={}, probe_count={}, finding_count={})",
+                    "no_behavioral_candidates requires changed lines and zero candidate, probe, and finding counts (changed_line_count={}, candidate_line_count={}, probe_count={}, finding_count={}); report this as a ripr bug with the command that produced it",
                     counts.changed_line_count,
                     counts.candidate_line_count,
                     counts.probe_count,
@@ -592,18 +594,18 @@ fn validate_outcome(
         }
         AnalysisOutcomeKind::CompleteNoFindings => {
             if counts.finding_count != 0 {
-                return Err("complete_no_findings requires finding_count = 0".to_string());
+                return Err("complete_no_findings requires finding_count = 0; report this as a ripr bug with the command that produced it".to_string());
             }
             if counts.candidate_line_count == 0 && counts.probe_count == 0 {
                 return Err(
-                    "complete_no_findings requires a behavioral candidate or probe subject"
+                    "complete_no_findings requires a behavioral candidate or probe subject; report this as a ripr bug with the command that produced it"
                         .to_string(),
                 );
             }
         }
         AnalysisOutcomeKind::CompleteWithFindings => {
             if counts.finding_count == 0 {
-                return Err("complete_with_findings requires finding_count > 0".to_string());
+                return Err("complete_with_findings requires finding_count > 0; report this as a ripr bug with the command that produced it".to_string());
             }
         }
         AnalysisOutcomeKind::PartialWithLimitations
