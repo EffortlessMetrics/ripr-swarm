@@ -1,5 +1,5 @@
 //! `cargo xtask fold-changelog [--dry-run | --write] [--limit N]
-//! [--keep-fragments]` (#5114): the repo-owned fold step of the release cut.
+//! [--keep-fragments] [--release-cut]` (#5114): the repo-owned fold step of the release cut.
 //! It appends each `changelog.d/*.md` entry (minus its section line) to the
 //! first `### <Section>` heading under `## Unreleased` in `CHANGELOG.md`, in
 //! file-name order, then deletes the folded fragment. The default writes
@@ -10,11 +10,13 @@ use std::fs;
 use std::path::Path;
 
 use super::changelog_fragments::{
-    ALLOWED_SECTIONS, CHANGELOG, FRAGMENT_DIR, README, fragment_violations, section_of,
+    ALLOWED_SECTIONS, CHANGELOG, FRAGMENT_DIR, README, changelog_fragment_violations,
+    fragment_violations, section_of,
 };
 
-const USAGE: &str =
-    "usage: cargo xtask fold-changelog [--dry-run | --write] [--limit <N>] [--keep-fragments]";
+const USAGE: &str = "usage: cargo xtask fold-changelog [--dry-run | --write] [--limit <N>] [--keep-fragments] [--release-cut]";
+/// Candidate-admission ceiling on changed files in one PR.
+const ADMISSION_FILE_CAP: usize = 160;
 const UNRELEASED: &str = "## Unreleased";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -22,6 +24,9 @@ pub(super) struct FoldOptions {
     pub(super) write: bool,
     pub(super) limit: Option<usize>,
     pub(super) keep_fragments: bool,
+    /// Cut-day mode: fold every fragment, then require the release-cut check
+    /// to pass, so one command leaves `changelog.d/` empty and verified.
+    pub(super) release_cut: bool,
 }
 
 /// `(file name, section, entry count)`.
@@ -57,6 +62,29 @@ pub(crate) fn fold_changelog(args: &[String]) -> Result<(), String> {
     } else if options.keep_fragments {
         println!("--keep-fragments: fragment files were not deleted");
     }
+    if options.release_cut {
+        // The PR carries every deleted fragment plus CHANGELOG.md.
+        if report.folded.len() + 1 > ADMISSION_FILE_CAP {
+            println!(
+                "warning: {} changed files exceeds the {ADMISSION_FILE_CAP}-file admission cap; \
+                 fold a snapshot ahead of the cut with `--write --keep-fragments --limit` and \
+                 delete in batches (changelog.d/README.md)",
+                report.folded.len() + 1
+            );
+        }
+        if options.write {
+            let violations = changelog_fragment_violations(Path::new("."), true)?;
+            if !violations.is_empty() {
+                return Err(format!(
+                    "release-cut check failed after the fold:\n  {}",
+                    violations.join("\n  ")
+                ));
+            }
+            println!("release-cut check passed: {FRAGMENT_DIR}/ holds no fragments");
+        } else {
+            println!("dry run: the release-cut check runs after --write");
+        }
+    }
     Ok(())
 }
 
@@ -64,6 +92,7 @@ pub(super) fn parse_args(args: &[String]) -> Result<FoldOptions, String> {
     let mut write = false;
     let mut dry_run = false;
     let mut keep_fragments = false;
+    let mut release_cut = false;
     let mut limit = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
@@ -71,6 +100,7 @@ pub(super) fn parse_args(args: &[String]) -> Result<FoldOptions, String> {
             "--write" => write = true,
             "--dry-run" => dry_run = true,
             "--keep-fragments" => keep_fragments = true,
+            "--release-cut" => release_cut = true,
             "--limit" => {
                 let value = iter
                     .next()
@@ -86,10 +116,16 @@ pub(super) fn parse_args(args: &[String]) -> Result<FoldOptions, String> {
     if write && dry_run {
         return Err(format!("--write and --dry-run conflict\n{USAGE}"));
     }
+    if release_cut && (limit.is_some() || keep_fragments) {
+        return Err(format!(
+            "--release-cut folds and deletes every fragment, so it conflicts with --limit and --keep-fragments\n{USAGE}"
+        ));
+    }
     Ok(FoldOptions {
         write,
         limit,
         keep_fragments,
+        release_cut,
     })
 }
 
