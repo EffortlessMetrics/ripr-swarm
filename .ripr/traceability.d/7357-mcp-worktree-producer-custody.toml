@@ -23,6 +23,10 @@ tests = [
   "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_over_dirty_rust_helper_outside_the_diff_withholds",
   "crates/ripr/src/mcp/workspace.rs::tests::committed_refusal_dirty_rust_rule_is_isolated_from_the_agreement",
   "crates/ripr/src/mcp/worktree_custody_tests.rs::committed_refresh_with_head_moved_after_findings_withholds_the_card",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::card_request_refuses_after_an_unrefreshed_edit_to_a_bound_file",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::card_request_refuses_after_a_commit_that_moved_a_bound_file",
+  "crates/ripr/src/mcp/worktree_custody_tests.rs::card_request_survives_edits_outside_the_evidence_scope_and_restored_bytes",
+  "crates/ripr/src/analysis/consumed_source.rs::tests::first_drift_flags_changed_or_unreadable_captured_paths_only",
 ]
 
 [[extend]]

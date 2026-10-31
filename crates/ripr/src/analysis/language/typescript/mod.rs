@@ -550,7 +550,28 @@ impl TypeScriptAdapter {
         // the test file itself changed in this diff.
         let workspace_scan =
             collect_workspace_typescript_files_with_handwritten(&options.root, handwritten);
-        let workspace_files = workspace_scan.files;
+        let mut workspace_files = workspace_scan.files;
+        if workspace_scan.truncated {
+            // #11767: a cut-short walk may never reach a file the diff itself
+            // names, which would leave that change with no owner and no
+            // finding at all. The diff is the authority for what changed, so
+            // every accepted changed source joins the partial set.
+            for changed in changed_files {
+                let excluded = is_detectable_generated_typescript_path(&changed.path)
+                    || (is_detectable_excluded_typescript_path(&changed.path)
+                        && !crate::config::is_declared_handwritten_typescript_path(
+                            handwritten,
+                            &changed.path,
+                        ));
+                if TypeScriptAdapter.accepts_path(&changed.path)
+                    && !excluded
+                    && !workspace_files.contains(&changed.path)
+                {
+                    workspace_files.push(changed.path.clone());
+                }
+            }
+            workspace_files.sort();
+        }
         let changed_paths = changed_files
             .iter()
             .map(|changed| normalized_path(&changed.path))
@@ -1644,7 +1665,7 @@ impl TypeScriptAdapter {
                     )?,
                 )
                 .with_detail(format!(
-                    "Workspace discovery stopped at the {}-entry visit cap ({TS_MAX_WORKSPACE_FILES_ENV}); discovered files are a partial set.",
+                    "Workspace discovery stopped at the {}-entry visit cap ({TS_MAX_WORKSPACE_FILES_ENV}) before covering the workspace; discovered files are a partial set, so a finding that reports no related test may reflect tests that were never read.",
                     ts_workspace_file_limit()
                 ))?,
             );
@@ -1674,6 +1695,17 @@ impl TypeScriptAdapter {
         // owner share a content-addressed probe id (path/family/owner/
         // expression, no line number); the ordinal pass keeps them
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
+        if workspace_scan.truncated {
+            // #11767: a truncated walk cannot back "no test reaches this".
+            let entry_cap = ts_workspace_file_limit();
+            for finding in &mut findings {
+                crate::analysis::classify::withhold_truncated_discovery_gap(
+                    finding,
+                    entry_cap,
+                    TS_MAX_WORKSPACE_FILES_ENV,
+                );
+            }
+        }
         dedup_typescript_probe_ids(&mut findings, &minted_owners);
         Ok(LanguageDiffResult {
             value_origins: Default::default(),
