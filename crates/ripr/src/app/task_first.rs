@@ -588,11 +588,12 @@ const REPAIR_SEAM_CEILING: usize = 2 * crate::analysis::DEFAULT_REPO_EXPOSURE_SE
 /// is unchanged: an explicit
 /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` or a larger repository still refuses.
 ///
-/// Only the one-shot CLI resolvers call this. `load_gate_state` stays on the
-/// plain inventory because MCP status reads reach it on concurrent worker
-/// threads, which must not share the process-wide cap; there a cut inventory
-/// still withholds the start with the wider-budget recovery.
-fn inventory_for_repair(
+/// The CLI resolvers, the repair-start gate behind `ripr agent status` and the
+/// MCP completeness check all call this, so every surface agrees on whether a
+/// 10k to 20k seam repository can start a repair. Widening holds the
+/// process-wide cap exclusively, so concurrent MCP worker threads serialize
+/// their reruns instead of stranding the cap.
+pub(crate) fn inventory_for_repair(
     root: &Path,
     config: &crate::config::RiprConfig,
 ) -> Result<
@@ -620,7 +621,7 @@ fn inventory_for_repair(
 /// The cap a repair resolver reruns with, or `None` when the cut stands: only
 /// a built-in default cut of a repository within [`REPAIR_SEAM_CEILING`]
 /// widens, to its exact total. An explicit limit is the operator's choice.
-fn repair_widened_cap(info: &crate::analysis::SeamLimitInfo) -> Option<usize> {
+pub(crate) fn repair_widened_cap(info: &crate::analysis::SeamLimitInfo) -> Option<usize> {
     (info.is_truncated()
         && info.source == crate::analysis::SeamLimitSource::Default
         && info.total <= REPAIR_SEAM_CEILING)
@@ -1518,7 +1519,7 @@ fn load_gate_state(root: &Path) -> GateState {
             ));
         }
     };
-    match crate::analysis::inventory_classified_seams_at_with_config(root, &config) {
+    match inventory_for_repair(root, &config) {
         Ok((classified, limit_info)) => GateState::Loaded {
             truncated: limit_info.as_ref().is_some_and(|info| info.is_truncated()),
             config: Box::new(config),
@@ -2671,6 +2672,82 @@ pub(crate) mod tests {
             None,
             "a complete inventory needs no rerun"
         );
+    }
+
+    /// End to end over a real repository above the 10,000-seam default cap
+    /// (#1887): the plain inventory is cut, while the repair inventory, the
+    /// gate behind `ripr agent status` and the MCP completeness read all
+    /// rerun at the exact total and agree the inventory is complete. The cap
+    /// is restored afterwards, and a repository past the ceiling still cuts.
+    #[test]
+    fn repair_surfaces_agree_on_a_repository_above_the_default_seam_cap() -> Result<(), String> {
+        use crate::analysis::{DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, SeamLimitSource};
+        if std::env::var_os("RIPR_REPO_EXPOSURE_SEAM_LIMIT").is_some() {
+            return Ok(());
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-widen-{}-{stamp}", std::process::id()));
+        let _guard = TempRootGuard { root: root.clone() };
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"wide\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let mut lib = String::new();
+        for file in 0..110 {
+            let mut body = String::new();
+            for item in 0..100 {
+                body.push_str(&format!(
+                    "pub fn f{file}_{item}(x: i32) -> bool {{ x > {item} }}\n"
+                ));
+            }
+            std::fs::write(root.join(format!("src/m{file}.rs")), body)
+                .map_err(|error| error.to_string())?;
+            lib.push_str(&format!("pub mod m{file};\n"));
+        }
+        std::fs::write(root.join("src/lib.rs"), lib).map_err(|error| error.to_string())?;
+        let config = load_for_root(&root)?;
+
+        // Plain inventory: cut by the default cap.
+        let (_, plain) =
+            crate::analysis::inventory_classified_seams_at_with_config(&root, &config)?;
+        let plain = plain.ok_or("expected a limit fact")?;
+        assert!(plain.is_truncated(), "fixture must exceed the default cap");
+        assert_eq!(plain.analyzed, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT);
+        assert_eq!(plain.source, SeamLimitSource::Default);
+        assert!(plain.total <= REPAIR_SEAM_CEILING, "fixture stays in range");
+
+        // Repair inventory: widened, complete.
+        let (classified, info) = inventory_for_repair(&root, &config)?;
+        assert!(info.is_none_or(|info| !info.is_truncated()));
+        assert_eq!(classified.len(), plain.total);
+
+        // Agent-status gate: same answer, not withheld as truncated.
+        let gate = load_gate_state(&root);
+        assert!(
+            matches!(
+                gate,
+                GateState::Loaded {
+                    truncated: false,
+                    ..
+                }
+            ),
+            "the status gate must use the widened inventory"
+        );
+
+        // The cap is restored for later plain reads.
+        let (_, after) =
+            crate::analysis::inventory_classified_seams_at_with_config(&root, &config)?;
+        assert!(after.is_some_and(|info| info.is_truncated()));
+        assert_eq!(
+            crate::analysis::repo_exposure_seam_limit()?,
+            Some((DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, SeamLimitSource::Default))
+        );
+        Ok(())
     }
 
     fn key<'a>(

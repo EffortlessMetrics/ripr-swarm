@@ -220,12 +220,25 @@ pub(crate) fn gather_seam_inventory(
         })?;
         completeness = match scoped.repo_seam_limit {
             Some(limit) => {
-                super::repair_admission::InventoryCompleteness::from_inventory_limit(limit)
+                // A default-cap cut within the repair ceiling is judged the way
+                // `ripr repair` judges it: rerun once at the exact total (#1887).
+                let widen = matches!(
+                    &limit,
+                    Ok(Some(info)) if crate::app::task_first::repair_widened_cap(info).is_some()
+                );
+                if widen {
+                    super::repair_admission::InventoryCompleteness::from_inventory_limit(
+                        crate::app::task_first::inventory_for_repair(root, config)
+                            .map(|(_, limit_info)| limit_info),
+                    )
+                } else {
+                    super::repair_admission::InventoryCompleteness::from_inventory_limit(limit)
+                }
             }
             // No index was built (the no-impact fast path), so the limit fact
             // is unknown: fall back to the repo-wide authority, fail closed.
             None => super::repair_admission::InventoryCompleteness::from_inventory_limit(
-                crate::analysis::inventory_classified_seams_at_with_config(root, config)
+                crate::app::task_first::inventory_for_repair(root, config)
                     .map(|(_, limit_info)| limit_info),
             ),
         };
