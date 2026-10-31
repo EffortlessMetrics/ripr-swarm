@@ -336,6 +336,17 @@ fn facade_next_command(
     Some(format!("{command} --root {bound}"))
 }
 
+/// The closed reason code of a facade refusal: a decision (exit 3) or an
+/// operational failure (exit 2), for `repair` or `continue`.
+fn facade_refusal_code(decision: bool, repair: bool) -> &'static str {
+    match (decision, repair) {
+        (true, true) => "repair_not_started",
+        (true, false) => "continue_declined",
+        (false, true) => "repair_failed",
+        (false, false) => "continue_failed",
+    }
+}
+
 /// Under `--json`, write the shared `cli_refusal` document for a facade
 /// refusal to stdout (#11584) and return the error unchanged, so the stderr
 /// prose and the 2/3 exit stay exactly as before. Callers use this only on
@@ -347,12 +358,10 @@ fn facade_refusal(
     next_command: Option<&str>,
     error: CommandError,
 ) -> CommandError {
-    let code = match (&error, command) {
-        (CommandError::Decision(_), "repair") => "repair_not_started",
-        (CommandError::Decision(_), _) => "continue_declined",
-        (_, "repair") => "repair_failed",
-        (_, _) => "continue_failed",
-    };
+    let code = facade_refusal_code(
+        matches!(error, CommandError::Decision(_)),
+        command == "repair",
+    );
     if !json || matches!(error, CommandError::Interrupted(_)) {
         return error;
     }
