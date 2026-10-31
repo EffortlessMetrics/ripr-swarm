@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A glob import in a file that composes only under another explicitly declared Cargo target (a manifest `[[bin]]`, `[[example]]`, `[[test]]` or `[[bench]]` `path`) no longer counts as possibly binding the library's name in an integration test's crate, so a crate-qualified exact assertion on a changed public owner is credited there. A file of unestablished placement, a shared root and the test crate's own files keep refusing (#11123, #7415).

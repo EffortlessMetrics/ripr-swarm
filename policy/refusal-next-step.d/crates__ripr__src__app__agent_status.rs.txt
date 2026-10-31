@@ -1,0 +1,4 @@
+crates/ripr/src/app/agent_status.rs|failed to render agent attempt status JSON: {err}
+crates/ripr/src/app/agent_status.rs|failed to render agent status JSON: {err}
+crates/ripr/src/app/agent_status.rs|no open seam
+crates/ripr/src/app/agent_status.rs|no resumable attempt
