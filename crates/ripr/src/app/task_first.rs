@@ -417,13 +417,14 @@ pub(crate) const WIDEN_SEAM_BUDGET: &str = "rerun with a wider seam budget (set 
 
 /// Largest repository a repair start widens the built-in seam cap to cover.
 /// Past it the refusal stands, so the cap still bounds pathological monorepos.
-const REPAIR_SEAM_CEILING: usize = 4 * crate::analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT;
+const REPAIR_SEAM_CEILING: usize = 2 * crate::analysis::DEFAULT_REPO_EXPOSURE_SEAM_LIMIT;
 
 /// Seam inventory for a repair resolver. A repository only just past the
 /// built-in cap (tokio: 12,754 seams) would otherwise refuse every repair, so
 /// a default-source cut within [`REPAIR_SEAM_CEILING`] reruns once with the cap
-/// raised to the exact total. The rerun is complete, not partial, so the
-/// fail-closed truncation gate below is unchanged: an explicit
+/// raised to the exact total. The rerun is cut by nothing, and one that
+/// declined a Rust file is discarded, so the fail-closed truncation gate below
+/// is unchanged: an explicit
 /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` or a larger repository still refuses.
 ///
 /// Only the one-shot CLI resolvers call this. `load_gate_state` stays on the
@@ -443,7 +444,14 @@ fn inventory_for_repair(
     let first = crate::analysis::inventory_classified_seams_at_with_config(root, config)?;
     if let Some(cap) = first.1.as_ref().and_then(repair_widened_cap) {
         let _widened = crate::analysis::PilotInventoryDefault::widen_to(cap);
-        return crate::analysis::inventory_classified_seams_at_with_config(root, config);
+        let rerun =
+            crate::analysis::inventory_classified_seams_report_at_with_config(root, config)?;
+        // The repair gates read the cap only. A file the parse budget declined
+        // has no seams in the inventory, so a rerun that declined any is not
+        // known to be complete and the original truncation refusal stands.
+        if rerun.declined_rust_files.is_empty() {
+            return Ok((rerun.classified, rerun.limit_info));
+        }
     }
     Ok(first)
 }
