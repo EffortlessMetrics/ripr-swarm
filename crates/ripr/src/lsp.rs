@@ -26,6 +26,7 @@ mod refresh_scheduler;
 mod repair_card;
 #[cfg(test)]
 mod saved_edit_sequence;
+mod session_end;
 #[cfg(test)]
 mod source_origin_tests;
 mod state;
@@ -112,9 +113,13 @@ where
     let (stdin, stdout) = bounds.wrap(stdin, stdout);
     // #10016: repair raw non-ASCII URIs in the first initialize frame before
     // tower-lsp-server's strict RFC 3986 Uri parser rejects the whole request.
-    let stdin = initialize_repair::InitializeRepairReader::new(stdin);
     let (service, socket) = build_service(root.clone(), bounds.client_request_timeout);
-    let order = ShutdownExitOrder::default();
+    // #11439: `exit` and the end of stdin cancel in-flight analysis, so the
+    // server does not wait out a refresh that can no longer be delivered.
+    let session_end = session_end::SessionEnd::new(service.inner().session_end_hook());
+    let stdin = initialize_repair::InitializeRepairReader::new(stdin);
+    let stdin = session_end::EndOfInput::new(stdin, session_end.clone());
+    let order = ShutdownExitOrder::default().ending_session_with(session_end);
 
     Server::new(stdin, stdout, socket)
         .concurrency_level(bounds.request_concurrency)
@@ -143,13 +148,25 @@ where
 struct ShutdownExitOrder {
     shutdown_received: Arc<AtomicBool>,
     exit_received: Arc<AtomicBool>,
+    /// Signalled when `exit` arrives (#11439).
+    session_end: Option<session_end::SessionEnd>,
 }
 
 impl ShutdownExitOrder {
+    fn ending_session_with(mut self, session_end: session_end::SessionEnd) -> Self {
+        self.session_end = Some(session_end);
+        self
+    }
+
     fn record(&self, method: &str) {
         match method {
             "shutdown" => self.shutdown_received.store(true, Ordering::SeqCst),
-            "exit" => self.exit_received.store(true, Ordering::SeqCst),
+            "exit" => {
+                self.exit_received.store(true, Ordering::SeqCst);
+                if let Some(session_end) = &self.session_end {
+                    session_end.signal();
+                }
+            }
             _ => {}
         }
     }

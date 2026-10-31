@@ -126,6 +126,8 @@ pub(crate) fn record_feedback(options: &RecordFeedbackOptions) -> Result<Recorde
 }
 
 /// Load every well-formed receipt under the default feedback directory.
+/// Unreadable or malformed `.json` files are skipped; each skipped file and
+/// reason is named on stderr. Directory listing failures still abort.
 pub(crate) fn load_feedback_receipts(root: &Path) -> Result<Vec<FeedbackReceipt>, String> {
     let root = confine_root(root)?;
     let directory = root.join(FEEDBACK_DIRECTORY);
@@ -142,8 +144,10 @@ pub(crate) fn load_feedback_receipts(root: &Path) -> Result<Vec<FeedbackReceipt>
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
         }
-        if let Some(receipt) = load_receipt_file(&path)? {
-            receipts.push(receipt);
+        match load_receipt_file(&path) {
+            Ok(Some(receipt)) => receipts.push(receipt),
+            Ok(None) => {}
+            Err(reason) => report_skipped_feedback_receipt(&path, &reason),
         }
     }
     receipts.sort_by(|left, right| left.feedback_id.cmp(&right.feedback_id));
@@ -294,6 +298,28 @@ fn load_receipt_file(path: &Path) -> Result<Option<FeedbackReceipt>, String> {
     let value: serde_json::Value = serde_json::from_str(&text)
         .map_err(|error| format!("parse {} failed: {error}", path.display()))?;
     Ok(Some(rendered_receipt_from_value(&value)?))
+}
+
+fn skipped_feedback_receipt_warning(path: &Path, reason: &str) -> String {
+    format!(
+        "ripr: skipping feedback receipt {}: {reason}",
+        path.display()
+    )
+}
+
+fn report_skipped_feedback_receipt(path: &Path, reason: &str) {
+    let warning = skipped_feedback_receipt_warning(path, reason);
+    eprintln!("{warning}");
+    SKIPPED_FEEDBACK_RECEIPT_WARNINGS.with(|cell| {
+        if let Some(buf) = cell.borrow_mut().as_mut() {
+            buf.push(warning);
+        }
+    });
+}
+
+thread_local! {
+    static SKIPPED_FEEDBACK_RECEIPT_WARNINGS: std::cell::RefCell<Option<Vec<String>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 fn load_optional_json(path: &Path) -> Result<Option<serde_json::Value>, String> {
@@ -565,6 +591,15 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn capture_skipped_feedback_receipt_warnings() {
+        super::SKIPPED_FEEDBACK_RECEIPT_WARNINGS.with(|cell| *cell.borrow_mut() = Some(Vec::new()));
+    }
+
+    fn take_skipped_feedback_receipt_warnings() -> Vec<String> {
+        super::SKIPPED_FEEDBACK_RECEIPT_WARNINGS
+            .with(|cell| cell.borrow_mut().take().unwrap_or_default())
+    }
 
     struct TempRoot {
         path: PathBuf,
@@ -1162,10 +1197,60 @@ mod tests {
         fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
         fs::write(directory.join("bad.json"), "{\"kind\":\"gate-decision\"}\n")
             .map_err(|error| error.to_string())?;
-        let error = load_feedback_receipts(&root.path)
-            .err()
-            .ok_or_else(|| "malformed".to_string())?;
-        assert!(error.contains("usefulness_feedback_receipt"));
+        let error = record(
+            &root.path,
+            payload("snap-1", None, FeedbackReason::UsefulLimitation),
+            "bad",
+        )
+        .err()
+        .ok_or_else(|| "malformed".to_string())?;
+        assert!(
+            error.contains("usefulness_feedback_receipt"),
+            "recording over a corrupt existing receipt must still fail closed: {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn export_skips_a_malformed_receipt_and_keeps_a_well_formed_one() -> Result<(), String> {
+        let root = TempRoot::new("export-skip-malformed")?;
+        record(
+            &root.path,
+            payload("snap-1", None, FeedbackReason::UsefulLimitation),
+            "good",
+        )?;
+        let directory = root.path.join(FEEDBACK_DIRECTORY);
+        let bad_path = directory.join("bad.json");
+        fs::write(&bad_path, "{not-json").map_err(|error| error.to_string())?;
+        let receipts = load_feedback_receipts(&root.path)?;
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].idempotency_key, "good");
+        capture_skipped_feedback_receipt_warnings();
+        let (rendered, join) = export_feedback_join(&ExportFeedbackOptions {
+            root: root.path.clone(),
+            route_quality: None,
+            live_identity: None,
+        })?;
+        let warnings = take_skipped_feedback_receipt_warnings();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        assert_eq!(parsed, join);
+        assert_eq!(join["kind"], "usefulness_feedback_join");
+        assert_eq!(join["denominators"]["receipts_total"], 1);
+        assert_eq!(
+            warnings.len(),
+            1,
+            "exactly one skipped-receipt warning, got {warnings:?}"
+        );
+        let warning = &warnings[0];
+        assert!(
+            warning.contains(&bad_path.display().to_string()),
+            "skip warning must name the skipped file: {warning}"
+        );
+        assert!(
+            warning.contains("parse") && warning.contains("failed"),
+            "skip warning must name the parse failure: {warning}"
+        );
         Ok(())
     }
 

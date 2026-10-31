@@ -27,8 +27,9 @@ analysis of the saved workspace against the base ref. Typing without saving
 does not re-analyze: the edited file's diagnostics are withdrawn, and hover
 says its evidence is paused until the file is saved. A file that no refresh
 has analyzed yet says so, and its evidence appears after the next refresh. Save to get fresh
-evidence, or run the `ripr.refresh` command. The server advertises full
-document sync and relies on `textDocument/didSave`.
+evidence, or run the `ripr.refresh` command. The server advertises incremental
+document sync (so it can tell when an open buffer diverges from the analyzed
+saved content) and relies on `textDocument/didSave`.
 
 **Few diagnostics is normal.** The default `actionable` profile publishes only
 `weakly_exposed`, `reachable_unrevealed`, and `no_static_path` findings that
@@ -96,7 +97,7 @@ from a scripted client):
 | --- | --- |
 | Git repository with an edited, saved Rust file | Observed with a scripted LSP client: a `weakly_exposed`-style diagnostic on the changed line within about a second |
 | Git repository with **nothing changed** against the base | Observed with a scripted LSP client: no diagnostics, and hover shows the generic "ripr estimates static RIPR exposure" text. This is the normal clean state, not a broken server. Expected, not observed in an editor: edit a branch condition, save, and the diagnostic appears. Set `baseRef` to compare against another branch |
-| **Not a Git work tree** | Observed with a scripted LSP client: a `window/showMessage` warning, "workspace analysis failed ... not inside a Git work tree", whose text ripr itself bounds to 240 characters (ending in `…` when cut, with absolute paths redacted), so a remedy may be cut off. Diff-scoped analysis needs Git: run `ripr doctor` for the full remedy, or use `ripr pilot --root .` to explore without history |
+| **Not a Git work tree** | Observed with a scripted LSP client: a `window/showMessage` warning, "workspace analysis failed ... not inside a Git work tree", whose text ripr itself bounds to 240 characters (ending in `…` when cut, with absolute paths redacted), and the remedy leads the text while the root path trails, so a long root is the part cut. Diff-scoped analysis needs Git: open a folder inside a repository or pass `--root <path>` to one, run `ripr doctor` for the full remedy, or use `ripr pilot --root .` to explore without history |
 | `ripr` not on the client's `PATH` | Typical editor behavior; wording varies. Clients generally report a failed server start (places to look: Helix `:log-open`, Neovim `:checkhealth vim.lsp`, Zed language server status). Use an absolute path in `cmd` / `command` |
 
 A first-open diagnostic of `ripr-diagnostic-analysis-pending` means the first
@@ -108,7 +109,13 @@ for the snippet below. Older versions can use `vim.lsp.start` with the same
 
 ## Helix
 
-Read from Helix master source on 2026-09-28; not run in a Helix binary.
+Read from Helix master source on 2026-09-28, then run in Helix 25.07.1 on Linux on
+2026-10-31 against a development build of `ripr` (0.11.0, 4753a6d): `hx --health rust`
+lists `ripr` as resolved, the `[language-server.ripr.config.ripr]` table is
+answered to `workspace/configuration`, the first-open pending diagnostic is
+followed by a pushed `weakly_exposed` diagnostic, and
+`:lsp-workspace-command ripr.refresh` reaches the server. This is a setup
+check, not a reviewed journey receipt.
 
 Add to `~/.config/helix/languages.toml` (or `.helix/languages.toml` in the
 repository):
@@ -162,8 +169,13 @@ any root, which would stop with `root_unavailable`. Refresh with the
 Neovim v0.12.5 does not redraw refreshed pull diagnostics in an open buffer on
 its own; the recipe's
 [measured compatibility limit](neovim-lsp.md#measured-compatibility-limit)
-records the run and the upstream fix. On that release, re-open the buffer or
-request document diagnostics after a refresh.
+records that run and the upstream fix. In one further check on 2026-10-31
+(Linux, Neovim v0.12.6, the snippet above, `ripr.refresh` through `exec_cmd`),
+the refreshed finding also did not appear within 60 seconds; after analysis had
+finished, one manual `textDocument/diagnostic` request made the `weakly_exposed`
+finding available. That check is recorded only on this page, and its transcript
+was not retained. On these releases, re-open the buffer or request document
+diagnostics after a refresh has finished analyzing.
 
 ## Zed
 

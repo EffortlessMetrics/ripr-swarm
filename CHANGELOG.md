@@ -11,6 +11,10 @@ are scoped or reviewed.
 
 ### Changed
 
+- `ripr cache status|export|clear --help` now open with the command's catalog
+  summary before the `Usage:` line, and `ripr policy|reports|baseline|pr-comments
+  <leaf> --help` lead with that leaf's catalog summary (the sentence
+  `ripr help --all` shows) instead of the group's lead sentence (#11431).
 - `ripr pilot` no longer classifies seams it will not rank. With
   `RIPR_REPO_EXPOSURE_SEAM_LIMIT` unset, the built-in inventory cap follows the
   pilot artifact budget (2000, via `RIPR_PILOT_SEAM_BUDGET`) instead of 10000.
