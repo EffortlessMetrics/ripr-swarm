@@ -1,0 +1,2 @@
+pub fn fragment_shift(base: u32) -> u32 { base + 5 }
+mod child;

@@ -70,6 +70,11 @@ pub(crate) fn check_workspace_with_config_typed(
 /// tracked-worktree counterpart of [`check_workspace_with_config_typed`]
 /// (#7357). Unlike the LSP refresh entry point it keeps the disclosure
 /// probes, so the untracked and ignored working-tree facts are populated.
+///
+/// It also returns the producer-observed raw Rust byte commitments the shared
+/// producer already records while it loads each source, so a consumer that
+/// later reads the same files (the MCP seam inventory) can compare what both
+/// producers consumed instead of hashing the working tree afterwards.
 pub(crate) fn check_workspace_worktree_with_config_typed(
     input: CheckInput,
     config: &RiprConfig,
@@ -77,12 +82,13 @@ pub(crate) fn check_workspace_worktree_with_config_typed(
     (
         CheckOutput,
         Option<crate::analysis::language_outcome::LanguageCompletenessView>,
+        crate::analysis::consumed_source::ConsumedRustSources,
     ),
     CoreError,
 > {
-    let (output, _, _, view) =
+    let (output, _, consumed_sources, view) =
         check_with_progress_and_origins(input, config, AnalysisProgressScope::Worktree, None)?;
-    Ok((output, view))
+    Ok((output, view, consumed_sources))
 }
 
 pub fn check_workspace_worktree_with_config(
