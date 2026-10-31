@@ -7626,6 +7626,37 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
         &RelationIndex::empty(),
     );
     assert_eq!(paths, vec!["./api".to_string()]);
+    // The line context projects the mock paths from the candidates it already
+    // computed: one relation scan per owner (#10925), and the same paths the
+    // standalone collector derives by scanning again.
+    assert!(
+        !related_test_candidates(
+            &owner,
+            &tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            &RelationIndex::empty()
+        )
+        .is_empty(),
+        "fixture must relate at least one test"
+    );
+    let before = related_tests::RELATED_CANDIDATE_SCANS.with(|count| count.get());
+    let context = owner_line_context(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        &RelationIndex::empty(),
+        None,
+    );
+    let scans = related_tests::RELATED_CANDIDATE_SCANS.with(|count| count.get()) - before;
+    assert_eq!(scans, 1, "owner_line_context must scan candidates once");
+    assert_eq!(context.mock_paths, paths);
+    assert_eq!(
+        mock_paths_from_candidates(&context.related_candidates),
+        paths
+    );
 }
 
 #[test]

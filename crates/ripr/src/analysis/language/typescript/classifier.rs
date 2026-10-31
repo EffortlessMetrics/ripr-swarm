@@ -6424,14 +6424,7 @@ pub(crate) fn owner_line_context<'a>(
         alias_map,
         relation_index,
     );
-    let mock_paths = collect_related_mock_paths(
-        owner,
-        all_tests,
-        workspace_root,
-        reexport_index,
-        alias_map,
-        relation_index,
-    );
+    let mock_paths = mock_paths_from_candidates(&related_candidates);
     let named_limitations_from_ownership: Vec<TypeScriptNamedLimitation> =
         if let Some(root) = workspace_root {
             named_limitations_for_unresolved_ownership(

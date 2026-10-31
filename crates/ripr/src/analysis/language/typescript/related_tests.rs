@@ -1403,6 +1403,14 @@ pub(crate) fn same_package_root(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Full `related_test_candidates` scans run on this thread: one owner's
+    /// line context must cost exactly one.
+    pub(crate) static RELATED_CANDIDATE_SCANS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 /// Collect related test candidates for `owner` from `all_tests`.
 ///
 /// `workspace_root` enables package-local ownership filtering when `Some`:
@@ -1438,6 +1446,8 @@ pub(crate) fn related_test_candidates<'a>(
     alias_map: Option<&TsAliasMap>,
     relation_index: &RelationIndex,
 ) -> Vec<TypeScriptRelatedCandidate<'a>> {
+    #[cfg(test)]
+    RELATED_CANDIDATE_SCANS.with(|count| count.set(count.get() + 1));
     let package_scope = workspace_root.map(|root| OwnerPackageScope::new(&owner.file, root));
     let in_owner_package = |test: &&TypeScriptTest| {
         package_scope
