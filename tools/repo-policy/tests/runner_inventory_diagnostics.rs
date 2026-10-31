@@ -26,6 +26,17 @@ fn run_route(
     runners: &str,
     untrusted: bool,
 ) -> TestResult<(String, String, bool, u32)> {
+    run_route_env(status, fail_first, error, runners, untrusted, &[])
+}
+
+fn run_route_env(
+    status: u8,
+    fail_first: u32,
+    error: &str,
+    runners: &str,
+    untrusted: bool,
+    extra: &[(&str, &str)],
+) -> TestResult<(String, String, bool, u32)> {
     let scratch = Scratch(std::env::temp_dir().join(format!(
         "ripr-runner-query-{}-{}",
         std::process::id(),
@@ -35,7 +46,7 @@ fn run_route(
     let stub = scratch.0.join("gh");
     fs::write(
         &stub,
-        "#!/bin/bash\nn=$(cat \"$COUNT\" 2>/dev/null || echo 0)\nn=$((n + 1))\nprintf '%s' \"$n\" > \"$COUNT\"\nprintf '%s\\n' \"$*\" > \"$CALLS\"\nprintf '%s' \"$QUERY_ERROR\" >&2\n[ \"$n\" -gt \"$FAIL_FIRST\" ] || exit \"$QUERY_STATUS\"\nprintf '%s' \"$RUNNERS\"\n",
+        "#!/bin/bash\nn=$(cat \"$COUNT\" 2>/dev/null || echo 0)\nn=$((n + 1))\nprintf '%s' \"$n\" > \"$COUNT\"\nprintf '%s\\n' \"$*\" > \"$CALLS\"\nv=ERR_$n\nif [ -n \"${!v+x}\" ]; then printf '%s' \"${!v}\" >&2; else printf '%s' \"$QUERY_ERROR\" >&2; fi\n[ \"$n\" -gt \"$FAIL_FIRST\" ] || exit \"$QUERY_STATUS\"\nprintf '%s' \"$RUNNERS\"\n",
     )?;
     fs::set_permissions(&stub, fs::Permissions::from_mode(0o700))?;
     let (_, route) = WORKFLOW.split_once("\n  route:\n").ok_or("route job")?;
@@ -95,6 +106,7 @@ fn run_route(
         .env("COUNT", &count)
         .env("FAIL_FIRST", fail_first.to_string())
         .env("RUNNER_QUERY_RETRY_DELAY", "0")
+        .envs(extra.iter().copied())
         .env("QUERY_STATUS", status.to_string())
         .env("QUERY_ERROR", error)
         .env("RUNNERS", runners)
@@ -238,5 +250,52 @@ fn untrusted_pr_never_queries_or_claims_a_command_status() -> TestResult {
         assert!(output.contains(expected), "{output}");
     }
     assert!(!summary.contains("underlying cause is not claimed"));
+    Ok(())
+}
+
+#[test]
+fn summary_reports_the_final_failed_attempts_http_status() -> TestResult {
+    let (_, summary, _, attempts) = run_route_env(
+        1,
+        99,
+        "",
+        "",
+        false,
+        &[
+            ("ERR_1", "HTTP 502: a"),
+            ("ERR_2", "HTTP 429: b"),
+            ("ERR_3", "HTTP 403: c"),
+        ],
+    )?;
+    assert_eq!(attempts, 3);
+    assert!(summary.contains("reported by gh: `403`"), "{summary}");
+    assert!(!summary.contains("502") && !summary.contains("429"));
+    // A final attempt that prints no status must not inherit an earlier one.
+    let (_, summary, _, _) = run_route_env(
+        1,
+        99,
+        "",
+        "",
+        false,
+        &[("ERR_1", "HTTP 502: a"), ("ERR_3", "opaque")],
+    )?;
+    assert!(summary.contains("reported by gh: `none`"), "{summary}");
+    Ok(())
+}
+
+#[test]
+fn malformed_retry_delay_falls_back_without_changing_retries() -> TestResult {
+    for bad in ["abc", "-1", "1.5", "999999999999"] {
+        let (output, _, _, attempts) = run_route_env(
+            1,
+            1,
+            "",
+            r#"{"runners":[]}"#,
+            false,
+            &[("RUNNER_QUERY_RETRY_DELAY", bad)],
+        )?;
+        assert_eq!(attempts, 2, "delay {bad:?}");
+        assert!(output.contains("runner_query=ok\n"), "{output}");
+    }
     Ok(())
 }

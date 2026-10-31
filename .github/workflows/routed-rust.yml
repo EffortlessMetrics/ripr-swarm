@@ -75,6 +75,8 @@ jobs:
           runner_query_attempts=0 runner_query_http=none
           query_runners() {
             local attempt=1 delay="${RUNNER_QUERY_RETRY_DELAY:-5}" rc status
+            # A malformed delay must not make `sleep` fail and change retry behavior.
+            [[ "$delay" =~ ^[0-9]{1,2}$ ]] || delay=1
             while :; do
               runner_query_attempts=$attempt
               runners="$(gh api --paginate 'orgs/EffortlessMetrics/actions/runners?per_page=100' 2>/tmp/runners.err)" && return 0
