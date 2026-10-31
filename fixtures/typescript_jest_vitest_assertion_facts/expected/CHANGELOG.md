@@ -845,7 +845,7 @@ Updated:
 ## Pending — typescript_jest_vitest_assertion_facts (39)
 
 Reason:
-RIPR-SPEC-0088: related-test selection ties keep the first row, matching the check headline (#11228)
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 
 Command:
 `cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`

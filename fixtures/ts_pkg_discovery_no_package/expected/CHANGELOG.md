@@ -629,6 +629,7 @@ Updated:
 ## Pending — ts_pkg_discovery_no_package (32)
 
 Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
 RIPR-SPEC-0122: #11229 script-file ObservationUnconfirmed wording names the preview adapter (wording only; verdict and credit unchanged)
 
 Command:

@@ -146,8 +146,9 @@ pub(crate) fn detect_typescript_project(root: &Path) -> bool {
 
 /// A package-led root (#11336): `package.json` at the root plus JavaScript or
 /// TypeScript source (not tooling config files) at the root or under
-/// `src`/`test`/`tests`. A Cargo or Python project at the same root does not
-/// exclude it: a polyglot repository whose JS/TS changes were reported as
+/// `src`/`test`/`tests` (beside a `Cargo.toml`, only the root and `src`: Rust
+/// `tests/` hold integration tests and fixtures, #11418). A Cargo or Python
+/// project at the same root does not exclude it: a polyglot repository whose JS/TS changes were reported as
 /// "not analyzed" is the case this exists for. `package.json` alone stays a
 /// non-marker (#10941), as does JavaScript with no manifest.
 #[cfg(any(feature = "lang-typescript", test))]
@@ -155,10 +156,16 @@ pub(crate) fn detect_javascript_led_root(root: &Path) -> bool {
     JAVASCRIPT_LED_MANIFESTS
         .iter()
         .any(|manifest| root.join(manifest).is_file())
-        && (dir_has_package_source_file(root)
-            || JAVASCRIPT_LED_SOURCE_DIRS
+        && (dir_has_package_source_file(root) || {
+            let has_cargo_toml = root.join("Cargo.toml").is_file();
+            JAVASCRIPT_LED_SOURCE_DIRS
                 .iter()
-                .any(|dir| dir_contains_package_source(&root.join(dir))))
+                // Beside a Rust crate, `test`/`tests` hold Rust integration
+                // tests and fixtures, so JavaScript there is not the
+                // project's own source (#11418).
+                .filter(|dir| !(has_cargo_toml && **dir != "src"))
+                .any(|dir| dir_contains_package_source(&root.join(dir)))
+        })
 }
 
 /// Root manifest and source directories that `detect_javascript_led_root`
@@ -502,6 +509,34 @@ mod tests {
             assert!(!detect_typescript_project(&root), "removed {extension}");
         }
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    /// A Rust crate's `tests/` holds Rust integration tests and fixtures, so
+    /// JavaScript there beside a `package.json` (wasm, napi, docs tooling) is
+    /// not the project's own source; `src/` and the root still count (#11418).
+    #[test]
+    fn rust_crate_fixture_javascript_does_not_select_the_adapter() -> Result<(), String> {
+        let root = detection_root("js-fixture-in-rust")?;
+        write(&root, "package.json")?;
+        write(&root, "Cargo.toml")?;
+        write(&root, "tests/fixtures/app/foo.js")?;
+        write(&root, "test/fixtures/bar.ts")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "fixture JavaScript under tests/ beside Cargo.toml"
+        );
+        write(&root, "src/pricing.js")?;
+        assert!(
+            detect_typescript_project(&root),
+            "JavaScript under src/ beside Cargo.toml still counts"
+        );
+        std::fs::remove_file(root.join("Cargo.toml")).map_err(|err| err.to_string())?;
+        std::fs::remove_file(root.join("src/pricing.js")).map_err(|err| err.to_string())?;
+        assert!(
+            detect_typescript_project(&root),
+            "the same tests/ JavaScript counts when there is no Cargo.toml"
+        );
+        Ok(())
     }
 
     /// #11336: a package-led root (manifest plus JavaScript/TypeScript source,

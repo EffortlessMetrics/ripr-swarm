@@ -40,8 +40,8 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
     if rust_nesting_refusal(text).is_some() {
         return None;
     }
-    let parse = parse_source_file(text);
-    parse.errors().is_empty().then_some(parse)
+    let (parse, error_count) = parse_source_file_checked(text);
+    (error_count == 0).then_some(parse)
 }
 
 /// Parse with the current edition, retrying as Rust 2021 when that fails.
@@ -51,23 +51,34 @@ pub(crate) fn parse_clean_source_file(text: &str) -> Option<Parse<SourceFile>> {
 /// 2021 parse is used only when it is error-free. A file that uses the
 /// legacy `try!(..)` macro and still fails both is retried once as Rust 2015
 /// (#10054), again used only when error-free.
+#[cfg(test)]
 pub(crate) fn parse_source_file(text: &str) -> Parse<SourceFile> {
+    parse_source_file_checked(text).0
+}
+
+/// [`parse_source_file`] plus the error count of the parse it returns.
+/// `Parse::errors` re-runs the whole-tree validation pass and allocates on
+/// every call (about 14% of a cold tokio `check`), so the count is computed
+/// once per distinct parse and memoized with it: callers that only need to
+/// know whether the file is clean (or how many errors it has) no longer
+/// validate the same tree again on every memo hit.
+pub(crate) fn parse_source_file_checked(text: &str) -> (Parse<SourceFile>, usize) {
     if text.len() > PARSE_CACHE_MAX_BYTES {
         return parse_source_file_uncached(text);
     }
     PARSE_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if let Some(position) = cache.iter().position(|(source, _)| source == text) {
+        if let Some(position) = cache.iter().position(|(source, _, _)| source == text) {
             // Move-to-front keeps the hot file resident.
             let entry = cache.remove(position);
-            let parse = entry.1.clone();
+            let result = (entry.1.clone(), entry.2);
             cache.insert(0, entry);
-            return parse;
+            return result;
         }
-        let parse = parse_source_file_uncached(text);
-        cache.insert(0, (text.to_string(), parse.clone()));
+        let (parse, error_count) = parse_source_file_uncached(text);
+        cache.insert(0, (text.to_string(), parse.clone(), error_count));
         cache.truncate(PARSE_CACHE_ENTRIES);
-        parse
+        (parse, error_count)
     })
 }
 
@@ -80,21 +91,35 @@ pub(crate) fn parse_source_file(text: &str) -> Parse<SourceFile> {
 const PARSE_CACHE_ENTRIES: usize = 4;
 const PARSE_CACHE_MAX_BYTES: usize = 512 * 1024;
 
-type ParseCacheEntries = Vec<(String, Parse<SourceFile>)>;
+type ParseCacheEntries = Vec<(String, Parse<SourceFile>, usize)>;
 
 thread_local! {
     static PARSE_CACHE: std::cell::RefCell<ParseCacheEntries> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn parse_source_file_uncached(text: &str) -> Parse<SourceFile> {
+#[cfg(test)]
+thread_local! {
+    /// Test-only count of `Parse::errors` validation passes run by the
+    /// uncached parse, so a test can assert the memo does not revalidate.
+    static VALIDATION_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The parse for `text` and the error count of that parse.
+fn parse_source_file_uncached(text: &str) -> (Parse<SourceFile>, usize) {
+    let validated = |parse: &Parse<SourceFile>| {
+        #[cfg(test)]
+        VALIDATION_PASSES.with(|passes| passes.set(passes.get() + 1));
+        parse.errors().len()
+    };
     let parse = SourceFile::parse(text, Edition::CURRENT);
-    if parse.errors().is_empty() {
-        return parse;
+    let current_errors = validated(&parse);
+    if current_errors == 0 {
+        return (parse, 0);
     }
     let legacy = SourceFile::parse(text, Edition::Edition2021);
-    if legacy.errors().is_empty() {
-        return legacy;
+    if validated(&legacy) == 0 {
+        return (legacy, 0);
     }
     // A Rust 2015 crate may still use the `try!(..)` macro, which 2018+
     // reserves as a keyword; both newer editions reject the whole file and
@@ -103,13 +128,13 @@ fn parse_source_file_uncached(text: &str) -> Parse<SourceFile> {
     // or `dyn` as identifiers) and genuinely broken buffers keep failing
     // closed and do not pay a third full parse.
     if !(text.contains("try!") || text.contains("try !")) {
-        return parse;
+        return (parse, current_errors);
     }
     let oldest = SourceFile::parse(text, Edition::Edition2015);
-    if oldest.errors().is_empty() {
-        oldest
+    if validated(&oldest) == 0 {
+        (oldest, 0)
     } else {
-        parse
+        (parse, current_errors)
     }
 }
 
@@ -593,13 +618,16 @@ mod tests {
         for round in 0..3 {
             for text in sources.iter().chain(sources.iter().rev()) {
                 let cached = parse_source_file(text);
-                let fresh = parse_source_file_uncached(text);
+                let (fresh, fresh_errors) = parse_source_file_uncached(text);
                 assert_eq!(
                     format!("{:#?}", cached.syntax_node()),
                     format!("{:#?}", fresh.syntax_node()),
                     "round {round}: {text}"
                 );
                 assert_eq!(cached.errors().len(), fresh.errors().len(), "{text}");
+                let (_, checked) = parse_source_file_checked(text);
+                assert_eq!(checked, fresh_errors, "{text}");
+                assert_eq!(checked, fresh.errors().len(), "{text}");
             }
         }
         // More distinct sources than cache slots still return correct parses.
@@ -610,6 +638,33 @@ mod tests {
             assert!(format!("{:?}", parse.syntax_node()).contains("SOURCE_FILE"));
             assert!(parse.syntax_node().text().to_string() == text, "{text}");
         }
+    }
+
+    /// Counter oracle: the memo hit must not rerun `Parse::errors`. One
+    /// clean source asked for five times validates once; a source that
+    /// fails every edition validates once per edition tried, once overall.
+    #[test]
+    fn repeated_clean_checks_of_one_source_validate_once() {
+        let clean = "fn counter_probe_clean() { let x = 1; }\n";
+        let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+        for _ in 0..5 {
+            assert!(parse_clean_source_file(clean).is_some());
+            assert_eq!(parse_source_file_checked(clean).1, 0);
+        }
+        let after = VALIDATION_PASSES.with(std::cell::Cell::get);
+        assert_eq!(after - before, 1, "clean source validated more than once");
+
+        let broken = "fn counter_probe_broken( {\n";
+        let before = VALIDATION_PASSES.with(std::cell::Cell::get);
+        let expected = SourceFile::parse(broken, Edition::CURRENT).errors().len();
+        assert!(expected > 0);
+        for _ in 0..5 {
+            assert!(parse_clean_source_file(broken).is_none());
+            assert_eq!(parse_source_file_checked(broken).1, expected);
+        }
+        let after = VALIDATION_PASSES.with(std::cell::Cell::get);
+        // current + 2021 editions on the first ask (no `try!`), then memo hits.
+        assert_eq!(after - before, 2, "broken source revalidated on memo hits");
     }
 
     use super::*;
