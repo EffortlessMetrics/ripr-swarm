@@ -1,1 +1,0 @@
-crates/ripr/src/git.rs|Command::new|9|shared-git-helper|#11533: one additional test-only raw `git init`/`git config` fixture spawn that plants a repository `core.hooksPath` post-index-change hook the shared git helper must not run. Same bounded fixture shape as the #4744 fsmonitor planting spawn; no shell, network or user-repository mutation.
