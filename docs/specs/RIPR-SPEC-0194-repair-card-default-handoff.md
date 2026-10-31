@@ -47,6 +47,12 @@ compatibility `ripr agent packet` command remains byte-for-byte unchanged.
 
 ## Behavior
 
+The human card groups detail families only when their route, evidence state,
+and unavailable reason agree, at the position of their first reference. Family
+order within a group follows the card. Every family remains named and the state is
+shown, including stale, missing, and unavailable. Distinct states or reasons
+remain separate; the full JSON card and its detail references are unchanged.
+
 `ripr agent card --root PATH --seam-id ID [--json]` resolves one visible,
 policy-admitted seam exactly like `ripr agent packet` (same inventory, same
 not-found refusal naming `ripr pilot`, same `AgentBriefPolicy` omission
@@ -244,6 +250,14 @@ live caller (`git_output`, `task_for`, `TASK_WRITE_TARGETED_TEST`).
   block did not already say (identical lists print once, partial overlap
   prints the shared entries once and the remainder once, and a card without a
   canonical block prints its own list).
+- `crates/ripr/src/cli/commands/agent_card.rs` unit test
+  `prose_words_enums_for_a_newcomer_and_omits_the_schema_line` covers the
+  human summary wording (#9244): the snapshot currentness, the instruction
+  state and the five done-when axes print in plain language, the
+  `repair_card.v1` schema line is omitted, and no owned line prints a raw
+  snake_case enum spelling. The JSON card keeps every wire value and
+  `schema_version`; the wording is static guidance and claims no runtime
+  outcome.
 - `crates/ripr/src/cli/agent.rs` unit tests cover option parsing and the
   updated unknown-subcommand listing.
 - `crates/ripr/tests/cli_smoke.rs` `agent_card_hands_off_one_seam_as_the_default_repair_card`

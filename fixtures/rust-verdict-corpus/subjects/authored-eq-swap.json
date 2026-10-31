@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-eq-swap",
+  "origin": "authored",
+  "version_label": "authored 2026-10-27 for #10304 (a constant swapped on a one-sided equality: which rows credit the replaced constant)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "4b7ee379fb9f9e9e599f29c09cef94d53b53c727eda4402b3d4fb89c6f329d37"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "78a320fc21bb894bddcf8489660007ed1e3b734ac5938af2093ff39c5710f0a4"
+    }
+  ]
+}

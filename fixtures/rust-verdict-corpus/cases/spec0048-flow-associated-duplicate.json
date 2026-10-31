@@ -1,0 +1,44 @@
+{
+  "case_id": "spec0048-flow-associated-duplicate",
+  "subject_id": "authored-spec0048-shape-kit",
+  "diff": "cases/spec0048-flow-associated-duplicate.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 32
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "behavior_selector_const",
+  "test_shape": "selector_const_associated_per_impl",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "pub const MAX: u32 = 10;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: the edited Large::MAX has no reader; capped reads Small::MAX through Self::MAX, so the edit changes nothing the test can see"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "MAX is declared once per impl. The reader reads Small::MAX, so an edit to Large::MAX has no reader. A name match on MAX must not promote a verdict.",
+  "labeling_observation": {
+    "ripr_commit": "01097634",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

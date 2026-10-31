@@ -35,9 +35,14 @@
 //!
 //! Unlike [`DirectoryModuleCacheScope`] this cache is deliberately NOT
 //! scoped per run: cross-run reuse on one thread is the entire point for
-//! the LSP. Test extraction is NOT routed through here because
-//! `promote_committed_snapshots` reads `__snapshots__` files — test
-//! extraction is not a pure function of the test file's content.
+//! the LSP. Test extraction is NOT routed through the combined facts
+//! because `promote_committed_snapshots` reads `__snapshots__` files, so the
+//! analysis of a test file is not a pure function of its content. The
+//! extraction itself (`extract_tests_with_expansion`) is: it reads only
+//! `(path, source)`. [`test_extraction_cached`] caches that pure step in a
+//! separate cache keyed by path and content, and the caller runs snapshot
+//! promotion on a clone of the cached tests every run, so a changed or new
+//! snapshot file is still seen (#10017).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -76,12 +81,18 @@ pub(crate) struct CacheKey {
     pub(crate) fingerprint: (u64, u64),
 }
 
-/// Two independent 64-bit hashes over different domain separators, composed
-/// into a 128-bit fingerprint of every input the facts depend on: workspace
+/// A 128-bit fingerprint of every input the facts depend on: workspace
 /// root, alias-map digest, path, and source bytes. Moved unchanged from the
 /// deleted export-facts cache (#10063); now the fingerprint of the combined
 /// facts cache (#10071). `DefaultHasher::new` is keyed deterministically
 /// within a process, which is all the cache needs.
+///
+/// One pass over the source bytes: the first lane hashes every input; the
+/// second lane hashes the finished first lane plus the identity metadata
+/// instead of re-reading the source (#10087 follow-up). The pair keeps the
+/// (u64, u64) shape, both lanes stay deterministic per process, and a
+/// process-lifetime cache capped at a few thousand entries sits far below
+/// the birthday bound of even a single 64-bit lane.
 pub(crate) fn facts_fingerprint(
     workspace_root: &Path,
     alias_digest: (u64, u64),
@@ -97,22 +108,23 @@ pub(crate) fn facts_fingerprint(
     first.write(path.as_bytes());
     first.write_u8(0x00);
     first.write(source.as_bytes());
+    let first = first.finish();
     let mut second = std::collections::hash_map::DefaultHasher::new();
     second.write_u8(0x5C);
-    second.write(source.as_bytes());
-    second.write_u8(0x00);
-    second.write(path.as_bytes());
-    second.write_u8(0x00);
+    second.write_u64(first);
+    second.write_u64(source.len() as u64);
     second.write_u64(alias_digest.1);
     second.write_u64(alias_digest.0);
+    second.write(path.as_bytes());
+    second.write_u8(0x00);
     workspace_root.hash(&mut second);
-    (first.finish(), second.finish())
+    (first, second.finish())
 }
 
 /// All per-file facts derived from one oxc parse (#10071): parse status,
 /// owners, export facts, and phase-2 facts. One parse per (path, content,
 /// root, alias-map) replaces the four separate parses per save.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct FileFacts {
     /// `None` when the source parsed cleanly; otherwise the same
     /// `"N parser error(s): <first message>"` string `parse_error_reason`
@@ -231,13 +243,7 @@ pub(crate) fn file_facts_cached(
     workspace_root: &Path,
     alias_map: Option<&TsAliasMap>,
 ) -> Result<Rc<FileFacts>, String> {
-    let path = normalized_path(relative);
-    let alias_digest = alias_map.map_or((0, 0), TsAliasMap::cache_digest);
-    let key = CacheKey {
-        fingerprint: facts_fingerprint(workspace_root, alias_digest, &path, source),
-        source_len: source.len(),
-        path,
-    };
+    let key = file_facts_key(relative, source, workspace_root, alias_map);
     let cached = FILE_FACTS_CACHE.with(|cache| {
         cache.try_borrow_mut().ok().and_then(|mut cache| {
             cache
@@ -303,10 +309,339 @@ pub(crate) fn file_facts_cached(
     Ok(facts)
 }
 
+/// The result of `extract_tests_with_expansion` for one test file.
+pub(crate) type TestExtraction = (
+    Vec<super::types::TypeScriptTest>,
+    Option<super::types::TypeScriptConditionalCreditGap>,
+    Option<super::suite_factory::SuiteFactoryExpansion>,
+);
+
+struct TestExtractionCache {
+    entries: HashMap<CacheKey, Rc<TestExtraction>>,
+    approx_bytes: usize,
+    max_entries: usize,
+    max_approx_bytes: usize,
+}
+
+/// Approximate heap bytes of a `Vec<String>`: the handles plus their text.
+fn strings_bytes(strings: &[String]) -> usize {
+    strings
+        .iter()
+        .map(|text| text.len().saturating_add(std::mem::size_of::<String>()))
+        .sum()
+}
+
+/// Approximate retained bytes of one extracted test, without the file-wide
+/// lists its tests share; `shared_bytes` counts each of those once.
+fn test_bytes(test: &super::types::TypeScriptTest) -> usize {
+    std::mem::size_of::<super::types::TypeScriptTest>()
+        .saturating_add(test.name.len())
+        .saturating_add(test.local_name.len())
+        .saturating_add(test.body_text.len())
+        .saturating_add(test.reach_body_text.as_ref().map_or(0, String::len))
+        .saturating_add(test.file.as_os_str().len())
+        .saturating_add(strings_bytes(&test.describe_names))
+        .saturating_add(strings_bytes(&test.setup_hook_bodies))
+        .saturating_add(test.assertions.len().saturating_mul(
+            std::mem::size_of::<super::types::TypeScriptAssertion>().saturating_add(96),
+        ))
+}
+
+/// Approximate retained bytes of the file-wide lists (imports, mocks,
+/// helpers, scope bindings) the tests of one file share. Each distinct list is
+/// counted once however many tests hold it.
+fn shared_bytes(tests: &[super::types::TypeScriptTest]) -> usize {
+    use super::types::{Shared, TypeScriptImport, TypeScriptScopeBinding};
+    use std::collections::HashSet;
+
+    // Elements own further strings; a flat 96 bytes each keeps the estimate
+    // on the safe (large) side without walking their fields.
+    fn elements<T: Clone>(list: &Shared<T>, seen: &mut HashSet<usize>, each: usize) -> usize {
+        if list.is_empty() || !seen.insert(list.identity() as usize) {
+            return 0;
+        }
+        list.len().saturating_mul(each.saturating_add(96))
+    }
+    let mut seen = HashSet::new();
+    let mut total = 0usize;
+    for test in tests {
+        for list in [
+            &test.mocks_in_file,
+            &test.unstable_member_roots_in_file,
+            &test.identity_helpers_in_file,
+            &test.written_locals_in_file,
+            &test.member_replacements_in_file,
+        ] {
+            total = total.saturating_add(elements(list, &mut seen, std::mem::size_of::<String>()));
+        }
+        for list in [
+            &test.default_member_only_locals_in_file,
+            &test.mock_factories_in_file,
+            &test.mock_spread_sources_in_file,
+        ] {
+            total =
+                total.saturating_add(elements(list, &mut seen, 2 * std::mem::size_of::<String>()));
+        }
+        total = total.saturating_add(elements(
+            &test.imports_in_file,
+            &mut seen,
+            std::mem::size_of::<TypeScriptImport>(),
+        ));
+        total = total.saturating_add(elements(
+            &test.scope_bindings,
+            &mut seen,
+            std::mem::size_of::<TypeScriptScopeBinding>(),
+        ));
+    }
+    total
+}
+
+impl TestExtractionCache {
+    fn with_bounds(max_entries: usize, max_approx_bytes: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            approx_bytes: 0,
+            max_entries,
+            max_approx_bytes,
+        }
+    }
+
+    fn entry_bytes(key: &CacheKey, extraction: &TestExtraction) -> usize {
+        let tests_bytes: usize = extraction
+            .0
+            .iter()
+            .map(test_bytes)
+            .sum::<usize>()
+            .saturating_add(shared_bytes(&extraction.0));
+        let expansion_bytes = extraction
+            .2
+            .as_ref()
+            .map_or(0, |expansion| expansion.source.len());
+        key.source_len
+            .saturating_add(key.path.len())
+            .saturating_add(tests_bytes)
+            .saturating_add(expansion_bytes)
+    }
+
+    /// Stores `extraction` unless it alone exceeds the byte bound; an entry
+    /// that cannot fit is served uncached rather than retained past the bound.
+    fn insert(&mut self, key: CacheKey, extraction: Rc<TestExtraction>) {
+        let entry_bytes = Self::entry_bytes(&key, &extraction);
+        if entry_bytes > self.max_approx_bytes {
+            return;
+        }
+        if self.entries.len() >= self.max_entries
+            || self.approx_bytes.saturating_add(entry_bytes) > self.max_approx_bytes
+        {
+            // Correctness-neutral: drop everything and start over.
+            self.entries.clear();
+            self.approx_bytes = 0;
+        }
+        self.approx_bytes = self.approx_bytes.saturating_add(entry_bytes);
+        self.entries.insert(key, extraction);
+    }
+}
+
+thread_local! {
+    static TEST_EXTRACTION_CACHE: RefCell<Option<TestExtractionCache>> =
+        const { RefCell::new(None) };
+}
+
+/// `extract_tests_with_expansion(relative, source)`, served from a
+/// process-lifetime cache keyed by normalized path, source length and a
+/// 128-bit content fingerprint (#10017). The extraction reads only its
+/// arguments, so a byte change misses and re-extracts; callers must still
+/// run filesystem-dependent steps (committed-snapshot promotion) on a clone
+/// of the returned tests. A reentrant or poisoned cell degrades to an
+/// uncached extraction. Test extraction costs about 4 s/MB in a debug build,
+/// which an unchanged test file used to pay again on every LSP save.
+#[cfg(test)]
+pub(crate) fn test_extraction_cached(relative: &Path, source: &str) -> Rc<TestExtraction> {
+    test_extraction_cached_disclosing(relative, source).0
+}
+
+/// [`test_extraction_cached`] that also returns the typed worker-failure
+/// reason when the parse worker could not extract (#11132). The empty result
+/// a failure serves reads as "this file registers no tests", which would
+/// silently turn a related test into a false `no_static_path`; the caller
+/// owns turning the reason into a disclosed extraction gap.
+pub(crate) fn test_extraction_cached_disclosing(
+    relative: &Path,
+    source: &str,
+) -> (Rc<TestExtraction>, Option<String>) {
+    test_extraction_cached_with_failure(relative, source, || {
+        super::tests_extract::try_extract_tests_with_expansion(relative, source)
+    })
+}
+
+/// [`test_extraction_cached`] with the extractor injected, so a test can
+/// force the worker-failure path that cannot be provoked from outside.
+#[cfg(test)]
+fn test_extraction_cached_with(
+    relative: &Path,
+    source: &str,
+    extract: impl FnOnce() -> Result<TestExtraction, String>,
+) -> Rc<TestExtraction> {
+    test_extraction_cached_with_failure(relative, source, extract).0
+}
+
+fn test_extraction_cached_with_failure(
+    relative: &Path,
+    source: &str,
+    extract: impl FnOnce() -> Result<TestExtraction, String>,
+) -> (Rc<TestExtraction>, Option<String>) {
+    let key = test_extraction_key(relative, source);
+    let cached = TEST_EXTRACTION_CACHE.with(|cache| {
+        cache.try_borrow_mut().ok().and_then(|cache| {
+            cache
+                .as_ref()
+                .and_then(|cache| cache.entries.get(&key).map(Rc::clone))
+        })
+    });
+    if let Some(extraction) = cached {
+        return (extraction, None);
+    }
+    // A worker failure is environmental, not a function of the bytes: serve
+    // the empty result this call but never store it, and report the reason.
+    let extraction = match extract() {
+        Ok(extraction) => Rc::new(extraction),
+        Err(reason) => return (Rc::new((Vec::new(), None, None)), Some(reason)),
+    };
+    TEST_EXTRACTION_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            let cache = cache.get_or_insert_with(|| {
+                TestExtractionCache::with_bounds(MAX_ENTRIES, MAX_APPROX_BYTES)
+            });
+            cache.insert(key, Rc::clone(&extraction));
+        }
+    });
+    (extraction, None)
+}
+
+/// Seed the process-lifetime facts cache with `facts` for
+/// `(relative, source)` under `(workspace_root, alias_map)` without parsing.
+/// The persistent per-file fact store (#10725) calls this after a disk hit so
+/// the unchanged loop body below serves memory; the key is computed exactly
+/// as `file_facts_cached` computes it, so a later in-process lookup for the
+/// same inputs is a hit.
+pub(crate) fn seed_file_facts(
+    relative: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&TsAliasMap>,
+    facts: Rc<FileFacts>,
+) {
+    let key = file_facts_key(relative, source, workspace_root, alias_map);
+    FILE_FACTS_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            let cache = cache.get_or_insert_with(FileFactsCache::default);
+            cache.insert(key, facts);
+        }
+    });
+}
+
+/// Seed the test-extraction cache with `extraction` for `(relative, source)`
+/// without extracting. The persistent per-file fact store (#10725) calls this
+/// after a disk hit; the key is computed exactly as
+/// `test_extraction_cached_with` computes it.
+pub(crate) fn seed_test_extraction(relative: &Path, source: &str, extraction: Rc<TestExtraction>) {
+    let key = test_extraction_key(relative, source);
+    TEST_EXTRACTION_CACHE.with(|cache| {
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            let cache = cache.get_or_insert_with(|| {
+                TestExtractionCache::with_bounds(MAX_ENTRIES, MAX_APPROX_BYTES)
+            });
+            cache.insert(key, extraction);
+        }
+    });
+}
+
+/// The one key `file_facts_cached`, `seed_file_facts` and
+/// `file_facts_in_memory` share, so a seed always matches a later lookup.
+fn file_facts_key(
+    relative: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&TsAliasMap>,
+) -> CacheKey {
+    let path = normalized_path(relative);
+    let alias_digest = alias_map.map_or((0, 0), TsAliasMap::cache_digest);
+    CacheKey {
+        fingerprint: facts_fingerprint(workspace_root, alias_digest, &path, source),
+        source_len: source.len(),
+        path,
+    }
+}
+
+/// The one key the test-extraction lookup, seed and probe share.
+fn test_extraction_key(relative: &Path, source: &str) -> CacheKey {
+    // Lossless path identity, not `normalized_path`: the extracted tests store
+    // `relative` as their `file`, and a Unix filename may contain a literal
+    // backslash that normalization would fold into a directory separator.
+    let path = relative.to_string_lossy().into_owned();
+    CacheKey {
+        fingerprint: facts_fingerprint(Path::new(""), (0, 0), &path, source),
+        source_len: source.len(),
+        path,
+    }
+}
+
+/// Whether the process-lifetime facts cache already holds `(relative,
+/// source)`, so the persistent store need not be read (an LSP refresh).
+pub(crate) fn file_facts_in_memory(
+    relative: &Path,
+    source: &str,
+    workspace_root: &Path,
+    alias_map: Option<&TsAliasMap>,
+) -> bool {
+    let key = file_facts_key(relative, source, workspace_root, alias_map);
+    FILE_FACTS_CACHE.with(|cache| {
+        cache.try_borrow().ok().is_some_and(|cache| {
+            cache
+                .as_ref()
+                .is_some_and(|cache| cache.entries.contains_key(&key))
+        })
+    })
+}
+
+/// Whether the test-extraction cache holds `(relative, source)`. A worker
+/// failure is served empty but never cached, so this is also how the
+/// persistent store tells a real extraction from an environmental empty one.
+pub(crate) fn test_extraction_in_memory(relative: &Path, source: &str) -> bool {
+    let key = test_extraction_key(relative, source);
+    TEST_EXTRACTION_CACHE.with(|cache| {
+        cache.try_borrow().ok().is_some_and(|cache| {
+            cache
+                .as_ref()
+                .is_some_and(|cache| cache.entries.contains_key(&key))
+        })
+    })
+}
+
+/// Drop both process-lifetime extraction caches (tests only). The persistent
+/// store (#10725) tests exercise the disk layer between runs, so every
+/// scenario starts without in-memory facts.
+#[cfg(test)]
+pub(crate) fn reset_caches_for_test() {
+    FILE_FACTS_CACHE.with(|cache| *cache.borrow_mut() = None);
+    TEST_EXTRACTION_CACHE.with(|cache| *cache.borrow_mut() = None);
+}
+
+/// Number of entries in the test-extraction cache (tests only).
+#[cfg(test)]
+fn test_extraction_cache_len() -> usize {
+    TEST_EXTRACTION_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .as_ref()
+            .map_or(0, |cache| cache.entries.len())
+    })
+}
+
 /// Export facts for `(path, source)` under `(workspace_root, alias_map)`,
 /// served from the combined process-lifetime facts cache (#10071, replacing
-/// the #10063 export-facts cache). Worker refusal or failure degrades to
-/// `None` (uncached, skipped by the caller exactly as before).
+/// the #10063 export-facts cache). Worker refusal, failure, or a parser error
+/// returns `None`: unavailable facts are not evidence of an empty export set.
 pub(crate) fn export_facts_cached(
     relative: &Path,
     source: &str,
@@ -314,8 +649,9 @@ pub(crate) fn export_facts_cached(
     alias_map: Option<&TsAliasMap>,
 ) -> Option<ModuleExportFacts> {
     file_facts_cached(relative, source, workspace_root, alias_map)
-        .map(|facts| facts.export_facts.clone())
         .ok()
+        .filter(|facts| facts.parse_error.is_none())
+        .map(|facts| facts.export_facts.clone())
 }
 
 /// Phase-2 facts for `(path, source)` under `(workspace_root, alias_map)`,
@@ -673,5 +1009,167 @@ mod tests {
             facts_fingerprint(Path::new("."), (0, 0), "src/a.ts", "export const x = 1;\n"),
             "content must be part of the key"
         );
+    }
+
+    const TEST_FILE: &str = "import { add } from '../src/add';\nit('adds', () => {\n  expect(add(1, 2)).toBe(3);\n});\n";
+
+    #[test]
+    fn test_extraction_cache_serves_unchanged_content_and_misses_on_any_edit() {
+        let path = Path::new("tests/cache_probe.test.ts");
+        let first = test_extraction_cached(path, TEST_FILE);
+        assert_eq!(first.0.len(), 1, "the fixture must extract its one test");
+        let again = test_extraction_cached(path, TEST_FILE);
+        assert!(
+            Rc::ptr_eq(&first, &again),
+            "unchanged path and bytes must be served from the cache"
+        );
+        let edited = TEST_FILE.replace("toBe(3)", "toBe(4)");
+        let after_edit = test_extraction_cached(path, &edited);
+        assert!(
+            !Rc::ptr_eq(&first, &after_edit),
+            "a changed byte must miss the cache"
+        );
+        assert!(
+            after_edit.0[0].body_text.contains("toBe(4)"),
+            "the edited extraction must reflect the new bytes, not the cached ones"
+        );
+        let other_path = test_extraction_cached(Path::new("tests/other_probe.test.ts"), TEST_FILE);
+        assert!(
+            !Rc::ptr_eq(&first, &other_path),
+            "the same bytes under another path must not share an entry"
+        );
+        assert!(test_extraction_cache_len() >= 3);
+    }
+
+    #[test]
+    fn test_extraction_cache_matches_the_uncached_extraction() {
+        let path = Path::new("tests/cache_parity.test.ts");
+        let cached = test_extraction_cached(path, TEST_FILE);
+        let direct = super::super::tests_extract::extract_tests_with_expansion(path, TEST_FILE);
+        assert_eq!(cached.0, direct.0);
+        assert_eq!(cached.1, direct.1);
+        assert_eq!(cached.2.is_some(), direct.2.is_some());
+    }
+
+    #[test]
+    fn worker_failures_are_environmental_and_budget_refusals_are_not() {
+        use super::super::parse::is_worker_failure;
+        assert!(is_worker_failure(
+            "static limit parse_worker_failed: TypeScript parse worker thread failed; syntax facts unavailable"
+        ));
+        assert!(is_worker_failure(
+            "static limit parse_worker_unavailable: TypeScript parse worker thread could not start: boom"
+        ));
+        assert!(!is_worker_failure(
+            "static limit expression_nesting_budget: estimated expression nesting depth 9999 exceeds the 2000-level parse budget; parse refused to avoid a parser stack overflow"
+        ));
+    }
+
+    #[test]
+    fn over_budget_test_source_caches_its_deterministic_empty_result() {
+        let path = Path::new("tests/deep_probe.test.ts");
+        let deep = format!(
+            "it('d', () => {{ expect({}1{}).toBe(1); }});\n",
+            "(".repeat(2_500),
+            ")".repeat(2_500)
+        );
+        let first = test_extraction_cached(path, &deep);
+        assert!(first.0.is_empty());
+        let second = test_extraction_cached(path, &deep);
+        assert!(
+            Rc::ptr_eq(&first, &second),
+            "the budget refusal is a function of the bytes, so it may be cached"
+        );
+    }
+
+    #[test]
+    fn test_extraction_cache_keeps_distinct_spellings_of_a_path_apart() {
+        // On Unix `a\\b.test.ts` is one filename and `a/b.test.ts` another;
+        // each must keep its own `file`.
+        let slash = test_extraction_cached(Path::new("tests/a/b.test.ts"), TEST_FILE);
+        let backslash = test_extraction_cached(Path::new("tests/a\\b.test.ts"), TEST_FILE);
+        assert!(!Rc::ptr_eq(&slash, &backslash));
+        assert_eq!(slash.0[0].file, Path::new("tests/a/b.test.ts"));
+        assert_eq!(backslash.0[0].file, Path::new("tests/a\\b.test.ts"));
+    }
+
+    #[test]
+    fn test_extraction_cache_counts_a_shared_file_wide_list_once() {
+        let many_imports: String = (0..40)
+            .map(|n| format!("import {{ f{n} }} from '../src/f{n}';\n"))
+            .collect();
+        let tests: String = (0..50)
+            .map(|n| format!("it('t{n}', () => {{ expect(f0({n})).toBe({n}); }});\n"))
+            .collect();
+        let source = format!("{many_imports}{tests}");
+        let extraction = test_extraction_cached(Path::new("tests/bytes.test.ts"), &source);
+        assert_eq!(extraction.0.len(), 50);
+        let key = CacheKey {
+            path: "tests/bytes.test.ts".to_string(),
+            source_len: source.len(),
+            fingerprint: (0, 0),
+        };
+        let bytes = TestExtractionCache::entry_bytes(&key, &extraction);
+        let one_test_imports = extraction.0[0].imports_in_file.len()
+            * std::mem::size_of::<super::super::types::TypeScriptImport>();
+        assert!(one_test_imports > 0);
+        assert!(
+            bytes >= one_test_imports,
+            "the file's imports must be counted: {bytes} < {one_test_imports}"
+        );
+        assert!(
+            bytes < 50 * one_test_imports,
+            "the tests share one import list, so it is not charged per test: {bytes}"
+        );
+    }
+
+    #[test]
+    fn test_extraction_cache_skips_an_entry_larger_than_its_bound() {
+        let extraction = Rc::new(super::super::tests_extract::extract_tests_with_expansion(
+            Path::new("tests/bound.test.ts"),
+            TEST_FILE,
+        ));
+        let key = CacheKey {
+            path: "tests/bound.test.ts".to_string(),
+            source_len: TEST_FILE.len(),
+            fingerprint: (1, 1),
+        };
+        let mut cache = TestExtractionCache::with_bounds(8, 16);
+        cache.insert(key.clone(), Rc::clone(&extraction));
+        assert!(
+            cache.entries.is_empty(),
+            "an oversize entry must not be stored"
+        );
+        let mut roomy = TestExtractionCache::with_bounds(8, 1 << 30);
+        roomy.insert(key, extraction);
+        assert_eq!(roomy.entries.len(), 1);
+    }
+
+    #[test]
+    fn a_worker_failure_is_served_empty_but_never_stored() {
+        let path = Path::new("tests/worker_failure.test.ts");
+        let before = test_extraction_cache_len();
+        let failed = test_extraction_cached_with(path, TEST_FILE, || {
+            Err("static limit parse_worker_failed: forced".to_string())
+        });
+        assert!(
+            failed.0.is_empty(),
+            "the failing call serves an empty result"
+        );
+        assert_eq!(
+            test_extraction_cache_len(),
+            before,
+            "the failure must not be stored"
+        );
+        // The persistent store (#10725) persists an extraction only when this
+        // probe finds it, so the empty failure result never reaches disk.
+        assert!(!test_extraction_in_memory(path, TEST_FILE));
+        let recovered = test_extraction_cached(path, TEST_FILE);
+        assert_eq!(
+            recovered.0.len(),
+            1,
+            "after the worker recovers, the same bytes must extract their test"
+        );
+        assert!(test_extraction_in_memory(path, TEST_FILE));
     }
 }

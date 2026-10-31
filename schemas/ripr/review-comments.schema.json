@@ -759,6 +759,14 @@
         "active_phase": {
           "type": ["string", "null"]
         },
+        "active_step": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canonical_analysis_evaluated_seams": {
+          "type": "integer",
+          "minimum": 0
+        },
         "completed_artifacts": {
           "type": "array",
           "items": {

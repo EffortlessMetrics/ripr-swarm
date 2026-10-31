@@ -166,23 +166,106 @@ actionable canonical gaps.
 ### Unsupported-Flow Expansion Criteria
 
 Unsupported-flow work must be selected from audit data, then narrowed by
-fixture coverage before analyzer support changes. The next selected expansion
-target is `opaque_config_lookup`.
+fixture coverage before analyzer support changes. The first selected expansion
+target is the same-file direct reader (#9871); `opaque_config_lookup` follows it.
 
 | Flow | Current state | Expansion rule |
 | --- | --- | --- |
-| `opaque_config_lookup` | Selected next. | May move out of limitation only for a fixture-backed lookup shape that identifies the changed constant, the lookup owner, a supported output/schema/validation sink, and the observer or missing observer for that sink. |
+| same-file direct reader (#9871) | Selected before `opaque_config_lookup`. | May move out of `static_limitation` only for a changed `const`/`static` with exactly one same-file declaration, read by name by a production function in the same file whose returned or rendered value contains the constant, called by a related test. The state is `already_observed` only when that test compares the output to an expected value that is independent of the constant (a literal, not the constant or a value computed from it) and the comparison would fail for the changed value. It is `actionable` (`add_output_observer` or `add_behavior_discriminator`) only when the test reaches the reader and its assertion cannot distinguish the changed value (`is_ok`, non-empty, length, or a different field). Any other shape stays a named limitation. |
+| `opaque_config_lookup` | Selected second, after the same-file direct reader. | May move out of limitation only for a fixture-backed lookup shape that identifies the changed constant, the lookup owner, a supported output/schema/validation sink, and the observer or missing observer for that sink. |
 | generated config or schema output | Limitation. | Remains `macro_generated_config_output` or `config_policy_flow_unknown` until generated output has a fixture-backed source-to-render path and a stable observer shape. |
 | macro output | Limitation. | Remains `macro_generated_config_output` until macro expansion or a fixture-backed macro wrapper gives a stable constant owner and sink without reading generated prose as authority. |
 | dynamic dispatch or registry lookup | Limitation. | Remains `dynamic_config_dispatch` unless the dispatch target is statically resolved by a fixture-backed registry shape and the selected sink is supported. |
 | unsupported cross-file flow | Limitation. | Remains `config_policy_flow_unknown` unless the cross-file edge, sink owner, and observer candidate are fixture-backed and stable across file movement. |
 
+The same-file direct-reader row is selected first because the reach half
+already landed (#9990: tests that call a changed constant's reader are related,
+reach is `weak`, the class stays `static_unknown`). Before it may promote a
+verdict, the fixture and benchmark PR must add must-not-claim cases proving each
+of these stays a limitation or keeps its prior state:
+
+- the constant is read through a lookup, environment variable or map (the
+  `opaque_config_lookup` row);
+- the constant name is shadowed by a local, parameter or pattern binding in the
+  reader;
+- the constant is declared more than once in the file (associated consts per
+  impl, a local `const`; the single-impl associated-constant shape is admitted
+  by the extension below);
+- the reader sits in another file or behind a `cfg` gate;
+- the test's expected value is the constant itself or computed from it
+  (self-computed oracle, RIPR-SPEC-0035);
+- the constant is only compared in a branch, which belongs to the predicate
+  boundary rules, not this row;
+- no production function reads the constant (unread constant keeps its
+  abstention).
+
+Each positive case needs a runtime mutant label, so the row can be measured in
+the verdict corpus (RIPR-SPEC-0219) and the Rust `missed_credit_ceiling` falls
+by exactly the rows that flip.
+
+The must-not-claim shapes above are the authored cases
+`spec0048-flow-*` (`authored-spec0048-const-flow` and
+`authored-spec0048-shape-kit`).
+
+#### Value-flow evaluation (the same-file direct-reader promotion)
+
+The promotion is decided by evaluating, not by naming. For a changed
+`const`/`static` whose old and new initializers are both bound literals, the
+classifier evaluates the same-file reader on each related test's literal call
+arguments twice, once with the old initializer and once with the new, and then
+evaluates the test's assertion on each result.
+
+- The declaration is a single changed line (`const NAME: T = expr;` removed and
+  re-added); a multi-line declaration is not paired.
+- The reader body is one expression over its parameters and the constant:
+  literals, parameters, the constant, `+ - * /`, comparisons, `&&`, `||`, `!`,
+  parentheses, `min`/`max`, `is_empty`, `len`, and `format!` whose arguments are
+  the same terms. Any control flow (`if`, `match`, loops), `let`, call, lookup,
+  cast or other method makes the flow unevaluable.
+- The test's assertion is `assert!(call)`, `assert!(!call)`, `assert_eq!`/
+  `assert_ne!` between the call (optionally with `.is_empty()` or `.len()`) and
+  a literal, with the call's arguments literals. A non-literal expected value
+  (the constant itself, a value computed from it, a binding) makes it
+  unevaluable.
+- An assertion that does not hold on the old initializer is stale or
+  misread; the flow is unevaluable rather than credited.
+- Integer arithmetic stays inside the declared type and `i64`; an overflow,
+  underflow or division by zero makes the flow unevaluable.
+- Each comparison in the assertion has a literal-only side written in the test.
+  `assert_eq!(read(), read())`, an expected value naming the constant, or a
+  comparison between two calls moves with the edit and pins nothing.
+- The reader must be the only function of its name in the file and must not be
+  behind a `cfg` attribute.
+- The declaration and every reader sit in the same module scope of the file
+  (the same chain of inline `mod` blocks, no enclosing function or `impl`
+  block). A same-spelled constant imported into another module cannot be told
+  from the edited one by name, so a reader there is not evaluated.
+
+Outcomes, over every related test that calls a reader:
+
+| Evaluation | Class |
+| --- | --- |
+| Some assertion holds on the old initializer and fails on the new | `exposed` (credited); the test discriminates the changed value |
+| Every related test is evaluated and every assertion holds on both | `weakly_exposed` (gap); the tests reach the reader and cannot tell the values apart |
+| A value-keeping rewrite | decided by the neighbour rule below |
+| Anything else: a test, assertion or reader that is unevaluable, no related test calls a reader | unchanged: `static_unknown` with reach `weak` |
+
+A rewrite that keeps the value (`10` to `5 + 5`) has no old/new pair, so it is
+asked the mutation question instead: the integer constant is evaluated one
+below and one above its value (neighbours its declared type admits). It is
+`exposed` only when every neighbour makes some assertion, in any related
+test, that holds on the current value fail (each neighbour's breaking
+assertion is cited); if any neighbour goes unnoticed, or the constant is not an
+integer, it keeps its abstention. A rewrite is never reported as a gap here:
+the neighbours are a sample of the wrong values, not all of them.
+
 The first implementation slice after this spec should target only the
-`opaque_config_lookup` row. Generated output, macro output, dynamic dispatch,
+same-file direct-reader row; the slice after it targets only `opaque_config_lookup`. Generated output, macro output, dynamic dispatch,
 and unsupported cross-file flow must stay named static limitations unless a
 later spec or fixture PR selects one of those rows explicitly.
 
-Before analyzer changes, the fixture and benchmark PR must add:
+Before the `opaque_config_lookup` analyzer slice, its fixture and benchmark PR
+must add:
 
 - a positive `opaque_config_lookup` case with a directly supported lookup shape;
 - a must-not-claim `opaque_config_lookup` case where helper or registry naming
@@ -211,6 +294,54 @@ movement:
 If those deltas cannot be shown, the implementation must keep the cases in
 `static_limitation` and report the missing proof instead of widening the
 supported scope.
+
+#### Associated-constant extension (selected by `shape-assoc-const-value`)
+
+The value-flow evaluation above refuses a constant declared more than once in
+the file, which excludes an associated constant (`impl Limits for Small { const
+MAX: u32 = 10; }`) read through `Self::MAX` in a trait default method. This
+extension admits exactly that shape and nothing wider. It reuses the same
+evaluator, outcomes and neighbour rule; only the binding step and two grammar
+terms change.
+
+Binding. The edited line is a single-line `const NAME: T = expr;` directly
+inside one `impl Trait for Type { ... }` block (no generics on the impl, no
+`cfg`) at the module scope of the file. `Trait` is declared in the same file
+and declares `NAME` as a required constant (no default value). The reader is a
+provided function of `Trait` with no `self` receiver, whose body is evaluable
+and reads `Self::NAME`; `Self` is bound to `Type`. A related test calls it as
+`Type::reader(..)` or `<Type as Trait>::reader(..)` with literal arguments.
+The edit is evaluated only through a call that names `Type`.
+
+Grammar additions. `Self::NAME` is the constant. `if cond { a } else { b }`
+(including `else if` chains) is evaluable when the condition and every branch
+are evaluable single expressions; an `if` without `else`, `match`, `let`,
+loops and early `return` stay unevaluable.
+
+Must-not-claim (authored first; each keeps its prior state, `static_unknown`
+with reach `weak`):
+
+- another `impl Trait for Other` also defines `NAME` and the test calls
+  `Other::reader`, so the edited impl is not what the test reads;
+- the test calls the reader through a generic parameter (`T::reader`), a trait
+  object or an unqualified path, so `Self` is not statically `Type`;
+- the trait gives `NAME` a default value and the edited impl is not the only
+  definition the call can reach;
+- the impl block is generic, `cfg`-gated, or nested inside a function;
+- the reader function is overridden inside the edited `impl`, so the default
+  body is not the code that runs;
+- a branch or the `if` condition is unevaluable (a call, lookup or `match`);
+- the expected value in the test is `Type::NAME` or computed from it.
+
+Positive: the `shape-assoc-const-value` rewrite (`10` to `5 + 5`, test pins
+`clamp(50)` to `10` and `clamp(5)` to `5`) is `exposed`, because both neighbours
+(9 and 11) flip the first assertion. A changed value (`10` to `20`) with the
+same tests is `exposed`; the same value change under tests that never reach a
+clamped input is `weakly_exposed`.
+
+Delivery order: this amendment, then the authored negatives with the existing
+positive left at its current accepted verdict, then the analyzer slice, which
+removes `shape-assoc-const-value` from `missed-credit.toml`.
 
 ## Required Evidence
 
@@ -333,55 +464,35 @@ not create a headline user test gap.
 
 ## Acceptance Examples
 
-Internal allowlist or policy metadata:
-
-- Given a changed constant used only by an internal allowlist, proof-lane map,
-  policy metadata table, or fixture label, RIPR emits one canonical
-  `config_or_policy_constant` item.
-- `gap_state = "internal_only"`.
-- Actionability is `no_action_internal`.
-- RIPR preserves raw findings as support and does not create user test debt.
-
-Rendered report/config label without observer:
-
-- Given a changed policy/config label that flows to a supported report, schema,
-  config-output, table, snapshot, or golden output path with no observer, RIPR
-  emits one actionable canonical item.
-- Actionability is `add_output_observer`.
-- The recommended repair names the most specific observer class known.
-
-Rendered label already observed:
-
-- Given a changed policy/config label and a supported golden, snapshot,
-  report-render, schema-render, or config-output test observing it, RIPR emits
-  an `already_observed` item.
-- No new RIPR repair action is recommended.
-
-Behavior selector without discriminator:
-
-- Given a changed threshold, routing constant, or validation selector that
-  reaches user-visible behavior but no related test observes the selected
-  behavior, RIPR emits one actionable canonical item.
-- Actionability is `add_behavior_discriminator`.
-- The repair names the missing discriminator or target assertion shape when
-  known.
-
-Opaque config lookup:
-
-- Given a changed constant whose flow passes through an unsupported helper,
-  registry, macro, generated output, dynamic dispatch, or untraceable cross-file
-  formatting, RIPR emits a static limitation.
-- The limitation category is `config_policy_flow_unknown`,
-  `opaque_config_lookup`, `macro_generated_config_output`, or
-  `dynamic_config_dispatch`.
-- RIPR does not infer output visibility or recommend mutation execution as the
-  first action.
-
-Unrelated constant:
-
-- Given a changed constant that has no supported config, policy, output,
-  schema, validation, or behavior-selector shape, RIPR does not create a
-  config/policy user action from the constant alone.
+1. Internal allowlist or policy metadata. Given a changed constant used only
+   by an internal allowlist, proof-lane map, policy metadata table, or fixture
+   label, RIPR emits one canonical `config_or_policy_constant` item with
+   `gap_state = "internal_only"` and actionability `no_action_internal`. RIPR
+   preserves raw findings as support and does not create user test debt.
+2. Rendered report/config label without observer. Given a changed
+   policy/config label that flows to a supported report, schema, config-output,
+   table, snapshot, or golden output path with no observer, RIPR emits one
+   actionable canonical item with actionability `add_output_observer`. The
+   recommended repair names the most specific observer class known.
+3. Rendered label already observed. Given a changed policy/config label and a
+   supported golden, snapshot, report-render, schema-render, or config-output
+   test observing it, RIPR emits an `already_observed` item. No new RIPR repair
+   action is recommended.
+4. Behavior selector without discriminator. Given a changed threshold, routing
+   constant, or validation selector that reaches user-visible behavior but no
+   related test observes the selected behavior, RIPR emits one actionable
+   canonical item with actionability `add_behavior_discriminator`. The repair
+   names the missing discriminator or target assertion shape when known.
+5. Opaque config lookup. Given a changed constant whose flow passes through an
+   unsupported helper, registry, macro, generated output, dynamic dispatch, or
+   untraceable cross-file formatting, RIPR emits a static limitation. The
+   limitation category is `config_policy_flow_unknown`,
+   `opaque_config_lookup`, `macro_generated_config_output`, or
+   `dynamic_config_dispatch`. RIPR does not infer output visibility or
+   recommend mutation execution as the first action.
+6. Unrelated constant. Given a changed constant that has no supported config,
+   policy, output, schema, validation, or behavior-selector shape, RIPR does
+   not create a config/policy user action from the constant alone.
 
 ## Test Mapping
 

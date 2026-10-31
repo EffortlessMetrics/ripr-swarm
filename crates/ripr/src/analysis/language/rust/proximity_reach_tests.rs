@@ -293,7 +293,7 @@ fn d1(x: i64) -> i64 { inner_rate(x) }
 }
 
 #[test]
-fn a_forwarding_helper_chain_relates_and_establishes_reach_without_credit() -> Result<(), String> {
+fn a_forwarding_helper_chain_relates_and_credits_an_exact_entry_pin() -> Result<(), String> {
     // A same-file test that reaches a private helper through its forwarding
     // caller relates by the chain, not file proximity.
     let fixture = Fixture::new(
@@ -316,11 +316,12 @@ mod tests {
     )?;
     let finding = fixture.rate_finding()?;
     // RIPR-SPEC-0159: the chain relation outranks file proximity, so the
-    // same-file test now relates to `inner_rate` through `outer` as a
-    // `helper_owner_call` and reach reads yes. The wrapper's return-value
-    // oracle is not credited for the helper's change (no return-value
-    // crediting through wrappers), so the class stays `weakly_exposed`
-    // without the transitive-reach limit.
+    // same-file test relates to `inner_rate` through `outer` as a
+    // `helper_owner_call` and reach reads yes. `outer` hands the helper's
+    // result on unchanged, both are unique bare-name functions of one scope,
+    // and the exact `outer(4) == 12` pin moves with the helper (free-call
+    // entry pin, #9638), so the class is `exposed` without the
+    // transitive-reach limit.
     assert!(
         finding
             .related_tests
@@ -330,7 +331,7 @@ mod tests {
         finding.related_tests
     );
     assert_eq!(finding.ripr.reach.state, StageState::Yes, "{finding:?}");
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.class, ExposureClass::Exposed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     assert!(
         !finding
@@ -729,9 +730,12 @@ fn an_unread_assertion_macro_without_the_owner_call_keeps_the_gap() -> Result<()
 }
 
 #[test]
-fn a_direct_test_with_a_recognized_oracle_keeps_the_gap() -> Result<(), String> {
-    // The direct test's own weak oracle is what ripr judged; the custom macro
-    // beside it does not turn that judgment into a limit.
+fn a_direct_test_whose_own_boolean_assert_is_unadmitted_beside_a_custom_macro_is_named_not_credited()
+-> Result<(), String> {
+    // The custom macro is opaque, so the test's own `assert!` is not shown to
+    // run and no longer counts as a recognized oracle (#10389: the boolean
+    // `assert!` takes the same execution admission as `assert_eq!`). The
+    // direct test then has no oracle and the evidence names the macro.
     let fixture = Fixture::new(
         "custom-assert-direct-oracle",
         &CUSTOM_ASSERT.replacen(
@@ -741,9 +745,17 @@ fn a_direct_test_with_a_recognized_oracle_keeps_the_gap() -> Result<(), String> 
         ),
     )?;
     let finding = fixture.rate_finding()?;
-    assert_custom_assert_construction(&finding, true);
+    assert_custom_assert_construction(&finding, false);
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("assertion not credited") && line.contains("`assert_rate!`")),
+        "{:?}",
+        finding.evidence
+    );
     Ok(())
 }
 

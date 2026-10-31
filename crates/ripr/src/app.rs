@@ -38,6 +38,7 @@ pub(crate) mod repair_card_handoff;
 /// real-opportunity accounting that back the versioned decision receipt.
 pub mod repair_card_usability;
 pub(crate) mod ripr_plus;
+mod running_binary;
 /// Task-first repair selection services behind `ripr repair` and
 /// `ripr continue` (#6305). The CLI adapter parses and renders; the
 /// decisions here reuse the inventory, eligibility, selector, and attempt
@@ -85,6 +86,7 @@ pub(crate) use check::check_with_progress_core;
 #[cfg(test)]
 pub(crate) use check::check_workspace_repo_with_origins;
 pub(crate) use check::check_workspace_with_config_typed;
+pub(crate) use check::check_workspace_worktree_with_config_typed;
 #[cfg(test)]
 pub(crate) use check::check_workspace_worktree_with_origins;
 pub(crate) use check::check_workspace_worktree_with_sources_open_rust_paths_and_progress;
@@ -107,7 +109,7 @@ pub(crate) use explain::{
 };
 pub(crate) use navigation::{
     CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, GapRepairRoute,
-    RepairRoute, finding_navigation, finding_navigation_with_worktree,
+    RepairRoute, RepairRouteRefusal, finding_navigation, finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
@@ -254,6 +256,7 @@ impl Mode {
 /// Result payload produced by [`check_workspace`].
 #[derive(Clone, Debug)]
 pub struct CheckOutput {
+    pub(crate) value_origins: crate::value_origins::ValueOrigins,
     /// Output schema version for machine consumers.
     pub schema_version: String,
     /// Test-harness registry projections (#3532): what each exact
@@ -385,3 +388,12 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
 
 #[cfg(test)]
 mod tests;
+
+impl CheckOutput {
+    /// Producer-recorded test files for the ordered source values of `finding`.
+    /// Returns `None` for findings with no matching producer receipt, changed probes/value payloads, or
+    /// ambiguous provenance. Unknown individual origins stay `None`.
+    pub fn source_value_files(&self, finding: &Finding) -> Option<&[Option<PathBuf>]> {
+        self.value_origins.files(finding)
+    }
+}

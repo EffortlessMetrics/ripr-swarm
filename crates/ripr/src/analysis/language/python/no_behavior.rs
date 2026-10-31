@@ -17,7 +17,7 @@ use std::path::Path;
 /// Conservative by construction: only blank/comment lines and lines that are
 /// ENTIRELY a single non-f-string literal qualify. f-strings are excluded (a bare
 /// f-string statement can evaluate embedded calls), multi-line docstring interiors
-/// are handled from AST-backed source context in [`classify_change_with_context`],
+/// are handled from AST-backed source context in [`super::classify::classify_change_with_value_origins`],
 /// and annotation-only changes are handled by the dedicated
 /// `is_annotation_only_*_change` guards in
 /// `classify_change_with_old` (def headers via #1294; module-scope bare variables
@@ -26,6 +26,72 @@ use std::path::Path;
 pub(super) fn is_python_no_behavior_line(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.is_empty() || trimmed.starts_with('#') || is_bare_string_literal_statement(trimmed)
+}
+
+/// Whether `new` differs from `old` only in a trailing `#` comment or in
+/// whitespace between tokens, so the statement runs identically (#10706).
+/// Both lines are lexed and compared token by token with comments and line
+/// breaks dropped (the lexer already skips comments) and spelled as written, which keeps a `#` inside a string a real edit. Fails closed
+/// on a lex error (a line that is only part of a multi-line construct), on
+/// differing indentation (the statement moved under or out of a block), and on
+/// textually identical lines.
+pub(super) fn is_comment_or_whitespace_only_change(old: &str, new: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    if old == new || old.get(..indent(old)) != new.get(..indent(new)) {
+        return false;
+    }
+    // Compare each token's source spelling, not its value, so a respelling
+    // such as `0x1` -> `1` or a requoted string stays an edit.
+    let tokens = |text: &str| -> Option<Vec<String>> {
+        let text = text.trim();
+        lex(text, Mode::Module)
+            .filter(|result| !matches!(result, Ok((Tok::Newline, _))))
+            .map(|result| {
+                result.ok().and_then(|(_, range)| {
+                    text.get(usize::from(range.start())..usize::from(range.end()))
+                        .map(str::to_owned)
+                })
+            })
+            .collect()
+    };
+    match (tokens(old), tokens(new)) {
+        (Some(old), Some(new)) => !old.is_empty() && old == new,
+        _ => false,
+    }
+}
+
+/// One-based line spans of every string literal that crosses a line break
+/// (triple-quoted strings, f-strings, a backslash-continued string), taken from
+/// a lex of the whole `source`. A line inside one is string content, so a
+/// spacing or `#` change on it changes the string's value. `None` when the
+/// source does not lex, so the caller can fail closed (#10706).
+pub(super) fn multi_line_string_line_ranges(
+    source: &str,
+) -> Option<Vec<std::ops::RangeInclusive<usize>>> {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    // One running count of line breaks, so a file with many strings is read
+    // once.
+    let (mut line, mut scanned) = (1usize, 0usize);
+    let mut line_at = |offset: usize| {
+        line += source
+            .get(scanned..offset)
+            .map_or(0, |gap| gap.matches('\n').count());
+        scanned = scanned.max(offset);
+        line
+    };
+    let mut spans = Vec::new();
+    for result in lex(source, Mode::Module) {
+        let (token, range) = result.ok()?;
+        if matches!(token, Tok::String { .. }) {
+            let start = line_at(usize::from(range.start()));
+            let end = line_at(usize::from(range.end()));
+            if start < end {
+                spans.push(start..=end);
+            }
+        }
+    }
+    Some(spans)
 }
 
 /// A line that only opens, continues, or closes a block or bracket and holds

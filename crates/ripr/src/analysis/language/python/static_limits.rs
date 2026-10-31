@@ -2,13 +2,20 @@ use super::PythonFramework;
 use super::admission::PythonAssertionAdmission;
 use super::approx_band::{PythonBandReading, parse_expression, python_band_reading};
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
-use super::caplog_text::PythonLogEvidence;
+use super::caplog_text::{PythonLogEvidence, substitute_caplog_aliases};
+use super::cli_subcommand::CliSubcommand;
+use super::effect_alignment::ChangedEffect;
+use super::fixtures::{inert_tool_fixture, literal_owner_instance_fixture};
+use super::forwarding_decorator::is_forwarding_decorator;
+use super::literal_patch::{literal_patch_calls, without_calls};
 use super::related_tests::{
     PythonRelatedCandidate, PythonRelationKind, body_calls_owner, dunder_method_class,
-    is_python_identifier_char, line_prefix_looks_like_comment_or_string, test_imports_owner_module,
+    import_source_module_matches_owner, is_python_identifier_char,
+    line_prefix_looks_like_comment_or_string, test_imports_owner_module,
     test_may_reach_owner_class,
 };
-use super::source_utils::SourceText;
+use super::sink_alignment::CreditedAssertion;
+use super::source_utils::{SourceText, signature_colon_end};
 use super::{
     PythonImport, PythonOracleShape, PythonOwner, PythonTest, expr_full_name,
     split_python_assignment,
@@ -37,7 +44,72 @@ pub(super) fn static_limit_for_change(
         line_text,
         None,
     );
-    static_limit_for_focused_change(line_text, None, None, &focus, owner, related_candidates)
+    static_limit_for_focused_change(line_text, None, None, &focus, owner, "", related_candidates)
+}
+
+/// A test that rebinds the owner's module object (`route.response = fake`,
+/// `importlib.reload`, `setattr`, `__setattr__`, `delattr`) reads a different
+/// object than the owner mutates. Withholding credit alone leaves a weak
+/// finding whose repair card asserts on the stale import, so the finding is
+/// withheld as a runtime-substitution limit like `patch` (#10289).
+///
+/// `credited` is the test the finding's observation credit comes from. A
+/// credit from a test that does not rebind the object is an independent live
+/// read, so a sibling's rebinding does not take it away (#10354); with no
+/// credit, or credit from a rebinding test, the limit holds (fail closed).
+pub(super) fn module_object_rebind_limit(
+    line_text: &str,
+    old_line_text: Option<&str>,
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    credited: Option<&CreditedAssertion>,
+) -> Option<PythonStaticLimit> {
+    let ChangedEffect::ModuleField { object, attr } =
+        ChangedEffect::of(line_text, old_line_text, owner, false)?
+    else {
+        return None;
+    };
+    let rebinds = |test: &PythonTest| test.constant_rebinding.assigns_attribute(&object);
+    // Only a credit that reads the changed field through the object's own
+    // import is a live read: a return or other assertion that merely names
+    // the owner does not discriminate the write (#10354).
+    let live_credit = credited.is_some_and(|credited| {
+        related_candidates.iter().any(|candidate| {
+            let test = candidate.test;
+            test.name == credited.test_name
+                && test.file == credited.test_file
+                && !rebinds(test)
+                && test.imports.iter().any(|import| {
+                    import.imported == object
+                        && import_source_module_matches_owner(import, owner, &test.file)
+                        && credited.text.contains(&format!("{}.{attr}", import.alias))
+                })
+        })
+    });
+    if live_credit {
+        return None;
+    }
+    related_candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .any(|candidate| {
+            let test = candidate.test;
+            // Only a test that imports the object can read a stale one.
+            rebinds(test)
+                && test.imports.iter().any(|import| {
+                    import.imported == object
+                        && import_source_module_matches_owner(import, owner, &test.file)
+                })
+        })
+        .then(|| PythonStaticLimit {
+            kind: StaticLimitKind::MockedModule,
+            evidence: format!(
+                "static_limit mocked_module: related test rebinds the module namespace that holds `{object}`"
+            ),
+            missing: format!(
+                "Static limit `mocked_module`: a related Python test reloads the module or replaces its names (`{object}`) by assignment, `setattr`, `__setattr__` or `delattr`; the preview adapter does not resolve which object an imported name reads afterwards."
+            ),
+        })
 }
 
 /// `focus` is the one the finding's rows are selected with (#5572): only the
@@ -49,6 +121,7 @@ pub(super) fn static_limit_for_focused_change(
     log_evidence: Option<&PythonLogEvidence>,
     focus: &PythonAssertionFocus,
     owner: &PythonOwner,
+    owner_source: &str,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<PythonStaticLimit> {
     let trimmed = line_text.trim();
@@ -88,11 +161,23 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
-    if let Some(decorator) = owner
-        .decorators
-        .iter()
-        .find(|decorator| !is_transparent_owner_decorator_for_owner(decorator, owner))
-    {
+    // A group subcommand's registration decorator builds a command that runs
+    // the body; it stops being an indirection once a test is shown to invoke
+    // the group with its name (`cli_subcommand.rs`, #9226).
+    let reached_subcommand_decorator = owner
+        .cli_subcommand
+        .as_ref()
+        .filter(|_| {
+            related_candidates
+                .iter()
+                .any(|candidate| candidate.relation == PythonRelationKind::CliRunnerInvoke)
+        })
+        .map(CliSubcommand::decorator);
+    if let Some(decorator) = owner.decorators.iter().find(|decorator| {
+        !is_transparent_owner_decorator_for_owner(decorator, owner)
+            && !is_forwarding_decorator(decorator, owner, owner_source)
+            && reached_subcommand_decorator.as_ref() != Some(*decorator)
+    }) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
             evidence: format!("static_limit decorator_indirection: `{decorator}`"),
@@ -106,9 +191,13 @@ pub(super) fn static_limit_for_focused_change(
     // only a client call to a route observes; a test that calls the function
     // directly never sees it (#9756).
     if is_route_decorator_edit(trimmed)
-        && !related_candidates
-            .iter()
-            .any(|candidate| candidate.relation == PythonRelationKind::ApiClientRouteCall)
+        && !related_candidates.iter().any(|candidate| {
+            matches!(
+                candidate.relation,
+                PythonRelationKind::ApiClientRouteCall
+                    | PythonRelationKind::ApiClientRouteUnidentifiedApp
+            )
+        })
     {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::DecoratorIndirection,
@@ -116,6 +205,30 @@ pub(super) fn static_limit_for_focused_change(
             missing: format!(
                 "Static limit `decorator_indirection`: the changed line edits the route registration of `{}`; no related test calls the route through an API client, so a direct call to the handler cannot observe the edit.",
                 owner.qualified_name
+            ),
+        });
+    }
+    // A request client whose application the adapter cannot tie to the owner's
+    // route registration reaches the route without evidence that the owner's
+    // application serves it: the test may discriminate the change or may
+    // exercise another application, so neither a gap nor a credit is claimed
+    // (#10110).
+    if !related_candidates
+        .iter()
+        .any(|candidate| candidate.relation.uses_oracle())
+        && let Some(candidate) = related_candidates.iter().find(|candidate| {
+            candidate.relation == PythonRelationKind::ApiClientRouteUnidentifiedApp
+        })
+    {
+        return Some(PythonStaticLimit {
+            kind: StaticLimitKind::MissingImportGraph,
+            evidence: format!(
+                "static_limit missing_import_graph: the request client in `{}` is not tied to the application `{}` is registered on",
+                candidate.test.qualified_name, owner.qualified_name
+            ),
+            missing: format!(
+                "Static limit `missing_import_graph`: related test `{}` calls the route of `{}` through a request client whose application the Python preview adapter does not resolve (a fixture it cannot read, a factory-built app, an app defined in the test or a router included elsewhere); it does not build an import graph through them. Build the client over the application the route is registered on, or inspect which application the test exercises.",
+                candidate.test.qualified_name, owner.qualified_name
             ),
         });
     }
@@ -142,11 +255,27 @@ pub(super) fn static_limit_for_focused_change(
             ),
         });
     }
-    if related_candidates
+    // A mocked test keeps the limit unless its substitutions are literal
+    // zero-argument stand-ins the edit cannot hide behind (`literal_patch`).
+    let mut substituted_calls: Vec<String> = Vec::new();
+    let mut mocked = false;
+    for candidate in related_candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
-        .any(|candidate| test_has_mocked_module(candidate.test))
+        .filter(|candidate| test_has_mocked_module(candidate.test))
     {
+        match literal_patch_calls(
+            candidate.test,
+            owner,
+            owner_source,
+            old_line_text,
+            line_text,
+        ) {
+            Some(calls) => substituted_calls.extend(calls),
+            None => mocked = true,
+        }
+    }
+    if mocked {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MockedModule,
             evidence: "static_limit mocked_module: related test uses patch/mock/monkeypatch module syntax"
@@ -204,7 +333,7 @@ pub(super) fn static_limit_for_focused_change(
             missing: "Static limit `opaque_custom_assertion_helper`: a related Python test uses a custom assertion helper such as `assert_*(...)`; the preview adapter cannot inspect the helper body or determine whether it already observes the changed discriminator.".to_string(),
         });
     }
-    if line_uses_imported_symbol(trimmed, &owner.imports) {
+    if line_uses_imported_symbol(&without_calls(trimmed, &substituted_calls), &owner.imports) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::MissingImportGraph,
             evidence: "static_limit missing_import_graph: changed line calls an imported symbol"
@@ -215,20 +344,24 @@ pub(super) fn static_limit_for_focused_change(
     if contains_lambda_keyword(trimmed) {
         return Some(PythonStaticLimit {
             kind: StaticLimitKind::UnsupportedSyntax,
-            evidence: "static_limit unsupported_syntax: changed line uses lambda syntax"
-                .to_string(),
+            evidence: LAMBDA_LIMIT_EVIDENCE.to_string(),
             missing: "Static limit `unsupported_syntax`: the changed line uses a Python syntax shape this preview adapter does not model precisely yet.".to_string(),
         });
     }
     None
 }
 
+/// The evidence of the lambda-syntax limit. A module-value credit (#9619) that
+/// reads the edited lambda body lifts exactly this limit.
+pub(super) const LAMBDA_LIMIT_EVIDENCE: &str =
+    "static_limit unsupported_syntax: changed line uses lambda syntax";
+
 /// A `lambda` expression: the keyword at an identifier boundary and followed
 /// by a space, `:` or `(`. Text in a string is read as text only when the line
 /// is a plain one-line string literal return (`return "lambda x"`): no braces
 /// (an f-string expression or a dict could hold code), no triple quotes (the
 /// line may close a string opened above) and no other quote state to track.
-fn contains_lambda_keyword(text: &str) -> bool {
+pub(super) fn contains_lambda_keyword(text: &str) -> bool {
     let plain_line =
         !text.contains(['{', '\\']) && !text.contains("\"\"\"") && !text.contains("'''");
     text.match_indices("lambda").any(|(idx, _)| {
@@ -274,7 +407,7 @@ pub(super) fn implicit_dunder_dispatch_limit(
 }
 
 pub(super) fn contains_dynamic_dispatch(text: &str) -> bool {
-    text.contains("getattr(") || (text.contains('[') && text.contains("]("))
+    contains_call_at_name_boundary(text, "getattr") || (text.contains('[') && text.contains("]("))
 }
 
 pub(super) fn contains_dynamic_import(text: &str) -> bool {
@@ -303,19 +436,29 @@ pub(super) fn line_prefix_before(text: &str, idx: usize) -> &str {
         .map_or(&text[..idx], |(_, line)| line)
 }
 
+/// Whether the end of `prefix` (the text of a line before a position) sits in
+/// a comment or an open string. A tripled quote opens a string that only the
+/// same tripled delimiter closes, so `'''it's'''` is one balanced literal and
+/// code after it is visible (#9992); a triple string left open at the end of
+/// the prefix hides what follows. F-string fields are not read here.
 pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
-    let mut quote = None;
-    let mut escaped = false;
-    for ch in prefix.chars() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if let Some(active_quote) = quote {
+    let chars: Vec<char> = prefix.chars().collect();
+    // The active delimiter and its width (1 or 3).
+    let mut open: Option<(char, usize)> = None;
+    let mut index = 0;
+    while index < chars.len() {
+        let ch = chars[index];
+        if let Some((quote, width)) = open {
+            let closes = ch == quote
+                && chars.len() - index >= width
+                && chars[index..index + width].iter().all(|c| *c == quote);
             if ch == '\\' {
-                escaped = true;
-            } else if ch == active_quote {
-                quote = None;
+                index += 2;
+            } else if closes {
+                open = None;
+                index += width;
+            } else {
+                index += 1;
             }
             continue;
         }
@@ -323,29 +466,36 @@ pub(super) fn python_prefix_hides_code(prefix: &str) -> bool {
             return true;
         }
         if ch == '\'' || ch == '"' {
-            quote = Some(ch);
+            let triple = chars.get(index + 1) == Some(&ch) && chars.get(index + 2) == Some(&ch);
+            let width = if triple { 3 } else { 1 };
+            open = Some((ch, width));
+            index += width;
+            continue;
         }
+        index += 1;
     }
-    quote.is_some()
+    open.is_some()
 }
 
 pub(super) fn contains_metaprogramming(text: &str) -> bool {
     text.contains("__getattr__")
-        || contains_call_at_name_boundary(text, "type(")
-        || contains_call_at_name_boundary(text, "setattr(")
+        || contains_call_at_name_boundary(text, "type")
+        || contains_call_at_name_boundary(text, "setattr")
         || contains_metaclass_declaration(text)
 }
 
-/// `call` (`type(`) where the name starts at an identifier boundary:
-/// `type(x)` and `builtins.type(x)`, not `content_type(x)`. Text in a string
+/// A call of `name` (`type`) where the name starts at an identifier boundary
+/// and `(` follows after optional spaces: `type(x)`, `type (x)` and
+/// `builtins.type(x)`, not `content_type(x)`. Text in a string
 /// still counts: a boundary is the only thing read, so an f-string expression
 /// or a multi-line string can never hide a real call.
-fn contains_call_at_name_boundary(text: &str, call: &str) -> bool {
-    text.match_indices(call).any(|(idx, _)| {
+fn contains_call_at_name_boundary(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(idx, _)| {
         !text[..idx]
             .chars()
             .next_back()
             .is_some_and(is_python_identifier_char)
+            && text[idx + name.len()..].trim_start().starts_with('(')
     })
 }
 
@@ -784,14 +934,32 @@ fn related_candidates_have_unresolved_pytest_fixture_limit(
 }
 
 fn test_has_unresolved_pytest_fixture_inputs(test: &PythonTest, owner: &PythonOwner) -> bool {
-    test.framework == PythonFramework::Pytest
-        && !test.parametrized
-        && body_calls_owner(&test.body_text, owner)
-        && test
-            .fixtures
-            .iter()
-            .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
-            .any(|fixture| body_uses_identifier(&test.body_text, fixture))
+    !unresolved_pytest_fixture_names(test, owner).is_empty()
+}
+
+/// The fixtures a pytest test that calls the owner takes and uses but ripr
+/// does not read, in signature order. These are what block the exposure
+/// answer, so the finding names them (#10979).
+pub(super) fn unresolved_pytest_fixture_names<'t>(
+    test: &'t PythonTest,
+    owner: &PythonOwner,
+) -> Vec<&'t str> {
+    if test.framework != PythonFramework::Pytest || !body_calls_owner(&test.body_text, owner) {
+        return Vec::new();
+    }
+    test.fixtures
+        .iter()
+        .map(String::as_str)
+        // A direct parametrize argname is a value pytest supplies, not a
+        // fixture, unless an unsettled `indirect=` may route it (#10685);
+        // a parametrize mark does not resolve the test's other fixtures
+        // (#9619).
+        .filter(|fixture| !test.takes_parametrize_value(fixture))
+        .filter(|fixture| !is_known_auxiliary_pytest_fixture(fixture))
+        .filter(|fixture| !literal_owner_instance_fixture(test, owner, fixture))
+        .filter(|fixture| !inert_tool_fixture(test, fixture))
+        .filter(|fixture| body_uses_identifier(&test.body_text, fixture))
+        .collect()
 }
 
 fn is_known_auxiliary_pytest_fixture(fixture: &str) -> bool {
@@ -817,15 +985,33 @@ fn is_known_auxiliary_pytest_fixture(fixture: &str) -> bool {
 }
 
 fn body_uses_identifier(body_text: &str, identifier: &str) -> bool {
+    // The test's own signature declares its parameters; it does not use them.
+    // A multi-line signature puts them on lines that do not start with `def`,
+    // and a one-line body follows the colon on the `def` line (#10685).
+    // The colon scan does not follow a triple-quoted string across lines, so
+    // a signature holding one falls back to the old line rule rather than
+    // risk starting the body past a real use.
+    let body_start = test_def_offset(body_text)
+        .and_then(|def| {
+            signature_colon_end(body_text, def).filter(|&end| {
+                let signature = &body_text[def..end];
+                !signature.contains("\"\"\"") && !signature.contains("\'\'\'")
+            })
+        })
+        .unwrap_or(0);
     let mut line_start = 0;
     for line in body_text.split_inclusive('\n') {
         let trimmed = line.trim_start();
-        if !trimmed.starts_with('@')
-            && !trimmed.starts_with("def ")
-            && !trimmed.starts_with("async def ")
+        // Inside the body, a decorator or `def` line belongs to a nested def.
+        let nested_header = line_start >= body_start
+            && (trimmed.starts_with('@')
+                || trimmed.starts_with("def ")
+                || trimmed.starts_with("async def "));
+        if !nested_header
             && line.match_indices(identifier).any(|(idx, _)| {
                 let body_idx = line_start + idx;
-                has_identifier_boundary(body_text, body_idx, identifier.len())
+                body_idx >= body_start
+                    && has_identifier_boundary(body_text, body_idx, identifier.len())
                     && !line_prefix_looks_like_comment_or_string(body_text, body_idx)
             })
         {
@@ -834,6 +1020,20 @@ fn body_uses_identifier(body_text: &str, identifier: &str) -> bool {
         line_start += line.len();
     }
     false
+}
+
+/// The offset of the test's own `def` keyword: the first line past its
+/// decorators that starts with `def` or `async def`.
+fn test_def_offset(body_text: &str) -> Option<usize> {
+    let mut line_start = 0;
+    for line in body_text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("def ") || trimmed.starts_with("async def ") {
+            return Some(line_start + line.len() - trimmed.len());
+        }
+        line_start += line.len();
+    }
+    None
 }
 
 pub(super) fn has_identifier_boundary(body_text: &str, idx: usize, len: usize) -> bool {
@@ -919,9 +1119,14 @@ fn related_candidates_have_log_membership_limit(
             select_relevant_assertion(&candidate.test.assertions, Some(focus))
                 .assertion()
                 .is_some_and(|assertion| {
+                    // A local alias of a captured-log read (`msgs = caplog.messages`)
+                    // is read as the capture itself: whether it is a faithful
+                    // snapshot is the evaluator's question, not a reason to
+                    // report a gap (#10151).
+                    let gate_text = substitute_caplog_aliases(candidate.test, &assertion.gate_text);
                     // Only the checked literal (left of the membership operator)
                     // may overlap; `assert` and `caplog.text` are scaffolding.
-                    caplog_membership_literals(&assertion.gate_text)
+                    caplog_membership_literals(&gate_text)
                         .iter()
                         .any(|checked| {
                             words(&checked.literal)
@@ -932,9 +1137,9 @@ fn related_candidates_have_log_membership_limit(
                         // `caplog.records` (`caplog.records[0].message == ...`,
                         // `caplog.messages == [...]`) are not evaluated: any
                         // shared word abstains.
-                        || (assertion.gate_text.contains("caplog.messages")
-                            || assertion.gate_text.contains("caplog.records"))
-                            && words(&assertion.gate_text)
+                        || (gate_text.contains("caplog.messages")
+                            || gate_text.contains("caplog.records"))
+                            && words(&gate_text)
                                 .iter()
                                 .any(|word| changed.contains(word))
                 })
@@ -958,6 +1163,9 @@ pub(super) enum CaplogRead {
 pub(super) struct CaplogMembership {
     pub(super) literal: String,
     pub(super) read: CaplogRead,
+    /// `"<text>" not in ...` or `not any(...)`: the assertion holds while no
+    /// captured text matches the literal.
+    pub(super) negated: bool,
 }
 
 /// The string literals an assertion checks against the captured log records
@@ -1071,14 +1279,17 @@ fn caplog_records_any(call: &ast::ExprCall) -> Option<CaplogMembership> {
         ast::CmpOp::In if is_record_message(other, name) => Some(CaplogMembership {
             literal: string_constant(&compare.left)?,
             read: CaplogRead::MessageContains,
+            negated: false,
         }),
         ast::CmpOp::Eq if is_record_message(&compare.left, name) => Some(CaplogMembership {
             literal: string_constant(other)?,
             read: CaplogRead::MessageEquals,
+            negated: false,
         }),
         ast::CmpOp::Eq if is_record_message(other, name) => Some(CaplogMembership {
             literal: string_constant(&compare.left)?,
             read: CaplogRead::MessageEquals,
+            negated: false,
         }),
         _ => None,
     }
@@ -1099,8 +1310,18 @@ fn collect_caplog_membership_literals(
             }
         }
         Expr::Call(call) => out.extend(caplog_records_any(call)),
+        // `assert not any(...)`: the same read, asserted absent.
+        Expr::UnaryOp(unary) if unary.op == ast::UnaryOp::Not => {
+            if let Expr::Call(call) = unary.operand.as_ref() {
+                out.extend(caplog_records_any(call).map(|membership| CaplogMembership {
+                    negated: true,
+                    ..membership
+                }));
+            }
+        }
         Expr::Compare(compare)
-            if compare.ops.len() == 1 && matches!(compare.ops[0], ast::CmpOp::In) =>
+            if compare.ops.len() == 1
+                && matches!(compare.ops[0], ast::CmpOp::In | ast::CmpOp::NotIn) =>
         {
             let comparator = compare.comparators.first();
             let read = match comparator.and_then(expr_full_name).as_deref() {
@@ -1110,7 +1331,11 @@ fn collect_caplog_membership_literals(
                 _ => return,
             };
             if let Some(literal) = string_constant(&compare.left) {
-                out.push(CaplogMembership { literal, read });
+                out.push(CaplogMembership {
+                    literal,
+                    read,
+                    negated: matches!(compare.ops[0], ast::CmpOp::NotIn),
+                });
             }
         }
         _ => {}
@@ -1180,13 +1405,55 @@ fn owner_called_inside_lambda(body_text: &str, owner: &PythonOwner) -> bool {
     })
 }
 
+/// #9226: the edit changes only the value of integer literals. Every other
+/// token is identical, so no callee, keyword, operator or operand moved and the
+/// imported symbol the line calls is the same before and after. The line is
+/// `classify` lifts the import abstention for it only when a strong exact
+/// oracle observes the owner (it then reads `weakly_exposed`); otherwise the
+/// limit stands.
+pub(super) fn integer_literal_swap(old: &str, new: &str) -> bool {
+    use rustpython_parser::{Mode, Tok, lexer::lex};
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    // Re-indenting moves the statement under or out of a block, which changes
+    // which inputs reach it.
+    if old.get(..indent(old)) != new.get(..indent(new)) {
+        return false;
+    }
+    let (old, new) = (old.trim(), new.trim());
+    let tokens = |text: &str| -> Option<Vec<Tok>> {
+        lex(text, Mode::Module)
+            .map(|result| result.ok().map(|(token, _)| token))
+            .collect()
+    };
+    let (Some(old), Some(new)) = (tokens(old), tokens(new)) else {
+        return false;
+    };
+    old.len() == new.len()
+        && old != new
+        && old
+            .iter()
+            .zip(&new)
+            .all(|(a, b)| a == b || matches!((a, b), (Tok::Int { .. }, Tok::Int { .. })))
+}
+
 pub(super) fn line_uses_imported_symbol(text: &str, imports: &[PythonImport]) -> bool {
     imports.iter().any(|import| {
         !is_known_mock_constructor_import(import)
             && !line_uses_known_static_cli_symbol(text, import)
-            && (text.contains(&format!("{}(", import.alias))
-                || text.contains(&format!("{}.", import.alias)))
+            && (names_imported_alias(text, &import.alias, '(')
+                || names_imported_alias(text, &import.alias, '.'))
     })
+}
+
+/// Whether `text` uses `alias` as a whole name followed by `next`. A substring
+/// match read `pos.x` as a use of `os` (RIPR-SPEC-0238 rule 8 requires tokens).
+/// Only an identifier character or a dot before the alias rules it out, so
+/// `x.os.getcwd()` (an attribute of another object) is not the import either;
+/// a string or comment prefix is not consulted, since f-string fields are code.
+fn names_imported_alias(text: &str, alias: &str, next: char) -> bool {
+    let needle = format!("{alias}{next}");
+    text.match_indices(&needle)
+        .any(|(idx, _)| python_callee_start_has_boundary(text, idx))
 }
 
 pub(super) fn is_known_mock_constructor_import(import: &PythonImport) -> bool {
@@ -1362,7 +1629,7 @@ pub(super) fn unpinned_equality_dunder_limit(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::domain::StaticLimitKind;
     use std::path::PathBuf;
@@ -1383,7 +1650,10 @@ mod tests {
         }
     }
 
-    fn owner_with(decorators: &[&str], imports: Vec<PythonImport>) -> PythonOwner {
+    pub(in crate::analysis::language::python) fn owner_with(
+        decorators: &[&str],
+        imports: Vec<PythonImport>,
+    ) -> PythonOwner {
         PythonOwner {
             name: "owner".to_string(),
             qualified_name: "owner".to_string(),
@@ -1411,6 +1681,9 @@ mod tests {
             class_path: String::new(),
             term_facts: Default::default(),
             class_facts: Default::default(),
+            foreign_writes: Default::default(),
+            version_conditional: false,
+            cli_subcommand: None,
         }
     }
 
@@ -1848,6 +2121,41 @@ mod tests {
             "    mocker.patch.object(a, \"b\")\n",
             "patch.object(",
             &none
+        ));
+    }
+
+    #[test]
+    fn a_signature_declares_its_parameters_and_the_body_uses_them() {
+        let cases = [
+            ("def test_x(fee):\n    pass\n", false),
+            ("def test_x(\n    fee,\n):\n    pass\n", false),
+            (
+                "@mark\ndef test_x(\n    fee: dict[str, int] = {'a': 1},\n) -> None:\n    pass\n",
+                false,
+            ),
+            ("async def test_x(\n    fee,\n):\n    pass\n", false),
+            (
+                "    def test_x(\n        self,\n        fee,\n    ):\n        pass\n",
+                false,
+            ),
+            ("def test_x(\n    fee,  # ):\n):\n    pass\n", false),
+            ("def test_x(\n    fee,\n):\n    assert fee\n", true),
+            ("def test_x(fee): assert fee\n", true),
+            ("def test_x(\n    fee,\n): return fee\n", true),
+            // A triple-quoted default the colon scan cannot follow keeps the
+            // old line rule, so the body use still counts.
+            (
+                "def test_x(fee, note=\"\"\"a\nb\"\"\"):\n    assert fee\n    text = \"\"\"\n    1) step: x\n    \"\"\"\n",
+                true,
+            ),
+        ];
+        for (body, uses) in cases {
+            assert_eq!(body_uses_identifier(body, "fee"), uses, "{body:?}");
+        }
+        // A nested def's header is still not a use.
+        assert!(!body_uses_identifier(
+            "def test_x(fee):\n    def helper(fee):\n        pass\n",
+            "fee"
         ));
     }
 }

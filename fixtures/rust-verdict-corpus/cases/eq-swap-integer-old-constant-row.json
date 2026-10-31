@@ -1,0 +1,45 @@
+{
+  "case_id": "eq-swap-integer-old-constant-row",
+  "subject_id": "authored-eq-swap",
+  "diff": "cases/eq-swap-integer-old-constant-row.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 21
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "one_sided_equality_constant_swap",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if n == 6 {",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::five_is_five",
+        "equivalence_review": "the edit itself: moving the compared constant changes which input takes the branch"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test pins `five_class(5)` to five. Moving the compared constant to 6 sends that row to other, so the test fails.",
+  "labeling_observation": {
+    "ripr_commit": "f59bb04f4",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

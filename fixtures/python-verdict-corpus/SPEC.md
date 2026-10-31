@@ -5,7 +5,7 @@ RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
-Twenty small authored Python projects under `subjects/`, our own code under
+Small authored Python projects under `subjects/`, our own code under
 this repository's license, one per test library or library feature:
 
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
@@ -16,8 +16,9 @@ this repository's license, one per test library or library feature:
   9's owner returns the handler it was given, as a registration helper
   does, so the mock the test asserts on is the owner's result
   (`tests/test_handler.py`). Example 10 is in `authored-py-pytest-numpy`,
-  and the `lambda: 0` half of 33 is left out because
-  `sorted(x, key=lambda: 0)` raises at runtime. Alternate forms within an
+  and the `lambda: 0` half of 33 is covered on an empty list, where the
+  zero-argument key function never runs (`sorted(x, key=lambda: 0)` raises
+  on a non-empty list). Alternate forms within an
   example are not all covered:
   6's assertEqual form, 18's form with the test bodies swapped between the
   names, 19's `Exception, match=''`, 24's third form, 25's no-import form,
@@ -33,9 +34,15 @@ this repository's license, one per test library or library feature:
   boundaries, `assume`, a reference-implementation oracle and a no-assertion
   property (derandomized in `tests/conftest.py`).
 - `authored-py-pytest-numpy`: RIPR-SPEC-0238 example 10, an owner whose
-  only test asserts through `np.testing.assert_array_equal`. It is a
-  subject of its own so the other subjects' tests still run without
-  numpy; its truth was recorded with numpy 2.1.3.
+  only test asserts through `np.testing.assert_array_equal`, and the rule 28
+  cases beside it (`src/extra.py`): an assertpy `is_equal_to` chain and a
+  `from numpy.testing import assert_equal` call, both credited, and five
+  false-credit traps that stay non-credited (an `assert_allclose` tolerance, a
+  helper under `pytest.raises(AssertionError)`, a test-local `np` with no
+  numpy import, a monkeypatched helper, an owner compared with itself). It is
+  a subject of its own so the other subjects' tests still run without numpy
+  or assertpy; example 10's truth was recorded with numpy 2.1.3 and the rule 28
+  cases with numpy 2.4.6, assertpy 1.1 and pytest 9.2.0.
 - `authored-py-pytest-blocks`: multi-line replacement blocks, where the
   behavior change is the second line of a block that also rewrites the
   comment above it (#7556).
@@ -69,6 +76,48 @@ this repository's license, one per test library or library feature:
   through a helper in another file, a module-level lambda, `globals()`
   dispatch, a module constant read by a test class, the same function name in
   two modules, a nested function, and an unrelated unparseable module.
+- `authored-py-pytest-route-clients`: a framework-free route registry and
+  `TestClient`, with route owners whose request client is a conftest fixture
+  over the owner's own app, a fixture over another module's `app` on the same
+  path, a client built over a factory call, and a fixture built on a second
+  fixture. Each test only asserts the response is not `None`, so every mutant
+  survives and the cases score how the client's application is read, not the
+  oracle (run under Python 3.13.16 and pytest 9.1.1).
+- `authored-py-pytest-literals`, `authored-py-pytest-imports`,
+  `authored-py-unittest-almost`, `authored-py-unittest-raises` and
+  `authored-py-pytest-conjuncts`: one RIPR-SPEC-0238 rule family each (literal
+  comparisons; rival imports and `mocker.patch`; `assertAlmostEqual`; callable
+  and bound exception assertions; `and`/`or`/`not` chains). Cases are
+  one-line edits or rewrites labeled by real pytest runs (Python 3.13.16,
+  pytest 9.1.1, pytest-mock 3.17.0).
+- `authored-py-pytest-offsets`: RIPR-SPEC-0238 rule 16's constant offset
+  operand (`LIMIT - 1`, `LIMIT + 1`, `threshold - 1` from a parametrize row).
+  Where a test calls the owner at the offset boundary value and pins the
+  result, the case is credited; where its inputs miss that value, it is a
+  gap.
+- `authored-py-pytest-channels`: RIPR-SPEC-0238 rule 17's written-channel
+  forms: `capsys`/`capfd` output, `write_text` on an owner parameter, and a
+  mock parameter's call. Each owner is one channel write; the cases vary
+  whether the test's read matches that channel (a read before the owner,
+  stderr read as stdout, the other parameter's file, and weak or partial mock
+  assertions are gaps; exact reads after the owner are credited).
+- `authored-py-pytest-properties`: RIPR-SPEC-0238 rule 25's property checks.
+  An idempotence assert (either order) and a loop identity over a `for`
+  variable (including a tuple target) pass on an edit that keeps the property,
+  so they are gaps; a chain with a literal, a literal expected value and a
+  name bound outside the loop pin the value and are credited.
+- `authored-py-pytest-unrunnable`: RIPR-SPEC-0238 rules 23 and 24. Assertions
+  under a literal-false `if`/`while` or swallowed by an `AssertionError`
+  handler cannot notice an edit, and tests the collector skips never run, so
+  those are gaps (the skipped forms abstain with `static_unknown`). The live
+  `else` arm, an `else` or `finally` block beside a swallowing `try`, a handler
+  that calls `pytest.fail`, `xfail(False, reason=...)` and
+  `unittest.skipUnless(True, ...)` keep the test active and are credited.
+- `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band
+  abstentions (positional band within and outside the band, spread band,
+  non-literal band, longer owner body, method owner, decorated owner). Every
+  case reads `static_unknown`; the outside-band edit is the one case whose
+  test catches the change.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's
@@ -126,7 +175,7 @@ the `py-spec0233-exNN-` prefix and the subject keeps its
 `authored-py-pytest-spec0233` name, because RIPR-SPEC-0238 cites
 `py-spec0233-ex21-exc-value` by id and the subject sources are pinned by
 digest. Each such case cites its example in `spec_examples`, and
-`spec-coverage.toml` gates those citations on a floor; example 34, added at
+`spec-coverage.toml` gates those citations through `spec-examples.lock`; example 34, added at
 merge, has its cases under the same prefix.
 
 ## Refreshing

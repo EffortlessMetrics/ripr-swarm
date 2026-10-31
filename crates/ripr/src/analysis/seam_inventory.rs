@@ -27,9 +27,10 @@ use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
 #[cfg(test)]
 use super::seam_cache::RepoSeamCountCache;
 use super::seam_cache::{
-    CacheLoad, CachedSeamLimitInfo, CorpusFingerprintLookup, FileFactCacheStats,
-    FilesContentHashBuilder, RepoCorpusFingerprintCache, RepoSeamCacheKey, RepoSeamFactCache,
-    WorkspaceKeyContext, classified_seam_cache_store_limit,
+    CLASSIFIED_SEAM_STORE_FAILURE_PATH, CORPUS_FINGERPRINT_STORE_FAILURE_PATH, CacheLoad,
+    CachedSeamLimitInfo, CorpusFingerprintLookup, FileFactCacheStats, FileFactStoreError,
+    FileFactStoreStage, FilesContentHashBuilder, RepoCorpusFingerprintCache, RepoSeamCacheKey,
+    RepoSeamFactCache, WorkspaceKeyContext, classified_seam_cache_store_limit,
     compact_classified_seam_cache_store_limit, corpus_fingerprint,
 };
 #[cfg(test)]
@@ -46,6 +47,7 @@ use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::RiprConfig;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 const REPO_EXPOSURE_SEAM_LIMIT_ENV: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
@@ -65,6 +67,72 @@ pub(crate) const PILOT_SEAM_BUDGET_ENV: &str = "RIPR_PILOT_SEAM_BUDGET";
 /// stay comfortably below 10 MB at typical per-seam evidence sizes.
 /// Operators can raise or remove the cap via `RIPR_PILOT_SEAM_BUDGET`.
 pub(crate) const DEFAULT_PILOT_SEAM_BUDGET: usize = 2_000;
+
+/// Default inventory cap while a pilot run is active; `0` means no pilot run.
+static PILOT_INVENTORY_DEFAULT: AtomicUsize = AtomicUsize::new(0);
+
+/// Scopes the built-in inventory cap of one `ripr pilot` run to the pilot
+/// artifact budget (#10726). Pilot ranks and writes at most
+/// `DEFAULT_PILOT_SEAM_BUDGET` seams, so classifying the other
+/// `DEFAULT_REPO_EXPOSURE_SEAM_LIMIT - DEFAULT_PILOT_SEAM_BUDGET` seams only
+/// to discard them tripled the wall time on a mid-size repo (tokio: 38 s vs
+/// 12 s) for an identical summary. Seams of the current change past the cap
+/// are still classified by the change supplement, and an explicit
+/// `RIPR_REPO_EXPOSURE_SEAM_LIMIT` (including `0`) still wins: only the
+/// built-in default moves, and it keeps reporting `source: default`.
+/// Dropping the guard restores the product default.
+///
+/// The cap is process-wide (a static, not thread-local, because inventory work
+/// runs on worker threads): one pilot run at a time per process. The guard
+/// restores the value it replaced, so nested guards unwind in order. The only
+/// holder is `ripr pilot`, whose entry point is private to the CLI adapter module and is
+/// reached from the CLI dispatch alone: the LSP and MCP adapters never call it
+/// and xtask runs the pilot binary as a subprocess, so no other in-process
+/// analysis shares the lowered default.
+#[must_use = "the pilot inventory default lasts only while the guard is held"]
+pub(crate) struct PilotInventoryDefault {
+    previous: usize,
+}
+
+impl PilotInventoryDefault {
+    /// Validates `RIPR_PILOT_SEAM_BUDGET` (#4529) and scopes the default.
+    pub(crate) fn enter() -> Result<Self, String> {
+        let cap = pilot_seam_budget()?.map_or(0, |(budget, _)| {
+            budget.min(DEFAULT_REPO_EXPOSURE_SEAM_LIMIT)
+        });
+        let previous = PILOT_INVENTORY_DEFAULT.swap(cap, Ordering::Relaxed);
+        Ok(Self { previous })
+    }
+}
+
+impl PilotInventoryDefault {
+    /// Re-labels an inventory cut made by the pilot-scoped default cap as the
+    /// pilot budget cut it stands in for: same analyzed and total counts, the
+    /// budget's own source. `None` for any other cut (an explicit
+    /// `RIPR_REPO_EXPOSURE_SEAM_LIMIT`, or a cap equal to the product default).
+    pub(crate) fn as_budget_cut(info: Option<&SeamLimitInfo>) -> Option<SeamLimitInfo> {
+        let cap = PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed);
+        let info = info?;
+        if cap == 0
+            || cap >= DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
+            || info.source != SeamLimitSource::Default
+        {
+            return None;
+        }
+        let (_, source) = pilot_seam_budget().ok()??;
+        Some(SeamLimitInfo {
+            analyzed: info.analyzed,
+            total: info.total,
+            source,
+        })
+    }
+}
+
+impl Drop for PilotInventoryDefault {
+    fn drop(&mut self) {
+        PILOT_INVENTORY_DEFAULT.store(self.previous, Ordering::Relaxed);
+    }
+}
 
 /// Walk production Rust files at `root` and emit the raw seam inventory.
 /// Used by the `repo-seams-*` formats; the classified inventory used by
@@ -181,6 +249,9 @@ pub(crate) struct ClassifiedSeamsReport {
     /// its consumed corpus identity avoids a later renderer hashing new
     /// workspace bytes for old classifications. Synthetic reports have none.
     pub(crate) corpus_key: Option<RepoSeamCacheKey>,
+    /// Production-role files admitted by this run's discovery, independent of
+    /// surviving seams. Recomputed before cache lookup, never inferred from gaps.
+    pub(crate) analyzed_production_files: Vec<PathBuf>,
     /// This run's selected inputs differ from ordinary repo exposure, including
     /// evidence-only files. Recomputed at discovery, never reused from cache.
     pub(crate) diff_bound_corpus: bool,
@@ -221,6 +292,27 @@ fn inventory_classified_seams_report_inner(
     config: &RiprConfig,
     changed_paths: Option<&[PathBuf]>,
 ) -> Result<ClassifiedSeamsReport, String> {
+    // Store failures of the classified-seam and corpus-fingerprint families
+    // are collected through the same bounded `{path, stage, error}` row
+    // owner as file-fact failures (#9633) and surfaced once per run, success
+    // or failure, on the opt-in trace channel.
+    let mut family_store_failures = FileFactCacheStats::zero_work();
+    let result = inventory_classified_seams_report_collect(
+        root,
+        config,
+        changed_paths,
+        &mut family_store_failures,
+    );
+    trace_cache_family_store_failures(&family_store_failures, result.as_ref().ok());
+    result
+}
+
+fn inventory_classified_seams_report_collect(
+    root: &Path,
+    config: &RiprConfig,
+    changed_paths: Option<&[PathBuf]>,
+    family_store_failures: &mut FileFactCacheStats,
+) -> Result<ClassifiedSeamsReport, String> {
     let total_started = Instant::now();
     let cache = RepoSeamFactCache::at(root);
     let store_limit = classified_seam_cache_store_limit()?;
@@ -245,6 +337,7 @@ fn inventory_classified_seams_report_inner(
         }
     };
     let rust_files = corpus.analyzable;
+    let analyzed_production_files = production_files_with_role(root, config, &rust_files);
     let fingerprint = corpus.fingerprint;
     let skipped_generated = corpus.skipped_generated;
     let naming_only_skips = corpus.naming_only_skips;
@@ -279,6 +372,7 @@ fn inventory_classified_seams_report_inner(
                 return Ok(ClassifiedSeamsReport {
                     classified: cached,
                     corpus_key: Some(key),
+                    analyzed_production_files,
                     diff_bound_corpus,
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
@@ -315,7 +409,7 @@ fn inventory_classified_seams_report_inner(
         }
     };
     let key = state.cache_key();
-    store_corpus_fingerprint_mapping(&state, fingerprint, &key);
+    store_corpus_fingerprint_mapping(&state, fingerprint, &key, family_store_failures);
     // NOTE: the seam-limit key is baked into `key.filename()`, so a capped run
     // and an unbounded run never share a cache file — no fast-path bypass needed.
     let cache_started = Instant::now();
@@ -341,6 +435,7 @@ fn inventory_classified_seams_report_inner(
             return Ok(ClassifiedSeamsReport {
                 classified: cached,
                 corpus_key: Some(key),
+                analyzed_production_files,
                 diff_bound_corpus,
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
@@ -364,7 +459,11 @@ fn inventory_classified_seams_report_inner(
     let compute_started = Instant::now();
     trace_latency_phase("cold_compute", "start", Duration::ZERO);
     let (classified, limit_info, lexical_fallback_files) =
-        match inventory_classified_seams_from_state_with_config(&state, config) {
+        match inventory_classified_seams_from_state_with_config(
+            &state,
+            config,
+            &analyzed_production_files,
+        ) {
             Ok(pair) => {
                 trace_latency_phase("cold_compute", "ok", compute_started.elapsed());
                 pair
@@ -404,7 +503,15 @@ fn inventory_classified_seams_report_inner(
         }
         Err(reason) => {
             eprintln!("ripr: repo seam cache store ignored ({reason})");
-            cache_store_status_label(&reason)
+            let label = cache_store_status_label(&reason);
+            family_store_failures.record_store_failure(
+                PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
+                FileFactStoreError {
+                    stage: FileFactStoreStage::ClassifiedSeamStore,
+                    message: reason,
+                },
+            );
+            label
         }
     };
     trace_latency_phase("cache_store", &store_status, store_started.elapsed());
@@ -412,6 +519,7 @@ fn inventory_classified_seams_report_inner(
     Ok(ClassifiedSeamsReport {
         classified,
         corpus_key: key.is_reusable().then_some(key),
+        analyzed_production_files,
         diff_bound_corpus,
         limit_info,
         skipped_generated,
@@ -429,7 +537,26 @@ pub(crate) fn workspace_cache_key_at_with_config(
     root: &Path,
     config: &RiprConfig,
 ) -> Result<super::seam_cache::RepoSeamCacheKey, String> {
+    workspace_cache_key_for_corpus(root, config, scan_corpus_fingerprint(root, config)?)
+}
+
+/// Current corpus identity and production membership from the same discovery
+/// and role authority as the full inventory, without running the classifier.
+pub(crate) fn workspace_cache_key_and_production_files_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<(RepoSeamCacheKey, Vec<PathBuf>), String> {
     let corpus = scan_corpus_fingerprint(root, config)?;
+    let production_files = production_files_with_role(root, config, &corpus.analyzable);
+    let key = workspace_cache_key_for_corpus(root, config, corpus)?;
+    Ok((key, production_files))
+}
+
+fn workspace_cache_key_for_corpus(
+    root: &Path,
+    config: &RiprConfig,
+    corpus: AnalyzableRustCorpus,
+) -> Result<RepoSeamCacheKey, String> {
     let inputs = workspace_key_inputs(root, config);
     // Fingerprint fast path (issue #2108): a stored mapping yields the
     // byte-identical key without reading any file contents.
@@ -442,7 +569,14 @@ pub(crate) fn workspace_cache_key_at_with_config(
     let state = collect_workspace_state_from_files(root, config, corpus.analyzable)?;
     let key = state.cache_key();
     key.require_reusable()?;
-    store_corpus_fingerprint_mapping(&state, corpus.fingerprint, &key);
+    // This key-only entry point has no receipt channel; the failure still
+    // reaches the ordinary stderr sentence inside the store helper.
+    store_corpus_fingerprint_mapping(
+        &state,
+        corpus.fingerprint,
+        &key,
+        &mut FileFactCacheStats::zero_work(),
+    );
     Ok(key)
 }
 
@@ -460,9 +594,61 @@ fn trace_file_fact_cache(stats: &FileFactCacheStats) {
         return;
     }
     eprintln!(
-        "ripr_file_fact_cache_receipt {}",
+        "{}{}",
+        latency_trace::authenticated_receipt_prefix(FILE_FACT_CACHE_RECEIPT_PREFIX),
         file_fact_cache_receipt(stats)
     );
+}
+
+/// Prefix of the opt-in file-fact cache receipt line on stderr.
+const FILE_FACT_CACHE_RECEIPT_PREFIX: &str = "ripr_file_fact_cache_receipt ";
+
+/// Prefix of the opt-in classified-seam / corpus-fingerprint store receipt.
+const CACHE_FAMILY_STORE_RECEIPT_PREFIX: &str = "ripr_cache_family_store_receipt ";
+
+/// Emit the classified-seam and corpus-fingerprint store outcome once per run
+/// on the opt-in trace channel: the same bounded `{path, stage, error}` rows
+/// and dropped count as the file-fact receipt, always present (an empty row
+/// list is the healthy state, so a consumer can tell it from a missing line).
+fn trace_cache_family_store_failures(
+    stats: &FileFactCacheStats,
+    report: Option<&ClassifiedSeamsReport>,
+) {
+    if !latency_trace::latency_trace_enabled() {
+        return;
+    }
+    let mut receipt = cache_family_store_receipt(stats);
+    receipt["subject"] = report.map_or(serde_json::Value::Null, run_subject);
+    eprintln!(
+        "{}{}",
+        latency_trace::authenticated_receipt_prefix(CACHE_FAMILY_STORE_RECEIPT_PREFIX),
+        receipt
+    );
+}
+
+/// What this run analyzed, as the producer saw it: the cache key identity
+/// (sources, config, manifests, toolchain, seam limit) and digests of the
+/// generated, naming-only and declined file disclosures. A harness comparing
+/// two runs uses it to refuse to compare runs over different subjects.
+/// `cache_key` is `null` when the run had no reusable key.
+fn run_subject(report: &ClassifiedSeamsReport) -> serde_json::Value {
+    let digest = |text: String| super::seam_cache::stable_input_hash(text.as_bytes());
+    serde_json::json!({
+        "cache_key": report.corpus_key.as_ref().map(|key| digest(key.filename())),
+        "skipped_generated": digest(format!("{:?}", report.skipped_generated)),
+        "naming_only_skips": digest(format!("{:?}", report.naming_only_skips)),
+        "declined_rust_files": digest(format!("{:?}", report.declined_rust_files)),
+        "diff_bound_corpus": report.diff_bound_corpus,
+    })
+}
+
+fn cache_family_store_receipt(stats: &FileFactCacheStats) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "0.1",
+        "store_errors": stats.store_errors,
+        "store_failures": file_fact_store_failure_rows(stats),
+        "store_failures_dropped": stats.store_failures_dropped,
+    })
 }
 
 /// Bounded `{path, stage, error}` store-failure rows, shared by the opt-in
@@ -695,7 +881,14 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
 
     let state = collect_workspace_state_from_files(root, config, rust_files)?;
     let key = state.cache_key();
-    store_corpus_fingerprint_mapping(&state, fingerprint, &key);
+    // The compact (badge) path has no receipt channel yet; its store failures
+    // keep the ordinary stderr sentence.
+    store_corpus_fingerprint_mapping(
+        &state,
+        fingerprint,
+        &key,
+        &mut FileFactCacheStats::zero_work(),
+    );
     let cache_started = Instant::now();
     match cache.load_classified_seams_with_fallback(&key) {
         CacheLoad::Hit((cached, _limit_info, lexical_fallback_files)) => {
@@ -838,8 +1031,8 @@ type ClassifiedSeamInventory = (Vec<ClassifiedSeam>, Option<SeamLimitInfo>, Vec<
 fn inventory_classified_seams_from_state_with_config(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
+    production_files: &[PathBuf],
 ) -> Result<ClassifiedSeamInventory, String> {
-    let production_files = production_files_from_state_with_role(state, config);
     let build_started = Instant::now();
     trace_latency_phase(
         "file_fact_cache",
@@ -868,7 +1061,7 @@ fn inventory_classified_seams_from_state_with_config(
     // inventory work, rather than after; every other behavior is unchanged.
     let limit_and_source = repo_exposure_seam_limit()?;
     let limit = limit_and_source.as_ref().map(|(limit, _)| *limit);
-    let bounded = inventory_seams_from_index_bounded(&production_files, &cached.index, limit)?;
+    let bounded = inventory_seams_from_index_bounded(production_files, &cached.index, limit)?;
     cancellation::checkpoint()?;
     // The retained-object peak is production-observable here (issue #4997):
     // the retained prefix stays within K while the trace reports the peak
@@ -2547,9 +2740,14 @@ fn normalize_scope_key_bytes(bytes: &[u8]) -> Vec<u8> {
 /// - Anything else → `Err` naming the variable (#4529). Only an explicit `0`
 ///   removes the cap, so a typo never turns the memory guard off.
 pub(crate) fn repo_exposure_seam_limit() -> Result<Option<(usize, SeamLimitSource)>, String> {
+    let pilot_default = PILOT_INVENTORY_DEFAULT.load(Ordering::Relaxed);
     seam_limit_from_env(
         REPO_EXPOSURE_SEAM_LIMIT_ENV,
-        DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+        if pilot_default == 0 {
+            DEFAULT_REPO_EXPOSURE_SEAM_LIMIT
+        } else {
+            pilot_default
+        },
         std::env::var(REPO_EXPOSURE_SEAM_LIMIT_ENV),
     )
 }
@@ -2749,13 +2947,12 @@ fn production_files_from_state_with_role(
     state: &OwnedWorkspaceState,
     config: &RiprConfig,
 ) -> Vec<PathBuf> {
-    let context = production_role_context(
-        &state.workspace_root,
-        config,
-        state.files.iter().map(PathBuf::as_path),
-    );
-    state
-        .files
+    production_files_with_role(&state.workspace_root, config, &state.files)
+}
+
+fn production_files_with_role(root: &Path, config: &RiprConfig, files: &[PathBuf]) -> Vec<PathBuf> {
+    let context = production_role_context(root, config, files.iter().map(PathBuf::as_path));
+    files
         .iter()
         .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
         .cloned()
@@ -2952,6 +3149,7 @@ fn store_corpus_fingerprint_mapping(
     state: &OwnedWorkspaceState,
     pre_read_fingerprint: Option<String>,
     key: &RepoSeamCacheKey,
+    store_failures: &mut FileFactCacheStats,
 ) {
     let Some(fingerprint) = pre_read_fingerprint else {
         return;
@@ -2968,6 +3166,13 @@ fn store_corpus_fingerprint_mapping(
         &key.files_content_hash,
     ) {
         eprintln!("ripr: corpus fingerprint cache store ignored ({reason})");
+        store_failures.record_store_failure(
+            PathBuf::from(CORPUS_FINGERPRINT_STORE_FAILURE_PATH),
+            FileFactStoreError {
+                stage: FileFactStoreStage::CorpusFingerprintStore,
+                message: reason,
+            },
+        );
     }
 }
 
@@ -3650,6 +3855,21 @@ pub(crate) fn seam_kind_for_probe_family(family: &str) -> Option<SeamKind> {
     .into_iter()
     .find(|kind| kind.as_str() == family)
     .and_then(seam_kind_from_probe_shape)
+}
+
+/// The `ripr agent stub --kind` probe family a seam of `kind` answers to: the
+/// inverse of [`seam_kind_for_probe_family`], so a printed stub command
+/// selects the seam it was printed for (#10978).
+pub(crate) fn probe_family_for_seam_kind(kind: SeamKind) -> &'static str {
+    match kind {
+        SeamKind::PredicateBoundary => ProbeShapeKind::Predicate.as_str(),
+        SeamKind::ReturnValue => ProbeShapeKind::ReturnValue.as_str(),
+        SeamKind::ErrorVariant => ProbeShapeKind::ErrorPath.as_str(),
+        SeamKind::FieldConstruction => ProbeShapeKind::FieldConstruction.as_str(),
+        SeamKind::SideEffect => ProbeShapeKind::SideEffect.as_str(),
+        SeamKind::MatchArm => ProbeShapeKind::MatchArm.as_str(),
+        SeamKind::CallPresence => ProbeShapeKind::CallDeletion.as_str(),
+    }
 }
 
 fn seam_kind_from_probe_shape(kind: ProbeShapeKind) -> Option<SeamKind> {
@@ -8384,6 +8604,62 @@ marker = "libtest_mimic::Trial"
     }
 
     #[test]
+    fn changed_production_files_partition_parsed_from_parser_declined() -> Result<(), String> {
+        // #9734: a changed production file the parser declines (nesting
+        // budget, non-UTF-8) falls back to lexical facts and yields no seams,
+        // so it is reported as declined, never as covered. Unchanged declined
+        // files and changed non-production files appear in neither list.
+        let root = make_tempdir("covered-declined-partition")?;
+        let nested = format!(
+            "pub fn deep() {{ {}{} }}\n",
+            "{".repeat(400),
+            "}".repeat(400)
+        );
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub mod ok;\npub mod deep;\npub mod raw;\npub mod stale;\n",
+        )?;
+        write_file(
+            &root.join("src/ok.rs"),
+            "pub fn early(n: i32) -> bool { n >= 10 }\n",
+        )?;
+        write_file(&root.join("src/deep.rs"), &nested)?;
+        write_file(&root.join("src/stale.rs"), &nested)?;
+        std::fs::write(
+            root.join("src/raw.rs"),
+            b"pub fn raw(n: i32) -> bool { n >= 3 } // \xff\xfe\n",
+        )
+        .map_err(|err| format!("write raw.rs: {err}"))?;
+        write_file(
+            &root.join("tests/boundary.rs"),
+            "#[test] fn boundary() { assert!(early(10)); }\n",
+        )?;
+        let inventory = inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &RiprConfig::default(),
+            &[
+                PathBuf::from("src/ok.rs"),
+                PathBuf::from("src/deep.rs"),
+                PathBuf::from("src/raw.rs"),
+                PathBuf::from("tests/boundary.rs"),
+            ],
+            &[],
+        )?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(
+            inventory.changed_production_files,
+            [PathBuf::from("src/ok.rs")]
+        );
+        let mut declined = inventory.parser_declined_files.clone();
+        declined.sort();
+        assert_eq!(
+            declined,
+            [PathBuf::from("src/deep.rs"), PathBuf::from("src/raw.rs")]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn scoped_sets_match_exactly_one_valid_sibling() -> Result<(), String> {
         // Portable control for the invalid-byte regression below: with
         // ordinary names, scoping one sibling never pulls in the other.
@@ -9201,7 +9477,12 @@ marker = "libtest_mimic::Trial"
             "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold || amount < 0 }\n",
         )?;
 
-        store_corpus_fingerprint_mapping(&state, pre_fingerprint.clone(), &key);
+        store_corpus_fingerprint_mapping(
+            &state,
+            pre_fingerprint.clone(),
+            &key,
+            &mut FileFactCacheStats::zero_work(),
+        );
         let Some(fingerprint) = pre_fingerprint else {
             // #3848: with no content-change witness there is no pre-read
             // signature, so the store is skipped before this guard is
@@ -9254,6 +9535,128 @@ marker = "libtest_mimic::Trial"
 
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
+    }
+
+    fn run_collect_with_family_failures(
+        root: &Path,
+    ) -> Result<(ClassifiedSeamsReport, FileFactCacheStats), String> {
+        let mut failures = FileFactCacheStats::zero_work();
+        let report = inventory_classified_seams_report_collect(
+            root,
+            &RiprConfig::default(),
+            None,
+            &mut failures,
+        )?;
+        Ok((report, failures))
+    }
+
+    /// #9633: a corpus-fingerprint store failure has a `{path, stage, error}`
+    /// row, not only a stderr sentence; the healthy run has none.
+    #[test]
+    fn given_fingerprint_store_blocked_then_failure_row_names_stage() -> Result<(), String> {
+        let root = make_tempdir("fingerprint-store-row")?;
+        write_file(
+            &root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )?;
+        let (_, healthy) = run_collect_with_family_failures(&root)?;
+        assert_eq!(healthy.store_errors, 0, "{:?}", healthy.store_failures);
+        assert!(healthy.store_failures.is_empty());
+
+        let fresh = make_tempdir("fingerprint-store-row-blocked")?;
+        write_file(
+            &fresh.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )?;
+        write_file(
+            &fresh
+                .join("target")
+                .join("ripr")
+                .join("cache")
+                .join("repo-corpus-fingerprint"),
+            "not a directory",
+        )?;
+        let (report, failures) = run_collect_with_family_failures(&fresh)?;
+        assert!(!report.classified.is_empty(), "analysis must still run");
+        let rows = file_fact_store_failure_rows(&failures);
+        // The fingerprint store exists only where a stat signature has a
+        // content-change witness (unix ctime, #3848). Elsewhere
+        // `corpus_fingerprint` is `None`, the store is never reached, and the
+        // honest result is no row at all, not a fabricated one (#10344).
+        let fingerprinted =
+            crate::analysis::seam_cache::corpus_fingerprint(&fresh, &[PathBuf::from("src/foo.rs")])
+                .is_some();
+        assert_eq!(fingerprinted, cfg!(unix), "platform rule changed");
+        if !fingerprinted {
+            assert!(rows.is_empty(), "{rows:?}");
+            assert_eq!(failures.store_errors, 0);
+            let _ = std::fs::remove_dir_all(&root);
+            let _ = std::fs::remove_dir_all(&fresh);
+            return Ok(());
+        }
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["path"], "repo-corpus-fingerprint");
+        assert_eq!(rows[0]["stage"], "corpus_fingerprint_store");
+        assert!(
+            rows[0]["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("corpus fingerprint cache dir")),
+            "{rows:?}"
+        );
+        assert_eq!(failures.store_errors, 1);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&fresh);
+        Ok(())
+    }
+
+    /// #9633: a classified-seam store failure has its own row and stage.
+    #[test]
+    fn given_classified_seam_store_blocked_then_failure_row_names_stage() -> Result<(), String> {
+        let root = make_tempdir("classified-store-row")?;
+        write_file(
+            &root.join("src/foo.rs"),
+            "pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }\n",
+        )?;
+        let cache = root.join("target").join("ripr").join("cache");
+        write_file(&cache.join("repo-seam-facts"), "not a directory")?;
+        let (report, failures) = run_collect_with_family_failures(&root)?;
+        assert!(!report.classified.is_empty(), "analysis must still run");
+        let rows = file_fact_store_failure_rows(&failures);
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0]["path"], "repo-seam-facts");
+        assert_eq!(rows[0]["stage"], "classified_seam_store");
+        assert_eq!(failures.store_errors, 1);
+        let receipt = cache_family_store_receipt(&failures);
+        assert_eq!(receipt["store_errors"], 1);
+        assert_eq!(
+            receipt["store_failures"][0]["stage"],
+            "classified_seam_store"
+        );
+        assert_eq!(receipt["store_failures_dropped"], 0);
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #9633: the family receipt reuses the 32-row cap and dropped count.
+    #[test]
+    fn cache_family_store_receipt_is_capped_with_dropped_count() {
+        let mut stats = FileFactCacheStats::zero_work();
+        for index in 0..40 {
+            stats.record_store_failure(
+                PathBuf::from(CLASSIFIED_SEAM_STORE_FAILURE_PATH),
+                FileFactStoreError {
+                    stage: FileFactStoreStage::ClassifiedSeamStore,
+                    message: format!("failure {index}"),
+                },
+            );
+        }
+        let receipt = cache_family_store_receipt(&stats);
+        assert_eq!(receipt["store_errors"], 40);
+        assert_eq!(receipt["store_failures"].as_array().map(Vec::len), Some(32));
+        assert_eq!(receipt["store_failures_dropped"], 8);
+        let healthy = cache_family_store_receipt(&FileFactCacheStats::zero_work());
+        assert_eq!(healthy["store_errors"], 0);
+        assert_eq!(healthy["store_failures"], serde_json::json!([]));
     }
 
     #[test]
@@ -9970,6 +10373,25 @@ pub fn check_b(x: i32) -> bool { x < 0 }
     }
 
     // -- Pilot seam budget tests ---------------------------------------------
+
+    #[test]
+    fn built_in_inventory_default_is_the_product_cap_without_a_pilot_guard() {
+        // No lib test holds `PilotInventoryDefault`, so non-pilot callers keep
+        // the product default; an explicit value still wins and is configured.
+        if std::env::var_os(REPO_EXPOSURE_SEAM_LIMIT_ENV).is_none() {
+            assert_eq!(
+                repo_exposure_seam_limit(),
+                Ok(Some((
+                    DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+                    SeamLimitSource::Default
+                )))
+            );
+        }
+        assert_eq!(
+            seam_limit_from_env(REPO_EXPOSURE_SEAM_LIMIT_ENV, 2_000, Ok("7".to_string())),
+            Ok(Some((7, SeamLimitSource::Configured)))
+        );
+    }
 
     #[test]
     fn pilot_seam_budget_default_constant_is_smaller_than_repo_exposure_cap() {

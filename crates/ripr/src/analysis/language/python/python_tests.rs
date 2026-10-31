@@ -524,7 +524,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -560,7 +564,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -603,7 +611,11 @@ def item(id):
     let tests = extract_tests(
         Path::new("tests/test_items.py"),
         r#"
-def test_item_response(client):
+from starlette.testclient import TestClient
+from app.items import api
+
+def test_item_response():
+    client = TestClient(api)
     response = client.get("/items/1")
     assert response.json()["ok"] == True
 "#,
@@ -688,7 +700,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -737,7 +753,11 @@ def checkout(payload):
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
         r#"
-def test_expired_coupon_response_smoke(client):
+from starlette.testclient import TestClient
+from app.checkout import api
+
+def test_expired_coupon_response_smoke():
+    client = TestClient(api)
     response = client.post("/checkout", json={"expired": True})
     assert response
 "#,
@@ -1226,6 +1246,9 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1454,39 +1477,42 @@ fn generated_large_python_module(functions: usize) -> String {
 
 #[test]
 fn source_fact_extraction_stays_linear_on_a_large_module() {
-    let functions = 5_000;
-    let source = generated_large_python_module(functions);
-    assert_eq!(source.lines().count(), 20_000);
-    let started = std::time::Instant::now();
-    let facts = extract_source_facts(Path::new("src/large.py"), &source);
-    let elapsed = started.elapsed();
-    // The fixture parsed and produced per-function facts with late lines.
-    assert!(facts.limitations.is_empty(), "{:?}", facts.limitations);
-    assert_eq!(
-        facts
-            .owners
-            .iter()
-            .filter(|owner| !owner.is_module_owner())
-            .count(),
-        functions
-    );
-    let last_start = facts
-        .owners
-        .iter()
-        .find(|owner| owner.name == "f4999")
-        .map(|owner| owner.start_line);
-    assert_eq!(last_start, Some(19_997));
-    assert!(
-        facts.facts.len() > functions * 4,
-        "facts: {}",
-        facts.facts.len()
-    );
-    // Generous bound. In a debug build on this fixture the per-lookup
-    // rescan took about 249s (quadratic: 15s at 5k lines, 62s at 10k) and
-    // the indexed path about 1.3s (#4495).
-    assert!(
-        elapsed < std::time::Duration::from_secs(20),
-        "extraction took {elapsed:?}"
+    // In a debug build the per-lookup rescan took about 249s at 20k lines
+    // (quadratic: 15s at 5k lines, 62s at 10k) and the indexed path about
+    // 1.3s (#4495). Compare 2,500 with 5,000 functions on the same runner
+    // instead of bounding seconds, so runner speed cancels out.
+    crate::testing::scale::assert_growth_within(
+        "python extraction",
+        2_500,
+        5_000,
+        3,
+        |functions| {
+            let source = generated_large_python_module(functions);
+            assert_eq!(source.lines().count(), 4 * functions);
+            let facts = extract_source_facts(Path::new("src/large.py"), &source);
+            // The fixture parsed and produced per-function facts with late lines.
+            assert!(facts.limitations.is_empty(), "{:?}", facts.limitations);
+            assert_eq!(
+                facts
+                    .owners
+                    .iter()
+                    .filter(|owner| !owner.is_module_owner())
+                    .count(),
+                functions
+            );
+            let last_name = format!("f{}", functions - 1);
+            let last_start = facts
+                .owners
+                .iter()
+                .find(|owner| owner.name == last_name)
+                .map(|owner| owner.start_line);
+            assert_eq!(last_start, Some(4 * functions - 3));
+            assert!(
+                facts.facts.len() > functions * 4,
+                "facts: {}",
+                facts.facts.len()
+            );
+        },
     );
 }
 
@@ -1495,44 +1521,46 @@ fn source_fact_extraction_stays_linear_on_a_large_module() {
 /// scan (once per module constant) each ran over the whole source.
 #[test]
 fn typer_receivers_and_constant_walrus_checks_stay_linear() {
-    let functions = 5_000;
-    let mut typer = String::from("import typer\napp = typer.Typer()\n");
-    for index in 0..functions {
-        typer.push_str(&format!("def f{index}(x):\n    return x + {index}\n"));
-    }
-    let constants = 20_000;
-    let mut constant_module = String::new();
-    for index in 0..constants {
-        constant_module.push_str(&format!("C{index} = {index}\n"));
-    }
-    constant_module.push_str("def f(x):\n    return x + C19999\n");
+    crate::testing::scale::assert_growth_within(
+        "typer and constant scans",
+        2_500,
+        5_000,
+        3,
+        |functions| {
+            let mut typer = String::from("import typer\napp = typer.Typer()\n");
+            for index in 0..functions {
+                typer.push_str(&format!("def f{index}(x):\n    return x + {index}\n"));
+            }
+            let constants = 4 * functions;
+            let mut constant_module = String::new();
+            for index in 0..constants {
+                constant_module.push_str(&format!("C{index} = {index}\n"));
+            }
+            constant_module.push_str(&format!("def f(x):\n    return x + C{}\n", constants - 1));
 
-    let started = std::time::Instant::now();
-    let typer_facts = extract_source_facts(Path::new("src/cli.py"), &typer);
-    let constant_facts = extract_source_facts(Path::new("src/limits.py"), &constant_module);
-    let elapsed = started.elapsed();
+            let typer_facts = extract_source_facts(Path::new("src/cli.py"), &typer);
+            let constant_facts = extract_source_facts(Path::new("src/limits.py"), &constant_module);
 
-    let last = typer_facts
-        .owners
-        .iter()
-        .find(|owner| owner.name == "f4999")
-        .ok_or("f4999 owner");
-    assert_eq!(
-        last.map(|owner| owner.cli_receiver_names.clone()),
-        Ok(vec!["app".to_string()])
-    );
-    let owner = constant_facts
-        .owners
-        .iter()
-        .find(|owner| owner.name == "f")
-        .ok_or("f owner");
-    assert_eq!(
-        owner.map(|owner| owner.module_constants.len()),
-        Ok(constants)
-    );
-    assert!(
-        elapsed < std::time::Duration::from_secs(20),
-        "extraction took {elapsed:?}"
+            let last_name = format!("f{}", functions - 1);
+            let last = typer_facts
+                .owners
+                .iter()
+                .find(|owner| owner.name == last_name)
+                .ok_or("last owner");
+            assert_eq!(
+                last.map(|owner| owner.cli_receiver_names.clone()),
+                Ok(vec!["app".to_string()])
+            );
+            let owner = constant_facts
+                .owners
+                .iter()
+                .find(|owner| owner.name == "f")
+                .ok_or("f owner");
+            assert_eq!(
+                owner.map(|owner| owner.module_constants.len()),
+                Ok(constants)
+            );
+        },
     );
 }
 
@@ -1729,6 +1757,9 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1793,6 +1824,9 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1879,6 +1913,9 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -1932,11 +1969,16 @@ fn same_stem_related_handles_missing_stems() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
@@ -1949,6 +1991,7 @@ fn same_stem_related_handles_missing_stems() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
@@ -2085,6 +2128,224 @@ fn analyze_diff_emits_finding_for_changed_python_file_on_disk() -> Result<(), St
     if finding.language_status != Some(LanguageStatus::Preview) {
         return Err("language status should be Preview".to_string());
     }
+    Ok(())
+}
+
+/// #10125: the workspace foreign-write index is built once per run. A rebuild
+/// per changed file would parse every workspace source again for each one.
+#[test]
+fn analyze_diff_parses_the_workspace_once_however_many_files_changed() -> Result<(), String> {
+    fn parses_for(changed_modules: usize) -> Result<(usize, usize), String> {
+        let root = unique_tempdir("analyze-diff-parse-once")?;
+        let mut changed_files = Vec::new();
+        for index in 0..3 {
+            let module = PathBuf::from(format!("settings{index}.py"));
+            write_file(&root.join(&module), &format!("LIMIT{index} = 12\n"))?;
+            write_file(
+                &root.join(format!("test_settings{index}.py")),
+                &format!(
+                    "from settings{index} import LIMIT{index}\n\n\ndef test_limit():\n    assert LIMIT{index} == 10\n"
+                ),
+            )?;
+            if index < changed_modules {
+                changed_files.push(ChangedFile {
+                    path: module,
+                    added_lines: vec![crate::analysis::diff::ChangedLine {
+                        line: 1,
+                        new_side_line: 1,
+                        text: format!("LIMIT{index} = 12"),
+                    }],
+                    removed_lines: vec![crate::analysis::diff::ChangedLine {
+                        line: 1,
+                        new_side_line: 1,
+                        text: format!("LIMIT{index} = 10"),
+                    }],
+                });
+            }
+        }
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: crate::analysis::AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+        };
+        super::module_value::FOREIGN_PARSES.with(|parses| parses.set(0));
+        let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+        let parses = super::module_value::FOREIGN_PARSES.with(std::cell::Cell::get);
+        let cleanup = std::fs::remove_dir_all(&root);
+        let result = result?;
+        cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+        Ok((parses, result.findings.len()))
+    }
+
+    let (one_parses, one_findings) = parses_for(1)?;
+    let (three_parses, three_findings) = parses_for(3)?;
+    assert_eq!(one_findings, 1, "one changed constant is one finding");
+    assert_eq!(
+        three_findings, 3,
+        "three changed constants are three findings"
+    );
+    assert_eq!(
+        one_parses, 6,
+        "each of the six workspace sources is parsed once"
+    );
+    assert_eq!(
+        three_parses, one_parses,
+        "changing more files must not parse the workspace again"
+    );
+    Ok(())
+}
+
+/// #10750: an owner's related tests are found once per run. A scan per
+/// changed line re-read every workspace test for each line of the same owner
+/// (pandas: ~23k tests times every changed line).
+#[test]
+fn analyze_diff_shares_one_alignment_index_across_owners() -> Result<(), String> {
+    let root = unique_tempdir("analyze-diff-alignment-index")?;
+    let module = PathBuf::from("pricing.py");
+    write_file(
+        &root.join(&module),
+        "def price(x):\n    return x + 2\n\n\ndef tax(x):\n    return x * 3\n",
+    )?;
+    write_file(
+        &root.join("test_pricing.py"),
+        "from pricing import price, tax\n\n\ndef test_price():\n    assert price(1) == 3\n\n\ndef test_tax():\n    assert tax(1) == 3\n",
+    )?;
+    let changed = |line: usize, text: &str| crate::analysis::diff::ChangedLine {
+        line,
+        new_side_line: line,
+        text: text.to_string(),
+    };
+    let changed_files = vec![ChangedFile {
+        path: module,
+        added_lines: vec![
+            changed(2, "    return x + 2"),
+            changed(6, "    return x * 3"),
+        ],
+        removed_lines: vec![
+            changed(2, "    return x + 1"),
+            changed(6, "    return x * 2"),
+        ],
+    }];
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    super::sink_alignment::ALIGNMENT_PREPS.with(|preps| preps.set(0));
+    super::sink_alignment::ALIGNMENT_LOOKUPS.with(|lookups| lookups.set(0));
+    let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+    let preps = super::sink_alignment::ALIGNMENT_PREPS.with(std::cell::Cell::get);
+    let lookups = super::sink_alignment::ALIGNMENT_LOOKUPS.with(std::cell::Cell::get);
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    assert_eq!(result.findings.len(), 2, "one finding per changed owner");
+    assert_eq!(preps, 2, "each owner gets its own alias tokens");
+    assert_eq!(lookups, 1, "every owner reads the run's one test index");
+    Ok(())
+}
+
+#[test]
+fn analyze_diff_scans_related_tests_once_per_owner() -> Result<(), String> {
+    fn scans_for(changed_lines: usize) -> Result<(usize, usize, usize), String> {
+        let root = unique_tempdir("analyze-diff-related-once")?;
+        let module = PathBuf::from("pricing.py");
+        write_file(
+            &root.join(&module),
+            "def price(x):\n    a = x + 2\n    b = a * 3\n    return b - 4\n",
+        )?;
+        write_file(
+            &root.join("test_pricing.py"),
+            "from pricing import price\n\n\ndef test_price():\n    assert price(1) == 5\n",
+        )?;
+        let pairs = [
+            ("    a = x + 2", "    a = x + 1"),
+            ("    b = a * 3", "    b = a * 2"),
+            ("    return b - 4", "    return b - 3"),
+        ];
+        let mut added_lines = Vec::new();
+        let mut removed_lines = Vec::new();
+        for (index, (new, old)) in pairs.iter().take(changed_lines).enumerate() {
+            added_lines.push(crate::analysis::diff::ChangedLine {
+                line: index + 2,
+                new_side_line: index + 2,
+                text: (*new).to_string(),
+            });
+            removed_lines.push(crate::analysis::diff::ChangedLine {
+                line: index + 2,
+                new_side_line: index + 2,
+                text: (*old).to_string(),
+            });
+        }
+        let changed_files = vec![ChangedFile {
+            path: module,
+            added_lines,
+            removed_lines,
+        }];
+        let options = AnalysisOptions {
+            root: root.clone(),
+            base: None,
+            diff_file: None,
+            mode: crate::analysis::AnalysisMode::Draft,
+            include_unchanged_tests: false,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+        };
+        super::related_tests::RELATED_SCANS.with(|scans| scans.set(0));
+        super::sink_alignment::ALIGNMENT_PREPS.with(|preps| preps.set(0));
+        let result = PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files);
+        let scans = super::related_tests::RELATED_SCANS.with(std::cell::Cell::get);
+        let preps = super::sink_alignment::ALIGNMENT_PREPS.with(std::cell::Cell::get);
+        let cleanup = std::fs::remove_dir_all(&root);
+        let result = result?;
+        cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+        Ok((scans, preps, result.findings.len()))
+    }
+
+    let (one_scans, one_preps, one_findings) = scans_for(1)?;
+    let (three_scans, three_preps, three_findings) = scans_for(3)?;
+    assert_eq!(one_findings, 1, "one changed line is one finding");
+    assert_eq!(three_findings, 3, "three changed lines are three findings");
+    assert_eq!(one_scans, 1, "one owner is scanned once");
+    assert_eq!(
+        three_scans, one_scans,
+        "more changed lines of the same owner must not rescan the tests"
+    );
+    // #10914: the owner's sink-alignment index is built once per run too.
+    assert_eq!(one_preps, 1, "one owner builds one alignment index");
+    assert_eq!(
+        three_preps, one_preps,
+        "more changed lines of the same owner must not rebuild the alignment index"
+    );
     Ok(())
 }
 
@@ -2283,6 +2544,53 @@ fn docstring_ranges_exclude_assigned_strings_and_fstrings() {
         facts.docstring_line_ranges,
         vec![1..=3],
         "only the plain first string expression of a real scope is a docstring"
+    );
+}
+
+#[test]
+fn docstring_ranges_include_attribute_docstrings() {
+    let source = concat!(
+        "class Box:\n",
+        "    name: str\n",
+        "    \"\"\"Attribute docs.\n",
+        "    More attribute docs.\n",
+        "    \"\"\"\n",
+        "    size = 1\n",
+        "    \"\"\"Size docs.\"\"\"\n",
+        "    f(1)\n",
+        "    \"\"\"Not after a call statement.\"\"\"\n",
+    );
+    let facts = extract_source_facts(Path::new("src/box.py"), source);
+
+    assert_eq!(
+        facts.docstring_line_ranges,
+        vec![3..=5, 7..=7],
+        "a plain string right after an assignment is an attribute docstring"
+    );
+}
+
+#[test]
+fn attribute_docstring_ranges_cover_module_and_stay_conservative() {
+    let source = concat!(
+        "LIMIT = 1\n",
+        "\"\"\"Module attribute docs.\n",
+        "More.\"\"\"\n",
+        "a = 1; \"shared with code\"\n",
+        "b = 2\n",
+        "f\"{b}\"\n",
+        "c = 3\n",
+        "b\"bytes\"\n",
+        "def fn():\n",
+        "    v = 1\n",
+        "    \"\"\"second string\"\"\"\n",
+        "    return v\n",
+    );
+    let facts = extract_source_facts(Path::new("src/mod.py"), source);
+
+    assert_eq!(
+        facts.docstring_line_ranges,
+        vec![2..=3],
+        "only the plain string after a module assignment counts"
     );
 }
 
@@ -3551,6 +3859,8 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_x".to_string(),
         qualified_name: "test_x".to_string(),
@@ -3565,6 +3875,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
@@ -3576,6 +3887,8 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_y".to_string(),
         qualified_name: "test_y".to_string(),
@@ -3588,6 +3901,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
@@ -3599,6 +3913,8 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_z".to_string(),
         qualified_name: "test_z".to_string(),
@@ -3611,6 +3927,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
@@ -3628,6 +3945,27 @@ fn contains_dynamic_dispatch_detects_registry_indexed_call() {
     assert!(contains_dynamic_dispatch("    return registry[key]()"));
     assert!(!contains_dynamic_dispatch("    return registry[key]"));
     assert!(!contains_dynamic_dispatch("    return notify()"));
+}
+
+#[test]
+fn contains_dynamic_dispatch_reads_getattr_as_a_bare_call_name() {
+    assert!(contains_dynamic_dispatch("    return getattr(x, 'a')"));
+    // A space before `(` is still a call (RIPR-SPEC-0238 example 33).
+    assert!(contains_dynamic_dispatch("    return getattr (x, 'a')"));
+    assert!(contains_dynamic_dispatch(
+        "    return builtins.getattr(x, 'a')"
+    ));
+    // Another identifier ending in `getattr` is not the builtin (example 28).
+    assert!(!contains_dynamic_dispatch("    return my_getattr(x)"));
+    assert!(!contains_dynamic_dispatch("    return getattr_default"));
+}
+
+#[test]
+fn contains_metaprogramming_reads_type_and_setattr_calls_with_a_space() {
+    assert!(contains_metaprogramming("    return type (x)"));
+    assert!(contains_metaprogramming("    setattr (o, 'a', 1)"));
+    assert!(!contains_metaprogramming("    return content_type(x)"));
+    assert!(!contains_metaprogramming("    return type_name(x)"));
 }
 
 #[test]
@@ -3809,7 +4147,7 @@ fn visit_workspace_returns_silently_when_directory_is_unreadable() {
         Path::new("/definitely-not-a-real-dir-ripr"),
         Path::new("/definitely-not-a-real-dir-ripr"),
         &[],
-        &mut out,
+        &mut |file| out.push(file),
     );
     assert!(out.is_empty());
 }
@@ -3897,6 +4235,35 @@ fn line_uses_imported_symbol_matches_attribute_access_on_imported_alias() {
     ));
     // A bare identifier with no dot and no call form should not match.
     assert!(!line_uses_imported_symbol("    unrelated", &imports));
+}
+
+/// RIPR-SPEC-0238 rule 8: an imported name is read as a token. `pos.x` and
+/// `repos(` merely end in `os`; a real use, a use after an operator or
+/// bracket, and an f-string field still count.
+#[test]
+fn an_import_alias_is_matched_as_a_whole_name() {
+    let os = vec![PythonImport {
+        imported: "os".to_string(),
+        alias: "os".to_string(),
+        source_module: String::new(),
+    }];
+    for line in [
+        "    return pos.x + 2",
+        "    return repos(x)",
+        "    return other.os.getcwd()",
+        "    return cosmos.get(x)",
+    ] {
+        assert!(!line_uses_imported_symbol(line, &os), "{line}");
+    }
+    for line in [
+        "    return os.getcwd()",
+        "    return x + os.cpu_count()",
+        "    return (os.getcwd())",
+        "    return f\"{os.getcwd()}\"",
+        "    return os(x)",
+    ] {
+        assert!(line_uses_imported_symbol(line, &os), "{line}");
+    }
 }
 
 /// `file=sys.stderr` on a `print` names a standard stream; any other `sys`
@@ -4061,6 +4428,9 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -4142,6 +4512,9 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -4165,6 +4538,8 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
@@ -4182,6 +4557,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
@@ -4224,6 +4600,9 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
+        foreign_writes: Default::default(),
+        version_conditional: false,
+        cli_subcommand: None,
     }
 }
 
@@ -4253,6 +4632,8 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "t".to_string(),
         qualified_name: "t".to_string(),
@@ -4268,6 +4649,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
@@ -4301,6 +4683,8 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
         direct_parametrized: Vec::new(),
+        unsettled_indirect: Vec::new(),
+        parametrize_argnames: Vec::new(),
         constant_rebinding: Default::default(),
         name: "test_alias".to_string(),
         qualified_name: "test_alias".to_string(),
@@ -4318,6 +4702,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
         fixtures: Vec::new(),
         parametrized: false,
         parametrize: None,
+        simple_literal_parametrize: false,
         generated_inputs: Vec::new(),
         framework: PythonFramework::Pytest,
         assertions: Vec::new(),
@@ -4761,7 +5146,9 @@ fn route_relation_for(decorator: &str, call: &str) -> Result<bool, String> {
         .ok_or_else(|| "expected items owner".to_string())?;
     let tests = extract_tests(
         Path::new("tests/test_items.py"),
-        &format!("def test_items(client):\n    response = client.{call}\n    assert response\n"),
+        &format!(
+            "from starlette.testclient import TestClient\nfrom app.items import api\n\ndef test_items():\n    client = TestClient(api)\n    response = client.{call}\n    assert response\n"
+        ),
     );
     Ok(related_test_candidates(owner, &tests)
         .iter()
@@ -4849,7 +5236,7 @@ fn same_name_import_gate_keeps_independent_route_relation() -> Result<(), String
         .ok_or_else(|| "expected route owner".to_string())?;
     let tests = extract_tests(
         Path::new("tests/test_checkout.py"),
-        "from pkg.a import quote\n\ndef test_expired(client):\n    assert quote({}) == {}\n    response = client.post(\"/checkout\", json={})\n    assert response\n",
+        "from starlette.testclient import TestClient\nfrom app.checkout import api\nfrom pkg.a import quote\n\ndef test_expired():\n    client = TestClient(api)\n    assert quote({}) == {}\n    response = client.post(\"/checkout\", json={})\n    assert response\n",
     );
     let relation = related_test_candidates(owner, &tests)
         .first()
@@ -4874,5 +5261,122 @@ fn same_name_import_gate_leaves_class_owners_alone() -> Result<(), String> {
         .find(|owner| owner.file == Path::new("pkg/b.py"))
         .ok_or_else(|| "expected class owner".to_string())?;
     assert!(owner.rival_definition_modules.is_empty());
+    Ok(())
+}
+
+/// Run the diff pipeline over a lone `LIMIT = 10` -> `LIMIT = 12` replacement
+/// with `extra` workspace files, optionally listing the test file as changed
+/// too, and return the finding's class (#9423).
+fn module_constant_pipeline_class(
+    label: &str,
+    extra: &[(&str, &str)],
+    test_also_changed: bool,
+) -> Result<ExposureClass, String> {
+    let root = unique_tempdir(label)?;
+    let write_all = || -> Result<(), String> {
+        write_file(
+            &root.join("hostile/settings.py"),
+            "LIMIT = 12\n\n\ndef over_limit(n):\n    return n > LIMIT\n",
+        )?;
+        write_file(
+            &root.join("tests/test_settings.py"),
+            "from hostile.settings import over_limit\n\n\ndef test_it():\n    assert over_limit(11)\n",
+        )?;
+        for (file, source) in extra {
+            write_file(&root.join(file), source)?;
+        }
+        Ok(())
+    };
+    let written = write_all();
+    let line = |text: &str| crate::analysis::diff::ChangedLine {
+        line: 1,
+        new_side_line: 1,
+        text: text.to_string(),
+    };
+    let mut changed_files = vec![ChangedFile {
+        path: PathBuf::from("hostile/settings.py"),
+        added_lines: vec![line("LIMIT = 12")],
+        removed_lines: vec![line("LIMIT = 10")],
+    }];
+    if test_also_changed {
+        changed_files.push(ChangedFile {
+            path: PathBuf::from("tests/test_settings.py"),
+            added_lines: vec![line("from hostile.settings import over_limit")],
+            removed_lines: Vec::new(),
+        });
+    }
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let result = written.and_then(|()| {
+        PythonAdapter.analyze_diff(&options, &OraclePolicy::default(), &changed_files)
+    });
+    let cleanup = std::fs::remove_dir_all(&root);
+    let result = result?;
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    match result.findings.as_slice() {
+        [finding] => Ok(finding.class.clone()),
+        other => Err(format!("expected one finding, got {}", other.len())),
+    }
+}
+
+#[test]
+fn module_constant_edit_credits_through_the_diff_pipeline_only_when_the_workspace_is_quiet()
+-> Result<(), String> {
+    let reader = (
+        "app/main.py",
+        "from hostile import settings\n\nprint(settings.LIMIT)\n",
+    );
+    assert_eq!(
+        module_constant_pipeline_class("module-value-read", &[reader], false)?,
+        ExposureClass::Exposed
+    );
+    for (label, file) in [
+        (
+            "module-value-production-write",
+            (
+                "app/main.py",
+                "import os\nfrom hostile import settings\n\nsettings.LIMIT = int(os.environ['L'])\n",
+            ),
+        ),
+        (
+            "module-value-conftest-patch",
+            (
+                "tests/conftest.py",
+                "import pytest\nfrom hostile import settings\n\n\n@pytest.fixture(autouse=True)\ndef big(monkeypatch):\n    monkeypatch.setattr(settings, 'LIMIT', 100)\n",
+            ),
+        ),
+        (
+            "module-value-helper-setattr",
+            (
+                "tests/support.py",
+                "from hostile import settings\n\n\ndef bump():\n    setattr(settings, 'LIMIT', 100)\n",
+            ),
+        ),
+    ] {
+        assert_ne!(
+            module_constant_pipeline_class(label, &[file], false)?,
+            ExposureClass::Exposed,
+            "{label}"
+        );
+    }
+    // The diff also edits the test file: its assertion is not a pre-existing oracle.
+    assert_ne!(
+        module_constant_pipeline_class("module-value-test-edited", &[reader], true)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }

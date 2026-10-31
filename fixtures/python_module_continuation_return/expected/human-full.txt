@@ -1,0 +1,67 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/python_module_continuation_return/input
+config: <cwd>/fixtures/python_module_continuation_return/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: python = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+NOTE settings.py:1
+  id: probe:settings.py:python_preview:b36e33fd
+
+Changed
+  after:  LIMIT = 12
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  python:settings.py::<module>
+
+Language
+  language: python
+  status: preview
+  owner kind: module_function
+
+Static exposure
+  static_unknown (note, confidence 0.20)
+
+Evidence
+  - reach weak: 1 heuristic Python test link(s) found for owner `<module>`; relation is uncertain
+  - infection unknown: Static limit `missing_import_graph` prevents a safe Python infection claim
+  - propagation unknown: Static limit `missing_import_graph` prevents a safe Python propagation claim
+  - observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)
+  - discriminator unknown: Static limit `missing_import_graph` prevents a safe Python discriminator claim
+  - related test tests/test_settings.py:3 test_it uses no oracle
+
+Weakness
+  - Static limit `missing_import_graph`: the changed line is a module-level statement (a constant, decorator argument or conditional definition) that runs when a test imports the module; related tests are linked only by a name heuristic and the preview adapter does not follow top-level values into their use sites, so it does not grade this edit as a gap
+
+Stop reasons:
+  - ripr could not model this change well enough to classify it (static_probe_unknown)
+    Next: Add a test that calls the changed code and asserts an exact result.
+
+Static limitation
+  missing_import_graph — The import graph could not be resolved (for example a relative or dynamic import), so ripr cannot connect a test to this change.
+  Next: Import the owner in the test by a static, absolute path (not a dynamic, computed or unresolved relative import) so ripr can connect the test to it.
+Drill in:
+  ripr explain --root <cwd>/fixtures/python_module_continuation_return/input --diff <cwd>/fixtures/python_module_continuation_return/diff.patch --mode fast probe:settings.py:python_preview:b36e33fd
+  ripr context --root <cwd>/fixtures/python_module_continuation_return/input --diff <cwd>/fixtures/python_module_continuation_return/diff.patch --mode fast --at probe:settings.py:python_preview:b36e33fd
+
+
+Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed expression(s) and 1 statically linked
+  related test(s). This is not a coverage assessment. A test may already exercise these changes
+  through macros, helper-call chains, or integration tests that ripr's static model does not yet
+  trace; if none does, add co-located tests that observe the changed behavior.
+
+Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

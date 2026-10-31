@@ -82,6 +82,33 @@ constant or helper hop stays paired. A same-test mix that calls the boundary
 without asserting and asserts a far call (`let _ = gate(10); assert_eq!(gate(100),
 true)`) does not pair.
 
+Pairing also retains the individual call's definition identity. A test that
+discards `a::gate(10)`, asserts `a::gate(11)` and asserts `b::gate(10)` does
+not establish a discriminator for `a::gate`. The same restriction applies
+when the sibling result is let-bound or the test imports the sibling and
+calls it by its bare name. Coarse test reach is not assertion-call identity.
+Qualified calls reuse activation's owner resolver; bare calls with indexed
+same-named rivals must resolve to the changed definition. Unsettled bindings
+remain unconfirmed, including a function-local relative import the bounded
+resolver cannot place (`use a::gate`). A crate-anchored import
+(`use crate::a::gate`) and direct or let-bound owner-qualified calls retain
+their existing credit. These restrictions do not replace helper or wrapper
+pairing with a new owner-return-pin requirement.
+The same identity rule applies to inline adaptor-element oracles, using the
+compared operands rather than diagnostic formatting arguments. A let-bound
+owner call keeps its identity when an unrelated sibling call follows its
+initializer statement on the same physical line. Identity and activation read
+the same balanced initializer span; later statements cannot lend it a boundary
+call, and a block-internal semicolon does not truncate its identity check.
+For a free-owner block initializer, both checks use its returned whole call through
+plain nested block tails and parentheses. Discarded owner or sibling calls
+cannot lend that result either identity or activation. Constant, far-input,
+wrapper, conditional and alias tails do not establish an owner-boundary result.
+Projected block tails do not borrow coarse line-level activation; unresolved
+arguments stay unconfirmed. Labelled, deferred, early-exit or locally rebound
+bare-call block forms remain outside this bounded proof. Inherent-owner binding
+analysis retains its separate existing authority; this rule adds no receiver proof.
+
 An owner-call argument is a boundary input only when it is the literal itself
 (including a type suffix such as `10u32`), a named local bound to that literal,
 or a form infection already recorded as `==` the boundary. An expression that
@@ -115,6 +142,16 @@ already stops the row transfer (RIPR-SPEC-0159), so no `==` row exists to
 pair, and so does an entry call shadowed by a test-local closure or nested
 fn of the entry's name. The owner-return pin (RIPR-SPEC-0197) judges the owner's own call and
 never admits a wrapper assertion here.
+
+The `return_value` twin of that private predicate may confirm the same wrapper
+assertion when the owner-return shape is an unconditional whole `bool` tail
+(RIPR-SPEC-0197's `Any` path), and the test reaches it only through the helper
+chain (#9849). This separate confirmation requires an admitted bare `assert_eq!`
+whose whole compared operand is the entry call and whose other operand is one
+numeric or boolean literal. The same per-test boundary row and result-forwarding
+chain are required. A projected or transformed operand, computed or named
+expectation, short-circuit owner tail, and discarded or recomputed helper result
+receive no new credit. Direct owner-return pin admission remains unchanged.
 
 A `let`-bound boundary name stays paired only while the binding still holds
 the call's result. A post-`let` reassignment (`got = true`), compound
@@ -233,45 +270,48 @@ relation are out of scope.
 
 ## Acceptance Examples
 
-- Given `boundary` calling `gate(10)` with no oracle and `far` asserting
-  `gate(100) == true`, when the predicate `input >= 10` is classified, then
-  the finding is at most `weakly_exposed` and names `same_test_pairing_missing`.
-- Given `assert_eq!(gate(10), true)` in one test, when the same predicate is
-  classified, then the finding stays `exposed`. The `strong_boundary_oracle`
-  fixture remains `exposed`.
-- Given `let _ = gate(10); assert_eq!(gate(100), true)` in one test, when the
-  predicate is classified, then it does not pair.
-- Given `assert_eq!(gate(if false { 10 } else { 50 }), true)` or
-  `assert_eq!(gate(std::cmp::max(10, 50)), true)`, when the predicate is
-  classified, then it does not pair: the evaluated argument is 50.
-- Given `let threshold = 10; assert_eq!(gate(threshold), true)`, or
-  `assert_eq!(gate(10u32), true)`, or `assert_eq!(gate(LIMIT), true)` with an
-  infection `==` fact, when the predicate is classified, then it pairs.
-  `assert_eq!(gate(LIMIT, make_context()), true)` with that same `==` fact
-  also pairs: the extra compound argument is not the compared parameter.
-  `assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90)` with `items == BULK_ITEMS`
-  also pairs: a path-qualified constant is still the named boundary.
-  Given `let amount = raw; amount >= threshold` and
-  `assert_eq!(gate(if false { 10 } else { 50 }, 10), true)`, pairing does
-  not treat the aliased input as a boundary just because `threshold` is 10.
-- Given private `fn is_bulk(qty: u32) -> bool { 10 <= qty }` reached only
-  through `pub fn order_discount(qty: u32) -> u32 { if is_bulk(qty) { 5 } else
-  { 0 } }` and `assert_eq!(order_discount(10), 5)`, when the predicate is
-  classified, then it pairs. With `let _ = is_bulk(qty); 5` as the wrapper
-  body, or with the tests calling only `order_discount(12)` and
-  `order_discount(3)`, it does not.
-- Given `let mut got = gate(10); got = true; assert_eq!(got, true)`, or
-  `got += 1` / `&mut got` in place of the reassignment, when the predicate
-  is classified, then it does not pair: the binding no longer holds the
-  boundary call's result. Given `got` then `= true;` on the next line, it
-  also does not pair (#7042 item 4). A `let` that exists only inside a
-  string or comment does not replace a real binding. Given
-  `let mut got = gate(10);` with no later mutation, then
-  `assert_eq!(got, true)` still pairs, including when the assertion is
-  wrapped across lines or the boundary argument is a quoted literal.
+1. Given `boundary` calling `gate(10)` with no oracle and `far` asserting
+   `gate(100) == true`, when the predicate `input >= 10` is classified, then
+   the finding is at most `weakly_exposed` and names `same_test_pairing_missing`.
+2. Given `assert_eq!(gate(10), true)` in one test, when the same predicate is
+   classified, then the finding stays `exposed`. The `strong_boundary_oracle`
+   fixture remains `exposed`.
+3. Given `let _ = gate(10); assert_eq!(gate(100), true)` in one test, when the
+   predicate is classified, then it does not pair.
+4. Given `assert_eq!(gate(if false { 10 } else { 50 }), true)` or
+   `assert_eq!(gate(std::cmp::max(10, 50)), true)`, when the predicate is
+   classified, then it does not pair: the evaluated argument is 50.
+5. Given `let threshold = 10; assert_eq!(gate(threshold), true)`, or
+   `assert_eq!(gate(10u32), true)`, or `assert_eq!(gate(LIMIT), true)` with an
+   infection `==` fact, when the predicate is classified, then it pairs.
+   `assert_eq!(gate(LIMIT, make_context()), true)` with that same `==` fact
+   also pairs: the extra compound argument is not the compared parameter.
+   `assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90)` with `items == BULK_ITEMS`
+   also pairs: a path-qualified constant is still the named boundary.
+   Given `let amount = raw; amount >= threshold` and
+   `assert_eq!(gate(if false { 10 } else { 50 }, 10), true)`, pairing does
+   not treat the aliased input as a boundary just because `threshold` is 10.
+6. Given private `fn is_bulk(qty: u32) -> bool { 10 <= qty }` reached only
+   through `pub fn order_discount(qty: u32) -> u32 { if is_bulk(qty) { 5 } else
+   { 0 } }` and `assert_eq!(order_discount(10), 5)`, when the predicate is
+   classified, then it pairs. With `let _ = is_bulk(qty); 5` as the wrapper
+   body, or with the tests calling only `order_discount(12)` and
+   `order_discount(3)`, it does not.
+7. Given `let mut got = gate(10); got = true; assert_eq!(got, true)`, or
+   `got += 1` / `&mut got` in place of the reassignment, when the predicate
+   is classified, then it does not pair: the binding no longer holds the
+   boundary call's result. Given `got` then `= true;` on the next line, it
+   also does not pair (#7042 item 4). A `let` that exists only inside a
+   string or comment does not replace a real binding. Given
+   `let mut got = gate(10);` with no later mutation, then
+   `assert_eq!(got, true)` still pairs, including when the assertion is
+   wrapped across lines or the boundary argument is a quoted literal.
 
 ## Test Mapping
 
+- `crates/ripr/tests/owner_pin_execution/boundary_call_identity.rs`
+- `fixtures/boundary_pairing_sibling_owner`
+- `fixtures/boundary_pairing_sibling_element`
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs`
 - `crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::the_loan_maps_only_plain_parameters_and_lone_eager_calls`
 - `fixtures/split_test_boundary_oracle`
@@ -283,15 +323,27 @@ relation are out of scope.
 - `fixtures/predicate_pairing_newline_split_reassigned_binding`
 - `crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities`
 - `crates/ripr/tests/helper_wrapper_reach.rs`
+- `fixtures/rust_wrapper_boolean_return_discarded`
+- `fixtures/rust_wrapper_user_macro_guard`
+- `fixtures/rust_wrapper_closure_shadowed_callee`
+- `fixtures/rust_wrapper_crate_alias_logging_macro`
+- `fixtures/rust_wrapper_unicode_macro_suffix`
+- `fixtures/rust_wrapper_macro_bang_bidi_whitespace`
 
 ## Implementation Mapping
 
+- `crates/ripr/src/analysis/classify/call_identity.rs`: shared definition
+  identity used by direct and let-bound boundary-call pairing.
 - `crates/ripr/src/analysis/classify/boundary_pairing.rs`: pairing authority,
   including `loan_pairs_boundary_call` for borrowed check-helper assertions.
 - `crates/ripr/src/analysis/classify/helper_transfer.rs`: the hop forwarding
   and parameter-rebinding checks the wrapper-entry pairing uses.
 - `crates/ripr/src/analysis/syntax/owner_pin.rs`: the `HelperLoan` facts
   (helper, plain parameters, eager lone-line call lines) pairing reads.
+- `crates/ripr/src/analysis/classify/reveal.rs`: the assertion-local
+  `wrapper_return_pin` admission for the whole-return twin.
+- `crates/ripr/src/analysis/classify/owner_pin.rs`:
+  `is_unconditional_boolean_tail`, the owner shape the wrapper pin admits.
 - `crates/ripr/src/analysis/classifier/evidence.rs`: apply the pairing gate
   before `exposed`.
 - `crates/ripr/src/analysis/classify/decision.rs`: missing evidence names the

@@ -70,7 +70,17 @@ pub(crate) fn owners_from_program(
             owner.module_entries = owner_entries.clone();
         }
     }
-    assign_class_entries(&mut owners, &class_instance_field_names(program));
+    let instance_fields = class_instance_field_names(program);
+    let repeated_names = repeated_class_names(program);
+    assign_class_entries(&mut owners, &instance_fields, &repeated_names);
+    assign_instance_factories(
+        program,
+        source,
+        &mut owners,
+        &instance_fields,
+        &repeated_names,
+    );
+    assign_decorated_entries(program, source, &mut owners);
     owners
 }
 
@@ -1353,7 +1363,7 @@ pub(crate) fn contains_jsx_like_return(slice: &str) -> bool {
 pub(crate) fn extract_imports_from_statements(
     statements: &[Statement<'_>],
 ) -> Vec<TypeScriptImport> {
-    extract_imports_from_statements_inner(statements, true)
+    extract_imports_from_statements_inner(statements, true, true)
 }
 
 /// Imports for a TEST file (#7507): `export { x } from './y'` re-exports are
@@ -1365,14 +1375,55 @@ pub(crate) fn extract_imports_from_statements(
 pub(crate) fn extract_imports_for_test_file(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
 ) -> Vec<TypeScriptImport> {
-    extract_imports_from_statements_inner(statements, false)
+    extract_imports_from_statements_inner(statements, false, true)
 }
 
 fn extract_imports_from_statements_inner(
     statements: &[Statement<'_>],
     include_reexports: bool,
+    resolve_require_scope: bool,
 ) -> Vec<TypeScriptImport> {
     let mut out: Vec<TypeScriptImport> = Vec::new();
+    // A file that binds its own `require` (`const require = ...`,
+    // `function require()`) is not calling Node's loader, so a `require()`
+    // call there says nothing about which module a local comes from (#10401).
+    // The ambient-`require` contract of `createRequire(import.meta.url)` keeps
+    // its reading.
+    let mut top_level_names = Vec::new();
+    // A block-level `function require()` hoists in sloppy CommonJS, so count it
+    // as a file-level binding (the conservative reading).
+    super::tests_extract::collect_registration_scope_names(statements, &mut top_level_names, false);
+    // ES imports hoist, so the loader predicate sees all of them whatever their
+    // position relative to `const require = createRequire(...)`.
+    // `resolve_require_scope` is false only for the single-import-declaration
+    // slices collected below: they hold no `require()` call, and re-deriving
+    // the scope from them would recurse on `import require from "./b"`
+    // without end (#10724).
+    let require_is_ambient =
+        !resolve_require_scope || !top_level_names.iter().any(|name| name == "require") || {
+            let es_imports: Vec<TypeScriptImport> = statements
+                .iter()
+                .filter(|statement| matches!(statement, Statement::ImportDeclaration(_)))
+                .flat_map(|statement| {
+                    extract_imports_from_statements_inner(
+                        std::slice::from_ref(statement),
+                        false,
+                        false,
+                    )
+                })
+                .collect();
+            super::admission::program_require_is_known(statements, &es_imports, false)
+        };
+    // Names the file assigns to anywhere (computed on the first mutable
+    // `require()` binding).
+    let mut written_names: Option<std::collections::HashSet<String>> = None;
+    // `const lib = require('./y')` namespace bindings, so a member picked off
+    // `lib` later reads as that module's member (#10447).
+    let mut namespaces: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    // Names whose members the file may replace (computed on the first
+    // namespace binding).
+    let mut mutated_names: Option<std::collections::HashSet<String>> = None;
     for stmt in statements {
         // ES module import declarations: `import { x } from './y'`
         if let Statement::ImportDeclaration(import) = stmt {
@@ -1477,12 +1528,65 @@ fn extract_imports_from_statements_inner(
                 let Some(init) = &declarator.init else {
                     continue;
                 };
-                let source_str = require_string_literal_source(init);
-                let Some(source_str) = source_str else {
+                if !require_is_ambient {
+                    continue;
+                }
+                // A `let`/`var` binding the file assigns to again may no longer
+                // hold the module's export, so it is not an import (#10401). A
+                // `const` cannot be reassigned.
+                let mutable = var_decl.kind != oxc_ast::ast::VariableDeclarationKind::Const;
+                let mut written = |name: &str| {
+                    mutable
+                        && written_names
+                            .get_or_insert_with(|| identifier_writes(statements))
+                            .contains(name)
+                };
+                // One member of a literal require: `const f = require('./y').f`
+                // picks the named export `f` out of the module (#9188). It is
+                // the twin of `const { f } = require('./y')`, so it records the
+                // same named import. A call on the member or a computed key
+                // other than a string literal is not read.
+                if let Some((member_source, member)) = require_member_source(init, &namespaces)
+                    && let Some(name) = binding_identifier_name(&declarator.id)
+                {
+                    if written(name) {
+                        continue;
+                    }
+                    push_unique_import(
+                        &mut out,
+                        TypeScriptImport {
+                            source: member_source,
+                            imported: Some(member),
+                            local: name.to_string(),
+                            namespace: false,
+                        },
+                    );
+                    continue;
+                }
+                let direct_source = require_string_literal_source(init);
+                // `const { f } = lib` destructures a `const lib = require(...)`
+                // namespace like `require(...)` itself (#10447).
+                let Some(source_str) = direct_source
+                    .clone()
+                    .or_else(|| namespace_source(init, &namespaces))
+                else {
                     continue;
                 };
                 // Simple binding: `const x = require('./y')`
                 if let Some(name) = binding_identifier_name(&declarator.id) {
+                    if direct_source.is_none() || written(name) {
+                        continue;
+                    }
+                    // A namespace whose members the file replaces
+                    // (`lib.f = stub`) no longer holds the module's export
+                    // there, so members read off it are not imports.
+                    if !mutable
+                        && !mutated_names
+                            .get_or_insert_with(|| member_mutations(statements))
+                            .contains(name)
+                    {
+                        namespaces.insert(name.to_string(), source_str.clone());
+                    }
                     push_unique_import(
                         &mut out,
                         TypeScriptImport {
@@ -1500,9 +1604,23 @@ fn extract_imports_from_statements_inner(
                         let Some(key_name) = object_binding_key_name(prop) else {
                             continue;
                         };
-                        let local_name = binding_identifier_name(&prop.value)
-                            .unwrap_or(key_name)
-                            .to_string();
+                        // The local is the plain binding, with or without a
+                        // default (`{ f: g }`, `{ f: g = 1 }`). A nested pattern
+                        // (`{ a: { b } }`) binds other names, so it records
+                        // nothing rather than a wrong local.
+                        let local_name = match &prop.value {
+                            BindingPattern::BindingIdentifier(id) => id.name.to_string(),
+                            BindingPattern::AssignmentPattern(with_default) => {
+                                match binding_identifier_name(&with_default.left) {
+                                    Some(name) => name.to_string(),
+                                    None => continue,
+                                }
+                            }
+                            _ => continue,
+                        };
+                        if written(&local_name) {
+                            continue;
+                        }
                         push_unique_import(
                             &mut out,
                             TypeScriptImport {
@@ -1540,6 +1658,55 @@ pub(crate) fn require_string_literal_source(expr: &Expression<'_>) -> Option<Str
         return None;
     };
     Some(literal.value.to_string())
+}
+
+/// The source and member of `require("<literal>").member` (or the string
+/// literal spelling `require("<literal>")["member"]`), for `const f =
+/// require("./y").f` (#9188). `None` for any other initializer, so a call on
+/// the member, a computed key and a dynamic `require` argument stay unread.
+fn require_member_source(
+    expr: &Expression<'_>,
+    namespaces: &std::collections::HashMap<String, String>,
+) -> Option<(String, String)> {
+    let read = require_member_parts(expr, namespaces)?;
+    // `.default` is an ES default only for a transpiled module; a native
+    // CommonJS module has no such property, so it is not read as the import.
+    (read.1 != "default").then_some(read)
+}
+
+fn require_member_parts(
+    expr: &Expression<'_>,
+    namespaces: &std::collections::HashMap<String, String>,
+) -> Option<(String, String)> {
+    let module_of = |object: &Expression<'_>| {
+        require_string_literal_source(object).or_else(|| namespace_source(object, namespaces))
+    };
+    match expr {
+        Expression::StaticMemberExpression(member) if !member.optional => {
+            let source = module_of(&member.object)?;
+            Some((source, member.property.name.as_str().to_string()))
+        }
+        Expression::ComputedMemberExpression(member) if !member.optional => {
+            let source = module_of(&member.object)?;
+            let Expression::StringLiteral(key) = &member.expression else {
+                return None;
+            };
+            Some((source, key.value.to_string()))
+        }
+        _ => None,
+    }
+}
+
+/// The module of a plain identifier naming a `const x = require("<literal>")`
+/// namespace binding.
+fn namespace_source(
+    expr: &Expression<'_>,
+    namespaces: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let Expression::Identifier(id) = expr else {
+        return None;
+    };
+    namespaces.get(id.name.as_str()).cloned()
 }
 
 /// Extract the key name from an object-pattern binding property.
@@ -1697,7 +1864,7 @@ pub(crate) fn ambient_declaration_lines(
 /// per save). Every fact is a pure function of the source bytes; the
 /// per-diff `changed_lines` filtering happens at call time, so one cached
 /// extraction serves every diff of the same content.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PhaseTwoFacts {
     /// Every unsupported owner shape span in source order. Filtering to the
     /// first entry whose line range intersects a changed line reproduces the
@@ -1715,13 +1882,67 @@ pub(crate) struct PhaseTwoFacts {
 /// snippet), and precomputed 1-based line range (for the changed-line gate).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct GapShape {
+    /// The disclosure label. The serialized spelling is on-disk cache
+    /// identity (#10725): deserialization accepts only the closed label
+    /// table and fails closed on anything else.
     pub(crate) shape: &'static str,
     pub(crate) span: (usize, usize),
     pub(crate) lines: (usize, usize),
 }
 
+/// Closed label table mirrored from the extractor sites in this file.
+/// Unknown labels are a cache-integrity failure, not a new shape:
+/// deserializing them must error so the entry is discarded.
+const GAP_SHAPE_LABELS: [&str; 8] = [
+    "enum declaration",
+    "module/namespace declaration",
+    "member-assigned function",
+    "function inside a top-level call",
+    "arrow-function class field",
+    "class static block",
+    "accessor auto-accessor",
+    "class method with unsupported key",
+];
+
+impl serde::Serialize for GapShape {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("GapShape", 3)?;
+        state.serialize_field("shape", self.shape)?;
+        state.serialize_field("span", &self.span)?;
+        state.serialize_field("lines", &self.lines)?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for GapShape {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Hand-written (not derived): the serde derive adds an implicit
+        // `'de: 'static` bound for a borrowed `&'static str` field, which no
+        // deserializer can satisfy. Deserializing through an owned body and
+        // resolving against the static table keeps the closed-label contract.
+        #[derive(serde::Deserialize)]
+        struct GapShapeBody {
+            shape: String,
+            span: (usize, usize),
+            lines: (usize, usize),
+        }
+        let body = <GapShapeBody as serde::Deserialize>::deserialize(deserializer)?;
+        let shape = GAP_SHAPE_LABELS
+            .iter()
+            .find(|label| **label == body.shape)
+            .copied()
+            .ok_or_else(|| serde::de::Error::custom("unknown gap shape label"))?;
+        Ok(GapShape {
+            shape,
+            span: body.span,
+            lines: body.lines,
+        })
+    }
+}
+
 /// One runtime enum member: its 1-based line range and stable identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct EnumMember {
     pub(crate) lines: (usize, usize),
     pub(crate) identity: String,
@@ -1990,4 +2211,208 @@ fn collect_ambient_ranges(
             ));
         }
     }
+}
+
+/// Every identifier whose members the statements may replace: the root of a
+/// member assignment target (`lib.f = v`, `lib.a.b = v`, `lib[k] = v`), of a
+/// `delete lib.f`, or any use of the bare namespace beyond a member read
+/// (`Object.assign(lib, ...)`, `Object.defineProperty(lib, ...)`).
+fn member_mutations(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
+    use oxc_ast::ast::Expression;
+    fn root(mut expr: &Expression<'_>) -> Option<String> {
+        loop {
+            match expr.get_inner_expression() {
+                Expression::Identifier(id) => return Some(id.name.to_string()),
+                Expression::StaticMemberExpression(member) => expr = &member.object,
+                Expression::ComputedMemberExpression(member) => expr = &member.object,
+                Expression::ChainExpression(chain) => match &chain.expression {
+                    oxc_ast::ast::ChainElement::StaticMemberExpression(member) => {
+                        expr = &member.object
+                    }
+                    oxc_ast::ast::ChainElement::ComputedMemberExpression(member) => {
+                        expr = &member.object
+                    }
+                    _ => return None,
+                },
+                _ => return None,
+            }
+        }
+    }
+    // A namespace used any way but as the object of a member read or a
+    // destructuring initializer (`const again = lib`, `f(lib)`, `{ lib }`)
+    // escapes, and what it reaches can replace members.
+    #[derive(Default)]
+    struct Mutations {
+        mutated: std::collections::HashSet<String>,
+        refs: std::collections::HashMap<String, usize>,
+        safe: std::collections::HashMap<String, usize>,
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for Mutations {
+        fn visit_simple_assignment_target(
+            &mut self,
+            target: &oxc_ast::ast::SimpleAssignmentTarget<'a>,
+        ) {
+            match target {
+                oxc_ast::ast::SimpleAssignmentTarget::StaticMemberExpression(member) => {
+                    self.mutated.extend(root(&member.object));
+                }
+                oxc_ast::ast::SimpleAssignmentTarget::ComputedMemberExpression(member) => {
+                    self.mutated.extend(root(&member.object));
+                }
+                // `(lib.f as any) = stub`: the member read underneath is a write.
+                oxc_ast::ast::SimpleAssignmentTarget::TSAsExpression(wrapped) => {
+                    self.mutated.extend(root(&wrapped.expression));
+                }
+                oxc_ast::ast::SimpleAssignmentTarget::TSSatisfiesExpression(wrapped) => {
+                    self.mutated.extend(root(&wrapped.expression));
+                }
+                oxc_ast::ast::SimpleAssignmentTarget::TSNonNullExpression(wrapped) => {
+                    self.mutated.extend(root(&wrapped.expression));
+                }
+                oxc_ast::ast::SimpleAssignmentTarget::TSTypeAssertion(wrapped) => {
+                    self.mutated.extend(root(&wrapped.expression));
+                }
+                _ => {}
+            }
+            oxc_ast_visit::walk::walk_simple_assignment_target(self, target);
+        }
+
+        fn visit_unary_expression(&mut self, unary: &oxc_ast::ast::UnaryExpression<'a>) {
+            if unary.operator == oxc_ast::ast::UnaryOperator::Delete {
+                self.mutated.extend(root(&unary.argument));
+            }
+            oxc_ast_visit::walk::walk_unary_expression(self, unary);
+        }
+
+        // `lib.install()` / `lib.__defineGetter__(...)` run with `this = lib`
+        // and can replace the exports, so a call through a namespace member
+        // is not a passive read (#10464 review).
+        fn visit_call_expression(&mut self, call: &oxc_ast::ast::CallExpression<'a>) {
+            if matches!(
+                call.callee.get_inner_expression(),
+                Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
+            ) {
+                self.mutated.extend(root(&call.callee));
+            }
+            oxc_ast_visit::walk::walk_call_expression(self, call);
+        }
+
+        // A member used as a template tag is invoked with the namespace as
+        // `this`, exactly like a call (#10464 review).
+        fn visit_tagged_template_expression(
+            &mut self,
+            tagged: &oxc_ast::ast::TaggedTemplateExpression<'a>,
+        ) {
+            if matches!(
+                tagged.tag.get_inner_expression(),
+                Expression::StaticMemberExpression(_) | Expression::ComputedMemberExpression(_)
+            ) {
+                self.mutated.extend(root(&tagged.tag));
+            }
+            oxc_ast_visit::walk::walk_tagged_template_expression(self, tagged);
+        }
+
+        fn visit_identifier_reference(&mut self, id: &oxc_ast::ast::IdentifierReference<'a>) {
+            *self.refs.entry(id.name.to_string()).or_default() += 1;
+        }
+
+        // `lib.f` / `lib[k]` read a member: the namespace does not escape.
+        fn visit_static_member_expression(
+            &mut self,
+            member: &oxc_ast::ast::StaticMemberExpression<'a>,
+        ) {
+            self.read_of(&member.object);
+            oxc_ast_visit::walk::walk_static_member_expression(self, member);
+        }
+
+        fn visit_computed_member_expression(
+            &mut self,
+            member: &oxc_ast::ast::ComputedMemberExpression<'a>,
+        ) {
+            self.read_of(&member.object);
+            oxc_ast_visit::walk::walk_computed_member_expression(self, member);
+        }
+
+        // `const { f } = lib` reads members too.
+        fn visit_variable_declarator(&mut self, declarator: &oxc_ast::ast::VariableDeclarator<'a>) {
+            if matches!(declarator.id, BindingPattern::ObjectPattern(_))
+                && let Some(init) = &declarator.init
+            {
+                self.read_of(init);
+            }
+            oxc_ast_visit::walk::walk_variable_declarator(self, declarator);
+        }
+    }
+    impl Mutations {
+        fn read_of(&mut self, object: &Expression<'_>) {
+            if let Expression::Identifier(id) = object.get_inner_expression() {
+                *self.safe.entry(id.name.to_string()).or_default() += 1;
+            }
+        }
+    }
+    let mut mutations = Mutations::default();
+    for statement in statements {
+        oxc_ast_visit::walk::walk_statement(&mut mutations, statement);
+    }
+    for (name, count) in &mutations.refs {
+        if mutations.safe.get(name).copied().unwrap_or(0) < *count {
+            mutations.mutated.insert(name.clone());
+        }
+    }
+    mutations.mutated
+}
+
+/// Every identifier the statements assign to: plain and destructuring
+/// assignment targets, `++`/`--`, `for (x of ...)` heads, and an identifier
+/// under a TypeScript wrapper (`(x as T) = v`). Member writes (`x.p = v`) do
+/// not rebind `x` and are not counted.
+fn identifier_writes(statements: &[Statement<'_>]) -> std::collections::HashSet<String> {
+    #[derive(Default)]
+    struct Writes {
+        names: std::collections::HashSet<String>,
+        wrapped: bool,
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for Writes {
+        fn visit_simple_assignment_target(
+            &mut self,
+            target: &oxc_ast::ast::SimpleAssignmentTarget<'a>,
+        ) {
+            use oxc_ast::ast::SimpleAssignmentTarget as Target;
+            match target {
+                Target::AssignmentTargetIdentifier(id) => {
+                    self.names.insert(id.name.to_string());
+                }
+                Target::TSAsExpression(_)
+                | Target::TSSatisfiesExpression(_)
+                | Target::TSNonNullExpression(_)
+                | Target::TSTypeAssertion(_) => {
+                    let outer = std::mem::replace(&mut self.wrapped, true);
+                    oxc_ast_visit::walk::walk_simple_assignment_target(self, target);
+                    self.wrapped = outer;
+                    return;
+                }
+                _ => {}
+            }
+            oxc_ast_visit::walk::walk_simple_assignment_target(self, target);
+        }
+
+        fn visit_assignment_target_property_identifier(
+            &mut self,
+            property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
+        ) {
+            self.names.insert(property.binding.name.to_string());
+            oxc_ast_visit::walk::walk_assignment_target_property_identifier(self, property);
+        }
+
+        fn visit_identifier_reference(&mut self, id: &oxc_ast::ast::IdentifierReference<'a>) {
+            if self.wrapped {
+                self.names.insert(id.name.to_string());
+            }
+        }
+    }
+    let mut writes = Writes::default();
+    for statement in statements {
+        oxc_ast_visit::walk::walk_statement(&mut writes, statement);
+    }
+    writes.names
 }

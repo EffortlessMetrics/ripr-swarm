@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0363"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0363-typescript-per-file-fact-store.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #10725 records the TypeScript per-file fact persistence contract: facts are content-keyed (never stat-keyed), a warm run serves untouched files with findings identical to a cold run, tampered entries are corrupt-ignored and recomputed, and the -v line discloses real admission counts only."

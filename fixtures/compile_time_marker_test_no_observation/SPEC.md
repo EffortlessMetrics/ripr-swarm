@@ -6,9 +6,9 @@ Issue: #10091
 
 ## Given
 
-The changed private method `Wrapper::get` returns `self.inner.get()`, a call
-to `Cell::get` that shares the owner's name, so some source outside the owner's
-`fn` line names `get` and reach cannot be ruled out. The only test in the owner's
+The changed private method `Wrapper::get` has a caller, `Wrapper::peek`
+(`self.get()`), so a source outside the owner's own body names `get` and reach
+cannot be ruled out. The only test in the owner's
 file is `wrapper_is_send`, whose whole body is the compile-time trait-bound check
 `assert_send::<Wrapper>()`: a turbofish call of an empty generic helper with no
 value argument. It calls nothing that reaches `get` and checks no runtime value.
@@ -44,7 +44,8 @@ lexical extractor read no fact from it before and reads none now (fail-open,
 other statement-splitting paths not measured).
 
 
-Reach stays `weak` (not `no`) because `get` is named elsewhere in the source
-(`self.inner.get()`); `owner_may_be_reached_unseen` does not tell a call of
-another type's method from a call of the owner (#10091 follow-up). Renaming the
-owner makes reach `no` and the class `no_static_path`.
+Reach stays `weak` (not `no`) because `peek` names `get` outside the owner's
+body. Without that caller the owner's only naming is the same-named call
+`self.inner.get()` inside its own body, which #10160 no longer counts as an unseen
+caller, and the class would be `no_static_path` whether or not the marker refusal
+exists; the caller keeps the fixture discriminating the marker rule.

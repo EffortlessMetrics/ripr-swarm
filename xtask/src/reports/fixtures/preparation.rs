@@ -18,8 +18,12 @@ pub(super) fn environment() -> Result<&'static Vec<(&'static str, String)>, Stri
             let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
             let cargo_home = home::cargo_home_with_cwd(&cwd)
                 .map_err(|e| format!("resolve effective Cargo home: {e}; set CARGO_HOME to a writable absolute directory"))?;
-            let pin = std::fs::read_to_string("rust-toolchain.toml")
-                .map_err(|e| format!("read repository toolchain pin: {e}; run from the repository root"))?;
+            // Read the pin from the repository the binary was built in, not the
+            // working directory: tests and archived runs execute elsewhere.
+            let pin_path = crate::repo_root()?.join("rust-toolchain.toml");
+            let pin = std::fs::read_to_string(&pin_path).map_err(|e| {
+                format!("read repository toolchain pin `{}`: {e}", pin_path.display())
+            })?;
             let toolchain = toolchain(&pin)?;
             let mut envs = vec![
                 ("CARGO_HOME", path_text(&cargo_home)?),
@@ -91,6 +95,23 @@ pub(super) fn build(args: &[&str]) -> Result<(), String> {
         .iter()
         .map(|(k, v)| (*k, v.as_str()))
         .collect::<Vec<_>>();
+    crate::run::run_with_envs("cargo", args, &envs).map(|_| ())
+}
+
+/// Build with a dedicated `CARGO_TARGET_DIR` overlay (#11197): the argv
+/// stays a plain `cargo build -p ripr ...` so native-lock observers keep
+/// matching the child's command line, while the artifacts land outside the
+/// shared target the running suite executes from.
+pub(super) fn build_in_target_dir(args: &[&str], target_dir: &Path) -> Result<(), String> {
+    let dir = target_dir.to_str().ok_or_else(|| {
+        format!(
+            "fixture variant target dir must be UTF-8: {}",
+            target_dir.display()
+        )
+    })?;
+    let environment = proxy_environment(environment()?, offline_mode(args.contains(&"--offline")));
+    let mut envs: Vec<(&str, &str)> = environment.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    envs.push(("CARGO_TARGET_DIR", dir));
     crate::run::run_with_envs("cargo", args, &envs).map(|_| ())
 }
 

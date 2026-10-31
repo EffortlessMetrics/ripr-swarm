@@ -114,6 +114,35 @@ pub(crate) fn conditional_assertion_credit_limitation(
     }
 }
 
+/// Build the `typescript_conditional_registration` named limitation from one
+/// test registered under an unevaluated `if` condition (#10438).
+///
+/// The test is indexed so it still reaches its owner, but it may never be
+/// registered at runtime, so its assertions earn no credit: a finding that
+/// consults it can read `reachable_unrevealed` where an unconditional test
+/// would have been credited. Fail-closed; nothing is promoted by it.
+pub(crate) fn conditional_registration_limitation(
+    gap: &TypeScriptConditionalCreditGap,
+) -> TypeScriptNamedLimitation {
+    conditional_registration_named(&gap.file, gap.sample_line, &gap.condition)
+}
+
+fn conditional_registration_named(
+    file: &Path,
+    line: usize,
+    condition: &str,
+) -> TypeScriptNamedLimitation {
+    TypeScriptNamedLimitation {
+        name: "typescript_conditional_registration",
+        sample_source: format!("{}:{}", normalized_path(file), line),
+        why_not_actionable: format!(
+            "the recognized test file `{}` registers a test under the unevaluated condition or loop `{condition}` (e.g. a platform or environment guard, or a loop over data static analysis cannot enumerate); static analysis cannot tell whether, or how many times, that registration runs, so the test is indexed for reach but its assertions earn no credit",
+            normalized_path(file),
+        ),
+        repair_route: "analysis/typescript-conditional-registration",
+    }
+}
+
 /// Map a `StaticLimitKind` producer to its TS-specific named limitation, if any.
 ///
 /// Only `MockedModule` and `MissingImportGraph` are mapped here because they
@@ -771,6 +800,7 @@ fn contains_member_call_name(body_text: &str, object_name: &str, method_name: &s
 pub(crate) fn named_limitations_for_oracle_candidates(
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
+    probe_family: &ProbeFamily,
 ) -> Vec<TypeScriptNamedLimitation> {
     // Only consider oracle-eligible candidates (direct call, imported call, etc.)
     // Heuristic-only (name/proximity) links are not oracle-eligible and cannot
@@ -782,7 +812,26 @@ pub(crate) fn named_limitations_for_oracle_candidates(
     let mut saw_table_case = false;
     let mut saw_dynamic_assertion = false;
 
+    let mut saw_conditional_registration = false;
+
     for candidate in candidates.iter().filter(|c| c.relation.uses_oracle()) {
+        // #10438: a registration under an unevaluated `if` reaches the owner
+        // but earns no credit; its emptied assertion list is not a helper-
+        // gated or unresolved oracle, so name the real cause instead.
+        if let Some(condition) = &candidate.test.conditional_registration {
+            if !saw_conditional_registration {
+                limitations.push(conditional_registration_named(
+                    &candidate.test.file,
+                    candidate
+                        .test
+                        .factory_call_line
+                        .unwrap_or(candidate.test.line),
+                    condition,
+                ));
+                saw_conditional_registration = true;
+            }
+            continue;
+        }
         if !saw_oracle_helper_gated
             && candidate.test.assertions.is_empty()
             && let Some((helper_name, helper_line)) =
@@ -852,6 +901,12 @@ pub(crate) fn named_limitations_for_oracle_candidates(
             // `has_dynamic_matcher_arg = true` for such cases (RIPR-SPEC-0085 §PR5).
             // A `toMatchObject(<const>)` argument whose test-body literal was
             // read (RIPR-SPEC-0250 example 5) is resolved, so it is not listed.
+            // A dynamic argument only hides a discriminator for this change
+            // when the assertion is in the seam's oracle family
+            // (RIPR-SPEC-0104): an unresolved error expectation cannot pin a
+            // returned value or predicate, and vice versa. That family
+            // condition scopes the dynamic-assertion limitation only; the
+            // table-case limitation below keeps its original rule.
             if assertion.has_dynamic_matcher_arg
                 && assertion.expected_object_const.is_none()
                 && !saw_dynamic_assertion
@@ -874,22 +929,24 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                     });
                     saw_table_case = true;
                 }
-                let sample = format!(
-                    "{}:{}",
-                    normalized_path(&candidate.test.file),
-                    candidate.test.evidence_line(assertion)
-                );
-                let why = format!(
-                    "the matcher `.{}(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior",
-                    assertion.matcher
-                );
-                limitations.push(TypeScriptNamedLimitation {
-                    name: "typescript_dynamic_assertion_unresolved",
-                    sample_source: sample,
-                    why_not_actionable: why,
-                    repair_route: "analysis/typescript-dynamic-assertion-resolution",
-                });
-                saw_dynamic_assertion = true;
+                if ts_oracle_kind_matches_seam(&assertion.oracle_kind, probe_family) {
+                    let sample = format!(
+                        "{}:{}",
+                        normalized_path(&candidate.test.file),
+                        candidate.test.evidence_line(assertion)
+                    );
+                    let why = format!(
+                        "the matcher `.{}(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior",
+                        assertion.matcher
+                    );
+                    limitations.push(TypeScriptNamedLimitation {
+                        name: "typescript_dynamic_assertion_unresolved",
+                        sample_source: sample,
+                        why_not_actionable: why,
+                        repair_route: "analysis/typescript-dynamic-assertion-resolution",
+                    });
+                    saw_dynamic_assertion = true;
+                }
             }
         }
     }

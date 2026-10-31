@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "test_deposit_through_fixture takes `account` from conftest.py (Account(100)), deposits 50 and asserts the balance is 150, so both mutants fail. ripr reports static_unknown with unresolved_pytest_fixture, an acceptable limit.",
+  "reasoning": "test_deposit_through_fixture takes `account` from conftest.py (Account(100)), deposits 50 and asserts the balance is 150, so both mutants fail. The fixture only returns a literal-built Account, so ripr reads it like the inlined construction (#9619).",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "limited",
@@ -48,5 +48,8 @@
       "static_unknown"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#41"
+  ]
 }

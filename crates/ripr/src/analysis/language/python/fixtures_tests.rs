@@ -2,7 +2,9 @@
 //! names a pytest fixture whose body calls the owner is related with
 //! reach-only evidence and never earns an oracle or `exposed`.
 
-use super::fixtures::attach_fixture_defs;
+use super::fixtures::{
+    FixtureSideEffects, attach_fixture_defs, mark_isolated_fixture_defs, side_effects_of,
+};
 use super::source_facts::extract_source_facts;
 use super::source_utils::is_test_file;
 use super::*;
@@ -13,15 +15,17 @@ const UTILS_PY: &str = "def _short(text, limit):\n    if limit > 3:\n        ret
 
 /// Owners from production files and tests (with fixtures attached) from test
 /// files, the way the workspace pass builds them.
-fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<PythonTest>) {
+pub(super) fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<PythonTest>) {
     let mut owners = Vec::new();
     let mut tests = Vec::new();
     let mut defs: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
+    let mut side: BTreeMap<PathBuf, FixtureSideEffects> = BTreeMap::new();
     for (path, source) in files {
         let facts = extract_source_facts(Path::new(path), source);
         if !facts.fixtures.is_empty() {
             defs.insert(PathBuf::from(path), facts.fixtures.clone());
         }
+        side.insert(PathBuf::from(path), side_effects_of(&facts));
         if is_test_file(Path::new(path)) {
             tests.extend(facts.tests);
         } else {
@@ -29,6 +33,9 @@ fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<PythonTest>) {
         }
     }
     attach_fixture_defs(&mut tests, &defs);
+    // Every conftest the workspace holds is in `files`; none is unreadable.
+    mark_isolated_fixture_defs(&mut tests, &defs, &side, |_| false);
+    super::param_fixtures::apply_literal_param_fixtures(&mut tests);
     (owners, tests)
 }
 
@@ -282,7 +289,22 @@ fn given_a_parametrize_the_literal_parser_gives_up_on_then_the_argname_is_still_
         "@pytest.mark.parametrize('out', VALUES)",
         "@pytest.mark.parametrize('out', [pytest.param('abc', marks=pytest.mark.skip)])",
         "@pytest.mark.parametrize('out', ['abc'], indirect=False)",
+        // Collection errors (#10867): `indirect` naming a name the mark does
+        // not parametrize, or `None`; a name parametrized twice.
         "@pytest.mark.parametrize('out', ['abc'], indirect=['other'])",
+        "@pytest.mark.parametrize('out', VALUES, indirect=('other', 'out'))",
+        "@pytest.mark.parametrize('out', ['abc'], indirect=None)",
+        "@pytest.mark.parametrize('out', ['abc'], indirect=True)\n@pytest.mark.parametrize('out', ['abc'], indirect=True)",
+        "@pytest.mark.parametrize('out, out', [('a', 'b')], indirect=True)",
+        // An `indirect=` value the read cannot settle makes no edge either
+        // way (RIPR-SPEC-0028); the fixture limit still counts it (#10685).
+        // A never-rebound module `IND = False` settles it as direct.
+        "IND = False\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
+        "NAME = 'out'\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=[NAME])",
+        "IND = True\nIND = False\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
+        // A canonical spelling whose root another library binds may be
+        // pytest's mark or not: no edge, and the limit still counts it.
+        "from mylib import mark\n\n\n@mark.parametrize('out', ['abc'])",
         "@pytest.mark.parametrize('out, other', [('a', 'b')])",
         "@pytest.mark.parametrize(('out', 'other'), [('a', 'b')])",
         "@pytest.mark.parametrize(['other', 'out'], [('a', 'b')])",
@@ -304,7 +326,9 @@ fn given_indirect_routing_the_argname_to_its_fixture_then_the_fixture_is_resolve
     for decorator in [
         "@pytest.mark.parametrize('out', ['abc'], indirect=True)",
         "@pytest.mark.parametrize('out', VALUES, indirect=['out'])",
-        "@pytest.mark.parametrize('out', VALUES, indirect=('other', 'out'))",
+        "@pytest.mark.parametrize('out', VALUES, indirect=('out',))",
+        // A never-rebound module value routes like its literal (#10685).
+        "IND = True\n\n\n@pytest.mark.parametrize('out', ['abc'], indirect=IND)",
     ] {
         let test = with_decorator(decorator);
         assert_eq!(
@@ -349,6 +373,74 @@ fn given_a_class_level_parametrize_naming_a_fixture_then_the_method_stays_unrela
     );
     assert_eq!(
         relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &plain)])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    Ok(())
+}
+
+/// #10867: a class and its method, or a class and its ancestor, that both
+/// parametrize one name fail pytest collection ("duplicate parametrization"),
+/// so even a routed argname makes no fixture edge.
+#[test]
+fn given_a_name_parametrized_by_both_a_class_and_its_method_then_no_fixture_is_resolved()
+-> Result<(), String> {
+    let routed = "VALUES, indirect=True)";
+    let method = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        &format!("@pytest.mark.parametrize('out', {routed}\nclass TestShort:\n    @pytest.mark.parametrize('out', {routed}\n    def test_short(self, out):\n        assert out == 'abc'\n"),
+    );
+    let ancestor = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        &format!("@pytest.mark.parametrize('out', {routed}\nclass Base:\n    pass\n\n\n@pytest.mark.parametrize('out', {routed}\nclass TestShort(Base):\n    def test_short(self, out):\n        assert out == 'abc'\n"),
+    );
+    for test in [&method, &ancestor] {
+        assert!(
+            relations(&[
+                ("src/utils.py", UTILS_PY),
+                ("tests/test_utils.py", test.as_str())
+            ])?
+            .is_empty(),
+            "{test}"
+        );
+    }
+    // A refused sibling mark (`indirect=None`) makes the whole test
+    // uncollectible, so a healthy routed mark beside it makes no edge either,
+    // on the test or on its class.
+    let sibling = with_decorator(
+        "@pytest.mark.parametrize('q', [1], indirect=None)\n@pytest.mark.parametrize('out', ['abc'], indirect=True)",
+    )
+    .replace("def test_short(out):", "def test_short(q, out):");
+    let class_sibling = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        &format!("@pytest.mark.parametrize('q', [1], indirect=None)\nclass TestShort:\n    @pytest.mark.parametrize('out', {routed}\n    def test_short(self, q, out):\n        assert out == 'abc'\n"),
+    );
+    for test in [&sibling, &class_sibling] {
+        assert!(
+            relations(&[
+                ("src/utils.py", UTILS_PY),
+                ("tests/test_utils.py", test.as_str())
+            ])?
+            .is_empty(),
+            "{test}"
+        );
+        // Control: `indirect=False` collects, and the routed mark keeps its edge.
+        let healthy = test.replace("indirect=None", "indirect=False");
+        assert_eq!(
+            relations(&[
+                ("src/utils.py", UTILS_PY),
+                ("tests/test_utils.py", &healthy)
+            ])?,
+            vec![("test_short".to_string(), "fixture_owner_call")],
+            "{healthy}"
+        );
+    }
+    // Control: the method alone routes to the fixture.
+    let single = SAME_MODULE.replace(
+        "def test_short(out):\n    assert out == 'abc'\n",
+        &format!("class TestShort:\n    @pytest.mark.parametrize('out', {routed}\n    def test_short(self, out):\n        assert out == 'abc'\n"),
+    );
+    assert_eq!(
+        relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &single)])?,
         vec![("test_short".to_string(), "fixture_owner_call")]
     );
     Ok(())
@@ -432,5 +524,294 @@ fn given_a_test_module_plain_def_then_the_conftest_fixture_is_still_attached() -
         ])?,
         vec![("test_short".to_string(), "fixture_owner_call")]
     );
+    Ok(())
+}
+
+const AUDIT_PY: &str = "import logging\nlog = logging.getLogger(\"audit\")\n\n\ndef check_balance(balance):\n    if balance < 10:\n        log.warning(\"low balance: %s\", balance)\n        return False\n    return True\n";
+
+/// The class and static limit of the edit `low balance` -> `balance low`
+/// over a workspace, the way the public path reaches it (#9546).
+fn log_edit(files: &[(&str, &str)]) -> Result<(ExposureClass, Option<StaticLimitKind>), String> {
+    let (owners, tests) = workspace(files);
+    let finding = classify_change_with_source(
+        Path::new("src/audit.py"),
+        7,
+        "        log.warning(\"balance low: %s\", balance)",
+        Some("        log.warning(\"low balance: %s\", balance)"),
+        &owners,
+        &tests,
+        Some(AUDIT_PY),
+    )
+    .ok_or_else(|| "expected a finding".to_string())?;
+    Ok((finding.class, finding.static_limit_kind))
+}
+
+const PINNED: &str = "import logging\nimport pytest\nfrom src.audit import check_balance\n\n\ndef test_low_balance(caplog):\n    with caplog.at_level(logging.WARNING):\n        assert check_balance(5) is False\n    assert \"low balance: 5\" in caplog.text\n";
+const ABSTAINS: (ExposureClass, Option<StaticLimitKind>) = (
+    ExposureClass::StaticUnknown,
+    Some(StaticLimitKind::UnsupportedSyntax),
+);
+
+#[test]
+fn given_the_builtin_caplog_then_the_logged_text_is_credited() -> Result<(), String> {
+    assert_eq!(
+        log_edit(&[("src/audit.py", AUDIT_PY), ("tests/test_audit.py", PINNED)])?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_conftest_or_module_caplog_fixture_then_the_logged_text_abstains() -> Result<(), String> {
+    let conftest = "import pytest\n\n\n@pytest.fixture\ndef caplog():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", conftest),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    let module = PINNED.replace(
+        "def test_low_balance",
+        "@pytest.fixture\ndef caplog():\n    return Recorder()\n\n\ndef test_low_balance",
+    );
+    assert_eq!(
+        log_edit(&[("src/audit.py", AUDIT_PY), ("tests/test_audit.py", &module)])?,
+        ABSTAINS
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_directly_parametrized_caplog_then_the_logged_text_abstains() -> Result<(), String> {
+    let test = PINNED.replace(
+        "def test_low_balance",
+        "@pytest.mark.parametrize(\"caplog\", [Recorder()])\ndef test_low_balance",
+    );
+    assert_eq!(
+        log_edit(&[("src/audit.py", AUDIT_PY), ("tests/test_audit.py", &test)])?,
+        ABSTAINS
+    );
+    Ok(())
+}
+
+#[test]
+fn given_more_fixtures_than_the_attach_cap_then_a_caplog_override_is_still_found()
+-> Result<(), String> {
+    // Parameters sort before `caplog`, so eight plain fixtures use the cap
+    // first (#10407 review).
+    let names: Vec<String> = (1..=8).map(|n| format!("a{n}")).collect();
+    let mut module = String::from("import pytest\n\n\n");
+    for name in names.iter().map(String::as_str).chain(["caplog"]) {
+        module.push_str(&format!(
+            "@pytest.fixture\ndef {name}():\n    return 1\n\n\n"
+        ));
+    }
+    let signature = format!("def test_low_balance({}, caplog):", names.join(", "));
+    let test = PINNED.replace("def test_low_balance(caplog):", &signature);
+    let test = test.replace(
+        "\n\n\ndef test_low_balance",
+        &format!("\n\n\n{module}def test_low_balance"),
+    );
+    assert_eq!(
+        log_edit(&[("src/audit.py", AUDIT_PY), ("tests/test_audit.py", &test)])?,
+        ABSTAINS
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_fixture_renamed_to_caplog_then_the_logged_text_abstains() -> Result<(), String> {
+    // #10418: the public name, not the def name, is what the test requests.
+    let conftest = "import pytest\n\n\n@pytest.fixture(name=\"caplog\")\ndef custom_recorder():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", conftest),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    // A fixture renamed to something else leaves the builtin `caplog` alone.
+    let other = conftest.replace("name=\"caplog\"", "name=\"recorder\"");
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", &other),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn given_a_replaced_or_unrelated_caplog_rename_then_the_builtin_caplog_is_still_credited()
+-> Result<(), String> {
+    let renamed = "import pytest\n\n\n@pytest.fixture(name=\"caplog\")\ndef custom_recorder():\n    return Recorder()\n";
+    // A later def of the binding replaces the renamed fixture (#10444 review).
+    let replaced = format!("{renamed}\n\ndef custom_recorder():\n    return None\n");
+    // `caplog` spelled in `params=` is data, not the registered name.
+    let params = "import pytest\n\n\n@pytest.fixture(params=['name=\"caplog\"'])\ndef sample(request):\n    return request.param\n";
+    for conftest in [replaced.as_str(), params] {
+        assert_eq!(
+            log_edit(&[
+                ("src/audit.py", AUDIT_PY),
+                ("tests/conftest.py", conftest),
+                ("tests/test_audit.py", PINNED),
+            ])?,
+            (ExposureClass::Exposed, None),
+            "{conftest}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn given_a_fixture_declared_through_an_aliased_pytest_import_then_it_is_recorded()
+-> Result<(), String> {
+    // #10454: `from pytest import fixture as fx` registers the same fixture.
+    let aliased = SAME_MODULE
+        .replace("import pytest", "from pytest import fixture as fx")
+        .replace("@pytest.fixture", "@fx");
+    assert_eq!(
+        relations(&[
+            ("src/utils.py", UTILS_PY),
+            ("tests/test_utils.py", &aliased)
+        ])?,
+        vec![("test_short".to_string(), "fixture_owner_call")]
+    );
+    // An alias of something else is not a fixture.
+    let other = SAME_MODULE
+        .replace("import pytest", "from functools import cache as fx")
+        .replace("@pytest.fixture", "@fx");
+    assert!(relations(&[("src/utils.py", UTILS_PY), ("tests/test_utils.py", &other)])?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn given_an_aliased_fixture_overriding_caplog_then_the_logged_text_abstains() -> Result<(), String>
+{
+    let conftest =
+        "from pytest import fixture as fx\n\n\n@fx\ndef caplog():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", conftest),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    let renamed = "from pytest import fixture as fx\n\n\n@fx(name=\"caplog\")\ndef custom_recorder():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", renamed),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    // `pytest_asyncio.fixture` is recognized the same way.
+    let asyncio = conftest.replace("from pytest import", "from pytest_asyncio import");
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", &asyncio),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    // An alias bound to another module's `fixture` is not pytest's.
+    let foreign = conftest.replace("from pytest import", "from tools import");
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", &foreign),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        (ExposureClass::Exposed, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn given_an_alias_rebound_by_a_later_import_then_it_is_not_a_fixture_decorator()
+-> Result<(), String> {
+    // `fx` ends up bound to functools.cache, so `@fx def caplog` is no fixture.
+    let shadowed = "from pytest import fixture as fx\nfrom functools import cache as fx\n\n\n@fx\ndef caplog():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", shadowed),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        (ExposureClass::Exposed, None)
+    );
+    // The pytest import coming last keeps the alias a fixture decorator.
+    let kept = "from functools import cache as fx\nfrom pytest import fixture as fx\n\n\n@fx\ndef caplog():\n    return Recorder()\n";
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", kept),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    Ok(())
+}
+
+#[test]
+fn given_an_alias_rebound_by_an_assignment_or_def_then_it_is_not_a_fixture_decorator()
+-> Result<(), String> {
+    // #10473: `fx` no longer names pytest's decorator once a statement before
+    // `@fx` rebinds it, so `caplog` here is not an override.
+    let head = "from pytest import fixture as fx\n";
+    let tail = "\n\n@fx\ndef caplog():\n    return Recorder()\n";
+    for rebinding in [
+        "fx = make_decorator()\n",
+        "fx: object = make_decorator()\n",
+        "fx, other = make_decorator(), None\n",
+        "def fx(function):\n    return function\n",
+        "class fx:\n    pass\n",
+        "import tools as fx\n",
+    ] {
+        let conftest = format!("{head}{rebinding}{tail}");
+        assert_eq!(
+            log_edit(&[
+                ("src/audit.py", AUDIT_PY),
+                ("tests/conftest.py", &conftest),
+                ("tests/test_audit.py", PINNED),
+            ])?,
+            (ExposureClass::Exposed, None),
+            "{rebinding}"
+        );
+    }
+    // A bare annotation binds nothing, so the alias is still pytest's.
+    let annotated = format!("{head}fx: object\n{tail}");
+    assert_eq!(
+        log_edit(&[
+            ("src/audit.py", AUDIT_PY),
+            ("tests/conftest.py", &annotated),
+            ("tests/test_audit.py", PINNED),
+        ])?,
+        ABSTAINS
+    );
+    // Rebinding the alias after the decorated def does not undo the fixture,
+    // and a later pytest import binds it again.
+    for kept in [
+        format!("{head}{tail}fx = make_decorator()\n"),
+        format!("{head}fx = make_decorator()\n{head}{tail}"),
+    ] {
+        assert_eq!(
+            log_edit(&[
+                ("src/audit.py", AUDIT_PY),
+                ("tests/conftest.py", &kept),
+                ("tests/test_audit.py", PINNED),
+            ])?,
+            ABSTAINS,
+            "{kept}"
+        );
+    }
     Ok(())
 }

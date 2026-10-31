@@ -133,7 +133,9 @@ without renumbering and without a shared end of list to conflict on. Both
 rules are enforced when the specs are scanned (`verdict-corpus check` and
 `validate` fail on an unordered or repeated slug), and a ledger waiver names
 either key (`example = 3` or `example = "equivalent-mutant"`). A PR adding an
-example need not raise a ledger `floor` or the xtask example-count lower bound.
+example need not edit a shared count: each corpus protects its covered examples
+through `spec-examples.lock`, one sorted line per example (RIPR-SPEC-0219), so
+the protection moves with the example and not with a number every PR edits.
 Decision numbers inside a spec are not keyed this way yet.
 
 ### Perl corpus
@@ -186,7 +188,7 @@ The Python corpus carries a spec-example ledger,
 `fixtures/python-verdict-corpus/spec-coverage.toml`, with the RIPR-SPEC-0219
 ledger contract: every spec with numbered acceptance examples is in or out
 of scope, RIPR-SPEC-0238 is in scope, and cases cite the examples they label
-in `spec_examples`. `check-all` gates it on its floor like the Rust ledger.
+in `spec_examples`. `check-all` gates it on its `spec-examples.lock` like the Rust ledger.
 Every runnable RIPR-SPEC-0238 example has a case; example 10 is labeled in
 a numpy subject (#7819). A deleted ledger fails `verdict-corpus check-all` and
 `committed_python_corpus_is_valid_and_covers_each_test_library`: every
@@ -259,8 +261,8 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `case_output_refuses_an_unavailable_perl_run_only_for_packet_cases`
 - `committed_python_corpus_is_valid_and_covers_each_test_library`
 - `python_expected_rows_agree_with_corpus_labels`
-- `fixtures/python-verdict-corpus/spec-coverage.toml` and its floor
-- `fixtures/typescript-verdict-corpus/spec-coverage.toml` and its floor
+- `fixtures/python-verdict-corpus/spec-coverage.toml` and its `spec-examples.lock`
+- `fixtures/typescript-verdict-corpus/spec-coverage.toml` and its `spec-examples.lock`
 
 ## Implementation Mapping
 

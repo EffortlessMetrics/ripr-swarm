@@ -4,6 +4,7 @@ use super::mask_pin::MASK_BITS_UNEXERCISED;
 use super::operand_pin::FIELD_PINNED_EQUAL_TO_OPERAND;
 use super::reveal::wrapper_error_seam_expression;
 use crate::domain::*;
+use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
 
 pub(in crate::analysis) fn ensure_unknown_stop_reason(
     class: &ExposureClass,
@@ -235,6 +236,28 @@ pub(in crate::analysis) fn recommended_next_step(
     owner_assertion_shaped: bool,
     stop_reasons: &[StopReason],
 ) -> Option<String> {
+    recommended_next_step_with_boundary(probe, class, owner_assertion_shaped, stop_reasons, false)
+}
+
+/// Next-step guidance when the caller knows whether a related test already
+/// supplies the changed boundary input (infection `yes`, #10622). For a weak
+/// predicate that means the input exists and only the oracle is weak, so the
+/// "add boundary tests" template would be misleading. Guidance only: repair
+/// eligibility is decided elsewhere.
+pub(in crate::analysis) fn recommended_next_step_with_boundary(
+    probe: &Probe,
+    class: &ExposureClass,
+    owner_assertion_shaped: bool,
+    stop_reasons: &[StopReason],
+    boundary_input_observed: bool,
+) -> Option<String> {
+    if boundary_input_observed
+        && !owner_assertion_shaped
+        && *class == ExposureClass::WeaklyExposed
+        && matches!(probe.family, ProbeFamily::Predicate)
+    {
+        return Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string());
+    }
     // RIPR-SPEC-0133: an assertion-shaped owner is the oracle, not the code
     // under test, so the standard code-under-test advice is incoherent for it.
     // The exposure class is unchanged; only the guidance is reframed.
@@ -404,7 +427,7 @@ fn uncertainty_next_step(
         crate::domain::ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP.to_string()
     } else {
         match class {
-            ExposureClass::InfectionUnknown => "Open the related test and trace its input through the local or computed operand (including default and empty cases) to see which side of the changed condition it exercises, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings.",
+            ExposureClass::InfectionUnknown => "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings.",
             ExposureClass::PropagationUnknown => "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes.",
             _ => "Inspect the changed behavior and its existing tests; ripr has not established a test gap.",
         }.to_string()
@@ -542,9 +565,7 @@ mod tests {
         )
         .unwrap_or_default();
         assert!(
-            step.starts_with(
-                "Open the related test and trace its input through the local or computed operand"
-            ),
+            step.starts_with("Open the related test, check whether it reaches the changed code"),
             "{step}"
         );
         assert!(
@@ -593,6 +614,64 @@ mod tests {
         assert_eq!(
             match_arm.as_deref(),
             Some("Strengthen the related assertion so it discriminates the changed behavior.")
+        );
+    }
+
+    #[test]
+    fn boundary_observed_weak_predicate_guidance_targets_the_oracle() {
+        let predicate = probe(ProbeFamily::Predicate, "qty > 10");
+        let observed = recommended_next_step_with_boundary(
+            &predicate,
+            &ExposureClass::WeaklyExposed,
+            false,
+            &[],
+            true,
+        );
+        assert_eq!(
+            observed.as_deref(),
+            Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
+        );
+        // Discriminating negative: boundary input not observed keeps the
+        // boundary-test template.
+        let unobserved = recommended_next_step_with_boundary(
+            &predicate,
+            &ExposureClass::WeaklyExposed,
+            false,
+            &[],
+            false,
+        );
+        assert_eq!(
+            unobserved.as_deref(),
+            Some(
+                "Add boundary tests for below, equal, and above the changed threshold with exact assertions."
+            )
+        );
+        // The observed-boundary wording is specific to weak predicates.
+        let other_family = recommended_next_step_with_boundary(
+            &probe(ProbeFamily::ReturnValue, "value + 1"),
+            &ExposureClass::WeaklyExposed,
+            false,
+            &[],
+            true,
+        );
+        assert_ne!(
+            other_family.as_deref(),
+            Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP)
+        );
+    }
+
+    #[test]
+    fn boundary_observed_does_not_override_assertion_shaped_owner_guidance() {
+        let step = recommended_next_step_with_boundary(
+            &probe(ProbeFamily::Predicate, "qty > 10"),
+            &ExposureClass::WeaklyExposed,
+            true,
+            &[],
+            true,
+        );
+        assert_eq!(
+            step.as_deref(),
+            Some(crate::domain::ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP)
         );
     }
 

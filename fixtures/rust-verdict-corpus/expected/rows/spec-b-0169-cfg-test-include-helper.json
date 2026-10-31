@@ -1,0 +1,20 @@
+{
+  "case_id": "spec-b-0169-cfg-test-include-helper",
+  "subject_id": "authored-spec-b-layout",
+  "origin": "authored",
+  "anchor": "src/l_include_fragment.rs:2",
+  "behavior_family": "return_value",
+  "test_shape": "cfg_test_include_helper_edit",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "silent",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 0,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -148,7 +148,6 @@ mod tests {
             owner: None,
         });
         finding.activation.observed_values.push(ValueFact {
-            file: None,
             line: 12,
             text: "discounted_total(50, 100)".to_string(),
             value: "amount = 50".to_string(),
@@ -234,9 +233,9 @@ mod tests {
         let text = crate::output::human::render_finding(finding);
         let changed = text
             .split_once("\nChanged\n")
-            .and_then(|(_, tail)| tail.split_once("\nProbe\n"))
+            .and_then(|(_, tail)| tail.split_once("\nChange type\n"))
             .map(|(changed, _)| changed)
-            .ok_or("full human report needs Changed and Probe sections")?;
+            .ok_or("full human report needs Changed and Change type sections")?;
         assert_eq!(
             changed,
             "  expr:   `a``b``` | \\\"\n\t  next\\u{0d}\n\\u{00}\\u{1b}\\u{85}\\u{202e}🦀\n"
@@ -337,6 +336,7 @@ mod tests {
             uninspected_changed_lines_lower_bound: 120,
             stop_reason: crate::analysis::PartialDiffStopReason::LineBudget,
             next_file_changed_lines: Some(50),
+            whole_diff_budgets: None,
             partition_identity: "b".repeat(64),
         }
     }
@@ -1094,6 +1094,7 @@ mod tests {
     #[test]
     fn render_adds_presentation_text_finding_alignment_when_supported() -> Result<(), String> {
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1204,6 +1205,7 @@ mod tests {
             role: crate::domain::RelatedTestRole::Contributing,
         };
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1346,6 +1348,7 @@ mod tests {
             role: crate::domain::RelatedTestRole::Contributing,
         };
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1552,7 +1555,6 @@ mod tests {
     fn finding_json_formats_observed_value_context_labels() {
         let mut finding = unknown_finding();
         finding.activation.observed_values.push(ValueFact {
-            file: None,
             line: 33,
             text: "assert_eq!(actual, expected)".to_string(),
             value: "actual = 10".to_string(),
@@ -2071,6 +2073,50 @@ mod tests {
     }
 
     #[test]
+    fn finding_json_states_typescript_preview_canonical_gap_id() -> Result<(), String> {
+        let mut finding = unknown_finding();
+        add_typescript_preview_actionability(&mut finding);
+        finding.id = "probe:src_lib.ts:typescript_preview:1a2b3c4d".to_string();
+        let mut out = String::new();
+        finding_json(&mut out, &finding, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert_eq!(
+            value["canonical_gap_id"],
+            "gap:typescript:typescript_preview:1a2b3c4d"
+        );
+
+        // Negative: a finding without the TypeScript preview card, or whose id
+        // is not a TypeScript preview probe id, states no gap id.
+        let mut other_id = finding.clone();
+        other_id.id = "probe:src_lib.ts:other:1a2b3c4d".to_string();
+        let mut out = String::new();
+        finding_json(&mut out, &other_id, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+
+        let mut not_ts = finding.clone();
+        not_ts.language = None;
+        let mut out = String::new();
+        finding_json(&mut out, &not_ts, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+
+        // JavaScript shares the preview card and probe family but has no
+        // TypeScript gap identity (#10709 review).
+        let mut js = finding.clone();
+        js.language = Some(LanguageId::JavaScript);
+        let mut out = String::new();
+        finding_json(&mut out, &js, 0);
+        let value: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|err| format!("finding JSON parse failed: {err}"))?;
+        assert!(value.get("canonical_gap_id").is_none());
+        Ok(())
+    }
+
+    #[test]
     fn finding_json_projects_perl_preview_card_public_preview_scope() -> Result<(), String> {
         let mut finding = unknown_finding();
         add_perl_preview_card_inputs(&mut finding);
@@ -2213,6 +2259,7 @@ mod tests {
     fn unknown_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
             id: "probe:src_lib_rs:1:static_unknown".to_string(),
             canonical_gap: None,
             probe: Probe {
@@ -2264,6 +2311,7 @@ mod tests {
 
     fn sample_output(base: Option<String>) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2395,7 +2443,6 @@ mod tests {
         let mut finding = unknown_finding();
         finding.activation.observed_values = (0..500)
             .map(|i| ValueFact {
-                file: None,
                 line: 42,
                 text: long_text.clone(),
                 value: format!("arg_{i} = {i}"),
@@ -2404,6 +2451,7 @@ mod tests {
             .collect();
 
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2462,7 +2510,6 @@ mod tests {
         let mut finding = unknown_finding();
         finding.activation.observed_values = (1..=5_000)
             .map(|line| ValueFact {
-                file: None,
                 line,
                 text: format!("assert!(rendered.contains(\"field_{line}\"));"),
                 value: format!("\"field_{line}\""),
@@ -2507,7 +2554,6 @@ mod tests {
     fn json_omits_observed_values_total_when_nothing_is_dropped() {
         let mut finding = unknown_finding();
         finding.activation.observed_values = vec![ValueFact {
-            file: None,
             line: 12,
             text: "assert_eq!(discounted_total(50, 100), 50);".to_string(),
             value: "amount = 50".to_string(),
@@ -2522,6 +2568,7 @@ mod tests {
 
     fn single_finding_output(finding: Finding) -> CheckOutput {
         CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2551,6 +2598,7 @@ mod tests {
         // When no_scope_provided=true the JSON output must include the
         // scope_disclosures additive field with scope_status=no_scope_provided.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2616,6 +2664,7 @@ mod tests {
         // When no_scope_provided=false (scope was provided) the scope_disclosures
         // field must be absent — this is a real analyzed-empty result.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -2657,6 +2706,7 @@ mod tests {
         // string must recommend `ripr pilot --root .` and NOT --mode fast.
         // --mode is a speed tier; pilot is the whole-repository route.
         let output = CheckOutput {
+            value_origins: Default::default(),
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
