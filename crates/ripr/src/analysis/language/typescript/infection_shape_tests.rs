@@ -217,3 +217,19 @@ fn a_block_comment_hiding_a_double_slash_is_undecidable_not_comment_only() {
         Some("comment_only")
     );
 }
+
+#[test]
+fn a_block_comment_opener_inside_a_string_does_not_decline_the_line() {
+    // `/*` inside a literal is text, so the trailing `//` comment is still read.
+    assert_eq!(
+        shape("  return \"/*\";", "  return \"/*\"; // note"),
+        Some("comment_only")
+    );
+}
+
+#[test]
+fn any_block_comment_line_is_declined_even_without_a_double_slash() {
+    // The reader does not track `/* ... */` extents, so every block-comment
+    // line fails closed, not only one that hides a `//`.
+    assert_eq!(shape("x /* a */ y", "x /* a */ z"), None);
+}
