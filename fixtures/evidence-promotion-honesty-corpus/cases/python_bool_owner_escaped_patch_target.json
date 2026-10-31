@@ -1,0 +1,23 @@
+{
+  "id": "python_bool_owner_escaped_patch_target",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_bool_owner_escaped_patch_target",
+  "vector": "bare_bool_assert_in_a_file_that_patches_the_callee_through_an_escaped_target",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

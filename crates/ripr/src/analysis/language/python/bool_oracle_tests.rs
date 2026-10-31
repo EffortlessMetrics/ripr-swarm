@@ -1,5 +1,7 @@
 //! Tests for crediting a bare boolean assertion on a `bool` owner (#9542).
 
+mod patch_scope_controls;
+
 use super::owners_tests::{extract_owners, extract_tests};
 use super::*;
 use std::path::Path;
@@ -299,5 +301,417 @@ fn given_a_test_function_that_shadows_the_callee_then_the_assertion_stays_smoke(
         let tests = format!("from src.rules import is_adult\n\n\n{body}");
         let strengths = credited_strengths(BOOL_OWNER, &tests);
         assert_eq!(strengths, vec![OracleStrength::Smoke], "{body}");
+    }
+}
+
+const OWNER_RULES_IMPORT: &str = "from src import rules\nfrom src.rules import is_adult\n";
+
+fn tests_with(prelude: &str, params: &str, body: &str) -> String {
+    format!(
+        "{OWNER_RULES_IMPORT}{prelude}\n\ndef test_adult({params}):\n{body}    assert is_adult(18)\n"
+    )
+}
+
+// #10391: patching that never names the callee is not a rebinding.
+#[test]
+fn given_a_file_that_patches_only_other_names_then_the_callee_is_still_credited() {
+    for (prelude, params, body) in [
+        (
+            "",
+            "",
+            "    \"\"\"Mentions mock and patch in prose.\"\"\"\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "monkeypatch",
+            "    monkeypatch.setenv('HOME', '/tmp/x')\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.delenv('HOME', raising=False)\n    monkeypatch.chdir('/tmp')\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    handle = mock.MagicMock()\n    handle.assert_not_called()\n",
+        ),
+        ("import pytest\n", "mocker: pytest.MonkeyPatch", ""),
+    ] {
+        let tests = tests_with(prelude, params, body);
+        // Mock helper calls may add their own assertions before the pin.
+        let strengths = credited_strengths(BOOL_OWNER, &tests);
+        assert_eq!(strengths.last(), Some(&OracleStrength::Strong), "{tests}");
+    }
+}
+
+#[test]
+fn given_a_requests_style_utils_file_then_the_callee_is_credited_despite_mock_and_monkeypatch() {
+    let tests = "from unittest import mock\n\nimport pytest\nfrom src.rules import is_adult\n\n\n@pytest.fixture\ndef clean_env(monkeypatch):\n    monkeypatch.setenv('NO_PROXY', '')\n    monkeypatch.delenv('no_proxy', raising=False)\n\n\nclass TestIsAdult:\n    def test_valid(self):\n        assert is_adult(18)\n\n    def test_invalid(self):\n        assert not is_adult(17)\n\n\ndef test_proxy(monkeypatch):\n    monkeypatch.setenv('http_proxy', 'x')\n    handle = mock.MagicMock()\n    handle.assert_not_called()\n";
+    let strengths = credited_strengths(BOOL_OWNER, tests);
+    let strong = strengths
+        .iter()
+        .filter(|strength| **strength == OracleStrength::Strong)
+        .count();
+    assert_eq!(strong, 2, "{strengths:?}");
+}
+
+#[test]
+fn given_patching_that_names_the_callee_by_any_spelling_then_the_assertion_stays_smoke() {
+    for (prelude, params, body) in [
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch('src.rules.is_adult', return_value=False):\n        pass\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch('tests.test_rules.is_adult', return_value=False):\n        pass\n",
+        ),
+        (
+            "from unittest.mock import patch\n",
+            "",
+            "    with patch.object(rules, 'is_adult', return_value=False):\n        pass\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch.object(target=rules, attribute='is_adult'):\n        pass\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch.multiple(rules, is_adult=lambda age: False):\n        pass\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setattr(rules, 'is_adult', lambda age: False)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setattr('src.rules.is_adult', lambda age: False)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.delattr(rules, 'is_adult')\n",
+        ),
+        (
+            "",
+            "",
+            "    setattr(rules, 'is_adult', lambda age: False)\n",
+        ),
+        (
+            "",
+            "mocker",
+            "    mocker.patch('src.rules.is_adult', return_value=False)\n",
+        ),
+        (
+            "",
+            "mocker",
+            "    mocker.patch.object(rules, 'is_adult', return_value=False)\n",
+        ),
+        ("", "mocker", "    mocker.spy(rules, 'is_adult')\n"),
+    ] {
+        let tests = tests_with(prelude, params, body);
+        let strengths = credited_strengths(BOOL_OWNER, &tests);
+        assert_eq!(strengths, vec![OracleStrength::Smoke], "{tests}");
+    }
+}
+
+#[test]
+fn given_a_decorator_that_patches_the_callee_then_the_assertion_stays_smoke() {
+    for decorator in [
+        "@patch('src.rules.is_adult')",
+        "@patch.object(rules, 'is_adult')",
+        "@mock.patch('tests.test_rules.is_adult', autospec=True)",
+    ] {
+        let tests = format!(
+            "from unittest import mock\nfrom unittest.mock import patch\n{OWNER_RULES_IMPORT}\n\n{decorator}\ndef test_adult(patched):\n    assert is_adult(18)\n"
+        );
+        let strengths = credited_strengths(BOOL_OWNER, &tests);
+        assert_eq!(strengths, vec![OracleStrength::Smoke], "{decorator}");
+    }
+}
+
+#[test]
+fn given_a_patch_target_that_cannot_be_read_then_the_assertion_stays_smoke() {
+    for (prelude, params, body) in [
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch(TARGET):\n        pass\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch('src.rules.' + NAME):\n        pass\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch('src.rules.is_' 'adult'):\n        pass\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch(f'src.rules.{NAME}'):\n        pass\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch.object(rules, NAME):\n        pass\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch.multiple(rules, **FAKES):\n        pass\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch.object(*PAIR):\n        pass\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setattr(rules, NAME, None)\n",
+        ),
+        ("", "monkeypatch", "    monkeypatch.setattr(TARGET, None)\n"),
+        ("", "monkeypatch", "    monkeypatch.setattr(*ARGS)\n"),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch('src.other.fetch', autospec=True):\n        pass\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setattr(rules, 'is_' + 'adult', None)\n",
+        ),
+    ] {
+        let tests = tests_with(prelude, params, body);
+        let strengths = credited_strengths(BOOL_OWNER, &tests);
+        assert_eq!(strengths, vec![OracleStrength::Smoke], "{tests}");
+    }
+}
+
+#[test]
+fn given_an_aliased_or_unreadable_patch_helper_then_the_assertion_stays_smoke() {
+    for (prelude, params, body) in [
+        (
+            "from unittest import mock\n",
+            "",
+            "    swap = mock.patch\n    swap('src.rules.is_adult')\n",
+        ),
+        (
+            "from unittest.mock import patch as swap\n",
+            "",
+            "    swap('src.rules.is_adult')\n",
+        ),
+        (
+            "from unittest import mock as fakes\n",
+            "",
+            "    fakes.patch('src.rules.is_adult')\n",
+        ),
+        ("import unittest.mock as fakes\n", "", ""),
+        (
+            "",
+            "monkeypatch",
+            "    swap = monkeypatch.setattr\n    swap(rules, 'is_adult', None)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    with monkeypatch.context() as scoped:\n        scoped.setattr(rules, 'is_adult', None)\n",
+        ),
+        ("", "monkeypatch", "    install_fakes(monkeypatch)\n"),
+        ("", "monkeypatch", "    patch_everything()\n"),
+        (
+            "from unittest import mock\n",
+            "",
+            "    mock.patch.stopall()\n",
+        ),
+    ] {
+        let tests = tests_with(prelude, params, body);
+        let strengths = credited_strengths(BOOL_OWNER, &tests);
+        assert_eq!(strengths, vec![OracleStrength::Smoke], "{tests}");
+    }
+}
+
+#[test]
+fn given_a_file_wide_dynamic_namespace_marker_then_unrelated_patching_does_not_restore_credit() {
+    for marker in [
+        "globals()['x'] = 1",
+        "vars(rules)['y'] = 2",
+        "rules.__dict__.update({})",
+        "sys.modules['src.rules'] = None",
+        "importlib.reload(rules)",
+    ] {
+        let tests = tests_with(
+            "import importlib, sys\n",
+            "monkeypatch",
+            &format!("    monkeypatch.setenv('A', 'b')\n    {marker}\n"),
+        );
+        let strengths = credited_strengths(BOOL_OWNER, &tests);
+        assert_eq!(strengths, vec![OracleStrength::Smoke], "{marker}");
+    }
+}
+
+#[test]
+fn given_a_patch_marker_in_the_owner_module_that_names_the_owner_then_the_assertion_stays_smoke() {
+    let owner = "def is_adult(age) -> bool:\n    return age >= 18\n\n\ndef reset(monkeypatch):\n    monkeypatch.setattr('src.rules.is_adult', None)\n";
+    let strengths = credited_strengths(owner, ADULT_TEST);
+    assert_eq!(strengths, vec![OracleStrength::Smoke; 2]);
+    let unrelated = "def is_adult(age) -> bool:\n    return age >= 18\n\n\ndef reset(monkeypatch):\n    monkeypatch.setenv('HOME', '/tmp')\n";
+    let strengths = credited_strengths(unrelated, ADULT_TEST);
+    // An ordinary helper parameter does not establish pytest fixture identity.
+    assert_eq!(strengths, vec![OracleStrength::Smoke; 2]);
+}
+
+#[test]
+fn given_a_decorator_that_patches_a_collaborator_then_the_old_veto_keeps_the_assertion_smoke() {
+    let tests = format!(
+        "from unittest.mock import patch\n{OWNER_RULES_IMPORT}\n\n@patch('src.other.fetch')\ndef test_adult(fetch):\n    assert is_adult(18)\n"
+    );
+    let strengths = credited_strengths(BOOL_OWNER, &tests);
+    assert_eq!(strengths, vec![OracleStrength::Smoke], "{tests}");
+}
+
+#[test]
+fn given_an_escaped_or_dynamic_namespace_write_then_the_assertion_stays_smoke() {
+    for (prelude, params, body) in [
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setenv('is\\x5fadult', 'x')\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setattr(rules, 'is\\x5fadult', None)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setattr(rules, 'is_\\\nadult', None)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setattr(rules, 'is\\N{LOW LINE}adult', None)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setattr(target=rules, name='is\\x5fadult', value=None)\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    mock.patch('rules.is\\x5fadult')\n",
+        ),
+        ("", "", "    is_adult.__globals__['is_adult'] = None\n"),
+        (
+            "",
+            "monkeypatch",
+            "    namespace = locals()\n    monkeypatch.setitem(namespace, NAME, None)\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    namespace = {}\n    with mock.patch.dict(namespace, {NAME: None}):\n        pass\n",
+        ),
+        (
+            "import sys\n",
+            "",
+            "    delattr(sys.modules[__name__], 'is_adult')\n",
+        ),
+        ("", "", "    delattr(rules, 'is_adult')\n"),
+        ("", "", "    rules.__setattr__('is_adult', None)\n"),
+        (
+            "",
+            "monkeypatch",
+            "    swap = monkeypatch.setattr\n    swap(rules, 'is_adult', None)\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    swap = mock.patch.object\n    swap(rules, 'is_adult')\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    swap = mock.patch.multiple\n    swap(rules, is_adult=None)\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    swap = mock.patch.dict\n    swap(NS, {NAME: None})\n",
+        ),
+        (
+            "from unittest import mock\nimport functools\n",
+            "",
+            "    swap = functools.partial(mock.patch.object, rules)\n    swap('is_adult')\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch('src.other.helper'):\n        pass\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    with mock.patch.dict('os.environ', {'A': '1'}):\n        pass\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    monkeypatch.setattr(rules.Session, 'send', None)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    yield from [swap := monkeypatch.setattr]\n    swap(rules, 'is_adult', None)\n",
+        ),
+        (
+            "from unittest import mock\n",
+            "",
+            "    yield from (swap := mock.patch.object,)\n    swap(rules, 'is_adult')\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    yield from (swap := monkeypatch.setattr,)\n    swap(rules, 'is_adult', None)\n",
+        ),
+        (
+            "",
+            "request",
+            "    s = request.getfixturevalue('monkey' 'patch')\n    getattr(s, 'setattr')(rules, 'is_adult', None)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    s = monkeypatch.setenv.__self__\n    getattr(s, 'set' + 'attr')(rules, 'is_adult', None)\n",
+        ),
+        (
+            "",
+            "monkeypatch",
+            "    s = monkeypatch.setenv.__self__\n    s.setattr(rules, 'is_adult', None)\n",
+        ),
+        ("", "mp", "    mp.setitem(NS, NAME, None)\n"),
+        ("", "monkeypatch", "    helper(monkeypatch)\n"),
+        (
+            "",
+            "monkeypatch",
+            "    swap = monkeypatch\n    swap.setattr(rules, 'is_adult', None)\n",
+        ),
+    ] {
+        let tests = tests_with(prelude, params, body);
+        let strengths = credited_strengths(BOOL_OWNER, &tests);
+        assert_eq!(strengths, vec![OracleStrength::Smoke], "{tests}");
     }
 }
