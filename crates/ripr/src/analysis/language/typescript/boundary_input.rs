@@ -461,9 +461,15 @@ fn slashes_are_plain_division(line: &str) -> bool {
             match before.chars().next_back() {
                 Some(')' | ']') => true,
                 Some(ch) if ch.is_alphanumeric() || ch == '_' || ch == '$' => {
+                    let is_word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+                    // `rfind` yields the separator's start byte; step over its
+                    // whole UTF-8 width so a multibyte separator (`€`, `…`)
+                    // cannot split a character.
                     let word_start = before
-                        .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
-                        .map_or(0, |i| i + 1);
+                        .char_indices()
+                        .rev()
+                        .find(|(_, c)| !is_word(*c))
+                        .map_or(0, |(i, c)| i + c.len_utf8());
                     !VALUE_KEYWORDS.contains(&&before[word_start..])
                 }
                 _ => false,

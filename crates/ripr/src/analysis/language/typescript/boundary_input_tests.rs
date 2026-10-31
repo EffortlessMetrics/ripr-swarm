@@ -511,6 +511,13 @@ fn whole_side_comparisons_accept_common_line_shapes() {
             true,
         ),
         ("  if (amount >= LIMIT) { return (amount) / 10; }", true),
+        ("  if (amount >= LIMIT) { return 1 / 2; }", true),
+        ("  if (amount >= LIMIT) { y = list[0] / 2; }", true),
+        // A multibyte separator before the word must not split a character.
+        ("  if (amount >= LIMIT) { y = \u{20ac}abc / 2; }", true),
+        ("  if (amount >= LIMIT) { x = a++ / 2; }", false),
+        ("  if (amount >= LIMIT) { x = a /* c */ / b; }", false),
+        ("  if (amount >= LIMIT) { x = s.return / 2; }", false),
         (
             "  if (amount >= LIMIT) { return /LIMIT >= amount/.test(s); }",
             false,
