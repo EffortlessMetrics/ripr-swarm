@@ -1126,6 +1126,26 @@ impl TypeScriptAdapter {
             // one, by coordinate where a removed line interrupts the run.
             let counterparts = changed.aligned_counterparts();
             let mut multiline_lines: Option<Option<MultilineRanges>> = None;
+            // #11250: one facts lookup and one line-table build per
+            // changed file, not per added line. `file_facts_cached`
+            // re-hashes the whole source for its key on every call and
+            // `lines().nth(n)` re-scans from the file start, so per-line
+            // calls cost O(changed lines x file bytes); the facts cache
+            // itself already avoids re-parsing, and the phase-2 consumers
+            // above have already warmed it for this file. Parse-error
+            // files yield no facts, so the classifier keeps its
+            // line-text fallback exactly as before.
+            let ast_probe_facts = source_by_normalized.get(&changed_norm).and_then(|source| {
+                let facts = extraction_cache::file_facts_cached(
+                    &changed.path,
+                    source,
+                    &options.root,
+                    alias_map_ref,
+                )
+                .ok()
+                .filter(|facts| facts.parse_error.is_none())?;
+                Some((source.lines().collect::<Vec<_>>(), facts))
+            });
             for added in &changed.added_lines {
                 if inside_private_member_boundary(&private_boundaries, added.line) {
                     continue;
@@ -1250,6 +1270,18 @@ impl TypeScriptAdapter {
                             &reexport_index,
                             alias_map_ref,
                             alias_load_gap.as_ref(),
+                            // #11250: an AST fact describes the source
+                            // line at this number; when the changed text
+                            // is not that line (a pre-change workspace, a
+                            // stale diff coordinate), the fact is absent
+                            // and the classifier keeps its line-text shape.
+                            ast_probe_facts.as_ref().and_then(|(lines, facts)| {
+                                let disk_line = lines.get(added.line.checked_sub(1)?)?;
+                                if disk_line.trim() != added.text.trim() {
+                                    return None;
+                                }
+                                facts.phase_two.probe_shape_for_line(added.line).cloned()
+                            }),
                         )
                     });
                 if let Some(mut finding) = resolved_finding {
@@ -1365,6 +1397,9 @@ impl TypeScriptAdapter {
                         &reexport_index,
                         alias_map_ref,
                         alias_load_gap.as_ref(),
+                        // Old-side text has no new-side AST fact; the
+                        // classifier keeps its line-text fallback (#11250).
+                        None,
                     )
                 },
             );
