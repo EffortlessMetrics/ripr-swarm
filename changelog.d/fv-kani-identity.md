@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- Kani bounded-model-checking harnesses (`cfg(kani)` only, no effect on normal builds) cover identity canonicalization: length-prefix framing of missing discriminators is injective (no delimiter or concatenation collision), canonical discriminator lists are sorted, deduplicated and order independent, normalization is idempotent, and identity-field surface matching accepts only identical or separator-anchored suffix paths.

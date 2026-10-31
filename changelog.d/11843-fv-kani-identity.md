@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- Kani bounded-model-checking harnesses (`cfg(kani)` only, no effect on normal builds) prove, within stated input bounds, that length-prefix framing of missing discriminators is injective (no delimiter or concatenation collision) and that identity-field surface matching accepts only identical or separator-anchored suffix paths. Sorting, deduplication and normalization idempotence are not proven (not tractable in the stated bounds) (#11843).

@@ -27,6 +27,8 @@ unused_must_use = "deny"
 # carves out an unsafe island, this keeps unsafe operations inside an
 # unsafe fn from skipping the explicit `unsafe { ... }` block.
 unsafe_op_in_unsafe_fn = "deny"
+# `cfg(kani)` gates the bounded-model-checking proof modules; Kani sets it, rustc does not know it.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 # Panic-safety policy: clippy is the fast IDE rail for panic-family code shapes;
 # `cargo xtask check-no-panic-family` is the authoritative semantic gate that
