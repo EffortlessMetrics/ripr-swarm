@@ -104,6 +104,14 @@ pub(super) struct ForeignWrites {
     /// A workspace file could not be read or the scan hit its bound, so the
     /// absence of a write is unknown.
     unknown: bool,
+    /// Submodule stems the owning package `__init__.py` binds in a way that
+    /// may replace `import pkg.submod` with a package attribute (#11135).
+    #[serde(default)]
+    init_submodule_shadows: std::collections::BTreeSet<String>,
+    /// The owning package `__init__.py` star-imports or did not parse, so no
+    /// submodule receiver along this module path is certain (#11135).
+    #[serde(default)]
+    init_submodule_receiver_opaque: bool,
     /// Sibling modules of the module's regular package that may forward a
     /// call to one of its readers (#9619). Filled per run, never cached.
     #[serde(skip)]
@@ -625,6 +633,10 @@ struct IndexedSource<'a> {
     reflects: bool,
     /// The file may bind names it does not spell byte for byte ([`names_may_differ`]).
     loose_names: bool,
+    /// For a package `__init__.py`, submodule stems its bindings may shadow.
+    init_submodule_shadows: std::collections::BTreeSet<String>,
+    /// For a package `__init__.py`, star import or an unparsed body (#11135).
+    init_submodule_receiver_opaque: bool,
 }
 
 impl<'a> ForeignIndex<'a> {
@@ -788,6 +800,21 @@ impl<'a> ForeignIndex<'a> {
                         })
             });
         let totals = &self.totals;
+        let (init_submodule_shadows, init_submodule_receiver_opaque) = own
+            .parent()
+            .map(|directory| directory.join("__init__.py"))
+            .and_then(|init_path| {
+                self.files
+                    .iter()
+                    .find(|indexed| indexed.file == init_path.as_path())
+            })
+            .map(|indexed| {
+                (
+                    indexed.init_submodule_shadows.clone(),
+                    indexed.init_submodule_receiver_opaque,
+                )
+            })
+            .unwrap_or_default();
         ForeignWrites {
             attributes: WrittenWords::held_by_others(&totals.attributes, &excluded.attributes),
             dynamic_words: WrittenWords::held_by_others(
@@ -811,6 +838,8 @@ impl<'a> ForeignIndex<'a> {
             shares_module_name,
             names_may_differ_elsewhere,
             unknown,
+            init_submodule_shadows,
+            init_submodule_receiver_opaque,
             forwarders: Vec::new(),
         }
     }
@@ -1537,6 +1566,146 @@ const MODULE_LOADERS: [&str; 11] = [
     "__builtins__",
 ];
 
+/// Whether the owning package's `__init__.py` may bind this module stem so an
+/// `import ….<stem>` loads a package attribute instead of the submodule file
+/// (#11135).
+fn package_init_refuses_submodule(module_file: &Path, foreign: &ForeignWrites) -> bool {
+    if foreign.init_submodule_receiver_opaque {
+        return true;
+    }
+    let Some(stem) = module_file
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| *stem != "__init__")
+    else {
+        return false;
+    };
+    foreign.init_submodule_shadows.contains(stem)
+}
+
+#[cfg(test)]
+pub(super) fn package_init_refuses_submodule_for_test(
+    module_file: &Path,
+    foreign: &ForeignWrites,
+) -> bool {
+    package_init_refuses_submodule(module_file, foreign)
+}
+
+/// Submodule stems a package initializer binds in a way that shadows the
+/// submodule import path, and whether the initializer is opaque (#11135).
+fn package_init_submodule_facts(
+    file: &Path,
+    source: &str,
+) -> (std::collections::BTreeSet<String>, bool) {
+    if file.file_name().is_none_or(|name| name != "__init__.py") {
+        return (std::collections::BTreeSet::new(), false);
+    }
+    let Ok(Mod::Module(module)) = parse_module_result(file, source) else {
+        return (std::collections::BTreeSet::new(), true);
+    };
+    let mut shadows = std::collections::BTreeSet::new();
+    for statement in &module.body {
+        if init_stmt_shadows_submodule(statement, &mut shadows) {
+            return (shadows, true);
+        }
+    }
+    (shadows, false)
+}
+
+#[cfg(test)]
+pub(super) fn package_init_submodule_facts_for_test(
+    file: &Path,
+    source: &str,
+) -> (std::collections::BTreeSet<String>, bool) {
+    package_init_submodule_facts(file, source)
+}
+
+fn init_stmt_shadows_submodule(
+    statement: &Stmt,
+    shadows: &mut std::collections::BTreeSet<String>,
+) -> bool {
+    match statement {
+        Stmt::Assign(assign) => {
+            for target in &assign.targets {
+                if let Expr::Name(name) = target {
+                    shadows.insert(name.id.to_string());
+                }
+            }
+            false
+        }
+        Stmt::AnnAssign(assign) => {
+            if let Expr::Name(name) = assign.target.as_ref() {
+                shadows.insert(name.id.to_string());
+            }
+            false
+        }
+        Stmt::AugAssign(assign) => {
+            if let Expr::Name(name) = assign.target.as_ref() {
+                shadows.insert(name.id.to_string());
+            }
+            false
+        }
+        Stmt::FunctionDef(function) => {
+            shadows.insert(function.name.to_string());
+            false
+        }
+        Stmt::AsyncFunctionDef(function) => {
+            shadows.insert(function.name.to_string());
+            false
+        }
+        Stmt::ClassDef(class) => {
+            shadows.insert(class.name.to_string());
+            false
+        }
+        Stmt::ImportFrom(import) => {
+            for alias in &import.names {
+                if alias.name.as_str() == "*" {
+                    return true;
+                }
+                if init_import_from_shadows_submodule(import, alias) {
+                    let bound = alias.asname.as_ref().unwrap_or(&alias.name).to_string();
+                    shadows.insert(bound);
+                }
+            }
+            false
+        }
+        Stmt::Import(import) => {
+            for alias in &import.names {
+                let bound = alias
+                    .asname
+                    .as_ref()
+                    .map(|asname| asname.to_string())
+                    .unwrap_or_else(|| {
+                        alias.name.split('.').next().unwrap_or_default().to_string()
+                    });
+                if alias.asname.is_some() {
+                    shadows.insert(bound);
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Whether one `from … import …` in a package initializer binds a name that
+/// may replace a submodule import. `from . import name` re-exports the
+/// submodule and does not shadow (#11135).
+fn init_import_from_shadows_submodule(import: &ast::StmtImportFrom, alias: &ast::Alias) -> bool {
+    if alias.asname.is_some() {
+        return true;
+    }
+    // `from . import name` re-exports the submodule; other forms bind a package
+    // attribute that may replace `import pkg.name`.
+    !matches!(
+        (
+            import.level.map(|level| level.to_u32()),
+            import.module.as_deref()
+        ),
+        (Some(1), None)
+    ) || alias.name.as_str() == "*"
+}
+
 /// Every name of the logical statements that hold an `import` keyword. The
 /// lexer ends a statement, so a parenthesis or backslash continuation reads
 /// whole (`from . import (\n    settings as hub,\n)`) while a bracket inside
@@ -1598,6 +1767,8 @@ fn scan_source<'a>(
         && REFLECTIVE_SPELLINGS
             .iter()
             .any(|spelling| mentions(spelling));
+    let (init_submodule_shadows, init_submodule_receiver_opaque) =
+        package_init_submodule_facts(file, source);
     let indexed = IndexedSource {
         file,
         assigned,
@@ -1636,6 +1807,8 @@ fn scan_source<'a>(
         reflective_opaque: reflective
             && (source.contains("sys.modules")
                 || MODULE_LOADERS.iter().any(|loader| mentions(loader))),
+        init_submodule_shadows,
+        init_submodule_receiver_opaque,
     };
     (hides_import, indexed)
 }
@@ -2108,7 +2281,7 @@ fn credits<'a>(
                 if test.constant_rebinding.assigns_attribute(&owner.name) {
                     continue;
                 }
-                let spellings = reader_spellings(test, owner);
+                let spellings = reader_spellings(test, owner, &module_owner.foreign_writes);
                 if spellings.is_empty()
                     || !flips(
                         &expression,
@@ -2172,7 +2345,8 @@ fn credits<'a>(
                 }) {
                     continue;
                 }
-                let spellings = reader_spellings(test, forwarder.owner);
+                let spellings =
+                    reader_spellings(test, forwarder.owner, &module_owner.foreign_writes);
                 let callee = |reader| Callee {
                     local: &forwarder.local,
                     constant: &name,
@@ -2497,7 +2671,7 @@ fn lambda_credits<'a>(
         {
             continue;
         }
-        let spellings = reader_spellings(test, &callee);
+        let spellings = reader_spellings(test, &callee, &module_owner.foreign_writes);
         if spellings.is_empty() {
             continue;
         }
@@ -2869,14 +3043,33 @@ pub(super) fn constant_spellings(
             spellings.push(import.alias.clone());
         }
         for receiver in submodule_receivers(import, module_owner, &test.file) {
-            spellings.push(format!("{receiver}.{name}"));
+            if !package_init_refuses_submodule(&module_owner.file, &module_owner.foreign_writes) {
+                spellings.push(format!("{receiver}.{name}"));
+            }
         }
     }
     keep_unshadowed(test, spellings)
 }
 
-pub(super) fn reader_spellings(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
-    keep_unshadowed(test, owner_module_callees(test, owner))
+pub(super) fn reader_spellings(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    module_foreign: &ForeignWrites,
+) -> Vec<String> {
+    let mut callees = owner_module_callees(test, owner);
+    if package_init_refuses_submodule(&owner.file, module_foreign) {
+        let blocked = test
+            .imports
+            .iter()
+            .flat_map(|import| submodule_receivers(import, owner, &test.file))
+            .collect::<std::collections::BTreeSet<_>>();
+        callees.retain(|callee| {
+            blocked
+                .iter()
+                .all(|receiver| !callee.starts_with(&format!("{receiver}.")))
+        });
+    }
+    keep_unshadowed(test, callees)
 }
 
 pub(super) fn keep_unshadowed(test: &PythonTest, mut spellings: Vec<String>) -> Vec<String> {

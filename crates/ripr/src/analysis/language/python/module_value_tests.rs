@@ -2703,3 +2703,138 @@ fn persisted_lexes_carry_the_loose_name_answer_the_index_uses() {
         assert_eq!(shared.excluding(own), parsed.excluding(own), "{own:?}");
     }
 }
+
+#[test]
+fn foreign_index_records_package_init_submodule_shadows_on_sibling_modules() {
+    let (shadows, opaque) = super::module_value::package_init_submodule_facts_for_test(
+        Path::new("shapes/rates/__init__.py"),
+        "from .table import lookup as table\n",
+    );
+    assert!(shadows.contains("table"), "{shadows:?}");
+    assert!(!opaque);
+    let index = super::module_value::ForeignIndex::build(
+        [
+            (
+                Path::new("shapes/rates/__init__.py"),
+                "from .table import lookup as table\n",
+            ),
+            (Path::new("shapes/rates/table.py"), "RATE_TABLE = {}\n"),
+        ]
+        .into_iter(),
+        false,
+    );
+    let foreign = index.excluding(Path::new("shapes/rates/table.py"));
+    assert!(
+        super::module_value::package_init_refuses_submodule_for_test(
+            Path::new("shapes/rates/table.py"),
+            &foreign,
+        )
+    );
+}
+
+const RATES_TABLE_OLD: &str = "RATE_TABLE = {\"gold\": 10, \"silver\": 5}";
+
+fn rates_table_source(first_line: &str, tail: &str) -> String {
+    format!("{first_line}\n\n\ndef lookup(tier):\n    return RATE_TABLE.get(tier, 0)\n{tail}")
+}
+
+fn classify_shapes_rates_table(
+    source: &str,
+    others: &[(&str, &str)],
+    test_source: &str,
+    old: &str,
+    new: &str,
+) -> Result<Finding, String> {
+    let own = Path::new("shapes/rates/table.py");
+    let mut owners = extract_owners(own, source);
+    let mut tests = tests_of(&[("tests/test_rates.py", test_source)]);
+    let foreign = super::module_value::ForeignWrites::scan(
+        own,
+        others
+            .iter()
+            .map(|(file, source)| (Path::new(file), *source))
+            .chain([
+                (own, source),
+                (Path::new("tests/test_rates.py"), test_source),
+            ]),
+        false,
+    );
+    for owner in owners.iter_mut().filter(|owner| owner.is_module_owner()) {
+        owner.foreign_writes = foreign.clone();
+    }
+    super::bool_oracle::credit_bare_bool_asserts(&mut tests, &owners, |path| {
+        if path == own {
+            Some(source)
+        } else {
+            (path == Path::new("tests/test_rates.py")).then_some(test_source)
+        }
+    });
+    classify_change_with_context(
+        own,
+        1,
+        new,
+        Some(old),
+        &owners,
+        &tests,
+        PythonNoBehaviorContext {
+            sole_line_replacement: true,
+            ..PythonNoBehaviorContext::default()
+        },
+        Some(source),
+    )
+    .ok_or_else(|| "the edit must yield a finding".to_string())
+}
+
+#[test]
+fn a_module_receiver_is_refused_when_the_package_init_rebinds_the_submodule_name() -> Check {
+    let source = rates_table_source(RATES_TABLE_OLD, "");
+    let test = "import shapes.rates.table as t\n\n\ndef test_gold():\n    assert t.lookup(\"gold\") == 10\n";
+    let others = [
+        ("shapes/__init__.py", ""),
+        (
+            "shapes/rates/__init__.py",
+            "from .table import lookup as table\n",
+        ),
+    ];
+    assert_not_credited(&classify_shapes_rates_table(
+        &source,
+        &others,
+        test,
+        RATES_TABLE_OLD,
+        "RATE_TABLE = {\"gold\": 11, \"silver\": 5}",
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_module_receiver_still_reaches_the_submodule_when_the_init_does_not_bind_its_name() -> Check {
+    let source = rates_table_source(RATES_TABLE_OLD, "");
+    let test = "import shapes.rates.table as t\n\n\ndef test_gold():\n    assert t.lookup(\"gold\") == 10\n";
+    let others = [("shapes/__init__.py", ""), ("shapes/rates/__init__.py", "")];
+    assert_credited(&classify_shapes_rates_table(
+        &source,
+        &others,
+        test,
+        RATES_TABLE_OLD,
+        "RATE_TABLE = {\"gold\": 11, \"silver\": 5}",
+    )?);
+    Ok(())
+}
+
+#[test]
+fn a_module_receiver_still_reaches_a_submodule_reexported_from_the_package_init() -> Check {
+    let source = rates_table_source(RATES_TABLE_OLD, "");
+    let test = "import shapes.rates.table as t\n\n\ndef test_gold():\n    assert t.lookup(\"gold\") == 10\n";
+    let others = [
+        ("shapes/__init__.py", ""),
+        ("shapes/rates/__init__.py", "from . import table\n"),
+    ];
+    assert_credited(&classify_shapes_rates_table(
+        &source,
+        &others,
+        test,
+        RATES_TABLE_OLD,
+        "RATE_TABLE = {\"gold\": 11, \"silver\": 5}",
+    )?);
+    Ok(())
+}
