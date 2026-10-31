@@ -5171,6 +5171,10 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
             .map_err(|err| format!("make git shim executable: {err}"))?;
     }
     let mut paths = vec![shim_dir.clone()];
+    let ripr_bin_dir = std::path::Path::new(env!("CARGO_BIN_EXE_ripr"))
+        .parent()
+        .ok_or("ripr binary must have a parent directory")?;
+    paths.push(ripr_bin_dir.to_path_buf());
     paths.extend(std::env::split_paths(
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
@@ -5178,6 +5182,36 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
         .map_err(|err| format!("build shim PATH: {err}"))?
         .to_string_lossy()
         .into_owned();
+
+    let configured = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "check",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--base",
+            "HEAD",
+            "--committed",
+            "--timeout",
+            "1",
+        ],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run configured deep control: {err}"))?;
+    let configured_stdout = assert_machine_refusal_basics(&configured)?;
+    let configured_value: serde_json::Value = serde_json::from_str(&configured_stdout)
+        .map_err(|err| format!("configured control must parse: {err}\n{configured_stdout}"))?;
+    if configured_value
+        .pointer("/input_context/requested/analysis_mode")
+        .and_then(serde_json::Value::as_str)
+        != Some("deep")
+    {
+        return Err(format!(
+            "configuration must select deep without override: {configured_value}"
+        ));
+    }
 
     let started = std::time::Instant::now();
     let output = run_command_with_env(
@@ -5295,6 +5329,25 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
     if command.contains("--timeout 0") {
         return Err(format!("the retry must stay bounded: {command}"));
     }
+    let retry = run_command_with_env(
+        "/bin/sh",
+        &root,
+        &["-c", command],
+        &[("PATH", search_path.as_str())],
+    )
+    .map_err(|err| format!("run generated retry: {err}"))?;
+    let retry_stdout = assert_machine_refusal_basics(&retry)?;
+    let retry_value: serde_json::Value = serde_json::from_str(&retry_stdout)
+        .map_err(|err| format!("retry refusal must parse: {err}\n{retry_stdout}"))?;
+    if retry_value
+        .pointer("/input_context/requested/analysis_mode")
+        .and_then(serde_json::Value::as_str)
+        != Some("draft")
+    {
+        return Err(format!(
+            "generated retry must still select draft: {retry_value}"
+        ));
+    }
     if value["input_context"]["recovery"]["rereads"]
         .as_array()
         .is_none_or(|reads| reads.is_empty())
@@ -5317,6 +5370,8 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
             "--base",
             "HEAD",
             "--committed",
+            "--mode",
+            "draft",
             "--timeout",
             "1",
         ],
@@ -5340,6 +5395,9 @@ fn check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery() -> 
         return Err(format!(
             "human stderr must carry the bounded recovery: {stderr}"
         ));
+    }
+    if !stderr.contains("--mode draft") {
+        return Err(format!("human retry must retain explicit draft: {stderr}"));
     }
     if !stderr.contains("not pinned") {
         return Err(format!(
