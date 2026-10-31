@@ -9467,20 +9467,12 @@ fn rerun_repair_receipt(root: &Path, out: bool) -> Result<Output, std::io::Error
 /// (even under `target/ripr`) breaks the verdict binding it just recorded. The
 /// refusal names the after-phase route (the verdict is recorded, so a rerun
 /// reports `already finished` and only a new attempt recovers), and the rerun
-/// points at the restart command. The printed commands are run, with an
-/// unrelated stash as a negative control for the recovery recipe.
+/// points at the restart command. The printed status and restart commands are
+/// run; the restart works once the test restores the pre-edit test content.
 #[test]
 fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = unbuilt_repair_fixture("agent-repair-after-redirect")?;
-    assert_success(&run_repair_phase(
-        &root,
-        &["--seam-id", BOUNDARY_GAP_SEAM_ID],
-        "before",
-    )?);
-    let (attempt_id, _) = sole_repair_attempt(&root)?;
-    add_boundary_test(&root)?;
-
     let outside = root.with_file_name(format!(
         "{}-outside",
         root.file_name()
@@ -9488,6 +9480,29 @@ fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route(
             .ok_or("fixture root has no name")?
     ));
     std::fs::create_dir_all(&outside)?;
+    let result = after_phase_redirect_scenario(&root, &outside);
+    // Clean up on failure paths too.
+    let _ = std::fs::remove_dir_all(&outside);
+    let _ = std::fs::remove_dir_all(&root);
+    result
+}
+
+fn after_phase_redirect_scenario(
+    root: &Path,
+    outside: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = root.to_path_buf();
+    assert_success(&run_repair_phase(
+        &root,
+        &["--seam-id", BOUNDARY_GAP_SEAM_ID],
+        "before",
+    )?);
+    let (attempt_id, _) = sole_repair_attempt(&root)?;
+    let test_file = root.join("tests/pricing.rs");
+    let pre_edit = std::fs::read_to_string(&test_file)?;
+    add_boundary_test(&root)?;
+    let edited = std::fs::read_to_string(&test_file)?;
+
     let in_repo_err = root.join("target/ripr/cont.txt");
     let after = run_repair_phase_redirected(
         &root,
@@ -9523,7 +9538,7 @@ fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route(
     };
     let status_args = printed("status")?;
     let status_refs = status_args.iter().map(String::as_str).collect::<Vec<_>>();
-    let status = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&outside), &status_refs)?;
+    let status = run_command(env!("CARGO_BIN_EXE_ripr"), Some(outside), &status_refs)?;
     assert_success(&status);
     let status_text = format!(
         "{}{}",
@@ -9536,35 +9551,25 @@ fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route(
     );
     let restart_args = printed("repair")?;
     let restart_refs = restart_args.iter().map(String::as_str).collect::<Vec<_>>();
-    let blocked = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&outside), &restart_refs)?;
+    let blocked = run_command(env!("CARGO_BIN_EXE_ripr"), Some(outside), &restart_refs)?;
     assert_failure(&blocked);
     let blocked_err = String::from_utf8_lossy(&blocked.stderr);
     assert!(
         blocked_err.contains("exposed") || blocked_err.contains("strongly_gripped"),
         "the blocked restart must say why: {blocked_err}"
     );
-    // Negative control: an unrelated pre-existing stash.
-    let readme = root.join("UNRELATED.txt");
-    std::fs::write(&readme, "unrelated work\n")?;
-    git_stdout(&root, &["add", "UNRELATED.txt"])?;
-    git_stdout(&root, &["stash", "push", "-m", "unrelated"])?;
-    let stash_before = git_stdout(&root, &["stash", "list"])?;
-    assert!(stash_before.contains("unrelated"), "{stash_before}");
-    // The printed recipe: copy the test file out, restore it, restart, copy back.
-    let test_file = root.join("tests/pricing.rs");
-    let saved = outside.join("pricing.rs");
-    std::fs::copy(&test_file, &saved)?;
-    git_stdout(&root, &["checkout", "--", "tests/pricing.rs"])?;
+    // The printed guidance: restore the pre-edit test content, restart, then
+    // re-apply the edit. The test does this by writing the saved contents.
+    std::fs::write(&test_file, &pre_edit)?;
     assert_success(&run_command(
         env!("CARGO_BIN_EXE_ripr"),
-        Some(&outside),
+        Some(outside),
         &restart_refs,
     )?);
-    std::fs::copy(&saved, &test_file)?;
-    assert_eq!(
-        git_stdout(&root, &["stash", "list"])?,
-        stash_before,
-        "the recipe must leave the unrelated stash untouched"
+    std::fs::write(&test_file, &edited)?;
+    assert!(
+        !refusal.contains("git stash"),
+        "the message prescribes no git stash: {refusal}"
     );
 
     // Removing the file does not revive the attempt: the rerun reports it
@@ -9578,8 +9583,6 @@ fn agent_repair_after_phase_stderr_redirected_into_repo_names_new_attempt_route(
         "{rerun_err}"
     );
 
-    std::fs::remove_dir_all(&outside)?;
-    std::fs::remove_dir_all(root)?;
     Ok(())
 }
 
@@ -9696,8 +9699,8 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
             && moved_stderr.contains("`ripr agent status --root ")
             && moved_stderr.contains("remove the stray file or edit and rerun")
             && moved_stderr.contains("Write command output outside the repository")
-            && moved_stderr.contains("Set the edit aside without touching other work")
-            && moved_stderr.contains("Avoid `git stash` here")
+            && moved_stderr.contains("restore their pre-edit content yourself")
+            && !moved_stderr.contains("git stash")
             && moved_stderr.contains("`ripr agent repair --root ")
             && moved_stderr.contains(" --seam-id ")
             && moved_stderr.contains(" --phase before`"),
