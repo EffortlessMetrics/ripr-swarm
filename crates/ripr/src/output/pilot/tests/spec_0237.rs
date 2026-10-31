@@ -224,6 +224,10 @@ fn spec_0237_example_06_evidence_is_a_boolean() -> Result<(), String> {
 /// discriminator, so `a` implies `m` in production evidence and those two
 /// seams cannot be built. This is the nearest buildable input: it still
 /// orders `m` over `r` over `a`, each as a later tie-breaker.
+///
+/// #11292: `a.rs` carries a producer-owned integration proposal, so it has a
+/// repair route and now leads the unroutable `b.rs`, `c.rs`, `e.rs` and
+/// `f.rs`; `d.rs` (related test plus a route) still leads it.
 #[test]
 fn spec_0237_example_07_evidence_precedence() -> Result<(), String> {
     let input = [
@@ -238,8 +242,8 @@ fn spec_0237_example_07_evidence_precedence() -> Result<(), String> {
         ranked(&input, 6)?,
         [
             "src/d.rs:1",
-            "src/b.rs:1",
             "src/a.rs:1",
+            "src/b.rs:1",
             "src/c.rs:1",
             "src/e.rs:1",
             "src/f.rs:1"
