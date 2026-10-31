@@ -4755,6 +4755,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
             covered: covered.as_deref().unwrap_or_default(),
             admission,
             shadowed: Vec::new(),
+            undefined_bound: 0,
             evaluated_only: false,
             gap: None,
         };
@@ -4834,6 +4835,11 @@ struct UnextractedTestFinder<'a> {
     /// parameter's value, not a runner registration (`async function run({
     /// test }) { await test(); }`).
     shadowed: Vec<String>,
+    /// How many enclosing scopes bind `undefined`. The extractor withholds a
+    /// skip/todo/fails/expectFailure option whose value is that binding; the
+    /// finder must use the same fence or those withheld registrations look
+    /// like dropped active tests (#6631).
+    undefined_bound: usize,
     /// Stored function values stay dormant throughout an invoked argument body.
     evaluated_only: bool,
     gap: Option<(usize, &'static str, String)>,
@@ -4862,7 +4868,17 @@ impl UnextractedTestFinder<'_> {
                 .chain(rest)
                 .map(|identifier| identifier.name.to_string()),
         );
+        let binds_undefined = self
+            .shadowed
+            .get(depth..)
+            .is_some_and(|names| names.iter().any(|name| name == "undefined"));
+        if binds_undefined {
+            self.undefined_bound = self.undefined_bound.saturating_add(1);
+        }
         visit(self);
+        if binds_undefined {
+            self.undefined_bound = self.undefined_bound.saturating_sub(1);
+        }
         self.shadowed.truncate(depth);
     }
 
@@ -4908,10 +4924,41 @@ impl UnextractedTestFinder<'_> {
             self.shadowed.retain(|name| !rebound.contains(name));
             outer
         });
+        let binds_undefined = rebound.iter().any(|name| name == "undefined");
+        if binds_undefined {
+            self.undefined_bound = self.undefined_bound.saturating_add(1);
+        }
         visit(self);
+        if binds_undefined {
+            self.undefined_bound = self.undefined_bound.saturating_sub(1);
+        }
         if let Some(outer) = outer {
             self.shadowed = outer;
         }
+    }
+
+    fn unshadowed_undefined(&self) -> bool {
+        self.undefined_bound == 0
+    }
+
+    fn call_is_active_declaration(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        root: TestDeclarationRoot,
+    ) -> bool {
+        expression_is_active_declaration(&call.callee, root)
+            && declaration_options_are_active_with_undefined(call, self.unshadowed_undefined())
+    }
+
+    fn call_is_active_each_declaration(
+        &self,
+        call: &oxc_ast::ast::CallExpression<'_>,
+        root: TestDeclarationRoot,
+    ) -> bool {
+        each_declaration_callee(call, root).is_some_and(|each_call| {
+            !each_table_is_empty(each_call)
+                && declaration_options_are_active_with_undefined(call, self.unshadowed_undefined())
+        })
     }
 
     fn visit_statement(&mut self, stmt: &Statement<'_>) {
@@ -5097,13 +5144,13 @@ impl UnextractedTestFinder<'_> {
                 if statement_position
                     && let Expression::CallExpression(call) = &await_expr.argument
                     && !self.callee_is_parameter(&call.callee)
-                    && ((call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
-                        || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test))
+                    && ((self.call_is_active_declaration(call, TestDeclarationRoot::Test)
+                        || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test))
                         && self
                             .admission
                             .registration_is_known(call, true, std::iter::empty())
-                        || (call_callee_is_active_declaration(call, TestDeclarationRoot::Describe)
-                            || call_callee_is_active_each_declaration(
+                        || (self.call_is_active_declaration(call, TestDeclarationRoot::Describe)
+                            || self.call_is_active_each_declaration(
                                 call,
                                 TestDeclarationRoot::Describe,
                             ))
@@ -5257,8 +5304,8 @@ impl UnextractedTestFinder<'_> {
                 return;
             }
             if !self.extracted_starts.contains(&(call.span.start as usize))
-                && (call_callee_is_active_declaration(call, TestDeclarationRoot::Test)
-                    || call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test))
+                && (self.call_is_active_declaration(call, TestDeclarationRoot::Test)
+                    || self.call_is_active_each_declaration(call, TestDeclarationRoot::Test))
             {
                 let shape = match call.arguments.first() {
                     Some(Argument::TemplateLiteral(_)) => "template-literal title",
@@ -5510,6 +5557,10 @@ impl UnextractedTestFinder<'_> {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests_extract_finder_tests.rs"]
+mod finder_tests;
 
 /// Whether a tagged template's tag is the `test.each` / `it.each` tagged-template
 /// form (`` test.each`table` ``), as opposed to the call form
