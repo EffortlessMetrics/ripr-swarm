@@ -2068,6 +2068,12 @@ suite('Extension Smoke', () => {
       });
 
       assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
+      assert.ok(!context.status.text.includes('$(warning)'), context.status.text);
+      assert.strictEqual(
+        (context.status.backgroundColor as { id?: string } | undefined)?.id,
+        undefined,
+        'unsaved-buffer stale must not use statusBarItem.warningBackground'
+      );
       assert.ok(String(context.status.tooltip).includes('unsaved routed-file changes remain'));
       assert.ok(String(context.status.tooltip).includes('Current diagnostics describe the last saved workspace state.'));
     } finally {
