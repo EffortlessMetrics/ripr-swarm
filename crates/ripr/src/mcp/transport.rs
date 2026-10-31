@@ -560,5 +560,9 @@ where
 mod tests;
 
 #[cfg(test)]
+#[path = "wire_panic_tests.rs"]
+mod wire_panic_tests;
+
+#[cfg(test)]
 #[path = "transport_backpressure_tests.rs"]
 mod backpressure_tests;
