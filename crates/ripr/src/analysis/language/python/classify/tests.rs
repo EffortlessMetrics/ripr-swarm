@@ -1213,7 +1213,7 @@ fn predicate_boundary_scope_computed_and_non_relational_predicates() -> Result<(
 #[test]
 fn predicate_boundary_without_literal_inputs_names_the_limitation() -> Result<(), String> {
     for tests in [
-        "from src.subject import bulk_discount\n\ndef test_bulk_discount_local():\n    quantity = 150\n    assert bulk_discount(quantity) == 0.15\n",
+        "from src.subject import bulk_discount\n\ndef test_bulk_discount_local():\n    quantity = 150\n    quantity += 1\n    assert bulk_discount(quantity) == 0.15\n",
         "from src.subject import bulk_discount\n\ndef test_bulk_discount_list():\n    assert bulk_discount(*[100]) == 0.15\n",
     ] {
         let finding = classify_case(
