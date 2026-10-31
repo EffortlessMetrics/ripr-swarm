@@ -1505,6 +1505,12 @@ fn encoded_units_to_byte_offset(
 /// an invalid incremental change and quarantines the document.
 const MAX_CHANGES_PER_NOTIFICATION: usize = 1024;
 
+/// A longer edit list (editors send one entry per match for replace-all or
+/// multi-cursor edits) is still accepted while edit count times document size
+/// stays within this many byte steps, so small documents keep working and a
+/// 16 MiB document cannot be scanned thousands of times.
+const MAX_CHANGE_SCAN_BUDGET: usize = 1 << 30;
+
 /// Largest retained document text: the transport's message cap, so a document
 /// that fit in one `didOpen` can be edited but never grown without bound.
 const MAX_DOCUMENT_BYTES: usize = crate::lsp::transport_bounds::MAX_MESSAGE_BYTES;
@@ -1550,7 +1556,9 @@ fn apply_document_content_changes(
     changes: Vec<TextDocumentContentChangeEvent>,
     encoding: &PositionEncodingKind,
 ) -> Result<(), ()> {
-    if changes.len() > MAX_CHANGES_PER_NOTIFICATION {
+    if changes.len() > MAX_CHANGES_PER_NOTIFICATION
+        && changes.len().saturating_mul(text.len().max(1)) > MAX_CHANGE_SCAN_BUDGET
+    {
         return Err(());
     }
     let mut changes = changes.into_iter();
@@ -2341,7 +2349,13 @@ mod tests {
         let many = (0..=MAX_CHANGES_PER_NOTIFICATION)
             .map(|_| ranged_edit(""))
             .collect::<Vec<_>>();
-        assert!(apply_document_content_changes(&mut text, many, &encoding).is_err());
+        // A small document keeps accepting long edit lists (replace-all).
+        assert!(apply_document_content_changes(&mut text, many, &encoding).is_ok());
+        let mut large = "y".repeat(MAX_DOCUMENT_BYTES / 2);
+        let too_many = (0..=MAX_CHANGES_PER_NOTIFICATION)
+            .map(|_| ranged_edit(""))
+            .collect::<Vec<_>>();
+        assert!(apply_document_content_changes(&mut large, too_many, &encoding).is_err());
         let at_cap = (0..MAX_CHANGES_PER_NOTIFICATION)
             .map(|_| ranged_edit(""))
             .collect::<Vec<_>>();
