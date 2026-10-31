@@ -3806,14 +3806,22 @@ fn build_seam_from_shape(
     arm_ranges: &BTreeMap<usize, (usize, usize)>,
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
-    // RIPR-SPEC-0228 field assignments are diff-scope probes only: repo-scope
-    // seam grading does not know their read rule, so it would grade a
-    // well-tested write as weakly gripped.
-    if kind == SeamKind::FieldConstruction
+    // RIPR-SPEC-0228 field writes (`self.count += 1`) get a seam only where
+    // the diff-side rule (`assigned_field_path`) reads the write as the
+    // owner's last word on one plain `self` field; that field is the
+    // required check, graded only by the exact-read rule (#11398). Any other
+    // field write stays a diff-scope probe: repo-scope grading has no read
+    // rule for it, so it would grade a well-tested write as weakly gripped.
+    let written_field = if kind == SeamKind::FieldConstruction
         && crate::analysis::classify::field_assignment_target(&shape.text).is_some()
     {
-        return None;
-    }
+        Some(written_field_of_shape(
+            owners.owner(shape.start_line)?,
+            shape,
+        )?)
+    } else {
+        None
+    };
     // A call whose value feeds a consumer cannot be deleted without breaking
     // the build, so no mutant asks whether tests notice it is gone. The
     // consumer's predicate, return or error seam carries that behavior
@@ -3834,7 +3842,10 @@ fn build_seam_from_shape(
     // are stable across platforms.
     let owner = owner_fact.id.0.replace('\\', "/");
     let expression = shape.text.clone();
-    let required_discriminator = required_discriminator_for(kind, &expression);
+    let required_discriminator = match written_field {
+        Some(field) => RequiredDiscriminator::FieldValue { field },
+        None => required_discriminator_for(kind, &expression),
+    };
     let expected_sink = expected_sink_for(kind);
     let owner_call = OwnerCallShape::from_function(owner_fact);
     // The ID hashes the line-ending-normalized logical offset (#7203): a
@@ -3874,6 +3885,25 @@ fn build_seam_from_shape(
         Some(span) => Some(seam.with_span(span)),
         None => Some(seam),
     }
+}
+
+/// The `self` field a field-write shape leaves as its owner's last word on it
+/// (#11398): the diff probe's own rule, with no method resolution available
+/// here, so a later `self.m()` call counts as a possible write and the shape
+/// gets no seam. Only a plain one-segment field qualifies, since the read rule
+/// names the field by that one word.
+fn written_field_of_shape(
+    owner: &crate::analysis::facts::FunctionFact,
+    shape: &ProbeShapeFact,
+) -> Option<String> {
+    crate::analysis::classify::assigned_field_path(
+        owner.body.as_str(),
+        owner.start_line,
+        shape.start_line,
+        &shape.text,
+        &|_| None,
+    )
+    .filter(|path| !path.contains('.'))
 }
 
 /// The seam kind a `ripr check` finding's probe family names (#5471). Probe
@@ -4984,6 +5014,68 @@ pub fn build_quote(amount: i32, fee: i32) -> Quote {
                 "expected at least one FieldConstruction seam, got {:?}",
                 seams.iter().map(|s| s.kind().as_str()).collect::<Vec<_>>()
             ));
+        }
+        Ok(())
+    }
+
+    /// The field a repository seam requires checked for each `self.` write in
+    /// `source`, in source order.
+    fn written_field_seams(source: &str) -> Result<Vec<(String, String)>, String> {
+        let path = PathBuf::from("src/counter.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(&[path], &index);
+        Ok(seams
+            .iter()
+            .filter(|seam| seam.expression().starts_with("self."))
+            .filter_map(|seam| match seam.required_discriminator() {
+                RequiredDiscriminator::FieldValue { field }
+                    if seam.kind() == SeamKind::FieldConstruction =>
+                {
+                    Some((seam.expression().to_string(), field.clone()))
+                }
+                _ => None,
+            })
+            .collect())
+    }
+
+    #[test]
+    fn field_write_seam_requires_the_written_field_only_for_the_last_plain_self_write()
+    -> Result<(), String> {
+        let wrap = |body: &str| {
+            format!(
+                "pub struct C {{ pub count: u32, pub label: u32 }}\nimpl C {{\n    pub fn bump(&mut self) {{\n{body}\n    }}\n}}\n"
+            )
+        };
+        // A last top-level write names the written field, not the statement.
+        assert_eq!(
+            written_field_seams(&wrap("        self.count += 1;"))?,
+            vec![("self.count += 1".to_string(), "count".to_string())]
+        );
+        // A builder's tail `self` is the hand-off, not a later write.
+        let builder = "pub struct R { pub timeout: u32 }\nimpl R {\n    pub fn timeout(mut self, t: u32) -> Self {\n        self.timeout = t * 2;\n        self\n    }\n}\n";
+        assert_eq!(
+            written_field_seams(builder)?,
+            vec![("self.timeout = t * 2".to_string(), "timeout".to_string())]
+        );
+        // Of two writes, only the last is the owner's last word.
+        assert_eq!(
+            written_field_seams(&wrap("        self.count += 1;\n        self.count = 0;"))?,
+            vec![("self.count = 0".to_string(), "count".to_string())]
+        );
+        // No seam where the write is not the owner's last word on the field,
+        // is conditional, or sits on a nested path.
+        for body in [
+            "        self.count += 1;\n        self.reset();",
+            "        self.count += 1;\n        helper(self);",
+            "        if self.label > 0 { self.count += 1; }",
+            "        for _ in 0..2 { self.count += 1; }",
+            "        self.inner.count += 1;",
+        ] {
+            assert_eq!(
+                written_field_seams(&wrap(body))?,
+                Vec::<(String, String)>::new(),
+                "{body}"
+            );
         }
         Ok(())
     }
