@@ -2318,8 +2318,9 @@ export class RiprClientController {
         this.output.appendLine(`ripr collectWorkspaceStatus failed: ${message}`);
       }
     }
+    // One surface: the output channel already has the status summary. A toast
+    // would duplicate the same line (#5319).
     this.output.show();
-    this.runtime.showInformationMessage(statusSummary(this.status, this.firstUsefulAction));
   }
 
   // ---------------------------------------------------------------------------
