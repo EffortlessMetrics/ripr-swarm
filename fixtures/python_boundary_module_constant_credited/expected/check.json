@@ -48,7 +48,7 @@
         {"kind":"unknown","text":"if score >= 50:","line":2}
       ],
       "evidence": ["owner: tier", "owner_kind: function", "test_framework: pytest (test_edge)", "test_verify_command: python -m pytest tests/test_pricing.py::test_edge (test_edge)", "related_test_relation: syntactic_call (test_edge)", "test_oracle: exact_value strong (test_edge)", "test_framework: pytest (test_gold)", "test_verify_command: python -m pytest tests/test_pricing.py::test_gold (test_gold)", "related_test_relation: syntactic_call (test_gold)", "test_oracle: exact_value strong (test_gold)"],
-      "missing": ["Related Python test reaches `tier` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `tier` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value assertion."],
       "assertion_texts": {
         "7": "assert tier(80) == \"gold\"",
         "11": "assert tier(THRESHOLD) == \"basic\""

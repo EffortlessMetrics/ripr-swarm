@@ -242,3 +242,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_typescript_deleted_statement (20)
+
+Reason:
+RIPR-SPEC-0122 plain wording: TypeScript preview next step, observed check heading and rationale say check/assertion (#12124, #11619)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_typescript_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

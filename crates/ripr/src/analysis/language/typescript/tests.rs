@@ -4222,7 +4222,7 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
         .as_deref()
         .ok_or_else(|| "expected recommended next step".to_string())?;
     assert!(
-        recommended.contains("broad error evidence does not establish missing discriminator")
+        recommended.contains("broad error evidence does not establish the missing check")
             && recommended.contains("no actionable repair packet is emitted"),
         "expected broad-error advisory recommendation, got {recommended:?}"
     );
@@ -4274,7 +4274,7 @@ fn typescript_preview_weak_oracle_guidance_distinguishes_mock_payload_limits() -
         .as_deref()
         .ok_or_else(|| "expected recommended next step".to_string())?;
     assert!(
-        recommended.contains("mock payloads are not yet a safe discriminator"),
+        recommended.contains("mock payloads are not yet a safe check"),
         "expected mock-payload recommendation, got {recommended:?}"
     );
     assert!(

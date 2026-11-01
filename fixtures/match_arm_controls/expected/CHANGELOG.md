@@ -490,3 +490,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — match_arm_controls (40)
+
+Reason:
+RIPR-SPEC-0122 plain wording: TypeScript preview next step, observed check heading and rationale say check/assertion (#12124, #11619)
+
+Command:
+`cargo xtask goldens bless match_arm_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

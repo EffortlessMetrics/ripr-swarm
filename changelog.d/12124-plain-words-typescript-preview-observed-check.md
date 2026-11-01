@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The default `ripr check` screen says "the missing check" in the TypeScript preview Next step and safe-next-action line, headlines the exposed-finding block "Observed check (advisory)" instead of "Discriminator (observed, advisory)", and ends the Python and TypeScript observed rationale "exact-value assertion" instead of "exact-value discriminator" (#12124, #11619). The pilot Python card message says "the missing check". The Next step, repair action and rationale strings are shared by every surface (JSON, SARIF, GitHub, LSP).

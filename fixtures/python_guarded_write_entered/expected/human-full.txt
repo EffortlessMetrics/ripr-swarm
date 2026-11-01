@@ -46,7 +46,7 @@ Evidence
   - related test tests/test_noter.py:3 test_note uses strong exact value oracle: assert rec.last == "error"
 
 Weakness
-  - Related Python test reaches `note` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  - Related Python test reaches `note` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value assertion
 
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior

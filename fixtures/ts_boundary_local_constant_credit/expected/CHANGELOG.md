@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_credit (3)
+
+Reason:
+RIPR-SPEC-0122 plain wording: TypeScript preview next step, observed check heading and rationale say check/assertion (#12124, #11619)
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

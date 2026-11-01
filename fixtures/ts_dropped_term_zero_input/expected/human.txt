@@ -24,9 +24,9 @@ Start here:
     0 for every tested input, so both versions return the same value. Add a case whose input makes
     `fee` non-zero
   Related test: tests/price.test.ts:3 price
-  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
-    discriminator `return value == subtotal + shipping(subtotal) + FLAT`; no actionable repair
-    packet is emitted until verify, receipt, and edit-boundary fields are available
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
+    check `return value == subtotal + shipping(subtotal) + FLAT`; no actionable repair packet is
+    emitted until verify, receipt, and edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

@@ -181,3 +181,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_unittest_list_equal (16)
+
+Reason:
+RIPR-SPEC-0122 plain wording: TypeScript preview next step, observed check heading and rationale say check/assertion (#12124, #11619)
+
+Command:
+`cargo xtask goldens bless python_unittest_list_equal --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

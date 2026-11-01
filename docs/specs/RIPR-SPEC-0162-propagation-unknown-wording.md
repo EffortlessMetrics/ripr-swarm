@@ -30,7 +30,7 @@ classification in two places (`output/human/sections.rs`):
   discriminator is missing (`activation.missing_discriminators` empty),
   the entry renders under `Analyzer limit`; any finding with a real
   missing discriminator keeps the `Missing discriminator` label, as does
-  the advisory `exposed` form (`Discriminator (observed, advisory)`).
+  the advisory `exposed` form (`Observed check (advisory)`).
 - No JSON, SARIF, gate, or decision-layer text changes: the fix is
   renderer-owned (the `missing` entry in `analysis/classify/decision.rs`
   is shared and unchanged).

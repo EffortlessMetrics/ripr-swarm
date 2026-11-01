@@ -1065,7 +1065,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             StageState::Yes,
             vec![format!(
                 // #7752: the article follows the oracle-kind label ("an `exact_value`").
-                "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.",
+                "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value assertion.",
                 owner.name,
                 indefinite_article(strongest_kind.as_str()),
                 strongest_kind.as_str()

@@ -48,7 +48,7 @@
         {"kind":"call_effect","text":"PLAIN_TABLE = ({\"gold\": 10, \"silver\": 6})","line":1}
       ],
       "evidence": ["owner: <module>", "owner_kind: module_function", "test_framework: pytest (test_silver_price)", "test_verify_command: python -m pytest tests/test_table.py::test_silver_price (test_silver_price)", "related_test_relation: module_value_call (test_silver_price)", "module_value_read: `PLAIN_TABLE` {\"gold\": 10, \"silver\": 5} -> {\"gold\": 10, \"silver\": 6} through `price` fails `assert price(\"silver\") == 5` (test_silver_price)", "test_oracle: exact_value strong (test_silver_price)"],
-      "missing": ["Related Python test reaches `<module>` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `<module>` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value assertion."],
       "assertion_texts": {
       },
       "activation": {

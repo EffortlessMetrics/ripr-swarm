@@ -19,9 +19,9 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
   Changed behavior: handlers[key]();
-  Discriminator (observed, advisory): Related test reaches `dispatchAction` with an `exact_value`
-    oracle. Static evidence suggests the changed behavior is observed under an exact-value or
-    exact-error-variant discriminator
+  Observed check (advisory): Related test reaches `dispatchAction` with an `exact_value` oracle.
+    Static evidence suggests the changed behavior is observed under an exact-value or
+    exact-error-variant assertion
   Related test: tests/cache.test.ts:3 dispatchAction calls the named handler
   Next step — TypeScript preview advisory: static limit `dynamic_dispatch`; Repair route: inspect
     the concrete dispatch key or add analyzer support for explicit dispatch-map resolution before

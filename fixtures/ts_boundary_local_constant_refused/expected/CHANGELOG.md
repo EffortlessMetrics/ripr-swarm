@@ -72,3 +72,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_refused (7)
+
+Reason:
+RIPR-SPEC-0122 plain wording: TypeScript preview next step, observed check heading and rationale say check/assertion (#12124, #11619)
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

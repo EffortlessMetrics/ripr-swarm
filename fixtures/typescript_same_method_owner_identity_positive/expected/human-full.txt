@@ -56,7 +56,7 @@ Evidence
   - related test tests/auth.test.ts:3 validates a trimmed token uses strong exact value oracle: expect(...).toBe(...)
 
 Weakness
-  - Related test reaches `validate` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  - Related test reaches `validate` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant assertion
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1

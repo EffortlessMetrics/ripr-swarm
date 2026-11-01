@@ -14,7 +14,7 @@ Start here:
   Static exposure: exposed (severity: info, confidence 1.00)
   Gap ID (for scripts): gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata
   Changed behavior: return Err(ParseError::InvalidData)
-  Discriminator (observed, advisory): ParseError::InvalidData
+  Observed check (advisory): ParseError::InvalidData
   Related test (1 of 2 matched rows): tests/messages.rs:12 rejects_short_payload_with_variant_pattern
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -34,7 +34,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/guarded_result_match_positive/input --diff <cwd>/fixtures/guarded_result_match_positive/diff.patch --mode fast probe:src_lib.rs:error_path:94d13aee
   ripr context --root <cwd>/fixtures/guarded_result_match_positive/input --diff <cwd>/fixtures/guarded_result_match_positive/diff.patch --mode fast --at probe:src_lib.rs:error_path:94d13aee
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that observes the changed error variant; incomplete evidence stage: propagation; follow the Next step above, then rerun `ripr check`
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

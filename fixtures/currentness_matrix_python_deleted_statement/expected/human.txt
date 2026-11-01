@@ -19,9 +19,8 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:src/cart.py:doubled:return_value:return_value:x*2
   Changed behavior: return x * 2
-  Discriminator (observed, advisory): Related Python test reaches `doubled` with an `exact_value`
-    oracle. Static evidence suggests the changed behavior is observed under an exact-value
-    discriminator
+  Observed check (advisory): Related Python test reaches `doubled` with an `exact_value` oracle.
+    Static evidence suggests the changed behavior is observed under an exact-value assertion
   Related test: tests/test_cart.py:12 test_doubled_doubles
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
@@ -46,8 +45,8 @@ Next: drill into the top finding:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets (Python preview: 2).
-    - src/cart.py:7 (exposed); kind: side_effect; reason: Related Python test reaches `capped_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.
-    - src/cart.py:13 (exposed); kind: side_effect; reason: Related Python test reaches `floored_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.
+    - src/cart.py:7 (exposed); kind: side_effect; reason: Related Python test reaches `capped_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value assertion.
+    - src/cart.py:13 (exposed); kind: side_effect; reason: Related Python test reaches `floored_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value assertion.
   Hidden classes:
     exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full

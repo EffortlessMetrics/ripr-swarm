@@ -262,7 +262,7 @@ The digest's discriminator line label reflects the discriminator state:
 - `Missing check` — the finding is not `exposed`; the named
   discriminator is absent from the related tests (#10691: the digest says
   "check"; the internal word stays in JSON and specs).
-- `Discriminator (observed, advisory)` — the finding is `exposed` and the
+- `Observed check (advisory)` — the finding is `exposed` and the
   field carries an observation rationale instead of a missing discriminator.
   Preview-language classifiers record that rationale in the same field, so an
   unconditional `Missing discriminator` header would contradict the exposure
@@ -822,8 +822,8 @@ unchanged, and the lines claim no runtime outcome.
 - Unit tests for bounded human selection, omitted count, no-scope
   `missing_scope`, preview-limited state, stable-gap-over-preview ranking,
   all-suppressed policy output, and `human-full` preservation.
-- Unit tests for the digest discriminator label (`Discriminator (observed,
-  advisory)` for `exposed` findings with an observation rationale; `Missing
+- Unit tests for the digest discriminator label (`Observed check
+  (advisory)` for `exposed` findings with an observation rationale; `Missing
   discriminator` otherwise) and for both `preview_limited` safe-next-action
   arms (complete-but-advisory packet versus missing packet fields).
 - Tests for the held repair start (#8738): the default check screen does not

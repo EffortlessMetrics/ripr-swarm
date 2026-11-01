@@ -48,7 +48,7 @@
         {"kind":"unknown","text":"return self.cents > 0","line":6}
       ],
       "evidence": ["owner: Money.__bool__", "owner_kind: method", "boundary_activation_unresolved: no strong related test call to `__bool__` binds a literal argument, so static evidence cannot place an input at the changed boundary of `self.cents > 0`", "test_framework: pytest (test_truthiness)", "test_verify_command: python -m pytest tests/test_money.py::test_truthiness (test_truthiness)", "related_test_relation: protocol_entry_call (test_truthiness)", "dunder_truthiness_read: integer construction passes before and fails after `assert Money(-1)` (test_truthiness)", "test_oracle: exact_value strong (test_truthiness)"],
-      "missing": ["Related Python test reaches `__bool__` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `__bool__` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value assertion."],
       "assertion_texts": {
       },
       "activation": {

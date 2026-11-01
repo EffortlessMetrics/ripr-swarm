@@ -48,7 +48,7 @@
         {"kind":"unknown","text":"self.writes += 1","line":7}
       ],
       "evidence": ["owner: Stats.record_write", "owner_kind: method", "test_framework: pytest (test_writes)", "test_verify_command: python -m pytest tests/test_stats.py::test_writes (test_writes)", "related_test_relation: syntactic_call (test_writes)", "test_oracle: exact_value strong (test_writes)", "test_oracle_shape: field_assertion (test_writes)"],
-      "missing": ["Related Python test reaches `record_write` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `record_write` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value assertion."],
       "assertion_texts": {
       },
       "activation": {

@@ -1577,7 +1577,7 @@ fn pilot_python_repair_card_message(
 ) -> String {
     let mut message = "the last complete `ripr pilot` run ranked no seam but produced a Python preview repair card".to_string();
     if let Some(discriminator) = &card.missing_discriminator {
-        message.push_str(&format!(" for missing discriminator `{discriminator}`"));
+        message.push_str(&format!(" for the missing check `{discriminator}`"));
     }
     // `ripr check` admits a gap-bound start for its selected Python finding
     // (#10373), so the warning must not say `agent repair` cannot run.
@@ -6787,7 +6787,7 @@ mod tests {
             .ok_or_else(|| format!("expected a Python card warning: {:?}", report.warnings))?;
         assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
         for expected in [
-            "produced a Python preview repair card for missing discriminator `amount == DISCOUNT_THRESHOLD`",
+            "produced a Python preview repair card for the missing check `amount == DISCOUNT_THRESHOLD`",
             "running pilot again unchanged records the same card",
             "`ripr first-pr --root",
             "(`pytest tests/test_pricing.py::test_discount`)",

@@ -46,7 +46,7 @@ Evidence
   - related test tests/test_stats.py:6 test_writes uses strong exact value oracle: check_writes(stats, 2)
 
 Weakness
-  - Related Python test reaches `record_write` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  - Related Python test reaches `record_write` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value assertion
 
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
