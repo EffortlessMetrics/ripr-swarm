@@ -10,6 +10,15 @@ pub(crate) struct InitOptions {
     pub(crate) force: bool,
     pub(crate) ci: Option<InitCi>,
     pub(crate) mcp: bool,
+    /// Agent instruction files requested with `--agents`, deduplicated in
+    /// request order.
+    pub(crate) agents: Vec<InitAgent>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InitAgent {
+    Claude,
+    Codex,
+    Cursor,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum InitCi {
@@ -71,6 +80,9 @@ pub(crate) struct GateOptions {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct BaselineCreateOptions {
     pub(crate) from: PathBuf,
+    /// `from` is a whole-repository `ripr check` JSON artifact
+    /// (`--from-check`), not a gate decision (`--from`).
+    pub(crate) from_check: bool,
     pub(crate) out: PathBuf,
     pub(crate) dry_run: bool,
     pub(crate) force: bool,

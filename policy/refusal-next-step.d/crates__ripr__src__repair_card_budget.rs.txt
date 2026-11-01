@@ -1,9 +1,0 @@
-crates/ripr/src/repair_card_budget.rs|family {} with state {:?} must carry a stable retrieval route
-crates/ripr/src/repair_card_budget.rs|family {} with state {:?} must carry authority-owned content
-crates/ripr/src/repair_card_budget.rs|family {} with state {:?} must not carry an unavailable reason
-crates/ripr/src/repair_card_budget.rs|missing family {} must not claim content
-crates/ripr/src/repair_card_budget.rs|unavailable family {} must not carry a retrieval route
-crates/ripr/src/repair_card_budget.rs|unavailable family {} must not claim content
-crates/ripr/src/repair_card_budget.rs|unavailable family {} must record an exact unavailable reason
-crates/ripr/src/repair_card_budget.rs|wire card needs {selected_bytes} normalized bytes, exceeding the reviewed byte bound {}
-crates/ripr/src/repair_card_budget.rs|{} detail families exceed the reviewed item bound {}
