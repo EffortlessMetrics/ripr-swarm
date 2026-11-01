@@ -1017,8 +1017,9 @@ fn chain_repeats_adjacent_value(body: &str, value_offset: usize) -> bool {
     false
 }
 
-/// Whether a later `{ .. }` arm on one line repeats the first arm's statement.
-fn inline_arms_repeat_the_first(line: &str) -> bool {
+/// Whether every `{ .. }` arm on one line holds the same statement, so the
+/// predicate decides nothing the next line can observe.
+fn inline_arms_all_agree(line: &str) -> bool {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
     let mut arms = Vec::new();
     let mut depth = 0usize;
@@ -1040,8 +1041,9 @@ fn inline_arms_repeat_the_first(line: &str) -> bool {
             _ => {}
         }
     }
-    arms.split_first()
-        .is_some_and(|(first, rest)| !first.is_empty() && rest.contains(first))
+    arms.split_first().is_some_and(|(first, rest)| {
+        !first.is_empty() && !rest.is_empty() && rest.iter().all(|arm| arm == first)
+    })
 }
 
 fn next_branch_value(
@@ -1064,7 +1066,7 @@ fn next_branch_value(
         .body
         .lines()
         .nth(start_index)
-        .is_some_and(inline_arms_repeat_the_first)
+        .is_some_and(inline_arms_all_agree)
     {
         return None;
     }
@@ -2181,6 +2183,20 @@ mod tests {
                 "`{body}` must not produce a return-value sink: {sinks:?}"
             );
         }
+    }
+
+    #[test]
+    fn three_identical_inline_arms_lose_the_sink_and_a_differing_last_arm_keeps_it() {
+        let identical = "pub fn f(c: bool, d: bool) -> i32 {\n    let r;\n    if c { r = 1; } else if d { r = 1; } else { r = 1; }\n    r + 0\n}";
+        let owner = tail_owner(identical);
+        let first = probe(ProbeFamily::Predicate, "c", 3);
+        assert!(local_flow_sinks(&first, Some(&owner)).is_empty());
+
+        // The last arm differs, so the condition still decides what `r` is.
+        let differing = "pub fn f(c: bool, d: bool) -> i32 {\n    let r;\n    if c { r = 1; } else if d { r = 1; } else { r = 2; }\n    r + 0\n}";
+        let owner = tail_owner(differing);
+        let second = probe(ProbeFamily::Predicate, "c", 3);
+        assert_eq!(local_flow_sinks(&second, Some(&owner)).len(), 1);
     }
 
     #[test]

@@ -118,15 +118,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — module_reach_control_qualified (10)
-
-Reason:
-RIPR-SPEC-0108: plain wording 'spot' for 'seam' in the check/repair disagreement note (#10880)
-
-Command:
-`cargo xtask goldens bless module_reach_control_qualified --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

@@ -187,7 +187,7 @@ impl RepairRouteRefusal {
             ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \
-                 no seam to start a repair from; follow the Next step above"
+                 no gap to start a repair from; follow the Next step above"
                     .to_string()
             }
             Self::PreviewPacketNotComplete { language, reason } => format!(
@@ -228,10 +228,10 @@ impl RepairRouteRefusal {
                  the related tests already notice this change (exposed)"
                 .to_string(),
             Self::SeamGrippedFindingNot => "no repair start offered: `ripr check` reads a gap \
-                 or limit for this change, but `ripr repair` judges the whole spot and finds \
+                 or limit for this change, but `ripr repair` judges the whole seam and finds \
                  its tests already notice changes there (exposed), so it has no gap to start \
                  from. The two read different evidence (your changed lines versus the whole \
-                 spot) and ripr does not start a repair on conflicting evidence; follow the \
+                 seam) and ripr does not start a repair on conflicting evidence; follow the \
                  Next step above"
                 .to_string(),
             Self::SeveralBindingSeams => {
@@ -945,7 +945,7 @@ mod tests {
         assert_eq!(
             no_gap,
             "no repair start offered: this finding has no gap ID, so there is no \
-             seam to start a repair from; follow the Next step above"
+             gap to start a repair from; follow the Next step above"
         );
         assert!(
             !no_gap.contains("ripr repair") && !no_gap.contains("full gate's answer"),

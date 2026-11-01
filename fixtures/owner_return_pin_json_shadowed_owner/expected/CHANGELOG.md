@@ -204,15 +204,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — owner_return_pin_json_shadowed_owner (17)
-
-Reason:
-RIPR-SPEC-0108: plain wording 'spot' for 'seam' in the check/repair disagreement note (#10880)
-
-Command:
-`cargo xtask goldens bless owner_return_pin_json_shadowed_owner --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

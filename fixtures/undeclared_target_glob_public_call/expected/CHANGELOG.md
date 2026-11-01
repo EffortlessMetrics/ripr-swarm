@@ -35,15 +35,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — undeclared_target_glob_public_call (4)
-
-Reason:
-RIPR-SPEC-0108: plain wording 'spot' for 'seam' in the check/repair disagreement note (#10880)
-
-Command:
-`cargo xtask goldens bless undeclared_target_glob_public_call --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`

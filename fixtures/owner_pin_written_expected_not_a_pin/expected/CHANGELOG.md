@@ -168,15 +168,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — owner_pin_written_expected_not_a_pin (14)
-
-Reason:
-RIPR-SPEC-0108: plain wording 'spot' for 'seam' in the check/repair disagreement note (#10880)
-
-Command:
-`cargo xtask goldens bless owner_pin_written_expected_not_a_pin --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
