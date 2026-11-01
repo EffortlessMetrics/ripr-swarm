@@ -42,7 +42,7 @@ use related_tests::{
 use super::classify::{
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
     call_text_may_call_free_function, direct_collection_mutation_receiver, is_ignored,
-    owner_call_text, reach_evidence as classify_reach_evidence,
+    owner_call_text, predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
     related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
 };
 use super::facts::{CallFact, FunctionImplContext};
@@ -2994,6 +2994,19 @@ fn propagate_evidence(
             StageState::No,
             Confidence::Medium,
             "No related tests; cannot infer propagation",
+        );
+    }
+    // A predicate whose one-line arms all hold the same statement changes no
+    // value a sink can carry, so an exact assertion on the owner's result
+    // cannot notice the condition (#12053; `ripr check` reads the same line
+    // as a limit since #10880).
+    if seam.kind() == SeamKind::PredicateBoundary
+        && predicate_line_arms_all_agree(owner_fn, seam.display_line())
+    {
+        return StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "The predicate's one-line arms hold the same statement, so no sink value depends on it",
         );
     }
     // Static heuristic: if any related test contains an oracle that
