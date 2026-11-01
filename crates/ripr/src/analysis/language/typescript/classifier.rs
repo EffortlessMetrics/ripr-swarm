@@ -7390,7 +7390,7 @@ pub(crate) fn classify_resolved_owner(
             StageState::Unknown,
             StageState::Unknown,
             vec![format!(
-                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); the discriminator is not established either way.",
+                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); whether a test checks the changed behavior is not established either way.",
                 owner.name
             )],
         )
@@ -9642,7 +9642,7 @@ fn module_entry_reach_summary(
     };
     if discriminator_unknown {
         return format!(
-            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so the discriminator is not established either way.",
+            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so whether a test checks the changed behavior is not established either way.",
             owner.name, entries
         );
     }
