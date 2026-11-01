@@ -278,3 +278,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — property_macro_noop_qualified_collision (22)
+
+Reason:
+RIPR-SPEC-0001: opaque property-macro reach reads static_unknown, not no_static_path (#11544)
+
+Command:
+`cargo xtask goldens bless property_macro_noop_qualified_collision --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

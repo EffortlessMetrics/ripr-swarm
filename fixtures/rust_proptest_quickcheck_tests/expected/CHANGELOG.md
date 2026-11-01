@@ -257,3 +257,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_proptest_quickcheck_tests (22)
+
+Reason:
+RIPR-SPEC-0001: opaque property-macro reach reads static_unknown, not no_static_path (#11544)
+
+Command:
+`cargo xtask goldens bless rust_proptest_quickcheck_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

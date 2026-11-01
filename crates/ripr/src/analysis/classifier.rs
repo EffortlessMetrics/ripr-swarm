@@ -538,6 +538,74 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
     }
 }
 
+/// #11544: an owner whose only candidate tests sit inside opaque property
+/// macros (`proptest!`, `quickcheck!`) has no ruled-out reach: the macro's
+/// own limitation says expansion, collection and reach are unresolved. Calling
+/// that `no_static_path` ("no test path found") contradicts the finding's own
+/// `non_claim`, so the class abstains as `static_unknown` and the wording
+/// stops asserting an absent test. Only `no_static_path` is rewritten; an
+/// owner no property macro mentions never reaches this function, and nothing
+/// is promoted or credited.
+pub(in crate::analysis) fn withhold_property_macro_no_path_as_unknown(finding: &mut Finding) {
+    if finding.class != ExposureClass::NoStaticPath {
+        return;
+    }
+    finding.class = ExposureClass::StaticUnknown;
+    let unknown = |summary: &str| StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
+    let mut stale: Vec<String> = Vec::new();
+    for (stage, summary) in [
+        (
+            &mut finding.ripr.reveal.observe,
+            "Not established: whether a test inside the property macro observes this change",
+        ),
+        (
+            &mut finding.ripr.reveal.discriminate,
+            "Not established: whether a test inside the property macro discriminates this change",
+        ),
+    ] {
+        if stage.state == StageState::No
+            && (stage.summary == NO_REACHABLE_TEST_OBSERVE_SUMMARY
+                || stage.summary == NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY)
+        {
+            stale.push(stage.summary.clone());
+            *stage = unknown(summary);
+        }
+    }
+    finding
+        .evidence
+        .retain(|line| !stale.contains(line) && !line.contains("No static test path"));
+    let ripr = &finding.ripr;
+    finding.confidence = finding.confidence.min(confidence_score(
+        &ripr.reach,
+        &ripr.infect,
+        &ripr.propagate,
+        &ripr.reveal.observe,
+        &ripr.reveal.discriminate,
+        &finding.class,
+    ));
+    // `macro_reach_unresolved` says the class stays `no_static_path`; the
+    // named limitation and its evidence pointer stay, the reason does not.
+    finding
+        .stop_reasons
+        .retain(|reason| !matches!(reason, StopReason::MacroReachUnresolved));
+    if !finding
+        .stop_reasons
+        .contains(&StopReason::StaticProbeUnknown)
+    {
+        finding.stop_reasons.push(StopReason::StaticProbeUnknown);
+    }
+    finding.missing = vec![
+        "property-macro reach abstains: ripr does not expand the macro or collect its tests"
+            .to_string(),
+    ];
+    finding.activation.missing_discriminators.clear();
+    for test in &mut finding.related_tests {
+        test.miss = test
+            .miss
+            .filter(|miss| *miss != RelatedTestMiss::NoCallPath);
+    }
+}
+
 /// #7080: a helper chain refused only because an entry name is not unique
 /// is not "no test reaches the owner". Relation stays refused (fail closed);
 /// when a test actually calls that ambiguous name, the finding abstains as
@@ -3684,6 +3752,63 @@ fn far_above_threshold_discounts() {
         assert_ne!(finding.ripr.infect.state, StageState::Yes);
         assert_eq!(finding.ripr.reveal.observe.state, StageState::No);
         assert_eq!(finding.ripr.reveal.discriminate.state, StageState::No);
+    }
+
+    /// #11544: opaque-property-macro reach abstains instead of reading "no test
+    /// path"; the rewrite touches only `no_static_path` and drops the stale
+    /// "no test can ..." stages, the missing-check lines and the
+    /// `macro_reach_unresolved` reason that said the class stays put.
+    #[test]
+    fn property_macro_no_path_becomes_unknown_and_other_classes_are_untouched() {
+        let index = uncalled_owner_index_at("", "");
+        let mut probe = fragile_fee_probe(ProbeFamily::Predicate, "fragile_fee");
+        probe.id = ProbeId("probe:src/lib.rs:2:fragile_fee".to_string());
+        probe.owner = Some(SymbolId("src/lib.rs::fragile_fee".to_string()));
+        probe.location = SourceLocation::new("src/lib.rs", 2, 1);
+        let mut finding = classify_probe(&probe, &index, true, None);
+        assert_eq!(
+            finding.class,
+            ExposureClass::NoStaticPath,
+            "premise: an owner no property macro mentions stays no_static_path"
+        );
+        finding.stop_reasons.push(StopReason::MacroReachUnresolved);
+
+        let mut other = finding.clone();
+        other.class = ExposureClass::WeaklyExposed;
+        let before = serde_json::to_value(&other).ok();
+        withhold_property_macro_no_path_as_unknown(&mut other);
+        assert_eq!(
+            serde_json::to_value(&other).ok(),
+            before,
+            "only no_static_path is rewritten"
+        );
+
+        withhold_property_macro_no_path_as_unknown(&mut finding);
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        // A stage keeps `no` only on its own evidence, never on ruled-out reach.
+        for stage in [
+            &finding.ripr.reveal.observe,
+            &finding.ripr.reveal.discriminate,
+        ] {
+            assert!(
+                stage.summary != NO_REACHABLE_TEST_OBSERVE_SUMMARY
+                    && stage.summary != NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY,
+                "{stage:?}"
+            );
+        }
+        assert!(
+            finding
+                .stop_reasons
+                .contains(&StopReason::StaticProbeUnknown)
+                && !finding
+                    .stop_reasons
+                    .contains(&StopReason::MacroReachUnresolved),
+            "{:?}",
+            finding.stop_reasons
+        );
+        assert!(finding.activation.missing_discriminators.is_empty());
+        assert_eq!(finding.missing.len(), 1);
+        assert!(!finding.missing[0].contains("No detected boundary"));
     }
 
     const PROC_MACRO_MANIFEST: &str =

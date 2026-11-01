@@ -3421,7 +3421,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
@@ -3482,7 +3482,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
@@ -3519,7 +3519,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
@@ -3556,7 +3556,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
@@ -3593,7 +3593,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
@@ -3630,7 +3630,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
