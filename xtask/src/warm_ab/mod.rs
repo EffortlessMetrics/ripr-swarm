@@ -136,6 +136,7 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Options, String> {
     let mut baseline_ref = None;
     let mut candidate_ref = None;
     let mut pins = None;
+    let mut external_pins = None;
     let mut iter = args.iter();
     while let Some(flag) = iter.next() {
         let mut value = |name: &str| {
@@ -152,6 +153,7 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Options, String> {
             "--baseline-ref" => baseline_ref = Some(value("--baseline-ref")?),
             "--candidate-ref" => candidate_ref = Some(value("--candidate-ref")?),
             "--pins" => pins = Some(value("--pins")?),
+            "--external-pins" => external_pins = Some(value("--external-pins")?),
             "--out" => options.out = PathBuf::from(value("--out")?),
             "--work" => options.work = PathBuf::from(value("--work")?),
             "--runs" => {
@@ -173,14 +175,19 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Options, String> {
             other => return Err(format!("unknown warm-ab argument `{other}`")),
         }
     }
-    if let Some(pins) = pins {
+    if pins.is_some() || external_pins.is_some() {
         if baseline.is_some() || candidate.is_some() || tree.is_some() || diff.is_some() {
             return Err(
                 "--pins builds its own binaries and trees; do not combine it with --baseline, --candidate, --tree or --diff"
                     .to_string(),
             );
         }
-        options.nightly = Some(nightly::Plan::new(&pins, baseline_ref, candidate_ref)?);
+        options.nightly = Some(nightly::Plan::new(
+            pins.as_deref(),
+            external_pins.as_deref(),
+            baseline_ref,
+            candidate_ref,
+        )?);
     } else {
         if baseline_ref.is_some() || candidate_ref.is_some() {
             return Err("--baseline-ref and --candidate-ref need --pins".to_string());
