@@ -104,12 +104,12 @@ pub(crate) fn discover_harnesses(files: &[(String, String)]) -> Vec<Harness> {
                 }
                 continue;
             }
-            if let Some(open) = trimmed.find("r#\"") {
-                if !trimmed[open + 3..].contains("\"#") {
-                    in_raw_string = true;
-                    pending = false;
-                    continue;
-                }
+            if let Some(open) = trimmed.find("r#\"")
+                && !trimmed[open + 3..].contains("\"#")
+            {
+                in_raw_string = true;
+                pending = false;
+                continue;
             }
             if trimmed.starts_with("#[kani::proof") {
                 pending = true;
@@ -497,8 +497,11 @@ mod tests {
     fn lane_never_passes_by_absence() {
         assert!(lane_verdict(&[], false, true).is_err());
         assert!(lane_verdict(&[], true, false).is_err());
-        assert!(lane_verdict(&[], true, true).is_ok());
-        assert!(lane_verdict(&[result(HarnessStatus::Verified)], true, false).is_ok());
+        assert_eq!(lane_verdict(&[], true, true).err(), None);
+        assert_eq!(
+            lane_verdict(&[result(HarnessStatus::Verified)], true, false).err(),
+            None
+        );
         let failed = result(HarnessStatus::Failed("x".to_string()));
         assert!(lane_verdict(&[failed], true, true).is_err());
         let skipped = result(HarnessStatus::NotEstablished("x".to_string()));
@@ -517,9 +520,13 @@ mod tests {
                 timeout_secs: DEFAULT_TIMEOUT_SECS,
             })
         );
-        assert!(parse_args(&strings(&["--bogus"])).is_err());
-        assert!(parse_args(&strings(&["--default-unwind", "0"])).is_err());
-        assert!(parse_args(&strings(&["--harness"])).is_err());
+        assert!(parse_args(&strings(&["--bogus"])).err().is_some());
+        assert!(
+            parse_args(&strings(&["--default-unwind", "0"]))
+                .err()
+                .is_some()
+        );
+        assert!(parse_args(&strings(&["--harness"])).err().is_some());
     }
 
     #[test]
