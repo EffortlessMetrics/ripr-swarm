@@ -54,7 +54,9 @@ fn write_workspace(broken: bool) -> Result<PathBuf, String> {
         "[project]\nname = \"pricing\"\n",
     )
     .map_err(|error| format!("write marker: {error}"))?;
-    let tail = if broken { "\ndef broken(:\n" } else { "" };
+    // The diff appends a blank line, so the control carries it too: a worktree
+    // holds the diff's post-image, and identity refuses a source that does not.
+    let tail = if broken { "\ndef broken(:\n" } else { "\n" };
     fs::write(
         root.join("src/pricing.py"),
         format!(
