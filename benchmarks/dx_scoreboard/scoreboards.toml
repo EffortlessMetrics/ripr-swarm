@@ -91,8 +91,8 @@ heavy = true
 [[corpus]]
 id = "servo"
 url = "https://github.com/servo/servo"
-sha = "436d98daa8cc128d96371709bc514b5b4d9cbce3"
-note = "browser engine workspace (several thousand .rs files); the pinned change edits components/net/http_cache.rs"
+sha = "e10d0a00ebd8a62a89ee51f4cff31ae7ed0aff28"
+note = "browser engine workspace (several thousand .rs files); the pinned change adds the devtools getFavicon message, a behavioral edit the warm check reports a finding for (the earlier pin was a type-level refactor with no behavioral candidates, #12203)"
 heavy = true
 
 [[corpus]]

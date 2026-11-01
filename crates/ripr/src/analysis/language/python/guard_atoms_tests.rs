@@ -316,6 +316,40 @@ fn a_module_level_rebinding_of_a_builtin_is_not_read_as_the_builtin() -> Result<
 }
 
 #[test]
+fn patching_a_builtin_through_the_builtins_module_is_not_read_as_the_builtin() -> Result<(), String>
+{
+    // `builtins.isinstance = f` rewrites the builtin without a local binding
+    // (#12183), so the guard is unknown and the arm keeps its credit.
+    let arm = "def label(x):\n    if isinstance(x, str):\n        return 'text'\n";
+    let patches = [
+        "import builtins\nbuiltins.isinstance = checker\n\n\n",
+        "import builtins\nbuiltins.str = Text\n\n\n",
+        "import builtins\nsetattr(builtins, 'isinstance', checker)\n\n\n",
+    ];
+    for patch in patches {
+        let owner = format!("{patch}{arm}");
+        assert_eq!(
+            classify(&owner, OLD_NIL, &test_of("label(3)", "None"))?,
+            ExposureClass::Exposed,
+            "builtins patch must fail closed: {patch:?}"
+        );
+    }
+    // Controls: importing `builtins` or calling through it patches nothing.
+    for harmless in [
+        "import builtins\n\n\n",
+        "import builtins\nlimit = builtins.len(CHECKS)\n\n\n",
+    ] {
+        let owner = format!("{harmless}{arm}");
+        assert_eq!(
+            classify(&owner, OLD_NIL, &test_of("label(3)", "None"))?,
+            ExposureClass::WeaklyExposed,
+            "a harmless builtins mention must not suppress the guard: {harmless:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_for_body_over_an_empty_literal_never_runs() -> Result<(), String> {
     let body = "def label(items):\n    for item in items:\n        return item + 1\n";
     assert_eq!(

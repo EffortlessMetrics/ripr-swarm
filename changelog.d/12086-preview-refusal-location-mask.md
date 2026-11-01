@@ -1,2 +1,2 @@
-<!-- section: Fixed -->
+<!-- section: Internal / CI -->
 - The goldens gate no longer treats the test location cited inside a TypeScript "no complete repair packet" refusal as wording: only the cited `path:line` is masked, and the language and blocker wording stay compared. The same location still appears unmasked in the safe-next-action line, the related-test line and `check.json`, so moving a cited test still drifts those surfaces (#12086; remaining surfaces tracked separately).
