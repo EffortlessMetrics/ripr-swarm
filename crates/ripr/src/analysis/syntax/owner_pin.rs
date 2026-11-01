@@ -167,6 +167,12 @@ pub(crate) enum AssertionContextRefusal {
     DuplicateSpellingOneRuns,
     /// The invocation sits where it may not run: names the construct.
     ConditionalPath(&'static str),
+    /// The invocation sits in the closure a model-checking runner
+    /// (`loom::model`, `shuttle::check_*`) takes. Whether and how often the
+    /// runner calls it is the runner's contract, which ripr does not read, so
+    /// this is a limit of ripr's reading, not a shape that can keep the
+    /// assertion from running (#11543).
+    ModelCheckClosure,
     /// The test body's only `return` is the whole body of a root
     /// `if <condition> { return; }` before the invocation: whether the
     /// invocation runs depends on the condition, held here as written.
@@ -2999,6 +3005,9 @@ fn admitted_assertions(
                 .iter()
                 .map(|call| {
                     eager_path(call.clone(), function, false, first_return).map_err(|construct| {
+                        if construct == MODEL_CHECK_CLOSURE {
+                            return AssertionContextRefusal::ModelCheckClosure;
+                        }
                         match (construct == EARLIER_RETURN)
                             .then(|| sole_return_guard(function))
                             .flatten()
@@ -3264,6 +3273,7 @@ pub(crate) fn err_return_guard_key(condition: &str) -> String {
 }
 
 const EARLIER_RETURN: &str = "a block that an earlier `return` can skip";
+const MODEL_CHECK_CLOSURE: &str = "a closure a model-checking runner calls";
 
 /// The condition of `if <condition> { return; }` when that `return` is the
 /// only one the test body holds outside closures and nested items, the
@@ -5100,6 +5110,9 @@ fn eager_path(
                 return eager_path(call.syntax().clone(), function, true, first_return);
             }
             let Some(spawn) = spawned_thread_reaching_test(&closure, function) else {
+                if model_check_closure(&closure) {
+                    return Err(MODEL_CHECK_CLOSURE);
+                }
                 return Err("a closure ripr cannot see invoked exactly once");
             };
             return eager_path(spawn, function, true, first_return);
@@ -5987,6 +6000,44 @@ const STATEMENT_MACROS: &[&str] = &[
     "write",
     "writeln",
 ];
+
+/// Whether `closure` is the first argument of a spelled-out model-checking
+/// runner call: `loom::model(..)` or `shuttle::check*(.., ..)`. The match is
+/// on the written path only, so a local `mod loom` is misread as the runner;
+/// that only turns a refusal into a disclosed limit and credits nothing.
+fn model_check_closure(closure: &ast::ClosureExpr) -> bool {
+    let expression = unparenthesized(closure);
+    let Some(args) = expression.parent().and_then(ast::ArgList::cast) else {
+        return false;
+    };
+    if args
+        .args()
+        .next()
+        .map(|first| first.syntax().clone())
+        .as_ref()
+        != Some(&expression)
+    {
+        return false;
+    }
+    let Some(call) = args.syntax().parent().and_then(ast::CallExpr::cast) else {
+        return false;
+    };
+    let Some(ast::Expr::PathExpr(path)) = call.expr() else {
+        return false;
+    };
+    let text: String = path
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let text = text.trim_start_matches("::");
+    text == "loom::model"
+        || text
+            .strip_prefix("shuttle::")
+            .is_some_and(|rest| rest == "check" || rest.starts_with("check_"))
+}
 
 /// The `std::thread::scope(..)` call that runs `closure`, its only argument.
 fn scope_invocation(closure: &ast::ClosureExpr, function: &ast::Fn) -> Option<ast::CallExpr> {
