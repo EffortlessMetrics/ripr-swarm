@@ -22,7 +22,7 @@
   "next_command": {
     "step": "select_seam",
     "artifact": "target/ripr/pilot",
-    "reason": "no repair seam is known yet; `ripr pilot` inspects the workspace and selects the seam to repair",
+    "reason": "no gap is selected yet; `ripr pilot` inspects the workspace and selects the gap to repair",
     "command": "ripr pilot --root '<cwd>/repo root' --out '<cwd>/repo root/target/ripr/pilot'"
   },
   "surfaces": [
