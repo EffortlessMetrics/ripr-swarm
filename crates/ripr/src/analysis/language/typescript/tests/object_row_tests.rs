@@ -625,11 +625,35 @@ fn loop_parameter_in_registration_arguments_is_never_resolved() -> Result<(), St
 #[test]
 fn a_null_or_undefined_row_title_never_credits_unregistered_tests() -> Result<(), String> {
     let callback = "() => { expect(encode(t.input)).toBe(t.out); }";
+    // Positive control: the same table with valid titles is credited, so the
+    // negatives below cannot pass vacuously.
+    for title in ["t.name", "t.name.toString()"] {
+        let table = "[\n    { input: \"a\", out: \"A\", name: \"first\" },\n    { input: \"b\", out: \"B\", name: 2 },\n  ]";
+        let tests = extract_tests(
+            Path::new("tests/encode.test.ts"),
+            &describe_source(table, "", LOOP, &format!("test({title}, {callback});")),
+        );
+        let values: Vec<_> = tests
+            .iter()
+            .flat_map(|t| t.assertions.iter())
+            .map(|a| a.expected_value_or_variant.as_deref())
+            .collect();
+        if values != vec![Some("\"A\""), Some("\"B\"")] {
+            return Err(format!("control {title}: {values:?}"));
+        }
+    }
     for (label, name_cell, title) in [
         ("null toString title", "null", "t.name.toString()"),
         ("undefined toString title", "undefined", "t.name.toString()"),
         ("null bare title", "null", "t.name"),
         ("boolean bare title", "true", "t.name"),
+        ("false bare title", "false", "t.name"),
+        ("bigint bare title", "1n", "t.name"),
+        (
+            "null template toString title",
+            "null",
+            "`${t.name.toString()}`",
+        ),
     ] {
         let table = format!(
             "[\n    {{ input: \"a\", out: \"A\", name: \"first\" }},\n    {{ input: \"b\", out: \"B\", name: {name_cell} }},\n  ]"

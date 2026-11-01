@@ -299,9 +299,16 @@ fn scalar_key_title(compact: &str, param: &str, rows: &[ObjectRow]) -> bool {
             row.cell(key).is_some_and(|cell| {
                 !cell.starts_with(['[', '{'])
                     && !matches!(cell.trim(), "null" | "undefined")
-                    && (via_to_string || !matches!(cell.trim(), "true" | "false"))
+                    && (via_to_string || bare_title_cell_registers(cell.trim()))
             })
         })
+}
+
+/// A bare (non-`.toString()`) title registers only for a string or number
+/// cell: booleans and bigints are rejected by the runner (fail closed).
+fn bare_title_cell_registers(cell: &str) -> bool {
+    !matches!(cell, "true" | "false")
+        && (cell.starts_with(['"', '\'', '`']) || !cell.ends_with('n'))
 }
 
 /// The assertions of a registration inside a [`RowLoop`] read once per row,
