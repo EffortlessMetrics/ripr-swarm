@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/module_reach_super_import_in_file_wrong_module/input
 
-Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -12,18 +12,18 @@ Start here:
   Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:2
   Static exposure: weak (severity: warning, confidence 0.66)
-  Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
+  Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: 10 <= qty
   Analyzer limit: A test may reach this change through an internal helper-call chain ripr cannot
     fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named
     limitation, not a coverage claim
-  Related test (1 of 2 matched rows): src/lib.rs:19 discount_boundary
+  Related test (1 of 2 matched rows): src/lib.rs:19 discount_boundary (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Tests cannot close this static-analysis limitation: ripr cannot trace entry
     `order_discount` -> owner `is_bulk` through a transitive Rust helper path. Inspect the named
     path and existing assertions through the public API; add a test only for an independently
     confirmed gap. This limitation does not establish a missing test. Route analyzer work to
     `analysis/rust-public-api-transitive-reach`
-  Evidence: reach weak · infection weak · propagation yes · observation yes · discriminator not established
+  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
@@ -35,18 +35,18 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach weak: No test is seen calling is_bulk; tests share only its file or a name token: discount_boundary
-    - infection weak: Related tests contain the changed boundary literal [10] only outside the changed owner's inputs (for example as an expected value); no test input at the changed…
+    - infection yes: Reachable tests can plausibly activate this changed behavior
     - 10 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast probe:src_lib.rs:predicate:41e056ec
-  ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast --at probe:src_lib.rs:predicate:41e056ec
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  ripr explain --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast probe:src_lib.rs:return_value:cc17bcd3
+  ripr context --root <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/input --diff <cwd>/fixtures/module_reach_super_import_in_file_wrong_module/diff.patch --mode fast --at probe:src_lib.rs:return_value:cc17bcd3
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (weak); kind: return_value; reason: A test may reach this change through an internal helper-call chain ripr cannot fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named limitation,…
+    - ./src/lib.rs:2 (unknown: infection unclear); kind: predicate; reason: A test may reach this change through an internal helper-call chain ripr cannot fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named limitation,…
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

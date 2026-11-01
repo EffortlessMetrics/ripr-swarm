@@ -398,3 +398,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_witness_dead_argument (34)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless typescript_witness_dead_argument --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

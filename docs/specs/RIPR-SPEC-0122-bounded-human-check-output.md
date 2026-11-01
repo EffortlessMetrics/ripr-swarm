@@ -262,7 +262,7 @@ The digest's discriminator line label reflects the discriminator state:
 - `Missing check` — the finding is not `exposed`; the named
   discriminator is absent from the related tests (#10691: the digest says
   "check"; the internal word stays in JSON and specs).
-- `Discriminator (observed, advisory)` — the finding is `exposed` and the
+- `Check (observed, advisory)` — the finding is `exposed` and the
   field carries an observation rationale instead of a missing discriminator.
   Preview-language classifiers record that rationale in the same field, so an
   unconditional `Missing discriminator` header would contradict the exposure
@@ -868,6 +868,51 @@ unchanged, and the lines claim no runtime outcome.
   non-indexed rival types, and `Self::`, `<W as T>::`, turbofish and `use .. as`
   type spellings are not resolved (the last over-withhold); a bare call of a
   name the test file defines itself never counts.
+- Tests for the match-arm repair start (#11111 burn-down): a changed match arm
+  passes the same gates as the return value above, and additionally needs the
+  related test's owner call to be direct under `check`'s own relation rules,
+  with the owner's impl type (and trait) declared exactly once and never
+  renamed or aliased, and a free-function owner the only free function of
+  its name in the workspace. The owner's whole body must be one top-level
+  `match <parameter> { .. }` on a bare parameter; the changed arm's pattern is
+  a single plain string, char or integer literal, and every earlier arm is a
+  plain literal (or `|` of literals) with no guard, binding or wildcard. One
+  related test must satisfy every gate at once: it calls the owner directly,
+  passes the arm's literal verbatim as that parameter's own argument, and its
+  assertion observes the owner's result. The literal and the observed result
+  must come from the same call, read by an allowlist of test shapes: the
+  owner's name appears exactly once in the test body (and no credited helper
+  also calls it); that call is the whole right side of a top-level
+  `let name = ..;` or sits in the condition operands of a top-level
+  `assert!`, `assert_eq!` or `assert_ne!` statement (never its
+  failure-message arguments, and never `debug_assert!`), with only plain
+  operand text around it (no closure, block, branch, short-circuit, `?` or
+  macro call, however spaced: `name ! (..)` counts), and only while no
+  file rebinds `assert`, `assert_eq` or `assert_ne`; every argument is one simple token (a literal, a name, a field or a
+  path, optionally borrowed); the owner's own parameter list is read only
+  when the function itself declares no generic parameters and every
+  parameter is `name: Type` with a plain type (no generic type, tuple
+  or pattern that could hold commas); a `self` method is reached only as
+  `value.method(..)` so its arguments line up with its parameters; the body
+  holds no attribute; and no other top-level statement holds `?` or an
+  early-exit word (`return`, `break`, `continue`, `else`, `loop`, `panic`,
+  `unreachable`, `todo`, `unimplemented`, `exit`). A literal and an assertion
+  split across two tests or two calls, a call inside a branch, `match` or
+  closure, a same-named call on another receiver, a path-qualified
+  `Type::method(receiver, ..)` call, a closure or generic argument, a
+  `#[cfg]`-gated assertion, a call only in an assertion message, an earlier
+  `return`, a local bound to the literal (rebound, reassigned or not), a
+  literal in another argument or only in a builder that never reaches the
+  owner, a derived scrutinee, a nested arm, an arm after a guard arm, and an
+  arm whose literal an earlier arm already names (alone, in a `|`
+  alternation, or as the same integer spelled differently) all stay refused.
+  The arm reader masks comments and strings, so a quote in a comment cannot
+  hide an earlier arm. A later reassignment of the bound result and sharing
+  this reading with the check-side arm selection are not yet covered (#11515). A test on a sibling arm, a discarded result,
+  an exact arm assertion, and a receiver bound to a test-module shadow type or
+  a type declared twice stay refused; a weak assertion on a sibling struct
+  field is still not a struct-field start
+  (`crates/ripr/tests/return_value_repair_start.rs`).
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.

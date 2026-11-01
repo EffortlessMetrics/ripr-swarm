@@ -659,6 +659,7 @@ fn refusal_next(
     class: &str,
     canonical_id: &str,
     stub_route: Option<&(String, usize, &'static str)>,
+    terminal_static_limit: Option<&Value>,
 ) -> Value {
     let gap_route = json!({
         "tool": "ripr_get_gap",
@@ -696,6 +697,30 @@ fn refusal_next(
             Value::Null,
         ),
     };
+    // #11622: an `infection_unknown` predicate item with a typed producer
+    // static limit is terminal for this tool: the limit is a fact about the
+    // finding, so "write a test, then re-check" and "refresh again" are both
+    // false hopes. The marker replaces those routes with the limitation read.
+    // The marker is scoped to the reasons whose route is an edit-and-recheck
+    // or a producer-fact wait (`write_test_by_hand`, `await_producer_fact`).
+    // `change_policy` (seam budget) and `commit_then_refresh` have real,
+    // different routes the limit does not remove, and `nothing_to_do` is not a
+    // dead end.
+    if let Some(limit) = terminal_static_limit
+        && matches!(kind, "write_test_by_hand" | "await_producer_fact")
+    {
+        return json!({
+            "kind": "terminal_static_limit",
+            "reason": reason,
+            "detail": "ripr named a typed static limit on this predicate finding (`static_limit`); ripr_prepare_repair has no repair route for it and a refresh on unchanged input will not change it. Read the limitation, do not retry this tool",
+            "static_limit": limit,
+            "mcp": {
+                "tool": "ripr_get_top_limitation",
+                "arguments": { "canonical_id": canonical_id },
+            },
+            "after_editing_tests": Value::Null,
+        });
+    }
     let mut next = json!({
         "kind": kind,
         "reason": reason,
@@ -762,6 +787,17 @@ impl WorkspaceSession {
         if !readiness.ready {
             let reason = readiness.ineligibility.unwrap_or("repair_not_established");
             let finding_guidance = super::gaps::finding_guidance(item);
+            let next = refusal_next(
+                reason,
+                item.evidence_core
+                    .get("class")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                &item.canonical_id,
+                item.stub_route.as_ref(),
+                item.terminal_static_limit().as_ref(),
+            );
+            let terminal = next["kind"] == "terminal_static_limit";
             let document = json!({
                 "schema_version": REPAIR_PACKET_SCHEMA_VERSION,
                 "snapshot_id": snapshot_id,
@@ -777,16 +813,10 @@ impl WorkspaceSession {
                 },
                 "attempt": Value::Null,
                 "finding_guidance": finding_guidance,
-                "next": refusal_next(
-                    reason,
-                    item.evidence_core
-                        .get("class")
-                        .and_then(Value::as_str)
-                        .unwrap_or(""),
-                    &item.canonical_id,
-                    item.stub_route.as_ref(),
-                ),
-                "recovery": if reason.starts_with("seam_") {
+                "next": next,
+                "recovery": if terminal {
+                    "the producer named a typed static limit on this finding and ripr_prepare_repair does not override it; calling it again or refreshing on unchanged input changes nothing. Read `next.static_limit` and ripr_get_top_limitation instead of retrying"
+                } else if reason.starts_with("seam_") {
                     "the shared repair gate refused this seam and ripr_prepare_repair does not override it; calling it again or re-running ripr_refresh on an unchanged tree changes nothing. See `next` for the one route to take"
                 } else {
                     "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field"
@@ -940,6 +970,41 @@ impl WorkspaceSession {
         }
     }
 
+    /// The machine-readable data of a `superseded` failure for a session
+    /// transaction still held in memory (#11622). A refresh after editing
+    /// tests commits a new snapshot, and a session transaction is bound to the
+    /// snapshot it was prepared against, so the read cannot continue it. The
+    /// data names the item and, when that item still exists in the current
+    /// snapshot, the one route that gives a fresh transaction. It claims
+    /// nothing about whether the edit helped: that is the receipt's job.
+    fn superseded_data(&self, transaction: &RepairTransaction, current: Option<&str>) -> Value {
+        let in_current = self
+            .last_good
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.item(&transaction.canonical_id).is_some());
+        json!({
+            "current_snapshot_id": current,
+            "canonical_id": transaction.canonical_id,
+            "item_in_current_snapshot": in_current,
+            "next": if in_current {
+                json!({
+                    "kind": "prepare_again",
+                    "detail": "the session transaction is bound to the snapshot it was prepared against and a refresh replaced that snapshot; prepare a fresh transaction for the same item against the current one",
+                    "mcp": {
+                        "tool": "ripr_prepare_repair",
+                        "arguments": { "canonical_id": transaction.canonical_id },
+                    },
+                })
+            } else {
+                json!({
+                    "kind": "item_no_longer_listed",
+                    "detail": "the item is not in the current snapshot; list the current items with ripr_list_gaps",
+                    "mcp": { "tool": "ripr_list_gaps", "arguments": {} },
+                })
+            },
+        })
+    }
+
     /// `ripr_get_repair_attempt` / `ripr://repair-attempt/{attempt_id}`:
     /// session transactions first, then the durable store of this session's
     /// root, each fail-closed and replay-resistant.
@@ -970,7 +1035,7 @@ impl WorkspaceSession {
                     ),
                     "re-read ripr_workspace_status for the current snapshot identity and prepare a fresh transaction"
                 )
-                .with_data(json!({ "current_snapshot_id": current })));
+                .with_data(self.superseded_data(transaction, current)));
             }
             return bounded_document(
                 session_attempt_document(transaction),
@@ -1031,7 +1096,7 @@ impl WorkspaceSession {
                     ),
                     "re-read ripr_workspace_status for the current snapshot identity"
                 )
-                .with_data(json!({ "current_snapshot_id": current })));
+                .with_data(self.superseded_data(transaction, current)));
             }
             return bounded_document(
                 session_receipt_document(transaction),
@@ -1150,6 +1215,16 @@ pub(super) mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    #[test]
+    fn unknown_attempt_remedy_leads_with_refresh_not_the_conditional_mention() {
+        let value = unknown_attempt("repair-attempt-x", true).value();
+        assert_eq!(value["remedy"]["tool"], "ripr_refresh", "{value}");
+        // The no-root variant states a real command and a retry.
+        let rootless = unknown_attempt("repair-attempt-x", false).value();
+        assert_eq!(rootless["remedy"]["kind"], "command", "{rootless}");
+        assert_eq!(rootless["remedy"]["retry_stated"], true, "{rootless}");
+    }
+
     fn output(
         kind: AnalysisOutcomeKind,
         findings: &[crate::domain::Finding],
@@ -1217,7 +1292,7 @@ pub(super) mod tests {
     #[test]
     fn refusal_next_maps_each_reason_to_one_route() -> Result<(), String> {
         let check_route = |reason: &str, class: &str, kind: &str, verify: bool| {
-            let next = refusal_next(reason, class, "gap:x", None);
+            let next = refusal_next(reason, class, "gap:x", None, None);
             if next["kind"] != kind
                 || next["reason"] != reason
                 || next["after_editing_tests"].is_null() == verify
@@ -1263,7 +1338,7 @@ pub(super) mod tests {
             "await_producer_fact",
             false,
         )?;
-        let by_hand = refusal_next("seam_not_found", "weakly_exposed", "gap:x", None);
+        let by_hand = refusal_next("seam_not_found", "weakly_exposed", "gap:x", None, None);
         if by_hand["mcp"]["arguments"]["canonical_id"] != "gap:x"
             || by_hand["after_editing_tests"]["mcp"]["arguments"]["source"] != "worktree"
         {
@@ -1281,7 +1356,7 @@ pub(super) mod tests {
     fn refusal_next_carries_the_stub_route_only_for_unbound_seams() -> Result<(), String> {
         let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
         for reason in ["seam_not_found", "seam_ambiguous"] {
-            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route));
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None);
             if next["stub_route"]["command"]
                 != "ripr agent stub --at src/pricing.rs:88 --kind predicate"
                 || next["kind"] != "write_test_by_hand"
@@ -1295,23 +1370,76 @@ pub(super) mod tests {
             "seam_inventory_truncated",
             "something_new",
         ] {
-            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route));
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None);
             if next.get("stub_route").is_some() {
                 return Err(format!("{reason} must not name a stub route: {next}"));
             }
         }
-        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", None)
+        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", None, None)
             .get("stub_route")
             .is_some()
         {
             return Err("no resolver route means no stub_route".into());
         }
         let spaced = ("src/my file.rs".to_string(), 3_usize, "predicate");
-        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", Some(&spaced))
-            .get("stub_route")
-            .is_some()
+        if refusal_next(
+            "seam_not_found",
+            "weakly_exposed",
+            "gap:x",
+            Some(&spaced),
+            None,
+        )
+        .get("stub_route")
+        .is_some()
         {
             return Err("a path needing quoting must not name a command".into());
+        }
+        Ok(())
+    }
+
+    /// #11622: a terminal static limit replaces the test-by-hand and verify
+    /// routes with the limitation read; without it the same reason keeps the
+    /// ordinary route.
+    #[test]
+    fn refusal_next_marks_a_terminal_static_limit() -> Result<(), String> {
+        let limit = json!({ "kind": "unsupported_syntax", "reason": "r", "recovery": "s" });
+        let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
+        let terminal = refusal_next(
+            "seam_not_found",
+            "infection_unknown",
+            "gap:x",
+            Some(&route),
+            Some(&limit),
+        );
+        if terminal["kind"] != "terminal_static_limit"
+            || terminal["static_limit"] != limit
+            || terminal["mcp"]["tool"] != "ripr_get_top_limitation"
+            || terminal["mcp"]["arguments"]["canonical_id"] != "gap:x"
+            || !terminal["after_editing_tests"].is_null()
+            || terminal.get("stub_route").is_some()
+        {
+            return Err(format!("terminal marker drifted: {terminal}"));
+        }
+        // Scope: the two reasons with their own real routes are unchanged for a
+        // limited predicate item, as is nothing_to_do.
+        for (reason, kind) in [
+            ("seam_inventory_truncated", "change_policy"),
+            ("worktree_source_not_committed", "commit_then_refresh"),
+        ] {
+            let next = refusal_next(reason, "infection_unknown", "gap:x", None, Some(&limit));
+            if next["kind"] != kind || next.get("static_limit").is_some() {
+                return Err(format!("{reason} must keep its own route: {next}"));
+            }
+        }
+        for reason in ["seam_gate_refused", "seam_ambiguous", "static_limitation"] {
+            let next = refusal_next(reason, "infection_unknown", "gap:x", None, Some(&limit));
+            if next["kind"] != "terminal_static_limit" {
+                return Err(format!("{reason} must carry the marker: {next}"));
+            }
+        }
+        let ordinary = refusal_next("seam_not_found", "infection_unknown", "gap:x", None, None);
+        if ordinary["kind"] != "write_test_by_hand" || ordinary.get("static_limit").is_some() {
+            return Err(format!("no limit must keep the ordinary route: {ordinary}"));
         }
         Ok(())
     }
@@ -1617,6 +1745,44 @@ pub(super) mod tests {
         Ok(())
     }
 
+    /// #11622 wiring: through the real `prepare_repair` refusal, a limited
+    /// `infection_unknown` predicate item carries the marker, an outer
+    /// recovery that does not say to refresh, and the same item without the
+    /// predicate family keeps the ordinary document.
+    #[test]
+    fn prepare_repair_refusal_carries_the_terminal_static_limit_marker() -> Result<(), String> {
+        let mut limited = super::super::gaps::test_finding()?;
+        limited.canonical_gap = None;
+        limited.missing = Vec::new();
+        limited.class = crate::domain::ExposureClass::InfectionUnknown;
+        limited.probe.family = crate::domain::ProbeFamily::Predicate;
+        limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
+        let mut session = session_with(&[limited.clone()], "root:sha256:a")?;
+        let document = session
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        let recovery = document["recovery"].as_str().unwrap_or_default();
+        if document["next"]["kind"] != "terminal_static_limit"
+            || document["next"]["static_limit"]["kind"] != "unsupported_syntax"
+            || document["repair_packet_ready"] != false
+            || recovery.contains("re-run ripr_refresh")
+            || !recovery.contains("ripr_get_top_limitation")
+        {
+            return Err(format!("terminal wiring drifted: {document}"));
+        }
+        limited.probe.family = crate::domain::ProbeFamily::ReturnValue;
+        let mut other = session_with(&[limited], "root:sha256:a")?;
+        let ordinary = other
+            .prepare_repair("finding:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        if ordinary["next"]["kind"] == "terminal_static_limit" {
+            return Err(format!(
+                "a non-predicate item must not be terminal: {ordinary}"
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn stale_snapshot_and_unknown_items_fail_closed() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
@@ -1706,9 +1872,84 @@ pub(super) mod tests {
         session.last_good = refreshed.last_good;
         match session.repair_attempt_document(&attempt_id, None, Some("root:sha256:a")) {
             Ok(value) => Err(format!("superseded attempt must fail closed: {value}")),
-            Err(failure) if failure.code == "superseded" => Ok(()),
+            Err(failure) if failure.code == "superseded" => {
+                // #11622: the failure names the item and the route to a fresh
+                // transaction, for the attempt read and the receipt read alike.
+                let receipt = session
+                    .receipt_status_document(&attempt_id, None, Some("root:sha256:a"))
+                    .err()
+                    .ok_or("superseded receipt read must fail closed")?;
+                for data in [&failure.data, &receipt.data] {
+                    if data["canonical_id"] != "gap:test:1"
+                        || data["item_in_current_snapshot"] != true
+                        || data["next"]["kind"] != "prepare_again"
+                        || data["next"]["mcp"]["tool"] != "ripr_prepare_repair"
+                        || data["next"]["mcp"]["arguments"]["canonical_id"] != "gap:test:1"
+                    {
+                        return Err(format!("superseded data lost its route: {data}"));
+                    }
+                }
+                // Negative: an item that left the snapshot gets the list route.
+                let mut gone = super::super::gaps::test_finding()?;
+                gone.id = "finding:other".to_string();
+                gone.canonical_gap = None;
+                session.last_good = session_with(&[gone], "root:sha256:a")?.last_good;
+                let listed = session
+                    .repair_attempt_document(&attempt_id, None, Some("root:sha256:a"))
+                    .err()
+                    .ok_or("must stay superseded")?;
+                if listed.data["item_in_current_snapshot"] != false
+                    || listed.data["next"]["kind"] != "item_no_longer_listed"
+                {
+                    return Err(format!(
+                        "a vanished item must route to the list: {listed:?}"
+                    ));
+                }
+                Ok(())
+            }
             Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
         }
+    }
+
+    /// #11622 positive twin: a refresh whose analysis evidence is unchanged
+    /// commits the identical snapshot identity, so the session transaction
+    /// stays readable (no `superseded`). This pins the premise the
+    /// superseded-route design rests on.
+    #[test]
+    fn unchanged_evidence_refresh_keeps_the_session_attempt_readable() -> Result<(), String> {
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let packet = session
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        let attempt_id = packet
+            .pointer("/attempt/attempt_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "missing attempt id".to_string())?
+            .to_string();
+        let before = session
+            .last_good
+            .as_ref()
+            .map(|snapshot| snapshot.snapshot_id.clone());
+        let refreshed = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let after = refreshed
+            .last_good
+            .as_ref()
+            .map(|snapshot| snapshot.snapshot_id.clone());
+        if before.is_none() || before != after {
+            return Err(format!(
+                "identical evidence must commit the identical snapshot id: {before:?} vs {after:?}"
+            ));
+        }
+        session.last_good = refreshed.last_good;
+        session
+            .repair_attempt_document(&attempt_id, None, Some("root:sha256:a"))
+            .map_err(|failure| format!("unchanged refresh must not supersede: {failure:?}"))?;
+        session
+            .receipt_status_document(&attempt_id, None, Some("root:sha256:a"))
+            .map_err(|failure| {
+                format!("unchanged refresh must keep the receipt read: {failure:?}")
+            })?;
+        Ok(())
     }
 
     #[test]

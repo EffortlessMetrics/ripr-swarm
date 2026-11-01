@@ -792,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_limitation_tokens_match_the_wire_contract() {
+    fn typed_limitation_tokens_match_the_wire_contract() -> Result<(), String> {
         let limitation_kinds = [
             (
                 AnalysisLimitationKind::CombinedHunkUnsupported,
@@ -833,6 +833,27 @@ mod tests {
         ];
         for (kind, expected) in limitation_kinds {
             assert_eq!(kind.as_str(), expected);
+        }
+
+        // Every wire token the producer can emit must be accepted by the
+        // published review-comments schema, so a new limitation kind cannot
+        // reach `check-output-contracts`/PR evidence as a schema violation.
+        let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/ripr/review-comments.schema.json");
+        let schema_text = std::fs::read_to_string(&schema_path)
+            .map_err(|error| format!("read {} failed: {error}", schema_path.display()))?;
+        let schema: serde_json::Value = serde_json::from_str(&schema_text)
+            .map_err(|error| format!("parse review-comments schema failed: {error}"))?;
+        let schema_kinds: Vec<&str> = schema["$defs"]["analysis_limitation"]["properties"]["kind"]
+            ["enum"]
+            .as_array()
+            .ok_or_else(|| "analysis_limitation.kind enum missing".to_string())?
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        assert_eq!(schema_kinds.len(), limitation_kinds.len());
+        for (_, token) in limitation_kinds {
+            assert!(schema_kinds.contains(&token), "schema lacks {token}");
         }
 
         // The single owner of advisory-disclosure membership: only the two
@@ -884,6 +905,7 @@ mod tests {
         for (recovery, expected) in recoveries {
             assert_eq!(recovery.as_str(), expected);
         }
+        Ok(())
     }
 
     #[test]

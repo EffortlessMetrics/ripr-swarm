@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
     /// this list in step with the enum.
     #[cfg(test)]
-    pub(crate) const ALL: [StaticLimitKind; 32] = [
+    pub(crate) const ALL: [StaticLimitKind; 33] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -49,6 +49,7 @@ impl StaticLimitKind {
         StaticLimitKind::RustIndirectOwnerCallUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
         StaticLimitKind::ProofHarnessNotEvaluated,
+        StaticLimitKind::RustInherentReceiverUnestablished,
         StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
     ];
 
@@ -186,6 +187,11 @@ impl StaticLimitKind {
                 "Run the verifier for the harness that calls the changed owner, or add a test \
                  that calls it and asserts on its result; ripr does not evaluate the proof."
             }
+            StaticLimitKind::RustInherentReceiverUnestablished => {
+                "Assert on the changed method's result with the standard `assert_eq!`, in a \
+                 test whose Cargo target ripr can place, so the assertion macro binding can be \
+                 verified."
+            }
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
                 "Run ripr from a narrower root, or raise RIPR_TS_MAX_WORKSPACE_FILES (and \
                  RIPR_TS_MAX_WORKSPACE_READ_BYTES if the run then reports a read budget), then \
@@ -198,7 +204,7 @@ impl StaticLimitKind {
 impl StopReason {
     /// Every reason, for the same walk as [`StaticLimitKind::ALL`].
     #[cfg(test)]
-    pub(crate) fn all() -> [StopReason; 16] {
+    pub(crate) fn all() -> [StopReason; 17] {
         [
             StopReason::MaxDepthReached,
             StopReason::ExternalCrateBoundary,
@@ -216,6 +222,7 @@ impl StopReason {
             StopReason::GapEvidenceUnresolved,
             StopReason::HelperIdentityUnresolved,
             StopReason::CompileTimeInvariant,
+            StopReason::UnsafeObligation,
         ]
     }
 
@@ -289,6 +296,10 @@ impl StopReason {
                  cfg that include it (a gated assertion is not compiled otherwise); no test \
                  run observes it, so do not add a test for it."
             }
+            StopReason::UnsafeObligation => {
+                "Check the safety contract and every caller or assumption site by hand; a \
+                 safe-code test cannot discharge an unsafe obligation, so do not add one for it."
+            }
         }
     }
 }
@@ -348,10 +359,11 @@ mod tests {
                 StaticLimitKind::RustIndirectOwnerCallUnresolved => 28,
                 StaticLimitKind::RustCallerLoopSelectorUnresolved => 29,
                 StaticLimitKind::ProofHarnessNotEvaluated => 30,
-                StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 31,
+                StaticLimitKind::RustInherentReceiverUnestablished => 31,
+                StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 32,
             }
         }
-        const COUNT: usize = 32;
+        const COUNT: usize = 33;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(
@@ -380,9 +392,10 @@ mod tests {
                 StopReason::GapEvidenceUnresolved => 13,
                 StopReason::HelperIdentityUnresolved => 14,
                 StopReason::CompileTimeInvariant => 15,
+                StopReason::UnsafeObligation => 16,
             }
         }
-        const COUNT: usize = 16;
+        const COUNT: usize = 17;
         let all = StopReason::all();
         assert_eq!(all.len(), COUNT);
         let ordinals: Vec<usize> = all.iter().map(ordinal).collect();

@@ -79,14 +79,17 @@ mod boundary;
 mod call_chain;
 mod caplog_text;
 mod classify;
+mod coarse_projection;
 mod conditional_defs;
 mod conditional_expression;
 mod dataclass_default;
 mod deleted_lines;
+mod derived_expectation;
 mod doctest_eval;
 mod doctest_tests;
 mod dunder_truthiness;
 mod guard_activation;
+mod guard_atoms;
 mod guard_credit;
 mod helper_inline;
 mod imported_call_operator;
@@ -189,6 +192,7 @@ use source_facts::{
 };
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod collection_config;
 mod fixtures;
 mod forwarding_decorator;
 mod helper_assertions;
@@ -811,7 +815,7 @@ fn python_recommended_next_step(
                 }
             };
             Some(format!(
-                "Python preview: {action} for missing discriminator `{missing}`."
+                "Python preview: {action} for the missing check `{missing}`."
             ))
         }
     }
@@ -1297,6 +1301,7 @@ impl PythonAdapter {
             &mut all_tests,
             &module_attribute_writes,
         );
+        collection_config::apply_collection_config(&mut all_tests, &options.root);
         reexports::apply_package_reexports(
             &mut all_owners,
             |file| workspace_read.sources.get(file).map(String::as_str),
@@ -1306,6 +1311,9 @@ impl PythonAdapter {
             workspace_read.sources.get(file).map(String::as_str)
         });
         known_equality_helpers::credit_known_equality_helpers(&mut all_tests, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
+        derived_expectation::demote_derived_expectations(&mut all_tests, &all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
         // Rival src-layout modules are found by path, so an over-cap run still
@@ -1865,6 +1873,9 @@ mod unreachable_assertion_tests;
 mod arm_activation_tests;
 
 #[cfg(test)]
+mod guard_atoms_tests;
+
+#[cfg(test)]
 mod conditional_expression_tests;
 
 #[cfg(test)]
@@ -1873,7 +1884,12 @@ mod assertion_selection_tests;
 #[cfg(test)]
 mod bool_oracle_tests;
 #[cfg(test)]
+mod derived_expectation_tests;
+#[cfg(test)]
 mod known_equality_helpers_tests;
+
+#[cfg(test)]
+mod collection_config_tests;
 
 #[cfg(test)]
 mod conftest_admission_tests;

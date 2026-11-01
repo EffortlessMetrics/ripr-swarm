@@ -76,7 +76,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `self.last == "fault"`
+  Python preview: strengthen the existing related test with a field/object assertion for the missing check `self.last == "fault"`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_guarded_write_unicode_rebound/input --diff <cwd>/fixtures/python_guarded_write_unicode_rebound/diff.patch --mode fast probe:shapes_noter.py:python_preview:a00e0fc8
   ripr context --root <cwd>/fixtures/python_guarded_write_unicode_rebound/input --diff <cwd>/fixtures/python_guarded_write_unicode_rebound/diff.patch --mode fast --at probe:shapes_noter.py:python_preview:a00e0fc8

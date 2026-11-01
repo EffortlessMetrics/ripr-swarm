@@ -41,6 +41,7 @@ mod pinned_shape;
 mod poll_helper;
 mod propagation_witness;
 mod reach;
+mod receiver_unestablished;
 mod related_tests;
 mod reveal;
 mod scanner_transfer;
@@ -91,7 +92,9 @@ pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
     facade_reach_witness, facade_reach_witness_pointer,
 };
-pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
+pub(in crate::analysis) use flow::{
+    local_flow_sinks, predicate_line_arms_all_agree, propagation_evidence_with_witness,
+};
 pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
 pub(in crate::analysis) use gap_admission::{
     CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,
@@ -154,15 +157,18 @@ pub(in crate::analysis) use reach::{
     is_trait_impl_method, names_identifier_outside_fn_definition, owner_may_be_reached_unseen,
     reach_evidence, relation_establishes_reach,
 };
+pub(in crate::analysis) use receiver_unestablished::{
+    mark_receiver_unestablished, withhold_receiver_unestablished_gap,
+};
 pub(in crate::analysis) use related_tests::{
     DependencyEdgeContext, RelatedTestCandidateIndex, assertion_pins_display_string,
     body_contains_owner_call, call_text_may_call_free_function, changes_only_string_literals,
     declared_dependent_package_calls_owner, find_related_tests_with_candidate_index,
     free_helper_call_resolves, impl_self_type_name, inherent_owner_call_resolves,
     is_display_fmt_owner, is_drop_destructor, is_partial_eq_method, manifests_with_unindexed_files,
-    method_call_resolves_to_impl, module_stem, owner_call_text, owner_dispatch_trait,
-    owner_impl_identity_shadowed, package_prefix, requires_inherent_receiver_identity,
-    resolves_method_in_prefix, test_calls_free_function,
+    method_call_resolves_to_impl, module_stem, owner_call_is_direct, owner_call_text,
+    owner_dispatch_trait, owner_impl_identity_shadowed, owner_trait_name, package_prefix,
+    requires_inherent_receiver_identity, resolves_method_in_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;

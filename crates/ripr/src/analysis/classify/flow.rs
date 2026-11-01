@@ -1019,8 +1019,18 @@ fn chain_repeats_adjacent_value(body: &str, value_offset: usize) -> bool {
 
 /// Whether every `{ .. }` arm on one line holds the same statement, so the
 /// predicate decides nothing the next line can observe.
+///
+/// Braces are located on the comment-and-string-masked copy (same length, so
+/// the offsets line up), but the arms are compared as written: masking blanks
+/// string literals, which would make `r = "yes";` and `r = "low";` look equal.
+/// A nested block inside an arm (`if a { if b { .. } else { .. } } else { .. }`)
+/// is not judged: the outer arms say nothing about the inner predicate, so the
+/// reading declines and the caller keeps its established behavior.
 fn inline_arms_all_agree(line: &str) -> bool {
     let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
+    if masked.len() != line.len() {
+        return false;
+    }
     let mut arms = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;
@@ -1029,13 +1039,18 @@ fn inline_arms_all_agree(line: &str) -> bool {
             '{' => {
                 if depth == 0 {
                     start = index + 1;
+                } else {
+                    return false;
                 }
                 depth += 1;
             }
             '}' if depth > 0 => {
                 depth -= 1;
                 if depth == 0 {
-                    arms.push(masked[start..index].trim().trim_end_matches(';').trim());
+                    let Some(arm) = line.get(start..index) else {
+                        return false;
+                    };
+                    arms.push(arm.trim().trim_end_matches(';').trim());
                 }
             }
             _ => {}
@@ -1043,6 +1058,23 @@ fn inline_arms_all_agree(line: &str) -> bool {
     }
     arms.split_first().is_some_and(|(first, rest)| {
         !first.is_empty() && !rest.is_empty() && rest.iter().all(|arm| arm == first)
+    })
+}
+
+/// Whether the predicate line of `owner_fn` at `probe_line` is a one-line `if`
+/// whose arms all hold the same statement, so the condition decides nothing a
+/// test can observe. The shared owner of that reading for diff and repo seams
+/// (#10880, #12053).
+pub(in crate::analysis) fn predicate_line_arms_all_agree(
+    owner_fn: Option<&FunctionSummary>,
+    probe_line: usize,
+) -> bool {
+    owner_fn.is_some_and(|function| {
+        function
+            .body
+            .lines()
+            .nth(probe_line.saturating_sub(function.start_line))
+            .is_some_and(inline_arms_all_agree)
     })
 }
 
@@ -1062,12 +1094,7 @@ fn next_branch_value(
     // line is not the predicate's produced value (#10880; #9843 for the tail
     // form). Arms that differ keep the adjacency rule: `let r = if c { 1 }
     // else { 0 };` really does feed `r` to the next line.
-    if function
-        .body
-        .lines()
-        .nth(start_index)
-        .is_some_and(inline_arms_all_agree)
-    {
+    if predicate_line_arms_all_agree(owner_fn, probe_line) {
         return None;
     }
     function

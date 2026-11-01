@@ -4598,14 +4598,16 @@ mod tests {
         );
 
         assert!(
-            digest.contains(
-                "  Discriminator (observed, advisory): Related test reaches `applyDiscount`"
-            ),
+            digest.contains("  Check (observed, advisory): Related test reaches `applyDiscount`"),
             "expected observed-advisory label in digest; got:\n{digest}"
         );
         assert!(
             !digest.contains("Missing check:"),
             "exposed digest must not claim a missing discriminator; got:\n{digest}"
+        );
+        assert!(
+            !digest.contains("Discriminator (observed"),
+            "the observed-evidence label must use plain words; got:\n{digest}"
         );
     }
 
@@ -4862,7 +4864,7 @@ mod tests {
                 finding.class
             );
             assert!(
-                !digest.contains("Discriminator (observed, advisory)"),
+                !digest.contains("Check (observed, advisory)"),
                 "non-exposed digest must not use the observed-advisory label; got:\n{digest}"
             );
         }
@@ -5278,7 +5280,7 @@ mod tests {
         // command instead of a bare "verify independently" with no route.
         assert!(
             rendered.contains(
-                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`\n"
+                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing check `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`\n"
             ),
             "{rendered}"
         );
@@ -7723,7 +7725,7 @@ mod tests {
 
         assert!(
             flattened.ends_with(
-                "add a co-located test that reaches and observes the changed behavior so a discriminator exists"
+                "add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong"
             ),
             "digest must keep the remedy; got:\n{digest}"
         );

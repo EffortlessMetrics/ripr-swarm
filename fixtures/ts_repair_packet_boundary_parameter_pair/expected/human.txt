@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/pricing.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(discount(100, 100)).toBe(expected)`; run `npx --no-install jest tests/pricing.test.ts`, then rerun `ripr check`
+  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/pricing.test.ts`, add a focused assertion for the missing check `amount == threshold`, shaped like `expect(discount(100, 100)).toBe(expected)`; run `npx --no-install jest tests/pricing.test.ts`, then rerun `ripr check`
   File: src/pricing.ts:2
   Language: typescript
   Language status: preview
@@ -24,8 +24,8 @@ Start here:
     assertion observes a `discount(...)` call at the changed predicate boundary `amount ==
     threshold`; inputs on one side of the boundary do not discriminate the changed comparison
   Related test (1 of 2 matched rows): tests/pricing.test.ts:3 no discount below threshold (the preview adapter could not confirm that this assertion observes the changed behavior)
-  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
-    discriminator `amount == threshold`; the repair packet is complete (advisory: `ripr context --at
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
+    check `amount == threshold`; the repair packet is complete (advisory: `ripr context --at
     <finding-id>` prints it; `ripr repair` covers Rust files only)
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -45,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/input --diff <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:0fb82713
   ripr context --root <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/input --diff <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:0fb82713
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

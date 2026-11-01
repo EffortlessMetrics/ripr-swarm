@@ -181,3 +181,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_module_value_use (16)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless typescript_module_value_use --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

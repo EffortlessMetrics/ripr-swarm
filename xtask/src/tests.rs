@@ -7596,13 +7596,13 @@ jobs:
   dependency-review:
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8362,14 +8362,14 @@ fn workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count() {
 jobs:
   dependency-review:
     steps:
-      - uses: actions/dependency-review-action@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8378,7 +8378,7 @@ jobs:
         workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
 
     assert!(violations.iter().any(|violation| {
-        violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
+        violation.contains("uses `actions/dependency-review-action@` 2 time(s), allowed 1")
     }));
 }
 
@@ -9525,8 +9525,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -9539,6 +9539,48 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         "a skippable result reports success when skipped: {:?}",
         routed_rust_ready_event_contract_violations(&skippable_result)
     );
+    for (what, from, to, needle) in [
+        (
+            "the extension e2e step",
+            "      - name: Read the extension e2e check for the admitted head\n        id: vscode\n",
+            "      - name: Read something else\n        id: other\n",
+            "read the extension e2e check for the admitted head",
+        ),
+        (
+            "the summary branch that fails the Result",
+            "[ \"$VSCODE_CHECK_RESULT\" != success ]",
+            "[ \"$VSCODE_CHECK_RESULT\" = never ]",
+            "fail the Result when the selected extension e2e did not succeed",
+        ),
+        (
+            "the check-run read permission",
+            "  checks: read\n",
+            "",
+            "grant the Result's check-run read",
+        ),
+        (
+            "the same-suite binding of the skip",
+            "((.check_suite.id | tostring) == $suite)",
+            "true",
+            "bind the extension e2e verdict to this request's own successful",
+        ),
+        (
+            "the skipped-check exclusion from the verdict",
+            "[.[] | select(.conclusion != \"skipped\")] | last // {}",
+            "[.[]] | last // {}",
+            "decide the extension e2e verdict by the newest executed check",
+        ),
+    ] {
+        let mutated = workflow.replacen(from, to, 1);
+        assert_ne!(mutated, workflow, "fixture must remove {what}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "removing {what} must be rejected (#12122): {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     for job in ["route", "detect-docs-only", "admission"] {
         let unguarded = workflow.replace(
             "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",
@@ -49204,8 +49246,13 @@ fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
     if upload.contains("if: always()") || upload.contains("if: success()") {
         violations.push("diagnostics upload must not run on success".to_string());
     }
-    if !upload.contains("actions/upload-artifact@v7") {
-        violations.push("diagnostics upload must use actions/upload-artifact@v7".to_string());
+    // The repo pins first-party actions to a commit SHA with the major in the
+    // trailing comment (`actions/upload-artifact@<sha> # v7.x.y`).
+    let pinned_v7 = upload
+        .lines()
+        .any(|line| line.contains("actions/upload-artifact@") && line.contains("# v7"));
+    if !pinned_v7 {
+        violations.push("diagnostics upload must use actions/upload-artifact v7".to_string());
     }
     if !upload.contains("target/ripr/vscode-test-host-diagnostics/") {
         violations
