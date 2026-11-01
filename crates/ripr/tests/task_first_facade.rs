@@ -5693,9 +5693,22 @@ fn quiet_drops_narration_and_keeps_results_and_refusals() -> Result<(), String> 
     // suppressed phase narration is removed (roots and attempt ids differ per
     // workspace, so both are normalized).
     let loud_normalized = normalize_refusal_stderr(&stderr_text(&loud_refusal), &loud_arg, true);
-    for (label, output) in [
+    // Each variant refuses at the same ordinal as the loud control (the first
+    // refusal of a fresh attempt): the retry-budget line only prints from the
+    // second refusal of one attempt, so reusing one attempt would differ for a
+    // reason unrelated to quiet mode.
+    let env_quiet = Fixture::boundary("facade-quiet-env")?;
+    let env_arg = env_quiet.root.to_string_lossy().into_owned();
+    let env_start = run_ripr_env(
+        &env_quiet.root,
+        &["repair", FIXTURE_SEAM, "--root", &env_arg, "--quiet"],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&env_start, 0, "env-quiet fixture repair start");
+    for (label, root_arg, output) in [
         (
             "--quiet",
+            quiet_arg.as_str(),
             run_ripr_env(
                 &quiet.root,
                 &["continue", "--root", &quiet_arg, "--quiet"],
@@ -5704,9 +5717,10 @@ fn quiet_drops_narration_and_keeps_results_and_refusals() -> Result<(), String> 
         ),
         (
             "RIPR_QUIET=1",
+            env_arg.as_str(),
             run_ripr_env(
-                &quiet.root,
-                &["continue", "--root", &quiet_arg],
+                &env_quiet.root,
+                &["continue", "--root", &env_arg],
                 &[("RIPR_QUIET", "1")],
             )?,
         ),
@@ -5730,7 +5744,7 @@ fn quiet_drops_narration_and_keeps_results_and_refusals() -> Result<(), String> 
         }
         assert_refusal_stderr_has_prefix(&stderr);
         assert_eq!(
-            normalize_refusal_stderr(&stderr, &quiet_arg, false),
+            normalize_refusal_stderr(&stderr, root_arg, false),
             loud_normalized,
             "{label} must differ from loud only by the dropped narration:\n{stderr}"
         );
