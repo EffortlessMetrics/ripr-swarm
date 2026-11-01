@@ -90,28 +90,38 @@ static SHARED_SCOPES: Mutex<Option<SharedScopes>> = Mutex::new(None);
 
 fn shared_scope(source: &Arc<str>) -> Option<Arc<MacroScope>> {
     let key = Arc::as_ptr(source).cast::<u8>() as usize;
-    if let Ok(guard) = SHARED_SCOPES.lock()
-        && let Some((weak, scope)) = guard.as_ref().and_then(|map| map.get(&key))
-        && weak
-            .upgrade()
-            .is_some_and(|live| Arc::ptr_eq(&live, source))
     {
-        return scope.clone();
+        let guard = lock_shared_scopes();
+        if let Some((weak, scope)) = guard.as_ref().and_then(|map| map.get(&key))
+            && weak
+                .upgrade()
+                .is_some_and(|live| Arc::ptr_eq(&live, source))
+        {
+            return scope.clone();
+        }
     }
     #[cfg(test)]
     SCOPE_PARSES.with(|parses| parses.set(parses.get() + 1));
     let scope = macro_scope(source).map(Arc::new);
-    if let Ok(mut guard) = SHARED_SCOPES.lock() {
-        let map = guard.get_or_insert_with(HashMap::new);
+    let mut guard = lock_shared_scopes();
+    let map = guard.get_or_insert_with(HashMap::new);
+    if map.len() >= SHARED_SCOPE_ENTRIES {
+        map.retain(|_, (weak, _)| weak.strong_count() > 0);
         if map.len() >= SHARED_SCOPE_ENTRIES {
-            map.retain(|_, (weak, _)| weak.strong_count() > 0);
-            if map.len() >= SHARED_SCOPE_ENTRIES {
-                map.clear();
-            }
+            map.clear();
         }
-        map.insert(key, (Arc::downgrade(source), scope.clone()));
     }
+    map.insert(key, (Arc::downgrade(source), scope.clone()));
     scope
+}
+
+/// The cache holds only derived data that a miss re-derives, so a panic
+/// elsewhere while the lock was held leaves nothing to repair: recover the
+/// guard instead of silently disabling sharing for the rest of the process.
+fn lock_shared_scopes() -> std::sync::MutexGuard<'static, Option<SharedScopes>> {
+    SHARED_SCOPES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl Clone for MacroVisibility {
@@ -1333,5 +1343,20 @@ mod tests {
         let copy: Arc<str> = Arc::from(&*source);
         let other = build(&copy).scope(&path);
         assert!(other.is_some_and(|other| a.as_ref().is_some_and(|a| !Arc::ptr_eq(&other, a))));
+    }
+
+    #[test]
+    fn a_stale_entry_at_a_reused_address_is_not_returned() {
+        let source: Arc<str> = Arc::from("macro_rules! t { () => { #[test] fn a() {} }; }\n");
+        let key = Arc::as_ptr(&source).cast::<u8>() as usize;
+        // An entry at this address whose `Weak` points at a freed allocation,
+        // as after the address was reused: it must be ignored, not returned.
+        let dead: Weak<str> = Arc::downgrade(&Arc::<str>::from("fn gone() {}"));
+        let bogus = Arc::new(MacroScope::default());
+        lock_shared_scopes()
+            .get_or_insert_with(HashMap::new)
+            .insert(key, (dead, Some(Arc::clone(&bogus))));
+        let derived = shared_scope(&source);
+        assert!(derived.is_some_and(|scope| !Arc::ptr_eq(&scope, &bogus)));
     }
 }
