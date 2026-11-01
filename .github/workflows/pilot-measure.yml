@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       timeout_ms:
-        description: "ripr pilot --timeout-ms (milliseconds)"
+        description: "ripr pilot --timeout-ms in milliseconds; supported 1..2700000 (45 min), larger values are clamped, invalid values use 1800000"
         required: false
         default: "1800000"
         type: string
@@ -63,11 +63,20 @@ jobs:
         run: |
           out="$RUNNER_TEMP/pilot-self"
           ripr="$RUNNER_TEMP/ripr-target/release/ripr"
+          eff=1800000
+          note=""
+          case "$TIMEOUT_MS" in
+            ''|*[!0-9]*|0) note="; input '$TIMEOUT_MS' invalid, default used" ;;
+            ??????????*) eff=99999999 ;;
+            *) eff=$((10#$TIMEOUT_MS)) ;;
+          esac
+          if [ "$eff" -le 0 ]; then eff=1800000; note="; input '$TIMEOUT_MS' not positive, default used"; fi
+          if [ "$eff" -gt 2700000 ]; then eff=2700000; note="; input '$TIMEOUT_MS' clamped to the 2700000 maximum"; fi
           status=0
-          "$ripr" pilot --root "$GITHUB_WORKSPACE" --out "$out" --timeout-ms "${TIMEOUT_MS:-1800000}" --quiet >/dev/null 2>"$RUNNER_TEMP/pilot-self.stderr" || status=$?
+          "$ripr" pilot --root "$GITHUB_WORKSPACE" --out "$out" --timeout-ms "$eff" --quiet >/dev/null 2>"$RUNNER_TEMP/pilot-self.stderr" || status=$?
           {
             echo "## ripr pilot on this repository (${GITHUB_SHA})"
-            echo "exit code: ${status}; timeout_ms: ${TIMEOUT_MS:-1800000}; build dir: $RUNNER_TEMP/ripr-target (outside the pilot root $GITHUB_WORKSPACE; target/ in root: $([ -d "$GITHUB_WORKSPACE/target" ] && echo present || echo absent))"
+            echo "exit code: ${status}; timeout_ms: ${eff}${note}; build dir: $RUNNER_TEMP/ripr-target (outside the pilot root $GITHUB_WORKSPACE; target/ in root: $([ -d "$GITHUB_WORKSPACE/target" ] && echo present || echo absent))"
             if [ -f "$out/repo-exposure.json" ]; then echo "repo-exposure.json: present, $(stat -c %s "$out/repo-exposure.json") bytes"; else echo "repo-exposure.json: absent"; fi
             echo "pilot-summary.json: $(jq -r '"status \(.status // "absent"); reason \(.reason // "none")"' "$out/pilot-summary.json" 2>&1 || echo absent)"
             echo '```'
