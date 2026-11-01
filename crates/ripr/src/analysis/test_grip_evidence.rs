@@ -300,11 +300,14 @@ pub(crate) struct EvidencePass<'index> {
     /// incomplete. Once set, no seam reads them; every seam gets the fail-closed
     /// stand-in instead.
     warm_failed: std::sync::atomic::AtomicBool,
-    /// Files of the seams answered with the stand-in, for the named limitation.
+    /// Files of every seam answered with the stand-in. The failure is
+    /// pass-wide (the memos are shared), so this is the scope of the pass's
+    /// stand-ins, not the file whose input caused the panic.
     incomplete_files: std::sync::Mutex<BTreeSet<PathBuf>>,
-    /// Test-only fault injection: panic inside the warm.
+    /// Test-only fault injection: 1 panics before any table is built, 2 panics
+    /// after the macro-site scan memo is populated and before the rest.
     #[cfg(test)]
-    inject_warm_panic: std::sync::atomic::AtomicBool,
+    inject_warm_panic: std::sync::atomic::AtomicU8,
 }
 
 impl<'index> EvidencePass<'index> {
@@ -326,7 +329,7 @@ impl<'index> EvidencePass<'index> {
             warm_failed: std::sync::atomic::AtomicBool::new(false),
             incomplete_files: std::sync::Mutex::new(BTreeSet::new()),
             #[cfg(test)]
-            inject_warm_panic: std::sync::atomic::AtomicBool::new(false),
+            inject_warm_panic: std::sync::atomic::AtomicU8::new(0),
         }
     }
 
@@ -493,8 +496,9 @@ impl<'index> EvidencePass<'index> {
     ) {
         self.shared_tables_warmed.call_once(|| {
             // #11524: a panic here must not unwind the caller or leave a
-            // possibly-incomplete memo readable. The payload is dropped: it
-            // can quote repository text.
+            // possibly-incomplete memo readable. The payload is dropped from
+            // evidence and findings because it can quote repository text; the
+            // process panic hook may still report it separately.
             let warmed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 cancellation::with_optional_token(token, || {
                     crate::analysis::committed_source::with_overlay(overlay.clone(), || {
@@ -504,7 +508,7 @@ impl<'index> EvidencePass<'index> {
                             return;
                         }
                         #[cfg(test)]
-                        if self.inject_warm_panic.load(Ordering::Acquire) {
+                        if self.inject_warm_panic.load(Ordering::Acquire) == 1 {
                             std::panic::resume_unwind(Box::new(
                                 "injected seam warm panic (#11524)",
                             ));
@@ -512,6 +516,12 @@ impl<'index> EvidencePass<'index> {
                         let started = Instant::now();
                         context.prime_pin_syntax_scan();
                         trace_latency_phase("evidence_macro_scan", "primed", started.elapsed());
+                        #[cfg(test)]
+                        if self.inject_warm_panic.load(Ordering::Acquire) == 2 {
+                            std::panic::resume_unwind(Box::new(
+                                "injected seam warm panic after scan (#11524)",
+                            ));
+                        }
                         if cancellation::checkpoint().is_err() {
                             return;
                         }

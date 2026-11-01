@@ -90,6 +90,17 @@ fn evidence_entrypoint_cancelled_1000_pays_zero_warm_scans() -> Result<(), Strin
 /// closed with a named producer-failure limitation on its file.
 #[test]
 fn a_panicking_shared_table_warm_fails_every_seam_closed() -> Result<(), String> {
+    warm_panic_fails_closed(1)
+}
+
+/// The panic lands after the macro-site scan memo is populated, so the memos
+/// are partially built: the stand-in must not depend on them being empty.
+#[test]
+fn a_warm_panic_after_the_scan_memo_is_populated_fails_every_seam_closed() -> Result<(), String> {
+    warm_panic_fails_closed(2)
+}
+
+fn warm_panic_fails_closed(point: u8) -> Result<(), String> {
     use crate::analysis::seam_classification::classify_seams;
     use crate::analysis::seams::SeamGripClass;
     use crate::analysis_outcome::AnalysisLimitationKind;
@@ -109,9 +120,19 @@ fn a_panicking_shared_table_warm_fails_every_seam_closed() -> Result<(), String>
     assert!(control_pass.producer_failure_limitations()?.is_empty());
 
     let pass = EvidencePass::new(&index);
+    let context = pass.context.as_ref().ok_or("fixture context must build")?;
+    assert_eq!(context.workspace_scan_passes(), 0);
     pass.inject_warm_panic
-        .store(true, std::sync::atomic::Ordering::Release);
+        .store(point, std::sync::atomic::Ordering::Release);
     let evidence = pass.evidence_for(&seams);
+    if point == 2 {
+        assert!(
+            context.workspace_scan_passes() >= 1,
+            "the scan memo must be populated before the panic"
+        );
+    } else {
+        assert_eq!(context.workspace_scan_passes(), 0);
+    }
     assert_eq!(evidence.len(), 1_000, "the run keeps going");
     for record in &evidence {
         assert_eq!(record.reach.summary, SEAM_EVIDENCE_INCOMPLETE);
