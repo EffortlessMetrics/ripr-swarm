@@ -634,3 +634,85 @@ fn doctest_asserting_against_the_constant_keeps_the_declaration() -> Result<(), 
     let repo = Repo::create(old, &banner_new(old), BANNER_SELF_TEST)?;
     assert_declaration_kept("doctest", &repo)
 }
+
+const BANNER_FROM_EXPECTED: &str = "use fx::banner_line;\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), expected());\n}\n";
+
+#[test]
+fn constant_copied_under_a_tests_fixtures_dir_keeps_the_declaration() -> Result<(), String> {
+    // `tests/fixtures/mod.rs` is compiled through `mod fixtures;` although
+    // workspace discovery skips `fixtures` directories.
+    let repo = Repo::create_with_files(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        "mod fixtures;\n\nuse fx::banner_line;\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), format!(\"[{}]\", fixtures::EXPECTED_BANNER));\n}\n",
+        &[(
+            "tests/fixtures/mod.rs",
+            "pub const EXPECTED_BANNER: &str = fx::BANNER;\n",
+        )],
+    )?;
+    assert_declaration_kept("tests/fixtures", &repo)
+}
+
+#[test]
+fn module_loaded_through_a_path_attribute_keeps_the_declaration() -> Result<(), String> {
+    let repo = Repo::create_with_files(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        &format!(
+            "#[path = \"helpers.rs.in\"]\nmod helpers;\nuse helpers::expected;\n\n{BANNER_FROM_EXPECTED}"
+        ),
+        &[(
+            "tests/helpers.rs.in",
+            "pub fn expected() -> String {\n    format!(\"[{}]\", fx::BANNER)\n}\n",
+        )],
+    )?;
+    assert_declaration_kept("#[path] module", &repo)
+}
+
+#[test]
+fn included_text_keeps_the_declaration() -> Result<(), String> {
+    let repo = Repo::create_with_files(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        &format!("include!(\"expected.inc\");\n\n{BANNER_FROM_EXPECTED}"),
+        &[(
+            "tests/expected.inc",
+            "fn expected() -> String {\n    format!(\"[{}]\", fx::BANNER)\n}\n",
+        )],
+    )?;
+    assert_declaration_kept("include!", &repo)
+}
+
+#[test]
+fn reader_referenced_as_a_value_keeps_the_declaration() -> Result<(), String> {
+    // `RENDER` holds the reader itself, outside any function body.
+    let (old, new) = banner_with("\npub const RENDER: fn() -> String = banner_line;\n");
+    let repo = Repo::create(
+        &old,
+        &new,
+        "use fx::{banner_line, RENDER};\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), RENDER());\n}\n",
+    )?;
+    assert_declaration_kept("reader as a value", &repo)
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_test_file_keeps_the_declaration() -> Result<(), String> {
+    // The link target sits under the ignored `target/`, so only following
+    // the link would reveal its mention of the constant; the scan refuses
+    // any symlink instead.
+    let repo = Repo::create(BANNER_OLD, &banner_new(BANNER_OLD), BANNER_SELF_TEST)?;
+    std::fs::create_dir_all(repo.0.join("target/shared")).map_err(|e| e.to_string())?;
+    repo.write(
+        "target/shared/expected.rs",
+        "pub fn expected() -> String {\n    format!(\"[{}]\", fx::BANNER)\n}\n",
+    )?;
+    std::os::unix::fs::symlink(
+        "../target/shared/expected.rs",
+        repo.0.join("tests/shared.rs"),
+    )
+    .map_err(|e| e.to_string())?;
+    repo.git(&["add", "tests/shared.rs"])?;
+    repo.git(&["commit", "-qm", "link"])?;
+    assert_declaration_kept("symlink", &repo)
+}

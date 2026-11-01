@@ -321,15 +321,24 @@ only when all of these hold:
   inline module chain is opened twice (`#[cfg]` alternatives); and no
   `macro_rules! format` exists in the indexed workspace;
 - over the raw text (comments, strings, doc comments and macro bodies
-  included) of every Rust file the workspace discovery finds, the name as a
-  whole word occurs exactly twice: once on the declaration and once in the
+  included) of every `.rs` file under the root, walked skipping only `.git`
+  and `target` (so `fixtures` and every other directory a test can compile
+  are read), the name as a whole word occurs exactly twice: once on the declaration and once in the
   reader's returned `format!`. Any other occurrence refuses: a test, a test
   helper, a doc test, a `use .. as` alias, a path-qualified read
   (`crate::fx::BANNER`), a copy into another constant, a macro body or a
   comment. Such a mention may carry the constant's value into a test's
   expected side (`assert_eq!(banner_line(), format!("[{BANNER}]"))` tracks
   the edit), which only the value-flow evaluation on the declaration judges.
-  The rule does not depend on where tests live, so an alias cannot dodge it;
+  The rule does not depend on where tests live, so an alias cannot dodge it.
+  The same scan refuses when any entry is a symlink or of unknown type, a
+  Rust file is unreadable or not UTF-8, any file holds `include!` or
+  `#[path`, any file defines `macro_rules! format`, or the reader is named
+  other than by its `fn` line, a call, or a plain `use` (for example
+  `const X: fn() -> String = banner_line;`). It also refuses past 200,000
+  directory entries, 20,000 Rust files or a 4 MiB Rust file. It runs only
+  after every cheaper guard has passed, once per surviving changed
+  constant;
 - there is exactly one reader, and no other production code names it, so a
   test cannot build its expected side from a second reader (`tag()`) or a
   caller of the reader;

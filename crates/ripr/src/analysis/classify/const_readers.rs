@@ -13,7 +13,7 @@ use crate::analysis::facts::{
 };
 use crate::analysis::rust_index::find_file_facts;
 use crate::domain::Probe;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Readers tried per changed constant, matching the `ripr check` stub route.
 const READER_LIMIT: usize = 6;
@@ -100,7 +100,6 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
         || imports_name(&masked, name)
         || imports_name(&masked, "format")
         || repeats_inline_module(&masked)
-        || defines_format_macro(index)
     {
         return Vec::new();
     }
@@ -127,7 +126,7 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
         return Vec::new();
     }
     let mut found = Vec::new();
-    for owner in readers {
+    for owner in &readers {
         let mut returns = facts.data().probe_shapes.iter().filter(|shape| {
             shape.kind == ProbeShapeKind::ReturnValue
                 && owner.start_line <= shape.start_line
@@ -153,32 +152,105 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
     // `use .. as` alias, a path-qualified read, a doc test, a macro body or a
     // comment) may carry the constant's value somewhere ripr does not follow.
     match found.as_slice() {
-        [shape] if name_confined(root, file, name, declaration_line, shape.start_line) => found,
+        [shape]
+            if name_confined(
+                root,
+                file,
+                name,
+                &reader.name,
+                declaration_line,
+                shape.start_line,
+            ) =>
+        {
+            found
+        }
         _ => Vec::new(),
     }
 }
 
-/// Whether the whole word `name` occurs, over the raw text (comments,
-/// strings, doc comments and macro bodies included) of every Rust file
-/// `discover_rust_files` finds under `root`, exactly once on
-/// `declaration_line` and once on `return_line` of `file`, and nowhere else.
-/// An unreadable file, or a `file` the discovery does not list, fails
-/// closed. `ripr check` and `ripr repair` both read this same scan.
+/// Bounds on the raw workspace scan: past any of them the scan refuses
+/// rather than reading partially.
+const SCAN_MAX_ENTRIES: usize = 200_000;
+const SCAN_MAX_RUST_FILES: usize = 20_000;
+const SCAN_MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Every `.rs` file under `root` as (relative path, raw text), from a walk
+/// that skips only `.git` and `target`: unlike workspace discovery it reads
+/// `fixtures`, `.ripr` and every other directory, since a test can compile
+/// any of them (`mod fixtures;`). `None` (refuse) on a symlink, an entry of
+/// unknown type, an unreadable or non-UTF-8 Rust file, or past the bounds.
+fn read_workspace_rust(root: &Path) -> Option<Vec<(PathBuf, String)>> {
+    let mut pending = vec![PathBuf::new()];
+    let mut files = Vec::new();
+    let mut entries = 0usize;
+    while let Some(relative) = pending.pop() {
+        for entry in std::fs::read_dir(root.join(&relative)).ok()? {
+            let entry = entry.ok()?;
+            entries += 1;
+            if entries > SCAN_MAX_ENTRIES {
+                return None;
+            }
+            let kind = entry.file_type().ok()?;
+            let name = entry.file_name();
+            let child = relative.join(&name);
+            if kind.is_symlink() {
+                return None;
+            } else if kind.is_dir() {
+                if name != ".git" && name != "target" {
+                    pending.push(child);
+                }
+            } else if kind.is_file() {
+                if child.extension().is_some_and(|ext| ext == "rs") {
+                    if files.len() >= SCAN_MAX_RUST_FILES
+                        || entry.metadata().ok()?.len() > SCAN_MAX_FILE_BYTES
+                    {
+                        return None;
+                    }
+                    let text = std::fs::read_to_string(root.join(&child)).ok()?;
+                    files.push((child, text));
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+    Some(files)
+}
+
+/// Whether, over the raw text (comments, strings, doc comments and macro
+/// bodies included) of every Rust file under `root` ([`read_workspace_rust`]):
+/// - the whole word `name` occurs exactly once on `declaration_line` and once
+///   on `return_line` of `file`, and nowhere else;
+/// - no file pulls in text ripr does not scan (`include!`, `#[path`);
+/// - no file defines `macro_rules! format`;
+/// - the reader `reader` is named only by its own `fn` line, by calls, and by
+///   plain `use` lines (no `as` rename): any other mention, such as
+///   `const X: fn() -> String = reader;`, can carry its value elsewhere.
+///
+/// It fails closed when the scan refuses or does not list `file`. `ripr
+/// check` and `ripr repair` both read this same scan.
 pub(in crate::analysis) fn name_confined(
     root: &Path,
     file: &Path,
     name: &str,
+    reader: &str,
     declaration_line: usize,
     return_line: usize,
 ) -> bool {
+    let Some(files) = read_workspace_rust(root) else {
+        return false;
+    };
     let target = super::related_tests::normalize_path(file);
     let mut saw_file = false;
-    for path in crate::analysis::workspace_rust_files(root) {
-        let Ok(text) = std::fs::read_to_string(root.join(&path)) else {
+    for (path, text) in &files {
+        if text.contains("include!") || text.contains("#[path") || text_defines_format_macro(text) {
             return false;
-        };
-        let lines = word_lines(&text, name);
-        if super::related_tests::normalize_path(&path) == target {
+        }
+        if !reader_mentions_are_plain(text, reader) {
+            return false;
+        }
+        let lines = word_lines(text, name);
+        if super::related_tests::normalize_path(path) == target {
             saw_file = true;
             if lines != [declaration_line, return_line] {
                 return false;
@@ -188,6 +260,32 @@ pub(in crate::analysis) fn name_confined(
         }
     }
     saw_file
+}
+
+/// Whether every whole-word mention of `reader` in `text` is its `fn` line,
+/// a call (`reader(`), or a `use` line that does not rename.
+fn reader_mentions_are_plain(text: &str, reader: &str) -> bool {
+    text.lines().all(|line| {
+        let trimmed = line.trim_start();
+        let bytes = line.as_bytes();
+        line.match_indices(reader).all(|(start, _)| {
+            let end = start + reader.len();
+            let whole = start
+                .checked_sub(1)
+                .and_then(|before| bytes.get(before))
+                .is_none_or(|byte| !is_ident_byte(*byte))
+                && !bytes.get(end).is_some_and(|byte| is_ident_byte(*byte));
+            if !whole {
+                return true;
+            }
+            let before = line.get(..start).unwrap_or_default();
+            let after = line.get(end..).unwrap_or_default().trim_start();
+            ends_with_word(before.trim_end(), "fn")
+                || after.starts_with('(')
+                || ((trimmed.starts_with("use ") || trimmed.starts_with("pub use "))
+                    && !contains_word(line, "as"))
+        })
+    })
 }
 
 /// The 1-based line of every whole-word occurrence of `name` in `text`, one
@@ -224,24 +322,20 @@ fn reader_has_production_callers(index: &RustIndex, reader: &FunctionSummary) ->
     })
 }
 
-/// Whether a workspace `macro_rules! format` could replace `std::format!`.
-fn defines_format_macro(index: &RustIndex) -> bool {
-    index.files().iter().any(|(_, facts)| {
-        facts.source.contains("macro_rules!") && {
-            let masked = mask_comments_and_strings(&facts.source);
-            masked.match_indices("macro_rules!").any(|(at, found)| {
-                let rest = masked
-                    .get(at + found.len()..)
-                    .unwrap_or_default()
-                    .trim_start();
-                rest.strip_prefix("format").is_some_and(|after| {
-                    after
-                        .as_bytes()
-                        .first()
-                        .is_none_or(|byte| !is_ident_byte(*byte))
-                })
+/// Whether `text` defines `macro_rules! format`, which could replace
+/// `std::format!`.
+fn text_defines_format_macro(text: &str) -> bool {
+    text.match_indices("macro_rules!").any(|(at, found)| {
+        text.get(at + found.len()..)
+            .unwrap_or_default()
+            .trim_start()
+            .strip_prefix("format")
+            .is_some_and(|after| {
+                after
+                    .as_bytes()
+                    .first()
+                    .is_none_or(|byte| !is_ident_byte(*byte))
             })
-        }
     })
 }
 
@@ -698,6 +792,19 @@ mod tests {
         assert!(repeats_inline_module("mod a {\n}\nmod a {\n}\n"));
         assert!(repeats_inline_module("pub mod a\n{\n}\n"));
         assert!(!repeats_inline_module("mod a {\n}\nmod b {\n}\nmod c;\n"));
+    }
+
+    #[test]
+    fn only_definition_calls_and_plain_imports_mention_the_reader() {
+        use super::reader_mentions_are_plain as plain;
+        assert!(plain(
+            "use fx::greet;\npub fn greet(n: &str) -> String {\n    x\n}\nfn t() { greet (\"a\"); }\n",
+            "greet"
+        ));
+        assert!(!plain("const X: fn(&str) -> String = greet;\n", "greet"));
+        assert!(!plain("use fx::greet as g;\n", "greet"));
+        assert!(!plain("let f = greet;\n", "greet"));
+        assert!(plain("fn greeting() {}\n", "greet"));
     }
 
     #[test]
