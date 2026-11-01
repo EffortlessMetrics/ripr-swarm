@@ -411,6 +411,10 @@ fn route_not_ready_reason(
     // The skeleton's call to the owner is the missing test input when no test
     // calls the owner at all, so that gap does not keep the stub route back.
     let without_owner_gap = owner_call_gap_covered_by_stub(entry, missing_evidence);
+    // Nothing else missing once the module blocker or the owner-call gap is
+    // routed means only the test home or the call is absent, and the stub
+    // supplies it (#11466, #11895).
+    let stub_supplies_rest = adds_module || without_owner_gap.is_some();
     let missing_evidence = without_owner_gap.as_deref().unwrap_or(missing_evidence);
     // #10622: a Rust predicate boundary whose only missing fact
     // is the boundary discriminator has a concrete manual route —
@@ -423,14 +427,15 @@ fn route_not_ready_reason(
     // route, so the bare label stays. The seam inventory this
     // gate reads is Rust-only, so the kind check is also the
     // language check.
-    // No missing fact left once the module blocker is routed means the seam
-    // already has its boundary input (#11466): only the test home is absent,
-    // and the stub adds it, so the predicate route applies there too.
+    // No missing fact left once the module blocker or the owner-call gap is
+    // routed means the seam already has its boundary input (#11466, #11895):
+    // only the test home or the call is absent, and the stub supplies it, so
+    // the predicate route applies there too.
     let boundary_route = match missing_evidence {
         [missing] => {
             missing.starts_with("producer-owned missing discriminator fact: boundary_value")
         }
-        [] => adds_module,
+        [] => stub_supplies_rest,
         _ => false,
     };
     if boundary_route && entry.seam.kind() == crate::analysis::seams::SeamKind::PredicateBoundary {
@@ -466,7 +471,7 @@ fn route_not_ready_reason(
     // alone picks the stub kind.
     let manual_stub_kind = match missing_evidence {
         [missing] => crate::analysis::repair_route::stub_kind_for_missing_evidence(missing),
-        [] if adds_module => match entry.seam.kind() {
+        [] if stub_supplies_rest => match entry.seam.kind() {
             crate::analysis::seams::SeamKind::ReturnValue => Some("return_value"),
             crate::analysis::seams::SeamKind::ErrorVariant => Some("error_path"),
             _ => None,
@@ -4273,6 +4278,98 @@ pub(crate) mod tests {
         let reason = route_not_ready_reason(&plain, "repair route not ready", &[], root);
         assert!(!reason.contains("--kind predicate"), "{reason}");
         Ok(())
+    }
+
+    /// #11895: when the only missing fact is the test input that reaches the
+    /// owner and no test calls the owner directly, the stub's own call supplies
+    /// it, so the predicate stub route is named; a direct caller or a second
+    /// missing fact keeps it out.
+    #[test]
+    fn owner_call_gap_alone_names_the_predicate_stub_route() {
+        use crate::analysis::seams::SeamGripClass;
+        let root = RefusalRoot::named(Path::new("/repo"));
+        let activation = vec!["incomplete evidence stage: activation".to_string()];
+
+        let none = gate_entry(SeamGripClass::ActivationUnknown, Vec::new());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &activation, root);
+        assert!(
+            reason.contains("--at src/pricing.rs:88 --kind predicate"),
+            "{reason}"
+        );
+
+        // Negatives: a direct caller keeps the gap (the stub would not close
+        // it), and another missing fact means the stub alone is not enough.
+        let direct = gate_entry(SeamGripClass::ActivationUnknown, vec![weak_related_test()]);
+        let reason = route_not_ready_reason(&direct, "repair route not ready", &activation, root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
+        let mut more = activation.clone();
+        more.push("incomplete evidence stage: propagation".to_string());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &more, root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
+        let mut target = activation.clone();
+        target.push(crate::analysis::repair_route::SAFE_TEST_TARGET_EVIDENCE.to_string());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &target, root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
+    }
+
+    /// #11895: the return-value and error-path stubs are named too when the
+    /// owner-call gap is the only missing fact; a direct caller or a seam kind
+    /// with no stub kind keeps them out.
+    #[test]
+    fn owner_call_gap_alone_names_the_return_and_error_stub_routes() {
+        use crate::analysis::seams::{
+            ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
+        };
+        let root = RefusalRoot::named(Path::new("/repo"));
+        let activation = vec!["incomplete evidence stage: activation".to_string()];
+        let build = |kind, required, related: Vec<_>| {
+            let mut entry = gate_entry(SeamGripClass::ActivationUnknown, related);
+            entry.seam = RepoSeam::new(
+                "src/pricing.rs",
+                "pricing::discounted_total",
+                kind,
+                42,
+                88,
+                "changed value",
+                required,
+                ExpectedSink::ReturnValue,
+            );
+            entry
+        };
+        let ret_required = || RequiredDiscriminator::ReturnValue {
+            description: "changed value".to_string(),
+        };
+
+        let ret = build(SeamKind::ReturnValue, ret_required(), Vec::new());
+        let reason = route_not_ready_reason(&ret, "repair route not ready", &activation, root);
+        assert!(
+            reason.contains("--at src/pricing.rs:88 --kind return_value"),
+            "{reason}"
+        );
+
+        let err = build(
+            SeamKind::ErrorVariant,
+            RequiredDiscriminator::ErrorVariant {
+                variant: "Bad".to_string(),
+            },
+            Vec::new(),
+        );
+        let reason = route_not_ready_reason(&err, "repair route not ready", &activation, root);
+        assert!(reason.contains("--kind error_path"), "{reason}");
+
+        // Negatives: a direct caller keeps the gap, and a second missing fact
+        // keeps the stub out.
+        let direct = build(
+            SeamKind::ReturnValue,
+            ret_required(),
+            vec![weak_related_test()],
+        );
+        let reason = route_not_ready_reason(&direct, "repair route not ready", &activation, root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
+        let mut more = activation.clone();
+        more.push("incomplete evidence stage: propagation".to_string());
+        let reason = route_not_ready_reason(&ret, "repair route not ready", &more, root);
+        assert!(!reason.contains("ripr agent stub"), "{reason}");
     }
 
     /// #11466: a propagation/observation-unknown seam that a test already runs

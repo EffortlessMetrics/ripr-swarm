@@ -43,7 +43,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_polling_helper_counterfeit_import_root/input --diff <cwd>/fixtures/rust_polling_helper_counterfeit_import_root/diff.patch --mode fast probe:src_lib.rs:return_value:e14b9880
   ripr context --root <cwd>/fixtures/rust_polling_helper_counterfeit_import_root/input --diff <cwd>/fixtures/rust_polling_helper_counterfeit_import_root/diff.patch --mode fast --at probe:src_lib.rs:return_value:e14b9880
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 No test stub here: the owner is async and needs a runtime the stub cannot pick
 Write this test by hand: call the function, run the future it returns to completion under your async test runtime (await it), and assert the exact value it produces. ripr has no repair route for this kind of change yet, so there is no command to run; add the test, then rerun `ripr check`.
 

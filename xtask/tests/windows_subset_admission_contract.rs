@@ -141,6 +141,14 @@ fn production_producer_preserves_all_native_commands_oracles_and_cleanup() -> Re
             "Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2",
             "Swatinem/rust-cache@v2",
         )
+        .replace(
+            "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0",
+            "actions/checkout@v6",
+        )
+        .replace(
+            "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2",
+            "actions/upload-artifact@v7",
+        )
         // The embedded Python assertions search the workflow for the pinned
         // `uses:` spelling, so they carry the commit with no trailing comment.
         .replace(

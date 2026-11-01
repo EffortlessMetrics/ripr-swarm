@@ -46,7 +46,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     }
                     None => {
                         return Err(CommandError::from(
-                            "missing value for --profile".to_string(),
+                            "missing value for --profile; pass a value right after it".to_string(),
                         ));
                     }
                 };
@@ -59,10 +59,16 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
                     Some("--help" | "-h" | "--json" | "--timings" | "--profile" | "--root") => {
-                        return Err(CommandError::from("missing value for --root".to_string()));
+                        return Err(CommandError::from(
+                            "missing value for --root; pass a value right after it".to_string(),
+                        ));
                     }
                     Some(value) => value,
-                    None => return Err(CommandError::from("missing value for --root".to_string())),
+                    None => {
+                        return Err(CommandError::from(
+                            "missing value for --root; pass a value right after it".to_string(),
+                        ));
+                    }
                 };
                 // #4318: a repeated documented flag is a usage mistake with a
                 // name of its own; accusing `--root` of being unknown sends
@@ -7499,7 +7505,7 @@ mod tests {
         assert_eq!(
             doctor(&args(&["--root"])),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
     }
@@ -7733,7 +7739,7 @@ mod tests {
             assert_eq!(
                 doctor(&args(&["--root", flag])),
                 Err(CommandError::Failure(
-                    "missing value for --root".to_string()
+                    "missing value for --root; pass a value right after it".to_string()
                 )),
                 "a known flag cannot be the --root value: {flag}"
             );

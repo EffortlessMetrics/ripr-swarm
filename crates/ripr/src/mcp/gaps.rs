@@ -315,6 +315,18 @@ pub(crate) struct GapItem {
     /// finding's probe family (`describe_for_family`), so the MCP reason cannot
     /// drift from them (#11821).
     static_limit_reason: Option<String>,
+    /// Whether the finding's probe family is `predicate`, captured for the
+    /// terminal-static-limit marker (#11622).
+    predicate_family: bool,
+}
+
+/// The wire token of a producer static limit, shared by the limitation
+/// document and the terminal-static-limit marker so they cannot disagree.
+fn static_limit_token(kind: crate::domain::StaticLimitKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "static_limitation".to_string())
 }
 
 impl GapItem {
@@ -380,6 +392,7 @@ impl GapItem {
             candidate_actionable: finding.is_candidate_actionable(),
             evidence_sha256,
             repair_readiness,
+            predicate_family: finding.probe.family == crate::domain::ProbeFamily::Predicate,
             static_limit: finding.static_limit_kind,
             static_limit_reason: finding
                 .static_limit_kind
@@ -389,6 +402,25 @@ impl GapItem {
 
     pub(crate) fn class(&self) -> &str {
         &self.class
+    }
+
+    /// The producer's typed static limit when this is an `infection_unknown`
+    /// predicate item (#11622): ripr named a static limit on the finding
+    /// itself, so neither a refresh on unchanged input nor ripr's repair
+    /// route changes it. Read from committed facts only; it adds no verdict.
+    pub(crate) fn terminal_static_limit(&self) -> Option<Value> {
+        if !(self.predicate_family && self.class == "infection_unknown") {
+            return None;
+        }
+        let kind = self.static_limit?;
+        Some(json!({
+            "kind": static_limit_token(kind),
+            "reason": self
+                .static_limit_reason
+                .clone()
+                .unwrap_or_else(|| kind.describe().to_string()),
+            "recovery": kind.next_step(),
+        }))
     }
 
     /// The earliest producer fact that prevents a safe repair route for this
@@ -421,10 +453,7 @@ impl GapItem {
         let refresh_recovery =
             "call ripr_refresh and re-read this limitation against the new snapshot";
         let limitation = if let Some(kind) = self.static_limit {
-            let kind_token = serde_json::to_value(kind)
-                .ok()
-                .and_then(|value| value.as_str().map(str::to_string))
-                .unwrap_or_else(|| "static_limitation".to_string());
+            let kind_token = static_limit_token(kind);
             json!({
                 "kind": kind_token,
                 "stage": "producer_static_limit",
@@ -1991,6 +2020,46 @@ mod tests {
             .pointer(&format!("/limitation/{name}"))
             .and_then(Value::as_str)
             .ok_or_else(|| format!("limitation document lacks {name}: {document}"))
+    }
+
+    /// #11622: the terminal marker needs all three typed facts together:
+    /// `infection_unknown` class, `predicate` family and a producer static
+    /// limit. Removing any one of them removes the marker.
+    #[test]
+    fn terminal_static_limit_needs_class_family_and_a_typed_limit() -> Result<(), String> {
+        let mut base = finding()?;
+        base.canonical_gap = None;
+        base.class = crate::domain::ExposureClass::InfectionUnknown;
+        base.probe.family = crate::domain::ProbeFamily::Predicate;
+        base.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
+        let item = GapItem::from_finding(&base, Path::new("."))?;
+        let marker = item
+            .terminal_static_limit()
+            .ok_or("infection_unknown predicate with a limit must carry the marker")?;
+        if marker["kind"] != "unsupported_syntax"
+            || marker["reason"] != crate::domain::StaticLimitKind::UnsupportedSyntax.describe()
+        {
+            return Err(format!("marker lost the typed limit: {marker}"));
+        }
+        let mut no_limit = base.clone();
+        no_limit.static_limit_kind = None;
+        let mut other_class = base.clone();
+        other_class.class = crate::domain::ExposureClass::WeaklyExposed;
+        let mut other_family = base.clone();
+        other_family.probe.family = crate::domain::ProbeFamily::ReturnValue;
+        for (label, changed) in [
+            ("no typed limit", no_limit),
+            ("other class", other_class),
+            ("other family", other_family),
+        ] {
+            if GapItem::from_finding(&changed, Path::new("."))?
+                .terminal_static_limit()
+                .is_some()
+            {
+                return Err(format!("{label} must not carry the terminal marker"));
+            }
+        }
+        Ok(())
     }
 
     /// #1898: the producer's own typed static limitation is the earliest
