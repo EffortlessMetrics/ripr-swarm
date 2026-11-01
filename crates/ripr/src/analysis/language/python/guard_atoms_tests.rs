@@ -182,6 +182,36 @@ fn a_shadowed_isinstance_is_not_read_as_the_builtin() -> Result<(), String> {
 }
 
 #[test]
+fn a_module_level_rebinding_of_a_builtin_is_not_read_as_the_builtin() -> Result<(), String> {
+    // Production hands the guard reader the whole new-side file, so a
+    // rebinding outside the owner's own `def` is in view. Each form below
+    // would make `isinstance(x, str)` mean something other than the builtin,
+    // so the guard is unknown and the arm keeps its credit even though no
+    // observed input is a `str` (#12171 item 2). The unshadowed arm in
+    // `an_isinstance_guard_is_read_for_builtin_classes` is the control that
+    // demotes the same call to `WeaklyExposed`.
+    let arm = "def label(x):\n    if isinstance(x, str):\n        return 'text'\n";
+    let shadows = [
+        "isinstance = checker\n\n\n",
+        "isinstance: object = checker\n\n\n",
+        "def isinstance(value, kind):\n    return True\n\n\n",
+        "from checks import isinstance\n\n\n",
+        "import checks as isinstance\n\n\n",
+        "from checks import *\n\n\n",
+        "str = Text\n\n\n",
+    ];
+    for shadow in shadows {
+        let owner = format!("{shadow}{arm}");
+        assert_eq!(
+            classify(&owner, OLD_NIL, &test_of("label(3)", "None"))?,
+            ExposureClass::Exposed,
+            "module-level shadow must fail closed: {shadow:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_for_body_over_an_empty_literal_never_runs() -> Result<(), String> {
     let body = "def label(items):\n    for item in items:\n        return item + 1\n";
     assert_eq!(
