@@ -193,7 +193,7 @@ fn output_identity(path: &Path) -> Result<PathBuf, String> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(format!(
-                    "reports kani resolve output {} failed: {error}",
+                    "reports kani resolve output {} failed: {error}; see `ripr help`",
                     path.display()
                 ));
             }

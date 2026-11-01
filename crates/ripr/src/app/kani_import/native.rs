@@ -49,7 +49,7 @@ pub(super) fn parse_native(json: &str) -> Result<NativeDocument, String> {
         .0;
     decoder
         .end()
-        .map_err(|error| format!("invalid native JSON: {error}"))?;
+        .map_err(|error| format!("invalid native JSON: {error}; see `ripr help`"))?;
     let root = object(&document, "native")?;
     let version = string(field(root, "schema_version")?, "schema_version")?;
     require(
