@@ -1362,6 +1362,10 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "      - name: Read the extension e2e check for the admitted head\n        id: vscode\n",
         ),
         (
+            "bind the extension e2e verdict to this request's own successful `vscode surface` suite so a stale skipped check cannot read as not selected (#12122)",
+            "((.check_suite.id | tostring) == $suite)",
+        ),
+        (
             "decide the extension e2e verdict by the newest executed check of this request (#12122)",
             "[.[] | select(.conclusion != \"skipped\")] | last // {}",
         ),

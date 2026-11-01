@@ -647,17 +647,20 @@ jobs:
           EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
         run: |
           set -euo pipefail
-          # #12122: ci.yml owns selection of the `vscode` extension e2e (its
-          # `vscode surface` job) and always creates a `vscode` check for the
-          # merge-ready event, executed or skipped. Only checks created by this
-          # request count: ones that started within 90s of this run's creation
-          # or later, so a skipped check from an earlier nonrequest event on the
-          # same head cannot read as "not selected" before the real one exists.
-          # No such check yet means ci.yml has not started: wait, then fail
-          # closed. Skipped only: not selected. Otherwise the newest executed
-          # check (highest id) decides, so a passing re-run clears an earlier
-          # infrastructure failure; a running check is awaited. Reads retry
-          # because one transient API error must not cost a 45 minute re-run.
+          # #12122: ci.yml owns selection of the `vscode` extension e2e. Its
+          # `vscode surface` job ends non-skipped only for a merge-ready request,
+          # and every `vscode` check of that workflow run lives in the same
+          # check suite. A skipped `vscode` check therefore means "not selected"
+          # only when the request's own `vscode surface` succeeded and the skip
+          # is in its suite: a skipped check from an earlier nonrequest event is
+          # in another suite and can never stand in for it. The surface check
+          # must also have started within 90s of this run's creation or later,
+          # so an older request's suite is not read. No such check yet means
+          # ci.yml has not got that far: wait, then fail closed. In the suite,
+          # the newest executed check (highest id) decides, so a passing re-run
+          # clears an earlier infrastructure failure; a running one is awaited.
+          # Reads retry because one transient API error must not cost a 45
+          # minute re-run.
           [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::admitted head is not a full SHA"; exit 1; }
           api() {
             local attempt
@@ -671,23 +674,34 @@ jobs:
           since=$(date -u -d "$run_created - 90 seconds" +%Y-%m-%dT%H:%M:%SZ) || { echo "::error::could not compute the request window from $run_created"; exit 1; }
           deadline=$((SECONDS + 1200))
           while :; do
-            raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode check runs for $EXPECTED_HEAD"; exit 1; }
-            mine=$(jq -s -c --arg since "$since" '[.[] | select(.app.slug == "github-actions" and (.started_at // "") >= $since)] | sort_by(.id)' <<<"$raw") || { echo "::error::could not classify vscode check runs"; exit 1; }
-            total=$(jq 'length' <<<"$mine")
-            newest=$(jq -c '[.[] | select(.conclusion != "skipped")] | last // {}' <<<"$mine")
-            status=$(jq -r '.status // "none"' <<<"$newest")
-            conclusion=$(jq -r '.conclusion // ""' <<<"$newest")
-            url=$(jq -r '.html_url // ""' <<<"$newest")
-            case "$status" in
-              none)
-                if [ "$total" -gt 0 ]; then echo "The vscode check was skipped for this request on $EXPECTED_HEAD: the extension e2e was not selected."; exit 0; fi
-                status="absent" ;;
-              completed)
-                if [ "$conclusion" = success ]; then echo "vscode check succeeded for $EXPECTED_HEAD: $url"; exit 0; fi
-                echo "::error::vscode extension e2e concluded '$conclusion' for $EXPECTED_HEAD: $url"; exit 1 ;;
-            esac
-            if [ "$SECONDS" -ge "$deadline" ]; then echo "::error::vscode extension e2e is $status after the wait for $EXPECTED_HEAD ${url:+($url)}"; exit 1; fi
-            echo "vscode check is $status for $EXPECTED_HEAD; waiting"
+            surface_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode%20surface&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode surface check runs for $EXPECTED_HEAD"; exit 1; }
+            vscode_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode check runs for $EXPECTED_HEAD"; exit 1; }
+            surface=$(jq -s -c --arg since "$since" '[.[] | select(.app.slug == "github-actions" and (.started_at // "") >= $since and .conclusion != "skipped")] | sort_by(.id) | last // {}' <<<"$surface_raw") || { echo "::error::could not classify vscode surface check runs"; exit 1; }
+            state=$(jq -r '.status // "none"' <<<"$surface")
+            if [ "$state" = completed ]; then
+              surface_conclusion=$(jq -r '.conclusion // ""' <<<"$surface")
+              [ "$surface_conclusion" = success ] || { echo "::error::vscode surface concluded '$surface_conclusion' for $EXPECTED_HEAD: $(jq -r '.html_url // ""' <<<"$surface")"; exit 1; }
+              suite=$(jq -r '.check_suite.id // ""' <<<"$surface")
+              mine=$(jq -s -c --arg suite "$suite" '[.[] | select(.app.slug == "github-actions" and ((.check_suite.id | tostring) == $suite))] | sort_by(.id)' <<<"$vscode_raw") || { echo "::error::could not classify vscode check runs"; exit 1; }
+              total=$(jq 'length' <<<"$mine")
+              newest=$(jq -c '[.[] | select(.conclusion != "skipped")] | last // {}' <<<"$mine")
+              state=$(jq -r '.status // "none"' <<<"$newest")
+              conclusion=$(jq -r '.conclusion // ""' <<<"$newest")
+              url=$(jq -r '.html_url // ""' <<<"$newest")
+              case "$state" in
+                none)
+                  if [ "$total" -gt 0 ]; then echo "The vscode check was skipped in this request's run for $EXPECTED_HEAD: the extension e2e was not selected."; exit 0; fi
+                  state="not yet created" ;;
+                completed)
+                  if [ "$conclusion" = success ]; then echo "vscode check succeeded for $EXPECTED_HEAD: $url"; exit 0; fi
+                  echo "::error::vscode extension e2e concluded '$conclusion' for $EXPECTED_HEAD: $url"; exit 1 ;;
+              esac
+            else
+              [ "$state" != none ] || state="absent"
+              state="vscode surface $state"
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then echo "::error::vscode extension e2e is $state after the wait for $EXPECTED_HEAD"; exit 1; fi
+            echo "vscode check is $state for $EXPECTED_HEAD; waiting"
             sleep 30
           done
       - name: Summarize routed result
