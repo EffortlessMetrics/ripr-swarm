@@ -3944,11 +3944,8 @@ fn finish_pr_triage_report(
 
 pub(crate) fn gh_pr_status_impl(args: &[String]) -> Result<(), String> {
     let number = parse_gh_pr_status_args(args)?;
-    let observation = gh_pr_status_snapshot::collect_current(
-        number,
-        || collect_gh_pr_status(number),
-        collect_required_status_contexts,
-    )?;
+    let observation =
+        gh_pr_status_snapshot::collect_current(number, || collect_gh_pr_status(number))?;
     let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
     let required_contexts = observation.contexts;
     let required_contexts_available = observation.contexts_available;
@@ -4029,31 +4026,6 @@ fn collect_gh_pr_status_with(
     let value = collect_gh_pr_status_json_with(number, run)?;
     parse_gh_pr_status_pull_request(&value.to_string())
 }
-fn collect_required_status_contexts(base_ref_name: &str) -> Result<Vec<String>, String> {
-    let repo_output = run_output("gh", &["repo", "view", "--json", "owner,name"])?;
-    let repo_value: Value = serde_json::from_str(&repo_output)
-        .map_err(|err| format!("failed to parse gh repo JSON: {err}"))?;
-    let owner = repo_value
-        .get("owner")
-        .and_then(|owner| owner.get("login"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("gh repo JSON is missing owner.login: {repo_value}"))?;
-    let name = repo_value
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or_else(|| format!("gh repo JSON is missing name: {repo_value}"))?;
-    let branch = if base_ref_name.trim().is_empty() {
-        "main"
-    } else {
-        base_ref_name.trim()
-    };
-    let endpoint = format!(
-        "repos/{owner}/{name}/branches/{branch}/protection/required_status_checks/contexts"
-    );
-    let output = run_output_owned("gh", &["api".to_string(), endpoint])?;
-    parse_required_status_contexts(&output)
-}
-
 fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, String> {
     let item: Value =
         serde_json::from_str(text).map_err(|err| format!("failed to parse gh PR JSON: {err}"))?;
@@ -4064,8 +4036,8 @@ fn parse_gh_pr_status_pull_request(text: &str) -> Result<GhPrStatusPullRequest, 
     let checks = item
         .get("statusCheckRollup")
         .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
+        .ok_or("PR statusCheckRollup is missing or malformed; check evidence is unknown")?
+        .iter()
         .map(parse_pr_triage_check)
         .collect::<Vec<_>>();
     let reviews = item
@@ -4159,22 +4131,6 @@ fn gh_pr_approved_review_subject_missing(pr: &GhPrStatusPullRequest) -> bool {
         })
 }
 
-fn parse_required_status_contexts(text: &str) -> Result<Vec<String>, String> {
-    let value: Value = serde_json::from_str(text)
-        .map_err(|err| format!("failed to parse required status contexts JSON: {err}"))?;
-    let Some(items) = value.as_array() else {
-        return Err("required status contexts JSON must be an array".to_string());
-    };
-    let mut contexts = items
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    contexts.sort();
-    contexts.dedup();
-    Ok(contexts)
-}
-
 fn gh_pr_status_readiness(
     pr: &GhPrStatusPullRequest,
     required_contexts: &[String],
@@ -4183,6 +4139,17 @@ fn gh_pr_status_readiness(
 ) -> GhPrStatusReadiness {
     if gh_pr_approved_review_subject_missing(pr) {
         warnings.push(format!("APPROVED has no latest approval attributed to current head {}; review subjects are stale or unavailable", value_or_unknown(&pr.head_ref_oid)));
+    }
+    let unknown_checks = pr
+        .checks
+        .iter()
+        .filter(|check| gh_pr_check_unknown(check))
+        .collect::<Vec<_>>();
+    if !unknown_checks.is_empty() {
+        warnings.push(format!(
+            "{} check(s) have unknown identity or state; do not treat them as passed",
+            unknown_checks.len()
+        ));
     }
     let failed_checks = pr
         .checks
@@ -4201,8 +4168,8 @@ fn gh_pr_status_readiness(
         .iter()
         .filter(|check| pr_check_pending(check))
         .filter(|check| {
-            !required_contexts_available
-                || required_contexts
+            required_contexts_available
+                && required_contexts
                     .iter()
                     .any(|context| context.eq_ignore_ascii_case(&check.name))
         })
@@ -4243,6 +4210,7 @@ fn gh_pr_safe_next_action(
         || pr.review_decision.eq_ignore_ascii_case("REVIEW_REQUIRED")
         || !readiness.required_checks_outstanding.is_empty()
         || !readiness.pending_checks.is_empty()
+        || pr.checks.iter().any(gh_pr_check_unknown)
     {
         return "wait";
     }
@@ -4251,11 +4219,24 @@ fn gh_pr_safe_next_action(
     }
     let merge_state = pr.merge_state_status.to_ascii_uppercase();
     match merge_state.as_str() {
-        "CLEAN" => "merge",
+        "CLEAN" => "inspect final merge gates",
         "BLOCKED" | "DRAFT" | "HAS_HOOKS" | "UNKNOWN" | "UNSTABLE" => "wait",
         "DIRTY" => "inspect failure",
         _ => "inspect failure",
     }
+}
+
+fn gh_pr_check_unknown(check: &PrTriageCheck) -> bool {
+    if check.name.trim().is_empty() {
+        return true;
+    }
+    if pr_check_pending(check) || pr_check_failed(check) {
+        return false;
+    }
+    let status = check.status.to_ascii_uppercase();
+    let conclusion = check.conclusion.to_ascii_uppercase();
+    !matches!(status.as_str(), "COMPLETED" | "SUCCESS")
+        || !matches!(conclusion.as_str(), "SUCCESS" | "NEUTRAL" | "SKIPPED")
 }
 
 fn format_gh_pr_check_status(check: &PrTriageCheck) -> String {
@@ -4310,9 +4291,17 @@ fn gh_pr_status_markdown(
             required_contexts.len()
         ));
     } else {
-        body.push_str("- Required context lookup: unavailable; using status rollup only\n");
+        body.push_str("- Required contexts: unknown; status rollup alone does not identify every required check\n");
     }
-    append_markdown_list(&mut body, &readiness.required_checks_outstanding, "None");
+    append_markdown_list(
+        &mut body,
+        &readiness.required_checks_outstanding,
+        if readiness.required_contexts_available {
+            "None"
+        } else {
+            "Required-check classification and completeness are unknown"
+        },
+    );
 
     body.push_str("\n## Failed Checks\n\n");
     append_markdown_list(&mut body, &readiness.failed_checks, "None");
@@ -4571,6 +4560,10 @@ fn parse_pr_triage_pull_requests(text: &str) -> Result<Vec<PrTriagePullRequest>,
             labels,
             files,
             checks,
+            checks_rollup_available: item
+                .get("statusCheckRollup")
+                .and_then(Value::as_array)
+                .is_some(),
         });
     }
     prs.sort_by_key(|pr| pr.number);
@@ -4764,7 +4757,7 @@ fn pr_triage_validation_findings(prs: &[PrTriagePullRequest]) -> Vec<PrTriageFin
         let failed = pr
             .checks
             .iter()
-            .filter(|check| pr_check_failed(check))
+            .filter(|check| pr_triage_check_kind(check) == PrTriageCheckKind::Failed)
             .map(|check| format!("{}={}", check.name, check.conclusion))
             .collect::<Vec<_>>();
         if !failed.is_empty() {
@@ -4773,13 +4766,24 @@ fn pr_triage_validation_findings(prs: &[PrTriagePullRequest]) -> Vec<PrTriageFin
         let pending = pr
             .checks
             .iter()
-            .filter(|check| pr_check_pending(check))
+            .filter(|check| pr_triage_check_kind(check) == PrTriageCheckKind::Pending)
             .map(|check| check.name.clone())
             .collect::<Vec<_>>();
         if !pending.is_empty() {
             details.push(format!("pending checks: {}", pending.join(", ")));
         }
-        if pr.checks.is_empty() {
+        let unknown = pr
+            .checks
+            .iter()
+            .filter(|check| pr_triage_check_kind(check) == PrTriageCheckKind::Unknown)
+            .map(format_gh_pr_check_status)
+            .collect::<Vec<_>>();
+        if !unknown.is_empty() {
+            details.push(format!("unknown checks: {}", unknown.join(", ")));
+        }
+        if !pr.checks_rollup_available {
+            details.push("check rollup missing or malformed; evidence is unknown".to_string());
+        } else if pr.checks.is_empty() {
             details.push("no check rollup entries returned".to_string());
         }
         if let Some(body_warning) = pr_body_validation_warning(&pr.body) {
@@ -4872,11 +4876,17 @@ fn pr_triage_queue_disposition(
     } else if pr_has_finding(findings, pr.number, "incomplete validation")
         || pr.checks.iter().any(pr_check_failed)
         || pr.checks.iter().any(pr_check_pending)
+        || !pr.checks_rollup_available
+        || pr.checks.is_empty()
+        || pr
+            .checks
+            .iter()
+            .any(|check| pr_triage_check_kind(check) == PrTriageCheckKind::Unknown)
     {
         (
             "needs_fresh_validation",
-            "validation is pending, failing, absent, or not fully recorded",
-            "Wait for checks, inspect failures, or update the PR body with actual commands run.",
+            "validation is pending, failing, absent, unknown, or not fully recorded",
+            "Wait for checks, inspect failures or unknown evidence, or update the PR body with actual commands run.",
         )
     } else if pr.is_draft || pr.review_decision.eq_ignore_ascii_case("REVIEW_REQUIRED") {
         (
@@ -4894,7 +4904,7 @@ fn pr_triage_queue_disposition(
         (
             "merge_candidate",
             "PR is current, non-draft, and has no detected validation or policy-sensitive queue risks",
-            "Review the diff and merge if the scope is still the canonical path.",
+            "Inspect current final merge gates, reviews, proof and findings, then decide on a normal server-enforced merge if the scope remains canonical.",
         )
     } else {
         (
@@ -5114,7 +5124,7 @@ fn pr_triage_markdown(
                 pr.is_draft,
                 age,
                 markdown_escape_table(&pr.merge_state_status),
-                markdown_escape_table(&pr_checks_summary(&pr.checks)),
+                markdown_escape_table(&pr_triage_checks_summary(pr)),
                 pr.files.len()
             ));
         }
@@ -5230,7 +5240,11 @@ fn write_pr_triage_pull_request_json(body: &mut String, pr: &PrTriagePullRequest
     ));
     body.push_str(&format!(
         "      \"checks_summary\": \"{}\",\n",
-        json_escape(&pr_checks_summary(&pr.checks))
+        json_escape(&pr_triage_checks_summary(pr))
+    ));
+    body.push_str(&format!(
+        "      \"checks_rollup_available\": {},\n",
+        pr.checks_rollup_available
     ));
     body.push_str("      \"labels\": [");
     write_json_string_array(body, &pr.labels);
@@ -5332,22 +5346,61 @@ fn pr_age_label(pr: &PrTriagePullRequest, today: i64) -> String {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PrTriageCheckKind {
+    Passed,
+    Neutral,
+    Pending,
+    Failed,
+    Unknown,
+}
+
+fn pr_triage_check_kind(check: &PrTriageCheck) -> PrTriageCheckKind {
+    if pr_check_failed(check) {
+        PrTriageCheckKind::Failed
+    } else if pr_check_pending(check) {
+        PrTriageCheckKind::Pending
+    } else if gh_pr_check_unknown(check) {
+        PrTriageCheckKind::Unknown
+    } else if matches!(
+        check.conclusion.to_ascii_uppercase().as_str(),
+        "NEUTRAL" | "SKIPPED"
+    ) {
+        PrTriageCheckKind::Neutral
+    } else {
+        PrTriageCheckKind::Passed
+    }
+}
+
+fn pr_triage_checks_summary(pr: &PrTriagePullRequest) -> String {
+    if !pr.checks_rollup_available {
+        "unknown rollup".to_string()
+    } else {
+        pr_checks_summary(&pr.checks)
+    }
+}
+
 fn pr_checks_summary(checks: &[PrTriageCheck]) -> String {
     if checks.is_empty() {
         return "none".to_string();
     }
-    let failed = checks.iter().filter(|check| pr_check_failed(check)).count();
-    let pending = checks
-        .iter()
-        .filter(|check| pr_check_pending(check))
-        .count();
-    if failed > 0 {
-        format!("{failed} failed, {pending} pending")
-    } else if pending > 0 {
-        format!("{pending} pending")
-    } else {
-        format!("{} passed", checks.len())
+    let mut counts = [0usize; 5];
+    for check in checks {
+        counts[match pr_triage_check_kind(check) {
+            PrTriageCheckKind::Failed => 0,
+            PrTriageCheckKind::Pending => 1,
+            PrTriageCheckKind::Unknown => 2,
+            PrTriageCheckKind::Neutral => 3,
+            PrTriageCheckKind::Passed => 4,
+        }] += 1;
     }
+    counts
+        .into_iter()
+        .zip(["failed", "pending", "unknown", "neutral/skipped", "passed"])
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, label)| format!("{count} {label}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn format_pr_triage_ref(pr: &PrTriagePullRequest) -> String {

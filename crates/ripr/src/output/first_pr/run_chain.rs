@@ -13,16 +13,21 @@ use super::{
     regenerate_check_output_gap_ledger_command, regenerate_repo_exposure_command,
     regenerate_repo_exposure_gap_ledger_command, repo_exposure_latency_report_available,
     resolve_path, review_comments_regeneration_command, ripr_flag_value, select_from_gap_ledger,
-    tokenize_command_words, uses_check_output_gap_ledger,
+    uses_check_output_gap_ledger,
 };
 use std::collections::VecDeque;
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::process::Stdio;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 
 /// Stderr lines kept to name a failed step's own last diagnostic.
 const STDERR_TAIL_LINES: usize = 20;
+
+/// Per-step wall-clock bound for `--run-chain` when the environment names no
+/// override. Zero disables the bound (tests inject a limit through
+/// [`run_steps_with`]).
+const DEFAULT_STEP_TIMEOUT: Duration = Duration::from_hours(2);
 
 /// One executable step of the chain, derived from a printed command.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -109,7 +114,7 @@ pub(super) fn plan_chain(root: &Path, options: &FirstPrOptions) -> Result<ChainP
 
 /// Split a printed compound command at its unquoted `&&`.
 fn split_chain(command: &str) -> Result<Vec<String>, String> {
-    let words = tokenize_command_words(command).ok_or_else(|| {
+    let words = tokenize_run_chain_words(command).ok_or_else(|| {
         format!(
             "cannot read the printed command `{command}`; run the printed commands yourself instead"
         )
@@ -122,6 +127,15 @@ fn split_chain(command: &str) -> Result<Vec<String>, String> {
     let mut chars = command.chars().peekable();
     while let Some(ch) = chars.next() {
         match (quote, ch) {
+            (Some('"'), '"') => {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    current.push('"');
+                } else {
+                    quote = None;
+                    current.push(ch);
+                }
+            }
             (Some(active), c) if c == active => {
                 quote = None;
                 current.push(c);
@@ -165,8 +179,73 @@ fn split_chain(command: &str) -> Result<Vec<String>, String> {
     Ok(segments)
 }
 
+/// Split a printed `--run-chain` command into words. POSIX single-quoted tokens
+/// match [`tokenize_command_words`]; double-quoted tokens follow the Windows
+/// console rules the product emits on that host (`""` and trailing `\`).
+fn tokenize_run_chain_words(command: &str) -> Option<Vec<(String, bool)>> {
+    let mut words: Vec<(String, bool)> = Vec::new();
+    let mut current = String::new();
+    let mut quoted_word = false;
+    let mut in_word = false;
+    let mut quote: Option<char> = None;
+    let mut chars = command.chars().peekable();
+    while let Some(character) = chars.next() {
+        match (quote, character) {
+            (Some('"'), '"') => {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                    current.push('"');
+                } else {
+                    let trailing = current.chars().rev().take_while(|ch| *ch == '\\').count();
+                    for _ in 0..(trailing / 2) {
+                        if current.ends_with('\\') {
+                            current.pop();
+                        }
+                    }
+                    quote = None;
+                }
+            }
+            (Some(active), value) if value == active => quote = None,
+            (Some('"'), '\\') => {
+                current.push('\\');
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            }
+            (Some(_), value) => current.push(value),
+            (None, '\'' | '"') => {
+                quote = Some(character);
+                quoted_word = true;
+                in_word = true;
+            }
+            (None, '\\') => {
+                current.push(chars.next()?);
+                in_word = true;
+            }
+            (None, value) if value.is_whitespace() => {
+                if in_word {
+                    words.push((std::mem::take(&mut current), quoted_word));
+                }
+                quoted_word = false;
+                in_word = false;
+            }
+            (None, value) => {
+                current.push(value);
+                in_word = true;
+            }
+        }
+    }
+    if quote.is_some() {
+        return None;
+    }
+    if in_word {
+        words.push((current, quoted_word));
+    }
+    Some(words)
+}
+
 fn step_from_display(label: &'static str, display: &str) -> Result<ChainStep, String> {
-    let words = tokenize_command_words(display)
+    let words = tokenize_run_chain_words(display)
         .ok_or_else(|| format!("cannot read the printed {label} command `{display}`; run the printed commands yourself instead"))?;
     let mut args = Vec::new();
     let mut stdout_to = None;
@@ -240,7 +319,21 @@ pub(super) fn run_steps(
     let exe = std::env::current_exe().map_err(|err| {
         format!("first-pr --run-chain: cannot resolve the running ripr executable: {err}")
     })?;
-    run_steps_with(&exe, root, options, steps)
+    run_steps_with(&exe, root, options, steps, step_timeout_from_env())
+}
+
+fn step_timeout_from_env() -> Option<Duration> {
+    match std::env::var("RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS") {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            if trimmed == "0" {
+                None
+            } else {
+                trimmed.parse::<u64>().ok().map(Duration::from_secs)
+            }
+        }
+        Err(_) => Some(DEFAULT_STEP_TIMEOUT),
+    }
 }
 
 fn run_steps_with(
@@ -248,6 +341,7 @@ fn run_steps_with(
     root: &Path,
     options: &FirstPrOptions,
     steps: &[ChainStep],
+    step_timeout: Option<Duration>,
 ) -> Result<(), String> {
     let total = steps.len();
     for (index, step) in steps.iter().enumerate() {
@@ -299,16 +393,20 @@ fn run_steps_with(
                 recent
             })
         });
-        let output = child
-            .wait_with_output()
-            .map_err(|err| stopped(number, total, step, &format!("could not run: {err}")))?;
+        let (status, stdout) = wait_for_step(
+            &mut child,
+            step_timeout,
+            number,
+            total,
+            step,
+            &fresh_outputs,
+        )?;
         let recent = tail
             .and_then(|handle| handle.join().ok())
             .unwrap_or_default();
-        if !output.status.success() {
+        if !status.success() {
             discard(&fresh_outputs);
-            let code = output
-                .status
+            let code = status
                 .code()
                 .map_or_else(|| "no exit code".to_string(), |code| format!("exit {code}"));
             let reason = match recent.back() {
@@ -320,7 +418,7 @@ fn run_steps_with(
         if let Some(target) = &step.stdout_to {
             // Validate before publishing: a bad stdout never reaches the
             // final path, so a rerun cannot mistake it for evidence.
-            if let Some(problem) = bytes_problem(target, &output.stdout) {
+            if let Some(problem) = bytes_problem(target, &stdout) {
                 return Err(stopped(number, total, step, &problem));
             }
             if let Some(parent) = target.parent() {
@@ -333,7 +431,7 @@ fn run_steps_with(
                     )
                 })?;
             }
-            crate::output::file_write::write(target, &output.stdout).map_err(|err| {
+            crate::output::file_write::write(target, &stdout).map_err(|err| {
                 stopped(
                     number,
                     total,
@@ -349,6 +447,73 @@ fn run_steps_with(
         }
     }
     Ok(())
+}
+
+fn wait_for_step(
+    child: &mut Child,
+    step_timeout: Option<Duration>,
+    number: usize,
+    total: usize,
+    step: &ChainStep,
+    fresh_outputs: &[PathBuf],
+) -> Result<(ExitStatus, Vec<u8>), String> {
+    let stdout = child.stdout.take();
+    let stdout_handle = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        if let Some(mut pipe) = stdout {
+            let _ = pipe.read_to_end(&mut bytes);
+        }
+        bytes
+    });
+    let status = match step_timeout {
+        None => child
+            .wait()
+            .map_err(|err| stopped(number, total, step, &format!("could not run: {err}")))?,
+        Some(limit) => {
+            let deadline = Instant::now() + limit;
+            loop {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status,
+                    Ok(None) => {
+                        if Instant::now() >= deadline {
+                            discard(fresh_outputs);
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            let _ = stdout_handle.join();
+                            let seconds = limit.as_secs();
+                            return Err(stopped(
+                                number,
+                                total,
+                                step,
+                                &format!(
+                                    "timed out after {seconds} second(s); the step did not finish"
+                                ),
+                            ));
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    Err(err) => {
+                        discard(fresh_outputs);
+                        return Err(stopped(
+                            number,
+                            total,
+                            step,
+                            &format!("could not run: {err}"),
+                        ));
+                    }
+                }
+            }
+        }
+    };
+    let stdout = stdout_handle.join().map_err(|join| {
+        stopped(
+            number,
+            total,
+            step,
+            &format!("stdout reader panicked: {join:?}"),
+        )
+    })?;
+    Ok((status, stdout))
 }
 
 /// Exit 0 is not enough: the step must have left what it promised. A
@@ -427,6 +592,64 @@ fn stopped(number: usize, total: usize, step: &ChainStep, reason: &str) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `check-local-context` forbids drive-letter path literals in source; build
+    /// Windows-shaped paths from parts like the product does on that host.
+    fn windows_path(drive_letter: char, segments: &[&str]) -> String {
+        let bs = '\\';
+        let mut path = format!("{drive_letter}:");
+        for segment in segments {
+            path.push(bs);
+            path.push_str(segment);
+        }
+        path
+    }
+
+    #[test]
+    fn split_chain_splits_windows_double_quoted_paths_at_unquoted_and() -> Result<(), String> {
+        let root = windows_path('C', &["tmp", "a && b"]);
+        let out = windows_path('C', &["out", "x y.json"]);
+        let compound = format!(
+            r#"ripr check --root "{root}" --json > "{out}" && ripr reports gap-ledger --out o.json"#
+        );
+        let parts = split_chain(&compound)?;
+        assert_eq!(
+            parts,
+            vec![
+                format!(r#"ripr check --root "{root}" --json > "{out}""#),
+                "ripr reports gap-ledger --out o.json".to_string(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn step_from_display_reads_windows_console_double_quoted_paths() -> Result<(), String> {
+        let root = windows_path('C', &["tmp", "probe win space"]);
+        let out = windows_path('C', &["out", "a b.json"]);
+        let display = format!(r#"ripr check --root "{root}" --json > "{out}""#);
+        let step = step_from_display("repo exposure report", &display)?;
+        assert_eq!(step.args, vec!["check", "--root", root.as_str(), "--json",]);
+        assert_eq!(step.stdout_to, Some(PathBuf::from(out.clone())));
+        assert_eq!(step.expected, PathBuf::from(out));
+        Ok(())
+    }
+
+    #[test]
+    fn step_from_display_doubles_a_trailing_backslash_before_the_closing_quote()
+    -> Result<(), String> {
+        let root = windows_path('C', &["repo", ""]);
+        let out = windows_path('D', &["out", "file.json"]);
+        let quoted_root = format!("\"{root}\\\"");
+        let display = format!(r#"ripr check --root {quoted_root} --mode instant > "{out}""#);
+        let step = step_from_display("repo exposure report", &display)?;
+        assert_eq!(
+            step.args,
+            vec!["check", "--root", root.as_str(), "--mode", "instant",]
+        );
+        assert_eq!(step.stdout_to, Some(PathBuf::from(out)));
+        Ok(())
+    }
 
     #[test]
     fn split_chain_splits_only_at_unquoted_operators() -> Result<(), String> {
@@ -535,7 +758,52 @@ mod tests {
     #[cfg(unix)]
     fn run_sh(step: ChainStep) -> Result<(), String> {
         let options = FirstPrOptions::default();
-        run_steps_with(Path::new("/bin/sh"), Path::new("."), &options, &[step])
+        run_steps_with(
+            Path::new("/bin/sh"),
+            Path::new("."),
+            &options,
+            &[step],
+            None,
+        )
+    }
+
+    #[cfg(unix)]
+    fn run_sh_with_timeout(step: ChainStep, step_timeout: Duration) -> Result<(), String> {
+        let options = FirstPrOptions::default();
+        run_steps_with(
+            Path::new("/bin/sh"),
+            Path::new("."),
+            &options,
+            &[step],
+            Some(step_timeout),
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_step_that_exceeds_the_timeout_fails_closed_and_names_the_step() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-11720-timeout-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let fifo = dir.join("block.fifo");
+        let script = format!(
+            "rm -f '{}' && mkfifo '{}' && read -r _ < '{}'",
+            fifo.display(),
+            fifo.display(),
+            fifo.display()
+        );
+        let target = dir.join("unused.json");
+        let error =
+            run_sh_with_timeout(sh_step(&script, None, &target), Duration::from_millis(200))
+                .err()
+                .unwrap_or_default();
+        assert!(error.contains("timed out"), "{error}");
+        assert!(error.contains("(gap ledger)"), "{error}");
+        assert!(
+            error.contains("no start-here packet was written"),
+            "{error}"
+        );
+        assert!(!target.exists());
+        std::fs::remove_dir_all(&dir).map_err(|err| err.to_string())
     }
 
     #[cfg(unix)]
