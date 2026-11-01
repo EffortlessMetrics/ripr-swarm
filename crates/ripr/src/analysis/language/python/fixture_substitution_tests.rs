@@ -221,3 +221,39 @@ fn fixtures_that_do_not_substitute_or_are_not_reachable_keep_their_credit() -> R
         "data fixture",
     )
 }
+
+#[test]
+fn a_conftest_pytestmark_usefixtures_reaches_tests_below_it() -> Result<(), String> {
+    let conftest = format!(
+        "import calc\nimport pytest\n\n\n@pytest.fixture\ndef stub(monkeypatch):\n{PATCHING_BODY}\n\npytestmark = pytest.mark.usefixtures('stub')\n"
+    );
+    assert_mocked(
+        &[
+            ("tests/conftest.py", &conftest),
+            ("tests/test_calc.py", TEST),
+        ],
+        "conftest pytestmark usefixtures",
+    )
+}
+
+#[test]
+fn an_unread_chain_conftest_fails_closed() -> Result<(), String> {
+    let (_, mut tests) = workspace(&[("calc.py", CALC), ("tests/test_calc.py", TEST)]);
+    let scopes = BTreeMap::new();
+    super::fixture_substitution::apply_fixture_substitution(&mut tests, &scopes, |_| false);
+    assert!(
+        tests
+            .iter()
+            .all(|t| !t.constant_rebinding.fixture_substitution)
+    );
+    super::fixture_substitution::apply_fixture_substitution(&mut tests, &scopes, |conftest| {
+        conftest == Path::new("tests/conftest.py")
+    });
+    assert!(!tests.is_empty());
+    assert!(
+        tests
+            .iter()
+            .all(|t| t.constant_rebinding.fixture_substitution)
+    );
+    Ok(())
+}

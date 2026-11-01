@@ -17839,6 +17839,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/fixture_substitution_tests.rs::unittest_setup_and_class_decorators_that_patch_keep_the_limit",
   "crates/ripr/src/analysis/language/python/fixture_substitution_tests.rs::conftest_hooks_and_module_setup_that_patch_keep_the_limit",
   "crates/ripr/src/analysis/language/python/fixture_substitution_tests.rs::fixtures_that_do_not_substitute_or_are_not_reachable_keep_their_credit",
+  "crates/ripr/src/analysis/language/python/fixture_substitution_tests.rs::a_conftest_pytestmark_usefixtures_reaches_tests_below_it",
+  "crates/ripr/src/analysis/language/python/fixture_substitution_tests.rs::an_unread_chain_conftest_fails_closed",
 ]
 fixtures = [
   "fixtures/python-verdict-corpus/subjects/authored-py-nested-call-9814",

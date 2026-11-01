@@ -362,6 +362,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     super::super::fixture_substitution::apply_fixture_substitution(
         &mut all_tests,
         &substitution_by_file,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
     );
     super::super::fixtures::taint_admission_by_conftest(
         &mut all_tests,

@@ -1268,13 +1268,17 @@ impl PythonAdapter {
             }
         }
         fixtures::attach_fixture_defs(&mut all_tests, &fixture_defs_by_file);
-        fixture_substitution::apply_fixture_substitution(&mut all_tests, &substitution_by_file);
         helper_assertions::apply_helper_assertions(&mut all_tests, &helper_modules_by_file);
         // A chain conftest that exists but was never read (capped, excluded or
         // unreadable) cannot be ruled out.
         let unreadable_conftest = |conftest: &Path| {
             !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
         };
+        fixture_substitution::apply_fixture_substitution(
+            &mut all_tests,
+            &substitution_by_file,
+            unreadable_conftest,
+        );
         fixtures::mark_isolated_fixture_defs(
             &mut all_tests,
             &fixture_defs_by_file,

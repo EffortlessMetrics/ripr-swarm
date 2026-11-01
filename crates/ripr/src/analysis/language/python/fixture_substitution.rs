@@ -34,7 +34,7 @@ use super::{PythonImport, PythonTest};
 use rustpython_parser::ast::{Constant, Expr, Ranged, Stmt};
 use rustpython_parser::text_size::TextRange;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Names a `usefixtures` mark with a non-literal argument may request: every
 /// substituting fixture in scope is then reachable.
@@ -454,12 +454,14 @@ fn assigns_imported_attribute(text: &str, imports: &[PythonImport]) -> bool {
 pub(super) fn apply_fixture_substitution(
     tests: &mut [PythonTest],
     scopes: &BTreeMap<PathBuf, SubstitutionScope>,
+    mut is_unreadable_conftest: impl FnMut(&Path) -> bool,
 ) {
-    if scopes.is_empty() {
-        return;
-    }
     for test in tests {
-        test.constant_rebinding.fixture_substitution = test_runs_under_substitution(test, scopes);
+        // A chain conftest that exists but was never read (capped, excluded
+        // or unreadable) may hold a patching autouse fixture: fail closed.
+        let unread = conftest_chain(&test.file).any(|conftest| is_unreadable_conftest(&conftest));
+        test.constant_rebinding.fixture_substitution =
+            unread || (!scopes.is_empty() && test_runs_under_substitution(test, scopes));
     }
 }
 
@@ -505,12 +507,15 @@ fn test_runs_under_substitution(
             }
         }
     }
-    if let Some(own) = own {
-        for mark in &own.marks {
+    // A module-level `pytestmark` in a chain conftest applies to every test
+    // below it; class and test targets only exist in the test's own file.
+    for scope in &chain {
+        let is_own = own.is_some_and(|own| std::ptr::eq(own, *scope));
+        for mark in &scope.marks {
             let applies = match &mark.target {
                 MarkTarget::Module => true,
-                MarkTarget::Class(name) => class.as_deref() == Some(name.as_str()),
-                MarkTarget::Test(name) => *name == test.qualified_name,
+                MarkTarget::Class(name) => is_own && class.as_deref() == Some(name.as_str()),
+                MarkTarget::Test(name) => is_own && *name == test.qualified_name,
             };
             if applies {
                 wanted.extend(mark.names.iter().cloned());

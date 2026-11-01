@@ -35,7 +35,7 @@ pub(super) fn workspace(files: &[(&str, &str)]) -> (Vec<PythonOwner>, Vec<Python
         }
     }
     attach_fixture_defs(&mut tests, &defs);
-    super::fixture_substitution::apply_fixture_substitution(&mut tests, &substitution);
+    super::fixture_substitution::apply_fixture_substitution(&mut tests, &substitution, |_| false);
     // Every conftest the workspace holds is in `files`; none is unreadable.
     mark_isolated_fixture_defs(&mut tests, &defs, &side, |_| false);
     super::param_fixtures::apply_literal_param_fixtures(&mut tests);
