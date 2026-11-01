@@ -19,9 +19,9 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:audit.py:check_balance:call_or_output_effect:side_effect:log.warning_balance_low%s_balance
   Changed behavior: log.warning("balance low: %s", balance)
-  Discriminator (observed, advisory): Related Python test reaches `check_balance` and reads the
-    logged text through `caplog`: the asserted text `low balance: 5` is in the old logged message
-    `low balance: 5` and not after the edit: the new message reads `balance low: 5`
+  Check (observed, advisory): Related Python test reaches `check_balance` and reads the logged text
+    through `caplog`: the asserted text `low balance: 5` is in the old logged message `low balance:
+    5` and not after the edit: the new message reads `balance low: 5`
   Related test: tests/test_audit.py:6 test_low_balance
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator yes

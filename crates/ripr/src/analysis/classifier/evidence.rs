@@ -7,16 +7,17 @@ use crate::analysis::classify::{
     body_contains_owner_call, call_parameter_names, callee_is_unique, chain_entry_pin_admits,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
     confidence_score, constructor_starts_empty, contains_as_whole_word, current_path_witness_with,
-    direct_call_name, direct_collection_mutation_receiver, expected_operand_value,
-    fallible_check_receipt, fallible_literal_witness, function_returns_value, getter_plainly_reads,
-    getter_plainly_reads_key, has_same_test_boundary_oracle_pairing, helper_only_reach,
-    helper_pins_owner_call, infection_evidence_for_owner, is_drop_destructor, local_flow_sinks,
-    method_cannot_store, observes_returned_element_field, operand_only_pin,
-    oracle_crediting_relations, outer_imported_names, owner_touches_field_only_at, package_prefix,
-    parameter_rebound, propagation_evidence_with_witness, pushed_collection_compared_whole,
-    pushed_literal_path, reach_evidence, reveal_outcome, same_test_pairing_missing_summary,
-    setter_plainly_writes, signature_parameters, unconditional_owner_insert_field,
-    unexercised_mask_bits, wrapper_return_boundary_pinned,
+    direct_call_name, direct_collection_mutation_receiver, error_path_arm_probe,
+    expected_operand_value, fallible_check_receipt, fallible_literal_witness,
+    function_returns_value, getter_plainly_reads, getter_plainly_reads_key,
+    has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
+    infection_evidence_for_owner, is_drop_destructor, local_flow_sinks, method_cannot_store,
+    observes_returned_element_field, operand_only_pin, oracle_crediting_relations,
+    outer_imported_names, owner_touches_field_only_at, package_prefix, parameter_rebound,
+    propagation_evidence_with_witness, pushed_collection_compared_whole, pushed_literal_path,
+    reach_evidence, reveal_outcome, same_test_pairing_missing_summary, setter_plainly_writes,
+    signature_parameters, unconditional_owner_insert_field, unexercised_mask_bits,
+    wrapper_return_boundary_pinned,
 };
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, OracleFact, RustIndex, TestSummary};
@@ -726,14 +727,24 @@ impl ClassifiedProbeEvidence {
         // A same-named function elsewhere (a trait method on another enum
         // with the same variant names) makes a direct call ambiguous; a
         // partial index cannot show the name is unique.
+        // #12110: an `error_path` probe on a whole match arm reads the same
+        // selector through its arm view, so a pin of the variant the change
+        // removed can be tied to an input that reaches this arm.
+        let selector_probe = match context.probe.family {
+            ProbeFamily::MatchArm => Some(context.probe.clone()),
+            ProbeFamily::ErrorPath => context
+                .owner_fn
+                .and_then(|owner| error_path_arm_probe(context.probe, owner)),
+            _ => None,
+        };
         let arm_selector = context
             .owner_fn
             .filter(|owner| {
-                matches!(context.probe.family, ProbeFamily::MatchArm)
+                selector_probe.is_some()
                     && context.workspace_complete
                     && callee_is_unique(&owner.name, context.index)
             })
-            .and_then(|owner| ArmSelector::establish(context.probe, owner))
+            .and_then(|owner| ArmSelector::establish(selector_probe.as_ref()?, owner))
             .map(|selector| {
                 selector
                     .in_workspace(
@@ -773,6 +784,7 @@ impl ClassifiedProbeEvidence {
             });
         let field_oracle_needs_admission = arm_selector
             .as_ref()
+            .filter(|_| matches!(context.probe.family, ProbeFamily::MatchArm))
             .is_some_and(ArmSelector::field_oracle_needs_admission);
         // RIPR-SPEC-0297 / #9836: an unsafe Display write edit needs its
         // admitted owner pin; generic token overlap cannot establish that
@@ -1304,6 +1316,17 @@ impl ClassifiedProbeEvidence {
                             )
                     })
             });
+        // #12110: an exact pin of the removed variant discriminates the
+        // change, so the new variant's missing exact assertion is obsolete.
+        if matches!(context.probe.family, ProbeFamily::ErrorPath)
+            && reveal.removed_variant_pin_credited
+        {
+            activation.missing_discriminators.retain(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_none_or(|sink| sink.kind != FlowSinkKind::ErrorVariant)
+            });
+        }
         if matches!(context.probe.family, ProbeFamily::FieldConstruction)
             && (reveal.owner_pin_credited || element_field_pinned)
         {

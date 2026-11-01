@@ -192,6 +192,8 @@ use source_facts::{
 };
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod collection_config;
+mod fixture_substitution;
 mod fixtures;
 mod forwarding_decorator;
 mod helper_assertions;
@@ -360,6 +362,12 @@ struct PythonOwner {
     /// subcommand, and the name a test passes to the group to reach it
     /// (`cli_subcommand.rs`, #9226). `None` unless the file proves it.
     cli_subcommand: Option<cli_subcommand::CliSubcommand>,
+    /// For a nested function owner (`outer.inner`): whether the enclosing
+    /// function's own body, outside the nested def, calls it by name. A test
+    /// that only calls the enclosing function reaches the nested body only
+    /// when this holds (`related_tests.rs`, #12141). `false` for every other
+    /// owner, which keeps parent-call reach fail-closed.
+    nested_called_by_parent: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -1148,6 +1156,8 @@ impl PythonAdapter {
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
         let mut fixture_side_by_file: BTreeMap<PathBuf, fixtures::FixtureSideEffects> =
             BTreeMap::new();
+        let mut substitution_by_file: BTreeMap<PathBuf, fixture_substitution::SubstitutionScope> =
+            BTreeMap::new();
         // Conftests that install implicit setup around tests (#6657).
         let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
         let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
@@ -1237,6 +1247,9 @@ impl PythonAdapter {
                 if !facts.fixtures.is_empty() {
                     fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
                 }
+                if facts.substitution_scope != fixture_substitution::SubstitutionScope::default() {
+                    substitution_by_file.insert(relative.clone(), facts.substitution_scope.clone());
+                }
                 let side = fixtures::side_effects_of(&facts);
                 if side != fixtures::FixtureSideEffects::default() {
                     fixture_side_by_file.insert(relative.clone(), side);
@@ -1271,6 +1284,11 @@ impl PythonAdapter {
         let unreadable_conftest = |conftest: &Path| {
             !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
         };
+        fixture_substitution::apply_fixture_substitution(
+            &mut all_tests,
+            &substitution_by_file,
+            unreadable_conftest,
+        );
         fixtures::mark_isolated_fixture_defs(
             &mut all_tests,
             &fixture_defs_by_file,
@@ -1300,6 +1318,7 @@ impl PythonAdapter {
             &mut all_tests,
             &module_attribute_writes,
         );
+        collection_config::apply_collection_config(&mut all_tests, &options.root);
         reexports::apply_package_reexports(
             &mut all_owners,
             |file| workspace_read.sources.get(file).map(String::as_str),
@@ -1887,6 +1906,9 @@ mod derived_expectation_tests;
 mod known_equality_helpers_tests;
 
 #[cfg(test)]
+mod collection_config_tests;
+
+#[cfg(test)]
 mod conftest_admission_tests;
 
 #[cfg(test)]
@@ -1897,6 +1919,9 @@ mod deleted_lines_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
+
+#[cfg(test)]
+mod fixture_substitution_tests;
 
 #[cfg(test)]
 mod import_writer_tests;

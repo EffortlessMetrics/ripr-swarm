@@ -46,7 +46,7 @@ Evidence
   - related test tests/test_cart.py:4 test_total_on_the_owner_receiver uses strong exact value oracle: assert other.total(10) == 30
 
 Weakness
-  - Related Python test reaches `total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  - Related Python test reaches `total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check
 
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior

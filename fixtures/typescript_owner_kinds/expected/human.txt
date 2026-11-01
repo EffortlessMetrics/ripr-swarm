@@ -25,7 +25,7 @@ Start here:
     a repair packet
   Related test: tests/owners.test.ts:7 cart total smoke (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: replace or augment the smoke-only assertion with an
-    exact-value assertion for missing discriminator `return value == this.items.length + 1`; no
+    exact-value assertion for the missing check `return value == this.items.length + 1`; no
     actionable repair packet is emitted until verify, receipt, and edit-boundary fields are
     available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
@@ -50,7 +50,7 @@ Next: drill into the top finding:
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (TypeScript preview: 3).
-    - src/owners.ts:2 (exposed); kind: return_value; reason: Related test reaches `formatPrice` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+    - src/owners.ts:2 (exposed); kind: return_value; reason: Related test reaches `formatPrice` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
     - src/owners.ts:11 (weak); kind: return_value; reason: Related test reaches `build` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair…
     - src/owners.ts:15 (weak); kind: return_value; reason: Related test reaches `DEFAULT_RATE` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or…
   Hidden classes:

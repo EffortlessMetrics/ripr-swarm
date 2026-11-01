@@ -2355,6 +2355,18 @@ pub(crate) fn task_for(entry: &ClassifiedSeam) -> &'static str {
     }
 }
 
+fn proof_obligation_json(obligation: &crate::analysis::test_stub::ProofObligation) -> String {
+    json!({
+        "kind": obligation.kind,
+        "function": obligation.function,
+        "changed_predicate": obligation.changed_predicate,
+        "witness_inputs": obligation.witness_inputs,
+        "property_skeleton": obligation.property_skeleton,
+        "limits": obligation.limits,
+    })
+    .to_string()
+}
+
 fn push_packet_json(
     out: &mut String,
     entry: &ClassifiedSeam,
@@ -2411,6 +2423,15 @@ fn push_packet_json(
         json_escape(recommended.reason.as_str())
     ));
     out.push_str("},\n");
+
+    // #11551: advisory proof obligation. Computed after `task_for` and the
+    // recommended test, and read by neither: it cannot change actionability.
+    if let Some(obligation) = crate::analysis::test_stub::proof_obligation_for(seam) {
+        out.push_str(&format!(
+            "      \"proof_obligation\": {},\n",
+            proof_obligation_json(&obligation)
+        ));
+    }
 
     // The edit cage this packet's repair will enforce, stated where the work
     // is planned (#4330). `edit_cage_policy_from_packet` consumes the
@@ -4693,6 +4714,41 @@ mod tests {
                 return Err(format!("missing v2 field {needle:?} in: {json}"));
             }
         }
+        Ok(())
+    }
+
+    // #11551: the proof obligation is an additive advisory member; the
+    // actionability fields beside it are produced without reading it.
+    #[test]
+    fn packet_carries_advisory_proof_obligation_for_a_relational_boundary() -> Result<(), String> {
+        let entry = weakly_gripped_classified();
+        let json = render_agent_seam_packets_json(std::slice::from_ref(&entry), None);
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| format!("packet is JSON: {error}"))?;
+        let packet = &value["packets"][0];
+        let obligation = &packet["proof_obligation"];
+        assert_eq!(obligation["kind"], "boundary", "{json}");
+        assert_eq!(obligation["function"], packet["owner"], "{json}");
+        assert_eq!(
+            obligation["changed_predicate"],
+            packet["changed_expression"]
+        );
+        assert_eq!(
+            obligation["witness_inputs"].as_array().map(Vec::len),
+            Some(3),
+            "{json}"
+        );
+        assert!(
+            obligation["limits"]
+                .as_array()
+                .is_some_and(|l| !l.is_empty())
+        );
+        assert_eq!(packet["task"], task_for(&entry), "{json}");
+        assert_eq!(
+            packet["headline_eligible"],
+            entry.class.is_headline_eligible(),
+            "{json}"
+        );
         Ok(())
     }
 

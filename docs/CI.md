@@ -689,7 +689,7 @@ check and does not run on ordinary pushes or PR updates.
 - **Contract.** Per harness the report (`target/ripr/reports/kani.md`) says
   `VERIFIED` (within the harness's documented `kani::assume` bounds), `FAILED`
   (counterexample, or an unreachable `kani::cover!` that makes the proof
-  vacuous) or `NOT-ESTABLISHED` (tool missing, timeout, no verdict). Anything
+  vacuous) or `NOT-ESTABLISHED` (tool missing, a harness over its 900 s per-harness timeout, no verdict). Anything
   but `VERIFIED` fails the job, and so does a missing tool or zero harnesses
   (`--allow-empty` is a local-only opt-out). Nothing passes by absence.
 - **Not a claim.** A `VERIFIED` row is a bounded check of a pure core. It is not a
@@ -970,6 +970,8 @@ The copyable self-hosted proof runbook is in
 [`docs/swarm-development.md`](swarm-development.md#self-hosted-proof-runbook).
 Use it to record CX43 primary proof, CPX42/CX53 fallback proof, or the bounded
 runner availability blocker without exposing runner tokens or secrets.
+
+The protected `Ripr Rust Small Result` job also reads the `vscode` extension e2e check for the exact admitted head on `merge-ready` requests (#12122). `ci.yml` owns selection: its `vscode surface` job ends non-skipped only for a `merge-ready` request, and all `vscode` checks of that run share its check suite. The Result requires a `github-actions` `vscode surface` check whose workflow run was created within 90 seconds of the routed run's creation or later (run creation is the event time, so a delayed runner does not exclude it) and concluded `success`, and reads only the `vscode` checks in that suite, so a skipped check from an earlier nonrequest event (another label applied just before `merge-ready`) can never read as "not selected". No such surface check yet, or no `vscode` check in its suite yet, means `ci.yml` has not got that far: the Result waits and fails closed after 20 minutes. A surface check that did not succeed fails the Result. In the suite, only skipped `vscode` checks mean not selected; otherwise the newest executed check (highest check-run id) decides: success passes, failure, cancellation or a timeout fails, and a check still running is awaited. A re-run of the job in the same run stays in the suite and can clear an earlier failure; a manual `workflow_dispatch` run is another suite and does not count. API reads retry four times. Main, manual-dispatch and merge-group results do not read it. The workflow grants `checks: read` for this, and the Result job's timeout is 30 minutes to cover the wait.
 
 The routed lane runs the existing Rust/product command surface without release
 package or publish dry-run steps. Each required lane invokes the shared
