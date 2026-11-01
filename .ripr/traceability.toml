@@ -577,6 +577,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_shares_facts_and_complete_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity",
+  "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::fragment_parses_share_only_exact_bytes_and_clones_start_empty",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::owner_lexical_facts_are_shared_across_syntax_owners",
   "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::source_snapshot_reuses_parse_and_scopes_across_threads_and_owners",
   "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::source_snapshot_preserves_qualifiers_ambiguity_and_complete_query_identity",
@@ -20568,6 +20569,37 @@ outputs = [
 ]
 metrics = [
   "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0352"
+name = "An inherent receiver blocked only by an assertion macro ripr cannot verify, because target-root placement is unavailable, is a named limitation and not a gap"
+spec = "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md"
+tests = [
+  "crates/ripr/tests/receiver_unestablished_limit.rs::an_unplaced_standard_assertion_over_the_owner_call_is_a_named_limitation",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::the_repository_consumer_credits_nothing_for_the_unplaced_call",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::a_receiver_that_does_not_resolve_even_with_the_macro_trusted_keeps_its_gap",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::available_placement_keeps_the_rebound_root_gap_and_the_plain_credit",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::a_weak_oracle_keeps_its_gap_even_though_the_macro_is_unverifiable",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::an_unrelated_weak_assertion_does_not_lift_the_withhold",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::another_crates_glob_reexport_is_part_of_the_unplaced_doubt",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::a_bare_factory_shadowed_by_an_import_keeps_the_gap",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::a_qualified_associated_factory_keeps_the_gap",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::an_unauthoritative_inherent_factory_declaration_keeps_the_gap",
+  "crates/ripr/src/analysis/classify/receiver_unestablished.rs::tests::a_related_row_names_one_of_two_same_named_tests_by_its_start_line",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::imported_enum_variant_value_admits_only_the_single_unambiguous_import",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::imported_crate_roots_read_through_whitespace_and_comments",
+]
+code = [
+  "crates/ripr/src/analysis/classify/receiver_unestablished.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md",
+  "docs/STATIC_LIMITS.md",
+]
+metrics = [
+  "verdict_corpus_false_actionable_rate",
 ]
 
 [[behavior]]
