@@ -41,6 +41,32 @@ const PLAIN_KEYS: &[&str] = &[
     "public",
 ];
 
+/// RIPR-SPEC-0369 audit table: `(source crate name, Cargo.lock package name,
+/// audited versions)` for the verification-prelude crates whose published
+/// export lists were read and found to hold no trusted assertion macro. The
+/// trust is these exact versions, not the crate name. To audit a new release,
+/// re-read the published crate's prelude exports (no macro named like a trusted
+/// assertion), then append its exact version string here; the spec table is checked against
+/// this const by `spec_audited_version_table_matches_the_code_authority`.
+const AUDITED_PRELUDE_VERSIONS: &[(&str, &str, &[&str])] = &[
+    ("creusot_std", "creusot-std", &["0.14.0"]),
+    ("vstd", "vstd", &["0.0.0-2026-10-25-0158"]),
+    ("prusti_contracts", "prusti-contracts", &["0.3.3"]),
+];
+
+/// Whether `krate` needs an audited locked version beyond the manifest proof,
+/// and if so whether the lockfile has one. The lockfile is the nearest one
+/// above the importing package's directory, so a nested workspace with its own
+/// `Cargo.lock` is judged by that lock and never by an outer one.
+fn audited_version_locked(directory: &Path, krate: &str) -> bool {
+    AUDITED_PRELUDE_VERSIONS
+        .iter()
+        .find(|(name, _, _)| *name == krate)
+        .is_none_or(|(_, lock_name, versions)| {
+            crate::analysis::workspace::locked_at_audited_version(directory, lock_name, versions)
+        })
+}
+
 type LiteralJsonMemo = Option<(
     String,
     Option<crate::analysis::workspace::LiteralJsonIdentity>,
@@ -127,7 +153,7 @@ impl DropInManifests {
         {
             return verdict;
         }
-        let verdict = verify(root, directory, krate);
+        let verdict = verify(root, directory, krate) && audited_version_locked(directory, krate);
         if let Ok(mut verdicts) = self.verdicts.lock() {
             verdicts.insert(key, verdict);
         }
@@ -421,6 +447,52 @@ mod tests {
     const KRATE: &str = "pretty_assertions";
     const FILE: &str = "src/lib.rs";
 
+    /// The spec's audited-version table is a view of `AUDITED_PRELUDE_VERSIONS`:
+    /// the code const is the one authority and this test fails on any drift in
+    /// crate, lock package or version (RIPR-SPEC-0369).
+    #[test]
+    fn spec_audited_version_table_matches_the_code_authority() -> Result<(), String> {
+        let spec = include_str!(
+            "../../../../../docs/specs/RIPR-SPEC-0369-verus-macro-region-and-verification-prelude-globs.md"
+        );
+        let mut from_spec: Vec<(String, String, String)> = Vec::new();
+        for line in spec.lines().filter(|line| line.starts_with("| `")) {
+            let cells = line.split('|').map(str::trim).collect::<Vec<_>>();
+            let (Some(glob), Some(audited)) = (cells.get(1), cells.get(2)) else {
+                continue;
+            };
+            let krate = glob
+                .trim_matches('`')
+                .split("::")
+                .next()
+                .unwrap_or_default();
+            let (lock_name, version) = audited
+                .split_once(' ')
+                .ok_or_else(|| format!("table cell without a version: {audited}"))?;
+            from_spec.push((
+                krate.to_string(),
+                lock_name.to_string(),
+                version.to_string(),
+            ));
+        }
+        let mut from_code: Vec<(String, String, String)> = AUDITED_PRELUDE_VERSIONS
+            .iter()
+            .flat_map(|(krate, lock, versions)| {
+                versions
+                    .iter()
+                    .map(move |v| (krate.to_string(), lock.to_string(), v.to_string()))
+            })
+            .collect();
+        from_spec.sort();
+        from_code.sort();
+        assert!(!from_code.is_empty(), "the audit table must not be empty");
+        assert_eq!(
+            from_spec, from_code,
+            "spec table and code authority drifted"
+        );
+        Ok(())
+    }
+
     fn verified(label: &str, files: &[(&str, &str)], file: &str) -> Result<bool, String> {
         let root = temp_workspace(label, files)?;
         let verdict = DropInManifests::new(&root).verified(Path::new(file), KRATE);
@@ -429,6 +501,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(verdict, joined, "{label}");
         Ok(verdict)
+    }
+
+    #[test]
+    fn a_nested_workspace_is_judged_by_its_own_lockfile() -> Result<(), String> {
+        let lock = |version: &str| {
+            format!(
+                "version = 3\n\n[[package]]\nname = \"vstd\"\nversion = \"{version}\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+            )
+        };
+        let dependent = "[package]\nname = \"inner\"\nversion = \"0.1.0\"\n\n[workspace]\n\n[dependencies]\nvstd = \"0\"\n";
+        let audited = lock("0.0.0-2026-10-25-0158");
+        let unaudited = lock("9.9.9");
+        for (label, outer, inner, expected) in [
+            // The inner lock decides: audited inner beats unaudited outer, and the reverse.
+            ("inner-audited", &unaudited, &audited, true),
+            ("inner-unaudited", &audited, &unaudited, false),
+        ] {
+            let root = temp_workspace(
+                label,
+                &[
+                    ("Cargo.lock", outer),
+                    ("inner/Cargo.toml", dependent),
+                    ("inner/Cargo.lock", inner),
+                ],
+            )?;
+            let verdict =
+                DropInManifests::new(&root).verified(Path::new("inner/src/lib.rs"), "vstd");
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(verdict, expected, "{label}");
+        }
+        Ok(())
     }
 
     fn manifest(dependencies: &str) -> String {

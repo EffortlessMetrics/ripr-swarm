@@ -128,7 +128,7 @@ map is:
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v4`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
-| `ripr help --json` | `schema_version` | `3` |
+| `ripr help --json` | `schema_version` | `4` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
@@ -825,6 +825,14 @@ next=COMMAND
   `--root` and the diff or base selectors, because a finding id does not
   resolve outside its run). It is absent when no gap is listed unless the
   shared canonical next action has an executable command.
+- `open=` replaces `stop=` when no gap is listed but a candidate-current
+  `weakly_exposed` or `reachable_unrevealed` finding is held only by the
+  reach-only `rust_transitive_reach_unresolved` limitation and still carries a
+  contributing related test with a `weak` or `smoke` oracle (#11825). It is not a
+  confirmed gap, so `gaps=` does not count it; the finding is listed in the gap
+  line shape (with `missing=-`), the weak test in its `tK` row, `limits=` still
+  counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
+  row, or any other limit kind, keeps `stop=`.
 - Terminal states are one explicit line: `done=` (no weak or unobserved gap is
   left to fix from the test side, or no changed behavior was found in scope) or
   `stop=` (every finding is base-side or unresolved, all are suppressed by
@@ -3350,6 +3358,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `macro_reach_unresolved`
 - `gap_evidence_unresolved`
 - `helper_identity_unresolved`
+- `compile_time_invariant`
 - `transitive_reach_unresolved`
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
@@ -16731,6 +16740,24 @@ Field contract:
   reports the outer inventory total, and each entry names its own recovery
   control. Full recovery requires lifting every active cap. Uncapped output
   has no stale cap limitation.
+- Pilot packet bound (#11951) — the `ripr pilot` copy of this document
+  (`target/ripr/pilot/agent-seam-packets.json`) carries at most
+  `RIPR_PILOT_PACKET_BUDGET` packets (default 3; `0` writes all). The kept
+  packets are the first `write_targeted_test` packets followed by
+  `inspect_static_limitation` packets, each group in its existing order, and
+  every kept packet is the packet the uncut document carries for that seam. A
+  cut adds a `limitations[]` object `{category: "pilot_packet_bound_applied",
+  packets_emitted, packets_eligible, limit_source, control:
+  "RIPR_PILOT_PACKET_BUDGET", repair_route}`. When no seam cap and no
+  declined file already owns `run_status`, a cut sets it to
+  `"packet_bound_applied"`; otherwise `seam_limit_applied` or
+  `limited_declined_files` is kept and the bound is an additional
+  `limitations[]` entry. A bound at or above the eligible count changes
+  nothing, and the document is the unbounded one. `packets_total` stays the
+  rendered `packets` length; `packets_eligible` is the packet-eligible count.
+  The `next` block, packet eligibility, `task` and classification are
+  unchanged by the bound. `ripr check --format agent-seam-packets-json` is
+  not bounded.
 - `analysis_outcome_status` — the producer outcome projection state. It is
   `"complete"` or `"incomplete"` when a typed diff outcome is present,
   `"missing"` or `"invalid"` when a required producer artifact cannot be
@@ -16749,10 +16776,12 @@ Field contract:
 - `inputs.gap_ledger` - optional. Present with gap-ledger packet mode so
   reviewers and agents can trace the packet back to the artifact that owned
   projection eligibility.
-- `packets_total` — number of actionable packets emitted. Equals the
-  count of headline-eligible seams plus opaque seams (which emit
-  `inspect_static_limitation`). Strongly-gripped, intentional, and
-  suppressed seams produce no packet.
+- `packets_total` — number of packets in `packets[]` (the rendered array
+  length). Unbounded, that is the count of headline-eligible seams plus
+  opaque seams (which emit `inspect_static_limitation`); strongly-gripped,
+  intentional, and suppressed seams produce no packet. In a bounded pilot
+  document it is the number written, which is smaller than the eligible
+  count that `limitations[].packets_eligible` reports.
 - `packets[].task` — `"write_targeted_test"` for headline-eligible
   seams; `"inspect_static_limitation"` for opaque seams. Future
   versions may add tasks like `"strengthen_oracle"` or

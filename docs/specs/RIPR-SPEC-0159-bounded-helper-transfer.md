@@ -156,6 +156,21 @@ can only hint that a caller "may lead here" without changing anything.
   re-exports, aliases and module-qualified hop calls are not admitted: the
   bare name is only trusted where one scope declares it. Only the test's call
   of the entry may be crate-qualified.
+- Computed chain-edge argument (#9638): a hop argument that is a closed integer
+  expression over the hop caller's own parameters (`add_fee(items * 10)`)
+  binds the owner's parameter when the test calls the entry with an exact
+  decimal literal row. The shared evaluator (`evaluate_initializer`, as the
+  RIPR-SPEC-0158 test-side fold) computes it from decimal literals, those
+  parameter names, `+ - * / %` and parentheses only. The caller's parameter
+  must be declared `i32`, `i64`, `i128`, `isize`, `u32`, `u64`, `u128` or
+  `usize` and never be rebound in the caller (`let`, assignment, pattern);
+  an overflow, an underflow, a division by zero or a result at the evaluator's
+  bound leaves the argument unread. A call, method, field, cast, suffixed
+  literal, constant, static, unary sign, macro hop, narrow, aliased or generic
+  type, or an expression naming no parameter keeps the abstention
+  (`infection_unknown`). The fold adds no reading of its own: a non-literal
+  test input or an input on which the owners agree reads as it does for the
+  same chain with the argument passed straight through.
 - Diverging unwrap tail (#9638): a hop caller whose tail is exactly
   `<hop call>.unwrap_or_else(<handler>)` forwards the owner's result when
   `<handler>` is a path to a workspace function that only diverges, so the
@@ -817,6 +832,11 @@ qualifier refusals; the class stays below `exposed`);
 `analysis/classify/helper_transfer/qualified_hop.rs` `tests` (the qualifier
 resolution and each decline); corpus cases `spec-b-0159-path-qualified-call-site` (accept shape of
 example 5) and `spec-b-0159-path-qualified-imported-module` (reject shape).
+`crates/ripr/tests/computed_edge_argument_fold.rs` (computed chain-edge argument:
+single- and two-hop positives, and the unfoldable-expression, rebound,
+narrow/generic type, non-literal input, two-call and macro refusals) and
+`argument_fold.rs` `tests` (`folded_hop_argument`); corpus case
+`tokens-add-fee-integration-api`.
 
 ## Non-Goals
 
