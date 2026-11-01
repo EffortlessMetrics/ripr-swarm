@@ -50,3 +50,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — fixture_receiver_unread_data (5)
+
+Reason:
+RIPR-SPEC-0122: plain wording for the Evidence stage name and the stage and state legend in the check digest (#10692)
+
+Command:
+`cargo xtask goldens bless fixture_receiver_unread_data --reason "..."`
+
+Updated:
+- `expected/human.txt`
