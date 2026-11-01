@@ -37,7 +37,7 @@ pub(crate) use crate::analysis::language::adapter::render_fact_cache_line;
 /// On-disk schema version of a `typescript-file-facts` envelope. Any change
 /// to a serialized fact spelling (field rename, type change, new label) is
 /// a schema change: bump this so stale entries read as misses.
-pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "4";
+pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "5";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. Parsing the
 /// file already happened by store time, so exhausting the budget only skips
@@ -173,6 +173,9 @@ impl TypeScriptFileFactEnvelope {
     /// fixed order; the digest is a corruption check, not authentication
     /// (seam_cache contract, #7780).
     fn expected_digest(&self) -> Result<String, String> {
+        // Shared lists digest in their wire form, so the digest binds the
+        // same bytes the encoder writes.
+        let _wire = super::types::SharedWireScope::open();
         seam_cache::semantic_body_digest(ENVELOPE_DIGEST_DOMAIN, self)
     }
 
@@ -302,7 +305,11 @@ impl TypeScriptFileFactStore {
             }
             Err(err) => return corrupt_entry(&path, format!("read failed: {err}")),
         };
-        match serde_json::from_slice::<TypeScriptFileFactEnvelope>(&bytes) {
+        let decoded = {
+            let _wire = super::types::SharedWireScope::open();
+            serde_json::from_slice::<TypeScriptFileFactEnvelope>(&bytes)
+        };
+        match decoded {
             Ok(envelope) => {
                 if !envelope.matches_key(key) {
                     return CacheLoad::Miss;
@@ -373,7 +380,14 @@ impl TypeScriptFileFactStore {
         }
         let envelope =
             TypeScriptFileFactEnvelope::new(key, file_facts.clone(), test_extraction.cloned());
-        let bytes = seam_cache::encode_integrity_body(&envelope, envelope.expected_digest()?)?;
+        let digest = envelope.expected_digest()?;
+        let bytes = {
+            // Compact, with shared lists written once: a file with thousands of
+            // tests or owners would otherwise store one copy of its file-wide
+            // lists for each (VS Code: a 267 MB envelope for one test file).
+            let _wire = super::types::SharedWireScope::open();
+            seam_cache::encode_integrity_body_compact(&envelope, digest)?
+        };
         let approx_bytes = bytes.len();
         let mut remaining = self.remaining_store_bytes.load(Ordering::Relaxed);
         loop {
@@ -498,7 +512,7 @@ mod tests {
     fn schema_version_pins_ast_probe_shape_facts() -> Result<(), String> {
         // #11250 added per-line probe shapes to the persisted facts, so
         // envelopes written before them must read as misses.
-        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "4");
+        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "5");
         // A stale-schema envelope: the exact bytes the pre-#11250 ("3")
         // binary wrote — same identity, valid integrity digest, older
         // schema version — sitting at the entry path the current key
