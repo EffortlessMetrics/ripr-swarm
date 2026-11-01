@@ -115,7 +115,11 @@ fn a_truncated_walk_withholds_no_static_path() -> Result<(), String> {
     );
     let text = finding.to_string();
     assert!(text.contains("RIPR_TS_MAX_WORKSPACE_FILES"), "{text}");
-    assert!(text.contains("3-entry"), "{text}");
+    assert!(
+        text.contains("3 TypeScript/JavaScript source files"),
+        "{text}"
+    );
+    assert!(text.contains("15 directory entries"), "{text}");
     assert_eq!(report["analysis_outcome"]["analysis_complete"], false);
     Ok(())
 }

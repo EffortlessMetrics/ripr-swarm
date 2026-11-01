@@ -122,6 +122,13 @@ const DEFAULT_TS_MAX_WORKSPACE_FILES: usize = 20_000;
 /// plus a dozen `docs/*.txt`) via this backstop after candidate-only counting.
 const TS_WORKSPACE_TOTAL_ENTRY_BACKSTOP_MULTIPLIER: usize = 5;
 
+/// Total directory-entry backstop for a candidate-source `limit`
+/// (`limit × 5`). Disclosure text names it beside the limit because the single
+/// `truncated` flag cannot say which bound tripped.
+pub(crate) fn ts_workspace_entry_backstop(limit: usize) -> usize {
+    limit.saturating_mul(TS_WORKSPACE_TOTAL_ENTRY_BACKSTOP_MULTIPLIER)
+}
+
 #[cfg(test)]
 thread_local! {
     /// Directory entries seen by the last [`visit_workspace_with_handwritten`]
@@ -207,8 +214,7 @@ pub(crate) fn visit_workspace_with_handwritten(
     max_entries: usize,
     handwritten: &[String],
 ) -> WorkspaceScan {
-    let max_total_entries =
-        max_entries.saturating_mul(TS_WORKSPACE_TOTAL_ENTRY_BACKSTOP_MULTIPLIER);
+    let max_total_entries = ts_workspace_entry_backstop(max_entries);
     let mut out = Vec::new();
     let mut candidates = 0usize;
     let mut total_entries = 0usize;

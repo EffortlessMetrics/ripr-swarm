@@ -489,9 +489,9 @@ pub enum StaticLimitKind {
     /// class stays `no_static_path`. This label names the unevaluated proof,
     /// not a coverage claim. See RIPR-SPEC-0367.
     ProofHarnessNotEvaluated,
-    /// TypeScript workspace discovery stopped at its entry cap
-    /// (`RIPR_TS_MAX_WORKSPACE_FILES`) before the walk covered the workspace,
-    /// so the test universe is incomplete. A finding that would say no test
+    /// TypeScript workspace discovery stopped at its candidate-source cap
+    /// (`RIPR_TS_MAX_WORKSPACE_FILES`) or its 5x total-entry backstop before
+    /// the walk covered the workspace, so the test universe is incomplete. A finding that would say no test
     /// reaches the change is withheld and the class is `static_unknown`: the
     /// missing test may be one the walk never read. See RIPR-SPEC-0240.
     TypescriptWorkspaceDiscoveryTruncated,
@@ -750,8 +750,9 @@ impl StaticLimitKind {
                  named limitation, not a coverage claim."
             }
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
-                "TypeScript workspace discovery stopped at its entry cap before it covered the \
-                 workspace, so tests past the cap were never read. ripr cannot say that no test \
+                "TypeScript workspace discovery stopped at its source-file limit or its total \
+                 directory-entry limit before it covered the workspace, so tests past the limit \
+                 were never read. ripr cannot say that no test \
                  reaches this change, so it does not claim a gap; this is a named limitation, \
                  not a coverage claim."
             }
