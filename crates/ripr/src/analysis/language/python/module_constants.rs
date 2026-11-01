@@ -358,10 +358,20 @@ fn without_test_bodies(source: &str, statements: &[Stmt]) -> String {
     }
     // A test function named anywhere but its own `def` (called at import,
     // used as a decorator) may run before the decorators: scan everything.
-    if names
-        .iter()
-        .any(|name| identifier_offsets(&blanked, name).count() > 1)
-    {
+    // Count the words once: a whole-word occurrence of an identifier is a word
+    // equal to it, so this is the same test as scanning for each name without
+    // a pass over the module per test (a module of N tests cost N scans).
+    let named_outside_its_def = {
+        let mut final_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for word in words(&blanked) {
+            *final_counts.entry(word).or_insert(0) += 1;
+        }
+        names
+            .iter()
+            .any(|name| final_counts.get(name).copied().unwrap_or(0) > 1)
+    };
+    if named_outside_its_def {
         return source.to_string();
     }
     blanked

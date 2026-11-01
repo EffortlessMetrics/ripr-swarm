@@ -54,6 +54,11 @@ struct Scope {
 
 pub(super) struct DeclarationBindings {
     scopes: Vec<Scope>,
+    /// `(span.start, scope index)` sorted ascending, so the scope a position
+    /// falls in is found by a search plus a walk up the parent chain instead
+    /// of a scan over every scope (a module of N tests has N+ scopes and N+
+    /// lookups).
+    scopes_by_start: Vec<(u32, usize)>,
     stack: Vec<usize>,
     variable_scopes: Vec<usize>,
     lexical_functions: bool,
@@ -74,6 +79,7 @@ impl DeclarationBindings {
     ) -> Self {
         let mut index = Self {
             scopes: Vec::new(),
+            scopes_by_start: Vec::new(),
             stack: Vec::new(),
             variable_scopes: Vec::new(),
             lexical_functions: admission.block_functions_are_lexical,
@@ -254,14 +260,45 @@ impl DeclarationBindings {
         possible
     }
 
+    /// The innermost scope that holds `at`: the smallest span, and the later
+    /// of two equal spans. Scopes nest or are disjoint and every enclosing
+    /// scope is on a scope's parent chain, so the scope with the greatest start
+    /// at or before `at` is the innermost candidate and each outer holder is
+    /// one of its ancestors.
+    fn innermost_scope(&self, at: u32) -> Option<usize> {
+        let holds = |index: usize| {
+            let span = self.scopes[index].span;
+            span.start <= at && at < span.end
+        };
+        let after = self
+            .scopes_by_start
+            .partition_point(|&(start, _)| start <= at);
+        let mut scope = after
+            .checked_sub(1)
+            .map(|last| self.scopes_by_start[last].1);
+        while let Some(index) = scope {
+            if holds(index) {
+                break;
+            }
+            scope = self.scopes[index].parent;
+        }
+        // The tests run every lookup against the full scan this replaced.
+        #[cfg(test)]
+        assert_eq!(
+            scope,
+            self.scopes
+                .iter()
+                .enumerate()
+                .filter(|(_, scope)| scope.span.start <= at && at < scope.span.end)
+                .min_by_key(|(index, scope)| (scope.span.size(), std::cmp::Reverse(*index)))
+                .map(|(index, _)| index),
+            "indexed scope lookup disagrees with the full scan at offset {at}"
+        );
+        scope
+    }
+
     fn binding_scope(&self, name: &str, at: u32) -> Option<usize> {
-        let mut scope = self
-            .scopes
-            .iter()
-            .enumerate()
-            .filter(|(_, scope)| scope.span.start <= at && at < scope.span.end)
-            .min_by_key(|(index, scope)| (scope.span.size(), std::cmp::Reverse(*index)))
-            .map(|(index, _)| index);
+        let mut scope = self.innermost_scope(at);
         while let Some(index) = scope {
             if self.scopes[index].bindings.contains_key(name) {
                 return Some(index);
@@ -279,6 +316,10 @@ impl DeclarationBindings {
             self.lexical_functions,
         );
         let index = self.scopes.len();
+        let slot = self
+            .scopes_by_start
+            .partition_point(|&(start, _)| start <= span.start);
+        self.scopes_by_start.insert(slot, (span.start, index));
         self.scopes.push(Scope {
             span,
             parent: self.stack.last().copied(),
