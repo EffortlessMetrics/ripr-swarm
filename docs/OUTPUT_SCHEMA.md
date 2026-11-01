@@ -141,8 +141,10 @@ with `result_too_large` instead of shipping a success without
 `structuredContent` (#7768; details in
 [MCP workspace status server](interop/mcp.md)). `content[0].text` is the
 compact JSON copy by default; `RIPR_MCP_TEXT_CONTENT=summary` opts a server
-process into a digest instead while `structuredContent` stays the one
-complete result (#9360).
+process into a digest instead (`brief` gives one line per gap) while
+`structuredContent` stays the one complete result (#9360, #11621). Argument
+errors on a known tool are `invalid_argument` tool failures (`isError: true`),
+not JSON-RPC errors (#11621).
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -3348,6 +3350,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `macro_reach_unresolved`
 - `gap_evidence_unresolved`
 - `helper_identity_unresolved`
+- `compile_time_invariant`
 - `transitive_reach_unresolved`
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
@@ -19190,7 +19193,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.125",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.126",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -19975,7 +19978,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.125",
+      "schema_version": "1.126",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

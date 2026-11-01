@@ -47,8 +47,8 @@ use super::state::{
     content_digest, format_duration,
 };
 use super::uri::{
-    CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uri_is_within_root,
-    file_uris_match, path_from_file_uri, path_is_within_root, read_artifact_capped,
+    CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uris_match,
+    path_from_file_uri, path_is_within_root, read_artifact_capped,
 };
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
@@ -1111,10 +1111,10 @@ impl Backend {
         let Ok(documents) = self.quarantine.documents.lock() else {
             return Default::default();
         };
-        documents
-            .documents
-            .keys()
-            .filter_map(|uri| super::uri::file_uri_relative_to_root(root, uri))
+        // One batch per refresh: the root and each directory are canonicalized
+        // once, not once per open document (#11763).
+        super::uri::file_uris_relative_to_root(root, documents.documents.keys())
+            .into_iter()
             .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
             .collect()
     }
@@ -5638,9 +5638,12 @@ fn workspace_diagnostics_are_root_contained(
 ) -> bool {
     let snapshot_root_matches = super::uri::path_is_within_root(root, &diagnostics.snapshot.root)
         && super::uri::path_is_within_root(&diagnostics.snapshot.root, root);
+    // One projector for the whole check: the root and each directory are
+    // resolved once, not once per diagnostic URI (#11763).
+    let mut projector = super::uri::RelativeKeyProjector::new(root);
     snapshot_root_matches
         && diagnostics.batches.iter().all(|batch| {
-            file_uri_is_within_root(root, &batch.uri)
+            projector.is_within_root(&batch.uri)
                 && batch.diagnostics.iter().all(|diagnostic| {
                     diagnostic
                         .related_information
@@ -5648,7 +5651,7 @@ fn workspace_diagnostics_are_root_contained(
                         .is_none_or(|related| {
                             related
                                 .iter()
-                                .all(|item| file_uri_is_within_root(root, &item.location.uri))
+                                .all(|item| projector.is_within_root(&item.location.uri))
                         })
                 })
         })

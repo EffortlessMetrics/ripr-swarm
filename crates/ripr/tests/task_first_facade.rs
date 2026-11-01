@@ -5487,3 +5487,27 @@ fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Resul
 
 #[path = "task_first_facade/brief_diff_status.rs"]
 mod brief_diff_status;
+
+/// #11600: `ripr status --attempt <bad>` is the façade the caller typed, so its
+/// failure names `status`, never the `agent status` spelling of the shared body.
+#[test]
+fn status_attempt_with_a_malformed_id_names_status_not_agent_status() -> Result<(), String> {
+    let root = unique_temp_workspace("status-bad-attempt");
+    std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+    init_repo(&root)?;
+    let output = run_ripr(&root, &["status", "--attempt", "not-a-repair-attempt-id"])?;
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a malformed id could not complete"
+    );
+    assert!(output.stdout.is_empty(), "stdout stays empty on exit 2");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("status --attempt: repair attempt ID must start with"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("agent status"), "{stderr}");
+    Ok(())
+}
