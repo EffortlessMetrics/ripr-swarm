@@ -24,9 +24,9 @@ Start here:
     verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value
     assertion
   Related test (1 of 2 matched rows): tests/discount.test.ts:5 at threshold discounts
-  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
-    discriminator `amount == threshold`; no actionable repair packet is emitted until verify,
-    receipt, and edit-boundary fields are available
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
+    check `amount == threshold`; no actionable repair packet is emitted until verify, receipt, and
+    edit-boundary fields are available
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

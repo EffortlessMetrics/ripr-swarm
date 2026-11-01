@@ -600,6 +600,7 @@ fn pilot_summary_discloses_the_repo_exposure_byte_bound_and_only_then() -> Resul
         &entries,
         Some((1, crate::analysis::SeamLimitSource::Configured)),
         |_| false,
+        &[],
     )
     .ok_or("one entry over a one-byte budget must be cut")?;
     let artifacts = pilot_artifacts();

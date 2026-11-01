@@ -159,20 +159,24 @@ pub(crate) fn resolve_external(
 const GIT_DEADLINE: Duration = Duration::from_mins(20);
 
 fn git(args: &[&str], cwd: &Path) -> Result<String, String> {
+    git_within(args, cwd, GIT_DEADLINE)
+}
+
+pub(crate) fn git_within(args: &[&str], cwd: &Path, deadline: Duration) -> Result<String, String> {
     let mut owned: Vec<String> = vec!["-C".to_string(), cwd.to_string_lossy().into_owned()];
     owned.extend(args.iter().map(|arg| (*arg).to_string()));
     let output = shared_run::capture_output_with_timeout(
         "git",
         &owned,
         &[("GIT_TERMINAL_PROMPT", "0")],
-        GIT_DEADLINE,
+        deadline,
         &format!("git {}", args.join(" ")),
     )?;
     if output.timed_out {
         return Err(format!(
             "git {} timed out after {} s",
             args.join(" "),
-            GIT_DEADLINE.as_secs()
+            deadline.as_secs()
         ));
     }
     if !output.status.is_some_and(|status| status.success()) {

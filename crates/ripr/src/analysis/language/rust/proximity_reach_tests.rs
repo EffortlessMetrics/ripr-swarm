@@ -1759,3 +1759,162 @@ fn a_weakly_exposed_owner_named_weak_assertion_keeps_its_gap_while_proximity_is_
     );
     Ok(())
 }
+
+// #12098: the related-test cap must not drop an owner-named weak row behind
+// eight earlier-sorting proximity rows. Real Rust producer fixture, no
+// synthetic `relation_reason`.
+const NUMERIC_OWNER_BODY: &str = r####"use std::str::FromStr;
+fn numeric_identifier(input: &str) -> Result<u64, String> {
+    let mut value = 0u64;
+    for digit in input.bytes() {
+        if digit < b'0' || digit > b'9' {
+            return Err("bad digit".to_string());
+        }
+        value = value * 10 + (digit - b'0') as u64;
+    }
+    Ok(value)
+}
+pub struct Version(pub u64);
+impl FromStr for Version {
+    type Err = String;
+    fn from_str(text: &str) -> Result<Self, String> {
+        Ok(Version(numeric_identifier(text)?))
+    }
+}
+impl Version {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        Version::from_str(text)
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+"####;
+
+const WEAK_OWNER_NAMED_ASSERTION: &str = "assert!(Version::parse(\"1x\").is_err());";
+const STRONG_OWNER_NAMED_ASSERTION: &str =
+    "assert_eq!(Version::parse(\"1x\").unwrap_err(), \"bad digit\");";
+
+/// `proximity_tests` same-file tests sorted ahead of the owner-named test by
+/// name, each with an exact-value assertion, then the owner-named test
+/// carrying `owner_named_assertion`.
+fn crowded_owner_named_fixture(
+    proximity_tests: usize,
+    owner_named_assertion: &str,
+) -> Result<Finding, String> {
+    let mut lib = String::from(NUMERIC_OWNER_BODY);
+    for index in 0..proximity_tests {
+        lib.push_str(&format!(
+            "    #[test]\n    fn aa_unrelated_{index:02}() {{\n        assert_eq!(format!(\"n{index}\"), \"n{index}\");\n    }}\n"
+        ));
+    }
+    lib.push_str(&format!(
+        "    #[test]\n    fn numeric_identifier_rejects_garbage() {{\n        {owner_named_assertion}\n    }}\n}}\n"
+    ));
+    let fixture = Fixture::new(&format!("crowded-{proximity_tests}"), &lib)?;
+    fixture.boundary_finding()
+}
+
+fn owner_named_row(finding: &Finding) -> Option<(usize, &crate::domain::RelatedTest)> {
+    finding
+        .related_tests
+        .iter()
+        .enumerate()
+        .find(|(_, test)| test.name == "numeric_identifier_rejects_garbage")
+}
+
+/// The selection `triage::weak_assertion_row` makes: the first contributing row
+/// whose oracle is `weak` or `smoke`.
+fn weak_bound_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
+    finding.related_tests.iter().find(|test| {
+        test.is_contributing()
+            && matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
+            )
+    })
+}
+
+fn assert_crowded_premises(finding: &Finding, proximity_tests: usize) {
+    // Fixture construction: the producer emits the owner-named relation behind
+    // the transitive-reach limit, and every other row is file proximity.
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustTransitiveReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert_eq!(finding.related_tests_total(), proximity_tests + 1);
+    assert_eq!(
+        finding.related_tests.len(),
+        8,
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|test| test.name == "numeric_identifier_rejects_garbage"
+                || test.relation_reason == Some(RelationReason::SameTestFile)),
+        "{:?}",
+        finding.related_tests
+    );
+}
+
+#[test]
+fn eight_proximity_rows_do_not_displace_the_owner_named_weak_row() -> Result<(), String> {
+    let finding = crowded_owner_named_fixture(10, WEAK_OWNER_NAMED_ASSERTION)?;
+    assert_crowded_premises(&finding, 10);
+    let (index, row) = owner_named_row(&finding)
+        .ok_or_else(|| format!("owner-named row was displaced: {:?}", finding.related_tests))?;
+    assert_eq!(row.relation_reason, Some(RelationReason::OwnerNamedTest));
+    assert_eq!(row.oracle_strength, crate::domain::OracleStrength::Weak);
+    // Row 0 is not rescored: the primary related test is still the first
+    // proximity row by name.
+    assert_ne!(index, 0, "{:?}", finding.related_tests);
+    assert_eq!(finding.related_tests[0].name, "aa_unrelated_00");
+    // The row `weak_assertion_row` inspects exists.
+    assert_eq!(
+        weak_bound_row(&finding).map(|test| test.name.as_str()),
+        Some("numeric_identifier_rejects_garbage")
+    );
+    Ok(())
+}
+
+#[test]
+fn eight_proximity_rows_still_cap_when_the_owner_named_oracle_is_strong() -> Result<(), String> {
+    // Discriminating negative: only a weak or smoke owner-named row is lifted,
+    // so a strong owner-named row stays behind the cap like any proximity row.
+    let finding = crowded_owner_named_fixture(10, STRONG_OWNER_NAMED_ASSERTION)?;
+    assert_crowded_premises(&finding, 10);
+    assert!(
+        owner_named_row(&finding).is_none(),
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(weak_bound_row(&finding).is_none());
+    Ok(())
+}
+
+#[test]
+fn an_uncrowded_window_keeps_its_name_order_with_the_owner_named_weak_row() -> Result<(), String> {
+    // Discriminating negative: under the cap nothing is cut, so nothing moves.
+    let finding = crowded_owner_named_fixture(3, WEAK_OWNER_NAMED_ASSERTION)?;
+    assert_eq!(finding.related_tests_total(), 4);
+    let names: Vec<&str> = finding
+        .related_tests
+        .iter()
+        .map(|test| test.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "aa_unrelated_00",
+            "aa_unrelated_01",
+            "aa_unrelated_02",
+            "numeric_identifier_rejects_garbage"
+        ]
+    );
+    Ok(())
+}

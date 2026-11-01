@@ -113,24 +113,24 @@ pub(crate) fn weak_oracle_recommendation(
 ) -> String {
     match oracle_kind {
         OracleKind::Snapshot => format!(
-            "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         OracleKind::SmokeOnly => format!(
-            "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         OracleKind::MockExpectation => mock_payload_oracle.map_or_else(
                 || format!(
-                    "TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe discriminator for `{discriminator}`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries."
+                    "TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe check for `{discriminator}`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries."
                 ),
                 |oracle| format!(
                     "TypeScript preview advisory: related mock payload evidence `{oracle}` is syntax-bounded for `{discriminator}`, but no actionable repair packet is emitted until verify, receipt, evidence refs, and edit boundaries are available."
                 ),
         ),
         OracleKind::BroadError => format!(
-            "TypeScript preview advisory: broad error evidence does not establish missing discriminator `{discriminator}`; add an exact payload to `toThrow` (string, object, or class reference) and no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: broad error evidence does not establish the missing check `{discriminator}`; add an exact payload to `toThrow` (string, object, or class reference) and no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         _ => format!(
-            "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
     }
 }

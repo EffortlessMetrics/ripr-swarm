@@ -57,6 +57,10 @@ next_action_class|run_command|Canonical next-action class (#6304): the only exec
 next_action_class|satisfy_prerequisite|Canonical next-action class (#6304): provide the named input before anything can run.
 next_action_class|terminal_no_action|Canonical next-action class (#6304): the repair is terminally complete; repeated invocation changes nothing.
 next_action_class|unsupported_or_limited|Canonical next-action class (#6304): the producer names a limitation; no repair route exists.
+refusal_remedy_kind|command|Structured refusal remedy kind (#11790): the message names a runnable `ripr ...` command, copied verbatim into `command`.
+refusal_remedy_kind|flags|Structured refusal remedy kind (#11790): the message names only flags to pass; `command` and `tool` are null.
+refusal_remedy_kind|mcp_tool|Structured refusal remedy kind (#11790): the message names an MCP tool to call instead of a CLI command.
+refusal_remedy_kind|none|Structured refusal remedy kind (#11790): the message states no machine-readable remedy; explicit, never a guessed command.
 oracle_alignment|alias|Python oracle observes an import alias of the changed owner.
 oracle_alignment|changed_sink_token|Python oracle observes a changed-sink token from the changed line.
 oracle_alignment|direct|Python oracle observes the changed owner by name.
@@ -154,6 +158,7 @@ stop_reason|fixture_opaque|Static analysis stop reason value.
 stop_reason|gap_evidence_unresolved|Static analysis stop reason value.
 stop_reason|helper_identity_unresolved|Static analysis stop reason value.
 stop_reason|compile_time_invariant|Static analysis stop reason value.
+stop_reason|unsafe_obligation|Static analysis stop reason value.
 stop_reason|infection_evidence_unknown|Static analysis stop reason value.
 stop_reason|macro_reach_unresolved|Static analysis stop reason value.
 stop_reason|max_depth_reached|Static analysis stop reason value.
