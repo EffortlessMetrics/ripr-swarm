@@ -2702,7 +2702,7 @@ fn enclosing_match(
     let match_is_tail = rest.is_some_and(|rest| rest.trim() == "}");
     let result_remapped = rest.is_some_and(|rest| {
         let rest = rest.trim_start();
-        rest.starts_with(|c: char| ".?%+-*/&|^<>=!".contains(c))
+        rest.starts_with(|c: char| ".?[%+-*/&|^<>=!".contains(c))
             || rest
                 .strip_prefix("as")
                 .is_some_and(|after| after.starts_with(char::is_whitespace))
@@ -5075,7 +5075,7 @@ mod tests {
         let method = "fn f(x: u8) -> Result<u8, E> {\n    match x {\n        0 => Ok(1),\n        _ => Ok(20),\n    }.map_err(|_| E)\n}\n";
         assert!(remapped(method)?);
         // A binary operator, cast or `?` after the closing brace consumes it too.
-        for consumer in ["% 7", "+ 1", "as u32", "?", "== 3"] {
+        for consumer in ["% 7", "+ 1", "as u32", "?", "== 3", "[0]"] {
             let body = format!(
                 "fn f(x: u8) -> u32 {{\n    match x {{\n        0 => 1,\n        _ => 20,\n    }} {consumer}\n}}\n"
             );
