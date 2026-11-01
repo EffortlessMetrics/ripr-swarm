@@ -326,15 +326,20 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
     },
     /// Judged against a repo-exposure report's `seams[]` (#12145): every seam
     /// whose `owner` matches and whose `expression` contains the selector must
-    /// list a related test named `test` whose published `oracle_strength` (and,
-    /// when pinned, `relation_reason`) equals the pin. A seam that does not list
-    /// the named test is a violation, as is a selector that matches no seam.
+    /// list a related test named `test` in `file` (and, when pinned, at `line`)
+    /// whose published `oracle_strength` (and, when pinned, `relation_reason`)
+    /// equals the pin. The producer identifies a related test by name, file and
+    /// line, so a same-named test in another file cannot stand in for the
+    /// intended row. A seam that does not list the named test is a violation,
+    /// as is a selector that matches no seam.
     /// This pins the related-test oracle independently of `grip_class`, which
     /// stayed unchanged when #12060 credited a test that pins another function.
     ExpectedRepoSeamRelatedTest {
         owner: String,
         expression: String,
         test: String,
+        file: String,
+        line: Option<u64>,
         oracle_strength: String,
         relation_reason: Option<String>,
     },
@@ -939,6 +944,22 @@ fn evidence_promotion_parse_assertion(
                     test: evidence_promotion_required_assertion_string(
                         case_id, index, assertion, "test",
                     )?,
+                    file: evidence_promotion_required_assertion_string(
+                        case_id, index, assertion, "file",
+                    )?,
+                    line: match assertion.get("line") {
+                        None | Some(Value::Null) => None,
+                        Some(value) => match value.as_u64().filter(|line| *line > 0) {
+                            Some(line) => Some(line),
+                            None => {
+                                return Err(format!(
+                                    "evidence promotion case `{case_id}` assertion {index}: \
+                                     expected_repo_seam_related_test.line must be a positive \
+                                     integer when present"
+                                ));
+                            }
+                        },
+                    },
                     oracle_strength,
                     relation_reason: evidence_promotion_optional_assertion_string(
                         case_id,
@@ -1679,6 +1700,8 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                 owner,
                 expression,
                 test,
+                file,
+                line,
                 oracle_strength,
                 relation_reason,
             } => {
@@ -1720,6 +1743,11 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                                 .iter()
                                 .filter(|row| {
                                     row.get("name").and_then(Value::as_str) == Some(test.as_str())
+                                        && row.get("file").and_then(Value::as_str)
+                                            == Some(file.as_str())
+                                        && line.is_none_or(|pinned| {
+                                            row.get("line").and_then(Value::as_u64) == Some(pinned)
+                                        })
                                 })
                                 .collect()
                         })
@@ -1727,7 +1755,8 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                     if named.is_empty() {
                         violations.push(format!(
                             "{case_label}: seam `{seam_label}` lists no related test named \
-                             `{test}`; a pin on an absent test must fail, never pass vacuously"
+                             `{test}` in `{file}`; a pin on an absent test must fail, never \
+                             pass vacuously"
                         ));
                         continue;
                     }
@@ -5230,12 +5259,16 @@ mod repo_seam_related_test_assertion_tests {
                     "related_tests": [
                         {
                             "name": "consume_runs",
+                            "file": "src/lib.rs",
+                            "line": 26,
                             "oracle_kind": "unknown",
                             "oracle_strength": "none",
                             "relation_reason": "direct_owner_call"
                         },
                         {
                             "name": "reduce_over",
+                            "file": "src/lib.rs",
+                            "line": 31,
                             "oracle_kind": kind,
                             "oracle_strength": strength,
                             "relation_reason": "direct_owner_call"
@@ -5252,6 +5285,7 @@ mod repo_seam_related_test_assertion_tests {
             "owner": "src/lib.rs::consume",
             "expression": "Reduction::Over(wait) =>",
             "test": "reduce_over",
+            "file": "src/lib.rs",
             "oracle_strength": strength
         })
     }
@@ -5330,9 +5364,50 @@ mod repo_seam_related_test_assertion_tests {
         let violations = violations_for(assertion, &report_with("none", "unknown"))?;
         assert_eq!(violations.len(), 1, "{violations:?}");
         assert!(
-            violations[0].contains("lists no related test named `no_such_test`"),
+            violations[0].contains("lists no related test named `no_such_test` in `src/lib.rs`"),
             "{violations:?}"
         );
+        Ok(())
+    }
+
+    /// A same-named test in another file must not stand in for the intended row
+    /// (the producer identifies related tests by name, file and line, and caps
+    /// the rows it renders per seam).
+    #[test]
+    fn a_same_named_test_in_another_file_does_not_satisfy_the_pin() -> Result<(), String> {
+        let mut report = report_with("none", "unknown");
+        report["seams"][0]["related_tests"][1]["file"] = json!("tests/other.rs");
+        let violations = violations_for(pin("none"), &report)?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("lists no related test named `reduce_over` in `src/lib.rs`"),
+            "{violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn line_is_pinned_only_when_present() -> Result<(), String> {
+        let report = report_with("none", "unknown");
+        let mut matching = pin("none");
+        matching["line"] = json!(31);
+        assert!(violations_for(matching, &report)?.is_empty());
+
+        let mut differing = pin("none");
+        differing["line"] = json!(99);
+        let violations = violations_for(differing, &report)?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("lists no related test"),
+            "{violations:?}"
+        );
+
+        let mut bogus = pin("none");
+        bogus["line"] = json!(0);
+        match evidence_promotion_parse_assertion("related_oracle_case", 0, &bogus) {
+            Err(error) => assert!(error.contains("line"), "{error}"),
+            Ok(_) => return Err("line 0 must be rejected".to_string()),
+        }
         Ok(())
     }
 
@@ -5403,7 +5478,7 @@ mod repo_seam_related_test_assertion_tests {
             Err(error) => assert!(error.contains("oracle_strength"), "{error}"),
             Ok(_) => return Err("bogus oracle_strength must be rejected".to_string()),
         }
-        for field in ["owner", "expression", "test", "oracle_strength"] {
+        for field in ["owner", "expression", "test", "file", "oracle_strength"] {
             let mut missing = pin("none");
             missing
                 .as_object_mut()
