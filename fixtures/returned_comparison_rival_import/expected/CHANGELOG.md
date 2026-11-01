@@ -3,7 +3,7 @@
 ## Pending — returned_comparison_rival_import (1)
 
 Reason:
-RIPR-SPEC-0197: rival bare imports withhold owner boundary inputs as infection_unknown (#10046)
+RIPR-SPEC-0197: rival bare imports withhold owner boundary inputs as infection_unknown (#10046); the base_deleted finding's next step now reads "Not a candidate edit target" (#11905)
 
 Command:
 `cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
