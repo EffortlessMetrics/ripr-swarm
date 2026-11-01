@@ -46,7 +46,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// (`nested_called_by_parent`, #12141). `13` entries lack the fact.
 /// `15`: each file records its fixture-substitution scope (#11542). `14`
 /// entries lack it.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "15";
+/// `16`: `nested_called_by_parent` ignores calls from unused defs, classes and
+/// lambdas under compound blocks and fails closed on a name defined twice
+/// (#12197). `15` entries may still hold the over-credited value.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "16";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the

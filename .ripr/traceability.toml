@@ -17851,6 +17851,7 @@ name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
   "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_records_whether_the_enclosing_body_calls_it",
+  "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_call_check_skips_defs_in_compound_blocks_lambdas_and_rebinds",
   "crates/ripr/src/analysis/language/python/python_tests.rs::body_calls_owner_refuses_nested_function_the_enclosing_body_never_calls",
   "crates/ripr/src/analysis/language/python/derived_expectation_tests.rs::given_an_expectation_bound_from_the_owner_then_it_is_demoted",
   "crates/ripr/src/analysis/language/python/derived_expectation_tests.rs::given_an_expectation_rewritten_from_the_owner_then_it_is_demoted",

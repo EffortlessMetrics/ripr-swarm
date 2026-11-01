@@ -1344,11 +1344,16 @@ mutant calibrates the rule; ripr reports only the static shape.
     (`outer.inner`). A test that calls only `outer` is related to a changed
     `outer.inner` (by call, by name token or by import of `outer`) only when
     the statements that run with `outer` call `inner` by name, spaced calls
-    included. The nested defs and classes inside `outer` are not part of those
-    statements, so a call from the nested body itself or from an unused sibling
-    def is not an edge. A body that rebinds the name (assignment, walrus,
-    `for`, `as`, `import`) and a def that is only returned or passed are
-    fail-closed: they give no reach. A direct test call of the nested name is
+    included. The nested defs and classes inside `outer`, at any depth through
+    `if`, `with`, `for`, `try` and `match` blocks, are not part of those
+    statements, and neither is the body of a `lambda` anywhere (found in the
+    syntax tree, so the word inside a string does not count), so a call from
+    the nested body itself, from an unused sibling def or from a lambda is not
+    an edge. The decorators, defaults, annotations, return annotations and
+    class bases of a nested declaration are evaluated with the enclosing body
+    and still count. A body that rebinds the name (assignment, walrus, `for`, `as`,
+    `import`), a name defined more than once in the enclosing body, and a def
+    that is only returned or passed are fail-closed: they give no reach. A direct test call of the nested name is
     unchanged. Whether the assertion observes the nested function's result,
     not only its call, is a separate problem (#12182).
 

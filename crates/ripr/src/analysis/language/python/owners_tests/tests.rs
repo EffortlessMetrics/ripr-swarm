@@ -312,6 +312,10 @@ fn nested_owner_call_check_skips_defs_in_compound_blocks_lambdas_and_rebinds() -
             "def unused_class_in_if(n):\n    def b5(m):\n        return m\n    if (n):\n        class Klass:\n            v = b5(n)\n    return n\n\n",
             "def unused_lambda(n):\n    def c1(m):\n        return m\n    f = lambda: c1(n)\n    return n\n\n",
             "def call_before_lambda(n):\n    def c2(m):\n        return m\n    r = c2(n); f = lambda: 0\n    return r\n\n",
+            "def lambda_in_with_header(n):\n    def c3(m):\n        return m\n    with open(lambda: c3(n)):\n        pass\n    return n\n\n",
+            "def lambda_word_in_string(n):\n    def e1(m):\n        return m\n    return ('lambda', e1(n))[1]\n\n",
+            "def lambda_as_if_test(n):\n    def e2(m):\n        return m\n    if lambda: e2(n):\n        pass\n    return n\n\n",
+            "def decorated_nested_in_if(n):\n    def e3(m):\n        return m\n    if (n):\n        @decorate(e3(n))\n        def inner():\n            return 1\n    return n\n\n",
             "def defined_twice(n):\n    def d1(m):\n        return m\n    def d1(m):\n        return m + 1\n    return d1(n)\n\n",
             "def redefined_in_if(n):\n    def d2(m):\n        return m\n    if (n):\n        def d2(m):\n            return m + 1\n    return d2(n)\n",
         ),
@@ -350,6 +354,22 @@ fn nested_owner_call_check_skips_defs_in_compound_blocks_lambdas_and_rebinds() -
     assert!(
         flag("call_before_lambda.c2")?,
         "a call before a lambda in the same statement still runs"
+    );
+    assert!(
+        !flag("lambda_in_with_header.c3")?,
+        "a call inside a lambda in a compound statement's header is not an edge"
+    );
+    assert!(
+        flag("lambda_word_in_string.e1")?,
+        "the word lambda inside a string literal does not mask a real call"
+    );
+    assert!(
+        !flag("lambda_as_if_test.e2")?,
+        "a call inside a lambda used as an `if` test is deferred, not an edge"
+    );
+    assert!(
+        flag("decorated_nested_in_if.e3")?,
+        "a decorator expression of a nested def is evaluated when the enclosing body runs"
     );
     assert!(
         !flag("defined_twice.d1")?,
