@@ -29111,13 +29111,21 @@ fn hover_and_lens_prose_uses_plain_words() -> Result<(), String> {
     let lens = super::lens::related_test_lens_title(&finding, None);
     let mut scanned = 0;
     for line in markdown.lines().chain(std::iter::once(lens.as_str())) {
-        if line
-            .trim_start_matches(['*', '-', ' '])
-            .starts_with("discriminator ")
-        {
-            continue;
-        }
-        let hits = jargon_words(line);
+        // A stage row keeps its exempt stage label (`* discriminator yes:`);
+        // its summary after the first colon is scanned like any other prose,
+        // outside backticks (the user's own source text).
+        let trimmed = line.trim_start_matches(['*', '-', ' ']);
+        let scanned_text = if trimmed.starts_with("discriminator ") {
+            trimmed.split_once(": ").map_or("", |(_, summary)| summary)
+        } else {
+            line
+        };
+        let prose: String = scanned_text
+            .split('`')
+            .step_by(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let hits = jargon_words(&prose);
         if !hits.is_empty() {
             return Err(format!("jargon {hits:?} in editor text: {line}"));
         }

@@ -1006,11 +1006,19 @@ fn stage_line(name: &str, stage: &StageEvidence) -> String {
 /// the glossary exempts), so they are not rewritten at the source; the editor
 /// hover shows "check" where the producer wrote "discriminator". Whole words
 /// only, so identifiers like `missing_discriminators` are never touched.
+///
+/// Summaries mix producer prose with the user's own source text (sink
+/// expressions, test names) that the producer appends after a colon or inside
+/// backticks. Those spans are never rewritten: a hover must not tell someone
+/// to look for a name their code does not contain.
 fn plain_hover_summary(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut word = String::new();
-    let flush = |word: &mut String, out: &mut String| {
+    let mut in_code = false;
+    let mut after_colon = false;
+    let flush = |word: &mut String, out: &mut String, verbatim: bool| {
         match word.as_str() {
+            _ if verbatim => out.push_str(word),
             "discriminator" => out.push_str("check"),
             "Discriminator" => out.push_str("Check"),
             "discriminators" => out.push_str("checks"),
@@ -1022,12 +1030,17 @@ fn plain_hover_summary(text: &str) -> String {
     for c in text.chars() {
         if c.is_alphanumeric() || c == '_' {
             word.push(c);
-        } else {
-            flush(&mut word, &mut out);
-            out.push(c);
+            continue;
         }
+        flush(&mut word, &mut out, in_code || after_colon);
+        match c {
+            '`' => in_code = !in_code,
+            ':' if !in_code => after_colon = true,
+            _ => {}
+        }
+        out.push(c);
     }
-    flush(&mut word, &mut out);
+    flush(&mut word, &mut out, in_code || after_colon);
     out
 }
 
@@ -2866,6 +2879,36 @@ mod top_limitation_parity_tests {
         assert!(
             note.contains("Boundary: static evidence only; advisory action."),
             "the code-action note keeps its advisory boundary:\n{note}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod plain_hover_summary_tests {
+    use super::plain_hover_summary;
+
+    #[test]
+    fn rewrites_producer_prose_but_not_user_source_text() {
+        // Producer prose before any colon is rewritten.
+        assert_eq!(
+            plain_hover_summary("the equality-boundary discriminator is missing"),
+            "the equality-boundary check is missing"
+        );
+        // Source expressions and test names appended after a colon, and any
+        // backticked span, are the user's own text and stay verbatim.
+        assert_eq!(
+            plain_hover_summary("Complete propagation witness reaches return value: discriminator"),
+            "Complete propagation witness reaches return value: discriminator"
+        );
+        assert_eq!(
+            plain_hover_summary(
+                "Related tests appear to reach f: discriminator_holds, discriminator"
+            ),
+            "Related tests appear to reach f: discriminator_holds, discriminator"
+        );
+        assert_eq!(
+            plain_hover_summary("no strong discriminator for `discriminator`"),
+            "no strong check for `discriminator`"
         );
     }
 }
