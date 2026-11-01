@@ -1225,13 +1225,14 @@ fn open_rust_index_cache_invalidation_is_scoped_to_the_affected_documents() -> R
         ));
     }
     // An event at the document, or at an ancestor directory, drops it.
-    for event in [link.clone(), src.clone()] {
+    // An ancestor directory event also drops the sibling below it.
+    for (event, resolved) in [(link.clone(), 1), (src.clone(), 2)] {
         store.invalidate_rust_index_keys_under(&file_uri_for_path(&event)?);
         if store.rust_index_key_is_cached(&uri) {
             return Err(format!("event at {event:?} must drop the entry"));
         }
         let (paths, count) = projections(&mut store);
-        if paths.contains(&key) || count != per_document {
+        if paths.contains(&key) || count != resolved * per_document {
             return Err(format!(
                 "retargeted symlink must leave the index after {event:?}: {count}"
             ));
