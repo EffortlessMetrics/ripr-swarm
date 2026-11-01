@@ -688,7 +688,7 @@ check and does not run on ordinary pushes or PR updates.
 - **Contract.** Per harness the report (`target/ripr/reports/kani.md`) says
   `VERIFIED` (within the harness's documented `kani::assume` bounds), `FAILED`
   (counterexample, or an unreachable `kani::cover!` that makes the proof
-  vacuous) or `NOT-ESTABLISHED` (tool missing, timeout, no verdict). Anything
+  vacuous) or `NOT-ESTABLISHED` (tool missing, a harness over its 900 s per-harness timeout, no verdict). Anything
   but `VERIFIED` fails the job, and so does a missing tool or zero harnesses
   (`--allow-empty` is a local-only opt-out). Nothing passes by absence.
 - **Not a claim.** A `VERIFIED` row is a bounded check of a pure core. It is not a
