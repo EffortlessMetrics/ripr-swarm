@@ -298,6 +298,71 @@ fn nested_owner_records_whether_the_enclosing_body_calls_it() -> Result<(), Stri
 }
 
 #[test]
+fn nested_owner_call_check_skips_defs_in_compound_blocks_lambdas_and_rebinds() -> Result<(), String>
+{
+    let owners = extract_owners(
+        Path::new("src/nested_compound.py"),
+        concat!(
+            "def called_in_if(n):\n    def a1(m):\n        return m\n    if (n):\n        return a1(n)\n    return 0\n\n",
+            "def called_in_if_header(n):\n    def a2(m):\n        return m\n    if a2(n):\n        return 1\n    return 0\n\n",
+            "def unused_def_in_if(n):\n    def b1(m):\n        return m\n    if (n):\n        def unused():\n            return b1(n)\n    return n\n\n",
+            "def unused_def_in_with(n):\n    def b2(m):\n        return m\n    with open(n):\n        def unused():\n            return b2(n)\n    return n\n\n",
+            "def unused_def_in_for(n):\n    def b3(m):\n        return m\n    for x in (n):\n        def unused():\n            return b3(x)\n    return n\n\n",
+            "def unused_def_in_try(n):\n    def b4(m):\n        return m\n    try:\n        def unused():\n            return b4(n)\n    except ValueError:\n        pass\n    return n\n\n",
+            "def unused_class_in_if(n):\n    def b5(m):\n        return m\n    if (n):\n        class Klass:\n            v = b5(n)\n    return n\n\n",
+            "def unused_lambda(n):\n    def c1(m):\n        return m\n    f = lambda: c1(n)\n    return n\n\n",
+            "def call_before_lambda(n):\n    def c2(m):\n        return m\n    r = c2(n); f = lambda: 0\n    return r\n\n",
+            "def defined_twice(n):\n    def d1(m):\n        return m\n    def d1(m):\n        return m + 1\n    return d1(n)\n\n",
+            "def redefined_in_if(n):\n    def d2(m):\n        return m\n    if (n):\n        def d2(m):\n            return m + 1\n    return d2(n)\n",
+        ),
+    );
+    let flag = |qualified: &str| -> Result<bool, String> {
+        owners
+            .iter()
+            .find(|owner| owner.qualified_name == qualified)
+            .map(|owner| owner.nested_called_by_parent)
+            .ok_or_else(|| format!("owner {qualified} missing"))
+    };
+    assert!(
+        flag("called_in_if.a1")?,
+        "a call inside an `if` body of the enclosing function is still a call"
+    );
+    assert!(
+        flag("called_in_if_header.a2")?,
+        "a call in an `if` test runs with the enclosing body"
+    );
+    for (qualified, why) in [
+        ("unused_def_in_if.b1", "if"),
+        ("unused_def_in_with.b2", "with"),
+        ("unused_def_in_for.b3", "for"),
+        ("unused_def_in_try.b4", "try"),
+        ("unused_class_in_if.b5", "class under if"),
+    ] {
+        assert!(
+            !flag(qualified)?,
+            "a call from a def nested under `{why}` that nothing calls is not an edge"
+        );
+    }
+    assert!(
+        !flag("unused_lambda.c1")?,
+        "a call inside a lambda that nothing calls is not an edge"
+    );
+    assert!(
+        flag("call_before_lambda.c2")?,
+        "a call before a lambda in the same statement still runs"
+    );
+    assert!(
+        !flag("defined_twice.d1")?,
+        "a name defined twice may call the second binding, so it stays fail-closed"
+    );
+    assert!(
+        !flag("redefined_in_if.d2")?,
+        "a conditional redefinition may call the other binding, so it stays fail-closed"
+    );
+    Ok(())
+}
+
+#[test]
 fn non_underscore_names_preserve_selectors_and_owner_relations() -> Result<(), String> {
     let tests = collect(
         RELATION_SOURCE,

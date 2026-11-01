@@ -205,13 +205,21 @@ struct PythonOwnerContext<'a> {
 
 /// Whether the statements that run when the enclosing function runs call the
 /// nested def `name` by name (#12141). `statements` is the enclosing body: the
-/// nested defs and classes in it are excluded, so a call from an unused
-/// sibling def, from the nested body itself or from a class body is not an
-/// edge from the enclosing function. A spaced call (`inner (n)`) counts. A
-/// body that rebinds the name (assignment, walrus, `for`, `as`, `import`)
-/// is fail-closed: the call may reach a different binding. Returning or
-/// passing the def without calling it is not a call.
+/// nested defs and classes in it, at any depth inside `if`/`with`/`for`/`try`/
+/// `match` blocks, are excluded, and so is a lambda and what follows it in
+/// its statement, so a call from an unused sibling def, from the nested body
+/// itself, from a class body or from a lambda is not an edge from the
+/// enclosing function (#12197). A spaced call (`inner (n)`) counts. A body
+/// that rebinds the name (assignment, walrus, `for`, `as`, `import`) or
+/// defines it more than once is fail-closed: the call may reach a different
+/// binding. Returning or passing the def without calling it is not a call.
 fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool {
+    let mut excluded = Vec::new();
+    let mut definitions = 0_usize;
+    collect_excluded_ranges(source, statements, name, &mut excluded, &mut definitions);
+    if definitions > 1 {
+        return false;
+    }
     let executed = statements
         .iter()
         .filter(|stmt| {
@@ -220,7 +228,7 @@ fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool 
                 Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_)
             )
         })
-        .map(|stmt| text_for_range(source, stmt.range()))
+        .map(|stmt| text_without_ranges(source, stmt.range(), &excluded))
         .collect::<Vec<_>>()
         .join("\n");
     let ident = |ch: char| ch == '_' || ch.is_alphanumeric();
@@ -248,6 +256,81 @@ fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool 
         }
     }
     calls && !rebinds
+}
+
+/// Byte ranges that do not run when the enclosing body runs: every nested
+/// def and class (counting defs named `name`), and, in a simple statement,
+/// the text from a `lambda` keyword to the statement's end.
+fn collect_excluded_ranges(
+    source: &str,
+    statements: &[Stmt],
+    name: &str,
+    excluded: &mut Vec<(usize, usize)>,
+    definitions: &mut usize,
+) {
+    for stmt in statements {
+        let range = stmt.range();
+        let (start, end) = (usize::from(range.start()), usize::from(range.end()));
+        match stmt {
+            Stmt::FunctionDef(function) => {
+                excluded.push((start, end));
+                if function.name.as_str() == name {
+                    *definitions += 1;
+                }
+            }
+            Stmt::AsyncFunctionDef(function) => {
+                excluded.push((start, end));
+                if function.name.as_str() == name {
+                    *definitions += 1;
+                }
+            }
+            Stmt::ClassDef(_) => excluded.push((start, end)),
+            _ => {
+                let blocks = super::admission::nested_blocks(stmt);
+                if blocks.is_empty() {
+                    let text = text_for_range(source, range);
+                    if let Some(offset) = lambda_keyword_offset(&text) {
+                        excluded.push((start + offset, end));
+                    }
+                } else {
+                    for block in blocks {
+                        collect_excluded_ranges(source, block, name, excluded, definitions);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The offset of the first whole-word `lambda` in `text`.
+fn lambda_keyword_offset(text: &str) -> Option<usize> {
+    let ident = |ch: char| ch == '_' || ch.is_alphanumeric();
+    text.match_indices("lambda")
+        .map(|(idx, _)| idx)
+        .find(|&idx| {
+            text[..idx].chars().next_back().is_none_or(|ch| !ident(ch))
+                && text[idx + "lambda".len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|ch| !ident(ch))
+        })
+}
+
+/// The text of `range` with every byte inside an excluded range blanked to a
+/// space, so offsets and line breaks are kept.
+fn text_without_ranges(source: &str, range: TextRange, excluded: &[(usize, usize)]) -> String {
+    let start = usize::from(range.start()).min(source.len());
+    let mut bytes = text_for_range(source, range).into_bytes();
+    for (from, to) in excluded {
+        let from = from.saturating_sub(start).min(bytes.len());
+        let to = to.saturating_sub(start).min(bytes.len());
+        for byte in bytes.iter_mut().take(to).skip(from) {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
+    String::from_utf8(bytes).unwrap_or_default()
 }
 
 fn owner_from_function(
