@@ -11,6 +11,16 @@ and toolchain before composing commands. Read `rust-toolchain.toml` rather than
 copying a version from a retained session. Detect installed tools instead of
 assuming Unix utilities or PowerShell cmdlets exist.
 
+A PATH lookup miss alone does not establish that a tool is unavailable. Before
+claiming it missing, inspect permitted configured and local toolchain locations
+appropriate to the host, including process-local Cargo and rustup homes when
+applicable. Verify the resolved executable runs and reports its version with a
+matching toolchain configuration. Record the attempted location and result;
+distinguish absent, present but unusable, and access denied. Do not read a denied
+path or retry a denied source operation by another route. Use process-local
+configuration when needed; do not install tools automatically or alter persistent
+settings. A usable tool does not itself establish native-platform proof or a pass.
+
 The shell determines grammar; the OS does not. Use PowerShell syntax when the
 active shell is PowerShell, including PowerShell on Linux. Use the actual Bash
 or POSIX grammar in Bash/WSL/Linux/macOS. A native Windows qualification still
@@ -231,5 +241,5 @@ Run this with `check-workflows` for changes to:
 
 For secrets, workflows, dependency policy, release scripts or command execution,
 inspect permissions, event triggers, fork behavior, artifact/log exposure and
-whether secrets can be printed or written. Diagnose branch protection and
-rulesets read-only; ordinary PR repair never authorizes weakening them.
+whether secrets can be printed or written. Routine PR repair does not need to
+read branch-protection or ruleset settings and never authorizes weakening them.

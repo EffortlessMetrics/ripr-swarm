@@ -7,7 +7,7 @@ use crate::domain::{
     ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, MissingDiscriminatorFact,
     OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RelatedTestMiss,
     RevealEvidence, RiprEvidence, SourceCurrentness, SourceLocation, StageEvidence, StageState,
-    Summary,
+    StaticLimitKind, Summary,
 };
 use std::path::PathBuf;
 
@@ -179,6 +179,43 @@ fn static_limited_run_stops_and_names_the_limit_instead_of_a_gap() {
     assert!(text.contains("\nlimits=no_static_path:1\n"), "{text}");
     assert!(text.contains(" gaps=0 "), "{text}");
     assert!(!text.contains("|missing="), "{text}");
+}
+
+/// #11825: triage can select a static-limited finding (higher repair rank)
+/// while an omitted weakly_exposed finding is still a test-side gap. The
+/// stop projection must follow the remaining gap, not the selected limit.
+#[test]
+fn open_test_side_gap_suppresses_stop_when_selected_finding_is_limited() {
+    let mut limited = finding("probe:limited", ExposureClass::StaticUnknown, 1);
+    limited.recommended_next_step = Some("inspect the unresolved owner".to_string());
+    let text = rendered(&output(vec![limited, weak_gap("probe:gap", 2)]));
+    assert!(!text.contains("\nstop="), "{text}");
+    assert!(text.contains(" gaps=1 "), "{text}");
+    assert!(
+        text.contains(
+            "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50|test=t1|id=probe:gap"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line == "next=ripr explain probe:gap"),
+        "{text}"
+    );
+    assert!(text.contains("\nlimits=static_unknown:1\n"), "{text}");
+}
+
+/// #11825 negative: a weakly_exposed finding that is itself static-limited
+/// is not an open test-side gap, so `stop=` stays.
+#[test]
+fn static_limited_weakly_exposed_alone_keeps_stop() {
+    let mut limited_weak = weak_gap("probe:limited-weak", 4);
+    limited_weak.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    let text = rendered(&output(vec![limited_weak]));
+    assert!(text.contains("\nstop="), "{text}");
+    assert!(text.contains(" gaps=0 "), "{text}");
+    assert!(!text.contains("|id=probe:limited-weak"), "{text}");
+    assert!(!text.contains("\nnext="), "{text}");
 }
 
 #[test]
