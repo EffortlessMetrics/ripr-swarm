@@ -297,3 +297,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_parameter_token_coincidence (24)
+
+Reason:
+RIPR-SPEC-0094: the unrelated assertion that pins another function no longer reads the owner as exposed in repo-seam (#12146), so ripr repair agrees with ripr check on the gap and offers a start instead of refusing on conflicting evidence
+
+Command:
+`cargo xtask goldens bless owner_parameter_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -311,3 +311,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_slice_table_try_exit (25)
+
+Reason:
+RIPR-SPEC-0094: repair missing list is read from the credited related test (#12146); an unrelated same-file test pinning another function no longer adds a phantom reaching-input requirement while reach is yes
+
+Command:
+`cargo xtask goldens bless rust_slice_table_try_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

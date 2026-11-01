@@ -97,3 +97,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (9)
+
+Reason:
+RIPR-SPEC-0240: repo-seam no longer credits the unrelated same-file assertion (#12146), so ripr repair reads the same gap as ripr check instead of refusing on a conflicting exposed reading
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -195,3 +195,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — one_hop_field_projection_wrong_sink (16)
+
+Reason:
+RIPR-SPEC-0094: the repair missing list is read from the credited related test (#12146); an unrelated test that pins another function no longer adds a phantom reaching-input requirement while reach is yes
+
+Command:
+`cargo xtask goldens bless one_hop_field_projection_wrong_sink --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
