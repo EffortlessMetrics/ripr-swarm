@@ -1589,7 +1589,6 @@ pub(crate) const UNCHECKED_ASSUMPTION_LABEL: &str = "unsafe block (unchecked ass
 /// with the block. Parsed calls only: a string, comment or identifier that
 /// merely contains the name does not match.
 fn block_calls_unchecked_assumption(block: &ast::BlockExpr) -> bool {
-    let scopes = scopes_visible_at(block.syntax());
     block
         .syntax()
         .descendants()
@@ -1599,8 +1598,50 @@ fn block_calls_unchecked_assumption(block: &ast::BlockExpr) -> bool {
             ast::Expr::PathExpr(path) => path.path(),
             _ => None,
         })
-        .filter_map(|path| path_segments(&path))
-        .any(|segments| resolves_to_unchecked_intrinsic(&segments, &scopes))
+        .any(|path| call_path_is_unchecked_intrinsic(&path, block))
+}
+
+fn call_path_is_unchecked_intrinsic(path: &ast::Path, block: &ast::BlockExpr) -> bool {
+    // `::std::hint::..` names the crate root directly: no scope can rebind it.
+    if path
+        .segments()
+        .next()
+        .is_some_and(|segment| segment.coloncolon_token().is_some())
+    {
+        let segments: Option<Vec<String>> = path
+            .segments()
+            .map(|segment| segment.name_ref().map(|name| name.text().to_string()))
+            .collect();
+        return segments.is_some_and(|segments| resolves_to_unchecked_intrinsic(&segments, &[]));
+    }
+    let Some(segments) = path_segments(path) else {
+        return false;
+    };
+    // A parameter, `let` or closure parameter of that name is called instead
+    // of an imported function. Fail closed on any such pattern in the function.
+    if let [name] = segments.as_slice()
+        && binds_local_pattern(block, name)
+    {
+        return false;
+    }
+    // Scopes start at the call so a `use` or item in the block itself or in a
+    // nested block is seen, innermost first.
+    let scopes = scopes_visible_at(path.syntax());
+    resolves_to_unchecked_intrinsic(&segments, &scopes)
+}
+
+/// Whether any pattern in the function around `block` (or in the block's file
+/// when it sits outside a function) binds `name`.
+fn binds_local_pattern(block: &ast::BlockExpr, name: &str) -> bool {
+    let scope = block
+        .syntax()
+        .ancestors()
+        .find(|ancestor| ast::Fn::can_cast(ancestor.kind()))
+        .unwrap_or_else(|| block.syntax().clone());
+    scope
+        .descendants()
+        .filter_map(ast::IdentPat::cast)
+        .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
 }
 
 /// The item scopes around `node`, innermost first: enclosing statement lists

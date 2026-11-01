@@ -466,6 +466,18 @@ fn probe_walk_resolves_unchecked_assumption_through_use_bindings() -> Result<(),
             "fn f() { use std::hint::unreachable_unchecked; unsafe { unreachable_unchecked() }; }\n",
         ),
         (
+            "absolute std path",
+            "fn f() { unsafe { ::std::hint::unreachable_unchecked() }; }\n",
+        ),
+        (
+            "absolute core path",
+            "fn f(x: bool) { unsafe { ::core::hint::assert_unchecked(x) }; }\n",
+        ),
+        (
+            "import inside the unsafe block",
+            "fn f() { unsafe { use std::hint::unreachable_unchecked; unreachable_unchecked() }; }\n",
+        ),
+        (
             "intrinsics path",
             "fn f(x: bool) { unsafe { std::intrinsics::assert_unchecked(x) }; }\n",
         ),
@@ -494,6 +506,26 @@ fn probe_walk_resolves_unchecked_assumption_through_use_bindings() -> Result<(),
         (
             "parent module import is not inherited",
             "use std::hint::unreachable_unchecked;\nmod inner { fn f() { unsafe { unreachable_unchecked() }; } }\n",
+        ),
+        (
+            "nested block import shadows the outer one",
+            "use std::hint::assert_unchecked;\nfn f() { unsafe { { use crate::checks::assert_unchecked; assert_unchecked(true); } }; }\n",
+        ),
+        (
+            "local function inside the unsafe block",
+            "fn f() { unsafe { fn unreachable_unchecked() {} unreachable_unchecked() }; }\n",
+        ),
+        (
+            "let binding shadows a renamed import",
+            "use std::hint::assert_unchecked as assume;\nfn f() { let assume = |_: bool| {}; unsafe { assume(true) }; }\n",
+        ),
+        (
+            "parameter shadows an import",
+            "use std::hint::unreachable_unchecked;\nfn f(unreachable_unchecked: fn()) { unsafe { unreachable_unchecked() }; }\n",
+        ),
+        (
+            "absolute path to another crate",
+            "fn f() { unsafe { ::other::hint::unreachable_unchecked() }; }\n",
         ),
         (
             "self path",
