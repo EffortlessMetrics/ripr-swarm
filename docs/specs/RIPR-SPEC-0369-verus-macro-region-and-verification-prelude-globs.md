@@ -90,6 +90,14 @@ The finding for such a probe is non-actionable and uncredited:
 - the recommended next step says the change is judged by the Verus verifier
   for spec and proof edits and requests no test.
 
+Repository mode (the whole-workspace analysis with no diff) seeds probes from
+the syntax index, which does not parse the token tree of a macro invocation as
+Rust. Text inside `verus! { .. }` therefore seeds no expression-family probe
+there, and ordinary Rust beside the block keeps its probes. Repository mode
+names no `verus_macro_region_unsupported` limitation: a region is silently
+absent from that inventory, and that absence is not a claim that the spec or
+proof is adequate.
+
 ripr does not run the verifier and does not claim a spec or proof edit is
 adequate or inadequate. A diff whose changed lines all sit inside `verus!` is
 no longer reported as "no changed line is behavior ripr checks".
@@ -156,6 +164,8 @@ substituted dependencies remain foreign globs.
 
 ## Non-Goals
 
+- Repository mode does not list or name `verus!` regions; it only guarantees
+  no expression probe inside one.
 - No Verus parser, `verus!` expansion or Kani/Verus fact producer (#10747).
 - No verifier execution and no claim that a spec, proof or contract is
   adequate; no credit for a `requires`/`ensures` clause as a test oracle.
@@ -199,11 +209,19 @@ substituted dependencies remain foreign globs.
 6. The file of example 4 with `Cargo.lock` locking prusti-contracts at a
    version outside the audited set (for example a newer release), or with no
    `Cargo.lock`, refuses assertion credit exactly as before this spec.
+7. A repository-mode run over a file whose only text sits inside
+   `verus! { .. }` reports no finding for it (never `propagation_unknown`,
+   `weakly_exposed` or `infection_unknown`); a sibling Rust function in the
+   same file keeps its normal probes.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/probes/macro_definition.rs`: region extent tests.
 - `crates/ripr/src/analysis/probes/diff.rs`: seeding tests.
+- `crates/ripr/src/analysis/probes/repo.rs`: repository-mode seeding test
+  (`repo_mode_verus_region_seeds_no_expression_probes`) and
+  `language/rust/mod.rs`
+  (`repo_analysis_excludes_verus_region_and_keeps_sibling_fn`).
 - `crates/ripr/src/analysis/language/rust/probes.rs`: finding limit tests.
 - `crates/ripr/src/analysis/syntax/owner_pin.rs` and the classify owner-pin
   tests: prelude-glob tests, including `verification_prelude_globs_credit_only_audited_locked_versions`.

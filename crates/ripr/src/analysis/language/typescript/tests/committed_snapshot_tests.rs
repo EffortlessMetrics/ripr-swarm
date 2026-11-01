@@ -2112,3 +2112,86 @@ fn plain_inline_projects_keep_the_credit_and_every_other_spelling_refuses() -> R
     }
     Ok(())
 }
+
+/// #9940: a spread of an unread base or a variable-computed key on the root
+/// config object may carry a snapshot override this walk never read, so the
+/// reading stays at medium. A plain config, an array spread, a nested-object
+/// spread and a literal computed key keep the credit.
+#[test]
+fn root_spread_of_unread_base_and_computed_key_refuse_but_plain_configs_keep_credit()
+-> Result<(), String> {
+    let jest = jest_snap(&[("price 1", "140")]);
+    for (text, expected) in [
+        (
+            "module.exports = { testEnvironment: \"node\" };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { moduleFileExtensions: [...defaults.moduleFileExtensions, \"ts\"] };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { transform: { ...tsJestTransform }, testEnvironment: \"node\" };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { ...{ ...base } };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = async () => { const base = await load(); return { ...base, a: 1 }; };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = function () { return { ...base }; };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { re: /\\{/, ...base };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { a: /'/, ...base, b: /'/ };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { maxWorkers: cpus / 2, testEnvironment: \"node\" };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { [\"testEnvironment\"]: \"node\" };",
+            OracleStrength::Strong,
+        ),
+        (
+            "module.exports = { ...require(\"./jest.base\"), testEnvironment: \"node\" };",
+            OracleStrength::Medium,
+        ),
+        (
+            "const base = require(\"./jest.base\");\nmodule.exports = { ...base };",
+            OracleStrength::Medium,
+        ),
+        (
+            "export default defineConfig({ ...baseConfig, test: { globals: true } });",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { testEnvironment: \"node\", [name]: \"x\" };",
+            OracleStrength::Medium,
+        ),
+        (
+            "module.exports = { re: /'/, ...base };",
+            OracleStrength::Medium,
+        ),
+    ] {
+        assert_eq!(
+            strengths(
+                "snap-root-inheritance",
+                PRICE_TEST,
+                &[(SNAP_PATH, &jest), ("jest.config.js", text)]
+            )?,
+            vec![expected],
+            "{text}"
+        );
+    }
+    Ok(())
+}
