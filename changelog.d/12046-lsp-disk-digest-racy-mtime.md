@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- The language server no longer reuses a cached on-disk digest for a file modified within the last two seconds, so a same-length rewrite inside one filesystem timestamp tick is no longer judged equal to the previous contents (#12046).
+- The language server no longer judges a same-length rewrite equal to the previous file contents: on Unix the cached on-disk digest is keyed on the inode change time too, so a rewrite that restores the old mtime is seen, and on every platform a file modified within the last two seconds is never cached. Windows exposes no change time to std, so a same-length in-place rewrite that restores an old mtime is not detected there (#12046).

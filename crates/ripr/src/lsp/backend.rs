@@ -13427,6 +13427,10 @@ struct DiskContentStatKey {
     len: u64,
     modified: Option<(u64, u32)>,
     ino: u64,
+    /// Inode change time. Unlike mtime, no writer can set or restore it
+    /// (#12046): an in-place same-length rewrite that puts the old mtime back
+    /// still moves ctime. `None` where std exposes no change time (Windows).
+    changed: Option<(i64, i64)>,
 }
 
 fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
@@ -13447,10 +13451,22 @@ fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
             .unwrap_or_default();
         (duration.as_secs(), duration.subsec_nanos())
     });
+    let changed = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            Some((meta.ctime(), meta.ctime_nsec()))
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    };
     DiskContentStatKey {
         len: meta.len(),
         modified,
         ino,
+        changed,
     }
 }
 
@@ -13460,6 +13476,11 @@ fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
 /// timestamp" rule applies: such a digest is used once and never cached, so a
 /// same-length rewrite in the same tick is reread (#12046). A future mtime is
 /// treated the same way.
+///
+/// Known limit: on Windows std exposes no inode change time, so a writer that
+/// rewrites a file in place with the same length and then restores its old
+/// mtime still matches the key. Unix keys include ctime, which cannot be
+/// restored, and are not affected.
 const DISK_EQUALITY_RACY_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn disk_mtime_is_racy(meta: &fs::Metadata) -> bool {
@@ -13648,6 +13669,32 @@ mod disk_bytes_equal_text_tests {
         if reads != 2 {
             return Err(format!(
                 "expected two disk reads after rewrite, got {reads}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #12046: a writer that rewrites in place with the same length and puts the
+    /// old mtime back leaves (len, mtime, ino) unchanged and the mtime outside the
+    /// racy window. Only the inode change time exposes the rewrite. Unix only:
+    /// std exposes no change time on Windows (documented limit).
+    #[cfg(unix)]
+    #[test]
+    fn same_length_rewrite_with_restored_old_mtime_is_reread() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("restored-mtime");
+        let old = std::time::SystemTime::now() - std::time::Duration::from_mins(1);
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        set_mtime(&path, old)?;
+        let first = disk_bytes_equal_text(&path, "abc");
+        std::fs::write(&path, "abd").map_err(|err| format!("rewrite failed: {err}"))?;
+        set_mtime(&path, old)?;
+        let second = disk_bytes_equal_text(&path, "abd");
+        let stale = disk_bytes_equal_text(&path, "abc");
+        let _ = std::fs::remove_file(&path);
+        if !first || !second || stale {
+            return Err(format!(
+                "first={first} second={second} stale_abc_still_equal={stale}"
             ));
         }
         Ok(())
