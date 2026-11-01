@@ -247,6 +247,17 @@ suite('Command Menus Manifest', () => {
     }
   });
 
+  test('ripr.copyContext stays palette-visible without an onCommand activation event (#8586)', async () => {
+    const manifest = await readManifest();
+    const hiddenFromPalette = (manifest.contributes?.menus?.commandPalette ?? [])
+      .filter((entry) => entry.when === 'false')
+      .map((entry) => entry.command);
+    assert.ok(
+      !hiddenFromPalette.includes('ripr.copyContext'),
+      'copyContext must not be hidden from the palette; it works from the active editor without a code-action payload'
+    );
+  });
+
   test('every commandPalette entry references a contributed command', async () => {
     const manifest = await readManifest();
     const contributed = new Set(
