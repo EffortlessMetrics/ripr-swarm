@@ -337,3 +337,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (29)
+
+Reason:
+RIPR-SPEC-0087: unbound-operand refusal leads with the remedy so the digest budget keeps it
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (30)
+
+Reason:
+RIPR-SPEC-0087: plain wording for the unbound-operand remedy
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (31)
+
+Reason:
+RIPR-SPEC-0087: plain wording for the unbound-operand remedy
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

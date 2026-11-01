@@ -3336,3 +3336,49 @@ Durable rules:
   41022609903) are the #11197 binary-swap class (in-suite xtask builds
   replacing `target/debug/ripr` mid-run), not a golden bless; the recorded
   Windows-bless qualification cost is #8614/PR #8559.
+
+## 2026-10-31: One owner, two branches, one silent leading-slash asymmetry (#4207)
+
+`normalized_relative_import_module`
+(`crates/ripr/src/analysis/language/typescript/related_tests.rs`) filtered
+empty path components on its relative-specifier branch, which dropped the
+leading `/` of an absolute test path, while the alias branch and
+`normalized_module_path` kept it. With absolute paths on both sides a
+specifier module and an owner module could never be equal. A positive
+assertion failed loudly (the hosted failure that found it); a negative
+assertion would have passed vacuously, because the comparison could not
+succeed. Two sibling fixtures (#4164, #4176, both closed unmerged) built
+absolute `std::env::temp_dir()` paths and hit exactly this. #11595 fixed the
+relative branch and pinned absolute inputs on both sides.
+
+Production reachability of an absolute path at the relation gate: not
+reachable, from source (answer to #4207 item 3):
+
+- Workspace test and owner files come from the TypeScript walk
+  (`typescript/discovery.rs`), which starts at `options.root` and so always
+  strips to a workspace-relative path; the `unwrap_or(&path)` fallback never
+  fires for a walked entry.
+- The only other way a path joins the workspace set is a changed file named
+  by the diff when the walk truncates (`typescript/mod.rs`). Diff paths pass
+  `confine_to_relative_path` (`analysis/diff/path.rs`), which rejects any
+  root, prefix or parent component, so an out-of-root or absolute path never
+  becomes a `ChangedFile` (covered by
+  `rejects_new_path_marker_with_absolute_path` and
+  `rejects_new_path_marker_with_parent_dir_traversal` in `diff/parse.rs`).
+
+This is source inspection plus those existing tests, not a run that fed an
+out-of-root file through the analyzer, so it is a not-reachable-by-construction
+claim, not an observation.
+
+Durable rules:
+
+- When one function canonicalizes the same identity on two branches, give both
+  branches one shared normalizer, or document the intended difference where
+  the code is.
+- Build relation-gate unit fixtures with production-shaped workspace-relative
+  paths; an absolute-path fixture depends on a branch the pipeline does not
+  use. Pin absolute inputs separately, as a control, so the asymmetry cannot
+  return.
+- Pair every negative assertion with a positive control built from the same
+  fixture shape, or the negative can pass because the comparison is
+  unsatisfiable.

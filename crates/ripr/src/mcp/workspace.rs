@@ -41,6 +41,10 @@ pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
+/// A call argument the model can correct (unknown name, wrong type, out of
+/// range, bad enum token). Returned as an `isError: true` tool result
+/// instead of a JSON-RPC `-32602`, which many hosts flatten (#11621).
+pub(crate) const CODE_INVALID_ARGUMENT: &str = "invalid_argument";
 /// #8736 review follow-up: one raw resource-id segment can resolve both as
 /// captured (legacy raw URI for a literal-`%` file) and as its percent-
 /// decoded form (a URI-emitting client addressing the decoded file) when
@@ -67,6 +71,7 @@ pub(crate) const RECOVERY_GAP_LIST_FILTER_TOO_LARGE: &str = "the echoed filter v
 pub(crate) const RECOVERY_REFRESH_TOO_LARGE: &str = "the refresh result exceeds the MCP response bound; read session state with ripr_workspace_status";
 pub(crate) const RECOVERY_STATUS_TOO_LARGE: &str =
     "the status document exceeds the MCP response bound; there is no narrower status read";
+pub(crate) const RECOVERY_LIMITATION_TOO_LARGE: &str = "this item's limitation document exceeds the MCP response bound; its canonical id is too long to echo, so read the bounded list summary with ripr_list_gaps";
 pub(crate) const RECOVERY_REPAIR_TOO_LARGE: &str = "this repair document exceeds the MCP response bound; there is no narrower MCP read of this record";
 /// Reserved typed-failure vocabulary for later slices. This slice fails
 /// closed before any of these states can occur; they are named so the wire
@@ -1251,6 +1256,37 @@ impl WorkspaceSession {
         Ok((document, snapshot.gap_item_recovery.clone()))
     }
 
+    /// Whether the current completed snapshot holds an item with exactly this
+    /// canonical id. Route disambiguation only; it reports no failure.
+    pub(crate) fn has_current_item(&self, canonical_id: &str) -> bool {
+        self.active_snapshot(None)
+            .is_ok_and(|snapshot| snapshot.item(canonical_id).is_some())
+    }
+
+    /// The earliest producer limitation for one canonical item of the current
+    /// completed snapshot (`ripr_get_top_limitation`,
+    /// `ripr://gap/{canonical_id}/limitation`). Reads committed facts only:
+    /// the same stale-snapshot and unknown-item failures as the gap read, and
+    /// no analysis rerun.
+    pub(crate) fn get_limitation(
+        &self,
+        canonical_id: &str,
+        requested: Option<&str>,
+    ) -> Result<Value, AttemptFailure> {
+        let snapshot = self.active_snapshot(requested)?;
+        let Some(item) = snapshot.item(canonical_id) else {
+            return Err(AttemptFailure::new(
+                CODE_ITEM_NOT_FOUND,
+                format!("no canonical item {canonical_id} exists in the current snapshot"),
+                "list the current canonical ids with ripr_list_gaps, then retry",
+            ));
+        };
+        bounded_document(
+            item.limitation_document(&snapshot.snapshot_id),
+            RECOVERY_LIMITATION_TOO_LARGE,
+        )
+    }
+
     /// The `ripr://snapshot/{snapshot_id}` evidence resource: snapshot
     /// identity, typed outcome, the full item index, and the stored selection
     /// summary — not the full evidence graph.
@@ -1762,9 +1798,22 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
         "claim_boundary": "One bounded static analysis attempt over the workspace diff. The server never edits source, executes verification or mutation commands, or loads project-local provider configuration.",
         "limitations": [
             "an attempt runs to a terminal state; MCP cancellation of the request does not roll back a running attempt and never manufactures a snapshot",
-            "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits (#5254 item 2)",
+            "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits",
         ],
     });
+    // Top-level currentness so an agent need not parse `scope`: `true` only
+    // when the snapshot's source is the saved worktree or the working tree
+    // had no uncommitted edits outside the analysis; `false` after a failed
+    // attempt or with edits the analysis cannot see; `null` with no snapshot
+    // (audit finding 2).
+    document["fresh_for_working_tree"] = match (&session.last_good, &session.last_failure) {
+        (None, _) => Value::Null,
+        (Some(_), Some(_)) => json!(false),
+        (Some(snapshot), None) => {
+            json!(snapshot.source == RefreshSource::Worktree || !snapshot.scope.uncommitted_edits)
+        }
+    };
+    document["verify"] = super::repair::verify_after_editing_tests();
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
     }
@@ -2848,6 +2897,37 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[test]
+    fn a_missing_stale_or_unknown_limitation_read_never_yields_a_limitation_document()
+    -> Result<(), String> {
+        // #11821: the limitation read is committed-facts only. Every state in
+        // which the item's limitation cannot be established answers with a
+        // typed failure (and its recovery), never with a limitation document a
+        // client could read as "no limitation, so a repair route".
+        expect_code(
+            WorkspaceSession::default().get_limitation("gap:any", None),
+            CODE_NO_SNAPSHOT,
+        )?;
+        expect_code(
+            WorkspaceSession {
+                in_flight: true,
+                ..Default::default()
+            }
+            .get_limitation("gap:any", None),
+            CODE_ANALYSIS_IN_FLIGHT,
+        )?;
+        let session = session_with_findings(1)?;
+        expect_code(
+            session.get_limitation("gap:any", Some("snapshot:sha256:old")),
+            CODE_STALE_SNAPSHOT,
+        )?;
+        expect_code(
+            session.get_limitation("gap:does-not-exist", None),
+            CODE_ITEM_NOT_FOUND,
+        )?;
+        Ok(())
     }
 
     /// A snapshot carrying `count` distinct canonical items, built from the
@@ -4504,6 +4584,19 @@ mod tests {
     }
 
     #[test]
+    fn refresh_limitations_contain_no_internal_issue_references() -> Result<(), String> {
+        use crate::mcp::agent_facing_text_tests::assert_agent_text_has_no_internal_issue_or_adr_references;
+        let session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let document = refresh_document(&session);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "refresh document lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        assert_agent_text_has_no_internal_issue_or_adr_references(&text)
+    }
+
+    #[test]
     fn refresh_document_reports_failure_without_dropping_last_known_good() -> Result<(), String> {
         let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
         let failure = AttemptFailure::new(CODE_ANALYSIS_FAILED, "producer hiccup", "retry");
@@ -4565,6 +4658,15 @@ mod tests {
         };
 
         let refresh = refresh_document(&session);
+        // The audit's silent-staleness case: an uncommitted edit the analysis
+        // cannot see is a top-level `false`, with the worktree re-check named.
+        if refresh["fresh_for_working_tree"] != json!(false)
+            || refresh["verify"]["mcp"]["arguments"]["source"] != "worktree"
+        {
+            return Err(format!(
+                "a dirty-tree committed refresh must say it is not fresh: {refresh}"
+            ));
+        }
         if refresh.pointer("/scope/analyzed").and_then(Value::as_str)
             != Some("committed default-branch diff")
         {

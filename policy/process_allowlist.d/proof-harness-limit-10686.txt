@@ -1,0 +1,2 @@
+crates/ripr/tests/proof_harness_limit.rs|Command::new|1|cli-tests|Runs the built ripr binary (`check --diff`) against an isolated temp workspace holding one Kani proof-harness shape and a private RIPR_CACHE_DIR. No shell, network, or user-repository mutation.
+crates/ripr/tests/proof_harness_limit.rs|use std::process::Command|1|cli-tests|Import for the exact-binary spawn site described above.

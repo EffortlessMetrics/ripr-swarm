@@ -19,9 +19,9 @@
       "confidence_basis": [
         {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
         {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
-        {"code": "discriminator_not_established", "summary": "whether a discriminator exists is not established"}
+        {"code": "discriminator_not_established", "summary": "whether a test checks this behavior is not established"}
       ],
-      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a discriminator exists is not established. Preview score, not on the same scale as Rust confidence.",
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_subject.ts:typescript_preview:5c135e82",
         "family": "predicate",
@@ -41,8 +41,8 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `isAdult`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator unknown: TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243).", "related test tests/guarded.test.ts:7 isAdult at the boundary uses no oracle"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: isAdult", "typescript_limitation: typescript_conditional_registration", "typescript_limitation_sample: typescript_conditional_registration at tests/guarded.test.ts:7", "typescript_limitation_why: typescript_conditional_registration — the recognized test file `tests/guarded.test.ts` registers a test under the unevaluated condition or loop `isWindows` (e.g. a platform or environment guard, or a loop over data static analysis cannot enumerate); static analysis cannot tell whether, or how many times, that registration runs, so the test is indexed for reach but its assertions earn no credit", "typescript_limitation_repair_route: typescript_conditional_registration → analysis/typescript-conditional-registration", "gap_state: advisory", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/subject.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_subject.ts:typescript_preview:5c135e82;owner=isAdult", "test_assertion_admission: assertion_like_present_but_unresolved (isAdult at the boundary)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `isAdult` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what they assert, is not established either way.", "TypeScript preview actionability `advisory` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "evidence": ["owner: isAdult", "typescript_limitation: typescript_conditional_registration", "typescript_limitation_sample: typescript_conditional_registration at tests/guarded.test.ts:7", "typescript_limitation_why: typescript_conditional_registration — the recognized test file `tests/guarded.test.ts` registers a test under the unevaluated condition or loop `isWindows` (e.g. a platform or environment guard, or a loop over data static analysis cannot enumerate); static analysis cannot tell whether, or how many times, that registration runs, so the test is indexed for reach but its assertions earn no credit", "typescript_limitation_repair_route: typescript_conditional_registration → analysis/typescript-conditional-registration", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/subject.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_subject.ts:typescript_preview:5c135e82;owner=isAdult", "test_assertion_admission: assertion_like_present_but_unresolved (isAdult at the boundary)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `isAdult` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what they assert, is not established either way.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target check or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
       "assertion_texts": {
       },
       "activation": {
@@ -99,13 +99,13 @@
         "verify": {
           "command": null
         },
-        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
       },
       "preview_actionability": {
         "actionability_category": "missing_target_shape",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "repair_kind",
           "target_test_shape",
@@ -131,7 +131,7 @@
         "repair_packet_ready": false,
         "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
         "unlock_condition": null,
-        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
       },
       "stop_reasons": ["gap_evidence_unresolved"],
       "oracle_kind": "unknown",

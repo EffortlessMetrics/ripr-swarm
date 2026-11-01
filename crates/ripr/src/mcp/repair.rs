@@ -637,6 +637,92 @@ pub(super) fn durable_receipt_document(
     })
 }
 
+/// How an agent re-checks its own test edit. ripr never runs the tests; the
+/// default `ripr_refresh` analyses the committed diff and does not see an
+/// uncommitted edit, so the re-check names `source: "worktree"` (audit
+/// finding 2).
+pub(super) fn verify_after_editing_tests() -> Value {
+    json!({
+        "mcp": {
+            "tool": "ripr_refresh",
+            "arguments": { "source": "worktree" },
+        },
+        "note": "run the project's tests yourself (ripr executes nothing); the default ripr_refresh analyses the committed diff and does not see an uncommitted edit",
+    })
+}
+
+/// The one machine-readable next step for a refused `ripr_prepare_repair`,
+/// derived from the same typed reason the shared gate produced. It adds no
+/// verdict: a terminal refusal never becomes a route the gate refused.
+fn refusal_next(
+    reason: &str,
+    class: &str,
+    canonical_id: &str,
+    stub_route: Option<&(String, usize, &'static str)>,
+) -> Value {
+    let gap_route = json!({
+        "tool": "ripr_get_gap",
+        "arguments": { "canonical_id": canonical_id },
+    });
+    let (kind, detail, mcp, verify) = match reason {
+        "seam_already_gripped" if class == "exposed" => (
+            "nothing_to_do",
+            "existing tests already grip this seam; no static gap remains to repair",
+            Value::Null,
+            Value::Null,
+        ),
+        "seam_already_gripped" | "seam_gate_refused" | "seam_ambiguous" | "seam_not_found" => (
+            "write_test_by_hand",
+            "ripr_prepare_repair has no repair route for this item; read `finding_guidance` (the item's `missing` and `recommended_next_step`), add or tighten the test yourself, then re-check",
+            gap_route,
+            verify_after_editing_tests(),
+        ),
+        "seam_inventory_truncated" => (
+            "change_policy",
+            "the seam inventory is truncated by the seam limit, so the shared gate refuses every item; widen the seam budget (`ripr repair` names the setting) and re-run ripr_refresh",
+            Value::Null,
+            Value::Null,
+        ),
+        "worktree_source_not_committed" => (
+            "commit_then_refresh",
+            "a saved-worktree snapshot is never repair-ready; commit the edit and run ripr_refresh with the default committed source",
+            json!({ "tool": "ripr_refresh", "arguments": {} }),
+            Value::Null,
+        ),
+        _ => (
+            "await_producer_fact",
+            "a producer readiness fact is not established; ripr_prepare_repair never guesses it",
+            json!({ "tool": "ripr_refresh", "arguments": {} }),
+            Value::Null,
+        ),
+    };
+    let mut next = json!({
+        "kind": kind,
+        "reason": reason,
+        "detail": detail,
+        "mcp": mcp,
+        "after_editing_tests": verify,
+    });
+    // #11622: a seam the repair gate could not bind (`seam_not_found`) or
+    // could not choose (`seam_ambiguous`) still has the manual stub route
+    // `ripr repair` names: the shared resolver derives the test skeleton from
+    // the changed code. Guidance only: it grants no repair readiness. A path
+    // that would need shell quoting names no command rather than a wrong one.
+    if matches!(reason, "seam_not_found" | "seam_ambiguous")
+        && let Some((file, line, family)) = stub_route
+        && !file
+            .chars()
+            .any(|c| c.is_whitespace() || "'\"`$\\;&|<>()*?[]{}!#~".contains(c))
+    {
+        next["stub_route"] = json!({
+            "command": format!("ripr agent stub --at {file}:{line} --kind {family}"),
+            "run_from": "the repository root",
+            "note": "writes nothing without --write; derives a test skeleton from the changed code. Fill its todo!() values by hand, then re-check with after_editing_tests. This route does not make the item repair-ready.",
+        });
+    }
+    next
+}
+
 impl WorkspaceSession {
     /// The live session transaction for one canonical item of one committed
     /// snapshot, if prepare created one.
@@ -691,8 +777,17 @@ impl WorkspaceSession {
                 },
                 "attempt": Value::Null,
                 "finding_guidance": finding_guidance,
+                "next": refusal_next(
+                    reason,
+                    item.evidence_core
+                        .get("class")
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                    &item.canonical_id,
+                    item.stub_route.as_ref(),
+                ),
                 "recovery": if reason.starts_with("seam_") {
-                    "the shared repair gate refused this seam; ripr_prepare_repair does not override it. Change the code or tests as `finding_guidance` (the item's `missing` and `recommended_next_step`) describes, then re-run ripr_refresh"
+                    "the shared repair gate refused this seam and ripr_prepare_repair does not override it; calling it again or re-running ripr_refresh on an unchanged tree changes nothing. See `next` for the one route to take"
                 } else {
                     "re-run ripr_refresh after the producer establishes the missing fact; ripr_prepare_repair never guesses a missing field"
                 },
@@ -1113,6 +1208,112 @@ pub(super) mod tests {
             desired_source: Default::default(),
             superseded_order: std::collections::VecDeque::new(),
         })
+    }
+
+    /// Audit finding 1/6: one terminal refusal reason maps to exactly one
+    /// machine-readable next step, and an already-gripped *weak* item is a
+    /// test-by-hand route while an *exposed* one is nothing to do. Only the
+    /// by-hand route carries the verify route.
+    #[test]
+    fn refusal_next_maps_each_reason_to_one_route() -> Result<(), String> {
+        let check_route = |reason: &str, class: &str, kind: &str, verify: bool| {
+            let next = refusal_next(reason, class, "gap:x", None);
+            if next["kind"] != kind
+                || next["reason"] != reason
+                || next["after_editing_tests"].is_null() == verify
+            {
+                return Err(format!("{reason}/{class} must route as {kind}: {next}"));
+            }
+            Ok(())
+        };
+        check_route("seam_already_gripped", "exposed", "nothing_to_do", false)?;
+        check_route(
+            "seam_already_gripped",
+            "weakly_exposed",
+            "write_test_by_hand",
+            true,
+        )?;
+        check_route(
+            "seam_not_found",
+            "infection_unknown",
+            "write_test_by_hand",
+            true,
+        )?;
+        check_route(
+            "seam_gate_refused",
+            "weakly_exposed",
+            "write_test_by_hand",
+            true,
+        )?;
+        check_route(
+            "seam_inventory_truncated",
+            "weakly_exposed",
+            "change_policy",
+            false,
+        )?;
+        check_route(
+            "worktree_source_not_committed",
+            "weakly_exposed",
+            "commit_then_refresh",
+            false,
+        )?;
+        check_route(
+            "something_new",
+            "weakly_exposed",
+            "await_producer_fact",
+            false,
+        )?;
+        let by_hand = refusal_next("seam_not_found", "weakly_exposed", "gap:x", None);
+        if by_hand["mcp"]["arguments"]["canonical_id"] != "gap:x"
+            || by_hand["after_editing_tests"]["mcp"]["arguments"]["source"] != "worktree"
+        {
+            return Err(format!(
+                "by-hand route lost its gap or verify route: {by_hand}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #11622: `seam_not_found` and `seam_ambiguous` carry the manual stub
+    /// route the shared resolver named; no other reason does, a missing route
+    /// stays absent, and a path needing shell quoting names no command.
+    #[test]
+    fn refusal_next_carries_the_stub_route_only_for_unbound_seams() -> Result<(), String> {
+        let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
+        for reason in ["seam_not_found", "seam_ambiguous"] {
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route));
+            if next["stub_route"]["command"]
+                != "ripr agent stub --at src/pricing.rs:88 --kind predicate"
+                || next["kind"] != "write_test_by_hand"
+            {
+                return Err(format!("{reason} lost the stub route: {next}"));
+            }
+        }
+        for reason in [
+            "seam_already_gripped",
+            "seam_gate_refused",
+            "seam_inventory_truncated",
+            "something_new",
+        ] {
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route));
+            if next.get("stub_route").is_some() {
+                return Err(format!("{reason} must not name a stub route: {next}"));
+            }
+        }
+        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", None)
+            .get("stub_route")
+            .is_some()
+        {
+            return Err("no resolver route means no stub_route".into());
+        }
+        let spaced = ("src/my file.rs".to_string(), 3_usize, "predicate");
+        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", Some(&spaced))
+            .get("stub_route")
+            .is_some()
+        {
+            return Err("a path needing quoting must not name a command".into());
+        }
+        Ok(())
     }
 
     #[test]

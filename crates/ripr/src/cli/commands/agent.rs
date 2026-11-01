@@ -711,9 +711,12 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 "agent repair seam_id `{seam_id}` names seam `{resolved}`, which is not repair-eligible: {reason}; no repair attempt was started. Run `ripr pilot --root {root_arg}` to list current seam IDs"
             )))
         }
-        Ok(RepairSubjectOutcome::Ambiguous(seam_ids)) => {
+        Ok(RepairSubjectOutcome::Ambiguous {
+            seam_ids,
+            descriptions,
+        }) => {
             const MAX_LISTED: usize = 8;
-            let mut listed: Vec<&str> = seam_ids
+            let mut listed: Vec<&str> = descriptions
                 .iter()
                 .map(String::as_str)
                 .take(MAX_LISTED)
@@ -883,6 +886,8 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
             )
         })
         .transpose()?;
+    let before_produced_from_dirty = before_identity.historical_produced_from_dirty();
+    let after_produced_from_dirty = after_identity.historical_produced_from_dirty();
     let artifact_currentness = crate::agent::artifact::pair_currentness_label(
         &before_identity.currentness,
         &after_identity.currentness,
@@ -904,6 +909,8 @@ fn render_agent_verify(options: &AgentVerifyOptions) -> Result<String, String> {
     let binding = output::outcome::AgentVerifyArtifactBinding {
         before_content_sha256: before_identity.content_sha256,
         after_content_sha256: after_identity.content_sha256,
+        before_produced_from_dirty,
+        after_produced_from_dirty,
     };
     let bound_gap = bound_gap.map(|closure| output::outcome::AgentVerifyBoundGap {
         gap_id: closure.gap_id,
@@ -1398,6 +1405,7 @@ fn run_agent_repair_with_identity_ctx(
                 "resolve shared workflow artifacts failed: {error}{previous}"
             ));
             refusal.typed = false;
+            refusal.code = None;
             refusal.pending_stdout = if json {
                 match (&result, &refusal.selected_attempt) {
                     (Err(error), Some((_, _, attempt_id))) => render_repair_after_refusal_json(
@@ -1462,6 +1470,11 @@ fn run_agent_repair_with_identity_ctx(
             Ok(rendered) => print!("{rendered}"),
             Err(render_error) => eprintln!("ripr: {render_error}"),
         }
+    }
+    if result.is_err()
+        && let Some(code) = refusal.code
+    {
+        eprintln!("{}", code.stderr_line());
     }
     let start_refused = refusal.start_refused;
     let result = if refusal.typed {
@@ -1557,6 +1570,9 @@ struct AfterPhaseRefusalContext {
     /// target is an uncommitted production file (#9033), before any
     /// workflow artifact or attempt existed.
     start_refused: bool,
+    /// The typed reason of the refusal (#11597), printed once on stderr
+    /// beside the unchanged prose when the phase ends in an error.
+    code: Option<crate::app::task_first::RepairRefusalCode>,
     /// Set once the phase printed its one stdout document (the bare verify
     /// document on a post-verify refusal), so a refusal never prints a
     /// second document.
@@ -1998,6 +2014,10 @@ impl SharedWorkflowArtifacts {
         for (_, backup, _, _, _) in &plans {
             if let Some(backup) = backup {
                 #[cfg(windows)]
+                #[allow(
+                    clippy::permissions_set_readonly_false,
+                    reason = "Windows-only: clearing the readonly flag is the platform way to make a backup removable; the Unix world-writable concern does not apply"
+                )]
                 {
                     let mut permissions = std::fs::metadata(backup)
                         .map_err(|error| {
@@ -2249,6 +2269,8 @@ fn run_agent_repair_phase(
                 &before_report.classified,
             ) {
                 refusal.start_refused = true;
+                refusal.code =
+                    Some(crate::app::task_first::RepairRefusalCode::StartRefusedUncommittedTarget);
                 return Err(crate::app::task_first::uncommitted_start_refusal_message(
                     &root, &seam_id, &file,
                 ));
@@ -2262,6 +2284,7 @@ fn run_agent_repair_phase(
                         if !crate::app::task_first::is_missing_edit_target_error(&error) {
                             return error;
                         }
+                        refusal.code = Some(crate::app::task_first::RepairRefusalCode::NoTestRoute);
                         // #10978: say where the change is and what to do next.
                         // The exact diagnostic stays last, because `ripr agent
                         // card` reports the same text as its blocker.
@@ -2444,6 +2467,8 @@ fn run_agent_repair_phase(
                     refusal.narrate(line);
                 }
                 refusal.typed = true;
+                refusal.code =
+                    Some(crate::app::task_first::RepairRefusalCode::RetryBudgetExhausted);
                 refusal.stop_unrecorded = true;
                 return Err(format!(
                     "repair attempt `{}` has spent its after-phase retry budget ({} refusals)",
@@ -2647,6 +2672,7 @@ fn run_agent_repair_phase(
                             // never open, or still reads open. Counts against
                             // the same retry budget as a no-movement refusal.
                             refusal.narrate(format!("{error}."));
+                            refusal.code = Some(no_movement_refusal_code(prior_refusals));
                             for line in repair_after_no_movement_lines(
                                 &caller_root,
                                 store_ref,
@@ -2657,6 +2683,7 @@ fn run_agent_repair_phase(
                                 refusal.narrate(line);
                             }
                         } else if error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX) {
+                            refusal.code = Some(no_movement_refusal_code(prior_refusals));
                             for line in repair_after_no_movement_lines(
                                 &caller_root,
                                 store_ref,
@@ -2768,12 +2795,16 @@ fn run_agent_repair_phase(
                 // the typed failure envelope and withdraw this phase's
                 // shared artifacts instead of the success-shaped document.
                 if cage_after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant {
+                    let finished_state =
+                        crate::app::repair_attempt::repair_attempt_state_for_finish(&cage_after);
+                    refusal.code = Some(
+                        crate::app::task_first::RepairRefusalCode::for_finished_state(
+                            &finished_state,
+                        ),
+                    );
                     refusal.terminal_finish = Some(TerminalAttemptFinish {
                         attempt_id: cage_after.attempt_id.as_str().to_string(),
-                        attempt_state: crate::app::repair_attempt::repair_attempt_state_for_finish(
-                            &cage_after,
-                        )
-                        .as_label(),
+                        attempt_state: finished_state.as_label(),
                         edit_cage_verdict: cage_after.verdict.status.as_label(),
                     });
                 }
@@ -3482,6 +3513,19 @@ fn repair_after_commit_busy_lines(
     ]
 }
 
+/// The typed code for a no-movement after refusal. The refusal that spends
+/// the retry budget is terminal, matching the next call, which refuses without
+/// running (`RetryBudgetExhausted`); earlier ones are retryable.
+fn no_movement_refusal_code(prior_refusals: u32) -> crate::app::task_first::RepairRefusalCode {
+    if prior_refusals.saturating_add(1)
+        >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+    {
+        crate::app::task_first::RepairRefusalCode::RetryBudgetExhausted
+    } else {
+        crate::app::task_first::RepairRefusalCode::AwaitingEdit
+    }
+}
+
 /// Recovery for the verify authority's no-movement refusal. The policy was
 /// already validated from this attempt's retained packet; the compatibility
 /// packet can belong to a later attempt and is never recovery authority.
@@ -3539,7 +3583,7 @@ fn repair_after_no_movement_lines(
         ));
     }
     lines.extend([
-        format!("to recover: {edit}, then rerun this after-phase command."),
+        format!("to recover: {edit}, then rerun the after phase."),
         format!(
             "inspect the selected attempt with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`."
         ),
@@ -6231,5 +6275,27 @@ mod start_output_tests {
         let without_next = agent_start_prose_lines(&written(None));
         assert_eq!(without_next.len(), 3);
         assert!(!without_next.iter().any(|line| line.starts_with("Next:")));
+    }
+}
+
+#[cfg(test)]
+mod no_movement_code_tests {
+    use super::no_movement_refusal_code;
+    use crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET as BUDGET;
+    use crate::app::task_first::{RepairRefusalCode, RepairRefusalDisposition};
+
+    /// The refusal that spends the budget is terminal like the next call, which
+    /// refuses without running; every earlier one stays retryable.
+    #[test]
+    fn the_budget_spending_refusal_is_terminal_and_earlier_ones_retryable() {
+        for prior in 0..BUDGET - 1 {
+            let code = no_movement_refusal_code(prior);
+            assert_eq!(code, RepairRefusalCode::AwaitingEdit, "prior={prior}");
+            assert_eq!(code.disposition(), RepairRefusalDisposition::Retryable);
+        }
+        let last = no_movement_refusal_code(BUDGET - 1);
+        assert_eq!(last, RepairRefusalCode::RetryBudgetExhausted);
+        assert_eq!(last.as_str(), "retry_budget_exhausted");
+        assert_eq!(last.disposition(), RepairRefusalDisposition::Terminal);
     }
 }

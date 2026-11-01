@@ -593,7 +593,7 @@ pub(crate) fn render_human_triage(
                 finding.probe.location.line,
                 finding.class.plain_label_with_stage(),
                 currentness,
-                finding.probe.family.as_str(),
+                super::evidence_lines::plain_probe_family(&finding.probe.family),
                 hidden_finding_reason(finding)
             ));
             if offers_test_stub(finding)
@@ -793,9 +793,13 @@ fn push_ambiguous_stub_choices(
 }
 
 fn hidden_finding_reason(finding: &Finding) -> String {
-    let reason = finding
+    // The family-aware wording, so a hidden match-arm finding reads the same
+    // limit text as its hover, MCP and full CLI explanation (#11821).
+    let limit_reason = finding
         .static_limit_kind
-        .map(|kind| kind.describe())
+        .map(|kind| kind.describe_for_family(&finding.probe.family));
+    let reason: &str = limit_reason
+        .as_deref()
         .or_else(|| finding.missing.first().map(String::as_str))
         .unwrap_or_else(|| match finding.class {
             ExposureClass::NoStaticPath => &finding.ripr.reach.summary,
@@ -807,7 +811,7 @@ fn hidden_finding_reason(finding: &Finding) -> String {
             }
             ExposureClass::StaticUnknown => &finding.ripr.infect.summary,
         });
-    one_line(reason)
+    one_line(&super::evidence_lines::plain_default_missing(reason))
 }
 
 /// The currentness mix of the omitted set. `unresolved_subject` is the
@@ -1429,6 +1433,17 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
                 ),
                 "add or strengthen a test by hand",
             )
+        } else if finding
+            .missing
+            .iter()
+            .any(|line| line.contains("Some strong related calls have unresolved inputs"))
+        {
+            // #10990: a strong call with unresolved inputs keeps the boundary
+            // finding weak and withholds the card; say so in plain words.
+            (
+                "static evidence cannot place every strong related test input, so the boundary equality cannot become a repair target".to_string(),
+                "add or strengthen a test by hand",
+            )
         } else {
             (
                 "static evidence names no concrete missing discriminator".to_string(),
@@ -1649,7 +1664,7 @@ fn has_repair_route(finding: &Finding) -> bool {
             .any(|line| line.starts_with("suggested_verify_command: "))
 }
 
-fn is_static_limited(finding: &Finding) -> bool {
+pub(super) fn is_static_limited(finding: &Finding) -> bool {
     // The producer's named limitation remains authoritative even when its
     // conservative class is reachable_unrevealed or weakly_exposed.
     finding.static_limit_kind.is_some()
@@ -1662,7 +1677,43 @@ fn is_static_limited(finding: &Finding) -> bool {
         )
 }
 
-fn is_preview_limited(finding: &Finding) -> bool {
+/// A reach-only static limitation that still leaves a confirmed test-side
+/// weakness open (#11825).
+///
+/// `rust_transitive_reach_unresolved` says ripr cannot trace the call chain
+/// from a test to the changed owner. It says nothing about a related test whose
+/// own oracle is too weak to tell the old value from the new (`weak` or
+/// `smoke` strength, for example a smoke `is_ok()`).
+/// Such a finding is not a confirmed gap (reach is unresolved, so it stays out
+/// of `gaps=` and out of repair routing), but it is not "nothing is fixable
+/// from the test side" either. Terminal `stop=` projections must not claim it
+/// is. Other limitation kinds, and limits with no weak-assertion row, are
+/// unaffected.
+pub(super) fn limit_leaves_weak_assertion_open(finding: &Finding) -> bool {
+    finding.is_candidate_actionable()
+        && !is_preview_limited(finding)
+        && matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+        && finding.static_limit_kind == Some(StaticLimitKind::RustTransitiveReachUnresolved)
+        && weak_assertion_row(finding).is_some()
+}
+
+/// The first contributing related-test row whose oracle is too weak to tell
+/// the old value from the new (`weak` or `smoke`). Selected on the row's oracle
+/// strength, never on `miss`, which is display-only.
+pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
+    finding.related_tests.iter().find(|test| {
+        test.is_contributing()
+            && matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
+            )
+    })
+}
+
+pub(super) fn is_preview_limited(finding: &Finding) -> bool {
     finding
         .language_status
         .is_some_and(|status| status.as_str() == "preview")
@@ -1670,6 +1721,28 @@ fn is_preview_limited(finding: &Finding) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn hidden_finding_reason_words_a_match_arm_limit_like_hover_and_mcp() -> Result<(), String> {
+        // #11821: `describe()` and `describe_for_family()` differ only for this
+        // kind on a match arm; the hidden-finding line must use the family form.
+        let mut finding = crate::mcp::gaps::test_finding()?;
+        finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustAssertionContextUnresolved);
+        let reason = hidden_finding_reason(&finding);
+        assert!(
+            reason.contains("`assert!`") && !reason.contains("`assert_eq!`"),
+            "a hidden match-arm limit must read the family wording: {reason}"
+        );
+        finding.probe.family = crate::domain::ProbeFamily::Predicate;
+        let other = hidden_finding_reason(&finding);
+        assert!(
+            other.contains("`assert_eq!`"),
+            "a non-match-arm limit keeps the standard wording: {other}"
+        );
+        Ok(())
+    }
     use super::*;
     use crate::app::Mode;
     use crate::domain::{
@@ -3297,6 +3370,23 @@ mod tests {
         assert!(
             !action.contains("names no concrete missing discriminator"),
             "{action}"
+        );
+        // #10990: the unresolved-call boundary decline gets its own plain
+        // wording instead of the generic line.
+        let mut unresolved_call = test_finding("finding:unresolved-call-decline");
+        unresolved_call.class = ExposureClass::WeaklyExposed;
+        unresolved_call.language = Some(LanguageId::Python);
+        unresolved_call.language_status = Some(LanguageStatus::Preview);
+        unresolved_call.missing = vec!["A strong Python oracle reaches `f`, but static evidence does not place a related test input at the changed predicate boundary. Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary of `x >= y`".to_string()];
+        let unresolved_action = python_preview_safe_action(&unresolved_call, false);
+        assert!(
+            unresolved_action
+                .contains("static evidence cannot place every strong related test input"),
+            "{unresolved_action}"
+        );
+        assert!(
+            !unresolved_action.contains("names no concrete missing discriminator"),
+            "{unresolved_action}"
         );
         // A weak finding without the unresolved-operand shape keeps the
         // generic line.

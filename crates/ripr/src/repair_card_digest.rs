@@ -140,7 +140,7 @@ pub(crate) fn repair_card_semantic_digest(card: &RepairCardV1) -> Result<String,
             .collect(),
     };
     let serialized = serde_json::to_string(&input)
-        .map_err(|error| format!("repair card digest serialization failed: {error}"))?;
+        .map_err(|error| format!("repair card digest serialization failed: {error}; report this as a ripr bug with the command that produced it"))?;
     Ok(sha256_hex(serialized.as_bytes()))
 }
 

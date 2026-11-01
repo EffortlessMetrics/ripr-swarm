@@ -8,6 +8,12 @@ name: Windows Advisory Shards
 # replace the required Linux gates and is not wired to pull_request events.
 on:
   workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Optional exact commit to test instead of the dispatched ref's head (40 hexadecimal characters; release candidate, #2769)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -35,6 +41,7 @@ jobs:
       # on a shallow clone (#10344).
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -70,6 +77,21 @@ jobs:
         shell: bash
         run: cargo xtask check-covered-by
 
+      # Nested-build tests (#10847). nextest runs every test in its own process,
+      # so the build memoized in a OnceLock (`candidate_binary` in
+      # xtask/tests/common/ripr_help.rs, `ripr_fixture_binary` in
+      # xtask/src/reports/fixtures.rs) is paid once per test, not once per run.
+      # On a cold runner the first of those `cargo build -p ripr` calls compiles
+      # the whole crate (the guide contract uses `--jobs 1`) while every other
+      # such test, and the policy tests' own cargo spawns, block on the target
+      # directory lock until the 360 s kill fires (run 41258971406: 10 TIMEOUT
+      # rows, all nested cargo). Building the same default-feature ripr here,
+      # before the clock starts on any test, leaves each spawn a no-op build.
+      - name: Warm the ripr build the nested-cargo tests spawn
+        timeout-minutes: 25
+        shell: bash
+        run: cargo build -p ripr --locked
+
       # File redirect, not `| tee`: see windows-advisory.yml. The shard's real
       # cargo status is recorded and replayed so a failed test still fails the
       # job, and the log is uploaded even when it does.
@@ -87,6 +109,11 @@ jobs:
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 55
         shell: bash
+        env:
+          # Below the 360 s nextest terminate (.config/nextest.toml), so a stalled
+          # child tool build fails with its own captured stderr instead of an
+          # anonymous TIMEOUT row (#12035).
+          RIPR_TOOL_BUILD_TIMEOUT_SECS: "300"
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
@@ -168,6 +195,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95

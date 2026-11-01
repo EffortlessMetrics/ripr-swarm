@@ -214,6 +214,17 @@ fn missing_perl_fact_packet_reason_is_user_facing() -> Result<(), String> {
     cleanup
 }
 
+/// The configured `cache_dir` runs through a non-directory (`blocker.txt/cache`).
+/// Which layer refuses depends on the host: where the path cannot be resolved
+/// the containment check refuses first ("refusing to write Perl facts cache",
+/// #11601), otherwise `create_dir_all` fails ("failed to create Perl facts
+/// cache dir"). Both are the real producer failure; the config advice is not.
+#[cfg(feature = "lang-perl")]
+fn names_cache_failure(text: &str) -> bool {
+    text.contains("failed to create Perl facts cache dir")
+        || text.contains("refusing to write Perl facts cache")
+}
+
 /// #6828: a *configured* managed Perl facts producer whose invocation fails
 /// must not be reported as the generic "requires a fact packet" state the
 /// user already satisfied. The typed limitation is `producer_failure` with
@@ -273,7 +284,7 @@ fn configured_producer_failure_is_typed_not_misattributed_to_missing_packet() ->
             .reason
             .as_deref()
             .ok_or_else(|| "failed Perl run must carry a reason".to_string())?;
-        if !reason.contains("failed to create Perl facts cache dir") {
+        if !names_cache_failure(reason) {
             return Err(format!(
                 "language_runs reason must carry the real producer failure: {reason}"
             ));
@@ -311,7 +322,7 @@ fn configured_producer_failure_is_typed_not_misattributed_to_missing_packet() ->
             ));
         }
         let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
-        if !detail.contains("failed to create Perl facts cache dir") {
+        if !names_cache_failure(detail) {
             return Err(format!(
                 "producer_failure limitation detail must carry the exporter failure: {detail}"
             ));
@@ -391,7 +402,7 @@ fn producer_failure_is_recorded_even_when_perl_is_not_enabled() -> Result<(), St
             return Err(format!("expected failed Perl run, got {perl_run:?}"));
         }
         let reason = perl_run.reason.as_deref().unwrap_or_default();
-        if !reason.contains("failed to create Perl facts cache dir") {
+        if !names_cache_failure(reason) {
             return Err(format!("reason must carry the real failure: {reason}"));
         }
         if reason.contains("requires a fact packet") {

@@ -683,7 +683,10 @@ fn diagnostic_is_actionable(diagnostic: &tower_lsp_server::ls_types::Diagnostic)
     // LSP projection route. The budget still needs the producer's semantic
     // actionability predicate, rather than treating identity as eligibility.
     if data.get("source").and_then(|value| value.as_str()) == Some("gap_decision_ledger") {
-        return data.get("gap_state").and_then(|value| value.as_str()) == Some("actionable")
+        return data
+            .get("gap_state")
+            .and_then(|value| value.as_str())
+            .is_some_and(crate::domain::EvidenceState::is_actionable_word)
             && data.get("repairability").and_then(|value| value.as_str()) == Some("repairable");
     }
 

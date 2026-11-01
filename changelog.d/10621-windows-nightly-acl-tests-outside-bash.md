@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The nightly Windows advisory lane runs the four tests that need a real directory deny ACL (`doctor` cache probes, the unreadable-subtree sweep) in a PowerShell step with its own log and status, and the bash test steps skip them, so the nightly no longer reports them as `NOT_ESTABLISHED`; the step ends with a `windows-advisory-acl-evidence` guard that pins the four full test paths and fails the step when the run's evidence is missing, spawn-failed, or does not show each expected test exactly once, so a renamed filter cannot pass silently (#10621).

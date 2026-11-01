@@ -84,16 +84,18 @@ pub(crate) fn ts_byte_limit_from_env(
             let parsed = raw
                 .trim()
                 .parse::<u64>()
-                .map_err(|err| format!("{env_name} must be a positive integer: {err}"))?;
+                .map_err(|err| format!("{env_name} must be a positive integer: {err}; set it to a whole number above zero, or unset it to use the default"))?;
             if parsed == 0 {
-                return Err(format!("{env_name} must be a positive integer"));
+                return Err(format!(
+                    "{env_name} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
+                ));
             }
             Ok(parsed)
         }
         Err(std::env::VarError::NotPresent) => Ok(default),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err(format!("{env_name} must be a positive integer"))
-        }
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{env_name} must be a positive integer; set it to a whole number above zero, or unset it to use the default"
+        )),
     }
 }
 

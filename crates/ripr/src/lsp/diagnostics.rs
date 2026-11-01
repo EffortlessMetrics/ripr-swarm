@@ -133,6 +133,32 @@ pub(super) fn canonical_finding_groups(findings: &[Finding]) -> Vec<(Finding, Ve
 /// and class summaries can read the same group structure the listing and
 /// publishing paths see.
 pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Vec<&Finding>)> {
+    let count = findings.len();
+    if count == 0 {
+        return Vec::new();
+    }
+    let mut parent = (0..count).collect::<Vec<_>>();
+    let find = |index: usize, parent: &mut [usize]| -> usize {
+        let mut root = index;
+        while parent[root] != root {
+            root = parent[root];
+        }
+        let mut current = index;
+        while current != root {
+            let next = parent[current];
+            parent[current] = root;
+            current = next;
+        }
+        root
+    };
+    let union = |left: usize, right: usize, parent: &mut [usize]| {
+        let left_root = find(left, parent);
+        let right_root = find(right, parent);
+        if left_root != right_root {
+            parent[right_root] = left_root;
+        }
+    };
+
     // Gap-less findings that are one behavior seeded under several probe
     // families (#11453) share the lowest member id as their group key, so a
     // singleton keeps the `raw:<id>` key and ordering it always had.
@@ -145,29 +171,127 @@ pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Ve
             }
         }
     }
-    let mut grouped = BTreeMap::<String, Vec<&Finding>>::new();
-    for finding in findings {
-        let key = finding
-            .canonical_gap
-            .as_ref()
-            .map(|gap| format!("canonical:{}", gap.id))
-            .unwrap_or_else(|| {
+
+    let mut buckets = BTreeMap::<String, Vec<usize>>::new();
+    // Group order must not depend on the order the snapshot lists findings in
+    // (that order is an analysis detail and shifts with unrelated changes).
+    // Each finding contributes the key it had before groups could merge
+    // (`canonical:<gap>` or `raw:<anchor>`), and a group sorts by the lowest
+    // key among its members.
+    let mut order_key = vec![String::new(); count];
+    for (index, finding) in findings.iter().enumerate() {
+        order_key[index] = match &finding.canonical_gap {
+            Some(gap) => format!("canonical:{}", gap.id),
+            None => {
                 let anchor = overlap_signature(finding)
                     .and_then(|key| overlap_anchor.get(&key).copied())
                     .unwrap_or(finding.id.as_str());
                 format!("raw:{anchor}")
-            });
-        grouped.entry(key).or_default().push(finding);
+            }
+        };
+        if let Some(gap) = &finding.canonical_gap {
+            buckets
+                .entry(format!("canonical:{}", gap.id))
+                .or_default()
+                .push(index);
+        }
+        if let Some(label) = site_missing_group_label(finding) {
+            buckets
+                .entry(format!("site-missing:{label}"))
+                .or_default()
+                .push(index);
+        }
+        if finding.canonical_gap.is_none()
+            && let Some(key) = overlap_signature(finding)
+        {
+            let anchor = overlap_anchor
+                .get(&key)
+                .copied()
+                .unwrap_or(finding.id.as_str());
+            buckets
+                .entry(format!("overlap:{anchor}"))
+                .or_default()
+                .push(index);
+        }
+    }
+    for indices in buckets.values() {
+        let Some(&head) = indices.first() else {
+            continue;
+        };
+        for &member in &indices[1..] {
+            union(head, member, &mut parent);
+        }
     }
 
-    grouped
-        .into_values()
-        .filter_map(|mut group| {
+    let mut grouped = BTreeMap::<usize, Vec<usize>>::new();
+    for index in 0..count {
+        let root = find(index, &mut parent);
+        grouped.entry(root).or_default().push(index);
+    }
+    let mut ordered = grouped.into_values().collect::<Vec<_>>();
+    ordered.sort_by_cached_key(|indices| {
+        let lowest = indices
+            .iter()
+            .map(|&index| order_key[index].as_str())
+            .min()
+            .unwrap_or_default()
+            .to_string();
+        (lowest, indices.first().copied().unwrap_or_default())
+    });
+
+    ordered
+        .into_iter()
+        .filter_map(|mut indices| {
+            indices.sort_unstable();
+            let mut group = indices
+                .iter()
+                .map(|&index| &findings[index])
+                .collect::<Vec<_>>();
             group.sort_by_key(|finding| finding_primary_sort_key(finding));
             let primary = *group.first()?;
             Some((primary, group))
         })
         .collect()
+}
+
+/// Same file/line/column/owner/expression as [`overlap_signature`], without
+/// requiring gap-less findings or full repair-signal equality (#11796).
+fn site_fingerprint(finding: &Finding) -> String {
+    let owner = finding
+        .probe
+        .owner
+        .as_ref()
+        .map(|owner| owner.0.as_str())
+        .unwrap_or("");
+    let file = finding
+        .probe
+        .location
+        .file
+        .to_string_lossy()
+        .replace('\\', "/");
+    format!(
+        "{file}\0{}\0{}\0{owner}\0{}",
+        finding.probe.location.line, finding.probe.location.column, finding.probe.expression
+    )
+}
+
+fn primary_missing_discriminator_value(finding: &Finding) -> Option<String> {
+    finding
+        .activation
+        .missing_discriminators
+        .first()
+        .map(|fact| fact.value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+/// Canonical-gap findings at one site that name the same missing discriminator
+/// collapse for LSP publication (#11796) while each probe stays in
+/// `raw_findings`.
+fn site_missing_group_label(finding: &Finding) -> Option<String> {
+    finding.canonical_gap.as_ref()?;
+    let missing = primary_missing_discriminator_value(finding)?;
+    Some(format!("{}\0{missing}", site_fingerprint(finding)))
 }
 
 /// Signature under which gap-less findings describe one behavior at one site
@@ -1610,6 +1734,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         out_of_scope_test_file_findings,
         unavailable_adapter,
         language_view,
+        rust_diagnostic_origins: origins,
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
 }
@@ -1995,6 +2120,7 @@ fn git_timeout_limited_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -2101,6 +2227,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     WorkspaceDiagnostics { snapshot, batches }
 }
@@ -7357,7 +7484,7 @@ mod lsp_next_step_parity_tests {
             confidence: 0.4,
             evidence: vec![
                 "owner: applyDiscount".to_string(),
-                "gap_state: advisory".to_string(),
+                "gap_state: unknown".to_string(),
                 "actionability_category: incomplete_repair_packet".to_string(),
                 "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract".to_string(),
                 "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available".to_string(),
@@ -7485,7 +7612,7 @@ mod lsp_next_step_parity_tests {
         let finding = complete_ts_finding();
         let message = lsp_message(&finding);
         assert!(
-            message.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
+            message.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only)"),
             "LSP diagnostic must contain reconciled next-step for complete packet; got: {message}"
         );
         assert!(
@@ -7536,6 +7663,218 @@ mod lsp_next_step_parity_tests {
             !message.contains("the repair packet is complete (advisory"),
             "LSP diagnostic must NOT say actionable for blocked packet; got: {message}"
         );
+    }
+}
+
+#[cfg(test)]
+mod canonical_group_member_tests {
+    use super::*;
+    use crate::domain::{
+        ActivationEvidence, Confidence, DeltaKind, ExposureClass, FindingCanonicalGap,
+        MissingDiscriminatorFact, Probe, ProbeFamily, ProbeId, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState,
+    };
+    use std::collections::BTreeSet;
+
+    fn base_site_finding(id: &str, family: ProbeFamily) -> Finding {
+        Finding {
+            analysis_scope: crate::domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
+            id: id.to_string(),
+            canonical_gap: None,
+            probe: Probe {
+                id: ProbeId(id.to_string()),
+                location: SourceLocation {
+                    file: std::path::PathBuf::from("src/lib.rs"),
+                    line: 1,
+                    column: 4,
+                },
+                owner: Some(crate::domain::SymbolId("src/lib.rs::can_vote".to_string())),
+                family,
+                delta: DeltaKind::Control,
+                before: None,
+                after: None,
+                expression: "age >= 18".to_string(),
+                expected_sinks: Vec::new(),
+                required_oracles: Vec::new(),
+            },
+            class: ExposureClass::WeaklyExposed,
+            ripr: RiprEvidence {
+                reach: StageEvidence::new(StageState::Yes, Confidence::High, "reached"),
+                infect: StageEvidence::new(StageState::Yes, Confidence::High, "infected"),
+                propagate: StageEvidence::new(StageState::Yes, Confidence::Medium, "propagated"),
+                reveal: RevealEvidence {
+                    observe: StageEvidence::new(StageState::Weak, Confidence::Medium, "observed"),
+                    discriminate: StageEvidence::new(
+                        StageState::Weak,
+                        Confidence::Medium,
+                        "weak discriminator",
+                    ),
+                },
+            },
+            confidence: 0.75,
+            evidence: Vec::new(),
+            missing: Vec::new(),
+            flow_sinks: Vec::new(),
+            activation: ActivationEvidence::default(),
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
+            related_tests: Vec::new(),
+            recommended_next_step: None,
+            language: None,
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+        }
+    }
+
+    fn gapped_site_finding(id: &str, family: ProbeFamily, gap_id: &str, missing: &str) -> Finding {
+        let mut finding = base_site_finding(id, family.clone());
+        finding.id = id.to_string();
+        finding.probe.id = ProbeId(id.to_string());
+        finding.probe.family = family.clone();
+        finding.probe.owner = Some(crate::domain::SymbolId("src/lib.rs::can_vote".to_string()));
+        finding.probe.expression = "age >= 18".to_string();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.recommended_next_step =
+            Some("Add boundary tests for below, equal, and above the changed threshold with exact assertions.".to_string());
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: missing.to_string(),
+            reason: "no test uses the boundary".to_string(),
+            flow_sink: None,
+        }];
+        finding.canonical_gap = Some(FindingCanonicalGap {
+            id: gap_id.to_string(),
+            language: "rust".to_string(),
+            file: "src/lib.rs".to_string(),
+            owner: "can_vote".to_string(),
+            behavior_kind: match family {
+                ProbeFamily::Predicate => "predicate_boundary".to_string(),
+                ProbeFamily::ReturnValue => "return_value".to_string(),
+                _ => "other".to_string(),
+            },
+            probe_kind: family.as_str().to_string(),
+            normalized_discriminator: missing.to_string(),
+        });
+        finding
+    }
+
+    #[test]
+    fn same_site_shared_missing_discriminator_collapses_to_one_group() -> Result<(), String> {
+        let predicate = gapped_site_finding(
+            "probe:lib:1:predicate",
+            ProbeFamily::Predicate,
+            "gap:rust:src/lib.rs:can_vote:predicate_boundary:predicate:age==18",
+            "age == 18",
+        );
+        let return_value = gapped_site_finding(
+            "probe:lib:1:return_value",
+            ProbeFamily::ReturnValue,
+            "gap:rust:src/lib.rs:can_vote:return_value:return_value:age>=18",
+            "age == 18",
+        );
+        let mut return_value = return_value;
+        return_value.recommended_next_step = Some(
+            "Replace broad assertions with exact equality or a property that constrains the changed returned value.".to_string(),
+        );
+        let third = gapped_site_finding(
+            "probe:lib:1:predicate_alt",
+            ProbeFamily::Predicate,
+            "gap:rust:src/lib.rs:can_vote:predicate_boundary:predicate:age==18:alt",
+            "age == 18",
+        );
+
+        let findings = [predicate, return_value, third];
+        let groups = canonical_group_members(&findings);
+        if groups.len() != 1 {
+            return Err(format!("expected one group, got {}", groups.len()));
+        }
+        let (primary, members) = &groups[0];
+        if members.len() != 3 {
+            return Err(format!("expected three raw members, got {}", members.len()));
+        }
+        if primary.probe.family != ProbeFamily::Predicate {
+            return Err("predicate probe should rank as the primary diagnostic".to_string());
+        }
+        let ids = members
+            .iter()
+            .map(|finding| finding.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if ids.len() != 3 {
+            return Err("group must retain every finding id".to_string());
+        }
+        Ok(())
+    }
+
+    /// Group order is a function of the groups' stable keys, not of the order
+    /// the snapshot lists findings in (#11862 made it follow list order).
+    #[test]
+    fn group_order_does_not_depend_on_the_order_findings_are_listed() -> Result<(), String> {
+        let canonical = gapped_site_finding(
+            "probe:lib:9:predicate",
+            ProbeFamily::Predicate,
+            "gap:rust:src/lib.rs:can_vote:predicate_boundary:predicate:age==18",
+            "age == 18",
+        );
+        let mut raw = gapped_site_finding(
+            "probe:lib:2:predicate",
+            ProbeFamily::Predicate,
+            "unused",
+            "other == 1",
+        );
+        raw.canonical_gap = None;
+        raw.probe.location.line = 2;
+
+        let primaries = |findings: &[Finding]| -> Vec<String> {
+            canonical_group_members(findings)
+                .into_iter()
+                .map(|(primary, _)| primary.id.clone())
+                .collect()
+        };
+        let forward = primaries(&[canonical.clone(), raw.clone()]);
+        let reversed = primaries(&[raw, canonical]);
+        if forward != reversed {
+            return Err(format!(
+                "order moved with input: {forward:?} vs {reversed:?}"
+            ));
+        }
+        if forward != ["probe:lib:9:predicate", "probe:lib:2:predicate"] {
+            return Err(format!("canonical group must sort before raw: {forward:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn same_site_different_missing_values_stay_separate() -> Result<(), String> {
+        let first = gapped_site_finding(
+            "probe:lib:1:predicate",
+            ProbeFamily::Predicate,
+            "gap:rust:src/lib.rs:can_vote:predicate_boundary:predicate:age==18",
+            "age == 18",
+        );
+        let mut second = gapped_site_finding(
+            "probe:lib:1:return_value",
+            ProbeFamily::ReturnValue,
+            "gap:rust:src/lib.rs:can_vote:return_value:return_value:age>=18",
+            "age >= 18",
+        );
+        second.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "age >= 18".to_string(),
+            reason: "missing return pin".to_string(),
+            flow_sink: None,
+        }];
+
+        let findings = [first, second];
+        let groups = canonical_group_members(&findings);
+        if groups.len() != 2 {
+            return Err(format!("expected two groups, got {}", groups.len()));
+        }
+        Ok(())
     }
 }
 
@@ -7627,6 +7966,7 @@ mod delivery_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 

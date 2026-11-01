@@ -346,6 +346,36 @@ fn current_meta() -> Value {
     })
 }
 
+/// A model-fixable argument problem is an `isError: true` tool result with
+/// the typed `invalid_argument` failure (#11621), never a JSON-RPC error that
+/// hosts may flatten. `detail` names the problem; `recovery` names the fix.
+fn require_invalid_argument(response: &Value, label: &str) -> Result<(), String> {
+    let failure = |key: &str| {
+        response
+            .pointer(&format!("/result/structuredContent/failure/{key}"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+    };
+    if response.get("error").is_some()
+        || response.pointer("/result/isError") != Some(&json!(true))
+        || failure("code") != "invalid_argument"
+        || failure("detail").is_empty()
+        || failure("recovery").is_empty()
+        || response
+            .pointer("/result/structuredContent/failure/data")
+            .is_none_or(|data| !data.is_object())
+        || !response
+            .pointer("/result/content/0/text")
+            .and_then(Value::as_str)
+            .is_some_and(|text| text.starts_with("invalid_argument:"))
+    {
+        return Err(format!(
+            "{label} must be an invalid_argument tool result: {response}"
+        ));
+    }
+    Ok(())
+}
+
 fn line(value: Value) -> Result<Vec<u8>, String> {
     let mut encoded = serde_json::to_vec(&value).map_err(|error| error.to_string())?;
     encoded.push(b'\n');
@@ -417,15 +447,6 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
             json!("unknown-tool"),
             -32602,
         ),
-        (
-            tool_call(
-                "bad-language",
-                "ripr_list_gaps",
-                json!({"language": "cobol"}),
-            )?,
-            json!("bad-language"),
-            -32602,
-        ),
     ];
     let timeout = Duration::from_secs(30);
     let mut session = SequentialStdio::spawn(&root)?;
@@ -453,6 +474,32 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
                 .to_owned(),
         );
     }
+    // A bad enum token on a known tool is a typed tool failure, not a
+    // protocol error: the model sees the vocabulary it must use (#11621).
+    let bad_language = session.raw_exchange(
+        &tool_call(
+            "bad-language",
+            "ripr_list_gaps",
+            json!({"language": "cobol"}),
+        )?,
+        timeout,
+    )?;
+    require_invalid_argument(&bad_language, "unknown language")?;
+    let detail = bad_language
+        .pointer("/result/structuredContent/failure/detail")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if bad_language.get("id") != Some(&json!("bad-language"))
+        || !detail.contains("unknown language \"cobol\"")
+        || !detail.contains("rust")
+        || !detail.contains("perl")
+        || bad_language
+            .pointer("/result/structuredContent/failure/data/allowed")
+            .and_then(Value::as_array)
+            .is_none_or(|allowed| !allowed.contains(&json!("rust")))
+    {
+        return Err(format!("unknown language failure drifted: {bad_language}"));
+    }
     // Every rejection left the session up and answering.
     let alive = session.raw_exchange(
         &line(json!({"jsonrpc": "2.0", "id": "alive", "method": "ping"}))?,
@@ -466,9 +513,6 @@ fn json_rpc_rejections_are_answered_with_spec_codes_and_the_session_survives() -
         || !messages[6].contains("expected `protocolVersion`")
         || messages[7] != "Method not found: nope/never"
         || !messages[8].starts_with("unknown tool")
-        || !messages[9].contains("unknown language \"cobol\"")
-        || !messages[9].contains("rust")
-        || !messages[9].contains("perl")
     {
         return Err(format!("rejection messages drifted: {messages:?}"));
     }
@@ -522,10 +566,10 @@ fn catalog_list_cursors_fail_closed_over_stdio() -> Result<(), String> {
             )
         };
         for (method, field, count) in [
-            ("tools/list", "tools", 9),
+            ("tools/list", "tools", 10),
             ("prompts/list", "prompts", 0),
             ("resources/list", "resources", 1),
-            ("resources/templates/list", "resourceTemplates", 5),
+            ("resources/templates/list", "resourceTemplates", 6),
         ] {
             let baseline = call(&mut session, "plain", method, json!({}))?;
             let catalog = baseline
@@ -728,7 +772,7 @@ fn malformed_catalog_cursors_preserve_protocol_validation_and_recover() -> Resul
         || recovered
             .pointer("/result/tools")
             .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 9)
+            .is_none_or(|tools| tools.len() != 10)
     {
         return Err(format!(
             "protocol controls lost same-session recovery: {recovered}"
@@ -919,7 +963,7 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
             }
         );
         let message = rejected
-            .pointer("/error/message")
+            .pointer("/result/structuredContent/failure/detail")
             .and_then(Value::as_str)
             .unwrap_or_default();
         let message_matches = if *kind == "integer" {
@@ -927,22 +971,14 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
         } else {
             message == expected_message
         };
-        if rejected.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
-            || !message_matches
-            || rejected.get("result").is_some()
-        {
+        require_invalid_argument(rejected, &format!("{tool}.{field} null"))?;
+        if !message_matches || rejected.get("id") != Some(&json!(format!("{index}-null"))) {
             return Err(format!(
-                "{tool}.{field} null must be correlated Invalid Params before session lookup: {rejected}"
+                "{tool}.{field} null must be a correlated invalid_argument failure before session lookup: {rejected}"
             ));
         }
     }
-    if reply("wrong-type")?
-        .pointer("/error/code")
-        .and_then(Value::as_i64)
-        != Some(-32602)
-    {
-        return Err("boolean paging limit must remain Invalid Params".into());
-    }
+    require_invalid_argument(reply("wrong-type")?, "boolean paging limit")?;
     let recovered = reply("recovery")?;
     if recovered.get("error").is_some()
         || recovered
@@ -1872,14 +1908,17 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     if responses.len() != 6 {
         return Err(format!("expected 6 MCP responses, got {}", responses.len()));
     }
-    let expected: [(&str, i64); 3] = [
-        ("unknown-tool", -32602),
-        ("with-arguments", -32602),
-        ("unknown-resource", -32602),
-    ];
-    for (index, (id, code)) in expected.iter().enumerate() {
-        let response = &responses[index + 1];
-        if response.pointer("/error/code").and_then(Value::as_i64) != Some(*code) {
+    // An argument problem on a known tool is a typed tool failure; an unknown
+    // tool and an unknown resource stay protocol errors (no tool result
+    // exists for either) (#11621).
+    require_invalid_argument(&responses[2], "status with an argument")?;
+    let expected: [(&str, i64); 2] = [("unknown-tool", -32602), ("unknown-resource", -32602)];
+    for (id, code) in expected {
+        let response = responses
+            .iter()
+            .find(|response| response.pointer("/id").and_then(Value::as_str) == Some(id))
+            .ok_or_else(|| format!("missing rejection for {id}"))?;
+        if response.pointer("/error/code").and_then(Value::as_i64) != Some(code) {
             return Err(format!(
                 "rejection for {id} must retain error code {code}: {response}"
             ));
@@ -1966,12 +2005,13 @@ fn rejection_arms_survive_the_stdio_transport() -> Result<(), String> {
     let miss = by_id
         .get("unknown-resource")
         .ok_or("missing unknown-resource response")?;
-    let expected_message = "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}";
+    let expected_message = "unknown resource; available: ripr://workspace/status; templates: ripr://snapshot/{snapshot_id}, ripr://gap/{canonical_id}, ripr://gap/{canonical_id}/limitation, ripr://repair-attempt/{attempt_id}, ripr://receipt/{receipt_id}, ripr://repair-card/{canonical_id}";
     if miss.pointer("/error/data/available") != Some(&json!(["ripr://workspace/status"]))
         || miss.pointer("/error/data/resource_templates")
             != Some(&json!([
                 "ripr://snapshot/{snapshot_id}",
                 "ripr://gap/{canonical_id}",
+                "ripr://gap/{canonical_id}/limitation",
                 "ripr://repair-attempt/{attempt_id}",
                 "ripr://receipt/{receipt_id}",
                 "ripr://repair-card/{canonical_id}"
@@ -2162,9 +2202,9 @@ fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<
         || recovered
             .pointer("/result/tools")
             .and_then(Value::as_array)
-            .is_none_or(|tools| tools.len() != 9)
+            .is_none_or(|tools| tools.len() != 10)
     {
-        return Err("valid inline request did not recover the nine-tool slice surface".into());
+        return Err("valid inline request did not recover the ten-tool slice surface".into());
     }
     Ok(())
 }
@@ -3334,19 +3374,57 @@ fn structured_tool_success(reply: &Value, context: &str) -> Result<Value, String
     let result = reply
         .get("result")
         .ok_or_else(|| format!("{context} lost its result: {reply}"))?;
-    if result
+    // A refresh document whose attempt failed is data (the typed failure and
+    // the last-known-good snapshot) AND an error on the wire: `isError` must
+    // be true exactly then (#11571). Every other success must be isError:false.
+    let failed_refresh = result.pointer("/structuredContent/attempt/state")
+        == Some(&json!("failed"))
+        && result.pointer("/structuredContent/verify").is_some();
+    let is_error = result
         .pointer("/isError")
         .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    if is_error != failed_refresh {
         return Err(format!(
-            "{context} returned an error instead of a card: {result}"
+            "{context} returned an error instead of a card (or a failed refresh was not isError): {result}"
         ));
     }
     result
         .get("structuredContent")
         .cloned()
         .ok_or_else(|| format!("{context} omitted structuredContent: {result}"))
+}
+
+/// The `ripr_prepare_repair` contract: a result is an error exactly when it
+/// created no transaction. Returns the structured document either way, after
+/// pinning that `isError` agrees with `repair_packet_ready` and `attempt`.
+fn structured_prepare_document(reply: &Value, context: &str) -> Result<Value, String> {
+    let result = reply
+        .get("result")
+        .ok_or_else(|| format!("{context} lost its result: {reply}"))?;
+    let document = result
+        .get("structuredContent")
+        .cloned()
+        .ok_or_else(|| format!("{context} omitted structuredContent: {result}"))?;
+    let is_error = result
+        .pointer("/isError")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| format!("{context} omitted isError: {result}"))?;
+    if document.pointer("/failure").is_some() {
+        return Err(format!("{context} returned a typed failure: {document}"));
+    }
+    let ready = document["repair_packet_ready"] == true;
+    if is_error == ready || ready == document["attempt"].is_null() {
+        return Err(format!(
+            "{context}: isError={is_error} must be the opposite of repair_packet_ready={ready} and attempt must exist exactly when ready: {document}"
+        ));
+    }
+    if !ready && document["next"]["kind"].as_str().is_none() {
+        return Err(format!(
+            "{context}: a refusal must carry a machine-readable next.kind: {document}"
+        ));
+    }
+    Ok(document)
 }
 
 /// Keep the wording tied to actual input selection: the same dirty fixture
@@ -3749,7 +3827,7 @@ fn read_resource_document(
 }
 
 /// An unknown `class` token used to narrow to an empty page that read like
-/// "no such gaps". It is now invalid params naming the vocabulary, while every
+/// "no such gaps". It is now an `invalid_argument` tool failure naming the vocabulary, while every
 /// real wire token still passes validation (before or after a refresh).
 #[test]
 fn list_gaps_rejects_unknown_class_tokens_with_the_vocabulary() -> Result<(), String> {
@@ -3765,14 +3843,18 @@ fn list_gaps_rejects_unknown_class_tokens_with_the_vocabulary() -> Result<(), St
             json!({ "class": bad }),
             REPLY_TIMEOUT,
         )?;
+        require_invalid_argument(&reply, &format!("class {bad:?}"))?;
         let message = reply
-            .pointer("/error/message")
+            .pointer("/result/structuredContent/failure/detail")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
-            || !message.contains("weakly_exposed")
+        if !message.contains("weakly_exposed")
+            || reply
+                .pointer("/result/structuredContent/failure/data/allowed")
+                .and_then(Value::as_array)
+                .is_none_or(|allowed| !allowed.contains(&json!("weakly_exposed")))
         {
-            return Err(format!("class {bad:?} must be invalid params: {reply}"));
+            return Err(format!("class {bad:?} must name the vocabulary: {reply}"));
         }
     }
     let refresh = session.call_tool("refresh-class", "ripr_refresh", json!({}), REPLY_TIMEOUT)?;
@@ -3809,8 +3891,8 @@ fn list_gaps_rejects_unknown_class_tokens_with_the_vocabulary() -> Result<(), St
     Ok(())
 }
 
-/// The invalid-params message echoes the caller's class token; it must stay
-/// bounded (a near-cap or escape-heavy token must not push the error past the
+/// The invalid-argument detail echoes the caller's class token; it must stay
+/// bounded (a near-cap or escape-heavy token must not push the failure past the
 /// writer's 128 KiB response cap and turn it into -32603) and correlated.
 #[test]
 fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
@@ -3834,18 +3916,17 @@ fn list_gaps_bounds_the_echoed_unknown_class_token() -> Result<(), String> {
         let bytes = serde_json::to_vec(&reply)
             .map_err(|error| error.to_string())?
             .len();
+        require_invalid_argument(&reply, &format!("{label} class"))?;
         let message = reply
-            .pointer("/error/message")
+            .pointer("/result/structuredContent/failure/detail")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
-            || reply.get("id") != Some(&json!(id))
+        if reply.get("id") != Some(&json!(id))
             || !message.contains("weakly_exposed")
             || bytes > 8 * 1024
         {
             return Err(format!(
-                "{label} class must be a bounded correlated -32602 (bytes={bytes}): code={:?} id={:?}",
-                reply.pointer("/error/code"),
+                "{label} class must be a bounded correlated invalid_argument failure (bytes={bytes}): id={:?}",
                 reply.get("id")
             ));
         }
@@ -3884,8 +3965,10 @@ fn call_tool_with_raw_arguments(
 /// "must be a non-negative integer" sentence that also answered `limit:
 /// 18446744073709551616` (which is non-negative and an integer) and `-1`
 /// (which the sentence did not name as the problem). `ripr_list_gaps` accepts
-/// up to this platform's `usize::MAX` (the effective bound `data.maximum`, the
-/// message and the recovery all name); `ripr_list_repair_attempts` caps at 256.
+/// up to the 500-item working-set bound (the effective bound `data.maximum`, the
+/// message and the recovery all name; #11621 replaced the `usize::MAX` cap);
+/// `ripr_list_repair_attempts` caps at 256. Each refusal is an
+/// `invalid_argument` tool failure carrying that data.
 #[test]
 fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<(), String> {
     const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
@@ -3895,9 +3978,9 @@ fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<()
     session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
     let too_large = "is larger than the largest accepted integer";
     let whole = "must be a whole JSON integer";
-    let platform_max = u64::try_from(usize::MAX).unwrap_or(u64::MAX);
-    // (tool, literal, message fragment, expected data.maximum); the
-    // effective maximum is capped at this platform's usize::MAX
+    let platform_max = 500_u64;
+    // (tool, literal, message fragment, expected data.maximum); list_gaps
+    // is capped at the working-set bound
     let cases: [(&str, &str, &str, u64); 12] = [
         (
             "ripr_list_gaps",
@@ -3944,17 +4027,20 @@ fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<()
             tool,
             &format!("{{\"limit\":{literal}}}"),
         )?;
+        require_invalid_argument(&reply, &format!("{tool} limit {literal}"))?;
         let message = reply
-            .pointer("/error/message")
+            .pointer("/result/structuredContent/failure/detail")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let data = reply.pointer("/error/data").cloned().unwrap_or(Value::Null);
-        let recovery = data
-            .pointer("/recovery")
+        let data = reply
+            .pointer("/result/structuredContent/failure/data")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let recovery = reply
+            .pointer("/result/structuredContent/failure/recovery")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
-            || !message.contains(fragment)
+        if !message.contains(fragment)
             || message.contains("non-negative integer")
             || data.pointer("/argument") != Some(&json!("limit"))
             || data.pointer("/minimum") != Some(&json!(1))
@@ -3966,16 +4052,31 @@ fn limit_errors_state_the_real_constraint_and_recovery_over_stdio() -> Result<()
             ));
         }
     }
-    // The largest accepted value is a valid request, not an error.
+    // The largest accepted value is a valid request, not an error; one past
+    // it is refused (the cap is a real bound, not usize::MAX).
     let reply = call_tool_with_raw_arguments(
         &mut session,
         "max-limit",
         "ripr_list_gaps",
         &format!("{{\"limit\":{platform_max}}}"),
     )?;
-    if reply.get("error").is_some() {
-        return Err(format!("usize::MAX is an accepted limit: {reply}"));
+    // Accepted means the argument validated: the call may still fail for an
+    // unrelated reason (no snapshot here), but never as invalid_argument.
+    if reply.get("error").is_some()
+        || reply.pointer("/result/structuredContent/failure/code")
+            == Some(&json!("invalid_argument"))
+    {
+        return Err(format!(
+            "the working-set bound is an accepted limit: {reply}"
+        ));
     }
+    let reply = call_tool_with_raw_arguments(
+        &mut session,
+        "over-limit",
+        "ripr_list_gaps",
+        &format!("{{\"limit\":{}}}", platform_max + 1),
+    )?;
+    require_invalid_argument(&reply, "limit one past the working-set bound")?;
     // The session survives the whole sweep.
     let reply = session.call_tool("after", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
     if reply.get("error").is_some() {
@@ -4243,6 +4344,48 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         ));
     }
 
+    // Limitation pair (#1898): the tool and the `/limitation` resource return
+    // one document, the `/limitation` suffix does not shadow the plain gap
+    // route (the gap resource above still returned the gap document), and the
+    // typed limitation block is present rather than `null`.
+    let limitation_tool = session.call_tool(
+        "limitation-tool",
+        "ripr_get_top_limitation",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let limitation_tool = structured_tool_success(&limitation_tool, "ripr_get_top_limitation")?;
+    let limitation_resource = read_resource_document(
+        &mut session,
+        "limitation-resource",
+        &format!("ripr://gap/{canonical_id}/limitation"),
+        REPLY_TIMEOUT,
+    )?;
+    if limitation_tool != limitation_resource {
+        return Err(format!(
+            "limitation tool and resource diverged:\ntool={limitation_tool}\nresource={limitation_resource}"
+        ));
+    }
+    if limitation_tool
+        .pointer("/schema_version")
+        .and_then(Value::as_str)
+        != Some("ripr-mcp-gap-limitation-v1")
+        || limitation_tool
+            .pointer("/canonical_id")
+            .and_then(Value::as_str)
+            != Some(canonical_id.as_str())
+        || limitation_tool
+            .pointer("/limitation/kind")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+        || limitation_tool.pointer("/limitation/stage").is_none()
+        || limitation_tool == gap_tool
+    {
+        return Err(format!(
+            "limitation document lost its typed contract: {limitation_tool}"
+        ));
+    }
+
     // Card pair.
     let card_tool = session.call_tool(
         "card-tool",
@@ -4356,7 +4499,7 @@ fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
         json!({ "canonical_id": canonical_id }),
         REPLY_TIMEOUT,
     )?;
-    let prepared = structured_tool_success(&prepared, "ripr_prepare_repair")?;
+    let prepared = structured_prepare_document(&prepared, "ripr_prepare_repair")?;
     let attempt_id = prepared
         .pointer("/attempt/attempt_id")
         .and_then(Value::as_str)
@@ -4668,7 +4811,7 @@ fn refresh_base_argument_recovers_a_repository_without_a_main_default_branch() -
         return Err("an option-shaped base reached Git as an option".to_string());
     }
 
-    // Argument shapes stay typed invalid params.
+    // Argument shapes are typed `invalid_argument` tool failures.
     for bad in [
         json!({ "base": "" }),
         json!({ "base": 7 }),
@@ -4676,9 +4819,7 @@ fn refresh_base_argument_recovers_a_repository_without_a_main_default_branch() -
         json!({ "other": 1 }),
     ] {
         let reply = session.call_tool("bad-args", "ripr_refresh", bad.clone(), timeout)?;
-        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
-            return Err(format!("{bad} must be invalid params: {reply}"));
-        }
+        require_invalid_argument(&reply, &format!("{bad}"))?;
     }
     Ok(())
 }
@@ -4911,7 +5052,7 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
             json!({ "canonical_id": id }),
             REPLY_TIMEOUT,
         )?;
-        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
         let list_ready = item["repair_packet_ready"] == true;
         // One readiness fact across the three MCP surfaces.
         if gap["item"]["readiness"]["repair_packet_ready"] != item["repair_packet_ready"]
@@ -4947,6 +5088,16 @@ fn mcp_readiness_never_exceeds_the_cli_repair_gate() -> Result<(), String> {
                 || !refusal.contains("already check it")
             {
                 return Err(format!("CLI refusal changed shape: {refusal}"));
+            }
+            // The gripped arm is a weak finding over a gripped seam: the gate
+            // refuses it, so the typed next step is a by-hand test with the
+            // worktree re-check, as data rather than a prose retry hint.
+            if prepare["next"]["kind"] != "write_test_by_hand"
+                || prepare["next"]["reason"] != "seam_already_gripped"
+                || prepare["next"]["after_editing_tests"]["mcp"]["arguments"]["source"]
+                    != "worktree"
+            {
+                return Err(format!("gripped arm refusal lost its next step: {prepare}"));
             }
             if item["repair_ineligibility"] != "seam_already_gripped"
                 || prepare["ineligibility"]["reason"] != "seam_already_gripped"
@@ -5009,7 +5160,7 @@ fn mcp_ready_item_is_the_item_the_cli_repair_gate_admits() -> Result<(), String>
             json!({ "canonical_id": id }),
             REPLY_TIMEOUT,
         )?;
-        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
         let finding_id = prepare["attempt"]["finding_id"]
             .as_str()
             .ok_or_else(|| format!("ready prepare lost its finding id: {prepare}"))?;
@@ -5038,6 +5189,63 @@ fn install_inline_test_fixture(second_module: bool) -> Result<PathBuf, String> {
     std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
     commit_fixture(&root, "inline tests")?;
     Ok(root)
+}
+
+/// Agent-experience MCP audit findings 2, 4a: a failed refresh is an error on
+/// the wire (not `isError:false` with the failure buried in `attempt`), keeps
+/// the last-known-good pointer, and every refresh states top-level whether it
+/// is fresh for the working tree and how to re-check after editing tests.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn failed_refresh_is_an_error_and_refresh_states_freshness_and_verify_route() -> Result<(), String>
+{
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_exposed_match_arm_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+
+    let good = session.call_tool("good", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    if good.pointer("/result/isError") != Some(&json!(false)) {
+        return Err(format!(
+            "a completed refresh must stay isError:false: {good}"
+        ));
+    }
+    let good = structured_tool_success(&good, "ripr_refresh")?;
+    if good["fresh_for_working_tree"] != json!(true)
+        || good["verify"]["mcp"]["tool"] != "ripr_refresh"
+        || good["verify"]["mcp"]["arguments"]["source"] != "worktree"
+    {
+        return Err(format!(
+            "a clean committed refresh must state freshness and the verify route: {good}"
+        ));
+    }
+    let snapshot_id = good["snapshot"]["snapshot_id"].clone();
+
+    let failed = session.call_tool(
+        "failed",
+        "ripr_refresh",
+        json!({ "base": "no-such-ref-for-the-audit" }),
+        REFRESH_TIMEOUT,
+    )?;
+    if failed.pointer("/result/isError") != Some(&json!(true)) {
+        return Err(format!("a failed refresh must be isError:true: {failed}"));
+    }
+    let failed = failed
+        .pointer("/result/structuredContent")
+        .cloned()
+        .ok_or("failed refresh omitted structuredContent")?;
+    if failed["attempt"]["state"] != "failed"
+        || failed["attempt"]["failure"]["code"].as_str().is_none()
+        || failed["last_known_good"]["snapshot_id"] != snapshot_id
+        || failed["fresh_for_working_tree"] != json!(false)
+    {
+        return Err(format!(
+            "a failed refresh keeps the typed failure and last-known-good and is not fresh: {failed}"
+        ));
+    }
+    Ok(())
 }
 
 /// #5516: `ripr_prepare_repair` accepts the inline-only seam the CLI before
@@ -5071,7 +5279,7 @@ fn mcp_prepare_repair_agrees_with_the_cli_on_inline_test_seams() -> Result<(), S
                 json!({ "canonical_id": id }),
                 REPLY_TIMEOUT,
             )?;
-            let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+            let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
             let gap = session.call_tool(
                 "gap",
                 "ripr_get_gap",
@@ -5234,7 +5442,7 @@ fn truncated_seam_inventory_refuses_repair_readiness_over_stdio() -> Result<(), 
             json!({ "canonical_id": id }),
             REPLY_TIMEOUT,
         )?;
-        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
         if prepare["repair_packet_ready"] != false
             || !prepare["attempt"].is_null()
             || prepare["ineligibility"]["reason"] != TRUNCATED
@@ -5640,7 +5848,7 @@ fn weak_boundary_naming_its_discriminator_is_repair_ready_only_where_the_cli_adm
             json!({ "canonical_id": id }),
             REPLY_TIMEOUT,
         )?;
-        let prepare = structured_tool_success(&prepare, "ripr_prepare_repair")?;
+        let prepare = structured_prepare_document(&prepare, "ripr_prepare_repair")?;
         if gap["item"]["readiness"]["repair_packet_ready"] != item["repair_packet_ready"]
             || prepare["repair_packet_ready"] != item["repair_packet_ready"]
         {
@@ -5958,9 +6166,7 @@ fn refresh_source_worktree_analyzes_saved_tracked_edits_without_cross_kind_reuse
         json!({ "source": ["worktree"] }),
     ] {
         let reply = session.call_tool("bad-source", "ripr_refresh", bad.clone(), TIMEOUT)?;
-        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
-            return Err(format!("{bad} must be invalid params: {reply}"));
-        }
+        require_invalid_argument(&reply, &format!("{bad}"))?;
     }
     drop(session);
 
@@ -6134,7 +6340,7 @@ fn refresh_source_worktree_serves_repair_card_and_readiness_with_established_cus
         json!({ "canonical_id": ready_id }),
         TIMEOUT,
     )?;
-    let prepared = structured_tool_success(&prepared, "ripr_prepare_repair")?;
+    let prepared = structured_prepare_document(&prepared, "ripr_prepare_repair")?;
     if prepared.get("repair_packet_ready") != Some(&json!(true))
         || prepared.pointer("/attempt/state") != Some(&json!("awaiting_edit"))
     {
