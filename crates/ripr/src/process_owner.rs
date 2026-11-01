@@ -926,12 +926,14 @@ mod tests {
                 "setup failure: descendant {descendant_pid} was not alive before the owner was terminated"
             ));
         }
-        helper
-            .kill()
-            .map_err(|err| format!("hard-kill helper owner: {err}"))?;
-        helper
-            .wait()
-            .map_err(|err| format!("reap helper owner: {err}"))?;
+        if let Err(err) = helper.kill() {
+            abandon(&mut helper, &[descendant_pid, primary_pid]);
+            return Err(format!("hard-kill helper owner: {err}"));
+        }
+        if let Err(err) = helper.wait() {
+            stop_processes_on_windows(&[descendant_pid, primary_pid]);
+            return Err(format!("reap helper owner: {err}"));
+        }
         Ok((descendant_pid, primary_pid))
     }
 
