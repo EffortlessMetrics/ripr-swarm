@@ -5287,7 +5287,8 @@ pub(super) fn walk_body_lexical<'a>(
                     skip_comment_close_slash = true;
                     // A same-line comment is transparent: it keeps the
                     // statement position it opened at (`; /* n */ const f`).
-                    at_declaration_start = block_comment_has_newline || comment_opened_at_statement_start;
+                    at_declaration_start =
+                        block_comment_has_newline || comment_opened_at_statement_start;
                 }
             }
             BodyScanState::SingleQuoted => {
