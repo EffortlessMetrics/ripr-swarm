@@ -3102,7 +3102,7 @@ mod tests {
     fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() {
         let shared = std::path::Path::new("/w/target/debug/ripr");
         // `std::path::absolute` anchors a rootless Windows path to the current
-        // drive (`/w` becomes `D:\w`), so the expectation goes through it too.
+        // drive (`/w` gains a drive prefix), so the expectation goes through it too.
         assert_eq!(
             super::isolated_default_target_dir(shared),
             std::path::absolute("/w/target/fixture-variants/default")
