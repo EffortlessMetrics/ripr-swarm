@@ -86,8 +86,10 @@ State vocabulary (closed; the schema enum is these nine plus `null`):
 
 Each report carries ordered `remediation` steps, complete for the state and
 empty when none are needed, and `non_claims`: availability does not mean the
-adapter ran, availability does not promote the support tier, and a disabled or
-unavailable language is not analyzed, so silence is not a clean result.
+adapter ran, and availability does not promote the support tier. Those two are
+always present. A third, that a disabled or unavailable language is not
+analyzed so silence is not a clean result, is added only when the language is
+not effectively enabled.
 
 `ripr doctor --json` `detected_languages[]` entries carry `availability_state`
 and `remediation` from this resolver:
@@ -122,8 +124,11 @@ and `remediation` from this resolver:
   `auto_detected_enabled` is reachable only from doctor today. This is a known
   follow-up, not an assumption that the surfaces agree.
 - Remediation order follows the resolver: the language's enable prerequisite
-  (for Perl, the fact-packet step) is appended after the state's own steps for
-  every language and state.
+  (today only Perl's fact-packet step) is appended after the state's own steps,
+  and only when the adapter is compiled and the state is
+  `detected_compiled_disabled`, `detected_compiled_enabled`,
+  `auto_detected_enabled` or `configured_enabled_not_detected`. The
+  not-compiled states and `not_enabled` get no prerequisite step.
 - The human doctor screen does not print the state.
 
 ## Non-Goals
