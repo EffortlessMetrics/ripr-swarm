@@ -1240,30 +1240,22 @@ fn deleted_guard_block_reads_a_conjunction_past_an_unreadable_conjunct() -> Resu
 
 // A guard dropped while part of its body is kept (dedented) leaves that part
 // running for every input, so the removal is not a deletion of an unentered
-// block and the existing verdict stands.
+// block: the header gets no old-side view and the existing verdict stands.
 #[test]
-fn deleted_guard_header_with_a_dedented_body_line_fails_open() -> Result<(), String> {
-    let new_source = "def apply_discount(total, vip=False):\n    result = total\n    result += 1\n    return result\n";
-    let removed = vec![
+fn deleted_guard_header_with_a_dedented_body_line_fails_open() {
+    let new = "def f(total):\n    result = total\n    result += 1\n    return result\n";
+    let old = "def f(total):\n    result = total\n    if total > 1000:\n        result = total - 50\n        result += 1\n    return result\n";
+    let removed = [
         line(3, 3, "    if total > 1000:"),
         line(4, 3, "        result = total - 50"),
         line(5, 3, "        result += 1"),
     ];
-    // The removed header is the record this guard protects: it must not be
-    // demoted as an unentered block while its dedented line still runs.
-    let findings = analyze_with_test("guard-dedented", new_source, DISCOUNT_TESTS, &[3], removed)?;
-    for finding in findings.iter().filter(|finding| {
-        finding.source_currentness != SourceCurrentness::CandidateCurrent
-            && finding.probe.expression.trim().starts_with("if total")
-    }) {
-        assert_ne!(
-            finding.class,
-            ExposureClass::WeaklyExposed,
-            "{}",
-            finding.probe.expression
-        );
-    }
-    Ok(())
+    // Control: the whole block deleted, nothing paired, reads at the body line.
+    assert_eq!(old_view_line(new, old, "f", &removed, 3, &[]), Some(4));
+    // The last body line pairs with the dedented added line.
+    assert_eq!(old_view_line(new, old, "f", &removed, 3, &[5]), None);
+    // The last body line is not a removed line at all (kept in place).
+    assert_eq!(old_view_line(new, old, "f", &removed[..2], 3, &[]), None);
 }
 
 // F2 (#11889): constants resolve on the new side, so a guard that names a
