@@ -46,7 +46,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// (`nested_called_by_parent`, #12141). `13` entries lack the fact.
 /// `15`: each file records its fixture-substitution scope (#11542). `14`
 /// entries lack it.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "15";
+/// `16`: each module owner's foreign writes record the package `__init__.py`
+/// submodule-name shadows (#11135). `15` entries lack them.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "16";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the
