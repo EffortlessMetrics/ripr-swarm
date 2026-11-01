@@ -261,7 +261,7 @@ Updated:
 ## Pending — rust_proptest_quickcheck_tests (22)
 
 Reason:
-RIPR-SPEC-0001: opaque property-macro reach reads static_unknown, not no_static_path (#11544)
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
 
 Command:
 `cargo xtask goldens bless rust_proptest_quickcheck_tests --reason "..."`

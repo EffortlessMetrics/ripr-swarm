@@ -355,6 +355,10 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     fallible_dependencies:
         SyncMemo<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: SyncMemo<Option<BTreeSet<String>>>,
+    /// RIPR-SPEC-0352: per package root, the names the package's own files
+    /// make ambiguous without a scope (the unplaced receiver limit reads
+    /// only these, never another package's sites).
+    own_package_macro_ambiguities: SyncMemo<OwnScopeAmbiguities>,
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.
     scoped_macro_bindings: SyncMemo<Option<ScopedMacroBindings>>,
@@ -451,6 +455,10 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     field_integer_memo: SyncMemo<BTreeMap<FieldIntegerKey, Option<&'static str>>>,
     withheld: WithheldMacroBindings,
 }
+
+/// RIPR-SPEC-0352: per (package, declaring parents of the test file), the
+/// names the test's own scope makes ambiguous.
+type OwnScopeAmbiguities = BTreeMap<(String, Vec<PathBuf>), Arc<BTreeSet<String>>>;
 
 /// #8051: one bare `debug_assert_eq!` call: its line and source text.
 type DebugAssertEqCall = (usize, String);
@@ -1317,6 +1325,33 @@ impl OwnerPinSyntax {
         name: &str,
         index: &RustIndex,
     ) -> bool {
+        self.macro_binding_is_unambiguous(test, line, name, index, false)
+    }
+
+    /// RIPR-SPEC-0352: the same decision with exactly one input lifted, the
+    /// target-root placement a `std`/`core`-rooted path needs to verify the
+    /// manifests of the crates that compile the file. Every other refusal
+    /// (bare-name ambiguity, scoped and crate-local bindings, the file's own
+    /// manifest, provenance, source-level rebinding of the root or macro, module
+    /// declarations) stays in force. Used only to name a limit; it never credits.
+    pub(in crate::analysis) fn macro_binding_is_unambiguous_if_unplaced(
+        &self,
+        test: &TestSummary,
+        line: usize,
+        name: &str,
+        index: &RustIndex,
+    ) -> bool {
+        self.macro_binding_is_unambiguous(test, line, name, index, true)
+    }
+
+    fn macro_binding_is_unambiguous(
+        &self,
+        test: &TestSummary,
+        line: usize,
+        name: &str,
+        index: &RustIndex,
+        trust_unplaced_standard_root: bool,
+    ) -> bool {
         let name = if let Some(leaf) = drop_in_assertion_leaf(name) {
             let Some((root, _)) = name.strip_prefix("::").unwrap_or(name).split_once("::") else {
                 return false;
@@ -1325,8 +1360,16 @@ impl OwnerPinSyntax {
             let Some(context) = context.as_ref() else {
                 return false;
             };
-            let Some(placement) = self.target_roots(index).roots(&test.file, index) else {
-                return false;
+            let placement = if trust_unplaced_standard_root
+                && matches!(root, "std" | "core")
+                && self.target_roots(index).disabled
+            {
+                Vec::new()
+            } else {
+                let Some(placement) = self.target_roots(index).roots(&test.file, index) else {
+                    return false;
+                };
+                placement.into_iter().collect()
             };
             let verified = std::iter::once(&test.file)
                 .chain(placement.iter())
@@ -1357,12 +1400,24 @@ impl OwnerPinSyntax {
                         index.files().get(path).is_some_and(|facts| {
                             crate::analysis::syntax::parse_clean_source_file(&facts.source)
                                 .is_some_and(|file| {
-                                    crate::analysis::syntax::ra::assertion_root_is_available(name, file.tree().syntax())
-                                        && if matches!(root, "std" | "core") {
-                                            crate::analysis::syntax::ra::std_macro_root_is_unrebound(name, file.tree().syntax())
-                                        } else {
-                                            crate::analysis::syntax::ra::assertion_root_binding_is_unrebound(name, file.tree().syntax())
-                                        }
+                                    // Cargo identity does not prove the source
+                                    // root: `use fake as std;` or a module named
+                                    // `std` re-exporting a non-asserting macro
+                                    // must not receive the qualified credit.
+                                    crate::analysis::syntax::ra::assertion_root_is_available(
+                                        name,
+                                        file.tree().syntax(),
+                                    ) && if matches!(root, "std" | "core") {
+                                        crate::analysis::syntax::ra::std_macro_root_is_unrebound(
+                                            name,
+                                            file.tree().syntax(),
+                                        )
+                                    } else {
+                                        crate::analysis::syntax::ra::assertion_root_binding_is_unrebound(
+                                            name,
+                                            file.tree().syntax(),
+                                        )
+                                    }
                                 })
                         })
                     })
@@ -1386,8 +1441,27 @@ impl OwnerPinSyntax {
             }
             name
         };
+        let unplaced = trust_unplaced_standard_root && self.target_roots(index).disabled;
+        let own_package = unplaced
+            .then(|| self.own_package_ambiguities(test, index))
+            .flatten();
         self.targeted_source_provenance_is_admitted(test, index)
-            && !self.trusted_macro_ambiguities(index).contains(name)
+            && !match own_package {
+                // RIPR-SPEC-0352: with placement unavailable, a site in
+                // another package reaches this test only through a file
+                // mounted into its target, which unavailable placement can
+                // neither establish nor rule out; that class is the doubt
+                // this limit names. A site in the test's own package, and
+                // any withheld file, still refuses.
+                Some(names) => {
+                    // Populate the scoped and crate-local bindings below.
+                    self.trusted_macro_ambiguities(index);
+                    names.contains(name)
+                        || self.withheld.any_name
+                        || self.withheld.trusted.contains(name)
+                }
+                None => self.trusted_macro_ambiguities(index).contains(name),
+            }
             && !self
                 .scoped_names_for(test, line)
                 .iter()
@@ -1400,6 +1474,124 @@ impl OwnerPinSyntax {
                 .module_names_for(test, index)
                 .iter()
                 .any(|candidate| candidate == name)
+    }
+
+    /// The names the test's own scope makes ambiguous without a scope of
+    /// their own (RIPR-SPEC-0352). The own scope is the test's package, every
+    /// file a resolved `mod` declaration mounts from the scope (a literal
+    /// `#[path]` into another package included) together with the declaring
+    /// parents of the test file, and every package the scope reaches through
+    /// an explicit import edge (`use dep::*`, `use dep::x`, `extern crate dep`).
+    /// `None` when the test's package cannot be named from its path (the caller
+    /// keeps the workspace-wide answer). A file whose package cannot be named
+    /// counts as the test's own.
+    fn own_package_ambiguities(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> Option<Arc<BTreeSet<String>>> {
+        use crate::analysis::workspace::package_root;
+        let package = package_root(&test.file)?;
+        let mut mounted: BTreeSet<PathBuf> = BTreeSet::new();
+        if let Some(context) = self.execution_context(&test.file, index).as_ref() {
+            mounted.extend(context.edges.iter().map(|edge| edge.parent.clone()));
+        }
+        // The scope depends on the test file's declaring parents as well as
+        // its package, so both key the memo.
+        let key = (package.clone(), mounted.iter().cloned().collect::<Vec<_>>());
+        if let Some(names) = self.own_package_macro_ambiguities.borrow().get(&key) {
+            return Some(names.clone());
+        }
+        let mut packages: BTreeSet<String> = BTreeSet::from([package.clone()]);
+        // Directory name of every package that holds an indexed file, the
+        // crate name a path dependency is imported under.
+        let directories: BTreeMap<String, String> = index
+            .files()
+            .iter()
+            .filter_map(|(path, _)| package_root(path))
+            .filter(|root| !root.is_empty())
+            .map(|root| {
+                let name = root
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or_default()
+                    .replace('-', "_");
+                (root, name)
+            })
+            .collect();
+        let owned = index.macro_scope_crates();
+        loop {
+            let in_scope =
+                |path: &Path, packages: &BTreeSet<String>, mounted: &BTreeSet<PathBuf>| {
+                    mounted.contains(path)
+                        || package_root(path).is_none_or(|root| packages.contains(&root))
+                };
+            let mut changed = false;
+            if let Some(parents) = index.execution_module_parents.as_ref() {
+                for (child, edges) in parents {
+                    if !in_scope(child, &packages, &mounted)
+                        && edges
+                            .iter()
+                            .any(|edge| in_scope(&edge.parent, &packages, &mounted))
+                    {
+                        mounted.insert(child.clone());
+                        changed = true;
+                    }
+                }
+            }
+            let mut roots = BTreeSet::new();
+            for (path, facts) in index.files().iter() {
+                if in_scope(path, &packages, &mounted) {
+                    imported_crate_roots(facts.data().source.as_ref(), &mut roots);
+                }
+            }
+            // A workspace-owned crate imported under a name no package
+            // directory carries (a renamed dependency) cannot be pinned to
+            // one package, so every package is reached.
+            let reach_all =
+                roots.iter().any(|root| {
+                    let matching = directories.values().filter(|name| *name == root).count();
+                    (owned.contains(root) || index.package_names.contains(root)) && matching == 0
+                        || matching > 1
+                }) || own_scope_manifests_defeat_names(index, &packages, &directories, &roots);
+            for (directory, name) in &directories {
+                if (reach_all || roots.contains(name)) && packages.insert(directory.clone()) {
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let files: Vec<MacroScanFile<'_>> = index
+            .files()
+            .iter()
+            .filter(|(path, _)| {
+                mounted.contains(path.as_path())
+                    || package_root(path).is_none_or(|root| packages.contains(&root))
+            })
+            .map(|(path, facts)| {
+                let data = facts.data();
+                (path, data.source.as_ref(), data.macro_candidates.as_deref())
+            })
+            .collect();
+        let resolved_modules = self.resolved_module_declarations(index);
+        let module_resolved = |file: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+        };
+        let sites = scan_macro_sites(&files, index, self.target_roots(index), &module_resolved);
+        let names: BTreeSet<String> = sites
+            .ambiguities
+            .into_iter()
+            .filter(|(_, _, site)| site.scope.is_none())
+            .map(|(_, name, _)| name)
+            .collect();
+        let names = Arc::new(names);
+        self.own_package_macro_ambiguities
+            .borrow_mut()
+            .insert(key, names.clone());
+        Some(names)
     }
 
     fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
@@ -2593,6 +2785,12 @@ impl OwnerPinSyntax {
             .get_or_init(|| super::out_parameter::workspace_macro_names(index))
     }
 
+    /// Whether no file can be placed in a Cargo target, because an include or
+    /// `#[path]` somewhere in the workspace cannot be resolved.
+    pub(in crate::analysis) fn target_placement_unavailable(&self, index: &RustIndex) -> bool {
+        self.target_roots(index).disabled
+    }
+
     /// Workspace routing inputs, computed once per run.
     fn target_roots(&self, index: &RustIndex) -> &TargetRoots {
         self.target_roots.get_or_init(|| TargetRoots::new(index))
@@ -2747,6 +2945,7 @@ impl AssertionRefusal {
                 | AssertionContextRefusal::AsyncTest
                 | AssertionContextRefusal::DuplicateSpelling
                 | AssertionContextRefusal::DuplicateSpellingOneRuns
+                | AssertionContextRefusal::ModelCheckClosure
                 | AssertionContextRefusal::StaleSource => true,
                 AssertionContextRefusal::TestAttribute(attribute) => {
                     !attribute_settles_test_outcome(attribute)
@@ -2838,6 +3037,9 @@ impl AssertionRefusal {
                 }
                 AssertionContextRefusal::ConditionalPath(construct) => {
                     format!("the assertion is inside {construct}")
+                }
+                AssertionContextRefusal::ModelCheckClosure => {
+                    "the assertion is inside a closure a model-checking runner (`loom::model`, `shuttle::check_*`) calls, and ripr does not read how often the runner calls it".into()
                 }
                 AssertionContextRefusal::GuardedReturn(condition) => format!(
                     "the assertion is inside a block that an earlier `if {condition} {{ return; }}` can skip"
@@ -3470,6 +3672,92 @@ fn absorb_macro_sites(
             }
         } else {
             global.insert(name.clone());
+        }
+    }
+}
+
+/// Whether the manifests in the own scope make a directory name an unreliable
+/// stand-in for the crate an import names (RIPR-SPEC-0352). Fails closed: a
+/// renamed dependency, an unreadable manifest, or a matching directory that
+/// holds a crate of another name sends the import to every package.
+fn own_scope_manifests_defeat_names(
+    index: &RustIndex,
+    packages: &BTreeSet<String>,
+    directories: &BTreeMap<String, String>,
+    roots: &BTreeSet<String>,
+) -> bool {
+    let Some(workspace) = index.drop_in_manifests.root() else {
+        return true;
+    };
+    let read = |directory: &str| {
+        std::fs::read_to_string(workspace.join(directory).join("Cargo.toml")).ok()
+    };
+    let renames = |text: &str| {
+        text.match_indices("package").any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + 7..].trim_start();
+            !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') && after.starts_with('=')
+        })
+    };
+    let mut scope: Vec<&str> = packages.iter().map(String::as_str).collect();
+    scope.push("");
+    for directory in scope {
+        match read(directory) {
+            Some(text) if !renames(&text) => {}
+            // A workspace root with no package of its own may have no manifest
+            // in a narrowed checkout; a package directory without one cannot
+            // be trusted.
+            None if directory.is_empty() => {}
+            _ => return true,
+        }
+    }
+    for (directory, name) in directories {
+        if !roots.contains(name) {
+            continue;
+        }
+        let Some(table) = read(directory).and_then(|text| text.parse::<toml::Table>().ok()) else {
+            return true;
+        };
+        let declared = |section: &str| {
+            table
+                .get(section)
+                .and_then(|section| section.get("name"))
+                .and_then(toml::Value::as_str)
+                .map(|name| name.replace('-', "_"))
+        };
+        if declared("package").as_ref() != Some(name) && declared("lib").as_ref() != Some(name) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The first path segment of every `use` item and `extern crate` in `source`,
+/// read lexically: a name inside a comment or string only adds a segment,
+/// which widens the own scope and never narrows it.
+fn imported_crate_roots(source: &str, roots: &mut BTreeSet<String>) {
+    let ident = |text: &str| -> Option<String> {
+        let text = text.trim_start().trim_start_matches("::").trim_start();
+        let end = text
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(text.len());
+        (end > 0).then(|| text[..end].to_string())
+    };
+    // Comments are masked and `use`/`extern crate` are found as whole words, so
+    // a tab, newline or comment between the keyword and the path is still read.
+    let masked = mask_comments_and_strings(source);
+    for offset in whole_word_offsets(&masked, "use") {
+        let statement = masked[offset + 3..].split(';').next().unwrap_or_default();
+        for part in statement.split([',', '{']) {
+            roots.extend(ident(part));
+        }
+    }
+    for offset in whole_word_offsets(&masked, "extern") {
+        let rest = masked[offset + 6..].trim_start();
+        if let Some(rest) = rest.strip_prefix("crate")
+            && rest.starts_with(|c: char| c.is_whitespace())
+        {
+            roots.extend(ident(rest));
         }
     }
 }
@@ -6332,6 +6620,21 @@ enum CallShape<'a> {
 /// gets no `.await` credit, and its bare call (a future) does not compile.
 pub(super) fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
     function_declaration_is_async(owner, index).unwrap_or(false)
+}
+
+/// Whether `owner` is a directly callable, always-available inherent
+/// associated fn of `ty` with no generic parameter spelled `ty`; unknown
+/// declarations are not authoritative.
+pub(in crate::analysis) fn inherent_factory_declaration_is_authoritative(
+    owner: &FunctionSummary,
+    ty: &str,
+    index: &RustIndex,
+) -> bool {
+    index
+        .source_syntax
+        .get(index, &owner.file)
+        .and_then(|snapshot| snapshot.inherent_factory_declaration_is_authoritative(owner, ty))
+        == Some(true)
 }
 
 /// Read the complete source declaration: indexed body slices start at `fn`
@@ -14287,6 +14590,119 @@ pub(super) fn unit_struct_value(
     declared_in_test_file == 1
 }
 
+/// Whether bare `name` in `test_file` is a variant of the one workspace enum
+/// `enum_name`, brought in by exactly one non-aliased `use` of that enum's
+/// glob or of the variant itself (#9676). Fail-closed: a prelude spelling,
+/// another import of `name`, a same-named local item or a `macro_rules!` in
+/// the file, or an enum that is not the single declaration all refuse.
+pub(super) fn imported_enum_variant_value(
+    name: &str,
+    enum_name: &str,
+    test_file: &Path,
+    index: &RustIndex,
+) -> bool {
+    if name.is_empty() || enum_name.is_empty() || PRELUDE_VALUES.contains(&name) {
+        return false;
+    }
+    let declaring: Vec<_> = index
+        .files()
+        .values()
+        .filter(|facts| {
+            facts.source.contains(enum_name)
+                && declares_type(&mask_comments_and_strings(&facts.source), enum_name)
+        })
+        .collect();
+    let [declaring] = declaring.as_slice() else {
+        return false;
+    };
+    // Equality facts are not needed (and can be unavailable for an enum with
+    // exotic derives): only the single non-test `enum` declaration's variants.
+    let Some(parse) = parse_clean_source_file(&declaring.source) else {
+        return false;
+    };
+    let mut enums = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Enum::cast)
+        .filter(|item| item.name().is_some_and(|ident| ident.text() == enum_name));
+    let (Some(item), None) = (enums.next(), enums.next()) else {
+        return false;
+    };
+    if !item.variant_list().is_some_and(|list| {
+        list.variants().any(|variant| {
+            variant.name().is_some_and(|ident| ident.text() == name)
+                && variant.field_list().is_none()
+        })
+    }) {
+        return false;
+    }
+    let Some(file) = index.files().get(test_file) else {
+        return false;
+    };
+    let masked = mask_comments_and_strings(&file.source);
+    if masked.contains("macro_rules") {
+        return false;
+    }
+    let enum_glob = format!("{enum_name}::*");
+    let enum_variant = format!("{enum_name}::{name}");
+    let rooted = |path: &str, tail: &str| {
+        path.strip_suffix(tail).is_some_and(|prefix| {
+            prefix.is_empty()
+                || prefix.strip_suffix("::").is_some_and(|prefix| {
+                    prefix
+                        .split("::")
+                        .all(|segment| matches!(segment, "self" | "super" | "crate"))
+                })
+        })
+    };
+    let mut admitted = 0usize;
+    for import in flattened_use_paths(&file.source) {
+        let last = import.path.rsplit("::").next().unwrap_or("");
+        let binds_name = last == name || import.alias.as_deref() == Some(name);
+        if import.alias.is_none()
+            && (rooted(&import.path, &enum_glob) || rooted(&import.path, &enum_variant))
+        {
+            admitted += 1;
+        } else if binds_name || import.path.ends_with("::*") || import.path == "*" {
+            // Another binding of the name, or any other glob that could
+            // supply it: the use items are read file-wide rather than by the
+            // test's lexical scope, so a second glob keeps the spelling
+            // ambiguous (e.g. `std::cmp::Ordering::*` beside a sibling
+            // module's `E::*`).
+            return false;
+        }
+    }
+    if admitted != 1 {
+        return false;
+    }
+    // A same-named item (other than the enum's own variant list) would shadow
+    // the glob; refuse any item keyword directly before the spelling.
+    !whole_word_offsets(&masked, name).into_iter().any(|offset| {
+        // A parameter or closure parameter of the same name shadows the
+        // variant: `name:` (a single colon) or a leading `|` binds it.
+        let after = masked[offset + name.len()..].trim_start();
+        if (after.starts_with(':') && !after.starts_with("::"))
+            || masked[..offset].trim_end().ends_with('|')
+        {
+            return true;
+        }
+        let before = masked[..offset].trim_end();
+        [
+            "const", "static", "fn", "struct", "union", "type", "mod", "trait", "enum", "let",
+            "mut",
+        ]
+        .iter()
+        .any(|keyword| {
+            before.ends_with(keyword)
+                && before[..before.len() - keyword.len()]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        })
+    })
+}
+
 /// The prelude's value-namespace names a unit struct could share.
 const PRELUDE_VALUES: &[&str] = &["None", "Some", "Ok", "Err"];
 
@@ -15167,7 +15583,7 @@ fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-fn whole_word_offsets(text: &str, word: &str) -> Vec<usize> {
+pub(super) fn whole_word_offsets(text: &str, word: &str) -> Vec<usize> {
     let bytes = text.as_bytes();
     let mut offsets = Vec::new();
     let mut search = 0usize;
