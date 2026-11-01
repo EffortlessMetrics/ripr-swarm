@@ -420,6 +420,47 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
     evidence_for_seam_with_context(seam, &context)
 }
 
+/// #12060: the related tests as the stage evidence should read them. A match
+/// arm names an enum variant other functions also return, so a test related
+/// to the owner only by file or module cannot confirm the arm through an
+/// assertion that calls a different indexed function with no path to the
+/// owner (`assert_eq!(reduce(..), Reduction::Over(..))` for an arm of
+/// `consume`). Repo relation also ties such a test by assertion affinity,
+/// because the assertion names the arm's variant, so that tie is refused
+/// the same way. `ripr check` refuses the same assertion per assertion
+/// (RIPR-SPEC-0094, #11552); the repo seam must agree.
+fn credited_related_tests<'a>(
+    seam: &RepoSeam,
+    context: &CompactGripContext<'_>,
+    owner_fn: Option<&FunctionSummary>,
+    related: &[(&'a TestSummary, RelationReason)],
+) -> Vec<std::borrow::Cow<'a, TestSummary>> {
+    let owner_reach = (seam.kind() == SeamKind::MatchArm)
+        .then(|| owner_fn.map(|owner| context.transitive_reach.owner_reach(&owner.name)))
+        .flatten();
+    related
+        .iter()
+        .map(|(test, reason)| {
+            let Some(owner_reach) = owner_reach.as_ref() else {
+                return std::borrow::Cow::Borrowed(*test);
+            };
+            if !(reason.is_proximity_only() || *reason == RelationReason::AssertionTargetAffinity)
+                || !test
+                    .assertions
+                    .iter()
+                    .any(|oracle| owner_reach.assertion_pins_other_function(&oracle.text))
+            {
+                return std::borrow::Cow::Borrowed(*test);
+            }
+            let mut credited = (*test).clone();
+            credited
+                .assertions
+                .retain(|oracle| !owner_reach.assertion_pins_other_function(&oracle.text));
+            std::borrow::Cow::Owned(credited)
+        })
+        .collect()
+}
+
 fn evidence_for_seam_with_context(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
@@ -443,9 +484,11 @@ fn evidence_for_seam_with_context(
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
-    let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
+    let credited_views = credited_related_tests(seam, context, owner_fn, &related_reasons);
+    let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
+    let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let observe = observe_evidence(&credited);
+    let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
 
     // One admission per test file for this seam: the verdict depends only on
     // the (test file, seam file) pair, and a file's tests share it (#5361).
@@ -2235,9 +2278,16 @@ pub(crate) fn compact_evidence_for_seam(
     let (activate, missing_discriminators) =
         compact_activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
-    let propagate = propagate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
-    let observe = observe_evidence(&related);
-    let discriminate = discriminate_evidence(seam, &related, owner_fn, context.index, pin_syntax);
+    let limited_reasons: Vec<(&TestSummary, RelationReason)> = ranked
+        .iter()
+        .take(COMPACT_RELATED_TEST_LIMIT)
+        .map(|(indexed, reason)| (indexed.test, *reason))
+        .collect();
+    let credited_views = credited_related_tests(seam, context, owner_fn, &limited_reasons);
+    let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
+    let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
+    let observe = observe_evidence(&credited);
+    let discriminate = discriminate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let statically_contradicted_related_tests = related
         .iter()
         .filter(|test| test_has_contradicted_assertion(test, owner_fn))

@@ -4166,7 +4166,7 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
             && packet.contains("Language status: preview")
             && packet.contains("Static limit: missing_import_graph")
             && packet.contains("Suggested action:")
-            && packet.contains("Missing discriminator: price(threshold) == expected")
+            && packet.contains("Missing check: price(threshold) == expected")
             && packet.contains("Focused proof intent:")
             && packet.contains("Artifacts:")
             && packet.contains("Verify command:")
@@ -4223,7 +4223,7 @@ fn gap_code_actions_surface_bounded_repair_actions_when_artifact_is_valid() -> R
         "Freshness: current validated GapRecord diagnostic.".to_string(),
         "Changed owner:\n  python:app/pricing.py::calculate_discount".to_string(),
         "Current test evidence:".to_string(),
-        "Missing discriminator:\n  price(threshold) == expected".to_string(),
+        "Missing check:\n  price(threshold) == expected".to_string(),
         format!("Verify:\n  ripr agent verify --root {bound} --json"),
         format!("Receipt:\n  ripr agent receipt --root {bound} --json"),
         "Static preview evidence only".to_string(),
@@ -4573,7 +4573,7 @@ fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(
         "Python repair card (preview/advisory)",
         "Freshness: current validated GapRecord diagnostic.",
         "Changed behavior:\n  if amount >= threshold:",
-        "Missing discriminator:\n  amount == threshold",
+        "Missing check:\n  amount == threshold",
         "Suggested assertion:\n  assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
         "Verify:\n  pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
     ] {
@@ -4598,7 +4598,7 @@ fn gap_code_actions_project_python_pytest_skeleton_and_target_file() -> Result<(
         .ok_or_else(|| format!("missing skeleton brief: {skeleton:?}"))?;
     for needle in [
         "# RIPR Python repair skeleton",
-        "# Missing discriminator: amount == threshold",
+        "# Missing check: amount == threshold",
         "# Verify: pytest tests/test_pricing.py::test_calculate_discount_threshold_boundary",
         "def test_calculate_discount_threshold_boundary():",
         "# assert calculate_discount(amount=threshold, threshold=threshold) == expected_discount",
@@ -5049,7 +5049,7 @@ fn editor_adoption_baseline_pins_gap_repair_action_contract() -> Result<(), Stri
         .ok_or_else(|| "missing first repair packet text".to_string())?;
     assert!(packet.contains("Language status: preview"));
     assert!(packet.contains("Static limit: missing_import_graph"));
-    assert!(packet.contains("Missing discriminator: price(threshold) == expected"));
+    assert!(packet.contains("Missing check: price(threshold) == expected"));
     assert!(packet.contains("Focused proof intent:"));
     assert!(packet.contains("Artifacts:"));
     let bound = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
@@ -16742,7 +16742,7 @@ fn finding_hover_with_named_missing_discriminator_spells_markers_in_words() -> R
         return Err(format!("hover kept the producer marker:\n{text}"));
     }
     for needle in [
-        "* discriminator missing: `amount == threshold`, `other`; related oracle: strong oracle, changed value never named\n",
+        "* missing check: `amount == threshold`, `other`; related oracle: strong oracle, changed value never named\n",
         "- missing value or check: `amount == threshold` \u{2014} input unexecuted\n",
         "`raise ValueError(\"observation_unverified\")`.",
     ] {
@@ -29086,7 +29086,10 @@ fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), Strin
     let finding = fix_route_rust_finding();
     let markdown = finding_hover_markdown_for(&finding)?;
     let lens = super::lens::related_test_lens_title(&finding, None);
-    assert!(lens.contains("no static discriminator (weak)"), "{lens}");
+    assert!(
+        lens.contains("no static check of this change (weak)"),
+        "{lens}"
+    );
     if markdown.contains("* discriminator yes") {
         return Err(format!(
             "hover claims a discriminator while the lens says none:\n{markdown}"
@@ -29094,7 +29097,7 @@ fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), Strin
     }
     assert!(
         markdown.contains(
-            "* discriminator missing: `amount == threshold`; related oracle: Strong oracle found: exact value or pattern assertion"
+            "* missing check: `amount == threshold`; related oracle: Strong oracle found: exact value or pattern assertion"
         ),
         "{markdown}"
     );

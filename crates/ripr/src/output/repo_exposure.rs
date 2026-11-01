@@ -220,6 +220,12 @@ pub(crate) const REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION: &str = "0.1";
 const MAX_RELATED_TESTS_PER_SEAM_JSON: usize = 8;
 const MAX_TOP_FILES_SUMMARY_JSON: usize = 25;
 
+const REPO_EXPOSURE_INVENTORY_LIMIT_CATEGORY: &str = "repo_seam_limit_applied";
+const REPO_EXPOSURE_PILOT_BUDGET_CATEGORY: &str = "pilot_seam_budget_applied";
+const REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL: &str = "RIPR_REPO_EXPOSURE_SEAM_LIMIT";
+const REPO_EXPOSURE_PILOT_BUDGET_CONTROL: &str = "RIPR_PILOT_SEAM_BUDGET";
+const REPO_EXPOSURE_SEAM_LIMIT_RUN_STATUS: &str = "seam_limit_applied";
+
 /// The producer that actually limited this artifact's seam population.
 /// Default/configured describes the value's source, not the cap's identity.
 #[derive(Clone, Copy)]
@@ -248,15 +254,15 @@ impl<'a> RepoExposureLimit<'a> {
 
     pub(crate) fn category(self) -> &'static str {
         match self {
-            Self::Inventory(_) => "repo_seam_limit_applied",
-            Self::PilotBudget(_) | Self::Both(_, _) => "pilot_seam_budget_applied",
+            Self::Inventory(_) => REPO_EXPOSURE_INVENTORY_LIMIT_CATEGORY,
+            Self::PilotBudget(_) | Self::Both(_, _) => REPO_EXPOSURE_PILOT_BUDGET_CATEGORY,
         }
     }
 
     pub(crate) fn control(self) -> &'static str {
         match self {
-            Self::Inventory(_) => "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
-            Self::PilotBudget(_) | Self::Both(_, _) => "RIPR_PILOT_SEAM_BUDGET",
+            Self::Inventory(_) => REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL,
+            Self::PilotBudget(_) | Self::Both(_, _) => REPO_EXPOSURE_PILOT_BUDGET_CONTROL,
         }
     }
 
@@ -400,6 +406,67 @@ pub(crate) fn byte_bounded_from_parts(
                     == Some(REPO_EXPOSURE_BYTE_BOUND_CATEGORY)
             })
         })
+}
+
+/// The controls whose seam cut limited this document's `seams[]` (#12150), in
+/// `limitations[]` order, or empty when no seam cut applied. A seam cap
+/// (`RIPR_REPO_EXPOSURE_SEAM_LIMIT` or the pilot `RIPR_PILOT_SEAM_BUDGET`)
+/// keeps a prefix of the inventory, so a seam absent from the file is
+/// unobserved, not removed; this is the same class as the byte bound. It reads
+/// the categories `RepoExposureLimit` writes, and falls back to `run_status`
+/// alone (both controls named) for a file whose limitation entry is missing.
+/// Declined-file and generated-skip limitations are not seam cuts.
+pub(crate) fn seam_limit_cut_controls_from_parts(
+    run_status: Option<&str>,
+    limitations: Option<&Vec<Value>>,
+) -> Vec<&'static str> {
+    let mut controls = Vec::new();
+    for entry in limitations.into_iter().flatten() {
+        let control = match entry.get("category").and_then(Value::as_str) {
+            Some(REPO_EXPOSURE_INVENTORY_LIMIT_CATEGORY) => REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL,
+            Some(REPO_EXPOSURE_PILOT_BUDGET_CATEGORY) => REPO_EXPOSURE_PILOT_BUDGET_CONTROL,
+            _ => continue,
+        };
+        if !controls.contains(&control) {
+            controls.push(control);
+        }
+    }
+    if controls.is_empty() && run_status == Some(REPO_EXPOSURE_SEAM_LIMIT_RUN_STATUS) {
+        controls.push(REPO_EXPOSURE_PILOT_BUDGET_CONTROL);
+        controls.push(REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL);
+    }
+    controls
+}
+
+/// [`seam_limit_cut_controls_from_parts`] over a parsed document.
+pub(crate) fn seam_limit_cut_controls(document: &Value) -> Vec<&'static str> {
+    seam_limit_cut_controls_from_parts(
+        document.get("run_status").and_then(Value::as_str),
+        document.get("limitations").and_then(Value::as_array),
+    )
+}
+
+/// The refusal clause every comparing consumer appends for a seam-cut file:
+/// it names the control(s) and the repair route.
+pub(crate) fn seam_limit_cut_repair(controls: &[&str]) -> String {
+    format!(
+        "set {}=0 and regenerate the file (`ripr pilot` for the pilot budget, `ripr check --format repo-exposure-json` for the inventory limit), then compare",
+        controls.join("=0 and ")
+    )
+}
+
+/// The full control list for a document cut both ways (#12226): the pilot byte
+/// budget first, then every seam-limit control `seam_cut` names. A file the
+/// byte bound and a seam limit both cut (the default above 2,000 seams) needs
+/// every control raised, so the first refusal lists them all and the user gets
+/// one repair route instead of a second refusal. `seam_cut` is
+/// [`seam_limit_cut_controls`] of the same document; an empty `seam_cut` is a
+/// byte-only cut, which keeps its own single-control message, so callers branch
+/// on that before using this.
+pub(crate) fn byte_and_seam_cut_controls(seam_cut: &[&'static str]) -> Vec<&'static str> {
+    let mut controls = vec![PILOT_REPO_EXPOSURE_BYTES_ENV];
+    controls.extend_from_slice(seam_cut);
+    controls
 }
 
 /// Bytes the writer adds between two `seams[]` entries (`,\n`).
@@ -1939,7 +2006,7 @@ impl ExposureMetrics {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
     use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
@@ -3454,6 +3521,114 @@ mod tests {
         assert!(!is_byte_bounded_repo_exposure(
             &json!({"run_status": "complete"})
         ));
+    }
+
+    /// #12150: the seam-cut predicate reads what the writer really emits for
+    /// each limit shape, and nothing else. Negative experiments: matching on
+    /// `run_status` alone would flag a declined-files document; dropping the
+    /// category arm would lose the control name for `Both`.
+    #[test]
+    fn seam_limit_cut_controls_read_the_written_documents() -> Result<(), String> {
+        let classified = vec![weakly_gripped_classified()];
+        let info = SeamLimitInfo {
+            analyzed: 1,
+            total: 3,
+            source: SeamLimitSource::Default,
+        };
+        let controls = |limit: Option<RepoExposureLimit<'_>>| -> Result<Vec<&'static str>, String> {
+            let json = render_repo_exposure_json_with_limit(&classified, limit, None, None, None);
+            let document: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+            Ok(seam_limit_cut_controls(&document))
+        };
+        assert_eq!(
+            controls(Some(RepoExposureLimit::Inventory(&info)))?,
+            vec!["RIPR_REPO_EXPOSURE_SEAM_LIMIT"]
+        );
+        assert_eq!(
+            controls(Some(RepoExposureLimit::PilotBudget(&info)))?,
+            vec!["RIPR_PILOT_SEAM_BUDGET"]
+        );
+        assert_eq!(
+            controls(Some(RepoExposureLimit::Both(&info, &info)))?,
+            vec!["RIPR_PILOT_SEAM_BUDGET", "RIPR_REPO_EXPOSURE_SEAM_LIMIT"]
+        );
+        // Discriminating negatives: an uncut document and a declined-files one.
+        assert!(controls(None)?.is_empty());
+        let declined = serde_json::json!({
+            "run_status": "limited_declined_files",
+            "limitations": [{"category": "rust_files_declined"}]
+        });
+        assert!(seam_limit_cut_controls(&declined).is_empty());
+        // A cut file whose limitation entry is missing is still a cut.
+        assert_eq!(
+            seam_limit_cut_controls(&serde_json::json!({"run_status": "seam_limit_applied"})).len(),
+            2
+        );
+        Ok(())
+    }
+
+    /// #12226: a document the real writer cut both ways (pilot seam budget and
+    /// byte bound), for the consumer refusal tests.
+    pub(crate) fn both_cuts_document_from_writer() -> Result<String, String> {
+        let classified = byte_bound_corpus();
+        let one = one_entry_bytes(&classified);
+        let bound = bound_repo_exposure_seams(
+            &classified,
+            Some((one * 5 / 2, SeamLimitSource::Default)),
+            |_| false,
+            &[],
+        )
+        .ok_or("fixture: byte bound must cut")?;
+        let info = SeamLimitInfo {
+            analyzed: 6,
+            total: 9,
+            source: SeamLimitSource::Default,
+        };
+        Ok(render_repo_exposure_json_bounded(
+            &classified,
+            Some(RepoExposureLimit::PilotBudget(&info)),
+            None,
+            None,
+            None,
+            Some(&bound),
+        ))
+    }
+
+    /// #12226: the control list for a both-cuts file leads with the byte
+    /// budget and adds every seam control the real writer emitted; a byte-only
+    /// and a seam-only document are told apart by the caller's two predicates.
+    #[test]
+    fn both_cuts_document_lists_the_byte_and_seam_controls() -> Result<(), String> {
+        let json = both_cuts_document_from_writer()?;
+        let document: Value = serde_json::from_str(&json).map_err(|err| err.to_string())?;
+        assert!(
+            is_byte_bounded_repo_exposure(&document),
+            "fixture: byte cut"
+        );
+        let seam_cut = seam_limit_cut_controls(&document);
+        assert_eq!(
+            seam_cut,
+            vec!["RIPR_PILOT_SEAM_BUDGET"],
+            "fixture: seam cut"
+        );
+        assert_eq!(
+            byte_and_seam_cut_controls(&seam_cut),
+            vec!["RIPR_PILOT_REPO_EXPOSURE_BYTES", "RIPR_PILOT_SEAM_BUDGET"]
+        );
+        // Negative: a byte-only document has no seam cut to add.
+        let classified = byte_bound_corpus();
+        let one = one_entry_bytes(&classified);
+        let bound = bound_repo_exposure_seams(
+            &classified,
+            Some((one * 5 / 2, SeamLimitSource::Default)),
+            |_| false,
+            &[],
+        )
+        .ok_or("must be cut")?;
+        let byte_only = render_bounded(&classified, None, Some(&bound))?;
+        assert!(is_byte_bounded_repo_exposure(&byte_only));
+        assert!(seam_limit_cut_controls(&byte_only).is_empty());
+        Ok(())
     }
 
     #[test]

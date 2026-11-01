@@ -1509,9 +1509,18 @@ fn an_owner_called_from_several_fmt_impls_names_the_dispatch_ambiguity() -> Resu
         .find(|line| line.starts_with("Trait-dispatch ambiguity: "))
         .ok_or("no ambiguity line")?;
     assert!(
-        line.contains("owner `pad` is called from 2 impls of `fmt` (A, B), one of 2 `fmt` impls")
-            && line.contains("cannot tell whether any test reaches one of these impls"),
+        line.contains("owner `pad` is called from 2 of the 2 `fmt` impls in this crate (A, B)")
+            && line.contains("cannot tell which of the calling impls, if any, a test reaches"),
         "{line}"
+    );
+    // The message names the crate's impls, not the callers, as the several.
+    assert!(
+        finding.evidence.iter().any(|line| {
+            line == crate::analysis::classify::RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE
+                && line.contains("the crate has several impls of that method")
+        }),
+        "{:?}",
+        finding.evidence
     );
     // No witness test is named and no runtime claim is made.
     assert!(
@@ -1541,7 +1550,7 @@ fn the_ambiguity_lists_a_bounded_number_of_candidates() -> Result<(), String> {
         .find(|line| line.starts_with("Trait-dispatch ambiguity: "))
         .ok_or("no ambiguity line")?;
     assert!(
-        line.contains("7 impls of `fmt` (A, B, C, D, E, and 2 more), one of 7 `fmt` impls"),
+        line.contains("7 of the 7 `fmt` impls in this crate (A, B, C, D, E, and 2 more)"),
         "{line}"
     );
     Ok(())
@@ -1567,7 +1576,7 @@ fn one_calling_impl_among_many_names_the_ambiguity_with_that_candidate() -> Resu
         .find(|line| line.starts_with("Trait-dispatch ambiguity: "))
         .ok_or("no ambiguity line")?;
     assert!(
-        line.contains("called from 1 impl of `fmt` (A), one of 2 `fmt` impls"),
+        line.contains("called from 1 of the 2 `fmt` impls in this crate (A)"),
         "{line}"
     );
     Ok(())

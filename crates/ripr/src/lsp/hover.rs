@@ -1020,13 +1020,13 @@ fn discriminator_stage_line(finding: &Finding) -> String {
         .collect::<Vec<_>>();
     if missing.is_empty() {
         format!(
-            "* discriminator not established ({}); related oracle: {}",
+            "* missing check not established ({}); related oracle: {}",
             finding.class.as_str(),
             plain_observation_wording(&stage.summary)
         )
     } else {
         format!(
-            "* discriminator missing: {}; related oracle: {}",
+            "* missing check: {}; related oracle: {}",
             missing.join(", "),
             plain_observation_wording(&stage.summary)
         )

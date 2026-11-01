@@ -15,7 +15,8 @@ use crate::cli::CommandError;
 use crate::cli::agent::{
     AgentBriefOptions, AgentBriefWorkingSet, AgentCommand, AgentPacketOptions, AgentReceiptOptions,
     AgentRepairOptions, AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions,
-    AgentStatusOptions, AgentVerifyExecuteOptions, AgentVerifyOptions, parse_agent_args,
+    AgentStatusOptions, AgentVerifyExecuteOptions, AgentVerifyOptions, SEAM_ID_SOURCE_HINT,
+    parse_agent_args,
 };
 use crate::cli::commands_agent_support::{
     agent_identity_path, build_agent_receipt_provenance, read_agent_verify_snapshot,
@@ -811,7 +812,7 @@ fn render_agent_packet_with_context(
     }
 
     let seam_id = options.seam_id.as_deref().ok_or_else(|| {
-        CoreError::from("agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`")
+        CoreError::from(format!("agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"))
     })?;
     let config =
         load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
