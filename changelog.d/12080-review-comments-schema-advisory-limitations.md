@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The review-comments schema now accepts the `eol_only_churn` and `verification_only_change` limitation kinds the producer already emits, so a PR whose diff is only proof or contract text no longer fails the PR evidence contract. A unit test now ties every producer token to the schema enum. (#12080)
