@@ -1052,3 +1052,96 @@ fn snapshot_alias_index_refuses_changed_roots_and_same_count_keys() -> Result<()
     }
     Ok(())
 }
+
+/// #11763: the per-refresh batch of open-document keys must equal the
+/// per-URI projection for regular files, missing files, a file symlink, a
+/// directory symlink and a root alias, since the batch only changes how often
+/// directories are canonicalized.
+#[cfg(unix)]
+#[test]
+fn batch_relative_keys_equal_the_per_uri_projection() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("batch-relative-keys")?;
+    let src = fixture.root.join("src");
+    fs::write(src.join("a.rs"), SOURCE_A).map_err(|error| format!("write a.rs: {error}"))?;
+    std::os::unix::fs::symlink(src.join("a.rs"), src.join("linked.rs"))
+        .map_err(|error| format!("link file: {error}"))?;
+    fs::create_dir_all(fixture.root.join("real_dir"))
+        .map_err(|error| format!("create dir: {error}"))?;
+    fs::write(fixture.root.join("real_dir/b.rs"), SOURCE_A)
+        .map_err(|error| format!("write b.rs: {error}"))?;
+    std::os::unix::fs::symlink(fixture.root.join("real_dir"), fixture.root.join("dir_link"))
+        .map_err(|error| format!("link dir: {error}"))?;
+    let outside = fixture.temp.path().join("outside.rs");
+    fs::write(&outside, SOURCE_A).map_err(|error| format!("write outside: {error}"))?;
+    let paths = [
+        src.join("a.rs"),
+        src.join("linked.rs"),
+        src.join("missing.rs"),
+        src.join("nested/missing.rs"),
+        fixture.root.join("dir_link/b.rs"),
+        fixture.root.join("real_dir/b.rs"),
+        fixture.alias.join("src/a.rs"),
+        fixture.alias.join("src/missing.rs"),
+        outside,
+    ];
+    let uris = paths
+        .iter()
+        .map(|path| file_uri_for_path(path))
+        .collect::<Result<Vec<_>, _>>()?;
+    for root in [&fixture.root, &fixture.alias] {
+        let expected = uris
+            .iter()
+            .filter_map(|uri| crate::lsp::uri::file_uri_relative_to_root(root, uri))
+            .collect::<Vec<_>>();
+        let batch = crate::lsp::uri::file_uris_relative_to_root(root, &uris);
+        if batch != expected || expected.len() < 6 {
+            return Err(format!(
+                "BEHAVIORAL: batch keys diverged from the per-URI projection under {root:?}\nexpected {expected:?}\nbatch    {batch:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The performance claim of #11763, observed through the projector's counting
+/// hook: 40 regular files in two directories cost two directory
+/// canonicalizations in total, not one per file, and a second pass over the
+/// same URIs on the same projector costs none. Only hosts with the
+/// directory-cache fast path (Linux and other non-macOS Unix) make the claim;
+/// elsewhere every URI is resolved in full and the count stays zero.
+#[cfg(unix)]
+#[test]
+fn projector_resolves_each_directory_once_not_once_per_file() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("projector-resolution-count")?;
+    let src = fixture.root.join("src");
+    fs::create_dir_all(fixture.root.join("tests"))
+        .map_err(|error| format!("create tests dir: {error}"))?;
+    let mut uris = Vec::new();
+    for index in 0..20 {
+        for dir in [src.clone(), fixture.root.join("tests")] {
+            let path = dir.join(format!("f{index}.rs"));
+            fs::write(&path, SOURCE_A).map_err(|error| format!("write {path:?}: {error}"))?;
+            uris.push(file_uri_for_path(&path)?);
+        }
+    }
+    let mut projector = crate::lsp::uri::RelativeKeyProjector::new(&fixture.root);
+    for _ in 0..2 {
+        for uri in &uris {
+            if projector.relative(uri).is_none() {
+                return Err(format!("BEHAVIORAL: {uri:?} was not projected"));
+            }
+        }
+    }
+    let expected = if cfg!(all(unix, not(target_os = "macos"))) {
+        2
+    } else {
+        0
+    };
+    if projector.directory_resolutions() != expected {
+        return Err(format!(
+            "BEHAVIORAL: {} directory resolutions for 80 projections, expected {expected}",
+            projector.directory_resolutions()
+        ));
+    }
+    Ok(())
+}

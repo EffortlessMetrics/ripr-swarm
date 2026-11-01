@@ -1411,6 +1411,9 @@ pub(crate) fn write_test_stub(
 ) -> Result<PathBuf, String> {
     let relative = stub.placement.file();
     let path = root.join(relative);
+    // A committed `tests -> /elsewhere` link must not redirect the write or
+    // the directory creation below (#11477 item 4); checked before either.
+    crate::atomic_file::ensure_path_within_root(root, &path, "test stub")?;
     match &stub.placement {
         TestStubPlacement::ExistingInlineModule { offset, .. }
         | TestStubPlacement::NewInlineModule { offset, .. } => {
@@ -1705,7 +1708,7 @@ fn package_edition(root: &Path, manifest: &Path, package: &toml::Table) -> Optio
             // included) that has a `[workspace]` table. If that workspace has
             // no `[workspace.package] edition`, the inheritance is invalid.
             let workspace_manifest = |dir: &Path| -> Option<toml::Table> {
-                std::fs::read_to_string(root.join(dir).join("Cargo.toml"))
+                crate::bounded_input::read_metadata_toml(root.join(dir).join("Cargo.toml"))
                     .ok()?
                     .parse::<toml::Table>()
                     .ok()
@@ -2984,6 +2987,51 @@ impl Size {
             next_repair, None,
             "a policy-omitted seam must not be offered a repair start"
         );
+        Ok(())
+    }
+
+    /// #11477 item 4: a committed `tests -> /elsewhere` link must not redirect
+    /// `agent stub --write`; a real `tests/` directory still receives the file.
+    #[cfg(unix)]
+    #[test]
+    fn write_test_stub_refuses_symlinked_tests_dir() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-stub-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&ws).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        let stub = RustTestStub {
+            placement: TestStubPlacement::NewIntegrationFile {
+                file: PathBuf::from("tests/clamp_tests.rs"),
+            },
+            test_name: "clamp_to_boundary".to_string(),
+            text: "#[test]\nfn t() {}\n".to_string(),
+            already_present: false,
+            fill_ins: Vec::new(),
+            derived_inputs: Vec::new(),
+        };
+        let resolution = TestStubResolution {
+            seam_id: "seam".to_string(),
+            owner: "clamp_to".to_string(),
+            source: String::new(),
+            outcome: Ok(stub.clone()),
+            grip_class: None,
+            at_note: None,
+            next_repair: None,
+            seam_line: 1,
+            weak_oracle_guidance: None,
+        };
+        std::os::unix::fs::symlink(&outside, ws.join("tests")).map_err(|e| e.to_string())?;
+        let refused = write_test_stub(&ws, &resolution, &stub);
+        let leaked = outside.join("clamp_tests.rs").exists();
+        std::fs::remove_file(ws.join("tests")).map_err(|e| e.to_string())?;
+        let written = write_test_stub(&ws, &resolution, &stub);
+        let landed = ws.join("tests/clamp_tests.rs").exists();
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(refused.is_err_and(|e| e.contains("resolves outside the workspace")));
+        assert!(!leaked, "nothing may be written through the link");
+        assert!(written.is_ok() && landed, "real tests/ dir must still work");
         Ok(())
     }
 

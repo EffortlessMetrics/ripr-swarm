@@ -154,3 +154,16 @@ Command:
 
 Updated:
 - `expected/human.txt`
+
+## Pending — test_in_struct_literal_not_exact (13)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless test_in_struct_literal_not_exact --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -12,6 +12,14 @@ on:
         required: false
         type: string
         default: "5"
+      runner:
+        description: "Windows runner image for the shards (a second image shows whether #9631 probe timing is image-specific)"
+        required: false
+        type: choice
+        options:
+          - windows-latest
+          - windows-2022
+        default: windows-latest
 
 # Diagnostic for #9526: the trusted packaged editor journey intermittently runs to its
 # step cap with no Mocha output. This repeats only that journey, in parallel shards and
@@ -24,7 +32,7 @@ permissions:
 jobs:
   hunt:
     name: trusted editor journey shard ${{ matrix.shard }} (${{ matrix.mode }}, ${{ matrix.profile }})
-    runs-on: windows-latest
+    runs-on: ${{ inputs.runner || 'windows-latest' }}
     timeout-minutes: 150
     strategy:
       fail-fast: false

@@ -453,14 +453,14 @@ fn finding_result(
     );
     result.insert(
         "partialFingerprints".to_string(),
-        json!({ "riprFingerprintV1": finding_fingerprint(&rule_id, finding, &file, line) }),
+        json!({ "riprFingerprintV1": finding_fingerprint(&rule_id, finding, &file) }),
     );
     // #2627: also emit top-level fingerprints for GitHub Code Scanning cross-run
     // dedup. partialFingerprints alone is insufficient — GitHub reads
     // fingerprints as the primary dedup key.
     result.insert(
         "fingerprints".to_string(),
-        json!({ "riprFingerprintV1": finding_fingerprint(&rule_id, finding, &file, line) }),
+        json!({ "riprFingerprintV1": finding_fingerprint(&rule_id, finding, &file) }),
     );
     result.insert(
         "properties".to_string(),
@@ -586,7 +586,10 @@ fn finding_properties(finding: &Finding, severity: ConfigSeverity) -> Value {
         "probe_delta".to_string(),
         json!(finding.probe.delta.as_str()),
     );
-    properties.insert("confidence".to_string(), json!(finding.confidence));
+    properties.insert(
+        "confidence".to_string(),
+        json!(crate::domain::contract_confidence(finding.confidence)),
+    );
     if let Some(owner) = &finding.probe.owner {
         properties.insert("owner".to_string(), json!(owner.0.as_str()));
     }
@@ -1058,11 +1061,11 @@ fn seam_message(entry: &ClassifiedSeam) -> String {
     )
 }
 
-fn finding_fingerprint(rule_id: &str, finding: &Finding, file: &str, line: usize) -> String {
-    format!(
-        "{rule_id}|{}|{}|{file}|{line}",
-        finding.id, finding.probe.id.0
-    )
+/// Keep a supported native finding/probe identity across display-line moves.
+/// Location-bound producer IDs retain their own limits; the renderer does not
+/// infer semantic equivalence or alias historical suppression selectors.
+fn finding_fingerprint(rule_id: &str, finding: &Finding, file: &str) -> String {
+    format!("{rule_id}|{}|{}|{file}", finding.id, finding.probe.id.0)
 }
 
 /// Line- and offset-independent seam alert identity (#11219).
@@ -1658,7 +1661,188 @@ mod tests {
         assert_eq!(result["properties"]["finding_id"], "finding:discount");
         assert_eq!(
             result["partialFingerprints"]["riprFingerprintV1"],
-            "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/pricing.rs|88"
+            "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/pricing.rs"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_finding_identity_moves_locations_but_retains_file_and_rule_boundaries()
+    -> Result<(), String> {
+        let original = sample_output();
+        let render = |output: &CheckOutput| {
+            parse_json(&render_findings_sarif(output, &RiprConfig::default(), &[]))
+        };
+        let base = render(&original)?;
+        let base = first_result(&base)?;
+        let mut moved = original.clone();
+        moved.findings[0].probe.location.line += 5;
+        let moved = render(&moved)?;
+        let moved = first_result(&moved)?;
+        assert_eq!(moved["fingerprints"], base["fingerprints"]);
+        assert_eq!(moved["partialFingerprints"], base["partialFingerprints"]);
+        assert_eq!(
+            moved["locations"][0]["physicalLocation"]["region"]["startLine"],
+            93
+        );
+
+        let mut other_file = original.clone();
+        other_file.findings[0].probe.location.file = PathBuf::from("src/other.rs");
+        let other_file = render(&other_file)?;
+        assert_ne!(
+            first_result(&other_file)?["fingerprints"],
+            base["fingerprints"]
+        );
+        let mut other_rule = original;
+        other_rule.findings[0].class = ExposureClass::ReachableUnrevealed;
+        let other_rule = render(&other_rule)?;
+        assert_ne!(
+            first_result(&other_rule)?["fingerprints"],
+            base["fingerprints"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_seam_identity_is_line_independent_but_file_and_rule_bound() -> Result<(), String> {
+        use crate::analysis::seams::CrlfPairPositions;
+        let source = "fn discount() {\n    if amount >= threshold { return 5; }\n}\n";
+        let make = |source: &str, file: &str, class| -> Result<ClassifiedSeam, String> {
+            let offset = source.find("if amount").ok_or("missing seam expression")?;
+            let line = source[..offset]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count()
+                + 1;
+            let mut entry = weakly_gripped_classified();
+            entry.seam = RepoSeam::new_in_source(
+                file,
+                "discount",
+                SeamKind::PredicateBoundary,
+                offset,
+                line,
+                "amount >= threshold",
+                RequiredDiscriminator::BoundaryValue {
+                    description: "amount == threshold".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+                &CrlfPairPositions::build(source),
+            );
+            entry.evidence.seam_id = entry.seam.id().clone();
+            entry.class = class;
+            Ok(entry)
+        };
+        let render = |entry| {
+            parse_json(&render_repo_seams_sarif(
+                &[entry],
+                None,
+                &RiprConfig::default(),
+            ))
+        };
+        let base_entry = make(source, "src/pricing.rs", SeamGripClass::WeaklyGripped)?;
+        let base = render(base_entry)?;
+        let base = first_result(&base)?;
+        // #11219: the seam alert identity is `rule|file|identity_hash|ordinal`
+        // and reads neither the display line nor the byte offset.
+        let fingerprint = base["partialFingerprints"]["riprFingerprintV1"]
+            .as_str()
+            .ok_or("missing seam fingerprint")?;
+        assert!(
+            fingerprint.starts_with("ripr.seam.weakly_gripped|src/pricing.rs|")
+                && fingerprint.ends_with("|0"),
+            "unexpected seam fingerprint shape: {fingerprint}"
+        );
+        assert_eq!(base["fingerprints"], base["partialFingerprints"]);
+        let moved = render(make(
+            &format!("\n{source}"),
+            "src/pricing.rs",
+            SeamGripClass::WeaklyGripped,
+        )?)?;
+        assert_eq!(
+            first_result(&moved)?["fingerprints"],
+            base["fingerprints"],
+            "a pure line move must keep the seam alert identity"
+        );
+        assert_eq!(
+            first_result(&moved)?["locations"][0]["physicalLocation"]["region"]["startLine"],
+            3
+        );
+        let other_file = render(make(source, "src/other.rs", SeamGripClass::WeaklyGripped)?)?;
+        assert_ne!(
+            first_result(&other_file)?["fingerprints"],
+            base["fingerprints"]
+        );
+        let other_rule = render(make(source, "src/pricing.rs", SeamGripClass::Ungripped)?)?;
+        assert_ne!(
+            first_result(&other_rule)?["fingerprints"],
+            base["fingerprints"]
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sarif_finding_identity_keeps_distinct_native_unix_filenames() -> Result<(), String> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let parent = std::env::temp_dir();
+        std::fs::create_dir_all(&parent).map_err(|error| error.to_string())?;
+        let root = parent.join(format!(
+            "ripr-sarif-native-files-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        struct Scratch(PathBuf);
+        impl Drop for Scratch {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        let _scratch = Scratch(root.clone());
+        std::fs::create_dir_all(root.join("src/a")).map_err(|error| error.to_string())?;
+        let literal_backslash = root.join(r"src/a\b.rs");
+        let nested = root.join("src/a/b.rs");
+        std::fs::write(&literal_backslash, "fn discount() { return 5; }\n")
+            .map_err(|error| error.to_string())?;
+        std::fs::write(&nested, "fn discount() { return 7; }\n")
+            .map_err(|error| error.to_string())?;
+        assert_ne!(
+            literal_backslash
+                .canonicalize()
+                .map_err(|error| error.to_string())?,
+            nested.canonicalize().map_err(|error| error.to_string())?
+        );
+        assert_ne!(
+            std::fs::read(&literal_backslash).map_err(|error| error.to_string())?,
+            std::fs::read(&nested).map_err(|error| error.to_string())?
+        );
+
+        let mut output = sample_output();
+        output.root = root;
+        let mut second = output.findings[0].clone();
+        output.findings[0].probe.location.file = literal_backslash;
+        second.probe.location.file = nested;
+        second.probe.location.line += 5;
+        // The renderer accepts opaque producer IDs. Distinct native files
+        // must remain distinct even when a producer supplied the same IDs.
+        output.findings.push(second);
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let rows = results(&sarif)?;
+        assert_eq!(rows.len(), 2);
+        let mut identities = std::collections::BTreeSet::new();
+        for row in rows {
+            assert_eq!(row["fingerprints"], row["partialFingerprints"]);
+            identities.insert(
+                row["fingerprints"]["riprFingerprintV1"]
+                    .as_str()
+                    .ok_or("missing fingerprint")?,
+            );
+        }
+        assert_eq!(
+            identities.len(),
+            2,
+            "distinct native Unix filenames must not collapse after removing display lines"
         );
         Ok(())
     }
@@ -1695,9 +1879,12 @@ mod tests {
         output.root = PathBuf::from(".");
         output.findings[0].probe.location.file = PathBuf::from("./src/rate%limit.rs");
         let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        // #10517: the line leaves the fingerprint so a pure line move keeps
+        // alert identity; the unencoded `%` path stays the final component
+        // so the root-spelling invariant this test pins still holds.
         assert_eq!(
             first_result(&sarif)?["partialFingerprints"]["riprFingerprintV1"],
-            "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/rate%limit.rs|88"
+            "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/rate%limit.rs"
         );
         Ok(())
     }
@@ -2135,7 +2322,7 @@ mod tests {
         finding.owner_kind = Some(OwnerKind::Function);
         finding.static_limit_kind = Some(StaticLimitKind::MockedModule);
         finding.evidence = vec![
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -2269,6 +2456,34 @@ weakly_exposed = "note"
 
         assert_eq!(result["level"], "note");
         assert_eq!(result["properties"]["severity"], "note");
+        Ok(())
+    }
+
+    /// #10717: `properties.confidence` is the contract's two-decimal value, not
+    /// the `f32` widened to `f64` (`0.4000000059604645`).
+    #[test]
+    fn sarif_finding_confidence_uses_contract_precision() -> Result<(), String> {
+        for (stored, wire, noisy) in [
+            (0.4_f32, 0.4_f64, true),
+            (0.92, 0.92, true),
+            (0.6, 0.6, true),
+            (0.75, 0.75, false),
+        ] {
+            // Fixture check: the pre-fix widening really is noisy for the
+            // inexact values, and exact ones (0.75) are the clean control.
+            let widened = serde_json::json!(stored).to_string();
+            assert_eq!(widened.len() > 6, noisy, "fixture {stored}: {widened}");
+            let mut output = sample_output();
+            output.findings[0].confidence = stored;
+            let rendered = render_findings_sarif(&output, &parse_config("")?, &[]);
+            let sarif = parse_json(&rendered)?;
+            let result = first_result(&sarif)?;
+            assert_eq!(result["properties"]["confidence"], serde_json::json!(wire));
+            assert_eq!(
+                result["properties"]["confidence"].to_string(),
+                format!("{wire}")
+            );
+        }
         Ok(())
     }
 
@@ -3220,8 +3435,9 @@ weakly_gripped = "note"
             .as_str()
             .unwrap_or_default();
         assert!(
-            fingerprint.contains("|src/we ird#dir/a.rs|"),
-            "fingerprint must hash the unencoded path: {fingerprint}"
+            fingerprint.ends_with("|src/we ird#dir/a.rs"),
+            "fingerprint must hash the unencoded path as its final component \
+             (no trailing line segment): {fingerprint}"
         );
         assert_eq!(
             result["partialFingerprints"]["riprFingerprintV1"],
@@ -3388,7 +3604,7 @@ weakly_gripped = "note"
         assert_eq!(results[0]["properties"]["finding_id"], "finding:first");
         assert_eq!(
             results[0]["partialFingerprints"]["riprFingerprintV1"],
-            "ripr.finding.weakly_exposed|finding:first|probe:src/pricing.rs:88:first|src/pricing.rs|88",
+            "ripr.finding.weakly_exposed|finding:first|probe:src/pricing.rs:88:first|src/pricing.rs",
             "the kept result keeps its own fingerprint"
         );
         let folded = &results[0]["properties"]["folded_results"];

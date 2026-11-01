@@ -1048,15 +1048,110 @@ fn macro_binding_sites_in_tree(
                 let word = token.text().trim_start_matches("r#");
                 matches!(word, "macro_use" | "no_implicit_prelude").then_some(word)
             }) {
-                return all(
-                    line_of(node),
-                    MacroBindingKind::ArgumentAttribute {
-                        wrapper: path.syntax().text().to_string(),
-                        attribute: attribute.to_string(),
-                    },
-                    // The expansion may export what it defines.
-                    false,
-                );
+                // The one exception (#5993): a verified registry
+                // `cfg_if::cfg_if!` emits its branch items as written, so a
+                // `#[macro_use] mod NAME;` there is that item written
+                // directly, admitted like it when the module file resolves.
+                // Everything else the macro's arguments mention is still
+                // judged below.
+                let wrapper = path.syntax().text().to_string();
+                let wrapper: String = wrapper.chars().filter(|c| !c.is_whitespace()).collect();
+                let external = wrapper.starts_with("::");
+                // The module file is looked up beside the declaring file, so
+                // the call must sit at the file's top level: inside an inline
+                // module (`mod inner { cfg_if! { .. } }`, `#[path]` included)
+                // the file is `inner/NAME.rs`, which that lookup does not
+                // model. An import or glob that could bind `cfg_if` to
+                // something else, or an `include!` that could add such a
+                // binding unseen, keeps the attribute ambiguous.
+                let top_level = node
+                    .parent()
+                    .is_some_and(|parent| parent.kind() == ra_ap_syntax::SyntaxKind::SOURCE_FILE);
+                // Only a top-level `use` scopes with the call; one inside a
+                // module or body binds in that scope alone.
+                let cfg_if_rebindable = binding_free
+                    .uses
+                    .iter()
+                    .filter(|item| {
+                        item.syntax()
+                            .ancestors()
+                            .find_map(ast::Use::cast)
+                            .is_some_and(|item| {
+                                item.syntax().parent().is_some_and(|parent| {
+                                    parent.kind() == ra_ap_syntax::SyntaxKind::SOURCE_FILE
+                                })
+                            })
+                    })
+                    .any(|item| {
+                        item.star_token().is_some()
+                            || item
+                                .syntax()
+                                .descendants_with_tokens()
+                                .filter_map(|element| element.into_token())
+                                .any(|token| token.text().trim_start_matches("r#") == "cfg_if")
+                    })
+                    || binding_free.calls.iter().any(|call| {
+                        call.path()
+                            .and_then(|path| path.segment())
+                            .and_then(|segment| segment.name_ref())
+                            .is_some_and(|name| name.text() == "include")
+                    })
+                    // A user macro invoked at item position (top level or in
+                    // a module) can expand to `use ..::cfg_if;` or `mod
+                    // cfg_if`, which exist only as token trees here. Any
+                    // such invocation other than a `cfg_if::cfg_if!` block
+                    // that never names `cfg_if` itself keeps the attribute
+                    // ambiguous.
+                    || binding_free.calls.iter().any(|other| {
+                        let item_position = other.syntax().parent().is_some_and(|parent| {
+                            matches!(
+                                parent.kind(),
+                                ra_ap_syntax::SyntaxKind::SOURCE_FILE
+                                    | ra_ap_syntax::SyntaxKind::ITEM_LIST
+                            )
+                        });
+                        if !item_position {
+                            return false;
+                        }
+                        let path: String = other
+                            .path()
+                            .map(|path| path.syntax().text().to_string())
+                            .unwrap_or_default()
+                            .chars()
+                            .filter(|c| !c.is_whitespace())
+                            .collect();
+                        let is_cfg_if_call =
+                            matches!(path.trim_start_matches("::"), "cfg_if::cfg_if");
+                        !is_cfg_if_call
+                            || other.token_tree().is_some_and(|tree| {
+                                tree.syntax()
+                                    .descendants_with_tokens()
+                                    .filter_map(|element| element.into_token())
+                                    .any(|token| token.text().trim_start_matches("r#") == "cfg_if")
+                            })
+                    });
+                let cfg_if_admitted = matches!(wrapper.trim_start_matches("::"), "cfg_if::cfg_if")
+                    && top_level
+                    && !cfg_if_rebindable
+                    && !drop_in_shadowed("cfg_if", external)
+                    && drop_in_verified("cfg_if")
+                    && cfg_if_macro_use_modules(&tree).is_some_and(|modules| {
+                        modules.iter().all(|(offset, name)| {
+                            let line = lines.get_or_init(|| LineIndex::new(source)).line(*offset);
+                            module_resolved(line, &cfg_if_module_declaration(name))
+                        })
+                    });
+                if !cfg_if_admitted {
+                    return all(
+                        line_of(node),
+                        MacroBindingKind::ArgumentAttribute {
+                            wrapper: path.syntax().text().to_string(),
+                            attribute: attribute.to_string(),
+                        },
+                        // The expansion may export what it defines.
+                        false,
+                    );
+                }
             }
             // Every mention counts, a plain `assert_eq!(..)` included: to the
             // macro it is only tokens, and `define!(assert_eq!(mod tests;))`
@@ -1201,6 +1296,15 @@ fn macro_binding_sites_in_tree(
                     && matches!(root, "std" | "core" | "alloc")
                     && (standard_root && !drop_in_shadowed(root, external)
                         || module_local_standard_root())
+                    && drop_in_verified(root)
+                {
+                    continue;
+                }
+                // RIPR-SPEC-0369: an exact verification-prelude glob exports no
+                // assertion macro, so it cannot rebind a trusted name.
+                if item.star_token().is_some()
+                    && is_assertion_free_prelude_glob(&item)
+                    && !drop_in_shadowed(root, external)
                     && drop_in_verified(root)
                 {
                     continue;
@@ -1434,8 +1538,9 @@ fn drop_in_crates(name: &str) -> &'static [&'static str] {
     }
 }
 
-fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
-    let crates = drop_in_crates(name);
+/// The full path segments a use tree names, outermost first: ancestors' paths
+/// joined, so `{prelude::*}` inside `use krate::{..}` reads `["krate", "prelude"]`.
+fn use_tree_segments(item: &ast::UseTree) -> Vec<String> {
     // Ancestor trees run inner to outer; reverse each path, then the whole.
     let mut segments: Vec<String> = item
         .syntax()
@@ -1454,6 +1559,31 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
         })
         .collect();
     segments.reverse();
+    segments
+}
+
+/// RIPR-SPEC-0369: glob imports of verification-framework preludes whose
+/// published export lists (checked against creusot-std 0.14.0, vstd
+/// 0.0.0-2026-10-25-0158 and prusti-contracts 0.3.3) contain no macro named
+/// like a trusted assertion, so the glob cannot rebind `assert_eq!` and its
+/// kin. Each entry is the exact glob path; the crate must also resolve to the
+/// registry package (`drop_in_verified`) and not be shadowed.
+const ASSERTION_FREE_PRELUDE_GLOBS: &[&[&str]] = &[
+    &["creusot_std", "prelude"],
+    &["vstd", "prelude"],
+    &["prusti_contracts"],
+];
+
+fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
+    let segments = use_tree_segments(item);
+    ASSERTION_FREE_PRELUDE_GLOBS
+        .iter()
+        .any(|glob| segments.iter().map(String::as_str).eq(glob.iter().copied()))
+}
+
+fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
+    let crates = drop_in_crates(name);
+    let segments = use_tree_segments(item);
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
     matches!(
         segments.as_slice(),
@@ -3419,6 +3549,53 @@ fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
     (!source_file).then_some(AssertionContextRefusal::NestedItem)
 }
 
+/// The unevaluated `cfg` gates on the `fn name` whose `fn` keyword is on
+/// `line`, and on every item that encloses it, with whitespace removed (#9643).
+///
+/// `None` unless the function is found uniquely and every gating attribute is
+/// a plain `#[cfg(..)]` whose test-build availability is unestablished: a gate
+/// that is provably off, or a `cfg_attr` or unreadable one, is not a gate this
+/// can compare. A function with no gate returns an empty list.
+pub(crate) fn unestablished_cfg_gates_of_fn(
+    source: &str,
+    name: &str,
+    line: usize,
+) -> Option<BTreeSet<String>> {
+    let parse = parse_clean_source_file(source)?;
+    let lines = LineIndex::new(source);
+    let mut found = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|fn_name| fn_name.text() == name)
+                && function
+                    .fn_token()
+                    .is_some_and(|token| lines.line(token.text_range().start()) == line)
+        });
+    let function = found.next()?;
+    if found.next().is_some() {
+        return None;
+    }
+    let mut gates = BTreeSet::new();
+    for node in function.syntax().ancestors() {
+        for attr in node.children().filter_map(ast::Attr::cast) {
+            let text = attr.syntax().text().to_string();
+            match attribute_test_build_availability(&text) {
+                Some(true) => {}
+                None if text.starts_with("#[cfg(") => {
+                    gates.insert(text.chars().filter(|ch| !ch.is_whitespace()).collect());
+                }
+                _ => return None,
+            }
+        }
+    }
+    Some(gates)
+}
+
 /// Attributes a pinned test may carry: `#[test]` itself, and the
 /// `serial_test` locks, which run the unchanged body while holding a mutex or
 /// file lock. Lock arguments are admitted only as bare key names
@@ -4681,6 +4858,149 @@ fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {
     // Qualified roots can themselves be rebound. Without name resolution,
     // only bare names with the workspace binding check are established.
     trusted.contains(&path)
+}
+
+/// The `module_resolved` key for a `mod NAME;` the parser sees only as
+/// tokens in a verified `cfg_if::cfg_if!` (#5993). It never matches a parsed
+/// module edge; the resolver answers it by looking for the module file beside
+/// the declaring crate-root or `mod.rs` file.
+pub(crate) fn cfg_if_module_declaration(name: &str) -> String {
+    format!("{CFG_IF_MODULE_PREFIX}mod {name};")
+}
+
+/// The module name inside a [`cfg_if_module_declaration`] key.
+pub(crate) fn cfg_if_module_name(declaration: &str) -> Option<&str> {
+    declaration
+        .strip_prefix(CFG_IF_MODULE_PREFIX)?
+        .strip_prefix("mod ")?
+        .strip_suffix(';')
+}
+
+const CFG_IF_MODULE_PREFIX: &str = "cfg_if ";
+
+/// The `#[macro_use] mod NAME;` items (offset of the `mod` keyword and name)
+/// a `cfg_if!` argument tree carries, when its arguments are exactly the
+/// `if #[cfg(..)] { .. } else if #[cfg(..)] { .. } else { .. }` shape and
+/// every `macro_use` in them is such an item written directly in a branch.
+/// `None` when any `macro_use` or `no_implicit_prelude` is anywhere else (an
+/// `extern crate`, an inline module body, a nested macro's arguments, after
+/// another attribute such as `#[path]`) or the shape is not recognized.
+fn cfg_if_macro_use_modules(tree: &ast::TokenTree) -> Option<Vec<(TextSize, String)>> {
+    use ra_ap_syntax::{NodeOrToken, SyntaxElement};
+    let text = |element: &SyntaxElement| match element {
+        NodeOrToken::Token(token) => token.text().trim_start_matches("r#").to_string(),
+        NodeOrToken::Node(node) => node.text().to_string(),
+    };
+    let is_tree = |element: &SyntaxElement, open: char| {
+        element
+            .as_node()
+            .and_then(|node| ast::TokenTree::cast(node.clone()))
+            .and_then(|tree| tree.syntax().first_token())
+            .is_some_and(|token| token.text().starts_with(open))
+    };
+    let significant = |tree: &SyntaxNode| -> Vec<SyntaxElement> {
+        let mut elements: Vec<_> = tree
+            .children_with_tokens()
+            .filter(|element| {
+                !element
+                    .as_token()
+                    .is_some_and(|token| token.kind().is_trivia())
+            })
+            .collect();
+        // The outer delimiters are not part of the contents.
+        elements.pop();
+        if !elements.is_empty() {
+            elements.remove(0);
+        }
+        elements
+    };
+    let top = significant(tree.syntax());
+    let mut bodies = Vec::new();
+    let mut at = 0;
+    loop {
+        if text(top.get(at)?) != "if"
+            || text(top.get(at + 1)?) != "#"
+            || !is_tree(top.get(at + 2)?, '[')
+            || !is_tree(top.get(at + 3)?, '{')
+        {
+            return None;
+        }
+        bodies.push(top[at + 3].as_node()?.clone());
+        at += 4;
+        match top.get(at) {
+            None => break,
+            Some(element) if text(element) == "else" => {
+                at += 1;
+                if top.get(at).is_some_and(|next| text(next) == "if") {
+                    continue;
+                }
+                if !is_tree(top.get(at)?, '{') || top.len() != at + 1 {
+                    return None;
+                }
+                bodies.push(top[at].as_node()?.clone());
+                break;
+            }
+            Some(_) => return None,
+        }
+    }
+    let words = |word: &str| {
+        tree.syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| token.text().trim_start_matches("r#") == word)
+            .count()
+    };
+    if words("no_implicit_prelude") != 0 {
+        return None;
+    }
+    let mut modules = Vec::new();
+    for body in &bodies {
+        let items = significant(body);
+        for (index, element) in items.iter().enumerate() {
+            let is_attribute = text(element) == "#"
+                && items.get(index + 1).is_some_and(|next| {
+                    is_tree(next, '[')
+                        && significant(next.as_node().unwrap_or(body))
+                            .iter()
+                            .map(&text)
+                            .collect::<Vec<_>>()
+                            == ["macro_use"]
+                });
+            if !is_attribute {
+                continue;
+            }
+            // Directly after another item, never after an attribute that
+            // could redirect the module (`#[path = ".."]`).
+            let boundary = index == 0
+                || items
+                    .get(index - 1)
+                    .is_some_and(|previous| text(previous) == ";" || is_tree(previous, '{'));
+            let (Some(keyword), Some(name), Some(semicolon)) = (
+                items.get(index + 2),
+                items.get(index + 3),
+                items.get(index + 4),
+            ) else {
+                return None;
+            };
+            let name_token = name.as_token()?;
+            if !boundary
+                || text(keyword) != "mod"
+                || text(semicolon) != ";"
+                || !name_token
+                    .text()
+                    .trim_start_matches("r#")
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_')
+            {
+                return None;
+            }
+            modules.push((
+                keyword.text_range().start(),
+                name_token.text().trim_start_matches("r#").to_string(),
+            ));
+        }
+    }
+    (words("macro_use") == modules.len()).then_some(modules)
 }
 
 /// The assertion macros the owner-pin collectors read (#8983), in the test body

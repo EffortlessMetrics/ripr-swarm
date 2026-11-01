@@ -15,7 +15,7 @@ Start here:
   Why unknown: the analysis could not determine a static exposure state
   Gap ID (for scripts): gap:rust:src/lib.rs:score:static_unknown:static_unknown:let_result=helper_amount*multiplier
   Changed behavior: let result = helper(amount * MULTIPLIER);
-  Analyzer limit: No strong discriminator was detected
+  Analyzer limit: No strong assertion was detected
   Related test: tests/score_tests.rs:4 score_uses_multiplier
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and
@@ -39,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/infect_value_returned/input --diff <cwd>/fixtures/infect_value_returned/diff.patch --mode fast probe:src_lib.rs:static_unknown:134382d4
   ripr context --root <cwd>/fixtures/infect_value_returned/input --diff <cwd>/fixtures/infect_value_returned/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:134382d4
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: ripr found 2 seams in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.

@@ -1,7 +1,7 @@
 //! A property check pins no value (#9594): an assertion that relates the owner
 //! to itself or to the loop variable it was handed holds for many wrong edits.
 
-use super::owners_tests::extract_tests;
+use super::owners_tests::{extract_owners, extract_tests};
 use super::*;
 use std::path::Path;
 
@@ -100,4 +100,61 @@ fn given_an_async_loop_then_its_target_is_a_loop_variable_too() {
     let tests = extract_tests(Path::new("tests/test_prop.py"), source);
     assert_eq!(tests.len(), 1);
     assert_eq!(tests[0].assertions[0].oracle_strength, OracleStrength::Weak);
+}
+
+fn owner_named(name: &str) -> Result<PythonOwner, String> {
+    let source = "def f(value):\n    return value\n\n\ndef g(value):\n    return value * 2\n\n\nclass Box:\n    def f(self, value):\n        return value\n";
+    extract_owners(Path::new("src/m.py"), source)
+        .into_iter()
+        .find(|owner| owner.qualified_name == name)
+        .ok_or_else(|| format!("owner `{name}` in the fixture"))
+}
+
+fn exact_strength_for(body: &str, owner: &str) -> Result<OracleStrength, String> {
+    let source = format!("from m import f, g\n\ndef test_x():\n{body}");
+    let tests = extract_tests(Path::new("tests/test_prop.py"), &source);
+    let owner = owner_named(owner)?;
+    let test = tests.first().ok_or("one test")?;
+    let resolved = super::owner_exact::owner_exact_test(test, &owner);
+    let assertion = resolved
+        .as_ref()
+        .unwrap_or(test)
+        .assertions
+        .first()
+        .ok_or("one assertion")?;
+    Ok(assertion.oracle_strength.clone())
+}
+
+#[test]
+fn given_an_independent_inner_call_then_only_the_outer_owner_is_pinned() -> Result<(), String> {
+    // #9814: `g(5)` runs on both sides, so a changed `g` passes through `f`.
+    let body = "    assert f(g(5)) == g(5)\n";
+    assert_eq!(strength_of(body), OracleStrength::Weak);
+    assert_eq!(exact_strength_for(body, "f")?, OracleStrength::Strong);
+    assert_eq!(exact_strength_for(body, "g")?, OracleStrength::Weak);
+    assert_eq!(
+        exact_strength_for("    assert g(5) == f(g(5))\n", "f")?,
+        OracleStrength::Strong
+    );
+    // A method named like the callee is not the bare function called.
+    assert_eq!(exact_strength_for(body, "Box.f")?, OracleStrength::Weak);
+    Ok(())
+}
+
+#[test]
+fn given_a_self_referential_or_wider_shape_then_no_owner_is_pinned() -> Result<(), String> {
+    for body in [
+        "    assert f(f(5)) == f(5)\n",
+        "    assert f(g(f(5))) == g(f(5))\n",
+        "    assert f(g(5), 1) == g(5)\n",
+        "    assert f(x=g(5)) == g(5)\n",
+        "    assert f(g(5) + 1) == g(5)\n",
+    ] {
+        assert_eq!(
+            exact_strength_for(body, "f")?,
+            OracleStrength::Weak,
+            "{body}"
+        );
+    }
+    Ok(())
 }
