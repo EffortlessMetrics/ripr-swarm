@@ -834,10 +834,12 @@ next=COMMAND
   counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
   row, or any other limit kind, keeps `stop=`.
 - Terminal states are one explicit line: `done=` (no weak or unobserved gap is
-  left to fix from the test side, or no changed behavior was found in scope) or
+  left to fix from the test side, or no changed behavior was found in scope),
   `stop=` (every finding is base-side or unresolved, all are suppressed by
   policy, ripr cannot tell from reading the code, preview-only evidence, or
-  nothing was analyzed because no scope was given). `done=` is static advisory
+  nothing was analyzed because no scope was given), or `open=` (no gap is
+  listed, but a reach-only limitation still carries a weak or smoke related
+  test; it replaces `stop=` as described above). `done=` is static advisory
   evidence, not runtime mutation outcome or test adequacy.
 
 Machine consumers that need fields should keep using `--format json`; this
@@ -19221,7 +19223,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.126",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.127",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20006,7 +20008,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.126",
+      "schema_version": "1.127",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

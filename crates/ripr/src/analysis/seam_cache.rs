@@ -604,7 +604,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// assertion credit (RIPR-SPEC-0369, #11703).
 /// `1.126`: a predicate on a self-closed `if` statement takes no branch-value
 /// sink from the next line (#10880); `1.125` credited a coincident row.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.126";
+/// `1.127`: those prelude globs keep assertion credit only when `Cargo.lock`
+/// pins an audited version of the crate (RIPR-SPEC-0369). Old entries credited
+/// by crate name alone.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.127";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -5542,7 +5545,9 @@ mod tests {
         // 1.124 -> 1.125: `verus!` region limit and verification-prelude glob
         // credit (RIPR-SPEC-0369, #11703).
         // 1.125 -> 1.126: self-closed `if` statement tail (#10880).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.126");
+        // 1.126 -> 1.127: those prelude globs keep assertion credit only for
+        // audited locked versions (RIPR-SPEC-0369).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.127");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.

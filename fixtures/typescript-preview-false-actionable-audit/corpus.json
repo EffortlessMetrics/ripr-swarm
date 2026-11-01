@@ -328,7 +328,7 @@
       "disposition": "candidate_future_support",
       "repair_packet_ready": false,
       "authority_boundary": "preview_advisory_only",
-      "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape",
+      "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape",
       "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
       "future_support": "module initializer support must distinguish exact exported value observers from relational/broad observers and dynamic initialization before repair-card projection",
       "must_remain_non_actionable": true,

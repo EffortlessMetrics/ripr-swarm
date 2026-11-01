@@ -91,7 +91,7 @@ impl ConfidenceCap {
                 "the assertion is not confirmed to observe the changed value".to_string()
             }
             Self::DiscriminatorNotEstablished => {
-                "whether a discriminator exists is not established".to_string()
+                "whether a test checks this behavior is not established".to_string()
             }
             Self::InfectionNotEstablished => {
                 "whether the changed value alters behavior is not established".to_string()
