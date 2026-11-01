@@ -840,6 +840,25 @@ fn swaps_that_change_the_predicate_name_no_boundary() {
 }
 
 #[test]
+fn pure_operand_swap_beside_an_unchanged_clause_names_its_clause() {
+    assert_eq!(
+        boundary_label(Some("  if (a > 1 && b < 2) {"), "  if (1 < a && b < 2) {").as_deref(),
+        Some("1 == a")
+    );
+}
+
+#[test]
+fn swap_plus_another_edit_in_the_line_names_no_boundary() {
+    for (old, new) in [
+        ("  if (a > 1 && b < 2) {", "  if (1 < a && b < 3) {"),
+        ("  if (a > 1 && b < 2) {", "  if (1 < a && b <= 2) {"),
+        ("  if (x > 1 && ok) {", "  if (1 < x && done) {"),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
+    }
+}
+
+#[test]
 fn two_tokens_changed_in_one_clause_name_no_boundary() {
     for (old, new) in [
         ("  if (a > 1 && ok) {", "  if (a >= 2 && ok) {"),

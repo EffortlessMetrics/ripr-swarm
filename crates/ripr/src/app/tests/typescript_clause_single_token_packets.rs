@@ -195,3 +195,25 @@ fn unmirrored_operand_exchange_starts_no_repair() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Positive control: the swap is the whole edit, so an unchanged neighbour
+/// clause does not stop it naming its clause.
+#[test]
+fn pure_operand_swap_beside_an_unchanged_clause_names_its_clause() -> Result<(), String> {
+    let check = check_typescript("swap-beside", "a > 1 && b < 2", "1 < a && b < 2")?;
+    if !check.names_discriminator("1 == a") {
+        return Err(format!("expected `1 == a`: {}", check.finding));
+    }
+    Ok(())
+}
+
+/// Discriminating negative: a swap plus an edit to another clause is not the
+/// whole edit, so it names no boundary.
+#[test]
+fn swap_plus_neighbour_clause_edit_starts_no_repair() -> Result<(), String> {
+    let check = check_typescript("swap-plus", "a > 1 && b < 2", "1 < a && b < 3")?;
+    if check.names_any_comparison() || check.packet_ready() || check.class() == Some("exposed") {
+        return Err(format!("swap plus edit named a clause: {}", check.finding));
+    }
+    Ok(())
+}

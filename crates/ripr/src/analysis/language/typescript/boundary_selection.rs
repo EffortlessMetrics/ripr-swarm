@@ -308,6 +308,14 @@ fn operand_swap(new: &BoundaryLine, old: &BoundaryLine, site: &BoundarySite) -> 
     else {
         return false;
     };
+    // The swap must be the whole edit: every token outside the swapped site
+    // is identical at the same index.
+    let outside_identical = (0..new.tokens.len())
+        .filter(|i| !(site.first..=site.last).contains(i))
+        .all(|i| new.tokens[i].text == old.tokens[i].text);
+    if !outside_identical {
+        return false;
+    }
     let (Some((new_left, new_op, new_right)), Some((old_left, old_op, old_right))) =
         (swap_parts(new, site), swap_parts(old, prior))
     else {
