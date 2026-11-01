@@ -10862,12 +10862,19 @@
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
       "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/proximity-other-function",
-      "vector": "repo_exposure_proximity_test_pinning_another_function_cannot_grade_a_match_arm_up",
+      "vector": "repo_exposure_proximity_test_pinning_another_function_cannot_grade_a_seam_up",
       "assertions": [
         {
           "type": "expected_repo_seam_grip",
           "owner": "src/lib.rs::consume",
           "expression": "Reduction::Over(wait) =>",
+          "grip_class": "reachable_unrevealed",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::consume",
+          "expression": "wait < 5",
           "grip_class": "reachable_unrevealed",
           "reach": "yes"
         },
