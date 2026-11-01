@@ -3256,6 +3256,43 @@ mod spec_0106_scan_tests {
     }
 
     #[test]
+    fn extract_assertions_upgrades_inline_unwrap_err_variant_to_exact_error_variant() {
+        let body = r"
+            assert_eq!(compute(-1).unwrap_err(), CalcError::Negative);
+        ";
+        let facts = extract_assertions(body, 1);
+        let got = facts.iter().find(|f| f.text.contains("assert_eq!"));
+        assert!(got.is_some(), "must find the inline assert_eq! fact");
+        assert_eq!(
+            got.map(|f| f.kind.clone()),
+            Some(OracleKind::ExactErrorVariant),
+            "inline unwrap_err variant equality must be ExactErrorVariant"
+        );
+    }
+
+    #[test]
+    fn extract_assertions_inline_non_variant_unwrap_err_stays_exact_value() -> Result<(), String> {
+        let body = r"
+            assert_eq!(compute(-1).unwrap_err(), err);
+        ";
+        let facts = extract_assertions(body, 1);
+        let got = facts
+            .iter()
+            .find(|f| f.text.contains("assert_eq!"))
+            .ok_or_else(|| "must find the inline assert_eq! fact".to_string())?;
+        if got.kind != OracleKind::ExactValue {
+            return Err(format!(
+                "inline unwrap_err compared with a non-variant must stay ExactValue, got {:?}",
+                got.kind
+            ));
+        }
+        if got.strength != crate::domain::OracleStrength::Strong {
+            return Err("non-variant inline control stays strong ExactValue".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn extract_assertions_upgrades_expect_err_constructor_payload_equality_to_exact_error_variant()
     -> Result<(), String> {
         let body = r#"
