@@ -337,9 +337,7 @@ fn file_has_inner_cfg_gate(source: &str) -> bool {
         }
         // Only `#![cfg(..)]` gates the file; `#![cfg_attr(docsrs, ..)]` and
         // `#![cfg_attr(not(test), no_std)]` are ordinary crate-root headers.
-        if trimmed.starts_with("#![")
-            && matches!(attribute_cfg_family(trimmed), AttributeCfgFamily::Cfg)
-        {
+        if trimmed.starts_with("#![") && inner_attribute_may_gate_file(trimmed) {
             return true;
         }
         if !trimmed.starts_with('#') {
@@ -347,6 +345,22 @@ fn file_has_inner_cfg_gate(source: &str) -> bool {
         }
     }
     false
+}
+
+/// `#![cfg(..)]`, or an inner `#![cfg_attr(.., cfg(..))]` that can add a
+/// `cfg` gate. A `cfg_attr` that only sets other attributes
+/// (`no_std`, `feature(doc_cfg)`) does not gate the file.
+fn inner_attribute_may_gate_file(trimmed: &str) -> bool {
+    match attribute_cfg_family(trimmed) {
+        AttributeCfgFamily::Cfg => true,
+        AttributeCfgFamily::CfgAttr => attribute_path_and_optional_args(trimmed)
+            .and_then(|(_, args)| args)
+            .is_some_and(|args| {
+                let compact: String = args.split_whitespace().collect();
+                compact.contains(",cfg(")
+            }),
+        AttributeCfgFamily::Other => false,
+    }
 }
 
 /// A `#[cfg(..)]` other than `#[cfg(doctest)]`, or any `#[cfg_attr(..)]`,
@@ -465,10 +479,10 @@ fn attribute_bears_doc_metadata(trimmed: &str) -> bool {
     if !trimmed.starts_with("#[") {
         return false;
     }
-    trimmed.starts_with("#[doc")
-        || trimmed.contains(" doc =")
-        || trimmed.contains(", doc =")
-        || trimmed.contains(", doc=")
+    // Whitespace is insignificant between `#[` and the path and around `=`
+    // (`#[ doc = ".."]` is a doc fragment), so compare the compacted text.
+    let compact: String = trimmed.split_whitespace().collect();
+    compact.starts_with("#[doc") || compact.contains(",doc=")
 }
 
 /// Whether the doc run `lines[start..end]` shares its item's document with

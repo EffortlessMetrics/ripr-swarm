@@ -401,6 +401,13 @@ fn cfg_gated_items_and_inner_cfg_files_register_nothing() -> Result<(), Box<dyn 
     }
     package(&dir.0, "", &format!("#![cfg(feature = \"x\")]\n{WIRE}"))?;
     assert_eq!(doctests(&dir.0, &["src/lib.rs"])?, Vec::new());
+    // An inner `#![cfg_attr(.., cfg(..))]` can add a gate, so it refuses too.
+    package(
+        &dir.0,
+        "",
+        &format!("#![cfg_attr(feature = \"x\", cfg(any()))]\n{WIRE}"),
+    )?;
+    assert_eq!(doctests(&dir.0, &["src/lib.rs"])?, Vec::new());
     // An inner `#![cfg_attr(..)]` is an ordinary crate-root header, not a gate.
     package(
         &dir.0,
@@ -410,7 +417,18 @@ fn cfg_gated_items_and_inner_cfg_files_register_nothing() -> Result<(), Box<dyn 
     assert_eq!(doctests(&dir.0, &["src/lib.rs"])?.len(), 1);
     let cfg_doctest = format!("{example}#[cfg(doctest)]\npub fn read_u16() {{}}\n");
     assert_eq!(examples(&cfg_doctest).len(), 1);
+    // And it registers through the index, not just the example scan.
+    package(&dir.0, "", &cfg_doctest)?;
+    assert_eq!(doctests(&dir.0, &["src/lib.rs"])?.len(), 1);
     Ok(())
+}
+
+#[test]
+fn a_spaced_doc_attribute_before_the_run_is_a_shared_document() {
+    // rustdoc joins `#[ doc = ".."]` with the `///` run below it, so the
+    // opening fence in the attribute closes at the run's first fence.
+    let lib = "#[ doc = \"```text\"]\n/// ```\n/// assert_eq!(wire::read_u16(&[0, 1]), 1);\n/// ```\npub fn read_u16() {}\n";
+    assert_eq!(examples(lib), Vec::new(), "{lib}");
 }
 
 #[test]
