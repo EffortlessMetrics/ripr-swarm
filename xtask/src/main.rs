@@ -15168,6 +15168,7 @@ fn check_output_contracts() -> Result<(), String> {
             "kind" => {
                 let producer = match value.as_str() {
                     "agent_card_refusal" => "crates/ripr/src/cli/commands/agent_card.rs",
+                    "cli_refusal" => "crates/ripr/src/output/cli_refusal.rs",
                     "python_repair_driver_binding" => {
                         "crates/ripr/src/app/python_repair_binding.rs"
                     }

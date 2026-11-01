@@ -596,7 +596,16 @@ fn context_selector_miss_prints_error_without_a_failed_progress_line() -> Result
         .output()
         .map_err(|error| format!("run ripr context: {error}"))?;
     assert_eq!(output.status.code(), Some(2), "selector miss keeps exit 2");
-    assert!(output.stdout.is_empty(), "selector miss keeps empty stdout");
+    // #11584: `context` emits JSON only, so the miss is one `cli_refusal`
+    // document on stdout; the progress and stderr contract is unchanged.
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("selector miss stdout is not a refusal document: {error}"))?;
+    assert_eq!(
+        document
+            .pointer("/error/code")
+            .and_then(serde_json::Value::as_str),
+        Some("selector_miss")
+    );
     let stderr = stderr_text(&output);
     assert!(
         stderr.contains("no finding matched \"nocolon\""),

@@ -3830,7 +3830,10 @@ fn help_surfaces_stay_task_first() -> Result<(), String> {
             row["exit"]["kind"], "decision_or_refusal",
             "{id} must advertise its decision exits"
         );
-        assert!(row["accepts_json_flag"].is_null(), "{id} has no JSON flag");
+        assert_eq!(
+            row["accepts_json_flag"], "--json",
+            "{id} accepts --json (#11584)"
+        );
     }
     let status = find("cmd:status")?;
     assert_eq!(status["exit"]["kind"], "completed_or_failed");
@@ -5629,6 +5632,98 @@ fn member_context_selector_shadowed_by_a_root_package_file_is_refused() -> Resul
 
 #[path = "task_first_facade/brief_diff_status.rs"]
 mod brief_diff_status;
+
+/// #11584: `repair --json` starts the same attempt as the human route and
+/// prints exactly one packet document whose `repair_attempt` block names it.
+#[test]
+fn repair_json_prints_the_packet_with_the_started_attempt_id() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-repair-json")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let repair = run_ripr(
+        root,
+        &["repair", FIXTURE_SEAM, "--root", &root_arg, "--json"],
+    )?;
+    assert_exit(&repair, 0, "repair --json with an explicit eligible seam");
+    let document: serde_json::Value = serde_json::from_slice(&repair.stdout)
+        .map_err(|error| format!("stdout must be one JSON document: {error}"))?;
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1, "exactly one attempt must be created");
+    assert_eq!(
+        document["repair_attempt"]["attempt_id"],
+        ids[0].as_str(),
+        "the packet must name the attempt it started:\n{document:#}"
+    );
+    assert!(
+        document.get("status").is_none(),
+        "a started repair is not a refusal: {document:#}"
+    );
+
+    // A repeat resumes the awaiting attempt through its typed status
+    // document: still one JSON document, still one attempt.
+    let again = run_ripr(
+        root,
+        &["repair", FIXTURE_SEAM, "--root", &root_arg, "--json"],
+    )?;
+    assert_exit(&again, 0, "repeated repair --json");
+    let resumed: serde_json::Value = serde_json::from_slice(&again.stdout)
+        .map_err(|error| format!("resume stdout must be one JSON document: {error}"))?;
+    assert_eq!(resumed["attempt"]["attempt_id"], ids[0].as_str());
+    assert_eq!(attempt_ids(root).len(), 1, "a repeat must not duplicate");
+    Ok(())
+}
+
+/// #11584: `continue --json` prints the after-phase document for the exact
+/// attempt it advanced, and a declined second continue answers with the
+/// shared refusal document.
+#[test]
+fn continue_json_prints_one_document_for_the_advanced_attempt() -> Result<(), String> {
+    let fixture = Fixture::boundary("facade-continue-json")?;
+    let root = &fixture.root;
+    let root_arg = root.to_string_lossy().into_owned();
+    let repair = run_ripr(
+        root,
+        &["repair", FIXTURE_SEAM, "--root", &root_arg, "--json"],
+    )?;
+    assert_exit(&repair, 0, "repair --json start");
+    let ids = attempt_ids(root);
+    assert_eq!(ids.len(), 1);
+    let attempt_id = ids[0].clone();
+    let pricing = std::fs::read_to_string(root.join("tests/pricing.rs"))
+        .map_err(|error| format!("read pricing tests: {error}"))?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        format!("{pricing}{FIXTURE_BOUNDARY_TEST}"),
+    )
+    .map_err(|error| format!("write focused edit: {error}"))?;
+    let continued = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(&continued, 0, "continue --json with one current attempt");
+    let document: serde_json::Value = serde_json::from_slice(&continued.stdout)
+        .map_err(|error| format!("stdout must be one JSON document: {error}"))?;
+    assert!(
+        document.to_string().contains(&attempt_id),
+        "the document must name the advanced attempt {attempt_id}:\n{document:#}"
+    );
+    assert_eq!(
+        read_manifest(root, &attempt_id)?["state"],
+        "ready_to_finish"
+    );
+
+    // The attempt is ready to finish but has no receipt yet, so a second
+    // continue is a declined decision: exit 3 with the shared refusal
+    // document, never a success-shaped one.
+    let declined = run_ripr(root, &["continue", "--root", &root_arg, "--json"])?;
+    assert_exit(
+        &declined,
+        3,
+        "continue --json on an attempt awaiting its receipt",
+    );
+    let refusal: serde_json::Value = serde_json::from_slice(&declined.stdout)
+        .map_err(|error| format!("a declined continue must write the refusal document: {error}"))?;
+    assert_eq!(refusal["status"], "refused");
+    assert_eq!(refusal["error"]["code"], "continue_declined");
+    Ok(())
+}
 
 /// #11598: `--quiet` (and `RIPR_QUIET`) on `repair` / `continue` drop the
 /// phase narration and `wrote <path>` lines but never the results (attempt

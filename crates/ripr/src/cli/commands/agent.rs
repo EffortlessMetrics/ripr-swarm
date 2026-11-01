@@ -2340,6 +2340,11 @@ fn run_agent_repair_phase(
                         if !crate::app::task_first::is_missing_edit_target_error(&error) {
                             return error;
                         }
+                        // #11584: a deliberate refusal that wrote nothing, like
+                        // the held-target refusal above, so `ripr repair`
+                        // exits with the documented decision code 3 instead
+                        // of the could-not-complete code 2.
+                        refusal.start_refused = true;
                         refusal.code = Some(crate::app::task_first::RepairRefusalCode::NoTestRoute);
                         // #10978: say where the change is and what to do next.
                         // The exact diagnostic stays last, because `ripr agent

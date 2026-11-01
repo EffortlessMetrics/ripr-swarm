@@ -268,7 +268,7 @@ garbage and truncated-section outcomes, independently hashed input identity,
 coverage counts and nonempty retained finding coordinates.
 `unsupported_check_keeps_rendered_formats_and_repo_scope` covers human, SARIF,
 native/Shields badge reports and the repo-only agent packet control;
-`check_json_malformed_options_remain_empty_exit_two` separates usage failure.
+`check_json_malformed_options_never_masquerade_as_a_report` separates usage failure.
 `cli_smoke::unsupported_diff_exit::diff_json_outcomes_preserve_report_and_exit_contract`
 executes committed complete, empty, usable partial, conflict and mixed subjects
 with literal outcome/status/count/coordinate expectations and independently

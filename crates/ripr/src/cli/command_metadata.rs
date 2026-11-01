@@ -218,8 +218,9 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
             Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT)
         }
         // #6305: the façade's selection/setup/limitation outcomes exit 3
-        // with prose on stderr and an empty stdout, like the card family.
-        "cmd:repair" | "cmd:continue" => Some(EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+        // with prose on stderr. Stdout is empty unless `--json` asked for the
+        // shared `cli_refusal` document (#11584), like the card family.
+        "cmd:repair" | "cmd:continue" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:agent.verify-execute" => Some(EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT),
         "cmd:agent.repair" => Some(EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
         "cmd:receipt.check" => Some(EXIT_RECEIPT_CHECK),
@@ -1863,7 +1864,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        accepts_json_flag: JsonFlag::None,
+        accepts_json_flag: JsonFlag::Json,
         writes_json_artifacts: false,
         example: "ripr repair [<item>] --root .",
         next_routes: &["continue", "status"],
@@ -1874,7 +1875,7 @@ const METADATA: &[CommandMetadata] = &[
             "a start held by an uncommitted focused test file (start_refused_uncommitted_target) or with no test route (no_test_route) starts nothing",
             "a bare `ripr repair` whose selector needs an explicit item (repair_needs_item) starts nothing",
         ],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "records the before snapshot and packet for one subject; ripr never edits source files and never runs project verification from this command.",
         not_applicable_reason: None,
     },
@@ -1892,7 +1893,7 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        accepts_json_flag: JsonFlag::None,
+        accepts_json_flag: JsonFlag::Json,
         writes_json_artifacts: false,
         example: "ripr continue [--attempt ID] --root .",
         next_routes: &["status", "receipt write"],
@@ -1903,7 +1904,7 @@ const METADATA: &[CommandMetadata] = &[
             "no current attempt (no_current_attempt) or several (ambiguous_attempts) starts nothing",
             "an edit-cage violation exits 2 with code edit_cage_violation (attempt_stale or attempt_incomparable when HEAD moved or files cannot be compared): the attempt is terminal, start a fresh `ripr repair`",
         ],
-        exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
+        exit: EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT,
         limitations: "records the after snapshot and composes static verification for one attempt; ripr never performs the edit and never runs project tests itself.",
         not_applicable_reason: None,
     },
@@ -3534,8 +3535,8 @@ mod tests {
             ("cmd:agent.stub", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.packet", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             ("cmd:agent.repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
-            ("cmd:repair", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
-            ("cmd:continue", EXIT_TYPED_REFUSAL_EMPTY_STDOUT),
+            ("cmd:repair", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
+            ("cmd:continue", EXIT_TYPED_REFUSAL_JSON_OPTIONAL_STDOUT),
             (
                 "cmd:agent.verify-execute",
                 EXIT_TYPED_REFUSAL_STDOUT_DOCUMENT,

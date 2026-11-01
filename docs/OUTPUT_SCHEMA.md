@@ -134,6 +134,7 @@ map is:
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
+| CLI refusal document (`kind: cli_refusal`; usage errors, `context` selector misses, `repair` / `continue` façade refusals; #11584) | `schema_version` | `0.1` |
 | `ripr agent stub --json` document and its refusal stdout envelope (`kind: rust_test_stub`, `state: ready` or `refused`; `next_repair` added in `0.3`, #8727; `unsupported_language` refusal added in `0.4`, #10716) | `schema_version` | `0.4` |
 
 The MCP tool envelopes carry the schema-versioned document as
@@ -158,6 +159,7 @@ records that distinction.
 | --- | --- | --- |
 | `schemas/ripr/check.schema.json` | `0.2` | `crates/ripr/src/app.rs`; check envelope |
 | `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `crates/ripr/src/app.rs`; analysis-timeout refusal envelope with input context (RIPR-SPEC-0241 amendment #10796) |
+| `schemas/ripr/cli-refusal.schema.json` | `0.1` | `crates/ripr/src/output/cli_refusal.rs`; standalone `cli_refusal` document for usage errors, `context` selector misses and `repair` / `continue` refusals (#11584) |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `crates/ripr/src/output/doctor.rs`; doctor environment report (#5214) |
 | `schemas/ripr/executed-control.schema.json` | `1` | `crates/ripr/src/domain/executed_control.rs` and `crates/ripr/src/output/executed_control.rs`; executed-control obligation/result/packet vocabulary (#4641) |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `crates/ripr/src/output/gate.rs`; gate decision envelope |
@@ -250,6 +252,46 @@ for four synthetic profiles only, with real-attempt usability still pending.
 The budget-version constant lives in
 `crates/ripr/src/domain/repair_card.rs` and is pinned by unit tests and
 `cargo xtask check-output-contracts`.
+
+## CLI refusal document (`cli_refusal`, schema `0.1`)
+
+When argv requests JSON (`--json`, or a `--format` of `json` or a `*-json`
+family) and the command has no result document to carry the refusal, it writes
+one `cli_refusal` document to stdout (`schemas/ripr/cli-refusal.schema.json`,
+#11584). The exit code (`2` or `3`) and the stderr prose are unchanged; without
+a JSON request stdout stays empty.
+
+```json
+{
+  "schema_version": "0.1",
+  "kind": "cli_refusal",
+  "tool": "ripr",
+  "status": "refused",
+  "command": "check",
+  "exit_code": 2,
+  "error": {
+    "code": "unknown_argument",
+    "message": "unknown check argument \"--bogus\". Run `ripr check --help --all`.",
+    "next": { "purpose": "recover", "command": "ripr check --help --all" }
+  }
+}
+```
+
+- `error.code` is the closed reason code to branch on: `unknown_argument`,
+  `unknown_value`, `unknown_command` (argv usage errors); `selector_miss`
+  (`context`); `repair_not_started` / `repair_failed` and `continue_declined` /
+  `continue_failed` (the task-first façade, exit `3` / `2`). A new code is an
+  additive minor bump; removing or renaming one is a major bump.
+- `error.message` is the verbatim stderr diagnostic, a non-authority.
+- `error.next` is the one runnable recovery command, or `null` when none
+  applies. The `check` refusal block uses the same `error` object.
+
+`ripr repair --json` prints the agent packet with its `repair_attempt` block
+(`attempt_id`, `next_command`) on a fresh start, and the `agent_attempt_status`
+document when an attempt already awaits its edit. `ripr continue --json` prints
+the `repair_after_refusal` / `repair_after_failure` documents of the after
+phase (each carries `attempt_id`) or, for an already-complete attempt, the
+`agent_attempt_status` document.
 
 ## Structured refusal remedy (`remedy`, additive, #11790, #11584)
 
@@ -1274,6 +1316,18 @@ and `gate evaluate` refuses a refusal envelope, and any document disclosing a
 pr-guidance, gap-ledger, and baseline inputs with a `config_error` naming the
 reason, exactly like the bounded and partial refusals above. A complete
 zero-finding envelope keeps its healthy `no_records` ledger and gate pass.
+
+Every refusal document below, and the two scope-guard documents above, also
+carries the shared refusal block (#11584) so a consumer branches on a
+discriminator instead of an empty `findings` list: top-level
+`"status": "refused"` and `"error": {"code", "message", "next"}`. `error.code`
+equals `run_limitations[0].category`; `error.message` is the stderr diagnostic;
+`error.next` is `{"purpose": "recover", "command": "<one runnable command>"}`
+or `null`. A completed run (including `no_scope` and
+`partial_with_limitations`) carries neither key. Commands with no result
+document (argv usage errors, `context` selector misses, the `repair` /
+`continue` façade) write the standalone `cli_refusal` document described under
+[CLI refusal document](#cli-refusal-document-cli_refusal-schema-01).
 
 Every other post-argv-parse `ripr check --json` failure also writes a document
 to stdout before reporting the error on stderr (#6834): the same envelope as

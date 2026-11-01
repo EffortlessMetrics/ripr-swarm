@@ -25,7 +25,7 @@ use crate::cli::suggest::unknown_argument;
 
 pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt from a Rust seam, or select a seam to repair.
 
-Usage: ripr repair [<item>] [--root PATH] [--base REF] [--quiet]
+Usage: ripr repair [<item>] [--root PATH] [--base REF] [--json] [--quiet]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -35,6 +35,11 @@ Options:
                    `ripr check --base`. Without it, repair infers the base
                    the way `ripr check` does. Only for a start ripr picks;
                    not allowed with an item.
+  --json           Print the repair packet with its `repair_attempt` block
+                   (attempt ID, next command) on stdout instead of the
+                   summary and card. A refusal prints one `cli_refusal`
+                   document (reason code, message, next command) on stdout
+                   and keeps its exit code.
   --quiet          Drop the start's progress narration and `wrote <path>`
                    lines from stderr. Refusal prose, the attempt id and the
                    next command stay. `RIPR_QUIET` (any value except empty,
@@ -70,13 +75,17 @@ before phase with explicit phase vocabulary."#;
 
 pub(in crate::cli) const CONTINUE_HELP: &str = r#"Continue the current repair attempt through its after phase.
 
-Usage: ripr continue [--attempt ID] [--root PATH] [--quiet]
+Usage: ripr continue [--attempt ID] [--root PATH] [--json] [--quiet]
 
 Options:
   --attempt ID     Select one repair attempt by ID.
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
+  --json           Print the verify result document (attempt ID, state) on
+                   stdout. A refusal prints one `cli_refusal` document
+                   (reason code, message, next command) on stdout and keeps
+                   its exit code.
   --quiet          Drop the after phase's progress narration and `wrote
                    <path>` lines from stderr. Refusal prose and the result
                    stay. `RIPR_QUIET` does the same.
@@ -130,6 +139,8 @@ pub(super) struct RepairFacadeOptions {
     /// `--root` was typed, so the root is used as given (#8767).
     pub(super) root_explicit: bool,
     pub(super) item: Option<String>,
+    /// `--json` (#11584): the machine route for the start and its refusals.
+    pub(super) json: bool,
     /// `--base`: the diff base for scoping an automatic start, as in
     /// `ripr check --base` (#11246). `None` infers it the way check does.
     pub(super) base: Option<String>,
@@ -144,6 +155,8 @@ pub(super) struct ContinueFacadeOptions {
     /// `--root` was typed, so the root is used as given (#8767).
     pub(super) root_explicit: bool,
     pub(super) attempt_id: Option<String>,
+    /// `--json` (#11584), as for `repair`.
+    pub(super) json: bool,
     /// `--quiet` (#11598), as for `repair`.
     pub(super) quiet: bool,
 }
@@ -183,6 +196,7 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
     let mut root_explicit = false;
     let mut item: Option<String> = None;
     let mut base: Option<String> = None;
+    let mut json = false;
     let mut quiet = false;
     let mut index = 0usize;
     while index < args.len() {
@@ -192,6 +206,7 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
                 root = PathBuf::from(expect_value(args, index, "--root")?);
                 root_explicit = true;
             }
+            "--json" => json = true,
             "--quiet" => quiet = true,
             "--base" => {
                 index += 1;
@@ -235,6 +250,7 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
         root,
         root_explicit,
         item,
+        json,
         base,
         quiet,
     }))
@@ -247,6 +263,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
     let mut root = PathBuf::from(".");
     let mut root_explicit = false;
     let mut attempt_id: Option<String> = None;
+    let mut json = false;
     let mut quiet = false;
     let mut index = 0usize;
     while index < args.len() {
@@ -256,6 +273,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
                 root = PathBuf::from(expect_value(args, index, "--root")?);
                 root_explicit = true;
             }
+            "--json" => json = true,
             "--quiet" => quiet = true,
             "--attempt" => {
                 index += 1;
@@ -273,6 +291,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
         root,
         root_explicit,
         attempt_id,
+        json,
         quiet,
     }))
 }
@@ -324,7 +343,77 @@ pub(in crate::cli) fn repair(args: &[String]) -> Result<(), CommandError> {
             println!("{}", help::render_command_help(REPAIR_HELP, &[]));
             Ok(())
         }
-        RepairFacadeCommand::Repair(options) => run_facade_repair(options),
+        RepairFacadeCommand::Repair(options) => {
+            let json = options.json;
+            let next = facade_next_command("ripr pilot", &options.root, options.root_explicit);
+            run_facade_repair(options)
+                .map_err(|error| facade_refusal("repair", json, next.as_deref(), error))
+        }
+    }
+}
+
+/// `command`, with `--root` appended only when the user typed one: an
+/// implicit root resolves the same way for the follow-up command.
+fn facade_next_command(
+    command: &str,
+    root: &std::path::Path,
+    root_explicit: bool,
+) -> Option<String> {
+    if !root_explicit {
+        return Some(command.to_string());
+    }
+    let bound = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+        &root.to_string_lossy(),
+    ));
+    Some(format!("{command} --root {bound}"))
+}
+
+/// The closed reason code of a facade refusal: a decision (exit 3) or an
+/// operational failure (exit 2), for `repair` or `continue`.
+fn facade_refusal_code(decision: bool, repair: bool) -> &'static str {
+    match (decision, repair) {
+        (true, true) => "repair_not_started",
+        (true, false) => "continue_declined",
+        (false, true) => "repair_failed",
+        (false, false) => "continue_failed",
+    }
+}
+
+/// Under `--json`, write the shared `cli_refusal` document for a facade
+/// refusal to stdout (#11584) and return the error unchanged, so the stderr
+/// prose and the 2/3 exit stay exactly as before. Callers use this only on
+/// paths where nothing has been written to stdout. A stdout delivery
+/// failure is an operational failure: no machine answer reached the caller.
+fn facade_refusal(
+    command: &'static str,
+    json: bool,
+    next_command: Option<&str>,
+    error: CommandError,
+) -> CommandError {
+    let code = facade_refusal_code(
+        matches!(error, CommandError::Decision(_)),
+        command == "repair",
+    );
+    if !json || matches!(error, CommandError::Interrupted(_)) {
+        return error;
+    }
+    let delivered =
+        crate::output::cli_refusal::render_cli_refusal(&crate::output::cli_refusal::CliRefusal {
+            command: Some(command),
+            exit_code: error.exit_code(),
+            code,
+            message: error.message(),
+            // A decision names a next step; an operational failure may not.
+            next_command: if matches!(error, CommandError::Decision(_)) {
+                next_command
+            } else {
+                None
+            },
+        })
+        .and_then(crate::cli::commands_context::write_stdout_refusal_json);
+    match delivered {
+        Ok(()) => error,
+        Err(failure) => CommandError::Failure(failure),
     }
 }
 
@@ -334,7 +423,20 @@ pub(in crate::cli) fn continue_repair(args: &[String]) -> Result<(), CommandErro
             println!("{}", help::render_command_help(CONTINUE_HELP, &[]));
             Ok(())
         }
-        ContinueFacadeCommand::Continue(options) => run_facade_continue(options),
+        ContinueFacadeCommand::Continue(options) => {
+            let json = options.json;
+            let next = facade_next_command("ripr status", &options.root, options.root_explicit);
+            // The after phase writes its own typed documents under `--json`;
+            // only refusals the facade itself decides get the shared one.
+            let own_document = std::cell::Cell::new(false);
+            run_facade_continue(options, &own_document).map_err(|error| {
+                if own_document.get() {
+                    error
+                } else {
+                    facade_refusal("continue", json, next.as_deref(), error)
+                }
+            })
+        }
     }
 }
 
@@ -447,7 +549,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     if let Some(existing) =
         crate::app::task_first::reusable_awaiting_attempt(&options.root, &seam_id)
     {
-        return resume_awaiting_attempt(&options.root, &seam_id, &existing);
+        return resume_awaiting_attempt(&options.root, &seam_id, &existing, options.json);
     }
     // The start's stdout is held until the handoff card renders too:
     // `cmd:repair` declares `EXIT_TYPED_REFUSAL_EMPTY_STDOUT`, so a card
@@ -455,8 +557,15 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // preceded by a success document would hand an orchestrator
     // success-shaped output on a retry that already started (#7032).
     let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
-        facade_before_options(&options.root, &seam_id, options.quiet),
+        facade_before_options(&options.root, &seam_id, options.json, options.quiet),
     )?;
+    if options.json {
+        // The machine route prints the packet envelope with its
+        // `repair_attempt` block (attempt ID, next command) and nothing
+        // else: the human card is not a JSON document.
+        print!("{before_stdout}");
+        return Ok(());
+    }
     // The compact handoff renders through the same card service the
     // advanced route serves. The attempt is already published here, so a
     // card failure must name the started attempt and its recovery
@@ -489,7 +598,21 @@ fn resume_awaiting_attempt(
     root: &std::path::Path,
     seam_id: &str,
     existing: &crate::app::task_first::ReusableAttempt,
+    json: bool,
 ) -> Result<(), CommandError> {
+    if json {
+        // The attempt already exists: its typed status document carries the
+        // attempt ID and the one next action, and nothing is written.
+        return super::agent::run_agent_status(AgentStatusOptions {
+            out_dir: None,
+            root: root.to_path_buf(),
+            root_explicit: true,
+            json: true,
+            store: None,
+            attempt_id: Some(existing.attempt_id.clone()),
+        })
+        .map_err(CommandError::from);
+    }
     let follow_up = crate::agent::human_after_phase_follow_up(&existing.next_command);
     let card_stdout = super::agent_card::agent_card_stdout(AgentCardOptions {
         root: root.to_path_buf(),
@@ -516,7 +639,12 @@ fn resume_awaiting_attempt(
     Ok(())
 }
 
-fn facade_before_options(root: &std::path::Path, seam_id: &str, quiet: bool) -> AgentRepairOptions {
+fn facade_before_options(
+    root: &std::path::Path,
+    seam_id: &str,
+    json: bool,
+    quiet: bool,
+) -> AgentRepairOptions {
     AgentRepairOptions {
         root: root.to_path_buf(),
         root_explicit: true,
@@ -536,12 +664,15 @@ fn facade_before_options(root: &std::path::Path, seam_id: &str, quiet: bool) -> 
         },
         verify_rollback: false,
         store: None,
-        json: false,
+        json,
         quiet,
     }
 }
 
-fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), CommandError> {
+fn run_facade_continue(
+    mut options: ContinueFacadeOptions,
+    own_document: &std::cell::Cell<bool>,
+) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
     super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
     ensure_command_root(&options.root, "continue")?;
@@ -555,36 +686,47 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             ))
         },
     )? {
-        ContinueSelection::Proceed { attempt_id } => super::agent::run_agent_repair_with_identity(
-            AgentRepairOptions {
-                root: options.root,
-                root_explicit: true,
-                seam_id: None,
-                gap_id: None,
-                base: None,
-                attempt_id: Some(attempt_id.as_str().to_string()),
-                phase: AgentRepairPhase::After,
-                python_repair_trust: None,
-                edit_authorization: crate::app::python_repair_binding::EditAuthorization {
-                    authorized: false,
-                    authority: None,
+        ContinueSelection::Proceed { attempt_id } => {
+            own_document.set(options.json);
+            super::agent::run_agent_repair_with_identity(
+                AgentRepairOptions {
+                    root: options.root,
+                    root_explicit: true,
+                    seam_id: None,
+                    gap_id: None,
+                    base: None,
+                    attempt_id: Some(attempt_id.as_str().to_string()),
+                    phase: AgentRepairPhase::After,
+                    python_repair_trust: None,
+                    edit_authorization: crate::app::python_repair_binding::EditAuthorization {
+                        authorized: false,
+                        authority: None,
+                    },
+                    verify_authorization:
+                        crate::app::python_repair_verification::VerifyAuthorization {
+                            authorized: false,
+                            authority: None,
+                        },
+                    verify_rollback: false,
+                    store: None,
+                    json: options.json,
+                    quiet: options.quiet,
                 },
-                verify_authorization: crate::app::python_repair_verification::VerifyAuthorization {
-                    authorized: false,
-                    authority: None,
-                },
-                verify_rollback: false,
-                store: None,
-                json: false,
-                quiet: options.quiet,
-            },
-            None,
-        ),
+                None,
+            )
+        }
         ContinueSelection::AlreadyComplete { report } => {
-            print!(
-                "{}",
-                crate::app::agent_status::render_agent_attempt_status_markdown(&report)
-            );
+            if options.json {
+                print!(
+                    "{}",
+                    crate::app::agent_status::render_agent_attempt_status_json(&report)?
+                );
+            } else {
+                print!(
+                    "{}",
+                    crate::app::agent_status::render_agent_attempt_status_markdown(&report)
+                );
+            }
             eprintln!(
                 "ripr: repair attempt `{}` is already complete ({}); no new attempt was created",
                 report.attempt.attempt_id, report.attempt.status_class
@@ -1144,6 +1286,22 @@ mod tests {
     }
 
     #[test]
+    fn repair_parse_accepts_json_and_nothing_else_flag_shaped() -> Result<(), String> {
+        match parse_repair_args(&args(&["--json", "seam-1"]))? {
+            RepairFacadeCommand::Repair(options) => {
+                if !options.json || options.item.as_deref() != Some("seam-1") {
+                    return Err(format!("bad repair --json parse: {options:?}"));
+                }
+            }
+            RepairFacadeCommand::Help => return Err("--json must not print help".to_string()),
+        }
+        match parse_repair_args(&args(&[]))? {
+            RepairFacadeCommand::Repair(options) if !options.json => Ok(()),
+            other => Err(format!("json must default off: {other:?}")),
+        }
+    }
+
+    #[test]
     fn repair_parse_fails_closed() -> Result<(), String> {
         for argv in [
             args(&["one", "two"]),
@@ -1187,6 +1345,14 @@ mod tests {
                 return Err("empty args must not print help".to_string());
             }
         }
+        match parse_continue_args(&args(&["--json", "--attempt", "id-1"]))? {
+            ContinueFacadeCommand::Continue(options) => {
+                if !options.json || options.attempt_id.as_deref() != Some("id-1") {
+                    return Err(format!("bad continue --json parse: {options:?}"));
+                }
+            }
+            ContinueFacadeCommand::Help => return Err("--json must not print help".to_string()),
+        }
         for argv in [args(&["--help"]), args(&["-h"])] {
             if parse_continue_args(&argv)? != ContinueFacadeCommand::Help {
                 return Err(format!("{argv:?} must print help"));
@@ -1196,7 +1362,7 @@ mod tests {
             args(&["positional"]),
             args(&["--attempt"]),
             args(&["--attempt", "  "]),
-            args(&["--json"]),
+            args(&["--bogus"]),
         ] {
             if parse_continue_args(&argv).is_ok() {
                 return Err(format!("continue accepted {argv:?}"));
@@ -1237,13 +1403,13 @@ mod tests {
         for (body, usage, flags) in [
             (
                 REPAIR_HELP,
-                "Usage: ripr repair [<item>] [--root PATH] [--base REF] [--quiet]",
-                &["--root", "--base", "--quiet"][..],
+                "Usage: ripr repair [<item>] [--root PATH] [--base REF] [--json] [--quiet]",
+                &["--root", "--base", "--json", "--quiet"][..],
             ),
             (
                 CONTINUE_HELP,
-                "Usage: ripr continue [--attempt ID] [--root PATH] [--quiet]",
-                &["--attempt", "--root", "--quiet"][..],
+                "Usage: ripr continue [--attempt ID] [--root PATH] [--json] [--quiet]",
+                &["--attempt", "--root", "--json", "--quiet"][..],
             ),
             (
                 STATUS_HELP,
@@ -1661,7 +1827,7 @@ mod tests {
         // The start holds its document: it comes back as a value, so
         // nothing reaches stdout before the card has rendered.
         let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
-            facade_before_options(&root, FIXTURE_SEAM, false),
+            facade_before_options(&root, FIXTURE_SEAM, false, false),
         )
         .map_err(|error| error.to_string())?;
         if before_stdout.trim().is_empty() {

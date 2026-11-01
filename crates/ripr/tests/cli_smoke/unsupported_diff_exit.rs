@@ -215,7 +215,12 @@ fn diff_human_unsupported_and_usage_keep_stream_contracts() -> TestResult {
         &["diff", "--json", "--unknown-diff-exit-option"],
     )?;
     assert_eq!(usage.status.code(), Some(2));
-    assert!(usage.stdout.is_empty());
+    // #11584: a JSON request gets the standalone refusal document, never a
+    // diff report; the prose stays on stderr.
+    let usage_document: Value = serde_json::from_slice(&usage.stdout)?;
+    assert_eq!(usage_document["kind"], "cli_refusal");
+    assert_eq!(usage_document["status"], "refused");
+    assert!(usage_document.get("analysis_scope").is_none());
     assert!(!usage.stderr.is_empty());
     let refused = run_command(
         env!("CARGO_BIN_EXE_ripr"),

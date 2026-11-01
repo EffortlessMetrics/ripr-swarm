@@ -13,6 +13,94 @@
 
 use crate::cli::help;
 
+/// The typed identity of a usage error whose message this module built.
+///
+/// Usage errors travel as plain `String`s, so a machine renderer would have
+/// to guess their class from prose. The message builders below record the
+/// class beside the message they return; [`take_usage_refusal`] hands it back
+/// only for the exact message, so no renderer inspects error text.
+///
+/// The record is process-wide, not thread-local: a command may build its
+/// usage message on a worker thread (the interruptible `check` runner) while
+/// the dispatcher that renders the refusal runs on the main thread. Records
+/// are keyed by their message and bounded, so a concurrent unrelated error
+/// can neither clear nor inherit another error's class.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UsageRefusal {
+    /// Closed set: `unknown_argument`, `unknown_value`, `unknown_command`.
+    pub(crate) code: &'static str,
+    /// The one command that answers the mistake, when there is one.
+    pub(crate) next_command: Option<String>,
+    message: String,
+}
+
+/// Most recent usage records kept; older ones are dropped.
+const RECORDED_USAGE_LIMIT: usize = 16;
+
+/// A bounded, message-keyed list of usage records. The process-wide store is
+/// one instance; the bound is exercised on a local instance so no test can
+/// evict another test's record.
+#[derive(Default)]
+struct UsageRecords {
+    records: Vec<UsageRefusal>,
+}
+
+impl UsageRecords {
+    const fn new() -> Self {
+        Self {
+            records: Vec::new(),
+        }
+    }
+
+    fn record(&mut self, usage: UsageRefusal) {
+        self.records
+            .retain(|existing| existing.message != usage.message);
+        if self.records.len() >= RECORDED_USAGE_LIMIT {
+            self.records.remove(0);
+        }
+        self.records.push(usage);
+    }
+
+    fn take(&mut self, message: &str) -> Option<UsageRefusal> {
+        let index = self
+            .records
+            .iter()
+            .position(|existing| existing.message == message)?;
+        Some(self.records.remove(index))
+    }
+}
+
+static RECORDED_USAGE: std::sync::Mutex<UsageRecords> = std::sync::Mutex::new(UsageRecords::new());
+
+fn recorded_usage() -> std::sync::MutexGuard<'static, UsageRecords> {
+    // A poisoned lock only means another thread panicked while holding it;
+    // the list stays a valid list of independent records.
+    RECORDED_USAGE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Record the class of the usage message just built and return the message.
+pub(crate) fn record_usage_refusal(
+    code: &'static str,
+    next_command: Option<String>,
+    message: String,
+) -> String {
+    recorded_usage().record(UsageRefusal {
+        code,
+        next_command,
+        message: message.clone(),
+    });
+    message
+}
+
+/// The recorded class of `message`, if a usage builder produced exactly that
+/// message. Taking removes the record, so a later unrelated error never
+/// inherits a stale class.
+pub(crate) fn take_usage_refusal(message: &str) -> Option<UsageRefusal> {
+    recorded_usage().take(message)
+}
+
 /// The help route an unknown-argument error points at. `check`'s default help
 /// is a one-screen summary that omits advanced flags, so a mistyped option
 /// there is sent to the exhaustive reference.
@@ -32,6 +120,11 @@ fn help_pointer(command: &str) -> String {
 /// `check` points at `--help --all` (see [`help_pointer`]).
 pub(crate) fn unknown_argument(command: &str, arg: &str) -> String {
     let pointer = help_pointer(command);
+    let message = unknown_argument_message(command, arg, &pointer);
+    record_usage_refusal("unknown_argument", Some(pointer), message)
+}
+
+fn unknown_argument_message(command: &str, arg: &str, pointer: &str) -> String {
     // `--version` is a process-level identity query scoped to the top level
     // (`parse.rs`); a subcommand that does not implement its own version
     // contract rejects it. Naming the spelling that works (#4318) beats
@@ -63,6 +156,11 @@ fn implements_local_version(command: &str) -> bool {
 /// as a near-miss suggestion, so the same mistake names the fix on every
 /// command instead of only where a parser happens to inline the list.
 pub(crate) fn unknown_value(label: &str, value: &str, accepted: &[&str]) -> String {
+    let message = unknown_value_message(label, value, accepted);
+    record_usage_refusal("unknown_value", None, message)
+}
+
+fn unknown_value_message(label: &str, value: &str, accepted: &[&str]) -> String {
     match closest(value, accepted.iter().copied()) {
         Some(suggestion) => format!(
             "unknown {label} {value:?}. Did you mean `{suggestion}`? Accepted: {}.",
@@ -83,6 +181,15 @@ pub(crate) fn unknown_value(label: &str, value: &str, accepted: &[&str]) -> Stri
 /// names (#9359). The near-miss suggestion still names the fix when one
 /// format is close enough (#4318).
 pub(in crate::cli) fn unknown_format_value(value: &str, accepted: &[&str]) -> String {
+    let message = unknown_format_value_message(value, accepted);
+    record_usage_refusal(
+        "unknown_value",
+        Some("ripr check --help --all".to_string()),
+        message,
+    )
+}
+
+fn unknown_format_value_message(value: &str, accepted: &[&str]) -> String {
     match closest(value, accepted.iter().copied()) {
         Some(suggestion) => format!(
             "unknown format {value:?}. Did you mean `{suggestion}`? \
@@ -361,6 +468,94 @@ pub(in crate::cli) fn edit_distance(left: &str, right: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_builders_record_a_typed_class_for_exactly_their_message() {
+        let message = unknown_argument("check", "--forma-record-11584");
+        let recorded = take_usage_refusal(&message);
+        assert_eq!(
+            recorded.as_ref().map(|usage| usage.code),
+            Some("unknown_argument")
+        );
+        assert_eq!(
+            recorded.and_then(|usage| usage.next_command),
+            Some("ripr check --help --all".to_string())
+        );
+        // Taking removes the record: a stale class is never inherited.
+        assert_eq!(take_usage_refusal(&message), None);
+
+        let value = unknown_value("mode", "turbo-record-11584", &["fast", "deep"]);
+        assert_eq!(
+            take_usage_refusal(&value).map(|usage| usage.code),
+            Some("unknown_value")
+        );
+        let format = unknown_format_value("yaml-record-11584", &["json", "human"]);
+        assert_eq!(
+            take_usage_refusal(&format).map(|usage| usage.code),
+            Some("unknown_value")
+        );
+    }
+
+    #[test]
+    fn a_different_message_never_takes_the_recorded_class() {
+        let message = unknown_argument("check", "--forma-other-11584");
+        // An unrelated error with different text stays prose-only and leaves
+        // the real record alone.
+        assert_eq!(take_usage_refusal("some operational failure"), None);
+        assert_eq!(
+            take_usage_refusal("unknown check argument \"--forma-other\""),
+            None
+        );
+        assert!(take_usage_refusal(&message).is_some());
+    }
+
+    #[test]
+    fn the_record_is_visible_across_threads() {
+        // The interruptible `check` runner builds its usage message on a
+        // worker thread; the dispatcher that renders the refusal is another.
+        let message = std::thread::spawn(|| unknown_argument("check", "--worker-11584"))
+            .join()
+            .unwrap_or_default();
+        assert!(!message.is_empty());
+        assert_eq!(
+            take_usage_refusal(&message).map(|usage| usage.code),
+            Some("unknown_argument")
+        );
+    }
+
+    #[test]
+    fn the_record_list_is_bounded() {
+        // A local store: the bound must not be exercised on the process-wide
+        // list, where it would evict records parallel tests still need.
+        let usage = |index: usize| UsageRefusal {
+            code: "unknown_argument",
+            next_command: None,
+            message: format!("record {index}"),
+        };
+        let mut records = UsageRecords::new();
+        for index in 0..(RECORDED_USAGE_LIMIT + 4) {
+            records.record(usage(index));
+        }
+        assert_eq!(records.records.len(), RECORDED_USAGE_LIMIT);
+        // The oldest records were dropped; the newest are kept.
+        assert_eq!(records.take("record 0"), None);
+        assert!(
+            records
+                .take(&format!("record {}", RECORDED_USAGE_LIMIT + 3))
+                .is_some()
+        );
+        // Re-recording a message replaces it instead of growing the list.
+        records.record(usage(10));
+        records.record(usage(10));
+        assert_eq!(
+            records
+                .records
+                .iter()
+                .filter(|existing| existing.message == "record 10")
+                .count(),
+            1
+        );
+    }
 
     #[test]
     fn unknown_argument_suggests_the_nearest_documented_flag() {

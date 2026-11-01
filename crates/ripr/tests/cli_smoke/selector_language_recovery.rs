@@ -126,11 +126,12 @@ impl Drop for Fixture {
     }
 }
 
-fn miss(output: Output) -> TestResult<String> {
+fn miss(command: &str, output: Output) -> TestResult<String> {
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(
-        output.stdout.is_empty(),
-        "selector misses keep stdout empty"
+        super::selector_miss_stdout_matches_contract(command, &output.stdout),
+        "{command} selector miss stdout breaks the contract: {}",
+        String::from_utf8_lossy(&output.stdout)
     );
     let stderr = String::from_utf8(output.stderr)?;
     assert!(stderr.contains("no finding matched"), "{stderr}");
@@ -171,7 +172,7 @@ fn disabled_preview_misses_disclose_scope_and_replay_exact_listing() -> TestResu
             "mixed Rust findings must survive the disabled preview: {report}"
         );
         for command in ["explain", "context"] {
-            let stderr = miss(fixture.run(command, Some("src/z.ts:2"), &scope)?)?;
+            let stderr = miss(command, fixture.run(command, Some("src/z.ts:2"), &scope)?)?;
             assert!(
                 stderr.contains("Analysis limitations for this run:"),
                 "{label}/{command}: {stderr}"
@@ -231,7 +232,10 @@ fn enabled_preview_hits_and_ordinary_misses_do_not_claim_unanalyzed_scope() -> T
             !text.contains("Analysis limitations for this run:"),
             "{text}"
         );
-        let stderr = miss(fixture.run(command, Some("probe:no-such-finding"), &scope)?)?;
+        let stderr = miss(
+            command,
+            fixture.run(command, Some("probe:no-such-finding"), &scope)?,
+        )?;
         assert!(
             !stderr.contains("Analysis limitations for this run:"),
             "{stderr}"
@@ -263,7 +267,7 @@ fn unrelated_disabled_language_keeps_rust_hit_and_selector_specific_recoveries()
             ("src/lib.rs:abc", "positive decimal line number"),
             ("seam:0123456789abcdef", "this looks like a seam id"),
         ] {
-            let stderr = miss(fixture.run(command, Some(selector), &scope)?)?;
+            let stderr = miss(command, fixture.run(command, Some(selector), &scope)?)?;
             assert!(stderr.contains(retained), "{stderr}");
             assert!(
                 stderr.contains("Analysis limitations for this run:"),
@@ -293,11 +297,14 @@ fn artifact_misses_do_not_invent_fresh_language_scope() -> TestResult {
     assert!(output.status.success(), "{output:?}");
     assert!(Path::new(artifact).is_file(), "artifact setup failed");
     for command in ["explain", "context"] {
-        let stderr = miss(fixture.run(
+        let stderr = miss(
             command,
-            Some("probe:no-such-finding"),
-            &["--from", artifact],
-        )?)?;
+            fixture.run(
+                command,
+                Some("probe:no-such-finding"),
+                &["--from", artifact],
+            )?,
+        )?;
         assert!(
             !stderr.contains("Analysis limitations for this run:"),
             "{stderr}"
@@ -315,7 +322,7 @@ fn uncompiled_preview_misses_name_binary_prerequisites_not_config_enablement() -
     let report = fixture.check(&scope)?;
     assert_eq!(advisory(&report, "perl")?["analyzed"], false);
     for command in ["explain", "context"] {
-        let stderr = miss(fixture.run(command, Some("src/z.pl:2"), &scope)?)?;
+        let stderr = miss(command, fixture.run(command, Some("src/z.pl:2"), &scope)?)?;
         assert!(
             stderr.contains("Analysis limitations for this run:"),
             "{stderr}"
@@ -345,7 +352,7 @@ fn enabled_unavailable_preview_misses_keep_native_reason_and_recovery() -> TestR
         .as_str()
         .ok_or("missing producer reason")?;
     for command in ["explain", "context"] {
-        let stderr = miss(fixture.run(command, Some("src/z.pl:2"), &scope)?)?;
+        let stderr = miss(command, fixture.run(command, Some("src/z.pl:2"), &scope)?)?;
         assert!(
             stderr.contains("did not complete successfully (unavailable)"),
             "{stderr}"
