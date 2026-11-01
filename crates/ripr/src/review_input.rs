@@ -157,27 +157,27 @@ pub fn canonical_projection_all(
             let probe = finding
                 .get("probe")
                 .and_then(Value::as_object)
-                .ok_or_else(|| "producer finding probe must be an object".to_string())?;
+                .ok_or_else(|| "producer finding probe must be an object; re-run `ripr check --format json` to regenerate the producer output".to_string())?;
             let file = probe
                 .get("file")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "producer finding probe.file must be a string".to_string())?;
+                .ok_or_else(|| "producer finding probe.file must be a string; re-run `ripr check --format json` to regenerate the producer output".to_string())?;
             let line = probe
                 .get("line")
                 .and_then(Value::as_u64)
-                .ok_or_else(|| "producer finding probe.line must be an integer".to_string())?;
+                .ok_or_else(|| "producer finding probe.line must be an integer; re-run `ripr check --format json` to regenerate the producer output".to_string())?;
             let stable_id = finding
                 .get("id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "producer finding id must be a string".to_string())?;
+                .ok_or_else(|| "producer finding id must be a string; re-run `ripr check --format json` to regenerate the producer output".to_string())?;
             let severity = finding
                 .get("severity")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "producer finding severity must be a string".to_string())?;
+                .ok_or_else(|| "producer finding severity must be a string; re-run `ripr check --format json` to regenerate the producer output".to_string())?;
             let finding_class = finding
                 .get("classification")
                 .and_then(Value::as_str)
-                .ok_or_else(|| "producer finding classification must be a string".to_string())?;
+                .ok_or_else(|| "producer finding classification must be a string; re-run `ripr check --format json` to regenerate the producer output".to_string())?;
             let related_test = match finding.get("related_tests") {
                 None | Some(Value::Null) => None,
                 Some(Value::Array(tests)) => tests.first().map(|test| {
@@ -185,21 +185,21 @@ pub fn canonical_projection_all(
                         name: test
                             .get("name")
                             .and_then(Value::as_str)
-                            .ok_or_else(|| "related test name must be a string".to_string())?
+                            .ok_or_else(|| "related test name must be a string; re-run `ripr check --format json` to regenerate the producer output".to_string())?
                             .to_string(),
                         file: test
                             .get("file")
                             .and_then(Value::as_str)
-                            .ok_or_else(|| "related test file must be a string".to_string())?
+                            .ok_or_else(|| "related test file must be a string; re-run `ripr check --format json` to regenerate the producer output".to_string())?
                             .to_string(),
                         line: test
                             .get("line")
                             .and_then(Value::as_u64)
-                            .ok_or_else(|| "related test line must be an integer".to_string())?,
+                            .ok_or_else(|| "related test line must be an integer; re-run `ripr check --format json` to regenerate the producer output".to_string())?,
                     })
                 }),
                 Some(_) => {
-                    return Err("producer finding related_tests must be an array".to_string());
+                    return Err("producer finding related_tests must be an array; re-run `ripr check --format json` to regenerate the producer output".to_string());
                 }
             }
             .transpose()?;
@@ -225,10 +225,10 @@ pub fn canonical_projection_from_index(
     index: &CanonicalFindingIndexV1,
 ) -> Result<Vec<ReviewFindingProjectionV1>, String> {
     if index.schema_version != REVIEW_INDEX_SCHEMA_VERSION {
-        return Err("canonical finding index schema is unsupported".to_string());
+        return Err("canonical finding index schema is unsupported; re-run `ripr check --format json` to regenerate the producer output".to_string());
     }
     if index.entries.len() > REVIEW_INDEX_MAX_ENTRIES {
-        return Err("canonical finding index exceeds entry limit".to_string());
+        return Err("canonical finding index exceeds entry limit; re-run `ripr check --format json` to regenerate the producer output".to_string());
     }
     if index.entries.len() as u64 != index.total_finding_count {
         return Err("canonical finding index count is contradictory".to_string());
@@ -236,11 +236,11 @@ pub fn canonical_projection_from_index(
     let encoded = serde_json::to_vec(&index.entries)
         .map_err(|error| format!("serialize canonical finding index: {error}"))?;
     if encoded.len() > REVIEW_INDEX_MAX_BYTES {
-        return Err("canonical finding index exceeds byte limit".to_string());
+        return Err("canonical finding index exceeds byte limit; re-run `ripr check --format json` to regenerate the producer output".to_string());
     }
     let expected = format!("sha256:{:x}", Sha256::digest(&encoded));
     if index.index_sha256 != expected {
-        return Err("canonical finding index digest does not match entries".to_string());
+        return Err("canonical finding index digest does not match entries; re-run `ripr check --format json` to regenerate the producer output".to_string());
     }
     let mut entries = index.entries.clone();
     let mut ids = std::collections::HashSet::new();

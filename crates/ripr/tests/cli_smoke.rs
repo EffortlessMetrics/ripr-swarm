@@ -33997,9 +33997,26 @@ fn review_guidance_windows_preserve_output_and_bound_retained_payloads()
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
+        // The latency trace is on so window counts can be read from stderr; it
+        // also writes wall-clock `duration_ms` into the receipt, which differs
+        // between runs. Compare everything else byte for byte.
+        let zero_durations = |bytes: Vec<u8>| -> Vec<u8> {
+            String::from_utf8_lossy(&bytes)
+                .lines()
+                .map(|line| match line.split_once("\"duration_ms\": ") {
+                    Some((head, rest)) => {
+                        let tail = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+                        format!("{head}\"duration_ms\": 0{tail}")
+                    }
+                    None => line.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                .into_bytes()
+        };
         let bytes = (
-            std::fs::read(&out)?,
-            std::fs::read(out.with_extension("md"))?,
+            zero_durations(std::fs::read(&out)?),
+            zero_durations(std::fs::read(out.with_extension("md"))?),
         );
         if let Some(ref expected) = expected {
             assert_eq!(&bytes, expected);
