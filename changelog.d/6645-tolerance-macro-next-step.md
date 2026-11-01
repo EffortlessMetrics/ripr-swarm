@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- A finding limited by an `approx` or `float-cmp` tolerance assertion macro (`assert_relative_eq!`, `assert_abs_diff_eq!`, `assert_ulps_eq!`, `assert_approx_eq!`) now says the macro reads like a floating-point tolerance comparison whose tolerance and effect ripr cannot establish, and points at checking the tolerance against the smallest difference the change can make, instead of the generic "custom assertion macro" step. Classification and credit are unchanged (#6645).
