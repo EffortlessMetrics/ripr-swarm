@@ -880,7 +880,7 @@ fn imported_module_path(import: &PythonImport) -> String {
     }
 }
 
-fn visit_exprs_in_statements(statements: &[Stmt], visit: &mut impl FnMut(&Expr)) {
+pub(super) fn visit_exprs_in_statements(statements: &[Stmt], visit: &mut impl FnMut(&Expr)) {
     visit_statements(statements, &mut |stmt| match stmt {
         Stmt::FunctionDef(function) => {
             for decorator in &function.decorator_list {
