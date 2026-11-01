@@ -702,6 +702,18 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         _ if stub_refusal == TestStubRefusal::FieldNotReturned.reason() => {
             "call the function and assert on what it returns: match the wrapper that carries the changed field (for example the `Err` variant) and check the field inside it, or compare the whole returned value"
         }
+        // #11398: the change writes a field of `self` in a method, so the
+        // value to check is the receiver after the call, not a struct
+        // literal. A by-value receiver cannot be confirmed yet (#11398
+        // review), so the step says so instead of promising credit.
+        // #12061: a by-value receiver writes a moved copy, so the value to
+        // check is what the call returns.
+        _ if stub_refusal == TestStubRefusal::FieldWrittenByValue.reason() => {
+            "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value the call returns; a by-value method writes a moved copy, so a read of the binding you called it on sees nothing"
+        }
+        _ if stub_refusal == TestStubRefusal::FieldWrittenInMethod.reason() => {
+            "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value you called it on"
+        }
         // A unit-returning owner has no result to compare.
         _ if stub_refusal == TestStubRefusal::NoReturnValue.reason() => {
             "call the function and assert what it changes (an argument it mutates, state it sets, or output it writes), or that it panics when the changed condition is hit, since it returns nothing to compare"
@@ -1963,6 +1975,31 @@ mod tests {
             "{not_returned}"
         );
         assert!(!not_returned.contains("changed field on what it returns"));
+        // #11398: a field write in a method names the receiver, not a wrapper.
+        let written = hand_written_test_step(
+            &finding,
+            TestStubRefusal::FieldWrittenInMethod.reason(),
+            true,
+        );
+        assert!(
+            written.contains("the value you called it on")
+                && !written.contains("`Err`")
+                && !written.contains("by value"),
+            "{written}"
+        );
+        // #12061: a by-value receiver writes a moved copy, so the step reads
+        // the call's result and never promises the called-on binding.
+        let by_value = hand_written_test_step(
+            &finding,
+            TestStubRefusal::FieldWrittenByValue.reason(),
+            true,
+        );
+        assert!(
+            by_value.contains("on the value the call returns")
+                && by_value.contains("moved copy")
+                && !by_value.contains("the value you called it on"),
+            "{by_value}"
+        );
 
         finding.probe.family = ProbeFamily::Predicate;
         let unit = hand_written_test_step(&finding, TestStubRefusal::NoReturnValue.reason(), true);

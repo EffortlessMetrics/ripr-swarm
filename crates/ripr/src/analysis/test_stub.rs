@@ -130,6 +130,8 @@ pub(crate) enum TestStubRefusal {
     NotRustSource,
     ObserverRequired,
     FieldNotReturned,
+    FieldWrittenInMethod,
+    FieldWrittenByValue,
     SourceUnparsed,
     OwnerUnsupported,
     OwnerAsync,
@@ -153,6 +155,8 @@ impl TestStubRefusal {
             Self::NotRustSource => "not_rust_source",
             Self::ObserverRequired => "observer_required",
             Self::FieldNotReturned => "field_not_returned",
+            Self::FieldWrittenInMethod => "field_written_in_method",
+            Self::FieldWrittenByValue => "field_written_by_value",
             Self::SourceUnparsed => "source_unparsed",
             Self::OwnerUnsupported => "owner_unsupported",
             Self::OwnerAsync => "owner_async",
@@ -179,6 +183,12 @@ impl TestStubRefusal {
             }
             Self::FieldNotReturned => {
                 "the changed field is set on a struct literal the owner does not return directly (as its tail or `return` value), so the stub cannot tell which value to assert on"
+            }
+            Self::FieldWrittenInMethod => {
+                "the change sets a field of `self` inside a method instead of building a value the method returns, so the stub cannot tell which value to assert on"
+            }
+            Self::FieldWrittenByValue => {
+                "the change sets a field of a by-value `self` inside a method, which writes a moved copy the caller's binding never sees, so the stub cannot tell which value to assert on"
             }
             Self::SourceUnparsed => "the owner file did not parse cleanly",
             Self::OwnerUnsupported => {
@@ -298,6 +308,23 @@ fn rust_test_stub_for_target(
     let signature =
         owner_signature_at(source, seam.byte_offset()).ok_or(TestStubRefusal::SourceUnparsed)?;
     check_signature(&signature)?;
+    // #11398: a field write in a method (`self.timeout = t * 2`) builds no
+    // returned literal; the value to assert on is the receiver after the
+    // call, which the stub cannot write, so say that rather than the
+    // struct-literal reason below.
+    if seam.kind() == SeamKind::FieldConstruction
+        && crate::analysis::classify::field_assignment_target(seam.expression()).is_some()
+    {
+        // #12061: only a borrowed receiver is written in place. A by-value
+        // (or typed) receiver writes a moved copy, so the value to assert on
+        // is what the call returns, not the binding it was called on.
+        return Err(match signature.receiver {
+            Some(OwnerReceiver::Ref | OwnerReceiver::RefMut) => {
+                TestStubRefusal::FieldWrittenInMethod
+            }
+            _ => TestStubRefusal::FieldWrittenByValue,
+        });
+    }
     // A changed field is visible to the stub's assertion only when the
     // struct literal holding it is the value the owner returns.
     if seam.kind() == SeamKind::FieldConstruction
