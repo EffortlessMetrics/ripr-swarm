@@ -42,9 +42,36 @@
     "non_claim": "Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."
   },
   "detected_languages": [
-    { "language": "rust", "status": "stable", "adapter_available": true, "enabled": true },
-    { "language": "python", "status": "preview", "adapter_available": true, "enabled": false },
-    { "language": "perl", "status": "preview", "adapter_available": true, "enabled": false }
+    {
+      "language": "rust",
+      "status": "stable",
+      "adapter_available": true,
+      "enabled": true,
+      "availability_state": "detected_compiled_enabled",
+      "remediation": []
+    },
+    {
+      "language": "python",
+      "status": "preview",
+      "adapter_available": true,
+      "enabled": false,
+      "availability_state": "detected_compiled_disabled",
+      "remediation": [
+        "enable `python` under `[languages]` in ripr.toml (`enabled = [..., \"python\"]`)",
+        "or leave Python disabled intentionally; its files are then not analyzed"
+      ]
+    },
+    {
+      "language": "perl",
+      "status": "preview",
+      "adapter_available": true,
+      "enabled": false,
+      "availability_state": "detected_compiled_disabled",
+      "remediation": [
+        "enable `perl` under `[languages]` in ripr.toml (`enabled = [..., \"perl\"]`)",
+        "or leave Perl disabled intentionally; its files are then not analyzed"
+      ]
+    }
   ],
   "unanalyzed_source_languages": [{ "language": "Go", "file_count": 2 }],
   "preview_language_gaps": [

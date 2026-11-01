@@ -1,0 +1,45 @@
+{
+  "case_id": "py-uncollected-python-files-match",
+  "subject_id": "authored-py-pytest-uncollected-config",
+  "diff": "cases/py-uncollected-python-files-match.diff",
+  "anchor": {
+    "file": "unconfig/core.py",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "returned_value",
+  "test_shape": "ini_python_files_match",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.16, pytest 9.2.0, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return a + b",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/check_name_on.py::test_name_on",
+        "equivalence_review": "not equivalent: 3 + 7 is 10, not 21"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Positive control: tests/check_name_on.py matches `python_files = check_*.py` and is collected. (#11527)",
+  "labeling_observation": {
+    "ripr_commit": "a561a277",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -756,6 +756,7 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         source,
         &module.body,
         None,
+        None,
         &imports,
         &module_constants,
         &mut snapshot.owners,

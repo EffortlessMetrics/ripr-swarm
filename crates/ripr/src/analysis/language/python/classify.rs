@@ -289,7 +289,10 @@ fn classify_change_full<'a>(
     // behavior delta. Emit no probe rather than crediting `exposed` from a test that
     // reaches the owner. Requires the paired old line; fails closed when anything
     // beyond an annotation differs (e.g. a default-value change, which IS behavioral).
+    // A line inside a multi-line string (or in a file that could not be
+    // lexed) is data, not a header, so it keeps its probe (#11888).
     if let Some(old) = old_line_text
+        && !no_behavior.new_line_in_multiline_string
         && same_indentation(old, line_text)
         && is_annotation_only_def_change(old, line_text)
     {
@@ -1062,7 +1065,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             StageState::Yes,
             vec![format!(
                 // #7752: the article follows the oracle-kind label ("an `exact_value`").
-                "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.",
+                "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value check.",
                 owner.name,
                 indefinite_article(strongest_kind.as_str()),
                 strongest_kind.as_str()

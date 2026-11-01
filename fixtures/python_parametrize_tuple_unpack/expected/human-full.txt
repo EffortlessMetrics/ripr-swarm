@@ -79,7 +79,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `quantity == 100`
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `quantity == 100`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_parametrize_tuple_unpack/input --diff <cwd>/fixtures/python_parametrize_tuple_unpack/diff.patch --mode fast probe:discount.py:python_preview:5ee0ee5a
   ripr context --root <cwd>/fixtures/python_parametrize_tuple_unpack/input --diff <cwd>/fixtures/python_parametrize_tuple_unpack/diff.patch --mode fast --at probe:discount.py:python_preview:5ee0ee5a

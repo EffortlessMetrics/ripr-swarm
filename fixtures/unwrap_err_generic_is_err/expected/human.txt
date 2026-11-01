@@ -36,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/unwrap_err_generic_is_err/input --diff <cwd>/fixtures/unwrap_err_generic_is_err/diff.patch --mode fast probe:src_lib.rs:error_path:6b37a3bc
   ripr context --root <cwd>/fixtures/unwrap_err_generic_is_err/input --diff <cwd>/fixtures/unwrap_err_generic_is_err/diff.patch --mode fast --at probe:src_lib.rs:error_path:6b37a3bc
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: ripr found 7 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/unwrap_err_generic_is_err/input --at src/lib.rs:18 --kind error_path
 

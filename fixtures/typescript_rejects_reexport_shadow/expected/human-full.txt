@@ -79,7 +79,7 @@ TypeScript repair packet (advisory)
   limitation: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 Next step
-  - TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `throws error matching "TOKEN_REQUIRED"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+  - TypeScript preview advisory: add or strengthen a focused assertion for the missing check `throws error matching "TOKEN_REQUIRED"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_rejects_reexport_shadow/input --diff <cwd>/fixtures/typescript_rejects_reexport_shadow/diff.patch --mode fast probe:src_load.ts:typescript_preview:fd09bc48
   ripr context --root <cwd>/fixtures/typescript_rejects_reexport_shadow/input --diff <cwd>/fixtures/typescript_rejects_reexport_shadow/diff.patch --mode fast --at probe:src_load.ts:typescript_preview:fd09bc48
@@ -102,7 +102,7 @@ Preview actionability
   gap state: unknown
   category: missing_target_shape
   repair packet ready: false
-  why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   repair route: add probe-specific discriminator extraction for this expression before repair packet projection
   missing fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
   evidence needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
@@ -133,7 +133,7 @@ TypeScript preview card (advisory)
   oracle: unknown (unknown)
   suggested assertion shape: Add an exact return-value assertion for the changed output.
   repair packet ready: false
-  why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   repair route: add probe-specific discriminator extraction for this expression before repair packet projection
   limits:
     - Syntax-first TypeScript/JavaScript preview evidence only.
@@ -141,7 +141,7 @@ TypeScript preview card (advisory)
     - This card is advisory and is not a repair packet.
 TypeScript repair packet (advisory)
   status: not actionable
-  limitation: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  limitation: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   next capability needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
 Next step
   - TypeScript preview advisory: infection is not established for this edit shape, so no assertion is requested and no repair packet is emitted; show a test input that changes the behavior first

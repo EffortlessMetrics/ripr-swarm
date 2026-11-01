@@ -1,0 +1,44 @@
+{
+  "case_id": "vitest-partial-typeof-kind",
+  "subject_id": "authored-ts-vitest-partial",
+  "diff": "cases/vitest-partial-typeof-kind.diff",
+  "anchor": {
+    "file": "src/typeofKind.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "vitest_tobe_typeof_derived_property",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "node 22.22.0; vitest 4.1.11 (the subject's pinned version); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return n > 100;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: isBulk(100) flips from true to false and typeof stays \"boolean\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test asserts `expect(typeof isBulk(100)).toBe(\"boolean\")`. The kind of the result is the same on both sides of the edit, so the green test cannot notice the boundary change. A derived-property observation is not an exact value check; the honest reading is `weakly_exposed`.",
+  "labeling_observation": {
+    "ripr_commit": "11cc34ec",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -286,6 +286,8 @@ struct Event<'a> {
     action: &'a str,
     label: &'a str,
     labels: &'a [&'a str],
+    // Output of the `vscode surface` job: "true", "false" or "" (the job failed).
+    surface: &'a str,
 }
 fn predicate(
     expression: &str,
@@ -301,6 +303,8 @@ fn predicate(
         .replace("github.event.label.name == 'merge-ready'",flag(event.label=="merge-ready"))
         .replace("contains(github.event.pull_request.labels.*.name, 'full-ci')",flag(event.labels.contains(&"full-ci")))
         .replace("contains(github.event.pull_request.labels.*.name, 'release-check')",flag(event.labels.contains(&"release-check")))
+        .replace("contains(github.event.pull_request.labels.*.name, 'vscode')",flag(event.labels.contains(&"vscode")))
+        .replace("needs.vscode-selection.outputs.selected != 'false'",flag(event.surface != "false"))
         .replace("contains(fromJSON('[\"opened\", \"synchronize\", \"reopened\"]'), github.event.action)",flag(["opened","synchronize","reopened"].contains(&event.action)))
         .replace("github.event_name",&format!("'{}'",event.name))
         .replace("github.ref", "'refs/heads/main'")
@@ -406,6 +410,7 @@ fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selecti
             action,
             label,
             labels: &labels,
+            surface: "false",
         };
         for ((job_name, _), expected) in JOBS.iter().zip(expected) {
             let expression = condition(job(WORKFLOW, job_name));
@@ -427,6 +432,73 @@ fn actual_predicates_preserve_legacy_events_and_use_only_frozen_callable_selecti
     Ok(())
 }
 #[test]
+fn vscode_selection_runs_the_extension_e2e_unless_the_classifier_says_no() -> TestResult {
+    // #12122: under a merge-ready request the e2e runs for an extension change, the
+    // `vscode` or `full-ci` label, or a failed classifier (empty output). Only an
+    // affirmative `false` skips it.
+    let expression = condition(job(WORKFLOW, "vscode"));
+    let request = |labels: &'static [&'static str], surface: &'static str| Event {
+        name: "pull_request",
+        action: "labeled",
+        label: "merge-ready",
+        labels,
+        surface,
+    };
+    for (labels, surface, expected) in [
+        (&["merge-ready"][..], "false", false),
+        (&["merge-ready"][..], "true", true),
+        (&["merge-ready"][..], "", true),
+        (&["merge-ready", "vscode"][..], "false", true),
+        (&["merge-ready", "full-ci"][..], "false", true),
+    ] {
+        assert_eq!(
+            predicate(
+                &expression,
+                false,
+                request(labels, surface),
+                false,
+                "skipped"
+            )?,
+            expected,
+            "{labels:?} surface={surface:?}"
+        );
+    }
+    // An extension change without the merge-ready request starts nothing.
+    for (action, label) in [
+        ("synchronize", ""),
+        ("labeled", "vscode"),
+        ("labeled", "unrelated"),
+    ] {
+        let event = Event {
+            name: "pull_request",
+            action,
+            label,
+            labels: &["vscode", "merge-ready"],
+            surface: "true",
+        };
+        assert!(
+            !predicate(&expression, false, event, false, "skipped")?,
+            "{action}/{label}"
+        );
+    }
+    // A callable run takes its frozen selection, never the classifier.
+    assert!(!predicate(
+        &expression,
+        true,
+        request(&["merge-ready"], "true"),
+        false,
+        "success"
+    )?);
+    assert!(predicate(
+        &expression,
+        true,
+        request(&["merge-ready"], "false"),
+        true,
+        "success"
+    )?);
+    Ok(())
+}
+#[test]
 fn independent_event_labels_reject_request_guard_removal() -> TestResult {
     const GUARD: &str =
         "(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')";
@@ -444,6 +516,7 @@ fn independent_event_labels_reject_request_guard_removal() -> TestResult {
                 action,
                 label,
                 labels: &["merge-ready", "full-ci"],
+                surface: "false",
             };
             assert!(
                 !predicate(&expression, false, event, false, "skipped")?,
@@ -521,7 +594,15 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
                             .is_some_and(|(_, sha)| sha.len() == 40) =>
                     {
                         let name = pinned.rsplit_once('@').map_or(pinned, |(name, _)| name);
-                        format!("{name}@{}", tag.trim())
+                        // A comment may carry the exact release (`v6.1.0`) while the
+                        // predecessor names the major (`v6`); compare the major.
+                        let tag = tag.trim();
+                        let tag = if tag.starts_with('v') {
+                            tag.split('.').next().unwrap_or(tag)
+                        } else {
+                            tag
+                        };
+                        format!("{name}@{tag}")
                     }
                     _ => line.to_owned(),
                 })
@@ -529,7 +610,13 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
         };
         assert_eq!(actions(job(WORKFLOW, name)), actions(job(ORIGINAL, name)));
         let child = job(WORKFLOW, name);
-        assert!(child.contains("    needs: source-identity"));
+        // The extension job also waits for the diff classifier (#12122).
+        let needs = if name == &"vscode" {
+            "    needs: [source-identity, vscode-selection]"
+        } else {
+            "    needs: source-identity"
+        };
+        assert!(child.contains(needs), "{name} needs");
         assert!(child.contains("ref: ${{ inputs.subject_sha || github.sha }}"));
         assert!(child.contains("persist-credentials: false"));
         // The callable qualification budget equals the retained predecessor's
@@ -887,6 +974,7 @@ fn release_steps_preserve_manual_semantics_and_ignore_labels_on_calls() -> TestR
                         action: "labeled",
                         label: "unrelated",
                         labels: &labels,
+                        surface: "false",
                     };
                     assert_eq!(
                         predicate(expr, false, context, false, "skipped")?,

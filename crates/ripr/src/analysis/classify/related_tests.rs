@@ -8,6 +8,7 @@
 //! path-dependency adjacency owned by `analysis/workspace`.
 
 mod fmt_dispatch;
+mod fmt_live;
 
 use super::super::rust_index::{
     FunctionSummary, RustIndex, TestSummary, extract_identifier_tokens,
@@ -4033,6 +4034,22 @@ pub(in crate::analysis) fn owner_dispatch_trait(owner: &FunctionSummary) -> Opti
     impl_trait_name(&owner.id.0)
 }
 
+/// The compact name of an annotation written as one unqualified path segment.
+/// `crate::foreign::Widget` keeps its module prefix out of `compact_impl_type_name`,
+/// so a qualified annotation is refused here rather than read as `Widget`
+/// (#8782 item 1).
+fn unqualified_annotation_type_name(ty: &str) -> Option<String> {
+    let head = ty.trim();
+    let head = head.strip_prefix('&').unwrap_or(head).trim();
+    let head = head.strip_prefix("mut ").unwrap_or(head).trim();
+    let head = head.strip_prefix("dyn ").unwrap_or(head).trim();
+    let head = head.split('<').next()?;
+    if head.contains("::") {
+        return None;
+    }
+    compact_impl_type_name(ty)
+}
+
 fn compact_impl_type_name(ty: &str) -> Option<String> {
     let ty = ty.trim();
     let ty = ty.strip_prefix('&').unwrap_or(ty).trim();
@@ -4301,7 +4318,11 @@ fn associated_fn_returns_own_type(index: &RustIndex, ty: &str, name: &str) -> bo
     if function.item.has_self_param {
         return false;
     }
-    declared_return_names_type(function, index, ty)
+    // An indexed `Inherent` container can come from a const or block ancestor,
+    // or from a declaration a `cfg` removes; only a directly callable,
+    // always-available inherent fn is the owner's factory.
+    super::owner_pin::inherent_factory_declaration_is_authoritative(function, ty, index)
+        && declared_return_names_type(function, index, ty)
 }
 
 /// Names of the inherent associated fns of `ty` that
@@ -4327,10 +4348,14 @@ fn inherent_constructor_names(index: &RustIndex, ty: &str) -> Vec<String> {
 /// `fixture().method()`. A same-named function, trait or method declaration
 /// fails closed.
 fn free_fn_returns_type(index: &RustIndex, name: &str, ty: &str) -> bool {
+    // `r#fixture` and `fixture` are one identifier, so a raw-named nested fn
+    // shadows the file-level helper.
+    let unraw = |text: &str| text.strip_prefix("r#").unwrap_or(text).to_string();
+    let name = unraw(name);
     let mut declarations = index
         .functions()
         .iter()
-        .filter(|function| function.name == name);
+        .filter(|function| unraw(&function.name) == name);
     let (Some(function), None) = (declarations.next(), declarations.next()) else {
         return false;
     };
@@ -4361,9 +4386,9 @@ fn declared_return_names_type(function: &FunctionSummary, index: &RustIndex, ty:
     // A type parameter named like the impl type is not that type.
     if ast::HasGenericParams::generic_param_list(&declared).is_some_and(|params| {
         params.generic_params().any(|param| match param {
-            ast::GenericParam::TypeParam(param) => {
-                param.name().is_some_and(|name| name.text() == ty)
-            }
+            ast::GenericParam::TypeParam(param) => param
+                .name()
+                .is_some_and(|name| name.text().trim_start_matches("r#") == ty),
             _ => false,
         })
     }) {
@@ -5141,6 +5166,20 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     index: Option<&RustIndex>,
     owner: Option<&FunctionSummary>,
 ) -> bool {
+    inherent_receiver_call_resolves_with(test, method, impl_type, index, owner, false)
+}
+
+/// `trust_unplaced_standard_root` lifts exactly one input, the target-root
+/// placement a `std`/`core`-rooted assertion macro path needs (RIPR-SPEC-0352).
+/// It is used only to name a limit and never grants the relation.
+fn inherent_receiver_call_resolves_with(
+    test: &TestSummary,
+    method: &str,
+    impl_type: &str,
+    index: Option<&RustIndex>,
+    owner: Option<&FunctionSummary>,
+    trust_unplaced_standard_root: bool,
+) -> bool {
     // The legacy text scan cannot be a deny gate: its last `let` can live in
     // an expired sibling block, and it cannot read a qualified unit variant.
     // The AST below establishes the same bounded type heads in live scope.
@@ -5160,6 +5199,11 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
     let unit_struct = |name: &str| {
         index.is_some_and(|index| {
             super::owner_pin::unit_struct_value(name, &test.file, index, pin_syntax)
+        })
+    };
+    let unit_variant = |name: &str| {
+        index.is_some_and(|index| {
+            super::owner_pin::imported_enum_variant_value(name, impl_type, &test.file, index)
         })
     };
     // The file-local claims below speak of the test file's own root `ty`, so
@@ -5193,17 +5237,23 @@ pub(in crate::analysis) fn inherent_receiver_call_resolves(
                 && index.is_some_and(|index| !file_rebinds_type(index, &test.file, impl_type))
         })
     };
-    executable_call_resolves(test, index, pin_syntax, &|node, scope| {
-        inherent_call_node_resolves(
-            node,
-            scope,
-            method,
-            impl_type,
-            &unit_struct,
-            &factory,
-            &owner_unrebound,
-        )
-    })
+    executable_call_resolves(
+        test,
+        index,
+        pin_syntax,
+        trust_unplaced_standard_root,
+        &|node, scope| {
+            inherent_call_node_resolves(
+                node,
+                scope,
+                method,
+                impl_type,
+                (&unit_struct, &unit_variant),
+                &factory,
+                &owner_unrebound,
+            )
+        },
+    )
 }
 
 /// A helper-name graph supplies candidates, never executable function identity.
@@ -5220,7 +5270,7 @@ pub(in crate::analysis) fn free_helper_call_resolves(
     // The index-owned owner, so the workspace trusted-macro scan behind the
     // binding check is paid once per run, not once per (seam, helper) hop.
     let syntax = &index.call_identity_memos.receiver_pin_syntax;
-    executable_call_resolves(caller, Some(index), syntax, &|node, _| {
+    executable_call_resolves(caller, Some(index), syntax, false, &|node, _| {
         let Some(call) = ast::CallExpr::cast(node) else {
             return false;
         };
@@ -5265,6 +5315,7 @@ fn executable_call_resolves(
     test: &TestSummary,
     index: Option<&RustIndex>,
     pin_syntax: &super::OwnerPinSyntax,
+    trust_unplaced_standard_root: bool,
     resolves: &dyn Fn(SyntaxNode, Option<&SyntaxNode>) -> bool,
 ) -> bool {
     let parse = match index {
@@ -5296,12 +5347,14 @@ fn executable_call_resolves(
                             .filter(|byte| *byte == b'\n')
                             .count();
                     call.path().is_some_and(|path| {
-                        pin_syntax.targeted_macro_binding_is_unambiguous(
-                            test,
-                            line,
-                            &path.syntax().text().to_string(),
-                            index,
-                        )
+                        let name = path.syntax().text().to_string();
+                        if trust_unplaced_standard_root {
+                            pin_syntax
+                                .macro_binding_is_unambiguous_if_unplaced(test, line, &name, index)
+                        } else {
+                            pin_syntax
+                                .targeted_macro_binding_is_unambiguous(test, line, &name, index)
+                        }
                     })
                 });
                 binding_admitted && assertion_arguments_resolve(&call, index, resolves)
@@ -5321,12 +5374,15 @@ pub(super) fn node_executes_in(node: &SyntaxNode, function: &SyntaxNode) -> bool
         })
 }
 
+/// A bare-spelling probe: whether the name is a value of the owner's type.
+type BareValueProbe<'a> = &'a dyn Fn(&str) -> bool;
+
 fn inherent_call_node_resolves(
     node: SyntaxNode,
     original_scope: Option<&SyntaxNode>,
     method: &str,
     impl_type: &str,
-    unit_struct: &dyn Fn(&str) -> bool,
+    (unit_struct, unit_variant): (BareValueProbe<'_>, BareValueProbe<'_>),
     factory: &dyn Fn(&str, &str) -> bool,
     owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
@@ -5353,6 +5409,7 @@ fn inherent_call_node_resolves(
                     original_scope.unwrap_or_else(|| call.syntax()),
                     impl_type,
                     unit_struct,
+                    unit_variant,
                     factory,
                     owner_unrebound,
                 )
@@ -5377,6 +5434,7 @@ fn inherent_call_node_resolves(
                     original_scope.unwrap_or_else(|| call.syntax()),
                     impl_type,
                     unit_struct,
+                    unit_variant,
                     factory,
                     owner_unrebound,
                 )
@@ -5395,21 +5453,30 @@ fn assertion_arguments_resolve(
         return false;
     };
     let name = path.syntax().text().to_string();
-    let operands = match name.trim() {
+    // A qualified `std`/`core`/drop-in assertion evaluates the same operands.
+    // Its root and binding were verified by the caller's macro-binding gate
+    // when an index is present; without an index there is nothing to verify.
+    let qualified = crate::analysis::syntax::ra::drop_in_assertion_leaf(name.trim());
+    if qualified.is_some() && index.is_none() {
+        return false;
+    }
+    let operands = match qualified.unwrap_or(name.trim()) {
         "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
         "assert" | "debug_assert" => 1,
         _ => return false,
     };
-    if call.syntax().ancestors().any(|scope| {
-        ast::StmtList::cast(scope).is_some_and(|list| {
-            list.syntax().children().any(|node| {
-                ast::MacroRules::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .or_else(|| ast::MacroDef::cast(node).and_then(|item| item.name()))
-                    .is_some_and(|bound| bound.text() == name.trim())
+    if qualified.is_none()
+        && call.syntax().ancestors().any(|scope| {
+            ast::StmtList::cast(scope).is_some_and(|list| {
+                list.syntax().children().any(|node| {
+                    ast::MacroRules::cast(node.clone())
+                        .and_then(|item| item.name())
+                        .or_else(|| ast::MacroDef::cast(node).and_then(|item| item.name()))
+                        .is_some_and(|bound| bound.text() == name.trim())
+                })
             })
         })
-    }) {
+    {
         return false;
     }
     let Some(tree) = call.token_tree() else {
@@ -5461,6 +5528,7 @@ fn scoped_receiver_names_type(
     call: &SyntaxNode,
     impl_type: &str,
     unit_struct: &dyn Fn(&str) -> bool,
+    unit_variant: &dyn Fn(&str) -> bool,
     factory: &dyn Fn(&str, &str) -> bool,
     owner_unrebound: &dyn Fn() -> bool,
 ) -> bool {
@@ -5483,7 +5551,9 @@ fn scoped_receiver_names_type(
             if !name.is_empty() && name.bytes().all(is_ident_byte) {
                 // A bare type name is a value only for a verified unit struct
                 // (`Formatter.format(..)`), not a same-spelled constant/import.
-                if name == impl_type && unit_struct(impl_type) {
+                // A bare variant is the owner's value only when exactly one
+                // `use` brings that variant of the one workspace enum in (#8782).
+                if (name == impl_type && unit_struct(impl_type)) || unit_variant(name) {
                     return true;
                 }
                 return visible_receiver_binding_names_type(
@@ -5527,7 +5597,11 @@ fn enclosing_fn_binds(call: &SyntaxNode, name: &str) -> bool {
             syntax
                 .descendants()
                 .filter_map(ast::IdentPat::cast)
-                .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+                .any(|pattern| {
+                    pattern.name().is_some_and(|bound| {
+                        bound.text().trim_start_matches("r#") == name.trim_start_matches("r#")
+                    })
+                })
                 || syntax
                     .descendants()
                     .filter_map(ast::Use::cast)
@@ -5565,7 +5639,12 @@ fn visible_receiver_binding_names_type(
                             .syntax()
                             .descendants()
                             .filter_map(ast::IdentPat::cast)
-                            .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+                            .any(|pattern| {
+                                pattern.name().is_some_and(|bound| {
+                                    bound.text().trim_start_matches("r#")
+                                        == name.trim_start_matches("r#")
+                                })
+                            })
                     })
                 })
         {
@@ -5594,7 +5673,12 @@ fn visible_receiver_binding_names_type(
                             .syntax()
                             .descendants()
                             .filter_map(ast::IdentPat::cast)
-                            .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
+                            .any(|pattern| {
+                                pattern.name().is_some_and(|bound| {
+                                    bound.text().trim_start_matches("r#")
+                                        == name.trim_start_matches("r#")
+                                })
+                            })
                     })
                 })
                 .last();
@@ -5606,8 +5690,10 @@ fn visible_receiver_binding_names_type(
                     return false;
                 }
                 if let Some(annotation) = binding.ty() {
-                    return compact_impl_type_name(&annotation.syntax().text().to_string())
-                        .as_deref()
+                    return unqualified_annotation_type_name(
+                        &annotation.syntax().text().to_string(),
+                    )
+                    .as_deref()
                         == Some(impl_type);
                 }
                 return binding.initializer().is_some_and(|initializer| {
@@ -5815,6 +5901,71 @@ pub(in crate::analysis) fn inherent_owner_call_resolves(
             index,
             false,
         ) == RelationReason::DirectOwnerCall
+}
+
+/// Whether `caller`'s call of `owner` is a direct call of the production
+/// owner under the same relation rules `ripr check` applies (unique name or
+/// resolved receiver, no test-module type or trait shadow, no rename). The
+/// caller must already be known to call `owner` by name; this only refuses.
+/// Same-name workspace functions are read from a full scan, so ambiguity
+/// refuses exactly as it does for the check-side relation.
+pub(in crate::analysis) fn owner_call_is_direct(
+    caller: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let same_name_ids: Vec<&str> = index
+        .functions()
+        .iter()
+        .filter(|function| function.name == owner.name)
+        .map(|function| function.id.0.as_str())
+        .collect();
+    owner_call_relation_reason(
+        caller,
+        Some(owner),
+        &owner.name,
+        &same_name_ids,
+        index
+            .files()
+            .get(&caller.file)
+            .map(|facts| facts.data().source.as_ref()),
+        index,
+        false,
+    ) == RelationReason::DirectOwnerCall
+}
+
+/// Whether `test` fails the inherent receiver check for `owner` only because
+/// the standard assertion macro binding cannot be verified for lack of
+/// target-root placement (RIPR-SPEC-0352). The complete owner-call relation is
+/// checked, so shadows and a wrong receiver still refuse. It never grants the
+/// relation.
+pub(in crate::analysis) fn inherent_owner_call_resolves_if_macros_trusted(
+    caller: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    let relation = |trust| {
+        owner_call_relation_reason_gated(
+            caller,
+            Some(owner),
+            &owner.name,
+            &[],
+            index
+                .files()
+                .get(&caller.file)
+                .map(|facts| facts.data().source.as_ref()),
+            index,
+            false,
+            trust,
+        )
+    };
+    requires_inherent_receiver_identity(owner)
+        && index
+            .call_identity_memos
+            .receiver_pin_syntax
+            .target_placement_unavailable(index)
+        && relation(false) != RelationReason::DirectOwnerCall
+        && relation(true) == RelationReason::DirectOwnerCall
 }
 
 /// Whether the last call of `method` in `prefix` (masked test source cut at
@@ -6097,6 +6248,32 @@ fn owner_call_relation_reason(
     index: &RustIndex,
     fmt_dispatch_resolved: bool,
 ) -> RelationReason {
+    owner_call_relation_reason_gated(
+        test,
+        owner_fn,
+        owner_name,
+        same_name_ids,
+        test_source,
+        index,
+        fmt_dispatch_resolved,
+        false,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the gated form adds one input to the existing relation reason without a parameter struct"
+)]
+fn owner_call_relation_reason_gated(
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    owner_name: &str,
+    same_name_ids: &[&str],
+    test_source: Option<&str>,
+    index: &RustIndex,
+    fmt_dispatch_resolved: bool,
+    trust_unplaced_standard_root: bool,
+) -> RelationReason {
     let indexed_same_name_count = same_name_ids.len();
     let Some(owner) = owner_fn else {
         return RelationReason::DirectOwnerCall;
@@ -6190,12 +6367,13 @@ fn owner_call_relation_reason(
         return RelationReason::WeakTokenSubstring;
     }
     if requires_inherent_receiver_identity(owner) {
-        return if inherent_receiver_call_resolves(
+        return if inherent_receiver_call_resolves_with(
             test,
             owner_name,
             &impl_type,
             Some(index),
             Some(owner),
+            trust_unplaced_standard_root,
         ) {
             RelationReason::DirectOwnerCall
         } else {

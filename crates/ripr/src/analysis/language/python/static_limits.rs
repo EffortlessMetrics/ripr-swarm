@@ -1761,6 +1761,7 @@ pub(super) mod tests {
             foreign_writes: Default::default(),
             version_conditional: false,
             cli_subcommand: None,
+            nested_called_by_parent: false,
         }
     }
 
