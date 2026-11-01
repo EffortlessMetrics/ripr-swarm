@@ -7,11 +7,15 @@
 //! that call them. It only widens which tests are *related*; the probe stays
 //! `static_unknown`, so nothing here can promote a verdict.
 
+use crate::analysis::diff::ChangedFile;
 use crate::analysis::extract::mask_comments_and_strings;
-use crate::analysis::facts::{FunctionSourceRole, FunctionSummary, RustIndex};
+use crate::analysis::facts::{
+    FactSlice, FileFacts, FileFactsView, FunctionFact, FunctionSourceRole, FunctionSummary,
+    ProbeShapeFact, ProbeShapeKind, RustIndex,
+};
 use crate::analysis::rust_index::find_file_facts;
 use crate::domain::Probe;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Readers tried per changed constant, matching the `ripr check` stub route.
 const READER_LIMIT: usize = 6;
@@ -42,6 +46,226 @@ pub(in crate::analysis) fn same_file_const_readers<'a>(
         .filter(|function| function_reads(&function.body, name))
         .take(READER_LIMIT)
         .collect()
+}
+
+/// #11400: the declaration name of a complete single-line `const`/`static`
+/// item (`pub const NAME: T = ...;`), the only shape the consumer retarget
+/// reads. A declaration split over lines keeps the generic changed-constant
+/// finding.
+pub(in crate::analysis) fn retargetable_const_name(text: &str) -> Option<&str> {
+    let text = text.trim();
+    if !text.ends_with(';') {
+        return None;
+    }
+    crate::domain::const_item_name(text)
+}
+
+/// The parts of a file's facts the consumer relation reads, so the indexed
+/// view `ripr check` holds and the freshly parsed facts `ripr repair` builds
+/// feed one function.
+#[derive(Clone, Copy)]
+pub(in crate::analysis) struct ConstFileFacts<'a> {
+    source: &'a str,
+    functions: FactSlice<'a, FunctionFact>,
+    probe_shapes: &'a [ProbeShapeFact],
+}
+
+impl<'a> ConstFileFacts<'a> {
+    pub(in crate::analysis) fn from_view(view: &'a FileFactsView<'a>) -> Self {
+        Self {
+            source: &view.data().source,
+            functions: view.functions,
+            probe_shapes: &view.data().probe_shapes,
+        }
+    }
+
+    pub(in crate::analysis) fn from_facts(facts: &'a FileFacts) -> Self {
+        Self {
+            source: &facts.source,
+            functions: FactSlice::from_slice(&facts.functions),
+            probe_shapes: &facts.probe_shapes,
+        }
+    }
+}
+
+/// One line that returns or renders a value built from a changed constant,
+/// with the parser's `return_value` expression that starts on it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::analysis) struct ConstConsumer {
+    pub line: usize,
+    pub expression: String,
+}
+
+/// #11400: the consumers of the constant `name`: [`const_consumer_lines`] that
+/// the diff does not itself change (`changed_lines`, a directly changed line
+/// already carries its own probe) and on which the parser starts a
+/// single-line `return_value` shape. This is the one relation `ripr check`
+/// (probe retarget) and `ripr repair` (change scope) both read.
+pub(in crate::analysis) fn const_consumers(
+    facts: ConstFileFacts<'_>,
+    name: &str,
+    changed_lines: &[usize],
+) -> Vec<ConstConsumer> {
+    const_consumer_lines(facts, name)
+        .into_iter()
+        .filter(|line| !changed_lines.contains(line))
+        .filter_map(|line| {
+            facts
+                .probe_shapes
+                .iter()
+                .find(|shape| {
+                    shape.kind == ProbeShapeKind::ReturnValue
+                        && shape.start_line == line
+                        && shape.end_line == line
+                })
+                .map(|shape| ConstConsumer {
+                    line,
+                    expression: shape.text.to_string(),
+                })
+        })
+        .collect()
+}
+
+/// #11400: `(file, line)` for every consumer line of every constant the diff
+/// declares, read from the working tree under `root`. Unreadable or
+/// unparseable files contribute nothing (fail closed).
+pub(crate) fn changed_const_consumer_lines(
+    root: &Path,
+    files: &[ChangedFile],
+) -> Vec<(PathBuf, usize)> {
+    let mut found = Vec::new();
+    for file in files {
+        let names: Vec<&str> = file
+            .added_lines
+            .iter()
+            .filter_map(|line| retargetable_const_name(&line.text))
+            .collect();
+        if names.is_empty() || file.path.extension().is_none_or(|ext| ext != "rs") {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(root.join(&file.path)) else {
+            continue;
+        };
+        let Ok(facts) =
+            crate::analysis::syntax::ra::summarize_file_with_parser(&file.path, &source)
+        else {
+            continue;
+        };
+        let changed_lines: Vec<usize> = file
+            .added_lines
+            .iter()
+            .chain(file.removed_lines.iter())
+            .map(|line| line.new_side_line)
+            .collect();
+        for name in names {
+            for consumer in
+                const_consumers(ConstFileFacts::from_facts(&facts), name, &changed_lines)
+            {
+                found.push((file.path.clone(), consumer.line));
+            }
+        }
+    }
+    found
+}
+
+/// #11400: the 1-based lines of same-file production functions that read the
+/// constant `name` as one plain top-level statement of the function body.
+///
+/// This is the diff-side relation that lets a changed constant stand for the
+/// code that consumes it. It is deliberately narrower than
+/// [`same_file_const_readers`]: the name must be declared exactly once in the
+/// file, the reading function must not shadow it ([`function_reads`]), and the
+/// reading line must sit directly in the function body (brace depth one, no
+/// nested block, closure or short-circuit on the line) with no earlier
+/// `return` or `?` in the function. Anything else reads the constant only
+/// conditionally, so it yields no line and the caller keeps the generic
+/// changed-constant finding.
+fn const_consumer_lines(facts: ConstFileFacts<'_>, name: &str) -> Vec<usize> {
+    let masked_source = mask_comments_and_strings(facts.source);
+    if declaration_count(&masked_source, name) != 1 {
+        return Vec::new();
+    }
+    let raw_lines: Vec<&str> = facts.source.lines().collect();
+    let masked_lines: Vec<&str> = masked_source.lines().collect();
+    let mut lines = Vec::new();
+    for function in facts
+        .functions
+        .iter()
+        .filter(|function| function.source_role == FunctionSourceRole::Production)
+        .filter(|function| function_reads(&function.body, name))
+        .filter(|function| !super::const_flow::reader_is_evaluable(&function.body))
+        .take(READER_LIMIT)
+    {
+        lines.extend(function_consumer_lines(
+            function.start_line,
+            function.end_line,
+            &raw_lines,
+            &masked_lines,
+            name,
+        ));
+    }
+    lines.sort_unstable();
+    lines.dedup();
+    lines
+}
+
+fn function_consumer_lines(
+    start_line: usize,
+    end_line: usize,
+    raw_lines: &[&str],
+    masked_lines: &[&str],
+    name: &str,
+) -> Vec<usize> {
+    let mut found = Vec::new();
+    // Brace depth inside the function: 0 before its opening brace.
+    let mut depth = 0usize;
+    let mut early_exit = false;
+    for line in start_line..=end_line.min(masked_lines.len()) {
+        let Some(&masked) = line
+            .checked_sub(1)
+            .and_then(|index| masked_lines.get(index))
+        else {
+            break;
+        };
+        let raw = raw_lines.get(line - 1).copied().unwrap_or("");
+        let braces = masked.contains(['{', '}']);
+        if depth == 1
+            && !braces
+            && !early_exit
+            && !masked.contains(['|', '?'])
+            && !masked.contains("&&")
+            && (code_reads(masked, name) || format_macro_reads(raw, name))
+        {
+            found.push(line);
+        }
+        if depth >= 1 && (contains_word(masked, "return") || masked.contains('?')) {
+            early_exit = true;
+        }
+        for byte in masked.bytes() {
+            match byte {
+                b'{' => depth += 1,
+                b'}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+        }
+    }
+    found
+}
+
+fn contains_word(text: &str, word: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while let Some(found) = text[start..].find(word) {
+        let at = start + found;
+        let end = at + word.len();
+        start = end;
+        if (at == 0 || !is_ident_byte(bytes[at - 1]))
+            && !bytes.get(end).is_some_and(|b| is_ident_byte(*b))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether `body` reads the constant `name`: a bare identifier, `Self::NAME`
@@ -434,5 +658,56 @@ mod tests {
             2
         );
         assert_eq!(declaration_count("const _: u32 = 3;", "LIMIT"), 0);
+    }
+
+    fn consumers(source: &str, changed: &[usize]) -> Vec<(usize, String)> {
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
+            std::path::Path::new("src/lib.rs"),
+            source,
+        )
+        .expect("fixture parses");
+        let name = super::retargetable_const_name(source.lines().next().unwrap_or(""))
+            .expect("first line declares a constant");
+        super::const_consumers(super::ConstFileFacts::from_facts(&facts), name, changed)
+            .into_iter()
+            .map(|c| (c.line, c.expression))
+            .collect()
+    }
+
+    #[test]
+    fn consumers_name_the_plain_returned_read() {
+        let source = "pub const G: &str = \"hi\";\n\npub fn greet(n: &str) -> String {\n    format!(\"{G}, {n}\")\n}\n";
+        let found = consumers(source, &[1]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].0, 4);
+    }
+
+    #[test]
+    fn consumers_refuse_unsafe_reads() {
+        let head = "pub const G: &str = \"hi\";\n";
+        for body in [
+            // shadowed by a binding
+            "pub fn f(n: &str) -> String {\n    let G = 1;\n    format!(\"{G}{n}\")\n}\n",
+            // shadowed by a parameter
+            "pub fn f(G: &str) -> String {\n    format!(\"{G}\")\n}\n",
+            // another module's namesake
+            "pub fn f() -> String {\n    other::G.to_string()\n}\n",
+            // conditional read
+            "pub fn f(b: bool) -> String {\n    if b {\n        G.to_string()\n    } else {\n        String::new()\n    }\n}\n",
+            // early return before the read
+            "pub fn f(b: bool) -> String {\n    if b { return String::new(); }\n    G.to_string()\n}\n",
+            // no reader
+            "pub fn f() -> String {\n    String::new()\n}\n",
+        ] {
+            let source = format!("{head}\n{body}");
+            assert!(consumers(&source, &[1]).is_empty(), "{body}");
+        }
+        // declared twice
+        let twice = "pub const G: &str = \"hi\";\nmod m { pub const G: &str = \"x\"; }\npub fn f() -> String {\n    G.to_string()\n}\n";
+        assert!(consumers(twice, &[1]).is_empty());
+        // a reader the diff already changes keeps its own probe
+        let source =
+            "pub const G: &str = \"hi\";\n\npub fn f() -> String {\n    G.to_string()\n}\n";
+        assert!(consumers(source, &[1, 4]).is_empty());
     }
 }

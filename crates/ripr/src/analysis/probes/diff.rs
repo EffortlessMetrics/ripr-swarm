@@ -28,7 +28,8 @@ use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::cfg_predicates::{attributes_require_test, split_leading_attribute};
 use crate::analysis::language::changed_let_binding;
-use crate::domain::{Probe, ProbeFamily, SourceLocation};
+use crate::analysis::classify::{ConstFileFacts, const_consumers, retargetable_const_name};
+use crate::domain::{Probe, ProbeFamily, SourceLocation, const_item_name};
 use std::path::Path;
 
 /// Test surface: the probe vec without the #3294 relations. Production
@@ -581,6 +582,13 @@ pub(crate) fn probes_for_file_with_relations(
         }
         if families == [ProbeFamily::StaticUnknown]
             && let Some(retargeted) =
+                retarget_changed_const_consumers(&build_context, added, text, &changed_lines)
+        {
+            probes.extend(retargeted);
+            continue;
+        }
+        if families == [ProbeFamily::StaticUnknown]
+            && let Some(retargeted) =
                 retarget_changed_binding_predicates(&build_context, added, text, &changed_lines)
         {
             probes.extend(retargeted);
@@ -856,6 +864,54 @@ fn retarget_changed_binding_predicates(
             use_site,
         ));
     }
+    (!retargeted.is_empty()).then_some(retargeted)
+}
+
+/// Retarget a changed `const`/`static` declaration to the same-file code that
+/// returns a value built from it (#11400). A changed constant sits outside
+/// every function, so its own probe has no seam: `ripr check` could not print
+/// a repair start for it and repair refused. The consumer line is the
+/// behavior the constant changes, so the probe moves there, typed by that
+/// line's own parser shape, and keeps the old and new declaration as causal
+/// evidence.
+///
+/// Fails closed to `None`, keeping the generic static-unknown path, unless a
+/// consumer line survives [`const_consumer_lines`] (single declaration, no
+/// shadow, plain top-level read, not a reader `const_flow` evaluates exactly),
+/// the diff does not change that line itself, and the parser names a
+/// `return_value` shape on it.
+fn retarget_changed_const_consumers(
+    context: &ProbeBuildContext<'_>,
+    added: &ChangedLine,
+    text: &str,
+    changed_lines: &[usize],
+) -> Option<Vec<SeededProbe>> {
+    let name = retargetable_const_name(text)?;
+    let facts = find_file_facts(context.index, &context.changed.path)?;
+    let before = nearby_removed_line(
+        added.new_side_line,
+        text,
+        context.changed,
+        context.added_run_starts,
+    )
+    .filter(|removed| const_item_name(removed) == Some(name));
+    let retargeted = const_consumers(ConstFileFacts::from_view(&facts), name, changed_lines)
+        .into_iter()
+        .map(|consumer| {
+            let line = ChangedLine {
+                line: consumer.line,
+                new_side_line: consumer.line,
+                text: consumer.expression,
+            };
+            SeededProbe::from_probe(build_probe(
+                context,
+                &line,
+                ProbeFamily::ReturnValue,
+                before.clone(),
+                Some(text.to_string()),
+            ))
+        })
+        .collect::<Vec<_>>();
     (!retargeted.is_empty()).then_some(retargeted)
 }
 

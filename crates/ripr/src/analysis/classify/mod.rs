@@ -76,7 +76,10 @@ pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_
 pub(in crate::analysis) use const_flow::{
     ChangedConsts, ConstFlow, associated_const_binding, evaluate_const_flow, shares_module_scope,
 };
-pub(in crate::analysis) use const_readers::same_file_const_readers;
+pub(crate) use const_readers::changed_const_consumer_lines;
+pub(in crate::analysis) use const_readers::{
+    ConstFileFacts, const_consumers, retargetable_const_name, same_file_const_readers,
+};
 pub(in crate::analysis) use context::ProbeContext;
 pub(in crate::analysis) use decision::{
     classify, confidence_score, ensure_unknown_stop_reason, exact_oracle_gap_next_step,

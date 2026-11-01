@@ -118,7 +118,7 @@ pub(crate) use next_action::{
     select_canonical_next_action, whole_repo_pilot_command,
 };
 pub(crate) use probe::{
-    ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, exact_assertion_fact,
+    ARM_UNSELECTED_REASON_PREFIX, const_item_name, GUARD_UNENTERED_REASON_PREFIX, exact_assertion_fact,
     input_boundary_fact, is_unselected_input_reason,
 };
 pub use probe::{

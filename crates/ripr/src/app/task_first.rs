@@ -840,10 +840,17 @@ pub(crate) fn resolve_repair_start(
     // seam, so repair must not start somewhere else). A diff that changes no
     // Rust production line leaves the whole-repository selection unscoped.
     let diff = live_check_diff_files(root, base);
+    // #11400: a changed constant is also the change to the code that returns a
+    // value built from it, resolved by the same relation `ripr check` uses to
+    // retarget the constant's finding, so check and repair agree.
+    let const_consumers = diff
+        .as_deref()
+        .map(|files| crate::analysis::changed_const_consumer_lines(root, files))
+        .unwrap_or_default();
     let scope = diff.as_ref().and_then(|files| {
         if classified
             .iter()
-            .any(|entry| seam_touches_change(entry, files))
+            .any(|entry| seam_touches_change(entry, files, &const_consumers))
         {
             Some(ChangeScope::TouchesSeams(files))
         } else {
@@ -851,7 +858,9 @@ pub(crate) fn resolve_repair_start(
         }
     });
     let off_change = |entry: &crate::analysis::ClassifiedSeam| match &scope {
-        Some(ChangeScope::TouchesSeams(files)) => !seam_touches_change(entry, files),
+        Some(ChangeScope::TouchesSeams(files)) => {
+            !seam_touches_change(entry, files, &const_consumers)
+        }
         Some(ChangeScope::TouchesNoSeam(_)) => true,
         None => false,
     };
@@ -1147,10 +1156,13 @@ fn changed_rust_production_lines(files: &[crate::analysis::ChangedFile]) -> Opti
 }
 
 /// Whether `files` (a parsed diff) adds, or deletes next to, a line inside
-/// the seam's span (its display line when no span was recorded).
+/// the seam's span (its display line when no span was recorded), or the span
+/// holds a line that reads a constant the diff changes (`const_consumers`,
+/// #11400).
 fn seam_touches_change(
     entry: &crate::analysis::ClassifiedSeam,
     files: &[crate::analysis::ChangedFile],
+    const_consumers: &[(std::path::PathBuf, usize)],
 ) -> bool {
     let seam_file = normalized_relative_path(entry.seam.file());
     let (start, end) = entry.seam.span().map_or(
@@ -1165,6 +1177,9 @@ fn seam_touches_change(
                 .iter()
                 .chain(file.removed_lines.iter())
                 .any(|line| (start..=end).contains(&line.new_side_line))
+        })
+        || const_consumers.iter().any(|(path, line)| {
+            normalized_relative_path(path) == seam_file && (start..=end).contains(line)
         })
 }
 

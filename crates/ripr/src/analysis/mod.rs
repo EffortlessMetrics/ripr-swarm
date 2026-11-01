@@ -2,6 +2,7 @@ pub(crate) mod cancellation;
 pub(crate) mod canonical_gap;
 mod classifier;
 mod classify;
+pub(crate) use classify::changed_const_consumer_lines;
 pub(crate) mod committed_source;
 pub(crate) mod consumed_source;
 pub(crate) mod diagnostic_origin;

@@ -32,6 +32,14 @@ use crate::analysis::facts::{FunctionContainer, FunctionSummary, TestSummary};
 /// than sampled.
 const TEST_LIMIT: usize = 8;
 
+/// Whether `reader_text` (a function with its signature) is the single
+/// expression shape this module evaluates (#11400). The diff-side consumer
+/// retarget leaves such a reader's constant probe in place so the exact
+/// evaluation keeps deciding it.
+pub(super) fn reader_is_evaluable(reader_text: &str) -> bool {
+    parse_reader(reader_text).is_some() || parse_trait_reader(reader_text).is_some()
+}
+
 /// The old and new declaration lines of one changed constant, by file and
 /// new-side line.
 #[derive(Clone, Debug, Default)]

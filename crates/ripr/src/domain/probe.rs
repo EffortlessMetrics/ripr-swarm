@@ -216,6 +216,37 @@ pub struct Probe {
     pub required_oracles: Vec<String>,
 }
 
+/// The name of the `const` or `static` item a declaration line introduces
+/// (`pub(crate) const NAME: T = ...;`), or `None` for any other line. The
+/// shared spelling rule behind [`Probe::changed_const_name`] and the diff-side
+/// consumer retarget (#11400).
+pub(crate) fn const_item_name(expression: &str) -> Option<&str> {
+    let mut rest = expression.trim_start();
+    if let Some(after_pub) = rest.strip_prefix("pub") {
+        rest = after_pub.trim_start();
+        if rest.starts_with('(') {
+            rest = rest[rest.find(')')? + 1..].trim_start();
+        }
+    }
+    rest = rest
+        .strip_prefix("const ")
+        .or_else(|| rest.strip_prefix("static "))?
+        .trim_start();
+    rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let name = &rest[..end];
+    let declaration = rest[end..].trim_start();
+    // An initializer on the line separates an item from a generics or
+    // parameter continuation line such as `const N: usize,`.
+    let named_item = !name.is_empty()
+        && name != "_"
+        && declaration.starts_with(':')
+        && declaration.contains('=');
+    named_item.then_some(name)
+}
+
 impl Probe {
     /// The name of the `const` or `static` item this probe's changed line
     /// declares, for a `static_unknown` probe. A changed constant has no seam
@@ -224,30 +255,7 @@ impl Probe {
         if self.family != ProbeFamily::StaticUnknown {
             return None;
         }
-        let mut rest = self.expression.trim_start();
-        if let Some(after_pub) = rest.strip_prefix("pub") {
-            rest = after_pub.trim_start();
-            if rest.starts_with('(') {
-                rest = rest[rest.find(')')? + 1..].trim_start();
-            }
-        }
-        rest = rest
-            .strip_prefix("const ")
-            .or_else(|| rest.strip_prefix("static "))?
-            .trim_start();
-        rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
-        let end = rest
-            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .unwrap_or(rest.len());
-        let name = &rest[..end];
-        let declaration = rest[end..].trim_start();
-        // An initializer on the line separates an item from a generics or
-        // parameter continuation line such as `const N: usize,`.
-        let named_item = !name.is_empty()
-            && name != "_"
-            && declaration.starts_with(':')
-            && declaration.contains('=');
-        named_item.then_some(name)
+        const_item_name(&self.expression)
     }
 
     /// Whether `ripr check` resolves a stub route for this probe.
