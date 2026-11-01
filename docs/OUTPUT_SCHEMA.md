@@ -16196,6 +16196,18 @@ agent work orders for every headline-eligible classified seam. The
 artifact lands at `target/ripr/reports/agent-seam-packets.json` when
 generated via `cargo xtask agent-seam-packets`.
 
+Seam packets for a Rust `predicate_boundary` seam whose whole expression is
+one `<`, `<=`, `>` or `>=` comparison also carry an optional, advisory
+`proof_obligation` object (#11551): `kind` (`boundary`), `function`,
+`changed_predicate`, symbolic `witness_inputs[]` (relations over the operands:
+just below, equal to, just above), a `property_skeleton` for a Kani or property
+harness, and `limits[]`. It is derived from the written predicate only, is not
+verified, compares no old predicate, and is computed after `task`,
+`headline_eligible` and the edit cage, so it cannot change classification or
+actionability. Packets for other seam kinds, compound or equality predicates
+and non-Rust files omit it. It is an additive optional member, so
+`schema_version` stays `0.5`.
+
 `ripr agent packet --root . --seam-id <id> --json` emits the same
 `agent-seam-packets-json` envelope filtered to one visible seam. It does not
 dump the full repo packet set. Missing seam IDs, non-actionable seam classes,
