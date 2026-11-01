@@ -213,10 +213,13 @@ fn is_compile_time_assertion(expression: &str) -> bool {
 
 /// #11549: the probe label of a changed `unsafe fn` or of an `unsafe` block
 /// holding an unchecked assumption. Label match only; the shape extractor owns
-/// the parsing.
-fn is_unsafe_obligation(expression: &str) -> bool {
-    expression.starts_with("unsafe fn ")
-        || expression == crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL
+/// the parsing. The labels are only produced for `unsafe_boundary` shapes, which
+/// map to the `static_unknown` family, so a probe of another family whose text
+/// happens to start with `unsafe fn ` does not qualify (#12174).
+fn is_unsafe_obligation(family: &ProbeFamily, expression: &str) -> bool {
+    matches!(family, ProbeFamily::StaticUnknown)
+        && (expression.starts_with("unsafe fn ")
+            || expression == crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL)
 }
 
 pub(in crate::analysis) fn stop_reasons(
@@ -232,7 +235,7 @@ pub(in crate::analysis) fn stop_reasons(
             reasons.push(StopReason::NoChangedRustLine);
         }
     }
-    if is_unsafe_obligation(&probe.expression) {
+    if is_unsafe_obligation(&probe.family, &probe.expression) {
         reasons.push(StopReason::UnsafeObligation);
     }
     if related_tests.iter().any(|test| {
@@ -1485,11 +1488,33 @@ mod tests {
     // #11549: only the unsafe-fn and unchecked-assumption labels name the stop reason.
     #[test]
     fn unsafe_obligation_is_recognised_by_probe_label_only() {
-        assert!(is_unsafe_obligation("unsafe fn pick"));
-        assert!(is_unsafe_obligation("unsafe block (unchecked assumption)"));
-        assert!(!is_unsafe_obligation("unsafe block"));
-        assert!(!is_unsafe_obligation("pub fn pick"));
-        assert!(!is_unsafe_obligation("unsafe_fn_pointer"));
+        let unknown = ProbeFamily::StaticUnknown;
+        assert!(is_unsafe_obligation(&unknown, "unsafe fn pick"));
+        assert!(is_unsafe_obligation(
+            &unknown,
+            "unsafe block (unchecked assumption)"
+        ));
+        assert!(!is_unsafe_obligation(&unknown, "unsafe block"));
+        assert!(!is_unsafe_obligation(&unknown, "pub fn pick"));
+        assert!(!is_unsafe_obligation(&unknown, "unsafe_fn_pointer"));
+    }
+
+    // #12174: the stop reason also needs the `static_unknown` family, so a value
+    // probe over a line that begins `unsafe fn ` does not receive it.
+    #[test]
+    fn unsafe_obligation_requires_the_static_unknown_family() {
+        for family in [ProbeFamily::ReturnValue, ProbeFamily::Predicate] {
+            let reasons = stop_reasons(&probe(family, "unsafe fn x"), None, &[]);
+            assert!(
+                !reasons.contains(&StopReason::UnsafeObligation),
+                "{reasons:?}"
+            );
+        }
+        let reasons = stop_reasons(&probe(ProbeFamily::StaticUnknown, "unsafe fn x"), None, &[]);
+        assert!(
+            reasons.contains(&StopReason::UnsafeObligation),
+            "{reasons:?}"
+        );
     }
 
     // #11547: a changed compile-time assertion names its own stop reason;
