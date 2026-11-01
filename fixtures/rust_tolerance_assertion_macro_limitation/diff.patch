@@ -1,0 +1,13 @@
+diff --git a/src/internal.rs b/src/internal.rs
+index 0000000..1111111 100644
+--- a/src/internal.rs
++++ b/src/internal.rs
+@@ -1,7 +1,7 @@
+ pub fn scale(value: f64, factor: f64) -> f64 {
+-    if value > factor {
++    if value >= factor {
+         value * factor
+     } else {
+         factor
+     }
+ }
