@@ -389,7 +389,9 @@ fn all_not_established(harnesses: &[Harness], reason: &str) -> Vec<HarnessResult
         .collect()
 }
 
-fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> Vec<HarnessResult> {
+/// The exact `cargo` arguments for the lane, kept separate so a test can pin
+/// what Kani actually receives.
+fn kani_command(args: &KaniArgs) -> Vec<String> {
     let mut command = vec!["kani".to_string(), "-p".to_string(), "ripr".to_string()];
     if let Some(wanted) = &args.harness {
         command.push("--harness".to_string());
@@ -404,6 +406,11 @@ fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> Vec<HarnessResult> {
     command.push("unstable-options".to_string());
     command.push("--harness-timeout".to_string());
     command.push(format!("{}s", args.harness_timeout_secs));
+    command
+}
+
+fn run_kani(harnesses: &[Harness], args: &KaniArgs) -> Vec<HarnessResult> {
+    let command = kani_command(args);
     let output = match run::capture_output_with_timeout(
         "cargo",
         &command,
@@ -521,6 +528,22 @@ mod tests {
             classify_output("VERIFICATION:- FAILED\n"),
             HarnessStatus::Failed(_)
         ));
+    }
+
+    #[test]
+    fn the_per_harness_timeout_reaches_the_kani_command() {
+        let parsed = parse_args(&strings(&["--harness-timeout-secs", "60"]));
+        assert!(parsed.is_ok());
+        let command = parsed.map(|args| kani_command(&args)).unwrap_or_default();
+        let position = command.iter().position(|arg| arg == "--harness-timeout");
+        assert_eq!(
+            position
+                .and_then(|index| command.get(index + 1))
+                .map(String::as_str),
+            Some("60s")
+        );
+        let gate = command.iter().position(|arg| arg == "unstable-options");
+        assert!(gate.is_some() && gate < position);
     }
 
     #[test]
