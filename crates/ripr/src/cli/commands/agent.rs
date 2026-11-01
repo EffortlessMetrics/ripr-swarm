@@ -711,9 +711,12 @@ pub(in crate::cli) fn translate_agent_repair_seam_id(
                 "agent repair seam_id `{seam_id}` names seam `{resolved}`, which is not repair-eligible: {reason}; no repair attempt was started. Run `ripr pilot --root {root_arg}` to list current seam IDs"
             )))
         }
-        Ok(RepairSubjectOutcome::Ambiguous(seam_ids)) => {
+        Ok(RepairSubjectOutcome::Ambiguous {
+            seam_ids,
+            descriptions,
+        }) => {
             const MAX_LISTED: usize = 8;
-            let mut listed: Vec<&str> = seam_ids
+            let mut listed: Vec<&str> = descriptions
                 .iter()
                 .map(String::as_str)
                 .take(MAX_LISTED)
@@ -3547,7 +3550,7 @@ fn repair_after_no_movement_lines(
         ));
     }
     lines.extend([
-        format!("to recover: {edit}, then rerun this after-phase command."),
+        format!("to recover: {edit}, then rerun the after phase."),
         format!(
             "inspect the selected attempt with `ripr agent status --root {root_arg}{store_flag} --attempt {attempt_arg}`."
         ),

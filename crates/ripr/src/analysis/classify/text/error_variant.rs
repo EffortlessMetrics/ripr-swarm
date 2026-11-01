@@ -192,10 +192,11 @@ pub(in crate::analysis) fn question_mark_error_variant(text: &str) -> Option<Str
     let text = text.trim();
     let statement = text.strip_suffix(';').unwrap_or(text).trim_end();
     let body = statement.strip_suffix('?')?;
-    let (call_at, name) = [".ok_or_else(", ".ok_or("]
+    let names = [".ok_or_else(", ".ok_or("];
+    let (call_at, name) = names
         .iter()
         .find_map(|name| body.rfind(name).map(|at| (at, *name)))?;
-    if body.matches(".ok_or(").count() + body.matches(".ok_or_else(").count() != 1 {
+    if names.iter().map(|n| body.matches(n).count()).sum::<usize>() != 1 {
         return None;
     }
     let receiver = &body[..call_at];

@@ -14,7 +14,7 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.50)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: pub(crate) const OBSERVATION_SCHEMA_GENERATION: u32 = 3;
-  Analyzer limit: No strong discriminator was detected
+  Analyzer limit: No strong assertion was detected
   Related test: src/lib.rs:34 observation_schema_generation_matches_policy
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place

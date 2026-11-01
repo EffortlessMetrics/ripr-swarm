@@ -49,6 +49,28 @@ impl ProgressPolicy {
     };
 }
 
+/// Environment switch that silences the stderr progress stream the way
+/// `--quiet` does (agent harnesses set it once instead of threading a flag
+/// through every drill-in command).
+pub(crate) const QUIET_ENV: &str = "RIPR_QUIET";
+
+/// `RIPR_QUIET` semantics: unset, empty, `0` or `false` (any case) leave
+/// progress on; any other value silences it. Pure so the parse is testable
+/// without mutating the process environment.
+pub(crate) fn quiet_env_value(value: Option<&str>) -> bool {
+    value.is_some_and(|raw| {
+        let trimmed = raw.trim();
+        !(trimmed.is_empty() || trimmed == "0" || trimmed.eq_ignore_ascii_case("false"))
+    })
+}
+
+/// True when the stderr progress stream must not be wired: the command's
+/// `--quiet` flag or the `RIPR_QUIET` environment switch. Stdout, exit codes
+/// and error text are unaffected.
+pub(crate) fn progress_silenced(quiet_flag: bool) -> bool {
+    quiet_flag || quiet_env_value(std::env::var(QUIET_ENV).ok().as_deref())
+}
+
 /// Wake interval of the heartbeat thread between throttled ticks.
 const HEARTBEAT_TICK: Duration = Duration::from_millis(50);
 
@@ -590,6 +612,19 @@ pub(crate) fn try_emit_notice(message: &str) -> bool {
 mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
+
+    /// #11580: `RIPR_QUIET` silences progress for any value but the explicit
+    /// off spellings; unset keeps it.
+    #[test]
+    fn quiet_env_value_silences_on_any_value_but_the_off_spellings() {
+        for on in ["1", "true", "yes", "on", " 1 ", "anything"] {
+            assert!(quiet_env_value(Some(on)), "{on:?} must silence progress");
+        }
+        for off in ["", "  ", "0", " 0 ", "false", "FALSE", "False"] {
+            assert!(!quiet_env_value(Some(off)), "{off:?} must keep progress");
+        }
+        assert!(!quiet_env_value(None), "unset keeps progress");
+    }
     use std::sync::atomic::AtomicU64;
 
     /// Milliseconds of fake time elapsed since construction. The produced

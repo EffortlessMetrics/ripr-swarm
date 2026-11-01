@@ -335,9 +335,7 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
             "ripr could not trace the changed value to anything a test observes"
         }
         StopReason::StaticProbeUnknown => "ripr has no probe shape for this kind of change",
-        StopReason::TransitiveReachUnresolved => {
-            "a test may reach this through a chain of internal calls ripr could not finish walking"
-        }
+        StopReason::TransitiveReachUnresolved => reason.describe(),
         StopReason::MacroReachUnresolved => {
             "a test may reach this through a macro ripr does not expand"
         }
@@ -346,7 +344,9 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
         }
         // ADR 0019: the domain gloss is the stop-reason owner. Do not invent
         // a second identity-unknown sentence here.
-        StopReason::HelperIdentityUnresolved => reason.describe(),
+        StopReason::HelperIdentityUnresolved | StopReason::CompileTimeInvariant => {
+            reason.describe()
+        }
     }
 }
 

@@ -722,7 +722,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "capability-docs [--check | --write] [--markdown-file <path>]",
         "check-doc-index",
         "check-changelog-fragments [--release-cut]",
-        "fold-changelog [--dry-run | --write] [--limit <N>] [--keep-fragments]",
+        "fold-changelog [--dry-run | --write] [--limit <N>] [--keep-fragments] [--release-cut]",
         "check-readme-state",
         "markdown-links",
         "check-pr-shape [--body-file <path> | --body-env <var>]",
@@ -2299,12 +2299,12 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Checks changelog.d fragment section, entry, reference and name, that verdict-corpus and Repo ops bookkeeping uses Internal / CI, and that each CHANGELOG.md Unreleased bullet names an issue, PR, or RIPR-SPEC; --release-cut also fails on any unfolded fragment.",
         ),
         command_entry(
-            "fold-changelog [--dry-run | --write] [--limit <N>] [--keep-fragments]",
+            "fold-changelog [--dry-run | --write] [--limit <N>] [--keep-fragments] [--release-cut]",
             "argument_dependent",
             "CHANGELOG.md and changelog.d/*.md (only with --write; fragments are deleted unless --keep-fragments)",
             true,
             false,
-            "Folds changelog.d fragments into the first matching `### <Section>` under `## Unreleased` in CHANGELOG.md, in file-name order, preserving continuation lines, and deletes each folded fragment (README.md stays). Default is a dry run that prints the plan and writes nothing; --write applies it. --limit takes the first N fragments for a batch (the release checklist allows at most 150 files per PR). Refuses an unknown section, a missing section marker or any malformed fragment by file name, and an entry already present in Unreleased. Release-cut tooling, not part of precommit; see changelog.d/README.md.",
+            "Folds changelog.d fragments into the first matching `### <Section>` under `## Unreleased` in CHANGELOG.md, in file-name order, preserving continuation lines, and deletes each folded fragment (README.md stays). Default is a dry run that prints the plan and writes nothing; --write applies it. --limit takes the first N fragments for a batch (the release checklist allows at most 150 files per PR). Refuses an unknown section, a missing section marker or any malformed fragment by file name, and an entry already present in Unreleased. --release-cut is the cut-day mode: it folds every fragment (conflicts with --limit and --keep-fragments), warns when the PR would exceed the 160-file admission cap, and after --write requires check-changelog-fragments --release-cut to pass. Release-cut tooling, not part of precommit; see changelog.d/README.md.",
         ),
         command_entry(
             "check-readme-state",

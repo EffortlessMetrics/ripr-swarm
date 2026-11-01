@@ -1951,7 +1951,7 @@ fn contains_word(text: &str, word: &str) -> bool {
 /// one of the binding's direct uses, so the initializer provably feeds
 /// the compared operand. At most one declaration generation can hold
 /// the predicate in its live span; the first that does wins.
-fn live_local_initializer(
+pub(in crate::analysis) fn live_local_initializer(
     owner: &FunctionSummary,
     operand: &str,
     predicate_line: usize,
@@ -4020,8 +4020,7 @@ fn missing_field_value_discriminator(
     // write from a kept one, so it does not confirm the assignment.
     let assigned_field_observed = |test: &TestSummary, assertion: &OracleFact| {
         assigned.as_ref().is_some_and(|(owner, path)| {
-            !super::propagation_witness::assertion_expects_default_like(&assertion.text)
-                && pushed_collection_compared_whole(owner, path, test, assertion, index)
+            assigned_field_read_confirms(owner, path, test, assertion, index)
         })
     };
     // #6578: the variant-field pattern rule's workspace scan depends only on
@@ -4153,6 +4152,24 @@ pub(in crate::analysis) fn assigned_field_of(
             })
         },
     )
+}
+
+/// RIPR-SPEC-0228, #11398: whether `assertion` confirms the changed write of
+/// `self.<path>` in `owner`: an `assert_eq!` that reads the whole field from
+/// the binding the test called `owner` on, after the call and under the
+/// pushed-literal binding rules ([`pushed_collection_compared_whole`]). A
+/// default-like expected value (`0`, `false`) cannot tell a deleted write
+/// from a kept one. This is the one read rule for a field write: the diff
+/// probe and the repository seam both ask it, so check and repair agree.
+pub(in crate::analysis) fn assigned_field_read_confirms(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    !super::propagation_witness::assertion_expects_default_like(&assertion.text)
+        && pushed_collection_compared_whole(owner, path, test, assertion, index)
 }
 
 /// #7131: the field collection path (`lines` for `self.lines.push(Line {
@@ -4759,7 +4776,7 @@ struct ReceiverParameters<'a> {
     index: Option<&'a crate::analysis::rust_index::RustIndex>,
 }
 
-type ReceiverReader<'a> = dyn Fn(&str) -> Option<String> + 'a;
+type ReceiverReader<'a> = dyn Fn(&TestSummary, &str) -> Option<String> + 'a;
 
 impl<'a> ReceiverParameters<'a> {
     fn none() -> Self {
@@ -4791,13 +4808,13 @@ impl<'a> ReceiverParameters<'a> {
         }
     }
 
-    fn cell(&self, parameter: &str, argument: &str) -> Option<Vec<String>> {
+    fn cell(&self, test: &TestSummary, parameter: &str, argument: &str) -> Option<Vec<String>> {
         if !self.names.iter().any(|name| name == parameter) {
             return None;
         }
         Some(
             self.value
-                .and_then(|read| read(argument))
+                .and_then(|read| read(test, argument))
                 .into_iter()
                 .collect(),
         )
@@ -4839,7 +4856,7 @@ fn owner_call_parameter_values_where(
                 .enumerate()
                 .filter_map(|(idx, argument)| {
                     let parameter = parameters.get(idx)?;
-                    if let Some(values) = receivers.cell(parameter, argument) {
+                    if let Some(values) = receivers.cell(test, parameter, argument) {
                         return Some((parameter, values, argument.trim(), false));
                     }
                     let values = owner_row_argument_values(
@@ -5376,8 +5393,15 @@ fn chain_entry_rows(
     // shadow authority that denies its `helper_owner_call` relation).
     // #9329: the entry hop's method receiver (`b` of `b.to_string_as(si)`)
     // is the one parameter whose cell is a constructed receiver string.
-    let receiver_reader =
-        |argument: &str| super::helper_transfer::receiver_cell_value(argument, index);
+    let receiver_reader = |test: &TestSummary, argument: &str| {
+        super::helper_transfer::receiver_cell_value(argument, index, &|name| {
+            // A let-bound name reads as its literal only through the shared
+            // single-immutable-`let` authority, and only a plain decimal.
+            crate::analysis::value_resolution::test_let_bound_literal(&test.body, name)
+                .filter(|value| !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit()))
+                .filter(|_| let_governs_every_use(&test.body, name))
+        })
+    };
     let receivers = ReceiverParameters {
         names: entry.receiver.iter().cloned().collect(),
         value: Some(&receiver_reader),
@@ -5408,6 +5432,32 @@ fn chain_entry_rows(
         },
         &receivers,
     )
+}
+
+/// True when the body's one `let NAME` sits at the body's top block level and
+/// is the first mention of `NAME`: a `let` in a closed inner block, or after an
+/// earlier use, does not bind a later use (it may name a constant instead).
+fn let_governs_every_use(body: &str, name: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(body);
+    let is_word = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let Some(first) = masked.match_indices(name).map(|(at, _)| at).find(|at| {
+        !masked[..*at].chars().next_back().is_some_and(is_word)
+            && !masked[*at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_word)
+    }) else {
+        return false;
+    };
+    let declared = masked[..first]
+        .trim_end()
+        .strip_suffix("mut")
+        .map_or(masked[..first].trim_end(), str::trim_end)
+        .ends_with("let");
+    let opens = masked[..first].matches('{').count();
+    let closes = masked[..first].matches('}').count();
+    // Depth 1 is the test function's own block.
+    declared && opens.saturating_sub(closes) == 1
 }
 
 /// One bound argument: a literal, or the caller's own parameter
