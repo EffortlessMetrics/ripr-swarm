@@ -10,6 +10,8 @@
 
 use super::*;
 
+mod partial_analysis;
+
 pub(crate) const EVIDENCE_PROMOTION_HONESTY_CORPUS: &str =
     "fixtures/evidence-promotion-honesty-corpus/corpus.json";
 
@@ -300,6 +302,9 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
     },
     ExpectedCompleteness {
         completeness: String,
+    },
+    ExpectedPartialAnalysis {
+        detail: partial_analysis::ExpectedPartialAnalysis,
     },
     ExpectedChangedRustFiles {
         count: u64,
@@ -800,6 +805,11 @@ fn evidence_promotion_parse_assertion(
                 evidence_promotion_required_assertion_class(case_id, index, assertion, "class")?;
             Ok(EvidencePromotionSemanticAssertion::MaximumClass { class })
         }
+        "expected_partial_analysis" => Ok(
+            EvidencePromotionSemanticAssertion::ExpectedPartialAnalysis {
+                detail: partial_analysis::parse(case_id, index, assertion)?,
+            },
+        ),
         "expected_completeness" => {
             let completeness = evidence_promotion_required_assertion_string(
                 case_id,
@@ -2033,6 +2043,13 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                             "{case_label}: finding `{finding_id}` class `{class}` exceeds maximum `{expected_max_class}`"
                         ));
                     }
+                }
+            }
+            EvidencePromotionSemanticAssertion::ExpectedPartialAnalysis { detail } => {
+                if !partial_analysis::matches(detail, check_json) {
+                    violations.push(format!(
+                        "{case_label}: `expected_partial_analysis` requires incomplete typed partial_with_limitations and exactly one matching limitation: {detail:?}"
+                    ));
                 }
             }
             EvidencePromotionSemanticAssertion::ExpectedCompleteness { completeness } => {
