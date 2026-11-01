@@ -1985,6 +1985,24 @@ impl DocumentStore {
             .sum()
     }
 
+    fn is_store_overflow_placeholder(state: &DocumentState) -> bool {
+        state.buffer_authority_unknown && state.text.is_empty()
+    }
+
+    /// Occupancy that counts against [`DocumentStoreLimits::max_open_documents`].
+    /// Overflow placeholders stay in the map so later `didChange`/`didClose`
+    /// find them, but they do not consume an accepted slot.
+    fn accepted_document_count_except(&self, uri: &Uri) -> usize {
+        self.documents
+            .iter()
+            .filter(|(stored, state)| *stored != uri && !Self::is_store_overflow_placeholder(state))
+            .count()
+    }
+
+    fn accepted_slots_are_full(&self, uri: &Uri) -> bool {
+        self.accepted_document_count_except(uri) >= self.limits.max_open_documents
+    }
+
     /// Per-notification change limits tightened to the store-wide retained-byte
     /// headroom so a full replacement cannot bypass [`DOCUMENT_STORE_LIMITS`].
     fn change_limits_for(&self, uri: &Uri) -> ContentChangeLimits {
@@ -2015,9 +2033,11 @@ impl DocumentStore {
         let uri = params.text_document.uri;
         let version = Some(params.text_document.version);
         let incoming = params.text_document.text;
-        let replacing = self.documents.contains_key(&uri);
-        let would_exceed_count =
-            !replacing && self.documents.len() >= self.limits.max_open_documents;
+        let replacing_accepted = self
+            .documents
+            .get(&uri)
+            .is_some_and(|state| !Self::is_store_overflow_placeholder(state));
+        let would_exceed_count = !replacing_accepted && self.accepted_slots_are_full(&uri);
         let would_exceed_bytes = self
             .retained_bytes_except(&uri)
             .saturating_add(incoming.len())
@@ -2173,8 +2193,8 @@ impl DocumentStore {
         let version = Some(params.text_document.version);
         let changes = params.content_changes;
         let change_limits = self.change_limits_for(&uri);
-        let new_uri_over_count = !self.documents.contains_key(&uri)
-            && self.documents.len() >= self.limits.max_open_documents;
+        let accepted_slots_full = self.accepted_slots_are_full(&uri);
+        let new_uri_over_count = !self.documents.contains_key(&uri) && accepted_slots_full;
 
         if let Some(state) = self.documents.get_mut(&uri) {
             state.version = version;
@@ -2197,6 +2217,7 @@ impl DocumentStore {
                 // The replacement is the recovered buffer, not a later change,
                 // so an empty follow-up list would not consult max_document_bytes.
                 if recovered.len() > change_limits.max_document_bytes
+                    || accepted_slots_full
                     || apply_document_content_changes_within(
                         &mut recovered,
                         changes
@@ -2298,6 +2319,7 @@ impl DocumentStore {
     ) -> QuarantineTransition {
         let other_bytes = self.retained_bytes_except(uri);
         let max_bytes = self.limits.max_retained_document_bytes;
+        let accepted_slots_full = self.accepted_slots_are_full(uri);
         let Some(state) = self.documents.get_mut(uri) else {
             return QuarantineTransition::Unchanged;
         };
@@ -2306,11 +2328,12 @@ impl DocumentStore {
                 return state.refresh_quarantine();
             }
             // Client-provided save text restores authority only when it fits
-            // the store-wide retained-bytes budget; otherwise the cap would
-            // be bypassed on the same path that clears `buffer_authority_unknown`.
-            if text
-                .as_ref()
-                .is_some_and(|incoming| other_bytes.saturating_add(incoming.len()) > max_bytes)
+            // both store-wide budgets; otherwise the cap would be bypassed on
+            // the same path that clears `buffer_authority_unknown`.
+            if accepted_slots_full
+                || text
+                    .as_ref()
+                    .is_some_and(|incoming| other_bytes.saturating_add(incoming.len()) > max_bytes)
             {
                 return state.refresh_quarantine();
             }
@@ -3368,6 +3391,42 @@ mod tests {
     }
 
     #[test]
+    fn full_replacement_of_a_count_overflow_uri_stays_quarantined() -> Result<(), String> {
+        let first = test_uri("file:///workspace/src/a.rs")?;
+        let second = test_uri("file:///workspace/src/b.rs")?;
+        let overflow = test_uri("file:///workspace/src/c.rs")?;
+        let mut store = DocumentStore::with_limits(tiny_count_limits());
+        store.open(open_params(first.clone(), "fn a() {}"));
+        store.open(open_params(second.clone(), "fn b() {}"));
+        store.open(open_params(overflow.clone(), "fn overflow() {}"));
+        assert_overflow_quarantined(&store, &overflow)?;
+        let over_cap = store.change(
+            full_replace_params(overflow.clone(), 2, "fn still_over() {}"),
+            &PositionEncodingKind::UTF16,
+        );
+        if over_cap != QuarantineTransition::Unchanged {
+            return Err("count-overflow full replacement must not restore authority".to_string());
+        }
+        assert_overflow_quarantined(&store, &overflow)?;
+        store.close(close_params(second));
+        let recovered = store.change(
+            full_replace_params(overflow.clone(), 3, "fn recovered() {}"),
+            &PositionEncodingKind::UTF16,
+        );
+        if recovered == QuarantineTransition::Unchanged
+            && store
+                .state_for_uri(&overflow)
+                .is_some_and(|state| state.buffer_authority_unknown)
+        {
+            return Err(
+                "closing an accepted document must free a slot for overflow recovery".into(),
+            );
+        }
+        assert_accepted_text(&store, &overflow, "fn recovered() {}")?;
+        Ok(())
+    }
+
+    #[test]
     fn reopening_an_existing_uri_at_the_count_cap_is_accepted() -> Result<(), String> {
         let first = test_uri("file:///workspace/src/a.rs")?;
         let second = test_uri("file:///workspace/src/b.rs")?;
@@ -3380,6 +3439,10 @@ mod tests {
         if store.documents.len() != 2 {
             return Err("reopen must replace the existing URI, not add a third".to_string());
         }
+        let overflow = test_uri("file:///workspace/src/c.rs")?;
+        store.open(open_params(overflow.clone(), "fn overflow() {}"));
+        store.open(open_params(overflow.clone(), "fn overflow_reopen() {}"));
+        assert_overflow_quarantined(&store, &overflow)?;
         Ok(())
     }
 
