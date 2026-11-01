@@ -1289,7 +1289,8 @@ pub fn render_finding(finding: &Finding) -> String {
 }
 
 /// Render one finding with the bounded context follow-up for the selected
-/// finding.
+/// finding. Production routes (`explain`) call the `_and_files` form directly.
+#[cfg(test)]
 pub(crate) fn render_finding_with_context_command(
     finding: &Finding,
     config: &RiprConfig,
@@ -1377,6 +1378,22 @@ pub(crate) fn render_agent_with_config_and_navigation(
     provenance: CheckDiffProvenance,
 ) -> String {
     agent::render(output, config, drill_in, provenance)
+}
+
+/// `ripr explain --format agent` (#12104): the compact agent projection of one
+/// selected finding, with an explicit `done=` / `open=` / `stop=` terminal line.
+pub(crate) fn render_finding_agent(
+    finding: &Finding,
+    root: &Path,
+    context_command: &str,
+    suppressed: bool,
+) -> String {
+    terminal_safe(agent::render_finding(
+        finding,
+        root,
+        context_command,
+        suppressed,
+    ))
 }
 
 pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};

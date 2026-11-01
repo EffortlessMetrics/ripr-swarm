@@ -3193,6 +3193,165 @@ fn check_navigation_replays_explicit_draft_over_configured_ready() -> Result<(),
     Ok(())
 }
 
+/// #12104: `explain --format agent` prints the compact one-finding lines with
+/// an explicit terminal state, `--format json` is refused toward `ripr context`,
+/// and the default stays the human explanation.
+#[test]
+fn explain_format_agent_prints_compact_lines_and_json_is_refused() -> Result<(), String> {
+    let (root, diff) =
+        agent_brief_sample_workspace("explain-format-agent").map_err(|err| err.to_string())?;
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+    let check = run_ripr(&[
+        "check", "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft",
+    ]);
+    assert_success(&check);
+    let stdout = String::from_utf8_lossy(&check.stdout);
+    let selector = stdout
+        .lines()
+        .find(|line| line.starts_with("  ripr explain "))
+        .and_then(|line| line.split_whitespace().find(|t| t.starts_with("probe:")))
+        .ok_or_else(|| format!("check output omitted a probe selector:\n{stdout}"))?
+        .to_string();
+    let base = [
+        "explain", "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft",
+    ];
+    let agent_args: Vec<&str> = base
+        .iter()
+        .copied()
+        .chain(["--format", "agent", selector.as_str()])
+        .collect();
+    let agent = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &agent_args)
+        .map_err(|err| format!("run explain --format agent: {err}"))?;
+    assert_success(&agent);
+    let text = String::from_utf8_lossy(&agent.stdout).to_string();
+    assert!(
+        text.starts_with("#ripr explain agent static-advisory class="),
+        "{text}"
+    );
+    let terminals = text
+        .lines()
+        .filter(|l| l.starts_with("done=") || l.starts_with("open=") || l.starts_with("stop="))
+        .count();
+    assert_eq!(terminals, 1, "exactly one terminal line:\n{text}");
+    assert!(
+        text.lines().any(|l| l.starts_with("next=ripr context ")),
+        "{text}"
+    );
+    assert!(text.contains(&format!("|id={selector}")), "{text}");
+    assert!(
+        !text.contains("Why:"),
+        "agent lines are not the human body:\n{text}"
+    );
+
+    let human_args: Vec<&str> = base.iter().copied().chain([selector.as_str()]).collect();
+    let human = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &human_args)
+        .map_err(|err| format!("run explain: {err}"))?;
+    assert_success(&human);
+    assert!(
+        !String::from_utf8_lossy(&human.stdout).starts_with("#ripr explain agent"),
+        "default format must stay human"
+    );
+
+    let json_args: Vec<&str> = base
+        .iter()
+        .copied()
+        .chain(["--format", "json", selector.as_str()])
+        .collect();
+    let json = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &json_args)
+        .map_err(|err| format!("run explain --format json: {err}"))?;
+    assert!(!json.status.success(), "json must be refused");
+    assert!(json.stdout.is_empty(), "refusal keeps stdout empty");
+    assert!(
+        String::from_utf8_lossy(&json.stderr).contains("ripr context --at"),
+        "{}",
+        String::from_utf8_lossy(&json.stderr)
+    );
+    Ok(())
+}
+
+/// #12104: the `--from` replay path prints the same agent lines, and its
+/// `next=` context command is runnable and succeeds against the same artifact.
+#[test]
+fn explain_format_agent_from_artifact_replays_the_context_next_command() -> Result<(), String> {
+    let (root, diff) =
+        agent_brief_sample_workspace("explain-agent-from").map_err(|err| err.to_string())?;
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+    let artifact = root.join("check-artifact.json");
+    let artifact_arg = artifact.display().to_string();
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--diff",
+        &diff_arg,
+        "--mode",
+        "draft",
+        "--write-artifact",
+        &artifact_arg,
+    ]);
+    assert_success(&check);
+    let stdout = String::from_utf8_lossy(&check.stdout);
+    let selector = stdout
+        .lines()
+        .find(|line| line.starts_with("  ripr explain "))
+        .and_then(|line| line.split_whitespace().find(|t| t.starts_with("probe:")))
+        .ok_or_else(|| format!("check output omitted a probe selector:\n{stdout}"))?
+        .to_string();
+    let args = [
+        "explain",
+        "--root",
+        &root_arg,
+        "--diff",
+        &diff_arg,
+        "--mode",
+        "draft",
+        "--from",
+        &artifact_arg,
+        "--format",
+        "agent",
+        selector.as_str(),
+    ];
+    let replay = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args)
+        .map_err(|err| format!("run explain --from --format agent: {err}"))?;
+    assert_success(&replay);
+    let text = String::from_utf8_lossy(&replay.stdout).to_string();
+    assert!(
+        text.starts_with("#ripr explain agent static-advisory"),
+        "{text}"
+    );
+    let next = text
+        .lines()
+        .find_map(|l| l.strip_prefix("next="))
+        .ok_or_else(|| format!("no next= line:\n{text}"))?;
+    assert!(next.starts_with("ripr context "), "{next}");
+    assert!(
+        next.contains("--from"),
+        "replay next= must keep the artifact: {next}"
+    );
+    assert!(next.contains("--at"), "{next}");
+    // The printed command is runnable: swap in the same typed argv (the display
+    // line is shell-quoted, so it is not split into argv here, #2816).
+    let context_args = [
+        "context",
+        "--root",
+        &root_arg,
+        "--diff",
+        &diff_arg,
+        "--mode",
+        "draft",
+        "--from",
+        &artifact_arg,
+        "--at",
+        selector.as_str(),
+    ];
+    let context = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &context_args)
+        .map_err(|err| format!("run context: {err}"))?;
+    assert_success(&context);
+    Ok(())
+}
+
 #[test]
 fn check_json_output_has_stable_contract_fields() -> sample_output::TestResult {
     let fixture = sample_output::Fixture::new()?;

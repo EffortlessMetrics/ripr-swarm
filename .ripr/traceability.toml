@@ -10652,6 +10652,16 @@ id = "RIPR-SPEC-0122"
 name = "bounded human check output"
 spec = "docs/specs/RIPR-SPEC-0122-bounded-human-check-output.md"
 tests = [
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_exposed_finding_is_done_not_open",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_limited_finding_stops_and_names_the_limit_without_a_gap_claim",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_reach_limit_with_weak_row_is_open_without_a_missing_value",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_agrees_with_check_agent_on_gap_membership",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_record_cannot_be_forged_and_stays_static",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_non_current_findings_fail_closed_with_a_currentness_stop",
+  "crates/ripr/src/output/human/agent_tests.rs::explain_agent_suppressed_gap_is_not_open_but_unsuppressed_is",
+  "crates/ripr/tests/cli_smoke.rs::explain_format_agent_prints_compact_lines_and_json_is_refused",
+  "crates/ripr/tests/cli_smoke.rs::explain_format_agent_from_artifact_replays_the_context_next_command",
   "crates/ripr/tests/check_dead_end_routes.rs::async_gap_with_no_route_says_to_write_the_test_by_hand",
   "crates/ripr/tests/check_dead_end_routes.rs::side_effect_gap_with_no_route_says_to_write_the_test_by_hand",
   "crates/ripr/tests/check_dead_end_routes.rs::generic_gap_with_a_repair_start_is_not_told_there_is_no_route",
