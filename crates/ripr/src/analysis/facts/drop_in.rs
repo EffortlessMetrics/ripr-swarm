@@ -55,13 +55,15 @@ const AUDITED_PRELUDE_VERSIONS: &[(&str, &str, &[&str])] = &[
 ];
 
 /// Whether `krate` needs an audited locked version beyond the manifest proof,
-/// and if so whether the lockfile has one.
-fn audited_version_locked(root: &Path, krate: &str) -> bool {
+/// and if so whether the lockfile has one. The lockfile is the nearest one
+/// above the importing package's directory, so a nested workspace with its own
+/// `Cargo.lock` is judged by that lock and never by an outer one.
+fn audited_version_locked(directory: &Path, krate: &str) -> bool {
     AUDITED_PRELUDE_VERSIONS
         .iter()
         .find(|(name, _, _)| *name == krate)
         .is_none_or(|(_, lock_name, versions)| {
-            crate::analysis::workspace::locked_at_audited_version(root, lock_name, versions)
+            crate::analysis::workspace::locked_at_audited_version(directory, lock_name, versions)
         })
 }
 
@@ -151,7 +153,7 @@ impl DropInManifests {
         {
             return verdict;
         }
-        let verdict = verify(root, directory, krate) && audited_version_locked(root, krate);
+        let verdict = verify(root, directory, krate) && audited_version_locked(directory, krate);
         if let Ok(mut verdicts) = self.verdicts.lock() {
             verdicts.insert(key, verdict);
         }
@@ -499,6 +501,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(verdict, joined, "{label}");
         Ok(verdict)
+    }
+
+    #[test]
+    fn a_nested_workspace_is_judged_by_its_own_lockfile() -> Result<(), String> {
+        let lock = |version: &str| {
+            format!(
+                "version = 3\n\n[[package]]\nname = \"vstd\"\nversion = \"{version}\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"\n"
+            )
+        };
+        let dependent = "[package]\nname = \"inner\"\nversion = \"0.1.0\"\n\n[workspace]\n\n[dependencies]\nvstd = \"0\"\n";
+        let audited = lock("0.0.0-2026-10-25-0158");
+        let unaudited = lock("9.9.9");
+        for (label, outer, inner, expected) in [
+            // The inner lock decides: audited inner beats unaudited outer, and the reverse.
+            ("inner-audited", &unaudited, &audited, true),
+            ("inner-unaudited", &audited, &unaudited, false),
+        ] {
+            let root = temp_workspace(
+                label,
+                &[
+                    ("Cargo.lock", outer),
+                    ("inner/Cargo.toml", dependent),
+                    ("inner/Cargo.lock", inner),
+                ],
+            )?;
+            let verdict =
+                DropInManifests::new(&root).verified(Path::new("inner/src/lib.rs"), "vstd");
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(verdict, expected, "{label}");
+        }
+        Ok(())
     }
 
     fn manifest(dependencies: &str) -> String {
