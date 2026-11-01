@@ -1053,7 +1053,7 @@ fn merge_ready_run_names_its_request_for_the_results_vscode_binding() {
 
 /// Split `format('<template>', arg, ...)` starting at `marker` into its template and
 /// top-level arguments, then render each `{n}` with its argument text.
-fn rendered_format_call(workflow: &str, marker: &str) -> Option<String> {
+fn rendered_format_call<'a>(workflow: &'a str, marker: &str) -> Option<(String, &'a str)> {
     let start = workflow.find(marker)?;
     let call = &workflow[start + "format(".len()..];
     let mut depth = 0usize;
@@ -1081,7 +1081,7 @@ fn rendered_format_call(workflow: &str, marker: &str) -> Option<String> {
             last.push(ch);
         }
     }
-    end?;
+    let after = &call[end? + 1..];
     let template = parts[0].trim().trim_matches('\'').to_string();
     let args: Vec<String> = parts[1..]
         .iter()
@@ -1091,7 +1091,7 @@ fn rendered_format_call(workflow: &str, marker: &str) -> Option<String> {
     for (index, arg) in args.iter().enumerate().rev() {
         rendered = rendered.replace(&format!("{{{index}}}"), arg);
     }
-    Some(rendered)
+    Some((rendered, after))
 }
 
 #[test]
@@ -1109,7 +1109,8 @@ fn routed_result_request_selection_matches_the_ci_run_name_tail() {
         routed.is_some(),
         "routed-rust.yml must carry the REQUEST_SELECTION format call"
     );
-    let ci = ci.unwrap_or_default();
+    let (ci, _) = ci.unwrap_or_default();
+    let (routed, routed_after) = routed.unwrap_or_default();
     let head_and_time = "CI merge-ready request github.event.pull_request.head.sha github.event.pull_request.updated_at ";
     assert!(
         ci.starts_with(head_and_time),
@@ -1117,8 +1118,19 @@ fn routed_result_request_selection_matches_the_ci_run_name_tail() {
     );
     assert_eq!(
         ci.strip_prefix(head_and_time).unwrap_or_default(),
-        routed.unwrap_or_default(),
+        routed,
         "ci.yml run-name tail and routed-rust.yml REQUEST_SELECTION must render identically"
+    );
+    // The format call must be the whole env value: a trailing operator such as `&& 'x'` would
+    // change what Actions assigns while the call text stays the same.
+    assert!(
+        ROUTED_RUST.contains("REQUEST_SELECTION: ${{ format('{0} full-ci={1} vscode={2}'"),
+        "REQUEST_SELECTION must be assigned directly from the format call"
+    );
+    assert!(
+        routed_after.starts_with(" }}\n"),
+        "REQUEST_SELECTION must end at the format call, found: {}",
+        routed_after.lines().next().unwrap_or_default()
     );
     // The Result appends the env after the head and the request time, in the run-name order.
     assert!(
