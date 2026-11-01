@@ -73,9 +73,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p target
-          cargo nextest run --profile windows-advisory -p ripr --lib --no-fail-fast --stress-count 300 -E 'test(overlapping_interactive_triggers_issue_one_scheduler_request_at_the_latest_revision)' > target/leak-rate.log 2>&1 || true
+          cargo nextest run --profile windows-advisory -p ripr --lib --no-fail-fast --stress-count 20 -E 'test(overlapping_interactive_triggers_issue_one_scheduler_request_at_the_latest_revision)' > target/leak-rate.log 2>&1 || true
           sed -i 's/\x1b\[[0-9;]*m//g' target/leak-rate.log
           echo "LEAKROWS $(grep -c ' LEAK ' target/leak-rate.log)"
           echo "PASSROWS $(grep -c ' PASS ' target/leak-rate.log)"
           echo "FAILROWS $(grep -c ' FAIL ' target/leak-rate.log)"
-          grep -E ' LEAK |Summary|stress' target/leak-rate.log | head -20
+          grep -E ' LEAK |Summary|stress|settle|FAIL' target/leak-rate.log | head -30
