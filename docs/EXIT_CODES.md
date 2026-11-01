@@ -250,14 +250,18 @@ reached the caller.
   `ripr agent repair --phase after` refusals above.
 
 - **Typed reason codes for `repair` and `continue` (#11597)**: beside the
-  unchanged prose, every `ripr repair` / `ripr continue` refusal (and the
-  matching `ripr agent repair` phases) writes one stderr line
+  unchanged prose, the `ripr repair` / `ripr continue` refusals listed in the
+  table below (and the matching `ripr agent repair` phases at the sites that
+  assign a code) write one stderr line
   `ripr: refusal code=<code> disposition=<disposition>`, so a script
   switches on the state instead of parsing prose. `disposition` is
   `retryable` (the same attempt proceeds after the stated action),
   `terminal` (the attempt is over; start a fresh `ripr repair`),
   `needs_selection` (name one of several), or `not_started` (nothing
-  started). The codes are closed:
+  started). The codes are closed. A refusal raised before any code is
+  assigned (for example a store or argument error on a shared
+  `agent repair` path) is exit `2` with prose only and no code line; the
+  table is the covered set, not a claim over every error path:
 
   | code | exit | disposition | state |
   |---|---|---|---|
