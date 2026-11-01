@@ -107,6 +107,7 @@ pub(super) fn collect_substitution_scope(
     source: &str,
     statements: &[Stmt],
     module_imports: &[PythonImport],
+    is_conftest: bool,
 ) -> SubstitutionScope {
     let aliases = fixture_aliases(module_imports);
     let ctx = ReadContext {
@@ -203,10 +204,12 @@ pub(super) fn collect_substitution_scope(
                 }
                 // `Mod.attr = stand_in` where `stand_in` is a plain `def` of
                 // this same file spells its replacement in the test module
-                // itself; the existing replaced-owner reading classifies it
+                // itself (never a conftest, which the test does not spell); the
+                // existing replaced-owner reading classifies it
                 // (RIPR-SPEC-0108 pins that class), so only the other
                 // substitution forms count as ambient here.
-                let spelled = spelled_standin_assignment(other, &defs, module_imports);
+                let spelled =
+                    !is_conftest && spelled_standin_assignment(other, &defs, module_imports);
                 scope.ambient |= if spelled {
                     text_substitutes_except_attribute(&text, module_imports)
                 } else {
@@ -464,12 +467,14 @@ fn spelled_standin_assignment(stmt: &Stmt, defs: &[&str], imports: &[PythonImpor
 
 /// `name(` where `name` starts at an identifier boundary or follows a dot.
 fn call_at_name_boundary(text: &str, name: &str) -> bool {
-    let call = format!("{name}(");
-    text.match_indices(&call).any(|(idx, _)| {
-        !text[..idx]
-            .chars()
-            .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    text.match_indices(name).any(|(idx, _)| {
+        // Python allows whitespace between a callee and its parenthesis.
+        let rest = text[idx + name.len()..].trim_start_matches([' ', '\t']);
+        rest.starts_with('(')
+            && !text[..idx]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
     })
 }
 
@@ -547,7 +552,12 @@ fn test_runs_under_substitution(
         None => true,
         Some(owner) => in_own_file && class.as_deref() == Some(owner.as_str()),
     };
-    let mut wanted: Vec<String> = test.fixtures.clone();
+    let mut wanted: Vec<String> = test
+        .fixtures
+        .iter()
+        .filter(|name| !test.direct_parametrized.contains(name))
+        .cloned()
+        .collect();
     for (index, scope) in chain.iter().enumerate() {
         let in_own_file = own.is_some_and(|own| std::ptr::eq(own, *scope)) && index == 0;
         for fixture in &scope.fixtures {

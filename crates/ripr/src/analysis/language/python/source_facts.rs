@@ -800,8 +800,12 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
     snapshot.fixtures = super::fixtures::collect_fixture_defs(file, source, &module.body, &imports);
     snapshot.fixture_side_effects =
         super::fixtures::collect_fixture_side_effects(source, &module.body, &imports);
-    snapshot.substitution_scope =
-        super::fixture_substitution::collect_substitution_scope(source, &module.body, &imports);
+    snapshot.substitution_scope = super::fixture_substitution::collect_substitution_scope(
+        source,
+        &module.body,
+        &imports,
+        file.file_name().and_then(|name| name.to_str()) == Some("conftest.py"),
+    );
     snapshot.helper_module =
         super::helper_assertions::collect_helper_module(file, source, &module.body);
     snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())

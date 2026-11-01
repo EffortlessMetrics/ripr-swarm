@@ -188,6 +188,19 @@ fn a_test_module_def_stand_in_assigned_at_top_level_is_not_ambient() -> Result<(
         "{:?}",
         finding.evidence
     );
+    let conftest = "import calc\n\n\ndef fake(x):\n    return 6\n\n\ncalc.price = fake\n";
+    assert_mocked(
+        &[
+            ("tests/conftest.py", conftest),
+            ("tests/test_calc.py", TEST),
+        ],
+        "conftest def stand-in",
+    )?;
+    let spaced = "import calc\nimport pytest\n\n\n@pytest.fixture(autouse=True)\ndef _m():\n    setattr (calc, 'price', lambda x: 6)\n";
+    assert_mocked(
+        &[("tests/conftest.py", spaced), ("tests/test_calc.py", TEST)],
+        "spaced setattr call",
+    )?;
     let unspelled = "import calc\nimport other\n\n\ncalc.price = other.fake\n\n\ndef test_p():\n    assert calc.price(3) == 6\n";
     assert_mocked(&[("tests/test_calc.py", unspelled)], "unspelled stand-in")
 }
