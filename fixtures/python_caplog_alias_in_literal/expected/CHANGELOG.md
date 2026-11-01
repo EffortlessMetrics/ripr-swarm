@@ -54,7 +54,7 @@ Updated:
 ## Pending — python_caplog_alias_in_literal (5)
 
 Reason:
-RIPR-SPEC-0182: Python finding ids move to the versioned v1- namespace (#11368); classification and finding count unchanged; fixture diff and input made consistent so source context is verifiable
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
 
 Command:
 `cargo xtask goldens bless python_caplog_alias_in_literal --reason "..."`

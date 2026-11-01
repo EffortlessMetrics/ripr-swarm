@@ -6195,6 +6195,15 @@ impl FreeOwnerBinding<'_> {
                 syntax,
             );
         }
+        if index.proptest_singleton_value(test).is_some() {
+            return self.property_import_reaches_owner(
+                test,
+                test_source,
+                &owner_inline,
+                index,
+                syntax,
+            );
+        }
         let Some(scopes) = syntax.file_scopes(index, &test.file) else {
             return false;
         };
@@ -6265,6 +6274,116 @@ impl FreeOwnerBinding<'_> {
         // Anywhere else the bare name is unresolved, the prelude, or a
         // macro-emitted import ripr cannot see — never the owner.
         test.file == *self.owner_file && scope.stack == owner_inline
+    }
+
+    /// The closed empty-string property has an explicit file-root import and
+    /// a generation-owned scope containing every sibling function binding.
+    /// Its known proptest token tree cannot invent a second value declaration
+    /// merely by mentioning the owner. Re-enter the ordinary import/module
+    /// authority; the receipt does not establish the imported owner by itself.
+    fn property_import_reaches_owner(
+        &self,
+        test: &TestSummary,
+        test_source: &str,
+        owner_inline: &[String],
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        let Some(scopes) = index.proptest_name_scopes(test) else {
+            return false;
+        };
+        let [body, root] = scopes.scopes.as_slice() else {
+            return false;
+        };
+        if !body.fn_body
+            || root.fn_body
+            || !root.modules.is_empty()
+            || !body.imports.is_empty()
+            || !body.globs.is_empty()
+            || body.block_globs
+            || body.defines.contains(self.name)
+            || body.block_bindings.contains(self.name)
+            || root.defines.contains(self.name)
+            || root.child_modules.contains(self.name)
+            || !root.globs.is_empty()
+        {
+            return false;
+        }
+        let imports = root.imports_of(self.name).collect::<Vec<_>>();
+        let [crate::analysis::syntax::UseBinding::Path(path)] = imports.as_slice() else {
+            return false;
+        };
+        let Some(first) = path.first() else {
+            return false;
+        };
+        if matches!(first.as_str(), "crate" | "self" | "super")
+            || root.defines.contains(first)
+            || root.child_modules.contains(first)
+            || root.imports_of(first).next().is_some()
+        {
+            return false;
+        }
+        let import = UsePath {
+            path: path.join("::"),
+            alias: None,
+        };
+        let context = ScopeContext {
+            file: &test.file,
+            source: test_source,
+            stack: &[],
+        };
+        if self.use_names_owner(&import, context, owner_inline, index, syntax) {
+            return true;
+        }
+        // The original property imports a library-root re-export spelled
+        // `pub use convert::owner`. Keep this additional transport local to
+        // the registered property: one unrenamed, relative, composed child
+        // of the owner's library root, with no competing binding or alias.
+        let Some((first, middle)) = split_binding_use(&import, self.name) else {
+            return false;
+        };
+        let Some((target_file, target_stack)) =
+            self.resolve_use_prefix(first, &middle, context, index, syntax)
+        else {
+            return false;
+        };
+        if target_file != composed_root(self.owner_file, index)
+            || !target_stack.is_empty()
+            || !owner_inline.is_empty()
+        {
+            return false;
+        }
+        let Some(target_scopes) = syntax.file_scopes(index, &target_file) else {
+            return false;
+        };
+        let Some(target) = target_scopes.scope_with_stack(&[]) else {
+            return false;
+        };
+        if target.has_twin(self.name) {
+            return false;
+        }
+        let (transports, _) = partition_name_uses(&target.uses, self.name);
+        let [transport] = transports.as_slice() else {
+            return false;
+        };
+        if transport.alias.is_some() || transport.path.starts_with("::") {
+            return false;
+        }
+        let Some((child, middle)) = split_binding_use(transport, self.name) else {
+            return false;
+        };
+        if !middle.is_empty()
+            || matches!(child, "crate" | "self" | "super")
+            || target.has_twin(child)
+            || !partition_name_uses(&target.uses, child).0.is_empty()
+        {
+            return false;
+        }
+        syntax
+            .mod_children(index)
+            .get(&(target_file, child.to_owned()))
+            .and_then(Option::as_ref)
+            .is_some_and(|file| file == self.owner_file)
     }
 
     /// #6648 (RIPR-SPEC-0279): whether a doc example's bare `name(..)`

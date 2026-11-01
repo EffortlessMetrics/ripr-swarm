@@ -5,8 +5,11 @@
 //! except a condition that is itself a boolean literal and so provably inert
 //! (`skipif(False)`), and `importorskip` of a module every interpreter has.
 
+use super::oracles::iterates_nothing;
+use super::sink_alignment::blank_quoted_strings;
+use super::source_utils::{SourceText, text_for_range};
 use super::{PythonFramework, PythonImport, PythonTest, expr_full_name};
-use rustpython_parser::ast::{self, Expr, Stmt};
+use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) enum DeclarationSite {
@@ -201,6 +204,102 @@ pub(super) fn parametrize_collection_error_control(
         name: "pytest.mark.parametrize(collection error)".to_string(),
         site,
     }
+}
+
+/// A later binding of the same name in the same scope replaced this test
+/// definition before collection, so pytest and unittest never run its body.
+pub(super) fn shadowed_by_later_binding_control(site: DeclarationSite) -> PythonActivationControl {
+    PythonActivationControl {
+        name: "later binding of the test name".to_string(),
+        site,
+    }
+}
+
+/// Whether a statement after `index` in the same list rebinds `name` without
+/// reading the earlier definition (a wrapper such as `name = mark(name)` keeps
+/// it running).
+pub(super) fn rebound_later(
+    statements: &[Stmt],
+    index: usize,
+    name: &str,
+    source: &SourceText<'_>,
+) -> bool {
+    // Quoted text (`factory('test_p')`) is not a read of the earlier definition.
+    let reads_name =
+        |range| mentions_identifier(&blank_quoted_strings(&text_for_range(source, range)), name);
+    let targets_name = |target: &Expr| binds_name(target, name);
+    statements[index + 1..].iter().any(|stmt| match stmt {
+        Stmt::FunctionDef(def) => {
+            def.name.as_str() == name && !def.decorator_list.iter().any(|d| reads_name(d.range()))
+        }
+        Stmt::AsyncFunctionDef(def) => {
+            def.name.as_str() == name && !def.decorator_list.iter().any(|d| reads_name(d.range()))
+        }
+        Stmt::ClassDef(def) => {
+            def.name.as_str() == name
+                && !def.decorator_list.iter().any(|d| reads_name(d.range()))
+                && !def.bases.iter().any(|b| reads_name(b.range()))
+        }
+        Stmt::Assign(assign) => {
+            assign.targets.iter().any(targets_name) && !reads_name(assign.value.range())
+        }
+        Stmt::AnnAssign(assign) => {
+            targets_name(assign.target.as_ref())
+                && assign
+                    .value
+                    .as_ref()
+                    .is_some_and(|value| !reads_name(value.range()))
+        }
+        // `del name` unbinds the earlier definition before collection.
+        Stmt::Delete(delete) => delete.targets.iter().any(targets_name),
+        // A loop or `with` target rebinds the name to a value that is not the
+        // earlier definition (the iterable or context manager could read it,
+        // so those stay credited).
+        // An empty literal iterable never binds the target, so the earlier
+        // definition survives.
+        Stmt::For(for_stmt) => {
+            targets_name(for_stmt.target.as_ref())
+                && !reads_name(for_stmt.iter.range())
+                && !iterates_nothing(for_stmt.iter.as_ref())
+        }
+        Stmt::With(with) => with.items.iter().any(|item| {
+            item.optional_vars.as_deref().is_some_and(targets_name)
+                && !reads_name(item.context_expr.range())
+        }),
+        // `import name` / `import name.sub` (binds the root) / `import x as
+        // name` / `from m import name [as alias]` rebind the name in this scope.
+        Stmt::Import(import) => import.names.iter().any(|alias| match &alias.asname {
+            Some(asname) => asname.as_str() == name,
+            None => alias.name.as_str().split('.').next() == Some(name),
+        }),
+        Stmt::ImportFrom(import) => import
+            .names
+            .iter()
+            .any(|alias| alias.asname.as_ref().unwrap_or(&alias.name).as_str() == name),
+        _ => false,
+    })
+}
+
+/// Whether `target` binds `name` directly or inside a tuple/list target.
+fn binds_name(target: &Expr, name: &str) -> bool {
+    match target {
+        Expr::Name(bound) => bound.id.as_str() == name,
+        Expr::Tuple(tuple) => tuple.elts.iter().any(|elt| binds_name(elt, name)),
+        Expr::List(list) => list.elts.iter().any(|elt| binds_name(elt, name)),
+        Expr::Starred(starred) => binds_name(starred.value.as_ref(), name),
+        _ => false,
+    }
+}
+
+/// Whether `name` occurs in `text` as a whole identifier, so `test_p_helper`
+/// or `xtest_p` does not count as a read of `test_p`.
+fn mentions_identifier(text: &str, name: &str) -> bool {
+    let is_ident = |c: char| c == '_' || c.is_alphanumeric();
+    text.match_indices(name).any(|(start, _)| {
+        let before = text[..start].chars().next_back();
+        let after = text[start + name.len()..].chars().next();
+        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
 }
 
 /// Whether `controls` hold [`parametrize_collection_error_control`].

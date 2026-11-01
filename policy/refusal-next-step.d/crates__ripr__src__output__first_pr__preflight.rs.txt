@@ -1,3 +1,0 @@
-crates/ripr/src/output/first_pr/preflight.rs|an unreadable regular ripr.toml must not be described as built-in defaults: {}
-crates/ripr/src/output/first_pr/preflight.rs|load_for_root must name ripr.toml for a chmod-000 file: {load_error}
-crates/ripr/src/output/first_pr/preflight.rs|preflight must name ripr.toml as present but unreadable: {}

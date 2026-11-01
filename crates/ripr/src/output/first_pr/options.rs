@@ -206,7 +206,8 @@ Options:
   --out-dir <path>           Output directory. Defaults to target/ripr/reports.
   --check                    Verify the existing start-here packet is up to date.
   --run-chain                Opt in to running the missing-artifact chain first: the repo-exposure
-                             report, the gap ledger, then the review cards, each only when missing
+                             report (a `ripr check` run on a Python or TypeScript root without a
+                             Cargo manifest), the gap ledger, then the review cards, each only when missing
                              and each exactly the command first-pr prints, with the resolved
                              --base and --head. This runs analysis (cost scales with the repository),
                              writes the missing artifacts (by default under target/ripr/) and

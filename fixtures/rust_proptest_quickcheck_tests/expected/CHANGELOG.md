@@ -269,3 +269,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_proptest_quickcheck_tests (23)
+
+Reason:
+RIPR-SPEC-0117: property-macro static_unknown keeps macro_reach_unresolved as its stop reason instead of static_probe_unknown (#11544)
+
+Command:
+`cargo xtask goldens bless rust_proptest_quickcheck_tests --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

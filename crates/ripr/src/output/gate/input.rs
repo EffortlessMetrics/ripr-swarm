@@ -57,7 +57,7 @@ impl ConsumedInputHashes {
             .map_err(|err| format!("failed to read exception policy `{display}`: {err}; check that the path exists and is readable, then rerun"))?;
         let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
         let text = String::from_utf8(bytes)
-            .map_err(|err| format!("exception policy `{display}` is not valid UTF-8: {err}"))?;
+            .map_err(|err| format!("exception policy `{display}` is not valid UTF-8: {err}; save the policy file as UTF-8, then rerun"))?;
         Ok((text, digest))
     }
 }

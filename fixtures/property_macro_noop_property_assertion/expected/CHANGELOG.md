@@ -291,3 +291,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — property_macro_noop_property_assertion (23)
+
+Reason:
+RIPR-SPEC-0117: property-macro static_unknown keeps macro_reach_unresolved as its stop reason instead of static_probe_unknown (#11544)
+
+Command:
+`cargo xtask goldens bless property_macro_noop_property_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
