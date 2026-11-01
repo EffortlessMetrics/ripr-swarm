@@ -291,12 +291,71 @@ jobs:
           save-if: false
       - run: cargo check --workspace --all-targets
 
+  vscode-selection:
+    # #12122: a pull request that changes the extension must run the extension
+    # e2e under the same `merge-ready` request. Without this the job was skipped
+    # unless `full-ci` was present, so a changed test never ran (#12068 merged
+    # with its own test red). Legacy trigger only; the callable path takes its
+    # selection from `inputs.run_vscode`, which the trusted caller owns.
+    # Every classification failure selects the job: an unknown diff must run
+    # the proof, not skip it.
+    name: vscode surface
+    if: >-
+      !contains(toJSON(inputs), '"subject_sha"') &&
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'merge-ready') &&
+      github.event.action == 'labeled' && github.event.label.name == 'merge-ready'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      selected: ${{ steps.surface.outputs.selected }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Detect extension surface change
+        id: surface
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          selected=true reason=unclassified
+          classify() {
+            reason=missing_identity
+            [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ] || return 0
+            reason=invalid_identity
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || return 0
+            reason=unavailable_history
+            if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || return 0
+            fi
+            reason=diff_failed
+            changed="$(mktemp)" || return 0
+            trap 'rm -f "$changed"' EXIT
+            # NUL records keep odd filenames intact; no rename collapsing hides a removed extension path.
+            git diff --no-renames --name-only -z "$BASE_SHA"..."$HEAD_SHA" > "$changed" 2>/dev/null || return 0
+            reason=empty_diff
+            [ -s "$changed" ] || return 0
+            reason=extension_surface
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                editors/vscode/*|.github/workflows/ci.yml) return 0 ;;
+              esac
+            done < "$changed"
+            selected=false reason=no_extension_surface
+          }
+          classify
+          echo "selected=$selected" >> "$GITHUB_OUTPUT"
+          { echo "### VS Code Surface Detection"; echo ""; echo "- selected: \`$selected\`"; echo "- reason: \`$reason\`"; } >> "$GITHUB_STEP_SUMMARY"
+
   vscode:
-    needs: source-identity
+    needs: [source-identity, vscode-selection]
     if: >-
       always() && !cancelled() &&
       ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_vscode) ||
-      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci'))))
+      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') || contains(github.event.pull_request.labels.*.name, 'vscode') || needs.vscode-selection.outputs.selected == 'true')))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
