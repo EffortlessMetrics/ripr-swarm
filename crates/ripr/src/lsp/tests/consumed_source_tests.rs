@@ -1268,13 +1268,15 @@ async fn save_and_watched_file_handlers_invalidate_only_affected_index_keys() ->
     let (service, socket) = LspService::new(|client| Backend::new(client, root.clone()));
     drop(socket);
     let backend = service.inner();
-    let watched = |target: &Uri| tower_lsp_server::ls_types::DidChangeWatchedFilesParams {
-        changes: vec![tower_lsp_server::ls_types::FileEvent::new(
-            target.clone(),
-            tower_lsp_server::ls_types::FileChangeType::CHANGED,
-        )],
+    let watched = |target: &tower_lsp_server::ls_types::Uri| {
+        tower_lsp_server::ls_types::DidChangeWatchedFilesParams {
+            changes: vec![tower_lsp_server::ls_types::FileEvent::new(
+                target.clone(),
+                tower_lsp_server::ls_types::FileChangeType::CHANGED,
+            )],
+        }
     };
-    let save = |target: &Uri, text: &str| DidSaveTextDocumentParams {
+    let save = |target: &tower_lsp_server::ls_types::Uri, text: &str| DidSaveTextDocumentParams {
         text_document: TextDocumentIdentifier::new(target.clone()),
         text: Some(text.to_string()),
     };
