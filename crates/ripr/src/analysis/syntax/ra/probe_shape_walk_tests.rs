@@ -383,6 +383,47 @@ fn assumes(x: u32) -> u32 {
     unsafe { core::hint::assert_unchecked(x > 0) };
     x
 }
+fn plain(p: *const u8) -> u8 {
+    // unsafe { unreachable_unchecked() }
+    let note = "unreachable_unchecked";
+    let _ = note;
+    unsafe { *p }
+}
+fn lookalike() {
+    unsafe { my_unreachable_unchecked_total() };
+}
+fn project_function() {
+    unsafe { local::assert_unchecked(true) };
+}
+fn deferred() {
+    unsafe {
+        fn never_called() { std::hint::assert_unchecked(true) }
+        let _ = || core::hint::unreachable_unchecked();
+    }
+}
+"#;
+    let facts = equivalent_file_facts(text)?;
+    let labels: Vec<&str> = facts
+        .probe_shapes
+        .iter()
+        .filter(|shape| shape.kind == ProbeShapeKind::UnsafeBoundary)
+        .map(|shape| shape.text.as_str())
+        .collect();
+    let assumed = labels
+        .iter()
+        .filter(|label| **label == UNCHECKED_ASSUMPTION_LABEL)
+        .count();
+    assert_eq!(assumed, 2, "{labels:?}");
+    assert_eq!(
+        labels
+            .iter()
+            .filter(|label| **label == "unsafe block")
+            .count(),
+        4,
+        "{labels:?}"
+    );
+    Ok(())
+}
 
 // #12196: the call is resolved to the `core::hint` intrinsic through the
 // file's `use` bindings, not taken from its spelling.
@@ -451,53 +492,16 @@ fn probe_walk_resolves_unchecked_assumption_through_use_bindings() -> Result<(),
             "use crate::checks as h;\nfn f() { unsafe { h::unreachable_unchecked() }; }\n",
         ),
         (
+            "parent module import is not inherited",
+            "use std::hint::unreachable_unchecked;\nmod inner { fn f() { unsafe { unreachable_unchecked() }; } }\n",
+        ),
+        (
             "self path",
             "fn f() { unsafe { self::unreachable_unchecked() }; }\n",
         ),
     ] {
         assert_eq!(assumed(text)?, 0, "{name} must keep the plain label");
     }
-    Ok(())
-}
-fn plain(p: *const u8) -> u8 {
-    // unsafe { unreachable_unchecked() }
-    let note = "unreachable_unchecked";
-    let _ = note;
-    unsafe { *p }
-}
-fn lookalike() {
-    unsafe { my_unreachable_unchecked_total() };
-}
-fn project_function() {
-    unsafe { local::assert_unchecked(true) };
-}
-fn deferred() {
-    unsafe {
-        fn never_called() { std::hint::assert_unchecked(true) }
-        let _ = || core::hint::unreachable_unchecked();
-    }
-}
-"#;
-    let facts = equivalent_file_facts(text)?;
-    let labels: Vec<&str> = facts
-        .probe_shapes
-        .iter()
-        .filter(|shape| shape.kind == ProbeShapeKind::UnsafeBoundary)
-        .map(|shape| shape.text.as_str())
-        .collect();
-    let assumed = labels
-        .iter()
-        .filter(|label| **label == UNCHECKED_ASSUMPTION_LABEL)
-        .count();
-    assert_eq!(assumed, 2, "{labels:?}");
-    assert_eq!(
-        labels
-            .iter()
-            .filter(|label| **label == "unsafe block")
-            .count(),
-        4,
-        "{labels:?}"
-    );
     Ok(())
 }
 

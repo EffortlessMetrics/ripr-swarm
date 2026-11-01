@@ -1603,29 +1603,35 @@ fn block_calls_unchecked_assumption(block: &ast::BlockExpr) -> bool {
         .any(|segments| resolves_to_unchecked_intrinsic(&segments, &scopes))
 }
 
-/// The item scopes around `node`, innermost first: enclosing statement lists,
-/// inline modules and the file.
+/// The item scopes around `node`, innermost first: enclosing statement lists
+/// up to the nearest module (inline `mod` or the file). A parent module's
+/// imports are not inherited by a child module, so the walk stops there.
 fn scopes_visible_at(node: &SyntaxNode) -> Vec<NameScope> {
-    node.ancestors()
-        .filter_map(|ancestor| {
-            let items: Vec<ast::Item> = if let Some(file) = ast::SourceFile::cast(ancestor.clone())
-            {
-                file.items().collect()
+    let mut scopes = Vec::new();
+    for ancestor in node.ancestors() {
+        let (items, module_level): (Vec<ast::Item>, bool) =
+            if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
+                (file.items().collect(), true)
             } else if let Some(list) = ast::ItemList::cast(ancestor.clone()) {
-                list.items().collect()
+                (list.items().collect(), true)
             } else if let Some(list) = ast::StmtList::cast(ancestor) {
-                list.statements()
+                let items = list
+                    .statements()
                     .filter_map(|stmt| match stmt {
                         ast::Stmt::Item(item) => Some(item),
                         _ => None,
                     })
-                    .collect()
+                    .collect();
+                (items, false)
             } else {
-                return None;
+                continue;
             };
-            Some(name_scope_for_items(&items))
-        })
-        .collect()
+        scopes.push(name_scope_for_items(&items));
+        if module_level {
+            break;
+        }
+    }
+    scopes
 }
 
 fn resolves_to_unchecked_intrinsic(segments: &[String], scopes: &[NameScope]) -> bool {
