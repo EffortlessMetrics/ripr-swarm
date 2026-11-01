@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- The sharded Windows advisory lane streams each shard's nextest log to the step output as it is written, and its Summarize and Upload steps now run even when the job is cancelled at its cap, so a shard that wedges leaves its SLOW rows and the log so far instead of nothing. Pass and fail semantics are unchanged (#12092).
+- The sharded Windows advisory lane streams each shard's nextest log to the step output as it is written, and its Summarize and Upload steps now also run when the job is cancelled at its cap. This is intended to leave the SLOW rows and the log so far from a shard that wedges, instead of nothing; it is not yet observed on Windows. The job result is unchanged (#12092).

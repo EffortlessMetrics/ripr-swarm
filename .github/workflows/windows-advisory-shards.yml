@@ -96,8 +96,10 @@ jobs:
       # cargo status is recorded so a failed test still fails the job, and the log
       # is uploaded even when it does. The log is also streamed to the step output
       # as nextest writes it (`tail -f`, stopped after the status is recorded), and
-      # the Summarize and Upload steps run under `always()`, so a shard that wedges
-      # until the job cap still leaves its SLOW rows and the log so far (#12092).
+      # the Summarize and Upload steps run under `always()`. This is intended to leave
+      # the SLOW rows and the log so far from a shard that wedges until the job cap
+      # (#12092); that is not yet observed on Windows, and it cannot help if the
+      # runner itself stops reporting.
       #
       # Shard 3 of run 39854834481 outlived GNU `timeout` and the step cap and the
       # job was cancelled with no log. The cause is not established. nextest now
@@ -146,7 +148,7 @@ jobs:
           wait "$watchdog_pid"
           if [ -f target/shard-$shard.watchdog ]; then status=124; fi
           printf '%s\n' "$status" > target/shard-$shard.status
-          sleep 2; kill "$tail_pid" > /dev/null 2>&1
+          sleep 5; kill "$tail_pid" > /dev/null 2>&1
           exit "$status"
 
       # pwsh starts with both privileges disabled and its children inherit that,
