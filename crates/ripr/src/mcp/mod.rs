@@ -76,12 +76,13 @@ Options:
   --version, -V Print the MCP server version.
 
 The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
-`ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`, `ripr_prepare_repair`,
+`ripr_refresh`, `ripr_list_gaps`, `ripr_get_gap`, `ripr_get_top_limitation`,
+`ripr_prepare_repair`,
 `ripr_get_repair_attempt`, `ripr_get_receipt_status`,
 `ripr_get_repair_card`, and `ripr_list_repair_attempts`, the resource
 `ripr://workspace/status`, and the resource templates
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
-`ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
+`ripr://gap/{canonical_id}/limitation`, `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
 `ripr_refresh` analyzes the committed default-branch diff by default through
 the shared check authority; its optional `base` argument selects another
@@ -162,13 +163,15 @@ pub fn run(args: &[String]) -> Result<(), String> {
                     Some(value) if !value.starts_with('-') => value.clone(),
                     Some(unexpected) => {
                         return Err(format!(
-                            "missing value for --root; found option {unexpected:?}"
+                            "missing value for --root; found option {unexpected:?}; pass the workspace directory after --root"
                         ));
                     }
-                    None => return Err("missing value for --root".to_string()),
+                    None => return Err("missing value for --root; pass the workspace directory after --root (`ripr mcp --help` shows usage)".to_string()),
                 };
                 if explicit_root.is_some() {
-                    return Err("--root may be passed only once".to_string());
+                    return Err(
+                        "--root may be passed only once; remove the extra --root".to_string()
+                    );
                 }
                 explicit_root = Some(PathBuf::from(value));
                 index += 1;
@@ -204,6 +207,9 @@ pub fn run(args: &[String]) -> Result<(), String> {
     runtime.shutdown_background();
     result
 }
+
+#[cfg(test)]
+mod agent_facing_text_tests;
 
 #[cfg(test)]
 mod tests {
@@ -288,7 +294,7 @@ mod tests {
         );
         assert_eq!(
             run(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass the workspace directory after --root (`ripr mcp --help` shows usage)".to_string())
         );
         // A following option token is a missing value, not a path:
         // `--root --help` must surface help, not a directory named `--help`.
@@ -304,7 +310,7 @@ mod tests {
         );
         assert_eq!(
             run(&args(&["--root", ".", "--root", "."])),
-            Err("--root may be passed only once".to_string())
+            Err("--root may be passed only once; remove the extra --root".to_string())
         );
     }
 }

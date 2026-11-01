@@ -1570,7 +1570,39 @@ fn apply_rust_no_static_path_limit(
         // a harness exists that ripr does not evaluate.
         replace_witnessed_no_path_infection_summary(finding);
         proof_harness::apply_limit(finding, &owner_name, &harness);
+    } else if let Some(ambiguity) = transitive_reach.trait_dispatch_ambiguity(&owner_name) {
+        // #11719: last, so no traced or structural witness is displaced.
+        replace_witnessed_no_path_infection_summary(finding);
+        apply_rust_trait_dispatch_ambiguity_limit(finding, &owner_name, &ambiguity);
     }
+}
+
+/// RIPR-SPEC-0114 (#11719): the owner is called from several impls of one
+/// implicit-dispatch trait method, so ripr names the ambiguity and lists
+/// candidate impls instead of guessing one. No witness test, no reach
+/// credit, no related-test relation, no class change.
+fn apply_rust_trait_dispatch_ambiguity_limit(
+    finding: &mut Finding,
+    owner_name: &str,
+    ambiguity: &classify::TraitDispatchAmbiguity,
+) {
+    finding.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    finding
+        .stop_reasons
+        .push(StopReason::TransitiveReachUnresolved);
+    finding
+        .evidence
+        .push(classify::RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE.to_string());
+    finding
+        .evidence
+        .push(classify::trait_dispatch_ambiguity_pointer(
+            ambiguity, owner_name,
+        ));
+    finding
+        .evidence
+        .extend(classify::trait_dispatch_ambiguity_detail_lines(
+            ambiguity, owner_name,
+        ));
 }
 
 /// #9982: the same named limitation a traced integration-test witness gets,
@@ -2536,6 +2568,7 @@ impl RustAdapter {
         // limitation.
         let mut files_with_findings = std::collections::BTreeSet::new();
         let mut seeded_probes = Vec::new();
+        let mut verification_only_files: Vec<(String, usize)> = Vec::new();
         let mut panicked_files: BTreeSet<PathBuf> = BTreeSet::new();
         for changed in analyzable_changed_files
             .iter()
@@ -2575,6 +2608,17 @@ impl RustAdapter {
             // and once per probe so a superseded or deadline-expired refresh
             // exits the classify loop promptly.
             cancellation::checkpoint()?;
+            // RIPR-SPEC-0368: contract attributes and ghost/proof text seed no
+            // probe; count them so the run discloses them instead of reading
+            // as "no behavior changed".
+            let verification_lines =
+                analysis_probes::changed_verification_only_lines(&index, changed);
+            if verification_lines > 0 {
+                verification_only_files.push((
+                    changed.path.to_string_lossy().replace('\\', "/"),
+                    verification_lines,
+                ));
+            }
             let probes = analysis_probes::probes_for_file_with_relations(
                 &options.root,
                 changed,
@@ -2594,6 +2638,8 @@ impl RustAdapter {
                 seeded_probes.push((changed, seeded));
             }
         }
+
+        limitations.extend(verification_only_limitation(&verification_only_files)?);
 
         // Classifying a probe reads the immutable index and the run-shared
         // candidate index, whose memos are thread-safe and pure in their keys
@@ -2873,6 +2919,9 @@ impl RustAdapter {
                     binding_relation.as_ref(),
                     pre_cap_syntax_only,
                 );
+                // RIPR-SPEC-0369: name a `verus!` region by the changed file's
+                // own index key; the probe's file is root-joined.
+                probes::apply_verus_macro_region_limit(&mut finding, &probe, &index, changed);
                 probes::attach_changed_binding_return_evidence(
                     &mut finding,
                     binding_return.as_ref(),
@@ -3162,6 +3211,52 @@ pub(crate) mod injected_classify_panic {
             std::panic::resume_unwind(Box::new("injected classify panic (#11116)"));
         }
     }
+}
+
+/// One aggregate disclosure for changed lines that are verification-erased
+/// text (RIPR-SPEC-0368): contract attributes and Creusot/Prusti ghost items.
+/// A test cannot observe them, so they seed no probe; the disclosure keeps a
+/// contract-only diff from reading as "no behavior changed" and names the
+/// verifier as the authority. It is not an incomplete analysis.
+fn verification_only_limitation(
+    files: &[(String, usize)],
+) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    if files.is_empty() {
+        return Ok(None);
+    }
+    let lines = files.iter().map(|(_, lines)| lines).sum::<usize>();
+    let paths = files
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    let listed = crate::analysis::pipeline::bounded_path_listing(&paths);
+    Ok(Some(
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::VerificationOnlyChange,
+            AnalysisStage::ProbeGeneration,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::InspectFailure,
+                "Verification contract or proof text changed. ripr does not evaluate contracts, \
+                 proofs or ghost code and a test cannot observe them; re-run the verifier \
+                 (for example cargo kani, cargo creusot or cargo prusti) on the affected items.",
+            )?,
+        )
+        .with_affected_items(files.len() as u64)?
+        .with_detail(
+            format!(
+                "{lines} changed line(s) in {} file(s) are verification-only text (contract \
+                 attribute, logic/ghost item or proof macro) and were not probed: {listed}",
+                files.len()
+            )
+            .chars()
+            .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+            .collect::<String>(),
+        )?,
+    ))
 }
 
 /// One typed limitation per changed Rust file whose facts came from the
@@ -3979,6 +4074,61 @@ mod tests {
             "diff and repo producers must derive the same identity for the same seam"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0369: repository mode yields no expression finding for text
+    /// inside `verus! { .. }`; the macro token tree is not indexed as Rust.
+    #[test]
+    fn repo_analysis_excludes_verus_region_and_keeps_sibling_fn() -> Result<(), String> {
+        let root = temp_root("verus-region-repo")?;
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"verus-repo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "use vstd::prelude::*;\nverus! {\nfn f(x: u32) -> (r: u32)\n    ensures r == x,\n{\n    if x > 5 { x } else { x }\n}\n}\nfn ordinary(n: usize) -> bool {\n    n >= 4\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let result = RustAdapter.analyze_repo(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+        )?;
+        fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+        // Positive control: the ordinary fn after the block (line 10) proves the
+        // file was indexed and probed, so the absence of region findings is
+        // attributable to region exclusion (lines 2-8) and not a no-finding path.
+        assert!(
+            result.findings.iter().any(|f| f.probe.location.line == 10),
+            "ordinary fn must still produce a finding: {:?}",
+            result.findings
+        );
+        assert!(
+            result
+                .findings
+                .iter()
+                .all(|f| !(2..=8).contains(&f.probe.location.line)),
+            "no finding inside the verus! region: {:?}",
+            result.findings
+        );
         Ok(())
     }
 

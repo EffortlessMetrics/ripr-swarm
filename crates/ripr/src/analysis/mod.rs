@@ -30,6 +30,9 @@ pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
+// Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
+// consumers outside `analysis` ask it instead of matching attribute text.
+pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
@@ -158,6 +161,7 @@ pub(crate) use seam_inventory::{
     seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
     workspace_cache_key_at_with_config,
 };
+pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
     owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
@@ -891,8 +895,19 @@ impl PreviewLanguageAdvisory {
     /// [`crate::domain::LanguageId::unavailable_adapter_recovery`] so every
     /// renderer tells the same story.
     pub(crate) fn unavailable_adapter_recovery(&self) -> Option<String> {
+        use crate::domain::language_availability::{
+            LanguageAvailabilityInput, resolve_language_availability, unavailable_recovery,
+        };
         let language = crate::domain::LanguageId::from_wire(&self.language)?;
-        (!self.enabled && !language.is_available()).then(|| language.unavailable_adapter_recovery())
+        if self.enabled {
+            return None;
+        }
+        let report = resolve_language_availability(&LanguageAvailabilityInput {
+            project_detected: true,
+            file_count: self.file_count,
+            ..LanguageAvailabilityInput::for_language(language)
+        });
+        unavailable_recovery(&report).map(str::to_owned)
     }
 
     /// Single-line `why` for a not-enabled advisory, shared by the JSON check

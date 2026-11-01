@@ -452,10 +452,10 @@ fn visit(
     out: &mut Vec<PathBuf>,
 ) -> Result<(), String> {
     let entries =
-        std::fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
+        std::fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}; check the directory is readable, or narrow the scan with --root", dir.display()))?;
     for entry in entries {
         cancellation::checkpoint()?;
-        let entry = entry.map_err(|err| format!("failed to read dir entry: {err}"))?;
+        let entry = entry.map_err(|err| format!("failed to read dir entry: {err}; check the workspace directories are readable and retry"))?;
         let path = entry.path();
         let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
         // `file_type` does not follow links. A committed `src/x.rs` symlink

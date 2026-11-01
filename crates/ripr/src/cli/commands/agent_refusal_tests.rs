@@ -323,13 +323,9 @@ fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> 
         };
         let mut refusal = AfterPhaseRefusalContext::default();
         match run_agent_repair_phase(options, &mut refusal, Some(&identity)) {
-            Err(error) => require_contains(
-                &error,
-                &[
-                    "differ from HEAD: src/lib.rs",
-                    "No workflow was prepared and no repair attempt was started.",
-                ],
-            ),
+            Err(error) => {
+                require_contains(&error, &["Uncommitted: src/lib.rs", "Nothing was started."])
+            }
             Ok(()) => Err("a dirty production premise must refuse the before phase".to_string()),
         }
     })();
@@ -352,13 +348,9 @@ fn gap_before_phase_refuses_dirty_production_premise_before_the_snapshot() -> Re
 fn gap_premise_exercise(root: &Path) -> Result<(), String> {
     let mut refusal = AfterPhaseRefusalContext::default();
     match run_gap_bound_before_phase(root, "gap:0123456789abcdef", "HEAD", None, &mut refusal) {
-        Err(error) => require_contains(
-            &error,
-            &[
-                "differ from HEAD: src/lib.rs",
-                "No workflow was prepared and no repair attempt was started.",
-            ],
-        ),
+        Err(error) => {
+            require_contains(&error, &["Uncommitted: src/lib.rs", "Nothing was started."])
+        }
         Ok(()) => Err("a dirty production premise must refuse the gap start".to_string()),
     }
 }
@@ -583,7 +575,7 @@ fn agent_receipt_with_a_malformed_attempt_id_is_a_failure() -> Result<(), String
     let _ = std::fs::remove_dir_all(&root);
     match result {
         Err(CommandError::Failure(message))
-            if message == "repair attempt ID must start with `repair-attempt-`" =>
+            if message.starts_with("repair attempt ID must start with `repair-attempt-`") =>
         {
             Ok(())
         }

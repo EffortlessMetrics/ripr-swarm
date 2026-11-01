@@ -5,6 +5,7 @@
 
 mod build_feature_reuse;
 mod discarded_matcher_honesty;
+mod evidence_promotion_semantic_assertions;
 mod evidence_promotion_semantics;
 mod fixture_cache;
 mod fixture_variants;
@@ -171,24 +172,23 @@ use super::{
     parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
     parse_inline_array, parse_mutation_calibration_args, parse_mutation_outcomes_json,
     parse_pr_triage_pull_requests, parse_reason, parse_repo_badge_artifact_options,
-    parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts,
-    parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
-    parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
-    parse_targeted_test_outcome_args, pin_report_packet_index_generated_at,
-    pr_actionable_delta_front_panel_from_inputs, pr_body_from_input_text,
-    pr_body_template_missing_error, pr_body_template_missing_lines, pr_body_validation_warning,
-    pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
-    pr_sensitive_file_reason, pr_shape_report_body, pr_shape_warnings, pr_summary_body,
-    pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
-    pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
-    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
-    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
-    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-    repo_exposure_authenticated_cache_load, repo_exposure_cache_family_store_from_stderr,
-    repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts, parse_ripr_swarm_args,
+    parse_ripr_swarm_plan_args, parse_sarif_policy_args, parse_sarif_policy_results,
+    parse_static_language_allowlist, parse_targeted_test_outcome_args,
+    pin_report_packet_index_generated_at, pr_actionable_delta_front_panel_from_inputs,
+    pr_body_from_input_text, pr_body_template_missing_error, pr_body_template_missing_lines,
+    pr_body_validation_warning, pr_checks_summary, pr_ready_json, pr_ready_markdown,
+    pr_ready_next_action, pr_ready_status, pr_sensitive_file_reason, pr_shape_report_body,
+    pr_shape_warnings, pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json,
+    pr_triage_markdown, pr_triage_queue_dispositions, precommit_report_body,
+    public_badge_basis_violations, public_contract_rows, read_badge_artifact_diff_governed,
+    read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
+    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
+    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+    repo_badge_artifacts_summary_markdown, repo_exposure_authenticated_cache_load,
+    repo_exposure_cache_family_store_from_stderr, repo_exposure_file_fact_cache_from_stderr,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_status_reasons, repo_exposure_latency_trace,
     repo_exposure_normalized_output, repo_exposure_parity_leg_receipts, repo_exposure_parity_run,
@@ -289,1334 +289,6 @@ fn write_evidence_promotion_check_json(fixture: &Path, check_json: Value) -> Res
         &serde_json::to_string_pretty(&check_json).map_err(|err| err.to_string())?,
     );
     Ok(())
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_human_missing_class_projection() {
-    let assertions = vec![super::EvidencePromotionSemanticAssertion::ExpectedClass {
-        class: "weakly_exposed".to_string(),
-    }];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:typescript:class-human-drift",
-                "classification": "weakly_exposed"
-            }
-        ]
-    });
-    let human_text = "\
-RIPR static exposure report
-
-Static exposure
-  exposed (info, confidence 0.60)
-";
-
-    let report = super::evidence_promotion_semantic_violations(
-        "class_human_drift",
-        Some("fixtures/typescript_class_human_drift"),
-        &assertions,
-        &check_json,
-        Some(human_text),
-        true,
-    )
-    .join("\n");
-
-    assert!(report.contains("expected_class"), "{report}");
-    assert!(
-        report.contains("project class `weakly_exposed`"),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_missing_human_class_golden() {
-    let assertions = vec![super::EvidencePromotionSemanticAssertion::ExpectedClass {
-        class: "weakly_exposed".to_string(),
-    }];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:typescript:class-missing-human",
-                "classification": "weakly_exposed"
-            }
-        ]
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "class_missing_human",
-        Some("fixtures/typescript_class_missing_human"),
-        &assertions,
-        &check_json,
-        None,
-        true,
-    )
-    .join("\n");
-
-    assert!(report.contains("expected_class"), "{report}");
-    assert!(report.contains("expected/human-full.txt"), "{report}");
-}
-
-#[test]
-fn evidence_promotion_human_class_line_matches_exact_class_token() {
-    assert!(super::evidence_promotion_human_class_line_matches(
-        "  weakly_exposed (warning, confidence 0.40)",
-        "weakly_exposed"
-    ));
-    assert!(super::evidence_promotion_human_class_line_matches(
-        "  exposed (info, confidence 0.60)",
-        "exposed"
-    ));
-    assert!(!super::evidence_promotion_human_class_line_matches(
-        "  weakly_exposed (warning, confidence 0.40)",
-        "exposed"
-    ));
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_expected_oracle_without_findings() {
-    let assertions = vec![super::EvidencePromotionSemanticAssertion::ExpectedOracle {
-        kind: "exact_value".to_string(),
-        strength: "strong".to_string(),
-    }];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 0},
-        "findings": []
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "oracle_empty",
-        Some("fixtures/typescript_oracle_empty"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-    )
-    .join("\n");
-
-    assert!(report.contains("expected_oracle"), "{report}");
-    assert!(report.contains("requires at least one finding"), "{report}");
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_missing_receipt_command() {
-    let assertions = vec![
-        super::EvidencePromotionSemanticAssertion::MustHaveReceiptCommand,
-        super::EvidencePromotionSemanticAssertion::MustEmitRepairPacket,
-    ];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "packet-missing-receipt",
-                "classification": "reachable_unrevealed",
-                "repair_packet_ready": true,
-                "verify_command": "cargo test packet_missing_receipt"
-            }
-        ]
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "packet_missing_receipt",
-        Some("fixtures/packet_missing_receipt"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-    )
-    .join("\n");
-
-    assert!(report.contains("must_have_receipt_command"), "{report}");
-    assert!(
-        report.contains("requires a non-empty receipt_command"),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_missing_repair_packet_detail() {
-    let assertions =
-        vec![super::EvidencePromotionSemanticAssertion::MustDiscloseRepairPacketDetail];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "packet-missing-detail",
-                "classification": "weakly_exposed",
-                "repair_packet_ready": true,
-                "typescript_repair_packet": {
-                    "allowed_edit_surface": ["tests/discount.test.ts"],
-                    "assertion_shape": "expect(result).toBe(50)",
-                    "authority_boundary": "preview_advisory_only",
-                    "canonical_gap_id": "gap:typescript:discount",
-                    "file": "src/discount.ts",
-                    "forbidden_files": ["src/discount.ts"],
-                    "gap_id": "probe:discount",
-                    "language": "typescript",
-                    "language_status": "preview",
-                    "line": 2,
-                    "must_not_change": ["Do not edit production code."],
-                    "receipt_command": "ripr outcome --before baseline --after repair",
-                    "repair_kind": "AddBoundaryAssertion",
-                    "verify_command": "jest tests/discount.test.ts"
-                }
-            }
-        ]
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "packet_missing_detail",
-        Some("fixtures/packet_missing_detail"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-    )
-    .join("\n");
-
-    assert!(
-        report.contains("must_disclose_repair_packet_detail"),
-        "{report}"
-    );
-    assert!(
-        report.contains("target_test:missing target test"),
-        "{report}"
-    );
-    assert!(
-        report.contains("$.raw_evidence_refs:missing raw evidence refs"),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_wrong_repair_packet_detail() {
-    let assertions = vec![
-        super::EvidencePromotionSemanticAssertion::ExpectedRepairPacketDetail {
-            detail: super::ExpectedRepairPacketDetail {
-                canonical_gap_id: "gap:typescript:discount".to_string(),
-                source_file: "src/discount.ts".to_string(),
-                source_line: 2,
-                target_test: "tests/discount.test.ts::discount boundary".to_string(),
-                assertion_shape: "expect(result).toBe(50)".to_string(),
-                authority_boundary: "preview_advisory_only".to_string(),
-                repair_kind: "AddBoundaryAssertion".to_string(),
-                verify_command: "jest tests/discount.test.ts".to_string(),
-                receipt_command: "ripr outcome --before baseline --after repair".to_string(),
-                allowed_edit_surface: vec!["tests/discount.test.ts".to_string()],
-                forbidden_files: vec!["src/discount.ts".to_string()],
-            },
-        },
-    ];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "packet-wrong-detail",
-                "classification": "weakly_exposed",
-                "repair_packet_ready": true,
-                "typescript_repair_packet": {
-                    "allowed_edit_surface": ["tests/discount.test.ts"],
-                    "assertion_shape": "expect(result).toBe(50)",
-                    "authority_boundary": "preview_advisory_only",
-                    "canonical_gap_id": "gap:typescript:discount",
-                    "file": "src/discount.ts",
-                    "forbidden_files": ["src/discount.ts"],
-                    "gap_id": "probe:discount",
-                    "language": "typescript",
-                    "language_status": "preview",
-                    "line": 2,
-                    "must_not_change": ["Do not edit production code."],
-                    "receipt_command": "ripr outcome --before baseline --after repair",
-                    "repair_kind": "AddBoundaryAssertion",
-                    "target_test": "tests/wrong.test.ts::discount boundary",
-                    "verify_command": "jest tests/wrong.test.ts"
-                }
-            }
-        ]
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "packet_wrong_detail",
-        Some("fixtures/packet_wrong_detail"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-    )
-    .join("\n");
-
-    assert!(report.contains("expected_repair_packet_detail"), "{report}");
-    assert!(
-            report.contains(
-                "target_test:expected `tests/discount.test.ts::discount boundary` got `tests/wrong.test.ts::discount boundary`"
-            ),
-            "{report}"
-        );
-    assert!(
-        report.contains(
-            "verify_command:expected `jest tests/discount.test.ts` got `jest tests/wrong.test.ts`"
-        ),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_contradictory_packet_messaging() {
-    let assertions =
-        vec![super::EvidencePromotionSemanticAssertion::MustNotHaveContradictoryPacketMessaging];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "packet-contradictory-messaging",
-                "classification": "weakly_exposed",
-                "preview_actionability": {
-                    "repair_packet_ready": true,
-                    "gap_state": "actionable",
-                    "actionability_category": "complete_repair_packet"
-                },
-                "typescript_repair_packet": {
-                    "canonical_gap_id": "gap:typescript:discount",
-                    "verify_command": "jest tests/discount.test.ts",
-                    "receipt_command": "ripr outcome --before baseline --after repair"
-                },
-                "evidence": [
-                    "owner: applyDiscount",
-                    "gap_state: advisory",
-                    "actionability_category: incomplete_repair_packet",
-                    "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract",
-                    "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
-                    "missing_actionability_fields: canonical_gap_id",
-                    "evidence_needed_to_promote: canonical gap identity"
-                ]
-            }
-        ]
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "packet_contradictory_messaging",
-        Some("fixtures/packet_contradictory_messaging"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-    )
-    .join("\n");
-
-    assert!(
-        report.contains("must_not_have_contradictory_packet_messaging"),
-        "{report}"
-    );
-    assert!(
-        report.contains("$.findings[0].evidence[1]:blocked gap_state evidence"),
-        "{report}"
-    );
-    assert!(
-        report.contains("$.findings[0].evidence[3]:blocked why-not-actionable evidence"),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_probe_family_selector_scopes_findings_and_refuses_empty_match() {
-    let assertions = vec![super::EvidencePromotionSemanticAssertion::MaximumClass {
-        class: "weakly_exposed".to_string(),
-    }];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 2},
-        "findings": [
-            {
-                "id": "probe:src_lib.rs:predicate:fa1d51d0",
-                "classification": "weakly_exposed",
-                "probe": {"id": "probe:src_lib.rs:predicate:fa1d51d0", "family": "predicate"}
-            },
-            {
-                "id": "probe:src_lib.rs:return_value:c71d52af",
-                "classification": "exposed",
-                "probe": {"id": "probe:src_lib.rs:return_value:c71d52af", "family": "return_value"}
-            }
-        ]
-    });
-
-    let scoped = super::evidence_promotion_semantic_violations_scoped(
-        "scoped_predicate_control",
-        Some("fixtures/split_test_boundary_oracle"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-        Some("predicate"),
-    );
-    assert!(scoped.is_empty(), "{scoped:?}");
-
-    let promoted_family = super::evidence_promotion_semantic_violations_scoped(
-        "scoped_wrong_family",
-        Some("fixtures/split_test_boundary_oracle"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-        Some("return_value"),
-    );
-    assert_eq!(promoted_family.len(), 1, "{promoted_family:?}");
-    assert!(
-        promoted_family[0].contains("probe:src_lib.rs:return_value:c71d52af"),
-        "{promoted_family:?}"
-    );
-
-    let unscoped = super::evidence_promotion_semantic_violations(
-        "unscoped_fixture_wide",
-        Some("fixtures/split_test_boundary_oracle"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-    );
-    assert_eq!(unscoped.len(), 1, "{unscoped:?}");
-
-    let empty_match = super::evidence_promotion_semantic_violations_scoped(
-        "scoped_empty_match",
-        Some("fixtures/split_test_boundary_oracle"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-        Some("call_deletion"),
-    );
-    assert_eq!(empty_match.len(), 1, "{empty_match:?}");
-    assert!(
-        empty_match[0].contains("matched no findings"),
-        "{empty_match:?}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_human_contradictory_packet_messaging() {
-    let assertions =
-        vec![super::EvidencePromotionSemanticAssertion::MustNotHaveContradictoryPacketMessaging];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "packet-human-contradictory-messaging",
-                "classification": "weakly_exposed",
-                "preview_actionability": {
-                    "repair_packet_ready": true,
-                    "gap_state": "actionable",
-                    "actionability_category": "complete_repair_packet"
-                },
-                "typescript_repair_packet": {
-                    "canonical_gap_id": "gap:typescript:discount",
-                    "verify_command": "jest tests/discount.test.ts",
-                    "receipt_command": "ripr outcome --before baseline --after repair"
-                },
-                "evidence": [
-                    "owner: applyDiscount",
-                    "gap_state: actionable",
-                    "actionability_category: complete_repair_packet"
-                ]
-            }
-        ]
-    });
-    let human_text = "\
-TypeScript repair packet (advisory)
-  canonical gap: gap:typescript:discount
-  status: not actionable
-  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
-  missing fields: verify_command, receipt_command
-";
-
-    let report = super::evidence_promotion_semantic_violations(
-        "packet_human_contradictory_messaging",
-        Some("fixtures/packet_human_contradictory_messaging"),
-        &assertions,
-        &check_json,
-        Some(human_text),
-        true,
-    )
-    .join("\n");
-
-    assert!(
-        report.contains("must_not_have_contradictory_packet_messaging"),
-        "{report}"
-    );
-    assert!(
-        report.contains(
-            "expected/human-full.txt:status: not actionable:blocked not-actionable status"
-        ),
-        "{report}"
-    );
-    assert!(
-            report.contains("expected/human-full.txt:missing fields: verify_command, receipt_command:blocked missing-fields line"),
-            "{report}"
-        );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_accept_human_complete_packet_messaging() {
-    let assertions =
-        vec![super::EvidencePromotionSemanticAssertion::MustNotHaveContradictoryPacketMessaging];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "packet-human-complete-messaging",
-                "classification": "weakly_exposed",
-                "preview_actionability": {
-                    "repair_packet_ready": true,
-                    "gap_state": "actionable",
-                    "actionability_category": "complete_repair_packet"
-                },
-                "typescript_repair_packet": {
-                    "canonical_gap_id": "gap:typescript:discount",
-                    "verify_command": "jest tests/discount.test.ts",
-                    "receipt_command": "ripr outcome --before baseline --after repair"
-                },
-                "evidence": [
-                    "owner: applyDiscount",
-                    "gap_state: actionable",
-                    "actionability_category: complete_repair_packet",
-                    "why_actionable: complete repair packet"
-                ]
-            }
-        ]
-    });
-    let human_text = "\
-TypeScript repair packet (advisory)
-  canonical gap: gap:typescript:discount
-  source: applyDiscount at src/discount.ts:2
-  related test: tests/discount.test.ts::discount
-  oracle: expect(result).toBe(50)
-  edit surface: tests/discount.test.ts
-  verify: jest tests/discount.test.ts
-  receipt: ripr outcome --before baseline --after repair
-  why actionable: complete repair packet
-  authority: preview_advisory_only
-";
-
-    let report = super::evidence_promotion_semantic_violations(
-        "packet_human_complete_messaging",
-        Some("fixtures/packet_human_complete_messaging"),
-        &assertions,
-        &check_json,
-        Some(human_text),
-        true,
-    );
-
-    assert!(report.is_empty(), "{report:?}");
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_accept_human_mixed_packet_and_blocked_messaging() {
-    let assertions =
-        vec![super::EvidencePromotionSemanticAssertion::MustNotHaveContradictoryPacketMessaging];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 2},
-        "findings": [
-            {
-                "id": "packet-human-complete-messaging",
-                "classification": "weakly_exposed",
-                "preview_actionability": {
-                    "repair_packet_ready": true,
-                    "gap_state": "actionable",
-                    "actionability_category": "complete_repair_packet"
-                },
-                "typescript_repair_packet": {
-                    "canonical_gap_id": "gap:typescript:discount",
-                    "verify_command": "jest tests/discount.test.ts",
-                    "receipt_command": "ripr outcome --before baseline --after repair"
-                },
-                "evidence": [
-                    "owner: applyDiscount",
-                    "gap_state: actionable",
-                    "actionability_category: complete_repair_packet",
-                    "why_actionable: complete repair packet"
-                ]
-            },
-            {
-                "id": "packet-human-blocked-messaging",
-                "classification": "weakly_exposed",
-                "preview_actionability": {
-                    "repair_packet_ready": false,
-                    "gap_state": "advisory",
-                    "actionability_category": "incomplete_repair_packet"
-                },
-                "evidence": [
-                    "owner: shippingTotal",
-                    "gap_state: advisory",
-                    "actionability_category: incomplete_repair_packet",
-                    "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
-                ]
-            }
-        ]
-    });
-    let human_text = "\
-TypeScript repair packet (advisory)
-  canonical gap: gap:typescript:discount
-  source: applyDiscount at src/discount.ts:2
-  related test: tests/discount.test.ts::discount
-  oracle: expect(result).toBe(50)
-  edit surface: tests/discount.test.ts
-  verify: jest tests/discount.test.ts
-  receipt: ripr outcome --before baseline --after repair
-  why actionable: complete repair packet
-  authority: preview_advisory_only
-
-TypeScript repair packet (advisory)
-  canonical gap: gap:typescript:shipping
-  status: not actionable
-  why not actionable: TypeScript preview lacks a complete repair packet contract
-  missing fields: verify_command, receipt_command
-";
-
-    let report = super::evidence_promotion_semantic_violations(
-        "packet_human_mixed_messaging",
-        Some("fixtures/packet_human_mixed_messaging"),
-        &assertions,
-        &check_json,
-        Some(human_text),
-        true,
-    );
-
-    assert!(report.is_empty(), "{report:?}");
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_human_missing_repair_packet_detail() {
-    let assertions =
-        vec![super::EvidencePromotionSemanticAssertion::MustDiscloseRepairPacketDetail];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "packet-human-missing-detail",
-                "classification": "weakly_exposed",
-                "repair_packet_ready": true,
-                "typescript_repair_packet": {
-                    "allowed_edit_surface": ["tests/discount.test.ts"],
-                    "assertion_shape": "expect(result).toBe(50)",
-                    "authority_boundary": "preview_advisory_only",
-                    "canonical_gap_id": "gap:typescript:discount",
-                    "file": "src/discount.ts",
-                    "forbidden_files": ["src/discount.ts"],
-                    "gap_id": "probe:discount",
-                    "language": "typescript",
-                    "language_status": "preview",
-                    "line": 2,
-                    "must_not_change": ["Do not edit production code."],
-                    "receipt_command": "ripr outcome --before baseline --after repair",
-                    "repair_kind": "AddBoundaryAssertion",
-                    "target_test": "tests/discount.test.ts::discount",
-                    "verify_command": "jest tests/discount.test.ts"
-                },
-                "preview_actionability": {
-                    "raw_evidence_refs": [
-                        {
-                            "file": "src/discount.ts",
-                            "kind": "typescript_preview_probe",
-                            "line": 2,
-                            "source_id": "probe:discount"
-                        }
-                    ]
-                }
-            }
-        ]
-    });
-    let human_text = "\
-TypeScript repair packet (advisory)
-  canonical gap: gap:typescript:discount
-  source: applyDiscount at src/discount.ts:2
-  related test: tests/discount.test.ts::discount
-  oracle: expect(result).toBe(50)
-  edit surface: tests/discount.test.ts
-  verify: jest tests/discount.test.ts
-  must not change:
-    - Do not edit production code.
-  authority: preview_advisory_only
-";
-
-    let report = super::evidence_promotion_semantic_violations(
-        "packet_human_missing_detail",
-        Some("fixtures/packet_human_missing_detail"),
-        &assertions,
-        &check_json,
-        Some(human_text),
-        true,
-    )
-    .join("\n");
-
-    assert!(
-        report.contains("must_disclose_repair_packet_detail"),
-        "{report}"
-    );
-    assert!(
-        report.contains("expected/human-full.txt:missing receipt command `receipt:`"),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_human_wrong_repair_packet_detail() {
-    let assertions = vec![
-        super::EvidencePromotionSemanticAssertion::ExpectedRepairPacketDetail {
-            detail: super::ExpectedRepairPacketDetail {
-                canonical_gap_id: "gap:typescript:discount".to_string(),
-                source_file: "src/discount.ts".to_string(),
-                source_line: 2,
-                target_test: "tests/discount.test.ts::discount boundary".to_string(),
-                assertion_shape: "expect(result).toBe(50)".to_string(),
-                authority_boundary: "preview_advisory_only".to_string(),
-                repair_kind: "AddBoundaryAssertion".to_string(),
-                verify_command: "jest tests/discount.test.ts".to_string(),
-                receipt_command: "ripr outcome --before baseline --after repair".to_string(),
-                allowed_edit_surface: vec!["tests/discount.test.ts".to_string()],
-                forbidden_files: vec!["src/discount.ts".to_string()],
-            },
-        },
-    ];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "packet-human-wrong-detail",
-                "classification": "weakly_exposed",
-                "repair_packet_ready": true,
-                "typescript_repair_packet": {
-                    "allowed_edit_surface": ["tests/discount.test.ts"],
-                    "assertion_shape": "expect(result).toBe(50)",
-                    "authority_boundary": "preview_advisory_only",
-                    "canonical_gap_id": "gap:typescript:discount",
-                    "file": "src/discount.ts",
-                    "forbidden_files": ["src/discount.ts"],
-                    "gap_id": "probe:discount",
-                    "language": "typescript",
-                    "language_status": "preview",
-                    "line": 2,
-                    "must_not_change": ["Do not edit production code."],
-                    "receipt_command": "ripr outcome --before baseline --after repair",
-                    "repair_kind": "AddBoundaryAssertion",
-                    "target_test": "tests/discount.test.ts::discount boundary",
-                    "verify_command": "jest tests/discount.test.ts"
-                }
-            }
-        ]
-    });
-    let human_text = "\
-Preview actionability
-  related test: tests/discount.test.ts::discount boundary
-  verify: jest tests/discount.test.ts
-  authority: preview_advisory_only
-
-TypeScript repair packet (advisory)
-  canonical gap: gap:typescript:discount
-  source: applyDiscount at src/discount.ts:2
-  related test: tests/wrong.test.ts::discount boundary
-  oracle: expect(result).toBe(50)
-  edit surface: tests/discount.test.ts
-  verify: jest tests/wrong.test.ts
-  receipt: ripr outcome --before baseline --after repair
-  must not change:
-    - Do not edit production code.
-  authority: preview_advisory_only
-";
-
-    let report = super::evidence_promotion_semantic_violations(
-        "packet_human_wrong_detail",
-        Some("fixtures/packet_human_wrong_detail"),
-        &assertions,
-        &check_json,
-        Some(human_text),
-        true,
-    )
-    .join("\n");
-
-    assert!(report.contains("expected_repair_packet_detail"), "{report}");
-    assert!(
-            report.contains(
-                "expected/human-full.txt:missing target test `tests/discount.test.ts::discount boundary`"
-            ),
-            "{report}"
-        );
-    assert!(
-        report.contains(
-            "expected/human-full.txt:missing verify command `jest tests/discount.test.ts`"
-        ),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_no_tests_claim_with_witness() {
-    let assertions = vec![
-        super::EvidencePromotionSemanticAssertion::MustDiscloseWitness,
-        super::EvidencePromotionSemanticAssertion::MustNotClaimNoTestsFound,
-    ];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_lib.rs:predicate:witnessed",
-                "classification": "no_static_path",
-                "ripr": {
-                    "infect": {
-                        "summary": "No tests were found, so activation/infection cannot be estimated"
-                    }
-                },
-                "evidence": [
-                    "For example, the test `integration_path` (tests/it.rs:4) calls `outer`, an entry point that may lead here.",
-                    "No tests were found, so activation/infection cannot be estimated"
-                ]
-            }
-        ]
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "witnessed_no_tests_claim",
-        Some("fixtures/witnessed_no_tests_claim"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-    )
-    .join("\n");
-
-    assert!(report.contains("must_not_claim_no_tests_found"), "{report}");
-    assert!(report.contains("$.findings[0].evidence[1]"), "{report}");
-    assert!(
-        report.contains("$.findings[0].ripr.infect.summary"),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_human_missing_witness_projection() {
-    let assertions = vec![super::EvidencePromotionSemanticAssertion::MustDiscloseWitness];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_lib.rs:predicate:witnessed",
-                "classification": "no_static_path",
-                "evidence": [
-                    "For example, the test `integration_path` (tests/it.rs:4) calls `outer`, an entry point that may lead here."
-                ]
-            }
-        ]
-    });
-    let human_text = "Static limitation\nNo statically reachable test path was found\n";
-
-    let report = super::evidence_promotion_semantic_violations(
-        "witnessed_human_missing_projection",
-        Some("fixtures/witnessed_human_missing_projection"),
-        &assertions,
-        &check_json,
-        Some(human_text),
-        true,
-    )
-    .join("\n");
-
-    assert!(report.contains("must_disclose_witness"), "{report}");
-    assert!(
-        report.contains("expected/human-full.txt:missing Where to look"),
-        "{report}"
-    );
-    assert!(
-        report.contains(
-            "expected/human-full.txt:missing witness `For example, the test `integration_path`"
-        ),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_human_mismatched_witness_projection() {
-    let assertions = vec![super::EvidencePromotionSemanticAssertion::MustDiscloseWitness];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_lib.rs:predicate:witnessed",
-                "classification": "no_static_path",
-                "evidence": [
-                    "For example, the test `integration_path` (tests/it.rs:4) calls `outer`, an entry point that may lead here."
-                ]
-            }
-        ]
-    });
-    let human_text = concat!(
-        "Where to look\n",
-        "  For example, the test `stale_path` (tests/it.rs:9) calls `outer`, an entry point that may lead here.\n",
-    );
-
-    let report = super::evidence_promotion_semantic_violations(
-        "witnessed_human_mismatched_projection",
-        Some("fixtures/witnessed_human_mismatched_projection"),
-        &assertions,
-        &check_json,
-        Some(human_text),
-        true,
-    )
-    .join("\n");
-
-    assert!(report.contains("must_disclose_witness"), "{report}");
-    assert!(
-        report.contains(
-            "expected/human-full.txt:missing witness `For example, the test `integration_path`"
-        ),
-        "{report}"
-    );
-    assert!(!report.contains("missing Where to look"), "{report}");
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_missing_human_witness_golden() {
-    let assertions = vec![super::EvidencePromotionSemanticAssertion::MustDiscloseWitness];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_lib.rs:predicate:witnessed",
-                "classification": "no_static_path",
-                "evidence": [
-                    "For example, the test `integration_path` (tests/it.rs:4) calls `outer`, an entry point that may lead here."
-                ]
-            }
-        ]
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "witnessed_missing_human_golden",
-        Some("fixtures/witnessed_missing_human_golden"),
-        &assertions,
-        &check_json,
-        None,
-        true,
-    )
-    .join("\n");
-
-    assert!(report.contains("must_disclose_witness"), "{report}");
-    assert!(
-        report.contains("requires fixture human output at `expected/human-full.txt`"),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_human_no_tests_claim_with_witness() {
-    let assertions = vec![
-        super::EvidencePromotionSemanticAssertion::MustDiscloseWitness,
-        super::EvidencePromotionSemanticAssertion::MustNotClaimNoTestsFound,
-    ];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_lib.rs:predicate:witnessed",
-                "classification": "no_static_path",
-                "ripr": {
-                    "infect": {
-                        "summary": "No statically reachable test path was found, so activation/infection cannot be estimated"
-                    }
-                },
-                "evidence": [
-                    "For example, the test `integration_path` (tests/it.rs:4) calls `outer`, an entry point that may lead here."
-                ]
-            }
-        ]
-    });
-    let human_text = concat!(
-        "Where to look\n",
-        "  For example, the test `integration_path` (tests/it.rs:4) calls `outer`, an entry point that may lead here.\n",
-        "No tests were found, so activation/infection cannot be estimated\n",
-    );
-
-    let report = super::evidence_promotion_semantic_violations(
-        "witnessed_human_no_tests_claim",
-        Some("fixtures/witnessed_human_no_tests_claim"),
-        &assertions,
-        &check_json,
-        Some(human_text),
-        true,
-    )
-    .join("\n");
-
-    assert!(report.contains("must_not_claim_no_tests_found"), "{report}");
-    assert!(report.contains("expected/human-full.txt:3"), "{report}");
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_missing_limitation_detail() {
-    let assertions = vec![super::EvidencePromotionSemanticAssertion::MustDiscloseLimitationDetail];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_internal.rs:predicate:inner",
-                "classification": "no_static_path",
-                "static_limit_kind": "rust_transitive_reach_unresolved",
-                "evidence": [
-                    "For example, the test `integration_path` (tests/it.rs:4) calls `outer`, an entry point that may lead here."
-                ]
-            }
-        ]
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "missing_limitation_detail",
-        Some("fixtures/missing_limitation_detail"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-    )
-    .join("\n");
-
-    assert!(
-        report.contains("must_disclose_limitation_detail"),
-        "{report}"
-    );
-    assert!(
-        report.contains("$.findings[0].evidence:missing last established edge"),
-        "{report}"
-    );
-    assert!(
-        report.contains("$.findings[0].evidence:missing first unresolved edge"),
-        "{report}"
-    );
-    assert!(
-        report.contains("$.findings[0].evidence:missing analyzer route"),
-        "{report}"
-    );
-    assert!(
-        report.contains("$.findings[0].evidence:missing non-claim"),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_human_missing_limitation_detail() {
-    let assertions = vec![super::EvidencePromotionSemanticAssertion::MustDiscloseLimitationDetail];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_internal.rs:predicate:inner",
-                "classification": "no_static_path",
-                "static_limit_kind": "rust_transitive_reach_unresolved",
-                "evidence": [
-                    "limitation_last_established_edge: test `integration_path` (tests/it.rs:4) -> entry `outer`",
-                    "limitation_first_unresolved_edge: entry `outer` -> owner `inner` through a transitive Rust helper path",
-                    "limitation_analyzer_route: analysis/rust-public-api-transitive-reach",
-                    "limitation_non_claim: named limitation only; ripr cannot confirm or deny that this path observes the change"
-                ],
-                "static_limitation": {
-                    "kind": "rust_transitive_reach_unresolved",
-                    "last_established_edge": "test `integration_path` (tests/it.rs:4) -> entry `outer`",
-                    "first_unresolved_edge": "entry `outer` -> owner `inner` through a transitive Rust helper path",
-                    "analyzer_route": "analysis/rust-public-api-transitive-reach",
-                    "non_claim": "named limitation only; ripr cannot confirm or deny that this path observes the change"
-                }
-            }
-        ]
-    });
-    let human_text = "Static limitation\n  rust_transitive_reach_unresolved\n";
-
-    let report = super::evidence_promotion_semantic_violations(
-        "human_missing_limitation_detail",
-        Some("fixtures/human_missing_limitation_detail"),
-        &assertions,
-        &check_json,
-        Some(human_text),
-        true,
-    )
-    .join("\n");
-
-    assert!(
-        report.contains("must_disclose_limitation_detail"),
-        "{report}"
-    );
-    assert!(
-        report.contains("expected/human-full.txt:missing Limitation detail"),
-        "{report}"
-    );
-    assert!(
-        report.contains("expected/human-full.txt:missing detail `last established edge:"),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_accept_limitation_detail_projection() {
-    let assertions = vec![
-            super::EvidencePromotionSemanticAssertion::MustDiscloseLimitationDetail,
-            super::EvidencePromotionSemanticAssertion::ExpectedLimitationDetail {
-                last_established_edge:
-                    "test `integration_path` (tests/it.rs:4) -> entry `outer`".to_string(),
-                first_unresolved_edge:
-                    "entry `outer` -> owner `inner` through a transitive Rust helper path"
-                        .to_string(),
-                non_claim:
-                    "named limitation only; ripr cannot confirm or deny that this path observes the change"
-                        .to_string(),
-            },
-            super::EvidencePromotionSemanticAssertion::ExpectedLimitationRoute {
-                route: "analysis/rust-public-api-transitive-reach".to_string(),
-            },
-        ];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_internal.rs:predicate:inner",
-                "classification": "no_static_path",
-                "static_limit_kind": "rust_transitive_reach_unresolved",
-                "evidence": [
-                    "limitation_last_established_edge: test `integration_path` (tests/it.rs:4) -> entry `outer`",
-                    "limitation_first_unresolved_edge: entry `outer` -> owner `inner` through a transitive Rust helper path",
-                    "limitation_analyzer_route: analysis/rust-public-api-transitive-reach",
-                    "limitation_non_claim: named limitation only; ripr cannot confirm or deny that this path observes the change"
-                ],
-                "static_limitation": {
-                    "kind": "rust_transitive_reach_unresolved",
-                    "last_established_edge": "test `integration_path` (tests/it.rs:4) -> entry `outer`",
-                    "first_unresolved_edge": "entry `outer` -> owner `inner` through a transitive Rust helper path",
-                    "analyzer_route": "analysis/rust-public-api-transitive-reach",
-                    "non_claim": "named limitation only; ripr cannot confirm or deny that this path observes the change"
-                }
-            }
-        ]
-    });
-    let human_text = concat!(
-        "Limitation detail\n",
-        "  last established edge: test `integration_path` (tests/it.rs:4) -> entry `outer`\n",
-        "  first unresolved edge: entry `outer` -> owner `inner` through a transitive Rust helper path\n",
-        "  analyzer route: analysis/rust-public-api-transitive-reach\n",
-        "  non-claim: named limitation only; ripr cannot confirm or deny that this path observes the change\n",
-    );
-
-    let violations = super::evidence_promotion_semantic_violations(
-        "limitation_detail_projection",
-        Some("fixtures/limitation_detail_projection"),
-        &assertions,
-        &check_json,
-        Some(human_text),
-        true,
-    );
-
-    assert!(violations.is_empty(), "{violations:?}");
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_wrong_limitation_detail() {
-    let assertions = vec![
-            super::EvidencePromotionSemanticAssertion::ExpectedLimitationDetail {
-                last_established_edge:
-                    "test `integration_path` (tests/it.rs:4) -> entry `outer`".to_string(),
-                first_unresolved_edge:
-                    "entry `outer` -> owner `inner` through a transitive Rust helper path"
-                        .to_string(),
-                non_claim:
-                    "named limitation only; ripr cannot confirm or deny that this path observes the change"
-                        .to_string(),
-            },
-        ];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_internal.rs:predicate:inner",
-                "classification": "no_static_path",
-                "static_limit_kind": "rust_transitive_reach_unresolved",
-                "evidence": [
-                    "limitation_last_established_edge: test `integration_path` (tests/it.rs:4) -> entry `outer`",
-                    "limitation_first_unresolved_edge: entry `other` -> owner `inner` through a transitive Rust helper path",
-                    "limitation_analyzer_route: analysis/rust-public-api-transitive-reach",
-                    "limitation_non_claim: named limitation only; ripr cannot confirm or deny that this path observes the change"
-                ]
-            }
-        ]
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "wrong_limitation_detail",
-        Some("fixtures/wrong_limitation_detail"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-    )
-    .join("\n");
-
-    assert!(report.contains("expected_limitation_detail"), "{report}");
-    assert!(
-        report.contains(
-            "$.findings[0].evidence:first unresolved edge:entry `other` -> owner `inner`"
-        ),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_wrong_limitation_route() {
-    let assertions = vec![
-        super::EvidencePromotionSemanticAssertion::ExpectedLimitationRoute {
-            route: "analysis/rust-public-api-transitive-reach".to_string(),
-        },
-    ];
-    let check_json = serde_json::json!({
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_internal.rs:predicate:inner",
-                "classification": "no_static_path",
-                "static_limit_kind": "rust_transitive_reach_unresolved",
-                "evidence": [
-                    "limitation_last_established_edge: test `integration_path` (tests/it.rs:4) -> entry `outer`",
-                    "limitation_first_unresolved_edge: entry `outer` -> owner `inner` through a transitive Rust helper path",
-                    "limitation_analyzer_route: analysis/generic-static-limitation",
-                    "limitation_non_claim: named limitation only; ripr cannot confirm or deny that this path observes the change"
-                ]
-            }
-        ]
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "wrong_limitation_route",
-        Some("fixtures/wrong_limitation_route"),
-        &assertions,
-        &check_json,
-        None,
-        false,
-    )
-    .join("\n");
-
-    assert!(report.contains("expected_limitation_route"), "{report}");
-    assert!(
-        report.contains("$.findings[0].evidence:analysis/generic-static-limitation"),
-        "{report}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_accept_scope_limited_empty_results() {
-    let no_scope = serde_json::json!({
-        "summary": {"findings": 0},
-        "findings": [],
-        "scope_disclosures": [
-            {"scope_status": "no_scope_provided", "category": "no_scope_disclosure"}
-        ]
-    });
-    let no_scope_assertions = vec![
-        super::EvidencePromotionSemanticAssertion::MustNotReportClean,
-        super::EvidencePromotionSemanticAssertion::MustDiscloseNoScope,
-    ];
-    let no_scope_violations = super::evidence_promotion_semantic_violations(
-        "no_scope",
-        Some("fixtures/scope_honesty_no_scope_empty"),
-        &no_scope_assertions,
-        &no_scope,
-        None,
-        false,
-    );
-    assert!(
-        no_scope_violations.is_empty(),
-        "no-scope disclosure should make the empty result non-clean: {no_scope_violations:?}"
-    );
-
-    let dirty_worktree = serde_json::json!({
-        "summary": {"findings": 0},
-        "findings": [],
-        "unanalyzed_working_tree": true
-    });
-    let dirty_assertions = vec![
-        super::EvidencePromotionSemanticAssertion::MustNotReportClean,
-        super::EvidencePromotionSemanticAssertion::MustDiscloseUnanalyzedWorkingTree,
-    ];
-    let dirty_violations = super::evidence_promotion_semantic_violations(
-        "dirty_worktree",
-        Some("fixtures/scope_honesty_unanalyzed_worktree_empty"),
-        &dirty_assertions,
-        &dirty_worktree,
-        None,
-        false,
-    );
-    assert!(
-        dirty_violations.is_empty(),
-        "unanalyzed_working_tree should make the empty result non-clean: {dirty_violations:?}"
-    );
-}
-
-#[test]
-fn evidence_promotion_semantic_assertions_reject_false_unanalyzed_worktree_disclosure() {
-    let assertions = vec![
-        super::EvidencePromotionSemanticAssertion::MustDiscloseScope,
-        super::EvidencePromotionSemanticAssertion::MustNotDiscloseUnanalyzedWorkingTree,
-    ];
-    let scoped_worktree = serde_json::json!({
-        "schema_version": "0.2",
-        "tool": "ripr",
-        "mode": "draft",
-        "root": ".",
-        "base": "HEAD",
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_lib.rs:predicate:4e6b5f28",
-                "classification": "no_static_path",
-                "probe": {"file": "src/lib.rs"}
-            }
-        ]
-    });
-
-    let scoped_violations = super::evidence_promotion_semantic_violations(
-        "scoped_worktree",
-        Some("fixtures/scope_worktree_analyzed_dirty"),
-        &assertions,
-        &scoped_worktree,
-        None,
-        false,
-    );
-    assert!(
-        scoped_violations.is_empty(),
-        "scoped worktree report without unanalyzed disclosure should pass: {scoped_violations:?}"
-    );
-
-    let false_exclusion = serde_json::json!({
-        "schema_version": "0.2",
-        "tool": "ripr",
-        "mode": "draft",
-        "root": ".",
-        "base": "HEAD",
-        "summary": {"findings": 1},
-        "findings": [
-            {
-                "id": "probe:src_lib.rs:predicate:4e6b5f28",
-                "classification": "no_static_path",
-                "probe": {"file": "src/lib.rs"}
-            }
-        ],
-        "unanalyzed_working_tree": true
-    });
-
-    let report = super::evidence_promotion_semantic_violations(
-        "false_exclusion",
-        Some("fixtures/scope_worktree_analyzed_dirty"),
-        &assertions,
-        &false_exclusion,
-        None,
-        false,
-    )
-    .join("\n");
-
-    assert!(
-        report.contains("must_not_disclose_unanalyzed_working_tree"),
-        "{report}"
-    );
-    assert!(
-        report.contains("working-tree draft was in scope"),
-        "{report}"
-    );
 }
 
 #[test]
@@ -29522,6 +28194,7 @@ fn triage_pr(number: u64, title: &str, files: &[&str]) -> PrTriagePullRequest {
         review_decision: String::new(),
         labels: Vec::new(),
         files: files.iter().map(|file| file.to_string()).collect(),
+        checks_rollup_available: true,
         checks: vec![PrTriageCheck {
             name: "rust".to_string(),
             status: "COMPLETED".to_string(),
@@ -29643,10 +28316,6 @@ fn parse_gh_pr_status_reads_view_json() -> Result<(), String> {
     assert_eq!(pr.checks.len(), 2);
     assert_eq!(pr.reviews.len(), 1);
     assert_eq!(pr.reviews[0].author, "droid");
-    assert_eq!(
-        parse_required_status_contexts(r#"["rust","msrv","rust"]"#)?,
-        vec!["msrv".to_string(), "rust".to_string()]
-    );
     Ok(())
 }
 
@@ -29655,7 +28324,10 @@ fn gh_pr_status_readiness_selects_safe_next_action() {
     let contexts = vec!["rust".to_string()];
     let clean = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
     let clean_readiness = gh_pr_status_readiness(&clean, &contexts, true, Vec::new());
-    assert_eq!(clean_readiness.safe_next_action, "merge");
+    assert_eq!(
+        clean_readiness.safe_next_action,
+        "inspect final merge gates"
+    );
 
     let pending = gh_pr_status_pr(vec![gh_pr_status_check("rust", "IN_PROGRESS", "")]);
     let pending_readiness = gh_pr_status_readiness(&pending, &contexts, true, Vec::new());
@@ -29678,6 +28350,75 @@ fn gh_pr_status_readiness_selects_safe_next_action() {
         gh_pr_safe_next_action(&behind, &behind_readiness),
         "inspect integration"
     );
+}
+
+#[test]
+fn gh_pr_status_unknown_required_checks_are_not_passed_or_classified() -> Result<(), String> {
+    let pending = gh_pr_status_pr(vec![gh_pr_status_check("rust", "IN_PROGRESS", "")]);
+    let readiness = gh_pr_status_readiness(&pending, &[], false, Vec::new());
+    assert!(readiness.required_checks_outstanding.is_empty());
+    assert_eq!(readiness.pending_checks.len(), 1);
+    assert_eq!(readiness.safe_next_action, "wait");
+    let markdown = gh_pr_status_markdown(&pending, &[], &readiness);
+    assert!(markdown.contains("Required-check classification and completeness are unknown"));
+    let json: Value = serde_json::from_str(&gh_pr_status_json(&pending, &[], &readiness))
+        .map_err(|error| error.to_string())?;
+    assert_eq!(json["required_contexts_available"], false);
+    assert_eq!(json["pending_checks"].as_array().map(Vec::len), Some(1));
+
+    let clean = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
+    let readiness = gh_pr_status_readiness(&clean, &[], false, Vec::new());
+    assert_eq!(readiness.safe_next_action, "inspect final merge gates"); // advisory, not merge authority
+    assert!(gh_pr_status_markdown(&clean, &[], &readiness).contains("completeness are unknown"));
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_rejects_missing_rollup_and_waits_on_unknown_check_states() -> Result<(), String> {
+    let mut fixture = gh_pr_status_subject_fixture("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    for value in [Value::Null, serde_json::json!({})] {
+        fixture["statusCheckRollup"] = value;
+        parse_gh_pr_status_pull_request(&fixture.to_string())
+            .err()
+            .ok_or("invalid rollup was accepted")?;
+    }
+    fixture
+        .as_object_mut()
+        .ok_or("fixture object")?
+        .remove("statusCheckRollup");
+    parse_gh_pr_status_pull_request(&fixture.to_string())
+        .err()
+        .ok_or("missing rollup was accepted")?;
+    fixture["statusCheckRollup"] = serde_json::json!([]);
+    let empty = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    let empty_readiness = gh_pr_status_readiness(&empty, &[], false, Vec::new());
+    assert_eq!(
+        empty_readiness.safe_next_action,
+        "inspect final merge gates"
+    );
+    assert!(
+        gh_pr_status_markdown(&empty, &[], &empty_readiness).contains("completeness are unknown")
+    );
+    for (name, status, conclusion) in [
+        ("rust", "UNKNOWN", ""),
+        ("rust", "COMPLETED", ""),
+        ("", "COMPLETED", "SUCCESS"),
+        ("rust", "", "SUCCESS"),
+    ] {
+        let pr = gh_pr_status_pr(vec![gh_pr_status_check(name, status, conclusion)]);
+        let readiness = gh_pr_status_readiness(&pr, &[], false, Vec::new());
+        assert_eq!(
+            readiness.safe_next_action, "wait",
+            "{name} {status} {conclusion}"
+        );
+        assert!(
+            readiness
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unknown"))
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -29741,7 +28482,7 @@ fn gh_pr_status_behind_preserves_failure_and_wait_routes() {
 fn gh_pr_status_behind_does_not_hide_a_conflict_or_grant_merge() {
     let contexts = vec!["rust".to_string()];
     for (state, expected) in [
-        ("CLEAN", "merge"),
+        ("CLEAN", "inspect final merge gates"),
         ("BEHIND", "inspect integration"),
         ("DIRTY", "inspect failure"),
         ("UNKNOWN", "wait"),
@@ -29817,7 +28558,7 @@ fn gh_pr_status_markdown_reports_reviews_checks_and_action() {
     let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
     let markdown = gh_pr_status_markdown(&pr, &contexts, &readiness);
     assert!(markdown.contains("# GitHub PR Status"));
-    assert!(markdown.contains("safe next action: `merge`"));
+    assert!(markdown.contains("safe next action: `inspect final merge gates`"));
     assert!(markdown.contains("## Required Checks Outstanding"));
     assert!(markdown.contains("## Reviews"));
     assert!(markdown.contains("droid/review"));
@@ -29840,7 +28581,7 @@ fn gh_pr_status_json_reports_merge_readiness_packet() -> Result<(), String> {
     assert_eq!(json["merge_state"], "CLEAN");
     assert_eq!(json["behind_main"], false);
     assert_eq!(json["review_decision"], "APPROVED");
-    assert_eq!(json["safe_next_action"], "merge");
+    assert_eq!(json["safe_next_action"], "inspect final merge gates");
     assert_eq!(
         json["advisory_checks"][0],
         "droid/review (status=COMPLETED, conclusion=SUCCESS)"
@@ -29968,6 +28709,31 @@ fn pr_triage_queue_dispositions_name_actionable_queue_state() {
         dispositions.get(&6).map(String::as_str),
         Some("close_duplicate")
     );
+}
+
+#[test]
+fn pr_triage_merge_candidate_requests_final_gate_inspection_on_both_surfaces() -> Result<(), String>
+{
+    let pr = triage_pr(1, "devex: ready", &["xtask/src/main.rs"]);
+    let prs = std::slice::from_ref(&pr);
+    let today = days_from_civil(2026, 5, 14);
+    let expected = "Inspect current final merge gates, reviews, proof and findings, then decide on a normal server-enforced merge if the scope remains canonical.";
+    let markdown = pr_triage_markdown(prs, &[], today);
+    let row = markdown
+        .lines()
+        .find(|row| row.starts_with("| #1 |"))
+        .ok_or("missing candidate row")?;
+    assert!(row.contains("merge_candidate"), "{row}");
+    assert!(row.contains(expected), "{row}");
+    let json: Value = serde_json::from_str(&pr_triage_json(prs, &[], today, "fixture"))
+        .map_err(|err| err.to_string())?;
+    assert_eq!(json["mode"], "advisory");
+    assert_eq!(
+        json["queue_disposition"][0]["disposition"],
+        "merge_candidate"
+    );
+    assert_eq!(json["queue_disposition"][0]["recommended_action"], expected);
+    Ok(())
 }
 
 #[test]
@@ -30686,18 +29452,28 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
 }
 
 fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
+    // Each phase is announced on stderr before it starts. When the child outlives
+    // its tool-build deadline the parent's diagnostic carries this stream, so a
+    // stall names the check it was inside instead of an anonymous TIMEOUT (#12035).
+    fn phase(name: &str, check: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        eprintln!("policy facade phase: {name}");
+        check()
+    }
     with_repo_cwd(|| {
-        check_static_language()?;
-        check_no_panic_family()?;
-        check_allow_attributes()?;
-        check_local_context()?;
-        check_file_policy()?;
-        assert_packet_coverage_report()?;
-        check_executable_files()?;
-        check_workflows()?;
-        check_droid_review_config()?;
-        check_process_policy()?;
-        check_network_policy()
+        phase("check_static_language", check_static_language)?;
+        phase("check_no_panic_family", check_no_panic_family)?;
+        phase("check_allow_attributes", check_allow_attributes)?;
+        phase("check_local_context", check_local_context)?;
+        phase("check_file_policy", check_file_policy)?;
+        phase(
+            "assert_packet_coverage_report",
+            assert_packet_coverage_report,
+        )?;
+        phase("check_executable_files", check_executable_files)?;
+        phase("check_workflows", check_workflows)?;
+        phase("check_droid_review_config", check_droid_review_config)?;
+        phase("check_process_policy", check_process_policy)?;
+        phase("check_network_policy", check_network_policy)
     })
 }
 
@@ -55621,7 +54397,7 @@ fn gh_pr_status_current_review_subject_control() -> Result<(), String> {
         "current_head"
     );
     let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
-    assert_eq!(readiness.safe_next_action, "merge");
+    assert_eq!(readiness.safe_next_action, "inspect final merge gates");
     assert!(readiness.warnings.is_empty());
     Ok(())
 }
@@ -55838,7 +54614,7 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
     assert!(markdown.contains("not evidence of review completion"));
     assert!(markdown.contains("not attributed to the current head"));
     assert_eq!(
-        readiness.safe_next_action, "merge",
+        readiness.safe_next_action, "inspect final merge gates",
         "advisory provider disclosure must not silently become a new gate"
     );
     Ok(())
@@ -55847,7 +54623,13 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
 #[test]
 fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Result<(), String> {
     for (status, conclusion, review, expected) in [
-        ("COMPLETED", "SUCCESS", "APPROVED", "merge"),
+        (
+            "COMPLETED",
+            "SUCCESS",
+            "APPROVED",
+            "inspect final merge gates",
+        ),
+        ("EMPTY", "", "APPROVED", "inspect final merge gates"),
         ("IN_PROGRESS", "", "APPROVED", "wait"),
         ("COMPLETED", "FAILURE", "APPROVED", "inspect failure"),
         (
@@ -55867,37 +54649,39 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
         });
         let mut last = first.clone();
         last["reviewDecision"] = serde_json::json!(review);
-        last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
-        last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        if status == "EMPTY" {
+            last["statusCheckRollup"] = serde_json::json!([]);
+        } else {
+            last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
+            last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        }
         let mut reads = 0;
-        let observation = super::gh_pr_status_snapshot::collect_current(
-            42,
-            || {
-                reads += 1;
-                super::collect_gh_pr_status_json_with(42, |program, args| {
-                    assert_eq!(program, "gh");
-                    if args.first().is_some_and(|arg| arg == "api") {
-                        return Ok(gh_pr_status_identity_response(if reads == 1 {
-                            &first
-                        } else {
-                            &last
-                        }));
-                    }
-                    assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
-                    let fields = args[4].split(',').collect::<Vec<_>>();
-                    assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
-                    Ok(if reads == 1 {
-                        first.to_string()
+        let observation = super::gh_pr_status_snapshot::collect_current(42, || {
+            reads += 1;
+            super::collect_gh_pr_status_json_with(42, |program, args| {
+                assert_eq!(program, "gh");
+                if args.first().is_some_and(|arg| arg == "api") {
+                    assert_eq!(args.get(1).map(String::as_str), Some("graphql"));
+                    assert!(
+                        args.iter()
+                            .all(|arg| !arg.contains("protection") && !arg.contains("rulesets"))
+                    );
+                    return Ok(gh_pr_status_identity_response(if reads == 1 {
+                        &first
                     } else {
-                        last.to_string()
-                    })
+                        &last
+                    }));
+                }
+                assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
+                let fields = args[4].split(',').collect::<Vec<_>>();
+                assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
+                Ok(if reads == 1 {
+                    first.to_string()
+                } else {
+                    last.to_string()
                 })
-            },
-            |target| {
-                assert_eq!(target, "main");
-                Ok(vec!["rust".to_string()])
-            },
-        )?;
+            })
+        })?;
         assert_eq!(reads, 2);
         let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
         let readiness = gh_pr_status_readiness(
@@ -55911,7 +54695,9 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
             serde_json::from_str(&gh_pr_status_json(&pr, &observation.contexts, &readiness))
                 .map_err(|error| error.to_string())?;
         assert_eq!(json["safe_next_action"], expected);
+        assert_eq!(json["required_contexts_available"], false);
         let markdown = gh_pr_status_markdown(&pr, &observation.contexts, &readiness);
+        assert!(markdown.contains("Required-check classification and completeness are unknown"));
         assert!(markdown.contains(&format!("safe next action: `{expected}`")));
         assert!(markdown.contains("1111111111111111111111111111111111111111"));
         assert!(markdown.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
@@ -56795,5 +55581,208 @@ fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String>
             ));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_unknown_check_is_not_a_pass_or_merge_candidate() -> Result<(), String> {
+    let prs = parse_pr_triage_pull_requests(
+        r#"[{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"__typename":"CheckRun","name":"rust","status":"COMPLETED","conclusion":""}]}]"#,
+    )?;
+    assert_eq!(prs.len(), 1);
+    let today = days_from_civil(2026, 5, 14);
+    let findings = pr_triage_findings(&prs, today);
+    let markdown = pr_triage_markdown(&prs, &findings, today);
+    let value: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["open_prs"][0]["checks_summary"], "1 unknown");
+    assert_eq!(
+        value["queue_disposition"][0]["disposition"],
+        "needs_fresh_validation"
+    );
+    assert!(markdown.contains("1 unknown"));
+    assert!(markdown.contains("unknown checks:"));
+    let expected_action = "Wait for checks, inspect failures or unknown evidence, or update the PR body with actual commands run.";
+    assert_eq!(
+        value["queue_disposition"][0]["recommended_action"],
+        expected_action
+    );
+    let queue = markdown
+        .split_once("\n## Queue Disposition\n\n")
+        .ok_or("missing queue")?
+        .1
+        .split_once("\n## Open PRs\n\n")
+        .ok_or("missing open PRs")?
+        .0;
+    assert!(
+        queue
+            .lines()
+            .any(|row| row.starts_with("| #42 |") && row.contains(expected_action))
+    );
+    assert!(!markdown.contains("1 passed"));
+    Ok(())
+}
+
+#[test]
+fn pr_triage_parsed_check_states_reach_reports_and_queue() -> Result<(), String> {
+    let today = days_from_civil(2026, 5, 14);
+    for (check, summary, disposition) in [
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"SUCCESS"}),
+            "1 passed",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"NEUTRAL"}),
+            "1 neutral/skipped",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"SKIPPED"}),
+            "1 neutral/skipped",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"FUTURE"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":""}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"COMPLETED","conclusion":"SUCCESS"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"MYSTERY","conclusion":"SUCCESS"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"SUCCESS"}),
+            "1 passed",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"PENDING"}),
+            "1 pending",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"FAILURE"}),
+            "1 failed",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"IN_PROGRESS"}),
+            "1 pending",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"COMPLETED","conclusion":"FAILURE"}),
+            "1 failed",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!(null),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+    ] {
+        let fixture = serde_json::json!([{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[check]}]);
+        let prs = parse_pr_triage_pull_requests(&fixture.to_string())?;
+        let findings = pr_triage_findings(&prs, today);
+        let markdown = pr_triage_markdown(&prs, &findings, today);
+        let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+            .map_err(|e| e.to_string())?;
+        assert_eq!(json["open_prs"][0]["checks_summary"], summary, "{fixture}");
+        assert_eq!(
+            json["queue_disposition"][0]["disposition"], disposition,
+            "{fixture}"
+        );
+        assert_eq!(
+            pr_triage_queue_dispositions(&prs, &[])[0].disposition,
+            disposition,
+            "{fixture}"
+        );
+        assert!(markdown.contains(summary), "{fixture}");
+        if summary == "1 unknown" {
+            assert!(markdown.contains("unknown checks:"), "{fixture}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_rollup_availability_is_not_conflated_with_empty() -> Result<(), String> {
+    let today = days_from_civil(2026, 5, 14);
+    for (rollup, expected, available) in [
+        (None, "unknown rollup", false),
+        (Some(serde_json::json!(null)), "unknown rollup", false),
+        (Some(serde_json::json!({})), "unknown rollup", false),
+        (Some(serde_json::json!([])), "none", true),
+    ] {
+        let mut fixture = serde_json::json!({"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN"});
+        if let Some(rollup) = rollup {
+            fixture["statusCheckRollup"] = rollup;
+        }
+        let prs = parse_pr_triage_pull_requests(&serde_json::json!([fixture]).to_string())?;
+        let findings = pr_triage_findings(&prs, today);
+        let markdown = pr_triage_markdown(&prs, &findings, today);
+        let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+            .map_err(|e| e.to_string())?;
+        assert_eq!(json["open_prs"][0]["checks_summary"], expected);
+        assert_eq!(json["open_prs"][0]["checks_rollup_available"], available);
+        assert_eq!(
+            json["queue_disposition"][0]["disposition"],
+            "needs_fresh_validation"
+        );
+        assert_eq!(
+            pr_triage_queue_dispositions(&prs, &[])[0].disposition,
+            "needs_fresh_validation"
+        );
+        assert!(markdown.contains(expected));
+        assert!(markdown.contains(if available {
+            "no check rollup entries returned"
+        } else {
+            "check rollup missing or malformed"
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_mixed_rollup_keeps_unknown_visible_alongside_other_results() -> Result<(), String> {
+    let fixture = serde_json::json!([{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[
+        {"name":"success","status":"COMPLETED","conclusion":"SUCCESS"},
+        {"name":"skip","status":"COMPLETED","conclusion":"SKIPPED"},
+        {"name":"pending","status":"IN_PROGRESS","conclusion":""},
+        {"name":"failure","status":"COMPLETED","conclusion":"FAILURE"},
+        {"name":"unknown","status":"COMPLETED","conclusion":"FUTURE"}
+    ]}]);
+    let prs = parse_pr_triage_pull_requests(&fixture.to_string())?;
+    let today = days_from_civil(2026, 5, 14);
+    let findings = pr_triage_findings(&prs, today);
+    let markdown = pr_triage_markdown(&prs, &findings, today);
+    let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+        .map_err(|e| e.to_string())?;
+    let summary = "1 failed, 1 pending, 1 unknown, 1 neutral/skipped, 1 passed";
+    assert_eq!(json["open_prs"][0]["checks_summary"], summary);
+    assert_eq!(
+        json["queue_disposition"][0]["disposition"],
+        "needs_fresh_validation"
+    );
+    assert!(markdown.contains(summary));
+    assert!(markdown.contains("unknown checks: unknown"));
+    assert!(json["findings"].as_array().unwrap().iter().any(|f| {
+        f["details"].as_array().unwrap().iter().any(|d| {
+            d.as_str()
+                .is_some_and(|d| d.contains("unknown checks: unknown"))
+        })
+    }));
     Ok(())
 }

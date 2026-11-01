@@ -78,6 +78,12 @@ pub enum OutputFormat {
     /// Seam Packets". Strongly-gripped, intentional, and suppressed
     /// seams emit no packet.
     AgentSeamPacketsJson,
+    /// Compact, legend-free, line-oriented diff-scoped report for coding
+    /// agents (#11580): verdict counts, bounded top gaps with `file:line`,
+    /// missing discriminator, strongest related test and finding id, an
+    /// explicit `done=`/`stop=` terminal line, and the shared `next=`
+    /// command. A projection of the human triage; carries no new verdict.
+    Agent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +142,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
     OutputFormatSpec {
         format: OutputFormat::Github,
         cli_names: &["github"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
+        format: OutputFormat::Agent,
+        cli_names: &["agent"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
         is_repo_seam_inventory: false,

@@ -291,8 +291,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // Apply the pilot artifact seam budget.  The inventory may already have
     // been capped by the repo-exposure seam limit; we then further cap the
     // classified slice for the two pilot artifacts so they stay under a
-    // manageable size.  `limit_info` carries whichever cap fired (pilot
-    // budget wins when both fire; inventory limit is the outer bound).
+    // manageable size. Preserve both cuts when each independently fires;
+    // the inventory limit is the outer bound.
     let mut classified = report.classified;
     let corpus_key = report.corpus_key;
     let analyzed_production_files = report.analyzed_production_files;
@@ -421,14 +421,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         }),
         (budget, inventory) => budget.clone().or_else(|| inventory.clone()),
     };
-    let limit_info = pilot_budget_info.or(inventory_limit_info);
-    let repo_exposure_limit = limit_info.as_ref().map(|info| {
-        if pilot_budget_truncated {
-            RepoExposureLimit::PilotBudget(info)
-        } else {
-            RepoExposureLimit::Inventory(info)
+    let repo_exposure_limit = match (&pilot_budget_info, &inventory_limit_info, &summary_limit) {
+        (Some(_), Some(inventory), Some(summary)) => {
+            Some(RepoExposureLimit::Both(summary, inventory))
         }
-    });
+        (Some(budget), None, _) => Some(RepoExposureLimit::PilotBudget(budget)),
+        (None, Some(inventory), _) => Some(RepoExposureLimit::Inventory(inventory)),
+        _ => None,
+    };
     let (causal_projection, causal_projection_warning) =
         crate::app::causal_projection::CausalDeltaArtifact::load_optional(&input.root);
     if let Some(warning) = causal_projection_warning {
@@ -506,6 +506,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             generated_skip.as_ref(),
         ),
     )?;
+    let packet_bound = analysis::pilot_packet_budget()?
+        .map(|(max, source)| output::agent_seam_packets::PacketBound { max, source });
     write_pilot_file(
         &artifacts.agent_seam_packets_json,
         output::agent_seam_packets::render_agent_seam_packets_json_for_root(
@@ -514,6 +516,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             &declined_rust_files,
+            packet_bound,
         ),
     )?;
 
@@ -736,7 +739,7 @@ fn elapsed_ms(started: Instant) -> u64 {
 /// sink is terminal-once, so a timed-out attempt (or its #2424 retry)
 /// needs a fresh one from `pilot_progress_sink`.
 fn pilot_progress_sink(quiet: bool) -> Option<Arc<CliProgressSink>> {
-    if quiet {
+    if crate::cli::progress::progress_silenced(quiet) {
         return None;
     }
     Some(Arc::new(CliProgressSink::for_stderr(

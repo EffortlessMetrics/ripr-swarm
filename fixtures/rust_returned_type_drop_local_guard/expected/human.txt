@@ -33,11 +33,11 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_returned_type_drop_local_guard/input --diff <cwd>/fixtures/rust_returned_type_drop_local_guard/diff.patch --mode fast probe:src_lib.rs:return_value:4fe97f3f
   ripr context --root <cwd>/fixtures/rust_returned_type_drop_local_guard/input --diff <cwd>/fixtures/rust_returned_type_drop_local_guard/diff.patch --mode fast --at probe:src_lib.rs:return_value:4fe97f3f
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:13 (unknown: static analysis limited); kind: static_unknown; reason: No strong discriminator was detected
+    - ./src/lib.rs:13 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
   Hidden classes:
     unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full

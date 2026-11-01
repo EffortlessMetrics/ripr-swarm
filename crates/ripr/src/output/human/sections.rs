@@ -225,7 +225,9 @@ pub(crate) fn render_finding_digest_with_config(
         let missing = missing
             .strip_prefix(MISSING_DISCRIMINATOR_VALUE_PREFIX)
             .unwrap_or(missing);
-        let missing = &super::evidence_lines::plain_internal_wording(missing);
+        let missing = &super::evidence_lines::plain_default_missing(
+            &super::evidence_lines::plain_internal_wording(missing),
+        );
         // #4320: the digest renders one entry while the exhaustive form's
         // Weakness section may carry several; disclose the window the same way
         // the evidence window below does, so the reader knows more
@@ -252,7 +254,10 @@ pub(crate) fn render_finding_digest_with_config(
             out.push('\n');
         }
     }
-    if let Some(test) = finding.related_tests.first() {
+    if let Some(test) = crate::output::related_test_miss::headline_related_test(
+        finding.language,
+        &finding.related_tests,
+    ) {
         // #4320: the digest shows only the first related-test row; carry the
         // total so the reader knows how much reaching-test evidence exists
         // (the evidence window in the full form discloses the same bound).
@@ -614,11 +619,8 @@ pub(super) fn render_finding_with_shared_sections(
     // Revision labelling (#3281): base-side evidence stays visible here —
     // the human surface explicitly supports historical context — but is
     // labelled non-actionable so it cannot read as a current obligation.
-    if !finding.is_candidate_actionable() {
-        out.push_str(&format!(
-            "  source:  {} — base-side evidence, not a candidate edit target\n",
-            finding.source_currentness.as_str()
-        ));
+    if let Some(disclosure) = finding.source_currentness_disclosure() {
+        out.push_str(&format!("  source:  {disclosure}\n"));
     }
 
     // #10691: lead with the plain change type; the stable family/delta tokens

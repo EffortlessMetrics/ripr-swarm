@@ -28,7 +28,7 @@ fn refuse_links(path: &Path) -> Result<(), String> {
         match fs::symlink_metadata(ancestor) {
             Ok(metadata) if linked(&metadata) => {
                 return Err(format!(
-                    "cache export refuses linked path {}",
+                    "cache export refuses linked path {}; replace the link with a real directory or export from a cache path without links",
                     ancestor.display()
                 ));
             }
@@ -56,7 +56,7 @@ fn read_entry(path: &Path) -> Result<Option<Vec<u8>>, String> {
         Ok(metadata) if metadata.is_file() => {}
         Ok(_) => {
             return Err(format!(
-                "cache export requires regular entry {}",
+                "cache export requires regular entry {}; remove the non-file entry from the cache and rerun the export",
                 path.display()
             ));
         }
@@ -82,7 +82,9 @@ fn copy_bytes(
     report: &mut CacheExportReport,
 ) -> Result<(), String> {
     let destination = relocated(path, source, &report.cache_dir)?;
-    let parent = destination.parent().ok_or("cache entry has no parent")?;
+    let parent = destination
+        .parent()
+        .ok_or("cache entry has no parent; report this as a ripr bug with the cache path")?;
     fs::create_dir_all(parent).map_err(|error| format!("create {}: {error}", parent.display()))?;
     let mut file = OpenOptions::new()
         .write(true)
@@ -123,7 +125,7 @@ fn copy_classified(
         for shard in &manifest.shards {
             let path = resolve_sharded_cache_file(&cache.sharded_entry_dir(key), &shard.file)?;
             let bytes = read_entry(&path)?
-                .ok_or_else(|| format!("missing export shard {}", path.display()))?;
+                .ok_or_else(|| format!("missing export shard {}; regenerate the cache with `ripr check` and rerun the export", path.display()))?;
             copy_bytes(&path, &bytes, source, report)?;
         }
         copy_bytes(&path, &bytes, source, report)?;
@@ -138,9 +140,9 @@ fn copy_classified(
             report.classified_entries += 1;
             Ok(true)
         }
-        CacheLoad::Miss => Err("copied classified entry does not match current key".to_owned()),
+        CacheLoad::Miss => Err("copied classified entry does not match current key; regenerate the cache with `ripr check` and rerun the export".to_owned()),
         CacheLoad::CorruptIgnored { reason } => {
-            Err(format!("invalid copied classified entry: {reason}"))
+            Err(format!("invalid copied classified entry: {reason}; regenerate the cache with `ripr check` and rerun the export"))
         }
     }
 }
@@ -157,7 +159,9 @@ fn export_selected(
     // load path would refuse (Git-tracked entries, #7780) must be refused
     // here or the export launders it into a cache the loader then trusts.
     if let Some(reason) = super::cache_base_untrusted_reason(source) {
-        return Err(format!("refusing to export an untrusted cache: {reason}"));
+        return Err(format!(
+            "refusing to export an untrusted cache: {reason}; clear the cache and regenerate it with `ripr check` before exporting"
+        ));
     }
     let mut report = CacheExportReport {
         schema_version: "0.1",
@@ -188,9 +192,9 @@ fn export_selected(
         copy_bytes(&path, &bytes, source, &mut report)?;
         match copied.load_file_facts(key) {
             CacheLoad::Hit(_) => report.file_fact_entries += 1,
-            CacheLoad::Miss => return Err("copied file fact does not match current key".to_owned()),
+            CacheLoad::Miss => return Err("copied file fact does not match current key; regenerate the cache with `ripr check` and rerun the export".to_owned()),
             CacheLoad::CorruptIgnored { reason } => {
-                return Err(format!("invalid copied file fact: {reason}"));
+                return Err(format!("invalid copied file fact: {reason}; regenerate the cache with `ripr check` and rerun the export"));
             }
         }
     }
@@ -200,7 +204,9 @@ fn export_selected(
 pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportReport, String> {
     let metadata = fs::metadata(root).map_err(|error| format!("inspect export root: {error}"))?;
     if !metadata.is_dir() {
-        return Err("cache export root must be a directory".to_owned());
+        return Err(
+            "cache export root must be a directory; pass the workspace root with --root".to_owned(),
+        );
     }
     // WorkspaceKeyContext hashes the supplied root spelling. Preserve it;
     // canonical paths below serve only filesystem confinement and relocation.
@@ -225,7 +231,9 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
             .join(output)
     };
     refuse_links(&output)?;
-    let parent = output.parent().ok_or("export output has no parent")?;
+    let parent = output
+        .parent()
+        .ok_or("export output has no parent; pass an output path inside an existing directory")?;
     let parent =
         fs::canonicalize(parent).map_err(|error| format!("resolve export parent: {error}"))?;
     let name = output
@@ -233,7 +241,7 @@ pub(crate) fn export_current(root: &Path, output: &Path) -> Result<CacheExportRe
         .ok_or("export output needs a new directory name")?;
     let output = parent.join(name);
     if output.starts_with(&source) || source.starts_with(&output) {
-        return Err("export output must not overlap source cache".to_owned());
+        return Err("export output must not overlap source cache; choose an output directory outside the source cache".to_owned());
     }
     let config = load_for_root(root)?;
     let (key, files) = current_cache_keys_at(root, &config)?;

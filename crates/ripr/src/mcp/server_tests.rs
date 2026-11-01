@@ -542,9 +542,9 @@ fn sdk_server_metadata_preserves_bounded_status_instructions() -> Result<(), Str
         return Err("SDK metadata changed application identity or analysis authority".into());
     }
     let tools = &server.tools;
-    if tools.tools.len() != 9 {
+    if tools.tools.len() != 10 {
         return Err(format!(
-            "SDK descriptor must expose the nine-tool slice surface, got {} tools",
+            "SDK descriptor must expose the ten-tool slice surface, got {} tools",
             tools.tools.len()
         ));
     }
@@ -1898,6 +1898,128 @@ fn summary_mode_never_digests_a_typed_failure() -> Result<(), String> {
             != Some(&serde_json::json!(workspace::CODE_RESULT_TOO_LARGE))
     {
         return Err(format!("a typed failure must not be digested: {wire}"));
+    }
+    Ok(())
+}
+
+async fn contained_call(
+    server: &McpServer,
+    tool: &str,
+    arguments: serde_json::Value,
+) -> Result<Result<serde_json::Value, ErrorData>, String> {
+    let mut request = rmcp::model::CallToolRequestParams::new(tool.to_string());
+    if let serde_json::Value::Object(map) = arguments {
+        request = request.with_arguments(map);
+    }
+    match server
+        .call_tool_contained(request, super::super::MAX_RESPONSE_BYTES)
+        .await
+    {
+        Ok(rmcp::model::CallToolResponse::Complete(result)) => serde_json::to_value(&result)
+            .map(Ok)
+            .map_err(|error| error.to_string()),
+        Ok(_other) => Err("tool call did not complete".to_string()),
+        Err(error) => Ok(Err(error)),
+    }
+}
+
+/// #11621: a model-fixable argument problem on a known tool is an
+/// `isError: true` `invalid_argument` tool result for every tool, carrying
+/// `data` and a recovery; an unknown tool stays a protocol -32602 (no tool ran).
+#[tokio::test(flavor = "current_thread")]
+async fn argument_errors_are_typed_tool_failures_and_unknown_tools_stay_protocol_errors()
+-> Result<(), String> {
+    let server = healthy_server()?;
+    let cases = [
+        (
+            protocol::STATUS_TOOL_NAME,
+            serde_json::json!({"verbose": true}),
+        ),
+        (protocol::REFRESH_TOOL_NAME, serde_json::json!({"other": 1})),
+        (
+            protocol::LIST_GAPS_TOOL_NAME,
+            serde_json::json!({"class": "bogus"}),
+        ),
+        (
+            protocol::LIST_GAPS_TOOL_NAME,
+            serde_json::json!({"limit": 0}),
+        ),
+        (
+            protocol::LIST_GAPS_TOOL_NAME,
+            serde_json::json!({"limit": 501}),
+        ),
+        (protocol::GET_GAP_TOOL_NAME, serde_json::json!({})),
+        (
+            protocol::PREPARE_REPAIR_TOOL_NAME,
+            serde_json::json!({"canonical_id": 7}),
+        ),
+        (
+            protocol::GET_REPAIR_ATTEMPT_TOOL_NAME,
+            serde_json::json!({}),
+        ),
+        (
+            protocol::GET_RECEIPT_STATUS_TOOL_NAME,
+            serde_json::json!({}),
+        ),
+        (
+            repair_card::GET_REPAIR_CARD_TOOL_NAME,
+            serde_json::json!({}),
+        ),
+        (
+            super::super::attempt_inventory::TOOL_NAME,
+            serde_json::json!({"limit": 257}),
+        ),
+    ];
+    for (tool, arguments) in cases {
+        let wire = contained_call(&server, tool, arguments.clone())
+            .await?
+            .map_err(|error| format!("{tool} {arguments} leaked a protocol error: {error:?}"))?;
+        let failure = wire.pointer("/structuredContent/failure");
+        let text = |key: &str| {
+            failure
+                .and_then(|failure| failure.get(key))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+        };
+        if wire["isError"] != serde_json::json!(true)
+            || text("code") != "invalid_argument"
+            || text("recovery").is_empty()
+            || text("detail").is_empty()
+            || !failure
+                .and_then(|failure| failure.get("data"))
+                .is_some_and(serde_json::Value::is_object)
+        {
+            return Err(format!(
+                "{tool} {arguments} is not an invalid_argument failure: {wire}"
+            ));
+        }
+    }
+    // The limit data names the working-set bound, not usize::MAX.
+    let wire = contained_call(
+        &server,
+        protocol::LIST_GAPS_TOOL_NAME,
+        serde_json::json!({"limit": 501}),
+    )
+    .await?
+    .map_err(|error| format!("{error:?}"))?;
+    if wire.pointer("/structuredContent/failure/data/maximum") != Some(&serde_json::json!(500)) {
+        return Err(format!("limit must be capped at 500: {wire}"));
+    }
+    // Negative: an unknown tool has no tool result; it stays -32602.
+    match contained_call(&server, "ripr_everything", serde_json::json!({})).await? {
+        Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {}
+        other => {
+            return Err(format!(
+                "an unknown tool must stay a protocol error: {other:?}"
+            ));
+        }
+    }
+    // Negative: a valid call on the same server is not a failure.
+    let ok = contained_call(&server, protocol::STATUS_TOOL_NAME, serde_json::json!({}))
+        .await?
+        .map_err(|error| format!("{error:?}"))?;
+    if ok["isError"] != serde_json::json!(false) {
+        return Err(format!("a valid call must succeed: {ok}"));
     }
     Ok(())
 }

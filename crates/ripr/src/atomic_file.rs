@@ -93,7 +93,7 @@ fn ensure_default_output_contained_with(
             for entry in entries {
                 let entry = entry.map_err(|error| {
                     format!(
-                        "refusing to write ripr output: cannot enumerate {}: {error}",
+                        "refusing to write ripr output: cannot enumerate {}: {error}; check that the directory is readable, or set RIPR_CACHE_DIR to another location",
                         ripr_dir.display()
                     )
                 })?;
@@ -105,7 +105,7 @@ fn ensure_default_output_contained_with(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
             return Err(format!(
-                "refusing to write ripr output: cannot enumerate {}: {error}",
+                "refusing to write ripr output: cannot enumerate {}: {error}; check that the directory is readable, or set RIPR_CACHE_DIR to another location",
                 ripr_dir.display()
             ));
         }
@@ -122,9 +122,67 @@ fn ensure_default_output_contained_with(
         };
         return Err(format!(
             "refusing to write ripr output: {} {problem} (workspace {}). \
-             A repository can check in a link to redirect where ripr writes. Either replace it with a real directory, \
+             A repository can check in a link to redirect where ripr writes. Next step: replace it with a real directory, \
              or choose the location yourself, for example: RIPR_CACHE_DIR=/var/cache/ripr ripr check",
             path.display(),
+            root.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse a write target whose existing ancestry resolves outside `root`
+/// (#11477). Lexical containment (no `..`, not absolute) does not stop a
+/// committed directory link from redirecting `create_dir_all` and the write
+/// that follows. This resolves the deepest existing component of `target`
+/// (a dangling or looping link counts as unresolvable) and requires it to stay
+/// under the canonical workspace root, before anything is created.
+///
+/// A `..` component is refused outright: a not-yet-created `new/../..` prefix
+/// has no existing ancestor to resolve, so the OS would only apply the
+/// traversal after `create_dir_all` made `new`.
+///
+/// Non-claim: this is check-then-use. A link swapped in between this check and
+/// the later `create_dir_all`/write is not defended against; that needs
+/// `openat`-style handling and the threat here is a link already committed in
+/// a cloned repository.
+pub(crate) fn ensure_path_within_root(
+    root: &Path,
+    target: &Path,
+    what: &str,
+) -> Result<(), String> {
+    // Only the part below `root` is judged; `--root ../repo` is legitimate.
+    if target
+        .strip_prefix(root)
+        .unwrap_or(target)
+        .components()
+        .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "refusing to write {what}: {} contains a `..` component; remove it and pass a path inside the workspace",
+            target.display()
+        ));
+    }
+    let canonical_root = root.canonicalize().map_err(|error| {
+        format!(
+            "refusing to write {what}: cannot resolve workspace root {}: {error}",
+            root.display()
+        )
+    })?;
+    for ancestor in target.ancestors() {
+        match std::fs::symlink_metadata(ancestor) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            _ => {}
+        }
+        let problem = match ancestor.canonicalize() {
+            Ok(canonical) if canonical.starts_with(&canonical_root) => return Ok(()),
+            Ok(_) => "resolves outside the workspace",
+            Err(_) => "cannot be resolved (dangling or looping link)",
+        };
+        return Err(format!(
+            "refusing to write {what}: {} {problem} (workspace {}). \
+             A repository can check in a link to redirect where ripr writes; replace it with a real directory.",
+            ancestor.display(),
             root.display()
         ));
     }
@@ -469,10 +527,13 @@ mod tests {
         CreateNewError, STALE_TEMP_GRACE, TEMP_FILE_SEQUENCE, create_new, is_stranded_temp_name,
         sweep_stale_temp_files, write, write_cache,
     };
-    // The unix symlink-escape tests and the platform-independent enumeration
-    // test (#9339) both call this, so the import is unconditional: gating it
-    // to unix left the Windows test build without the function.
+    // `ensure_default_output_contained_with` is called by tests on every
+    // platform, so its import is unconditional: gating it to unix left the
+    // Windows test build without the function (#9339).
     use super::ensure_default_output_contained_with;
+    // Only the unix symlink-escape test calls this one; unconditional, it is an
+    // unused import (`-D warnings`) in the Windows test build.
+    #[cfg(unix)]
     use super::ensure_relative_output_contained_in;
     use std::path::{Path, PathBuf};
 
@@ -1025,6 +1086,61 @@ mod tests {
             })
         );
         assert!(escaped_ripr.is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_within_root_refuses_linked_ancestor_and_passes_real_ones() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-within-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(ws.join("real")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        // Positive controls: a real directory, a not-yet-created child, and an
+        // in-workspace alias all pass.
+        super::ensure_path_within_root(&ws, &ws.join("real/new/leaf"), "x")?;
+        std::os::unix::fs::symlink(ws.join("real"), ws.join("alias")).map_err(|e| e.to_string())?;
+        super::ensure_path_within_root(&ws, &ws.join("alias/new"), "x")?;
+        // Escaping link, a child below it, and a dangling link all refuse.
+        std::os::unix::fs::symlink(&outside, ws.join("out")).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(base.join("missing"), ws.join("dangling"))
+            .map_err(|e| e.to_string())?;
+        let traversal =
+            super::ensure_path_within_root(&ws, &ws.join("new/../../outside/leaf"), "x");
+        let direct = super::ensure_path_within_root(&ws, &ws.join("out"), "x");
+        let below = super::ensure_path_within_root(&ws, &ws.join("out/not/yet"), "x");
+        let dangling = super::ensure_path_within_root(&ws, &ws.join("dangling/leaf"), "x");
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(traversal.is_err_and(|e| e.contains("`..` component")));
+        assert!(direct.is_err_and(|e| e.contains("resolves outside")));
+        assert!(below.is_err());
+        assert!(dangling.is_err_and(|e| e.contains("cannot be resolved")));
+        Ok(())
+    }
+
+    /// Containment is judged by where the path resolves, not how it is spelled:
+    /// a lexically foreign spelling whose existing ancestor resolves inside the
+    /// workspace is accepted, while an absent leaf under an outside ancestor
+    /// is refused.
+    #[cfg(unix)]
+    #[test]
+    fn path_within_root_judges_resolved_location_not_spelling() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-spelling-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(ws.join("real")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        // `alias` lives outside the workspace but resolves into it.
+        std::os::unix::fs::symlink(ws.join("real"), outside.join("alias"))
+            .map_err(|e| e.to_string())?;
+        let inside = super::ensure_path_within_root(&ws, &outside.join("alias/absent/leaf"), "x");
+        let foreign = super::ensure_path_within_root(&ws, &outside.join("absent/leaf"), "x");
+        let _ = std::fs::remove_dir_all(&base);
+        inside?;
+        assert!(foreign.is_err_and(|e| e.contains("resolves outside")));
         Ok(())
     }
 
