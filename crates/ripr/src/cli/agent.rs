@@ -269,6 +269,10 @@ pub(super) fn parse_agent_args(args: &[String]) -> Result<AgentCommand, String> 
     }
 }
 
+/// Where a seam id comes from, for the missing-`--seam-id` errors of
+/// `agent card` and `agent packet`. One copy so the messages cannot drift.
+pub(crate) const SEAM_ID_SOURCE_HINT: &str = "Get an id from `ripr pilot --root <dir>`";
+
 fn parse_agent_start_command(args: &[String]) -> Result<AgentCommand, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         return Ok(AgentCommand::StartHelp);
@@ -928,9 +932,9 @@ pub(super) fn parse_agent_packet_options(args: &[String]) -> Result<AgentPacketO
             );
         }
         (false, false, false) => {
-            return Err(
-                "agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. Get a seam id from `ripr pilot --root <dir>`".to_string(),
-            );
+            return Err(format!(
+                "agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"
+            ));
         }
         _ => {}
     }
@@ -981,7 +985,7 @@ pub(super) fn parse_agent_card_options(args: &[String]) -> Result<AgentCardOptio
     }
 
     let seam_id = seam_id.ok_or_else(|| {
-        "agent card requires --seam-id; add `--seam-id <id>`. Get a seam id from `ripr pilot --root <dir>`".to_string()
+        format!("agent card requires --seam-id; add `--seam-id <id>`. {SEAM_ID_SOURCE_HINT}")
     })?;
 
     Ok(AgentCardOptions {
@@ -1716,7 +1720,9 @@ mod tests {
         // requirement.
         assert_eq!(
             parse_agent_args(&args(&["packet"])),
-            Err("agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. Get a seam id from `ripr pilot --root <dir>`".to_string())
+            Err(format!(
+                "agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_args(&args(&["packet", "--seam-id", "abc"])),
@@ -2578,7 +2584,9 @@ mod tests {
         );
         assert_eq!(
             parse_agent_packet_options(&args(&["--json"])),
-            Err("agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. Get a seam id from `ripr pilot --root <dir>`".to_string())
+            Err(format!(
+                "agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_packet_options(&args(&["--seam-id", "", "--json"])),
@@ -2635,7 +2643,9 @@ mod tests {
     fn agent_card_requires_seam_id_and_rejects_unknown_arguments() {
         assert_eq!(
             parse_agent_card_options(&args(&["--json"])),
-            Err("agent card requires --seam-id; add `--seam-id <id>`. Get a seam id from `ripr pilot --root <dir>`".to_string())
+            Err(format!(
+                "agent card requires --seam-id; add `--seam-id <id>`. {SEAM_ID_SOURCE_HINT}"
+            ))
         );
         assert_eq!(
             parse_agent_card_options(&args(&["--seam-id", ""])),
