@@ -25,12 +25,12 @@ use std::time::{Duration, Instant};
 /// Stderr lines kept to name a failed step's own last diagnostic.
 const STDERR_TAIL_LINES: usize = 20;
 
-/// Per-step wall-clock bound for `--run-chain` when the environment names no
-/// override. Zero disables the bound (tests inject a limit through
-/// [`run_steps_with`]).
 /// Environment variable overriding the per-step bound, in whole seconds.
 pub(super) const STEP_TIMEOUT_ENV: &str = "RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS";
 
+/// Per-step wall-clock bound for `--run-chain` when the environment names no
+/// override. Zero disables the bound (tests inject a limit through
+/// [`run_steps_with`]).
 const DEFAULT_STEP_TIMEOUT: Duration = Duration::from_hours(2);
 
 /// One executable step of the chain, derived from a printed command.
