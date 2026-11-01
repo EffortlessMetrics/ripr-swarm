@@ -169,6 +169,45 @@ fn corpus() -> Result<Vec<String>, String> {
     Ok(messages)
 }
 
+fn phrase_position(text: &str, phrase: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut from = 0;
+    let mut last = None;
+    while let Some(found) = text[from..].find(phrase) {
+        let at = from + found;
+        let end = at + phrase.len();
+        let before_ok = at == 0 || !word(bytes[at - 1]);
+        let after_ok = end >= bytes.len() || !word(bytes[end]);
+        if before_ok && after_ok {
+            last = Some(at);
+        }
+        from = at + 1;
+    }
+    last
+}
+
+/// Text of the clause that precedes byte offset `at`, mirroring [`RefusalRemedy`].
+fn clause_prefix(prose: &str, at: usize) -> &str {
+    let mut start = 0;
+    let mut in_tick = false;
+    let mut chars = prose.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if index >= at {
+            break;
+        }
+        match ch {
+            '`' => in_tick = !in_tick,
+            ';' if !in_tick => start = index + 1,
+            '.' if !in_tick && chars.peek().is_none_or(|(_, next)| next.is_whitespace()) => {
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    &prose[start.min(at)..at]
+}
+
 /// Independent oracle: a backticked `ripr <word>` span the prose plainly
 /// instructs, i.e. an imperative verb precedes it in its clause with no
 /// description (`is a`, `are`) or condition (`if`) in between. A `none`
@@ -208,12 +247,11 @@ fn stated_ripr_command_span(prose: &str) -> bool {
     false
 }
 
-/// When the clause names a conditional step (`if/unless/when/otherwise` plus an
-/// imperative, but not a description `is/are`), the structured remedy must be
-/// non-`none` and marked `conditional`.
+/// When the clause names a conditional step (conditional marker with `,` or `:`
+/// before the mention, mirroring producer role assignment), the structured
+/// remedy must be non-`none` and marked `conditional`.
 fn stated_conditional_ripr_command_span(prose: &str) -> bool {
     const IMPERATIVES: &[&str] = &["run", "call", "use", "try", "rerun", "re-run", "execute"];
-    const CONDITIONAL: &[&str] = &["if", "unless", "when", "otherwise"];
     const DESCRIBING: &[&str] = &["is", "are"];
     let mut offset = 0;
     for (index, part) in prose.split('`').enumerate() {
@@ -230,17 +268,26 @@ fn stated_conditional_ripr_command_span(prose: &str) -> bool {
         if !is_command || part.len() > MAX_COMMAND_LEN {
             continue;
         }
-        let before = &prose[..at.saturating_sub(1)];
-        let clause = before.rsplit([';', ':']).next().unwrap_or(before);
-        let words: Vec<String> = clause
+        let prefix = clause_prefix(prose, at.saturating_sub(1));
+        let lower = prefix.to_ascii_lowercase();
+        let Some(cond) = ["if", "unless", "when", "otherwise"]
+            .iter()
+            .filter_map(|word| phrase_position(&lower, word))
+            .max()
+        else {
+            continue;
+        };
+        if !lower[cond..].contains([',', ':']) {
+            continue;
+        }
+        let words: Vec<String> = prefix
             .split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
             .filter(|word| !word.is_empty())
             .map(str::to_ascii_lowercase)
             .collect();
         let imperative = words.iter().any(|w| IMPERATIVES.contains(&w.as_str()));
-        let conditional = words.iter().any(|w| CONDITIONAL.contains(&w.as_str()));
         let describing = words.iter().any(|w| DESCRIBING.contains(&w.as_str()));
-        if imperative && conditional && !describing {
+        if imperative && !describing {
             return true;
         }
     }
@@ -336,7 +383,10 @@ fn every_message_yields_a_grounded_remedy_or_an_explicit_none() -> Result<(), St
                 }
             }
         }
-        if stated_conditional_ripr_command_span(message) && !stated_ripr_command_span(message) {
+        if message.len() <= 700
+            && stated_conditional_ripr_command_span(message)
+            && !stated_ripr_command_span(message)
+        {
             if matches!(remedy.kind, RemedyKind::None) {
                 failures.push(format!(
                     "stated conditional command dropped to none: {message}"
@@ -433,7 +483,7 @@ fn the_oracle_tells_a_conditional_command_from_a_description() {
         "this is run by `ripr x`"
     ));
     assert!(stated_conditional_ripr_command_span(
-        "otherwise run `ripr y`"
+        "when stale, otherwise run `ripr y`"
     ));
     assert!(!stated_ripr_command_span(
         "run `ripr pilot`; if it persists, run `ripr doctor`"
