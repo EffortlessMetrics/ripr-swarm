@@ -1919,8 +1919,9 @@ pub(super) struct DocumentStore {
     /// keyed by URI; each entry is valid only for the root recorded with it (#11763). Each
     /// resolution canonicalizes the root and the candidate, so recomputing
     /// every document on every refresh made N `didOpen`s cost O(N^2)
-    /// filesystem calls. An entry is dropped on reopen, close, save and
-    /// watched-file changes, and ignored when the root differs.
+    /// filesystem calls. An entry is dropped on reopen, close, a save of that
+    /// document and watched-file events at or above its path, and ignored when
+    /// the root differs.
     rust_index_keys: BTreeMap<Uri, (PathBuf, Option<PathBuf>)>,
 }
 
@@ -1971,11 +1972,27 @@ impl DocumentStore {
         self.rust_index_keys.contains_key(uri)
     }
 
-    /// Forget resolved index keys so the next refresh re-resolves them against
-    /// the current filesystem (a save or watched-file change can retarget a
-    /// symlink).
-    pub(super) fn invalidate_rust_index_keys(&mut self) {
-        self.rust_index_keys.clear();
+    /// Forget the resolved index key of one document so its next refresh
+    /// re-resolves it against the current filesystem (a save can replace a
+    /// symlink with a regular file). Other documents keep their keys.
+    pub(super) fn invalidate_rust_index_key(&mut self, uri: &Uri) {
+        self.rust_index_keys.remove(uri);
+    }
+
+    /// Forget resolved index keys a filesystem event at `event` can affect:
+    /// the document at that path and any document below it (a directory
+    /// event can retarget or replace a symlinked ancestor). Entries elsewhere
+    /// stay warm, so unrelated watched events (build output, logs) cost no
+    /// re-resolution.
+    pub(super) fn invalidate_rust_index_keys_under(&mut self, event: &Uri) {
+        let prefix = event.as_str().trim_end_matches('/');
+        self.rust_index_keys.retain(|uri, _| {
+            let candidate = uri.as_str();
+            !(candidate == prefix
+                || candidate
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| rest.starts_with('/')))
+        });
     }
 
     /// Whether the just-opened buffer already matches the persisted saved

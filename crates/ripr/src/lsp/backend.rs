@@ -1107,9 +1107,17 @@ impl Backend {
         RefreshAttemptOutcome::Published
     }
 
-    fn invalidate_rust_index_keys(&self) {
+    fn invalidate_rust_index_key(&self, uri: &Uri) {
         if let Ok(mut documents) = self.quarantine.documents.lock() {
-            documents.invalidate_rust_index_keys();
+            documents.invalidate_rust_index_key(uri);
+        }
+    }
+
+    fn invalidate_rust_index_keys_for_events(&self, changes: &[FileEvent]) {
+        if let Ok(mut documents) = self.quarantine.documents.lock() {
+            for event in changes {
+                documents.invalidate_rust_index_keys_under(&event.uri);
+            }
         }
     }
 
@@ -6327,7 +6335,7 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        self.invalidate_rust_index_keys();
+        self.invalidate_rust_index_keys_for_events(&params.changes);
         let changes = self.watched_file_change_kinds(&params.changes);
         if changes.config_changed {
             self.reload_repository_config().await;
@@ -6720,7 +6728,6 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
-        self.invalidate_rust_index_keys();
         // Deduplicate by saved-content input identity (#1908): a save whose
         // bytes did not change since the last recorded save cannot change
         // analysis input, so it neither advances the workspace revision nor
@@ -6768,6 +6775,9 @@ impl LanguageServer for Backend {
                 .await;
             return;
         }
+        // Only the saved document's own resolution can change; a deduplicated
+        // save returned above and leaves every cached key warm.
+        self.invalidate_rust_index_key(&uri);
         match digest {
             Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
             None => self.advance_workspace_revision(),

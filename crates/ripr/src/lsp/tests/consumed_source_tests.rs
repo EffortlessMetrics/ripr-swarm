@@ -1112,7 +1112,10 @@ fn open_rust_index_paths_match_reference_and_bound_canonicalization() -> Result<
         if expected.is_empty() {
             return Err("fixture must produce indexed keys".into());
         }
-        store.invalidate_rust_index_keys();
+        let uris = store.documents.keys().cloned().collect::<Vec<_>>();
+        for uri in &uris {
+            store.invalidate_rust_index_key(uri);
+        }
         let actual = store.open_rust_index_paths(root);
         if actual != expected {
             return Err(format!("index drifted: {actual:?} != {expected:?}"));
@@ -1172,8 +1175,7 @@ fn open_rust_index_paths_match_reference_and_bound_canonicalization() -> Result<
 
 #[cfg(unix)]
 #[test]
-fn open_rust_index_cache_is_stale_until_invalidated_and_dropped_on_reopen_and_close()
--> Result<(), String> {
+fn open_rust_index_cache_invalidation_is_scoped_to_the_affected_documents() -> Result<(), String> {
     let fixture = consumed_source_alias_fixture("open-rust-index-invalidate")?;
     let src = fixture.root.join("src");
     let outside = fixture.temp.path().join("outside.rs");
@@ -1183,33 +1185,59 @@ fn open_rust_index_cache_is_stale_until_invalidated_and_dropped_on_reopen_and_cl
         .map_err(|error| format!("link inside: {error}"))?;
     let key = PathBuf::from("src/sym.rs");
     let uri = file_uri_for_path(&link)?;
+    let other_uri = file_uri_for_path(&fixture.file)?;
     let mut store = DocumentStore::default();
     open_for_index_test(&mut store, &link)?;
-    if !store.open_rust_index_paths(&fixture.root).contains(&key) {
-        return Err("in-root symlink must be indexed".into());
+    open_for_index_test(&mut store, &fixture.file)?;
+    let projections = |store: &mut DocumentStore| {
+        let before = crate::lsp::uri::canonical_projection_count_for_test();
+        let paths = store.open_rust_index_paths(&fixture.root);
+        (
+            paths,
+            crate::lsp::uri::canonical_projection_count_for_test() - before,
+        )
+    };
+    let (paths, cold) = projections(&mut store);
+    if !paths.contains(&key) || cold == 0 {
+        return Err("in-root symlink must be indexed by a cold resolution".into());
     }
-    if !store.rust_index_key_is_cached(&uri) {
-        return Err("resolved key must be cached".into());
-    }
+    let per_document = cold / 2;
     // Retarget outside the root: containment now fails, but the cache serves
-    // the stale key until it is invalidated.
+    // the stale key until that document's entry is invalidated.
     fs::remove_file(&link).map_err(|error| format!("unlink: {error}"))?;
     std::os::unix::fs::symlink(&outside, &link)
         .map_err(|error| format!("relink outside: {error}"))?;
-    if !store.open_rust_index_paths(&fixture.root).contains(&key) {
-        return Err("cache must serve the stale key before invalidation".into());
+    let (paths, count) = projections(&mut store);
+    if !paths.contains(&key) || count != 0 {
+        return Err("cache must serve the stale key with no resolution".into());
     }
-    store.invalidate_rust_index_keys();
-    if store.rust_index_key_is_cached(&uri) {
-        return Err("invalidation must clear the cache".into());
+    // Invalidating another document, or an event elsewhere, keeps the link warm.
+    store.invalidate_rust_index_key(&other_uri);
+    store.invalidate_rust_index_keys_under(&file_uri_for_path(&fixture.temp.path().join("logs"))?);
+    store.invalidate_rust_index_keys_under(&file_uri_for_path(&src.join("sym.rs.bak"))?);
+    if !store.rust_index_key_is_cached(&uri) || store.rust_index_key_is_cached(&other_uri) {
+        return Err("unrelated invalidation must touch only its own document".into());
     }
-    if store.open_rust_index_paths(&fixture.root).contains(&key) {
-        return Err("retargeted symlink must leave the index after invalidation".into());
+    let (paths, count) = projections(&mut store);
+    if !paths.contains(&key) || count != per_document {
+        return Err(format!(
+            "only the invalidated document may re-resolve: {count} projections"
+        ));
     }
-    // Reopen drops the entry.
-    if !store.rust_index_key_is_cached(&uri) {
-        return Err("fresh resolution must be cached".into());
+    // An event at the document, or at an ancestor directory, drops it.
+    for event in [link.clone(), src.clone()] {
+        store.invalidate_rust_index_keys_under(&file_uri_for_path(&event)?);
+        if store.rust_index_key_is_cached(&uri) {
+            return Err(format!("event at {event:?} must drop the entry"));
+        }
+        let (paths, count) = projections(&mut store);
+        if paths.contains(&key) || count != 2 * per_document {
+            return Err(format!(
+                "retargeted symlink must leave the index after {event:?}: {count}"
+            ));
+        }
     }
+    // Reopen and close drop the entry.
     open_for_index_test(&mut store, &link)?;
     if store.rust_index_key_is_cached(&uri) {
         return Err("reopen must drop the cached entry".into());
@@ -1226,65 +1254,95 @@ fn open_rust_index_cache_is_stale_until_invalidated_and_dropped_on_reopen_and_cl
 
 #[cfg(unix)]
 #[tokio::test]
-async fn save_and_watched_file_handlers_invalidate_open_rust_index_keys() -> Result<(), String> {
+async fn save_and_watched_file_handlers_invalidate_only_affected_index_keys() -> Result<(), String>
+{
     let fixture = consumed_source_alias_fixture("open-rust-index-handlers")?;
     let outside = fixture.temp.path().join("outside.rs");
     fs::write(&outside, SOURCE_A).map_err(|error| format!("write outside: {error}"))?;
     let link = fixture.root.join("src/sym.rs");
     let key = PathBuf::from("src/sym.rs");
     let uri = file_uri_for_path(&link)?;
+    let other_uri = file_uri_for_path(&fixture.file)?;
+    let unrelated = file_uri_for_path(&fixture.temp.path().join("target/build.log"))?;
     let root = fixture.root.clone();
     let (service, socket) = LspService::new(|client| Backend::new(client, root.clone()));
     drop(socket);
     let backend = service.inner();
+    let watched = |target: &Uri| tower_lsp_server::ls_types::DidChangeWatchedFilesParams {
+        changes: vec![tower_lsp_server::ls_types::FileEvent::new(
+            target.clone(),
+            tower_lsp_server::ls_types::FileChangeType::CHANGED,
+        )],
+    };
+    let save = |target: &Uri, text: &str| DidSaveTextDocumentParams {
+        text_document: TextDocumentIdentifier::new(target.clone()),
+        text: Some(text.to_string()),
+    };
+    let count_refresh = || {
+        let before = crate::lsp::uri::canonical_projection_count_for_test();
+        let paths = backend.open_rust_index_paths_for_root(&root);
+        (
+            paths,
+            crate::lsp::uri::canonical_projection_count_for_test() - before,
+        )
+    };
     for handler in ["save", "watched"] {
         let _ = fs::remove_file(&link);
         std::os::unix::fs::symlink(&fixture.file, &link)
             .map_err(|error| format!("link inside: {error}"))?;
-        backend
-            .did_open(DidOpenTextDocumentParams {
-                text_document: TextDocumentItem::new(
-                    uri.clone(),
-                    "rust".to_string(),
-                    1,
-                    SOURCE_A.to_string(),
-                ),
-            })
-            .await;
-        if !backend.open_rust_index_paths_for_root(&root).contains(&key) {
+        for target in [&uri, &other_uri] {
+            backend
+                .did_open(DidOpenTextDocumentParams {
+                    text_document: TextDocumentItem::new(
+                        target.clone(),
+                        "rust".to_string(),
+                        1,
+                        SOURCE_A.to_string(),
+                    ),
+                })
+                .await;
+        }
+        let (paths, cold) = count_refresh();
+        if !paths.contains(&key) || cold == 0 {
             return Err(format!("{handler}: in-root symlink must be indexed"));
         }
+        let per_document = cold / 2;
         fs::remove_file(&link).map_err(|error| format!("unlink: {error}"))?;
         std::os::unix::fs::symlink(&outside, &link)
             .map_err(|error| format!("relink outside: {error}"))?;
-        if !backend.open_rust_index_paths_for_root(&root).contains(&key) {
-            return Err(format!("{handler}: cache must be stale before the event"));
+        // An unrelated event keeps every key warm: no resolution at all.
+        if handler == "save" {
+            backend.did_save(save(&unrelated, SOURCE_A)).await;
+        } else {
+            backend.did_change_watched_files(watched(&unrelated)).await;
         }
+        let (paths, count) = count_refresh();
+        if !paths.contains(&key) || count != 0 {
+            return Err(format!(
+                "{handler}: unrelated event must keep the cache warm ({count} projections)"
+            ));
+        }
+        // The affected document re-resolves; its sibling does not.
         if handler == "save" {
             backend
-                .did_save(DidSaveTextDocumentParams {
-                    text_document: TextDocumentIdentifier::new(uri.clone()),
-                    text: Some(SOURCE_A.to_string()),
-                })
+                .did_save(save(&uri, &format!("{SOURCE_A}\n// edited\n")))
                 .await;
         } else {
+            backend.did_change_watched_files(watched(&uri)).await;
+        }
+        let (paths, count) = count_refresh();
+        if paths.contains(&key) || count != per_document {
+            return Err(format!(
+                "{handler}: affected document must re-resolve alone ({count} projections)"
+            ));
+        }
+        for target in [&uri, &other_uri] {
             backend
-                .did_change_watched_files(tower_lsp_server::ls_types::DidChangeWatchedFilesParams {
-                    changes: vec![tower_lsp_server::ls_types::FileEvent::new(
-                        uri.clone(),
-                        tower_lsp_server::ls_types::FileChangeType::CHANGED,
-                    )],
+                .did_close(DidCloseTextDocumentParams {
+                    text_document: TextDocumentIdentifier::new(target.clone()),
                 })
                 .await;
         }
-        if backend.open_rust_index_paths_for_root(&root).contains(&key) {
-            return Err(format!("{handler}: event must invalidate the cached key"));
-        }
-        backend
-            .did_close(DidCloseTextDocumentParams {
-                text_document: TextDocumentIdentifier::new(uri.clone()),
-            })
-            .await;
     }
     Ok(())
 }
