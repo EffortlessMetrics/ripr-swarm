@@ -288,7 +288,7 @@ fn no_findings_line(output: &CheckOutput) -> &'static str {
         // #11396: nothing in scope, or only non-source files changed, examined
         // no behavior; say what was not checked instead of "No findings".
         _ if no_source_examined(output) => {
-            "Nothing to check: no changed Rust, Python or TypeScript source was available to analyze, so ripr examined no behavior.\n"
+            "Nothing to check: no changed source file in a language ripr analyzes was available, so ripr examined no behavior.\n"
         }
         _ => "No findings: ripr checked no changed behavior.\n",
     }
@@ -1606,7 +1606,7 @@ mod tests {
                 // not open with an all-clear style "No findings".
                 assert!(
                     rendered.contains(
-                        "Nothing to check: no changed Rust, Python or TypeScript source was available to analyze"
+                        "Nothing to check: no changed source file in a language ripr analyzes was available"
                     ),
                     "{rendered}"
                 );
@@ -1658,7 +1658,9 @@ mod tests {
             render_full_with_config(&docs_only, &config),
         ] {
             assert!(
-                rendered.contains("Nothing to check: no changed Rust, Python or TypeScript source"),
+                rendered.contains(
+                    "Nothing to check: no changed source file in a language ripr analyzes"
+                ),
                 "{rendered}"
             );
             assert!(!rendered.contains("No findings:"), "{rendered}");

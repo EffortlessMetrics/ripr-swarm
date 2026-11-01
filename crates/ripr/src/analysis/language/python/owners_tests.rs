@@ -204,23 +204,57 @@ struct PythonOwnerContext<'a> {
 }
 
 /// Whether the statements that run when the enclosing function runs call the
-/// nested def `name` by name (#12141). `statements` is the enclosing body: the
-/// nested defs and classes in it are excluded, so a call from an unused
-/// sibling def, from the nested body itself or from a class body is not an
-/// edge from the enclosing function. A spaced call (`inner (n)`) counts. A
-/// body that rebinds the name (assignment, walrus, `for`, `as`, `import`)
-/// is fail-closed: the call may reach a different binding. Returning or
-/// passing the def without calling it is not a call.
+/// nested def `name` by name (#12141). `statements` is the enclosing body. The
+/// bodies of nested defs and classes, at any depth through `if`/`with`/`for`/
+/// `try`/`match` blocks, and every `lambda` expression are excluded, so a call
+/// from an unused sibling def, from the nested body itself, from a class body
+/// or from a lambda is not an edge from the enclosing function (#12197).
+/// What a nested declaration evaluates when it is defined (decorators, default
+/// values, annotations, class bases) still runs and still counts. A spaced
+/// call (`inner (n)`) counts. A body that rebinds the name (assignment,
+/// walrus, `for`, `as`, `import`) or defines it more than once is fail-closed:
+/// the call may reach a different binding. Returning or passing the def
+/// without calling it is not a call.
 fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool {
+    let mut scan = DeferredRanges::default();
+    collect_deferred_ranges(statements, name, &mut scan);
+    if scan.definitions > 1 {
+        return false;
+    }
+    super::module_constants::visit_exprs_in_statements(statements, &mut |expr| {
+        if let Expr::Lambda(lambda) = expr {
+            scan.lambdas.push(span(lambda.range));
+        }
+    });
     let executed = statements
         .iter()
-        .filter(|stmt| {
-            !matches!(
-                stmt,
-                Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_)
-            )
+        .map(|stmt| match stmt {
+            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_) => {
+                // Only what the declaration evaluates runs with the body.
+                let mut eager = DeferredRanges::default();
+                declaration_eager_ranges(stmt, &mut eager.eager);
+                eager.lambdas.clone_from(&scan.lambdas);
+                eager
+                    .eager
+                    .iter()
+                    .map(|&(from, to)| {
+                        text_without_ranges(source, from, to, &[], &[], &scan.lambdas)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+            _ => {
+                let range = stmt.range();
+                text_without_ranges(
+                    source,
+                    usize::from(range.start()),
+                    usize::from(range.end()),
+                    &scan.deferred,
+                    &scan.eager,
+                    &scan.lambdas,
+                )
+            }
         })
-        .map(|stmt| text_for_range(source, stmt.range()))
         .collect::<Vec<_>>()
         .join("\n");
     let ident = |ch: char| ch == '_' || ch.is_alphanumeric();
@@ -248,6 +282,134 @@ fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool 
         }
     }
     calls && !rebinds
+}
+
+/// Byte ranges found while reading an enclosing body for a nested-def call.
+#[derive(Default)]
+struct DeferredRanges {
+    /// Nested defs and classes: their text does not run with the body.
+    deferred: Vec<(usize, usize)>,
+    /// Inside a deferred declaration, what it evaluates when defined.
+    eager: Vec<(usize, usize)>,
+    /// `lambda` expressions: their bodies run only if something calls them.
+    lambdas: Vec<(usize, usize)>,
+    /// Defs named like the target, anywhere in the enclosing body's blocks.
+    definitions: usize,
+}
+
+fn span(range: TextRange) -> (usize, usize) {
+    (usize::from(range.start()), usize::from(range.end()))
+}
+
+fn collect_deferred_ranges(statements: &[Stmt], name: &str, scan: &mut DeferredRanges) {
+    for stmt in statements {
+        match stmt {
+            Stmt::FunctionDef(function) => {
+                scan.deferred.push(span(stmt.range()));
+                declaration_eager_ranges(stmt, &mut scan.eager);
+                if function.name.as_str() == name {
+                    scan.definitions += 1;
+                }
+            }
+            Stmt::AsyncFunctionDef(function) => {
+                scan.deferred.push(span(stmt.range()));
+                declaration_eager_ranges(stmt, &mut scan.eager);
+                if function.name.as_str() == name {
+                    scan.definitions += 1;
+                }
+            }
+            Stmt::ClassDef(_) => {
+                scan.deferred.push(span(stmt.range()));
+                declaration_eager_ranges(stmt, &mut scan.eager);
+            }
+            _ => {
+                for block in super::admission::nested_blocks(stmt) {
+                    collect_deferred_ranges(block, name, scan);
+                }
+            }
+        }
+    }
+}
+
+/// The expressions a def or class evaluates when it is defined: decorators,
+/// default values, return and argument annotations, class bases and keywords.
+fn declaration_eager_ranges(stmt: &Stmt, out: &mut Vec<(usize, usize)>) {
+    let mut push = |expr: &Expr| out.push(span(expr.range()));
+    let arguments = |args: &ast::Arguments, push: &mut dyn FnMut(&Expr)| {
+        for arg in args
+            .posonlyargs
+            .iter()
+            .chain(&args.args)
+            .chain(&args.kwonlyargs)
+        {
+            if let Some(default) = arg.default.as_deref() {
+                push(default);
+            }
+            if let Some(annotation) = arg.def.annotation.as_deref() {
+                push(annotation);
+            }
+        }
+    };
+    match stmt {
+        Stmt::FunctionDef(function) => {
+            function.decorator_list.iter().for_each(&mut push);
+            arguments(&function.args, &mut push);
+            function.returns.as_deref().into_iter().for_each(&mut push);
+        }
+        Stmt::AsyncFunctionDef(function) => {
+            function.decorator_list.iter().for_each(&mut push);
+            arguments(&function.args, &mut push);
+            function.returns.as_deref().into_iter().for_each(&mut push);
+        }
+        Stmt::ClassDef(class) => {
+            class.decorator_list.iter().for_each(&mut push);
+            class.bases.iter().for_each(&mut push);
+            class
+                .keywords
+                .iter()
+                .for_each(|keyword| push(&keyword.value));
+        }
+        _ => {}
+    }
+}
+
+/// The text of `[from, to)` with every byte inside a deferred or lambda range
+/// blanked to a space (newlines kept so offsets and lines are stable), except
+/// bytes inside an eager range, which a deferred declaration still evaluates.
+/// Lambda ranges are blanked last, so a lambda in a default stays deferred.
+fn text_without_ranges(
+    source: &str,
+    from: usize,
+    to: usize,
+    deferred: &[(usize, usize)],
+    eager: &[(usize, usize)],
+    lambdas: &[(usize, usize)],
+) -> String {
+    let from = from.min(source.len());
+    let to = to.min(source.len());
+    let original = source.get(from..to).unwrap_or_default().as_bytes();
+    let mut bytes = original.to_vec();
+    let blank = |bytes: &mut Vec<u8>, ranges: &[(usize, usize)]| {
+        for &(start, end) in ranges {
+            let start = start.saturating_sub(from).min(bytes.len());
+            let end = end.saturating_sub(from).min(bytes.len());
+            for byte in bytes.iter_mut().take(end).skip(start) {
+                if *byte != b'\n' {
+                    *byte = b' ';
+                }
+            }
+        }
+    };
+    blank(&mut bytes, deferred);
+    for &(start, end) in eager {
+        let start = start.saturating_sub(from).min(bytes.len());
+        let end = end.saturating_sub(from).min(bytes.len());
+        if let (Some(dst), Some(src)) = (bytes.get_mut(start..end), original.get(start..end)) {
+            dst.copy_from_slice(src);
+        }
+    }
+    blank(&mut bytes, lambdas);
+    String::from_utf8(bytes).unwrap_or_default()
 }
 
 fn owner_from_function(

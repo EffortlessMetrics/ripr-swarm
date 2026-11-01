@@ -370,13 +370,28 @@ fn render_pilot_summary_md_with_target(
             ));
         } else if let Some((route, command)) = supported_headline_route(context) {
             out.push_str(&format!(
-                "Analyze the {} diff: `{command}`\n\nPilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
+                "Analyze the {} diff: `{command}`\n\n",
                 route.language.display_name(),
             ));
+            if no_rust_source(context) {
+                out.push_str(
+                    "Pilot found no Rust code to scan. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
+                );
+            } else {
+                out.push_str(
+                    "Pilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
+                );
+            }
         } else if required_routes(context).is_some() {
-            out.push_str(
-                "Pilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
-            );
+            if no_rust_source(context) {
+                out.push_str(
+                    "Pilot found no Rust code to scan. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
+                );
+            } else {
+                out.push_str(
+                    "Pilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan.\n\n",
+                );
+            }
         } else if let Some(unanalyzed) = unanalyzed_only(context) {
             out.push_str(&format!(
                 "None: {UNANALYZED_ONLY_VERDICT} Found: {}.\n\n",
@@ -473,7 +488,10 @@ fn render_pilot_summary_md_with_target(
         }
     }
 
-    if let Some(first_use) = context.python_first_use {
+    if let Some(first_use) = context
+        .python_first_use
+        .filter(|first_use| !python_preview_is_unscanned(context, first_use))
+    {
         push_python_first_use_md(&mut out, first_use);
     }
     push_declined_rust_files_md(&mut out, declined_rust_files(context));
