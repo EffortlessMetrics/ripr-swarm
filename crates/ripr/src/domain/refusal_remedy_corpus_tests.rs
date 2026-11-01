@@ -192,15 +192,15 @@ fn every_message_yields_a_grounded_remedy_or_an_explicit_none() -> Result<(), St
     let mut failures = Vec::new();
     for message in &messages {
         let remedy = RefusalRemedy::from_prose(message);
-        if let Some(command) = &remedy.command {
-            if !message.contains(command.as_str()) {
-                failures.push(format!("command not in prose: {command} <- {message}"));
-            }
+        if let Some(command) = &remedy.command
+            && !message.contains(command.as_str())
+        {
+            failures.push(format!("command not in prose: {command} <- {message}"));
         }
-        if let Some(tool) = &remedy.tool {
-            if !message.contains(tool.as_str()) {
-                failures.push(format!("tool not in prose: {tool} <- {message}"));
-            }
+        if let Some(tool) = &remedy.tool
+            && !message.contains(tool.as_str())
+        {
+            failures.push(format!("tool not in prose: {tool} <- {message}"));
         }
         for flag in &remedy.flags {
             if !message.contains(flag.as_str()) {

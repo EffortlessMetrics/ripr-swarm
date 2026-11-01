@@ -246,7 +246,7 @@ fn is_ripr_command(span: &str) -> bool {
     let Some(rest) = span.strip_prefix("ripr ") else {
         return false;
     };
-    let first = rest.trim_start().split_whitespace().next().unwrap_or("");
+    let first = rest.split_whitespace().next().unwrap_or("");
     let subcommand_shaped = first
         .chars()
         .next()
@@ -432,10 +432,12 @@ fn stated_env(prose: &str, ranges: &[(usize, usize)]) -> Vec<String> {
             && name
                 .chars()
                 .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-        if name_ok && !value.is_empty() && !out.iter().any(|seen| seen == trimmed) {
-            if out.len() < MAX_LISTED {
-                out.push(trimmed.to_string());
-            }
+        if name_ok
+            && !value.is_empty()
+            && !out.iter().any(|seen| seen == trimmed)
+            && out.len() < MAX_LISTED
+        {
+            out.push(trimmed.to_string());
         }
     }
     out
