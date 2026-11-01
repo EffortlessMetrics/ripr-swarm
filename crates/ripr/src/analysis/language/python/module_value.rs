@@ -1681,20 +1681,19 @@ fn skip_blank_and_full_line_comment_lines(source: &str) -> &str {
 
 /// Skip one complete string literal at the start of `source`.
 ///
-/// Only `r`/`u` prefixes are accepted: an `f`-string can bind through `:=`,
-/// and any other prefix (or an unclosed literal) falls through to parse.
+/// Only a single `r`/`R` or `u`/`U` prefix is accepted: `ur`/`ru` are a
+/// Python 3 `SyntaxError`, an `f`-string can bind through `:=`, and any
+/// other prefix (or an unclosed literal) falls through to parse. A
+/// backslash escapes the next source byte in both single- and triple-quoted
+/// strings, so `\"""` does not close a `"""` docstring.
 fn skip_complete_string_literal(source: &str) -> Option<&str> {
     let bytes = source.as_bytes();
     let mut i = 0;
-    let mut saw_r = false;
-    let mut saw_u = false;
-    while i < bytes.len() && matches!(bytes[i], b'r' | b'R' | b'u' | b'U') {
-        match bytes[i] {
-            b'r' | b'R' if !saw_r => saw_r = true,
-            b'u' | b'U' if !saw_u => saw_u = true,
-            _ => return None,
-        }
+    if i < bytes.len() && matches!(bytes[i], b'r' | b'R' | b'u' | b'U') {
         i += 1;
+        if i < bytes.len() && matches!(bytes[i], b'r' | b'R' | b'u' | b'U') {
+            return None;
+        }
     }
     let quote = *bytes.get(i)?;
     if quote != b'\'' && quote != b'"' {
@@ -1704,7 +1703,7 @@ fn skip_complete_string_literal(source: &str) -> Option<&str> {
     let quote_len = if triple { 3 } else { 1 };
     i += quote_len;
     while i + quote_len <= bytes.len() {
-        if !triple && bytes[i] == b'\\' {
+        if bytes[i] == b'\\' {
             i = i.checked_add(2)?;
             continue;
         }

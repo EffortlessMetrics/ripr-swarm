@@ -2969,6 +2969,8 @@ fn package_init_prefilter_parses_sources_that_may_bind() {
         "from . import a as b\n",
         "# comment\n    x = 1\n",
         "s = \"#\"\n",
+        "\"\"\"docs \\\"\"\"\n# \"\"\"; table = 1\n",
+        "ur\"docs\"\n",
     ];
     for source in must_parse {
         let (shadows, opaque, parsed) =
@@ -3004,6 +3006,16 @@ fn package_init_prefilter_parses_sources_that_may_bind() {
     let (shadows, opaque, _) =
         super::module_value::package_init_submodule_facts_parsed_for_test(init, "s = \"#\"\n");
     assert!(!opaque && shadows.contains("s"), "{shadows:?}");
+    let escaped_doc = "\"\"\"docs \\\"\"\"\n# \"\"\"; table = 1\n";
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, escaped_doc);
+    assert!(
+        parsed && !opaque && shadows.contains("table"),
+        "{shadows:?}"
+    );
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "ur\"docs\"\n");
+    assert!(parsed && opaque && shadows.is_empty(), "{shadows:?}");
 }
 
 #[test]
