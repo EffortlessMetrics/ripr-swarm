@@ -12,6 +12,7 @@ mod execute;
 #[cfg(kani)]
 mod exit_kani;
 pub(crate) mod help;
+mod help_flags;
 mod help_json;
 pub(crate) mod interrupt;
 mod parse;

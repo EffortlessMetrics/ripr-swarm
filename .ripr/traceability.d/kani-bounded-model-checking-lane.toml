@@ -1,0 +1,21 @@
+[[behavior]]
+id = "RIPR-SPEC-0371"
+name = "Kani lane never passes by absence"
+spec = "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md"
+tests = [
+  "xtask/src/kani_lane.rs::discovery_finds_named_harnesses_past_attributes_and_docs",
+  "xtask/src/kani_lane.rs::classification_requires_an_explicit_success_verdict",
+  "xtask/src/kani_lane.rs::unreachable_cover_makes_the_proof_vacuous",
+  "xtask/src/kani_lane.rs::blocks_join_to_harnesses_and_a_missing_block_is_not_established",
+  "xtask/src/kani_lane.rs::lane_never_passes_by_absence",
+  "xtask/src/kani_lane.rs::arguments_parse_and_reject_unknown_flags",
+  "xtask/src/kani_lane.rs::report_names_every_status_word",
+]
+code = [
+  "xtask/src/kani_lane.rs",
+  "crates/ripr/src/kani_smoke.rs",
+]
+outputs = [
+  "docs/CI.md",
+]
+metrics = ["unit_test_pass_rate"]

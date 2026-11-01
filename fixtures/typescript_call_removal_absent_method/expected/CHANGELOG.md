@@ -103,3 +103,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_call_removal_absent_method (9)
+
+Reason:
+RIPR-SPEC-0246: plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_absent_method --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_call_removal_absent_method (10)
+
+Reason:
+RIPR-SPEC-0246: re-render after merging main; plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_absent_method --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
