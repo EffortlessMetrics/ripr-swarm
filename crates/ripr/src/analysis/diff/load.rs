@@ -166,10 +166,12 @@ pub(crate) fn load_diff_with_effective_base_core(
             .map_err(|err| {
                 // `--diff HEAD` reads a revision name as a file path; point at
                 // `--base` when the path does not exist.
-                let revision_hint = if diff_file.exists() {
-                    ""
-                } else {
+                // Only a proven absence: a permission error on an existing
+                // path keeps the bare read error.
+                let revision_hint = if matches!(diff_file.try_exists(), Ok(false)) {
                     " (to compare against a revision instead, use `--base REV`, for example `--base HEAD~1`)"
+                } else {
+                    ""
                 };
                 format!(
                     "failed to read diff file {}: {err}; pass the path of an existing unified diff file, or `-` to read the diff from stdin{revision_hint}",
