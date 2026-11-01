@@ -289,14 +289,14 @@ fn free_call_entry_resolved_through_a_use_glob_or_another_file_is_not_credited()
 }
 
 #[test]
-fn free_call_entry_with_a_test_that_does_not_pin_it_exactly_is_not_credited() -> Result<(), String>
-{
+fn free_call_entry_classes_follow_the_tests_shape() -> Result<(), String> {
     let before = library("inner(x) + 1", OWNER, "");
     let after = library("inner(x) + 1", OWNER_CHANGED, "");
     for (tests, class) in [
-        // A weak oracle, an expectation computed through the entry and a
-        // path-qualified call keep reach and read `weakly_exposed` (before
-        // the free-call pin they read `propagation_unknown`); a rebound entry
+        // A weak oracle and an expectation computed through the entry keep
+        // reach and read `weakly_exposed` (before the free-call pin they read
+        // `propagation_unknown`); the crate-qualified entry call is credited
+        // since #9638 (`crate_qualified_free_call_pin`); a rebound entry
         // name, an alias, a foreign glob and an ignored test do not relate.
         (
             "use free_pin::outer;\n\n#[test]\nfn outer_is_pinned() {\n    assert!(outer(5) > 0);\n}\n",
@@ -308,7 +308,7 @@ fn free_call_entry_with_a_test_that_does_not_pin_it_exactly_is_not_credited() ->
         ),
         (
             "#[test]\nfn outer_is_pinned() {\n    assert_eq!(free_pin::outer(5), 11);\n}\n",
-            "weakly_exposed",
+            "exposed",
         ),
         (
             "use free_pin::outer;\n\n#[test]\nfn outer_is_pinned() {\n    let outer = |x: i64| x + 6;\n    assert_eq!(outer(5), 11);\n}\n",

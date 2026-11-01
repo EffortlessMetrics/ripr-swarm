@@ -97,10 +97,6 @@ case = "hex-decode-slice-odd"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "idiom-fixture-builder-total"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "idiom-result-test-sum-accumulate"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -169,10 +165,6 @@ case = "loop-accumulator-bound-input"
 reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
 
 [[entry]]
-case = "method-hop-field-read-nonliteral"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "method-hop-field-read-rebound"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -195,6 +187,10 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "mined-debug-assert-only-oracle"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "mined-feature-v4-stamp-run-with-feature"
+reason = "Discriminated at runtime by `cargo test --features v4`, abstained on purpose: the test sits under the same unevaluated `cfg(feature = \"v4\")` gate as the owner, and which feature set a run enables is not known statically. Crediting it would also credit the default-features twin mined-feature-v7-stamp-default-features-run, whose test is never compiled (#9643). Delete this entry if a run's feature set becomes an analyzer input."
 
 [[entry]]
 case = "mined-hex-table-tested-row"
@@ -607,10 +603,6 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "strsim-sorensen-dice-equal"
 reason = "Compares a local rebound from the parameter (`let a = a.chars()..collect()`), so the name-only credit is withheld and the row abstains; fail-closed by design (#9197)."
-
-[[entry]]
-case = "tokens-add-fee-integration-api"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
 case = "tokens-base-six-hop-chain"

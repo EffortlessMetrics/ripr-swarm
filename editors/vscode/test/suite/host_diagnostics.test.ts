@@ -134,129 +134,6 @@ suite('VS Code test host diagnostics', () => {
     );
   });
 
-  test('retains distinct first and nested-host logs plus the whole matrix receipt on failure', () => {
-    const userDataDir = resolveUserDataDir(root);
-    const matrixUserData = path.join(userDataDir, 'multiroot');
-    writeLog(root, 'same.log', 'FIRST-HOST-SENTINEL');
-    fs.mkdirSync(resolveLogDir(matrixUserData), { recursive: true });
-    fs.writeFileSync(path.join(resolveLogDir(matrixUserData), 'same.log'), 'MATRIX-HOST-SENTINEL');
-    const receiptPath = path.join(root, 'matrix', 'acceptance.json');
-    fs.mkdirSync(path.dirname(receiptPath));
-    const receipt = { outcome: 'failed', last_phase: 'select root A', processes: [{ pid: 731, exits: 1 }],
-      emergency_cleanup_errors: [], stages: [{ failure: 'Canceled: Canceled' }] };
-    fs.writeFileSync(receiptPath, JSON.stringify(receipt));
-    const restore = replaceConsoleError(() => {});
-    try {
-      const result = finalizeHostRun({ artifactRoot: root, userDataDir,
-        multiRoot: { userDataDir: matrixUserData, receiptPath }, error: new Error('Canceled') });
-      assert.strictEqual(result.exitCode, 1);
-      assert.strictEqual(fs.readFileSync(path.join(result.retention.diagnosticsDir, 'logs', 'same.log'), 'utf8'),
-        'FIRST-HOST-SENTINEL');
-      assert.strictEqual(fs.readFileSync(path.join(result.retention.diagnosticsDir, 'multiroot', 'logs', 'same.log'), 'utf8'),
-        'MATRIX-HOST-SENTINEL');
-      assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(result.retention.diagnosticsDir,
-        'multiroot', 'acceptance.json'), 'utf8')), receipt);
-      const identity = JSON.parse(fs.readFileSync(path.join(result.retention.diagnosticsDir, 'retention.json'), 'utf8'));
-      assert.strictEqual(identity.user_data_dir, userDataDir);
-      assert.strictEqual(identity.multiroot.user_data_dir, matrixUserData);
-      assert.deepStrictEqual(identity.multiroot.copied_files, ['same.log']);
-      assert.strictEqual(identity.multiroot.receipt.state, 'retained');
-    } finally { restore(); }
-  });
-
-  test('matrix logs and receipt survive first-host saturation within the unchanged total cap', () => {
-    for (let i = 0; i < 24; i++) { writeLog(root, `${i}.log`, '#'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES)); }
-    const matrixUserData = path.join(resolveUserDataDir(root), 'multiroot');
-    fs.mkdirSync(resolveLogDir(matrixUserData), { recursive: true });
-    fs.writeFileSync(path.join(resolveLogDir(matrixUserData), 'matrix.log'), 'MATRIX-PRIORITY');
-    for (let i = 0; i < 24; i++) {
-      fs.writeFileSync(path.join(resolveLogDir(matrixUserData), `zz-${i}.log`), '#'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES));
-    }
-    const receiptPath = path.join(root, 'receipt.json');
-    fs.writeFileSync(receiptPath, '{"outcome":"failed"}');
-    const result = retainHostDiagnostics({ artifactRoot: root, userDataDir: resolveUserDataDir(root),
-      multiRoot: { userDataDir: matrixUserData, receiptPath }, failed: true });
-    const actualBytes = retainedBytes(result.diagnosticsDir);
-    assert.ok(actualBytes <= MAX_HOST_DIAGNOSTICS_BYTES, String(actualBytes));
-    assert.strictEqual(result.bytesWritten, actualBytes);
-    assert.strictEqual(fs.readFileSync(path.join(result.diagnosticsDir, 'multiroot', 'logs', 'matrix.log'), 'utf8'),
-      'MATRIX-PRIORITY');
-    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(result.diagnosticsDir, 'multiroot', 'acceptance.json'), 'utf8')),
-      { outcome: 'failed' });
-  });
-
-  test('matrix receipt refusals are explicit and success removes all retained profiles', () => {
-    const matrixUserData = path.join(resolveUserDataDir(root), 'multiroot');
-    const receiptPath = path.join(root, 'receipt.json');
-    const input = { artifactRoot: root, userDataDir: resolveUserDataDir(root),
-      multiRoot: { userDataDir: matrixUserData, receiptPath }, failed: true };
-    for (const [contents, expected] of [[undefined, 'missing'], ['{bad', 'invalid_json'],
-      ['x'.repeat(MAX_HOST_DIAGNOSTICS_FILE_BYTES + 1), 'oversized']] as const) {
-      if (contents !== undefined) { fs.writeFileSync(receiptPath, contents); }
-      const result = retainHostDiagnostics(input);
-      const identity = JSON.parse(fs.readFileSync(path.join(result.diagnosticsDir, 'retention.json'), 'utf8'));
-      assert.strictEqual(identity.multiroot.receipt.state, expected);
-      assert.ok(!fs.existsSync(path.join(result.diagnosticsDir, 'multiroot', 'acceptance.json')));
-    }
-    const result = finalizeHostRun({ ...input, error: undefined });
-    assert.strictEqual(result.exitCode, 0);
-    assert.ok(!fs.existsSync(result.retention.diagnosticsDir));
-  });
-
-  test('refuses matrix receipt/profile symlinks and outside-root receipt sources', function () {
-    if (process.platform === 'win32') { this.skip(); }
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-unowned-diag-'));
-    try {
-      const receiptPath = path.join(outside, 'acceptance.json');
-      fs.writeFileSync(receiptPath, '{"secret":"OUTSIDE-SENTINEL"}');
-      fs.mkdirSync(path.join(outside, 'logs'));
-      fs.writeFileSync(path.join(outside, 'logs', 'secret.log'), 'UNOWNED-LOG');
-      const userDataDir = resolveUserDataDir(root);
-      fs.mkdirSync(userDataDir, { recursive: true });
-      const matrixUserData = path.join(userDataDir, 'multiroot');
-      fs.symlinkSync(outside, matrixUserData, 'dir');
-      const linkReceipt = path.join(root, 'receipt.json');
-      fs.symlinkSync(receiptPath, linkReceipt);
-      for (const source of [receiptPath, linkReceipt]) {
-        const result = retainHostDiagnostics({ artifactRoot: root, userDataDir,
-          multiRoot: { userDataDir: matrixUserData, receiptPath: source }, failed: true });
-        const identity = JSON.parse(fs.readFileSync(path.join(result.diagnosticsDir, 'retention.json'), 'utf8'));
-        assert.strictEqual(identity.multiroot.receipt.state, 'outside_root_or_symlink');
-        assert.deepStrictEqual(identity.multiroot.copied_files, []);
-        assert.ok(!fs.existsSync(path.join(result.diagnosticsDir, 'multiroot', 'logs', 'secret.log')));
-      }
-    } finally { fs.rmSync(outside, { recursive: true, force: true }); }
-  });
-
-  test('matrix launch failure retains its log without inventing a teardown receipt and redacts both profiles', () => {
-    const userDataDir = resolveUserDataDir(root);
-    const matrixUserData = path.join(userDataDir, 'multiroot');
-    const token = 'ghp_abcdefghijklmnopqrstuvwxyz0123';
-    writeLog(root, 'main.log', token);
-    fs.mkdirSync(resolveLogDir(matrixUserData), { recursive: true });
-    fs.writeFileSync(path.join(resolveLogDir(matrixUserData), 'main.log'), `MATRIX-LAUNCH-FAILED ${token}`);
-    const receiptPath = path.join(root, 'missing-receipt.json');
-    const restore = replaceConsoleError(() => {});
-    try {
-      const result = finalizeHostRun({ artifactRoot: root, userDataDir,
-        multiRoot: { userDataDir: matrixUserData, receiptPath }, error: new Error('launch failed') });
-      assert.strictEqual(result.exitCode, 1);
-      const identity = JSON.parse(fs.readFileSync(path.join(result.retention.diagnosticsDir, 'retention.json'), 'utf8'));
-      assert.strictEqual(identity.multiroot.receipt.state, 'missing');
-      for (const profile of ['', 'multiroot']) {
-        const text = fs.readFileSync(path.join(result.retention.diagnosticsDir, profile, 'logs', 'main.log'), 'utf8');
-        assert.ok(!text.includes(token));
-        assert.ok(text.includes('[redacted-token]'));
-      }
-      fs.writeFileSync(receiptPath, JSON.stringify({ error: token, outcome: 'failed' }));
-      retainHostDiagnostics({ artifactRoot: root, userDataDir,
-        multiRoot: { userDataDir: matrixUserData, receiptPath }, failed: true });
-      const receipt = JSON.parse(fs.readFileSync(path.join(result.retention.diagnosticsDir, 'multiroot', 'acceptance.json'), 'utf8'));
-      assert.strictEqual(receipt.error, '[redacted-token]');
-      assert.strictEqual(receipt.outcome, 'failed');
-    } finally { restore(); }
-  });
-
   test('redacts a complete PEM block', () => {
     const redacted = redactHostDiagnosticsText(
       [
@@ -566,6 +443,52 @@ suite('VS Code test host diagnostics', () => {
     assert.ok(Buffer.byteLength(kept) <= MAX_HOST_DIAGNOSTICS_FILE_BYTES);
   });
 
+  test('refuses to copy a log directory that is a symlink or sits outside the artifact root', () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-outside-logs-'));
+    try {
+      const outsideLogs = path.join(outside, HOST_LOG_DIR_NAME);
+      fs.mkdirSync(outsideLogs, { recursive: true });
+      fs.writeFileSync(path.join(outsideLogs, 'secret.log'), 'DO_NOT_COLLECT_OUTSIDE_LOG');
+      // Positive control in the same shape: a contained log directory is copied.
+      writeLog(root, 'control.log', 'CONTAINED_LOG');
+      const contained = retainHostDiagnostics({ artifactRoot: root, userDataDir: resolveUserDataDir(root), failed: true });
+      assert.ok(fs.existsSync(path.join(contained.diagnosticsDir, HOST_LOG_DIR_NAME, 'control.log')));
+
+      // A user-data directory outside the artifact root.
+      const external = retainHostDiagnostics({ artifactRoot: root, userDataDir: outside, failed: true });
+      assert.ok(!fs.existsSync(path.join(external.diagnosticsDir, HOST_LOG_DIR_NAME, 'secret.log')));
+
+      // A log directory that is itself a symlink to an outside directory.
+      const linkedUserData = path.join(root, 'linked-user-data');
+      fs.mkdirSync(linkedUserData, { recursive: true });
+      fs.symlinkSync(outsideLogs, path.join(linkedUserData, HOST_LOG_DIR_NAME), 'junction');
+      const linked = retainHostDiagnostics({ artifactRoot: root, userDataDir: linkedUserData, failed: true });
+      assert.ok(!fs.existsSync(path.join(linked.diagnosticsDir, HOST_LOG_DIR_NAME, 'secret.log')));
+      const identity = JSON.parse(fs.readFileSync(path.join(linked.diagnosticsDir, 'retention.json'), 'utf8')) as { copied_files: string[] };
+      assert.deepStrictEqual(identity.copied_files, []);
+
+      // A link in an intermediate component: root/linked-parent -> outside,
+      // with the real logs under outside/user-data/logs.
+      const nestedLogs = path.join(outside, 'user-data', HOST_LOG_DIR_NAME);
+      fs.mkdirSync(nestedLogs, { recursive: true });
+      fs.writeFileSync(path.join(nestedLogs, 'nested-secret.log'), 'DO_NOT_COLLECT_NESTED_LOG');
+      fs.symlinkSync(outside, path.join(root, 'linked-parent'), 'junction');
+      const nested = retainHostDiagnostics({
+        artifactRoot: root,
+        userDataDir: path.join(root, 'linked-parent', 'user-data'),
+        failed: true
+      });
+      assert.ok(!fs.existsSync(path.join(nested.diagnosticsDir, HOST_LOG_DIR_NAME, 'nested-secret.log')));
+      // The refused directory leaves no log copies at all, not only no secret file.
+      assert.deepStrictEqual(
+        fs.existsSync(path.join(nested.diagnosticsDir, HOST_LOG_DIR_NAME))
+          ? fs.readdirSync(path.join(nested.diagnosticsDir, HOST_LOG_DIR_NAME))
+          : [],
+        []
+      );
+    } finally { fs.rmSync(outside, { recursive: true, force: true }); }
+  });
+
   test('matrix receipt refuses other filenames, outside paths, directories and symlink traversal', () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-outside-receipt-'));
     try {
@@ -732,11 +655,4 @@ function replaceConsoleError(stub: (...args: unknown[]) => void): () => void {
     }
     Object.defineProperty(console, 'error', descriptor);
   };
-}
-
-function retainedBytes(root: string): number {
-  return fs.readdirSync(root, { withFileTypes: true }).reduce((total, entry) => {
-    const file = path.join(root, entry.name);
-    return total + (entry.isDirectory() ? retainedBytes(file) : fs.statSync(file).size);
-  }, 0);
 }

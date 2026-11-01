@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `policy/flaky-tests.toml` is now the flake ledger for intermittent test failures found in CI history, and `xtask/tests/flake_ledger.rs` fails if a fixed entry loses its guard test, an open entry has no owning issue, or any nextest profile enables retries. The first three entries (TypeScript parse-worker injection leak, `Text file busy` on copied binaries, Perl variant shared-binary stamp) record fixes that landed in #11338, #11463 and #11346 (#11602, #11604).

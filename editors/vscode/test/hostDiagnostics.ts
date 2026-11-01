@@ -34,7 +34,6 @@ export interface RetainHostDiagnosticsInput {
   artifactRoot: string;
   userDataDir: string;
   failed: boolean;
-  multiRoot?: { userDataDir: string; receiptPath: string };
   error?: unknown;
   env?: NodeJS.ProcessEnv;
   /** Only the matrix's named receipt; never a workspace or profile directory. */
@@ -114,32 +113,8 @@ export function retainHostDiagnostics(
   let bytesWritten = matrixReceipt?.bytes ?? 0;
   const logBudget = MAX_HOST_DIAGNOSTICS_BYTES - MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES;
   const logsRoot = path.join(diagnosticsDir, HOST_LOG_DIR_NAME);
-  const matrix = input.multiRoot;
-  const matrixReceipt = matrix === undefined ? undefined : retainMatrixReceipt(
-    input.artifactRoot, matrix.receiptPath, path.join(diagnosticsDir, 'multiroot', 'acceptance.json')
-  );
-  bytesWritten += matrixReceipt?.bytes ?? 0;
-  const matrixFiles: string[] = [];
-  // The failing second host must not be starved by verbose first-host logs.
-  // Both profiles share the existing cap; reserve half for each profile.
-  if (matrix !== undefined) {
-    const matrixLogDir = resolveLogDir(matrix.userDataDir);
-    if (ownedSource(input.artifactRoot, matrixLogDir) && fs.lstatSync(matrixLogDir).isDirectory()) {
-      for (const relative of listRelativeFiles(matrixLogDir)) {
-        const remaining = Math.floor(logBudget / 2) - bytesWritten;
-        if (remaining <= 0) { break; }
-        const copied = copyLogTail(path.join(matrixLogDir, relative),
-          path.join(diagnosticsDir, 'multiroot', HOST_LOG_DIR_NAME, relative),
-          Math.min(MAX_HOST_DIAGNOSTICS_FILE_BYTES, remaining));
-        if (copied > 0) {
-          matrixFiles.push(relative.split(path.sep).join('/'));
-          bytesWritten += copied;
-        }
-      }
-    }
-  }
 
-  if (ownedSource(input.artifactRoot, logDir) && fs.lstatSync(logDir).isDirectory()) {
+  if (isContainedDirectory(input.artifactRoot, logDir)) {
     for (const relative of listRelativeFiles(logDir)) {
       const remaining = logBudget - bytesWritten;
       if (remaining <= 0) {
@@ -194,7 +169,6 @@ export function finalizeHostRun(input: {
       userDataDir: input.matrix?.userDataDir ?? input.userDataDir,
       matrixReceiptPath: input.matrix?.receiptPath,
       failed: input.error !== undefined,
-      multiRoot: input.multiRoot,
       error: input.error
     });
   } catch (retainErr) {
@@ -230,7 +204,6 @@ function serializeIdentity(input: {
     .map((name) => clipField(name, MAX_IDENTITY_PATH_CHARS));
   const body: Record<string, unknown> = {
     schema_version: '0.1',
-    multiroot: input.multiRoot,
     retained_because: 'test_host_failure',
     user_data_dir: clipField(input.userDataDir, MAX_IDENTITY_PATH_CHARS),
     log_dir: clipField(input.logDir, MAX_IDENTITY_PATH_CHARS),
@@ -254,11 +227,6 @@ function serializeIdentity(input: {
     return identity;
   }
   body.copied_files = [];
-  if (input.multiRoot !== undefined) {
-    body.multiroot = { ...input.multiRoot, copied_files: [],
-      copied_files_omitted: (input.multiRoot.copied_files as unknown[]).length
-        + (input.multiRoot.copied_files_omitted as number) };
-  }
   body.copied_files_omitted = input.copiedFiles.length;
   identity = redactHostDiagnosticsText(`${JSON.stringify(body, null, 2)}\n`);
   if (Buffer.byteLength(identity, 'utf8') <= MAX_HOST_DIAGNOSTICS_IDENTITY_BYTES) {
@@ -270,6 +238,32 @@ function serializeIdentity(input: {
     copied_file_count: input.copiedFiles.length,
     identity_truncated: true
   })}\n`;
+}
+
+/**
+ * The log directory is copied only when it is a real directory under the
+ * artifact root: no `..`, no absolute escape, and no symlink or junction in
+ * any component below the root. Same containment as the matrix receipt path.
+ */
+function isContainedDirectory(artifactRoot: string, directory: string): boolean {
+  const root = path.resolve(artifactRoot);
+  const target = path.resolve(directory);
+  const relative = path.relative(root, target);
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return false;
+  }
+  try {
+    let current = root;
+    for (const part of relative.split(path.sep)) {
+      current = path.join(current, part);
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        return false;
+      }
+    }
+    return fs.lstatSync(target).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function retainMatrixReceipt(

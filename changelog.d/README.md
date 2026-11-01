@@ -34,8 +34,11 @@ into that Unreleased heading instead of crowding user-facing sections.
   format: the section line (the only HTML comment allowed), every entry a
   `- ` bullet at column 0 with indented continuation lines, an issue or PR
   reference in each entry, a lowercase kebab-case name that is more than
-  a number, and that verdict-corpus case-count or `Repo ops:` bookkeeping
-  uses `Internal / CI` rather than a user-facing section. Nothing checks that
+  a number, that verdict-corpus case-count, `Repo ops:`, or maintainer-tooling
+  entries (opening with a backticked `cargo xtask` command, `.github/`,
+  `policy/`, `AGENTS.md`, `CLAUDE.md` or a maintainer doc) use `Internal / CI`
+  rather than a user-facing section, and that no entry repeats another
+  fragment or Unreleased entry word for word. Nothing checks that
   a PR which needs an entry carries one; reviewers do. The fold step below is
   the repo-owned `cargo xtask fold-changelog` command.
 - Existing `CHANGELOG.md` entries stay where they are. Do not move them.
@@ -73,6 +76,21 @@ snapshot covered, and only after the roll-up has merged. A fragment added
 after a snapshot stays until the next snapshot or the cut. After the final
 fold, `cargo xtask check-changelog-fragments --release-cut` must pass: it
 fails on any fragment still here.
+
+On cut day use one command. `--release-cut` folds every fragment (it cannot be
+combined with `--limit` or `--keep-fragments`), deletes them, and then requires
+`check-changelog-fragments --release-cut` to pass, so a leftover or malformed
+fragment fails the same step:
+
+```bash
+cargo xtask fold-changelog --release-cut           # dry run: plan only
+cargo xtask fold-changelog --write --release-cut   # fold, delete, verify
+```
+
+It prints a warning when the PR (every fragment plus `CHANGELOG.md`) would exceed
+the 160-file admission cap; fold a snapshot ahead of the cut in that case. The
+fold appends entries verbatim, so run the correctness pass over `Unreleased`
+(duplicates, sections, claims that overstate what shipped) after it.
 
 Both ordinary and `--release-cut` checks reject repeated column-zero
 `### <Section>` headings within the first `## Unreleased` block. The diagnostic

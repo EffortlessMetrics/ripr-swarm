@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
-use super::{ParsedDiff, parse_bounded_lines, parse_unbounded};
+use super::{ParsedDiff, parse_bounded_lines, parse_bounded_lines_scoped, parse_unbounded};
 use crate::analysis_outcome::AnalysisLimitationKind;
 
 const FIRST_FILE: &str =
@@ -547,4 +547,167 @@ fn path_at_the_depth_bound_still_parses() -> Result<(), String> {
     let parsed = parse_bounded_lines(header.lines(), 10)?;
     assert_eq!(parsed.changed_files.len(), 1);
     Ok(())
+}
+
+// #2398: the language-neutral changed-line budget.
+
+const FILE_LIMIT: usize = 100;
+
+fn parse_with_line_limit<'a>(
+    lines: impl Iterator<Item = &'a str>,
+    line_limit: usize,
+) -> Result<ParsedDiff, String> {
+    parse_bounded_lines_scoped(lines, FILE_LIMIT, line_limit, |_| true)
+}
+
+fn one_file_header(path: &str, added: usize) -> String {
+    format!("diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -0,0 +1,{added} @@\n")
+}
+
+#[test]
+fn oversized_single_file_stops_at_the_first_line_past_the_ceiling_in_every_language()
+-> Result<(), String> {
+    for path in ["src/a.rs", "web/a.ts", "pkg/a.py", "lib/a.pl", "web/a.js"] {
+        let header = one_file_header(path, 10_000);
+        let tail_reads = Cell::new(0usize);
+        let body = std::iter::repeat_n("+line", 10_000).inspect(|_| {
+            tail_reads.set(tail_reads.get() + 1);
+        });
+        let result = parse_with_line_limit(header.lines().chain(body), 5);
+        let Err(error) = result else {
+            return Err(format!(
+                "{path}: over-limit input returned a partial successful parse"
+            ));
+        };
+        assert!(
+            error.starts_with("diff_scope_oversized: at least 6 changed lines"),
+            "{path}: {error}"
+        );
+        assert!(
+            error.contains("RIPR_MAX_DIFF_CHANGED_LINES limit (5)"),
+            "{error}"
+        );
+        // The sixth payload line is the last one read; the tail stays unread.
+        assert_eq!(tail_reads.get(), 6, "{path}: the oversized tail was read");
+    }
+    Ok(())
+}
+
+#[test]
+fn exact_limit_single_file_succeeds_with_exact_coordinates() -> Result<(), String> {
+    let input = format!(
+        "{}-gone\n+one\n+two\n+three\n",
+        one_file_header("web/a.ts", 3)
+    );
+    let input = input.replace("@@ -0,0 +1,3 @@", "@@ -4,1 +4,3 @@");
+    let parsed = parse_with_line_limit(input.lines(), 4)?;
+    let file = &parsed.changed_files[0];
+    assert_eq!(file.added_lines.len(), 3);
+    assert_eq!(file.removed_lines.len(), 1);
+    assert_eq!(file.removed_lines[0].line, 4);
+    assert_eq!(file.added_lines[2].line, 6);
+    assert_eq!(file.added_lines[2].text, "three");
+    // One line fewer of headroom fails: the boundary is exact.
+    let Err(error) = parse_with_line_limit(input.lines(), 3) else {
+        return Err("one line over the ceiling must fail".to_string());
+    };
+    assert!(
+        error.starts_with("diff_scope_oversized: at least 4 changed lines"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn many_tiny_files_still_trip_the_file_count_guard_not_the_line_guard() -> Result<(), String> {
+    let input = format!(
+        "{FIRST_FILE}diff --git a/src/b.rs b/src/b.rs\n--- a/src/b.rs\n+++ b/src/b.rs\n@@ -1 +1 @@\n-x\n+y\n"
+    );
+    let Err(error) = parse_bounded_lines_scoped(input.lines(), 1, 1_000, |_| true) else {
+        return Err("two files must exceed a one-file limit".to_string());
+    };
+    assert!(
+        error.contains("changed files exceed the RIPR_MAX_DIFF_INDEX_FILES"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn quarantined_conflict_and_context_lines_do_not_consume_the_budget() -> Result<(), String> {
+    let input = concat!(
+        "--- a/src/b.rs\n+++ b/src/b.rs\n@@ -1,3 +1,6 @@\n context\n context\n",
+        "+<<<<<<< ours\n+hidden\n+hidden\n+>>>>>>> theirs\n+visible\n",
+    );
+    let parsed = parse_with_line_limit(input.lines(), 1)?;
+    assert_eq!(parsed.changed_files[0].added_lines.len(), 1);
+    assert_eq!(parsed.changed_files[0].added_lines[0].text, "visible");
+    Ok(())
+}
+
+#[test]
+fn deleted_file_body_retains_no_payloads_so_it_never_consumes_the_budget() -> Result<(), String> {
+    let input = "diff --git a/src/gone.rs b/src/gone.rs\ndeleted file mode 100644\n--- a/src/gone.rs\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n";
+    // The parser registers no file for a deleted path, so its body lines are
+    // never retained as `ChangedLine` payloads and never count (#2398).
+    let parsed = parse_with_line_limit(input.lines(), 1)?;
+    assert_eq!(parsed.deleted_file_count, 1);
+    assert!(
+        parsed
+            .changed_files
+            .iter()
+            .all(|f| f.removed_lines.is_empty())
+    );
+    Ok(())
+}
+
+#[test]
+fn scope_dropped_sections_never_consume_the_budget() -> Result<(), String> {
+    let input = format!(
+        "{}+a\n+b\n+c\n{}+keep\n",
+        one_file_header("docs/skip.rs", 3),
+        one_file_header("src/keep.rs", 1)
+    );
+    let parsed =
+        parse_bounded_lines_scoped(input.lines(), FILE_LIMIT, 1, |path| path.starts_with("src"))?;
+    assert_eq!(parsed.changed_files.len(), 1);
+    assert_eq!(parsed.out_of_scope_file_count, 1);
+    Ok(())
+}
+
+#[test]
+fn changed_line_limit_env_fails_closed_instead_of_disabling_the_bound() {
+    use crate::analysis::language::with_forced_diff_limit_env;
+    let name = super::DIFF_CHANGED_LINE_LIMIT_ENV;
+    assert_eq!(
+        super::super::diff_changed_line_limit_from_env(),
+        Ok(super::DEFAULT_DIFF_CHANGED_LINE_LIMIT)
+    );
+    for bad in ["0", "abc", "-1", ""] {
+        let result = with_forced_diff_limit_env(&[(name, bad)], || {
+            super::super::diff_changed_line_limit_from_env()
+        });
+        assert!(
+            result.as_ref().is_err_and(|e| e.contains(name)),
+            "{bad:?} must fail closed, got {result:?}"
+        );
+    }
+    let result = with_forced_diff_limit_env(&[(name, "7")], || {
+        super::super::diff_changed_line_limit_from_env()
+    });
+    assert_eq!(result, Ok(7));
+}
+
+#[test]
+fn non_unicode_changed_line_limit_env_fails_closed() {
+    let name = super::DIFF_CHANGED_LINE_LIMIT_ENV;
+    let result = crate::analysis::language::positive_limit_from_env(
+        name,
+        super::DEFAULT_DIFF_CHANGED_LINE_LIMIT,
+        Err(std::env::VarError::NotUnicode(std::ffi::OsString::new())),
+    );
+    assert!(
+        result.as_ref().is_err_and(|e| e.contains(name)),
+        "got {result:?}"
+    );
 }

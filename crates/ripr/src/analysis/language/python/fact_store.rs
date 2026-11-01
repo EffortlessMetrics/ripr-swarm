@@ -39,7 +39,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// `11`: each file records `<module>.<attr>` writes so a test-module
 /// constant another file rebinds is not credited (#11424). `10` entries
 /// lack that fact.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "11";
+/// `12`: each assertion records the outer callee of an independent nested
+/// call equality for per-finding exact reading (#9814). `11` entries lack it.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "12";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the
@@ -309,7 +311,7 @@ impl PythonFileFactEnvelope {
         if self.payload_digest.as_deref() == Some(expected.as_str()) {
             Ok(())
         } else {
-            Err("missing or mismatching semantic payload digest".to_owned())
+            Err("missing or mismatching semantic payload digest; delete the cache entry and rerun `ripr check` to rebuild it".to_owned())
         }
     }
 }

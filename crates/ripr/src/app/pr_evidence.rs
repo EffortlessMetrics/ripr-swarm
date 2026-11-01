@@ -110,10 +110,12 @@ fn parse_options(args: &[String]) -> Result<PrEvidenceOptions, String> {
 
 fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
     let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}"));
+        return Err(format!("missing value for {flag}; pass a value after it"));
     };
     if value.trim().is_empty() {
-        return Err(format!("pr-evidence {flag} requires a non-empty value"));
+        return Err(format!(
+            "pr-evidence {flag} requires a non-empty value; pass `{flag} <value>`"
+        ));
     }
     Ok(value)
 }
@@ -1182,6 +1184,39 @@ mod tests {
         let omitted = changed_files_sha256(&["a".to_string()]);
         assert_ne!(ab, omitted, "omission changes the digest");
         assert!(valid_sha256_digest(&ab));
+    }
+
+    #[test]
+    fn changed_files_digest_matches_shared_corpus() -> Result<(), String> {
+        // Both PR-evidence producers carry their own copy of the digest
+        // helper; this corpus (digests computed independently with Python
+        // hashlib) is the shared oracle that keeps them in agreement.
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("tests/fixtures/verification/ripr/changed-files-digest.corpus.json");
+        let text =
+            fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+        let corpus: Value = serde_json::from_str(&text)
+            .map_err(|err| format!("parse {}: {err}", path.display()))?;
+        let cases = corpus["cases"].as_array().ok_or("corpus has no cases")?;
+        if cases.len() < 8 {
+            return Err(format!("corpus shrank to {} cases", cases.len()));
+        }
+        for case in cases {
+            let name = case["name"].as_str().ok_or("case without name")?;
+            let paths = case["paths"]
+                .as_array()
+                .ok_or("case without paths")?
+                .iter()
+                .map(|p| p.as_str().map(str::to_string).ok_or("non-string path"))
+                .collect::<Result<Vec<_>, _>>()?;
+            let want = case["sha256"].as_str().ok_or("case without sha256")?;
+            let got = changed_files_sha256(&paths);
+            if got != want {
+                return Err(format!("{name}: digest {got}, corpus expects {want}"));
+            }
+        }
+        Ok(())
     }
 
     #[test]

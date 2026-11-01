@@ -82,6 +82,14 @@ pub(crate) fn render_check_with_config_and_progress(
             super::check_findings::render_check_findings_json_with_context(output, config, &context)
         }
         OutputFormat::Github => Ok(github::render_with_config(output, config)),
+        OutputFormat::Agent => Ok(human::terminal_safe(
+            human::render_agent_with_config_and_navigation(
+                output,
+                config,
+                None,
+                CheckDiffProvenance::CommittedHistory,
+            ),
+        )),
         OutputFormat::Sarif => {
             let suppressions = load_suppressions(output, config)?;
             Ok(sarif::render_findings_sarif(output, config, &suppressions))
@@ -309,6 +317,9 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
         )),
         OutputFormat::HumanFull => Ok(human::terminal_safe(
             human::render_full_with_config_and_navigation(output, config, drill_in),
+        )),
+        OutputFormat::Agent => Ok(human::terminal_safe(
+            human::render_agent_with_config_and_navigation(output, config, drill_in, provenance),
         )),
         OutputFormat::Json => {
             // The public CLI JSON adapter has navigation/provenance; reuse

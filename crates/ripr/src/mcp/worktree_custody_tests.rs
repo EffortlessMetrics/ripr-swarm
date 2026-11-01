@@ -124,7 +124,9 @@ fn assert_withheld(snapshot: &super::workspace::Snapshot, reason_part: &str) -> 
     let SourceCustody::NotEstablished { reason } = &snapshot.custody else {
         return Err(format!("custody must be withheld: {:?}", snapshot.custody));
     };
-    if !reason.contains(reason_part) {
+    // The refusal names the path with the host's separators; the control names
+    // the portable spelling.
+    if !reason.replace('\\', "/").contains(reason_part) {
         return Err(format!("withheld reason must name {reason_part}: {reason}"));
     }
     if snapshot.card_producers.is_some() {
@@ -821,6 +823,136 @@ fn withheld_verdict_keeps_an_earlier_finding_level_reason() {
     .with_seam_verdict(Some(&withheld));
     assert_eq!(not_ready.ineligibility, Some("missing_discriminator"));
     assert!(!not_ready.ready);
+}
+
+fn card_session(snapshot: super::workspace::Snapshot) -> (WorkspaceSession, String) {
+    let id = ready_item(&snapshot).unwrap_or_default();
+    (
+        WorkspaceSession {
+            last_good: Some(Arc::new(snapshot)),
+            ..Default::default()
+        },
+        id,
+    )
+}
+
+/// Card currentness (#7357): the card path never re-resolves git state, so a
+/// source edit after `ripr_refresh` (the server does not watch the worktree)
+/// used to leave the card served over bytes the snapshot never described. The
+/// request re-verifies the digests of the files the card's evidence is bound
+/// to and refuses with `stale_snapshot` and a refresh remedy. Controls: the
+/// card is served before the edit, and an unrelated edit keeps it.
+#[test]
+fn card_request_refuses_after_an_unrefreshed_edit_to_a_bound_file() -> Result<(), String> {
+    let test_edit = PRICING_TESTS.replace(
+        "assert_eq!(discounted_total(100, 100), 90);",
+        "let _ = discounted_total(100, 100);",
+    );
+    for (tag, source, relative, edited) in [
+        (
+            "card-stale-wt-src",
+            RefreshSource::Worktree,
+            "src/lib.rs",
+            MOVED_LIB.to_string(),
+        ),
+        (
+            "card-stale-wt-test",
+            RefreshSource::Worktree,
+            "tests/pricing.rs",
+            test_edit.clone(),
+        ),
+        (
+            "card-stale-committed-src",
+            RefreshSource::Committed,
+            "src/lib.rs",
+            MOVED_LIB.to_string(),
+        ),
+        (
+            "card-stale-committed-test",
+            RefreshSource::Committed,
+            "tests/pricing.rs",
+            test_edit,
+        ),
+    ] {
+        let fixture = install_fixture(tag)?;
+        let snapshot = run_check(&fixture.root, Some(ROOT_IDENTITY), None, source)
+            .map_err(|failure| format!("{tag}: {}: {}", failure.code, failure.detail))?;
+        let (session, id) = card_session(snapshot);
+        session
+            .repair_card_document(&id, None, Some(&fixture.root))
+            .map_err(|failure| format!("{tag}: control card must serve: {}", failure.detail))?;
+        write(&fixture.root, relative, &edited)?;
+        let refusal = session
+            .repair_card_document(&id, None, Some(&fixture.root))
+            .err()
+            .ok_or_else(|| format!("{tag}: a card was served over an unrefreshed edit"))?;
+        if refusal.code != CODE_STALE_SNAPSHOT
+            // The detail prints the native path spelling (`tests\pricing.rs` on Windows).
+            || !refusal.detail.replace('\\', "/").contains(relative)
+            || !refusal.recovery.contains("ripr_refresh")
+        {
+            return Err(format!(
+                "{tag}: unexpected refusal {}: {} / {}",
+                refusal.code, refusal.detail, refusal.recovery
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A committed edit after the refresh (HEAD moves with the bytes) is refused the
+/// same way: the card binds the refresh-time head and bytes.
+#[test]
+fn card_request_refuses_after_a_commit_that_moved_a_bound_file() -> Result<(), String> {
+    let fixture = install_fixture("card-stale-commit")?;
+    let (session, id) = card_session(committed_refresh(&fixture.root)?);
+    session
+        .repair_card_document(&id, None, Some(&fixture.root))
+        .map_err(|failure| format!("control card must serve: {}", failure.detail))?;
+    write(&fixture.root, "src/lib.rs", MOVED_LIB)?;
+    commit(&fixture.root, "edit after refresh")?;
+    let refusal = session
+        .repair_card_document(&id, None, Some(&fixture.root))
+        .err()
+        .ok_or("a card was served over a commit made after the refresh")?;
+    if refusal.code != CODE_STALE_SNAPSHOT || !refusal.detail.contains("src/lib.rs") {
+        return Err(format!(
+            "unexpected refusal {}: {}",
+            refusal.code, refusal.detail
+        ));
+    }
+    Ok(())
+}
+
+/// Negative controls: edits outside the card's evidence scope (a non-Rust file,
+/// an unrelated Rust helper) keep the card, and so does restoring the bytes.
+#[test]
+fn card_request_survives_edits_outside_the_evidence_scope_and_restored_bytes() -> Result<(), String>
+{
+    let fixture = install_fixture("card-unrelated")?;
+    write(&fixture.root, "README.md", "notes\n")?;
+    write(
+        &fixture.root,
+        "src/helper_unrelated.rs",
+        "pub fn helper_value() -> i32 {\n    1\n}\n",
+    )?;
+    commit(&fixture.root, "add files")?;
+    let (session, id) = card_session(worktree_refresh(&fixture.root)?);
+    write(&fixture.root, "README.md", "edited notes\n")?;
+    write(
+        &fixture.root,
+        "src/helper_unrelated.rs",
+        "pub fn helper_value() -> i32 {\n    2\n}\n",
+    )?;
+    session
+        .repair_card_document(&id, None, Some(&fixture.root))
+        .map_err(|failure| format!("unrelated edits must keep the card: {}", failure.detail))?;
+    write(&fixture.root, "src/lib.rs", MOVED_LIB)?;
+    write(&fixture.root, "src/lib.rs", CLOSED_LIB)?;
+    session
+        .repair_card_document(&id, None, Some(&fixture.root))
+        .map_err(|failure| format!("restored bytes must keep the card: {}", failure.detail))?;
+    Ok(())
 }
 
 /// With no findings there is no card to protect: a dirty checkout keeps the
