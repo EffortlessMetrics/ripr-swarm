@@ -7723,7 +7723,7 @@ mod tests {
 
         assert!(
             flattened.ends_with(
-                "add a co-located test that reaches and observes the changed behavior so a discriminator exists"
+                "add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong"
             ),
             "digest must keep the remedy; got:\n{digest}"
         );

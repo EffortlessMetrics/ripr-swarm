@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The language server no longer judges a same-length rewrite equal to the previous file contents. On Windows it rereads the on-disk bytes for every buffer-equals-disk check, because std exposes no inode change time. On Unix the cached digest is keyed on the inode change time too, and a file whose modification or change time is within the last two seconds is not cached; this assumes filesystem timestamps finer than that window, so a filesystem with coarser timestamps (for example 2 s FAT) can still reuse a digest (#12046).

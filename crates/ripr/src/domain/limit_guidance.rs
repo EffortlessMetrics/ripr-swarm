@@ -17,7 +17,7 @@ impl StaticLimitKind {
     /// Every kind, so tests can walk the vocabulary. The ordinal test keeps
     /// this list in step with the enum.
     #[cfg(test)]
-    pub(crate) const ALL: [StaticLimitKind; 32] = [
+    pub(crate) const ALL: [StaticLimitKind; 33] = [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
         StaticLimitKind::MissingImportGraph,
@@ -49,6 +49,7 @@ impl StaticLimitKind {
         StaticLimitKind::RustIndirectOwnerCallUnresolved,
         StaticLimitKind::RustCallerLoopSelectorUnresolved,
         StaticLimitKind::ProofHarnessNotEvaluated,
+        StaticLimitKind::RustInherentReceiverUnestablished,
         StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
     ];
 
@@ -185,6 +186,11 @@ impl StaticLimitKind {
             StaticLimitKind::ProofHarnessNotEvaluated => {
                 "Run the verifier for the harness that calls the changed owner, or add a test \
                  that calls it and asserts on its result; ripr does not evaluate the proof."
+            }
+            StaticLimitKind::RustInherentReceiverUnestablished => {
+                "Assert on the changed method's result with the standard `assert_eq!`, in a \
+                 test whose Cargo target ripr can place, so the assertion macro binding can be \
+                 verified."
             }
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => {
                 "Run ripr from a narrower root, or raise RIPR_TS_MAX_WORKSPACE_FILES (and \
@@ -348,10 +354,11 @@ mod tests {
                 StaticLimitKind::RustIndirectOwnerCallUnresolved => 28,
                 StaticLimitKind::RustCallerLoopSelectorUnresolved => 29,
                 StaticLimitKind::ProofHarnessNotEvaluated => 30,
-                StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 31,
+                StaticLimitKind::RustInherentReceiverUnestablished => 31,
+                StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated => 32,
             }
         }
-        const COUNT: usize = 32;
+        const COUNT: usize = 33;
         assert_eq!(StaticLimitKind::ALL.len(), COUNT);
         let ordinals: Vec<usize> = StaticLimitKind::ALL.iter().copied().map(ordinal).collect();
         assert_eq!(

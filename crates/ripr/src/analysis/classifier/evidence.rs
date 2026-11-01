@@ -527,6 +527,7 @@ impl ClassifiedProbeEvidence {
                 &owner_parameter_names(owner),
                 &chain_tests,
                 Some(chain),
+                context.index,
             )
             .is_empty(),
             _ => false,
@@ -1133,6 +1134,13 @@ impl ClassifiedProbeEvidence {
                         owner_reach
                             .get_or_init(|| proximity_reach.owner_reach(&owner.name))
                             .test_may_reach(test)
+                    })
+                },
+                assertion_pins_other_function: &|assertion| {
+                    context.owner_fn.is_some_and(|owner| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .assertion_pins_other_function(&assertion.text)
                     })
                 },
                 owner_parameters: &owner_parameters,

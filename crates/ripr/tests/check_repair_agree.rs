@@ -196,7 +196,7 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     );
     assert!(
         check.contains(
-            "seams in this finding's file, but could not tie one to this finding's changed line"
+            "spots in this finding's file, but could not tie one to this finding's changed line"
         ),
         "check must name the one reason it cannot bind a seam:\n{check}"
     );
@@ -444,7 +444,8 @@ const ERR_TEST: &str = "use ar::{parse, ParseError};\n\n#[test]\nfn long_input_i
 
 const WS_ROOT: &str = "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n";
 const WS_APP_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n";
-const WS_CORE_TOML: &str = "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
+const WS_CORE_TOML: &str =
+    "[package]\nname = \"wscore\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
 const WS_APP_SRC: &str = "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n";
 const WS_OLD: &str = "pub fn discount(price: u32) -> u32 {\n    if price > 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
 const WS_NEW: &str = "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";

@@ -83,6 +83,7 @@ mod conditional_defs;
 mod conditional_expression;
 mod dataclass_default;
 mod deleted_lines;
+mod derived_expectation;
 mod doctest_eval;
 mod doctest_tests;
 mod dunder_truthiness;
@@ -811,7 +812,7 @@ fn python_recommended_next_step(
                 }
             };
             Some(format!(
-                "Python preview: {action} for missing discriminator `{missing}`."
+                "Python preview: {action} for the missing check `{missing}`."
             ))
         }
     }
@@ -1306,6 +1307,9 @@ impl PythonAdapter {
             workspace_read.sources.get(file).map(String::as_str)
         });
         known_equality_helpers::credit_known_equality_helpers(&mut all_tests, |file| {
+            workspace_read.sources.get(file).map(String::as_str)
+        });
+        derived_expectation::demote_derived_expectations(&mut all_tests, &all_owners, |file| {
             workspace_read.sources.get(file).map(String::as_str)
         });
         // Rival src-layout modules are found by path, so an over-cap run still
@@ -1872,6 +1876,8 @@ mod assertion_selection_tests;
 
 #[cfg(test)]
 mod bool_oracle_tests;
+#[cfg(test)]
+mod derived_expectation_tests;
 #[cfg(test)]
 mod known_equality_helpers_tests;
 

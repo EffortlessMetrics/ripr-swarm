@@ -964,7 +964,7 @@ pub(crate) fn render_gap_decision_ledger_json(
         warnings: &report.warnings,
         limits: &report.limits,
     })
-    .map_err(|err| format!("serialize gap decision ledger JSON failed: {err}"))
+    .map_err(|err| format!("serialize gap decision ledger JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// Derive the ledger's `source_subject` for the selected `root` (#4544).
@@ -1059,7 +1059,7 @@ pub(crate) fn check_output_gap_records(
 }
 
 fn gap_record_json_value(record: &GapRecord) -> Result<Value, String> {
-    serde_json::to_value(record).map_err(|err| format!("serialize gap record JSON failed: {err}"))
+    serde_json::to_value(record).map_err(|err| format!("serialize gap record JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// Producer-supplied typed command specs parsed from one canonical item.
@@ -1078,7 +1078,7 @@ fn command_specs_from_value(value: Option<&Value>) -> Result<ParsedCommandSpecCo
     };
     let object = command_specs
         .as_object()
-        .ok_or_else(|| "command_specs must be an object".to_string())?;
+        .ok_or_else(|| "command_specs must be an object; regenerate the input with the command that wrote it, then rerun".to_string())?;
     let parse = |field: &str, expected_role: CommandRole| -> Result<Vec<CommandSpec>, String> {
         let Some(value) = object.get(field) else {
             return Ok(Vec::new());
@@ -1087,18 +1087,22 @@ fn command_specs_from_value(value: Option<&Value>) -> Result<ParsedCommandSpecCo
             Value::Null => return Ok(Vec::new()),
             Value::Array(values) => values.clone(),
             Value::Object(_) => vec![value.clone()],
-            _ => return Err(format!("command_specs.{field} must be an object or array")),
+            _ => {
+                return Err(format!(
+                    "command_specs.{field} must be an object or array; regenerate the input with the command that wrote it, then rerun"
+                ));
+            }
         };
         values
             .into_iter()
             .map(|value| {
                 let spec: CommandSpec = serde_json::from_value(value)
-                    .map_err(|error| format!("command_specs.{field} is malformed: {error}"))?;
+                    .map_err(|error| format!("command_specs.{field} is malformed: {error}; regenerate the input with the command that wrote it, then rerun"))?;
                 spec.validate()
-                    .map_err(|error| format!("command_specs.{field} is invalid: {error}"))?;
+                    .map_err(|error| format!("command_specs.{field} is invalid: {error}; regenerate the input with the command that wrote it, then rerun"))?;
                 if spec.role != expected_role {
                     return Err(format!(
-                        "command_specs.{field} contains {} role, expected {}",
+                        "command_specs.{field} contains {} role, expected {}; regenerate the input with the command that wrote it, then rerun",
                         command_role_label(spec.role),
                         command_role_label(expected_role)
                     ));
@@ -1272,8 +1276,11 @@ fn parse_gap_record_source_json_with_root(
     contents: &str,
     selected_root: Option<&Path>,
 ) -> Result<ParsedGapRecordSource, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let root = value
         .as_object()
         .and_then(|object| object.get("root"))
@@ -1344,8 +1351,11 @@ fn input_findings_total_from_source_value(source_value: Option<&Value>) -> usize
 }
 
 fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let items = value
         .get("finding_alignment")
         .and_then(|alignment| alignment.get("items"))
@@ -1353,7 +1363,7 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     let findings = value.get("findings").and_then(Value::as_array);
     if items.is_none() && findings.is_none() {
         return Err(
-            "expected check output object with finding_alignment.items or findings array"
+            "expected check output object with finding_alignment.items or findings array; regenerate the input with the command that wrote it, then rerun"
                 .to_string(),
         );
     }
@@ -1364,7 +1374,9 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     if let Some(findings) = findings {
         for (index, finding) in findings.iter().enumerate() {
             if !finding.is_object() {
-                return Err(format!("findings array entry {index} is not a JSON object"));
+                return Err(format!(
+                    "findings array entry {index} is not a JSON object; regenerate the input with the command that wrote it, then rerun"
+                ));
             }
         }
     }
@@ -1453,12 +1465,15 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
 }
 
 fn gap_records_from_repo_exposure_json(contents: &str) -> Result<Vec<GapRecord>, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let seams = value
         .get("seams")
         .and_then(Value::as_array)
-        .ok_or_else(|| "expected repo exposure object with seams array".to_string())?;
+        .ok_or_else(|| "expected repo exposure object with seams array; regenerate the input with the command that wrote it, then rerun".to_string())?;
     let mut records = Vec::new();
     for (index, seam) in seams.iter().enumerate() {
         if let Some(canonical_item) = seam
@@ -3427,7 +3442,7 @@ fn gap_records_from_value(value: &Value) -> Result<Vec<GapRecord>, String> {
         return parse_record_array(records);
     }
     let Some(object) = value.as_object() else {
-        return Err("expected object or array at gap record root".to_string());
+        return Err("expected object or array at gap record root; regenerate the input with the command that wrote it, then rerun".to_string());
     };
     if let Some(records) = object.get("records").and_then(Value::as_array) {
         return parse_record_array(records);
@@ -3440,7 +3455,9 @@ fn gap_records_from_value(value: &Value) -> Result<Vec<GapRecord>, String> {
         for case in cases {
             let case_id = case.get("id").and_then(Value::as_str).unwrap_or("unknown");
             let Some(record) = case.get("expected_gap_record") else {
-                return Err(format!("case {case_id} is missing expected_gap_record"));
+                return Err(format!(
+                    "case {case_id} is missing expected_gap_record; regenerate the input with the command that wrote it, then rerun"
+                ));
             };
             records.push(parse_record(record).map_err(|err| format!("case {case_id}: {err}"))?);
         }
@@ -3458,7 +3475,7 @@ fn parse_record_array(records: &[Value]) -> Result<Vec<GapRecord>, String> {
 }
 
 fn parse_record(record: &Value) -> Result<GapRecord, String> {
-    serde_json::from_value(record.clone()).map_err(|err| format!("invalid GapRecord: {err}"))
+    serde_json::from_value(record.clone()).map_err(|err| format!("invalid GapRecord: {err}; regenerate the input with the command that wrote it, then rerun"))
 }
 
 fn summarize_records(records: &[GapRecord]) -> GapDecisionLedgerSummary {
