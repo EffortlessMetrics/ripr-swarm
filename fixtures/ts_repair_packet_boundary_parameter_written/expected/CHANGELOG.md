@@ -373,3 +373,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_parameter_written (32)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_parameter_written --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

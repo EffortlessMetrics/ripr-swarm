@@ -1,7 +1,2 @@
-crates/ripr/src/output/badge/test_efficiency.rs|test-efficiency entry has unknown class `{class}`; recognized classes are {} opaque ,
-crates/ripr/src/output/badge/test_efficiency.rs|test-efficiency entry is missing `class`
 crates/ripr/src/output/badge/test_efficiency.rs|test-efficiency.json is missing `metrics.tests_scanned`
-crates/ripr/src/output/badge/test_efficiency.rs|test-efficiency.json is missing `schema_version`
 crates/ripr/src/output/badge/test_efficiency.rs|test-efficiency.json is missing the `tests` array
-crates/ripr/src/output/badge/test_efficiency.rs|test-efficiency.json is not valid JSON: {err}
-crates/ripr/src/output/badge/test_efficiency.rs|test-efficiency.json schema_version `{schema_version}` is not supported (expected `0.1`)
