@@ -1887,11 +1887,14 @@ fn mask_test_file_citations(text: &str) -> String {
 }
 
 /// True when the rest of a pretty-printed member line is exactly an unsigned
-/// integer, with an optional trailing comma. `null`, a quoted string or a
+/// canonical unsigned integer (no leading zero), with at most one trailing comma. `null`, a quoted string or a
 /// malformed number is not masked, so a broken test pointer stays drift.
 fn is_unsigned_json_number_member(rest: &str) -> bool {
-    let value = rest.trim_end().trim_end_matches(',');
-    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+    let value = rest.trim_end();
+    let value = value.strip_suffix(',').unwrap_or(value);
+    !value.is_empty()
+        && (value == "0" || !value.starts_with('0'))
+        && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 /// In pretty `check.json`, mask `"line": N` when the nearest preceding
@@ -1903,6 +1906,12 @@ fn mask_test_lines_in_check_json(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for chunk in text.split_inclusive('\n') {
         let trimmed = chunk.trim_start();
+        // A `file` only governs the `line` in its own object: leaving or
+        // entering an object ends it, so a later `line` with no `file` of its
+        // own stays compared.
+        if trimmed.starts_with('}') || trimmed.trim_end().ends_with('{') {
+            last_file_is_test = false;
+        }
         if let Some(value) = trimmed.strip_prefix("\"file\": \"") {
             let name = value.split('"').next().unwrap_or("");
             last_file_is_test = ends_with_test_file(name);
@@ -4041,7 +4050,7 @@ mod tests {
                 );
             }
             if surface == "check.json" {
-                for broken in ["null", "\"7\"", "7x", "-7", ""] {
+                for broken in ["null", "\"7\"", "7x", "-7", "07", "7,,", ""] {
                     let invalid = moved.replace(
                         "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 7",
                         &format!(
@@ -4057,6 +4066,24 @@ mod tests {
                         "a test line of `{broken}` is drift, not a masked line"
                     );
                 }
+                // A `line` in a later object with no `file` of its own is not
+                // governed by the earlier test-file object.
+                let closed =
+                    "{\n  \"file\": \"tests/a.test.ts\",\n  \"line\": 3\n},\n{\n  \"line\": ";
+                assert_ne!(
+                    mask_test_lines_in_check_json(&format!("{closed}3\n}}")),
+                    mask_test_lines_in_check_json(&format!("{closed}4\n}}")),
+                    "a bare line after a closed test-file object stays compared"
+                );
+                assert_eq!(
+                    mask_test_lines_in_check_json(
+                        "{\n  \"file\": \"tests/a.test.ts\",\n  \"line\": 3\n}"
+                    ),
+                    mask_test_lines_in_check_json(
+                        "{\n  \"file\": \"tests/a.test.ts\",\n  \"line\": 4\n}"
+                    ),
+                    "a test-file line inside its own object is masked"
+                );
                 let source_moved = shift(&moved, "\"line\": 2", "\"line\": 3");
                 assert_ne!(
                     source_moved, moved,
