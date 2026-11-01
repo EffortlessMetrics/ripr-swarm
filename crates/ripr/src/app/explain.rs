@@ -24,6 +24,7 @@ fn render_selected(
     context_command: &str,
     root: &Path,
     files: Option<&[Option<std::path::PathBuf>]>,
+    suppressed: bool,
 ) -> String {
     match format {
         ExplainFormat::Human => output::human::render_finding_with_context_command_and_files(
@@ -33,7 +34,9 @@ fn render_selected(
             root,
             files,
         ),
-        ExplainFormat::Agent => output::human::render_finding_agent(finding, root, context_command),
+        ExplainFormat::Agent => {
+            output::human::render_finding_agent(finding, root, context_command, suppressed)
+        }
     }
 }
 
@@ -138,6 +141,12 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
             &navigation.context_command(selector),
             &output.root,
             output.source_value_files(finding),
+            output.suppression.as_ref().is_some_and(|outcome| {
+                outcome
+                    .suppressed
+                    .iter()
+                    .any(|entry| entry.finding_id == finding.id)
+            }),
         )),
         FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
             selector,
@@ -460,6 +469,9 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
             // location renders against it like every fresh route (#5996).
             &input.root,
             None,
+            // `--from` replay applies no suppression policy; the CLI refuses
+            // the agent format when one is supplied (fail closed).
+            false,
         )),
         FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
             selector,

@@ -105,13 +105,38 @@ pub(super) fn render(
 /// finding: no classification, ranking or validator of its own, and no runtime
 /// claim. `context_command` is the navigation's scope-bound `ripr context`
 /// route for this finding.
-pub(super) fn render_finding(finding: &Finding, root: &Path, context_command: &str) -> String {
+pub(super) fn render_finding(
+    finding: &Finding,
+    root: &Path,
+    context_command: &str,
+    suppressed: bool,
+) -> String {
     let mut out = format!(
         "#ripr explain agent static-advisory class={}\n",
         finding.class.as_str()
     );
     let weak_row = triage::weak_assertion_row(finding);
-    let (terminal, test) = if is_test_side_gap(finding) {
+    let currentness = finding.source_currentness_disclosure();
+    let (terminal, test) = if suppressed {
+        // A policy-suppressed finding is never an actionable gap or a
+        // `done=` claim; `check` drops it from triage the same way.
+        (
+            "stop=this finding is suppressed by policy; no test-side action is offered",
+            None,
+        )
+    } else if let Some(reason) = currentness.as_deref() {
+        // Fail closed: a base-deleted, moved or unresolved finding is not a
+        // candidate edit target, so it is neither `open=` nor `done=`.
+        return finish_stop(
+            out,
+            finding,
+            root,
+            context_command,
+            &format!(
+                "stop=this finding is not a current edit target ({reason}); nothing is offered from the test side"
+            ),
+        );
+    } else if is_test_side_gap(finding) {
         (
             "open=a test-side gap remains: no related test is shown to notice this change; static advisory, not runtime proof",
             strongest_test(finding),
@@ -149,6 +174,23 @@ pub(super) fn render_finding(finding: &Finding, root: &Path, context_command: &s
     {
         out.push_str(&format!("limit={}\n", field(&name)));
     }
+    out.push_str(terminal);
+    out.push('\n');
+    out.push_str(&format!("next={context_command}\n"));
+    out
+}
+
+/// Terminal `stop=` rendering for a finding that is not a current edit target:
+/// the record and `next=` stay, but no related test is offered.
+fn finish_stop(
+    mut out: String,
+    finding: &Finding,
+    root: &Path,
+    context_command: &str,
+    terminal: &str,
+) -> String {
+    out.push_str(&gap_line(root, finding, None, false));
+    out.push('\n');
     out.push_str(terminal);
     out.push('\n');
     out.push_str(&format!("next={context_command}\n"));

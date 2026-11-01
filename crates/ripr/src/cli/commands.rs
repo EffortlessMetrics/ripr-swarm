@@ -3339,6 +3339,12 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // `explain` has no machine output format (its stdout is the human or
     // markdown explanation), so only `--quiet` / `RIPR_QUIET` silence it; the
     // machine-format default that `check` and `pilot` adopt has nothing to key on.
+    if from_artifact.is_some()
+        && input.suppression_policy.is_some()
+        && format == app::ExplainFormat::Agent
+    {
+        return Err("`ripr explain --format agent` cannot apply `--suppression-policy` to a `--from` replay, so a suppressed finding could print as open; drop `--from` or `--suppression-policy`".to_string());
+    }
     let progress = (!crate::cli::progress::progress_silenced(quiet, false)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),

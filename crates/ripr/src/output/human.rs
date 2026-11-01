@@ -1386,8 +1386,14 @@ pub(crate) fn render_finding_agent(
     finding: &Finding,
     root: &Path,
     context_command: &str,
+    suppressed: bool,
 ) -> String {
-    terminal_safe(agent::render_finding(finding, root, context_command))
+    terminal_safe(agent::render_finding(
+        finding,
+        root,
+        context_command,
+        suppressed,
+    ))
 }
 
 pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};

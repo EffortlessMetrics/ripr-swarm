@@ -3270,6 +3270,88 @@ fn explain_format_agent_prints_compact_lines_and_json_is_refused() -> Result<(),
     Ok(())
 }
 
+/// #12104: the `--from` replay path prints the same agent lines, and its
+/// `next=` context command is runnable and succeeds against the same artifact.
+#[test]
+fn explain_format_agent_from_artifact_replays_the_context_next_command() -> Result<(), String> {
+    let (root, diff) =
+        agent_brief_sample_workspace("explain-agent-from").map_err(|err| err.to_string())?;
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+    let artifact = root.join("check-artifact.json");
+    let artifact_arg = artifact.display().to_string();
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--diff",
+        &diff_arg,
+        "--mode",
+        "draft",
+        "--write-artifact",
+        &artifact_arg,
+    ]);
+    assert_success(&check);
+    let stdout = String::from_utf8_lossy(&check.stdout);
+    let selector = stdout
+        .lines()
+        .find(|line| line.starts_with("  ripr explain "))
+        .and_then(|line| line.split_whitespace().find(|t| t.starts_with("probe:")))
+        .ok_or_else(|| format!("check output omitted a probe selector:\n{stdout}"))?
+        .to_string();
+    let args = [
+        "explain",
+        "--root",
+        &root_arg,
+        "--diff",
+        &diff_arg,
+        "--mode",
+        "draft",
+        "--from",
+        &artifact_arg,
+        "--format",
+        "agent",
+        selector.as_str(),
+    ];
+    let replay = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args)
+        .map_err(|err| format!("run explain --from --format agent: {err}"))?;
+    assert_success(&replay);
+    let text = String::from_utf8_lossy(&replay.stdout).to_string();
+    assert!(
+        text.starts_with("#ripr explain agent static-advisory"),
+        "{text}"
+    );
+    let next = text
+        .lines()
+        .find_map(|l| l.strip_prefix("next="))
+        .ok_or_else(|| format!("no next= line:\n{text}"))?;
+    assert!(next.starts_with("ripr context "), "{next}");
+    assert!(
+        next.contains("--from"),
+        "replay next= must keep the artifact: {next}"
+    );
+    assert!(next.contains("--at"), "{next}");
+    // The printed command is runnable: swap in the same typed argv (the display
+    // line is shell-quoted, so it is not split into argv here, #2816).
+    let context_args = [
+        "context",
+        "--root",
+        &root_arg,
+        "--diff",
+        &diff_arg,
+        "--mode",
+        "draft",
+        "--from",
+        &artifact_arg,
+        "--at",
+        selector.as_str(),
+    ];
+    let context = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &context_args)
+        .map_err(|err| format!("run context: {err}"))?;
+    assert_success(&context);
+    Ok(())
+}
+
 #[test]
 fn check_json_output_has_stable_contract_fields() -> sample_output::TestResult {
     let fixture = sample_output::Fixture::new()?;

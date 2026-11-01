@@ -487,6 +487,7 @@ fn explained(finding: &Finding) -> String {
         finding,
         std::path::Path::new("repo"),
         "ripr context --root repo --at probe:a",
+        false,
     )
 }
 
@@ -573,4 +574,46 @@ fn explain_agent_record_cannot_be_forged_and_stays_static() {
         let word = parts.concat();
         assert!(!text.contains(&word), "{word} in {text}");
     }
+}
+
+#[test]
+fn explain_agent_non_current_findings_fail_closed_with_a_currentness_stop() {
+    for currentness in [
+        SourceCurrentness::BaseDeleted,
+        SourceCurrentness::MovedOrRenamed,
+        SourceCurrentness::UnresolvedSubject,
+    ] {
+        for class in [ExposureClass::Exposed, ExposureClass::WeaklyExposed] {
+            let mut f = weak_gap("probe:old", 5);
+            f.class = class;
+            f.source_currentness = currentness;
+            let text = explained(&f);
+            assert!(
+                text.contains("\nstop=this finding is not a current edit target ("),
+                "{currentness:?} {class:?}: {text}"
+            );
+            assert!(text.contains(currentness.as_str()), "{text}");
+            assert!(!text.contains("done=") && !text.contains("open="), "{text}");
+            assert!(text.contains("|test=-|"), "{text}");
+        }
+    }
+}
+
+#[test]
+fn explain_agent_suppressed_gap_is_not_open_but_unsuppressed_is() {
+    let gap = weak_gap("probe:a", 2);
+    let ctx = "ripr context --at probe:a";
+    let root = std::path::Path::new("repo");
+    let open = render_finding(&gap, root, ctx, false);
+    let suppressed = render_finding(&gap, root, ctx, true);
+    assert!(open.contains("\nopen="), "{open}");
+    assert!(
+        suppressed.contains("\nstop=this finding is suppressed by policy"),
+        "{suppressed}"
+    );
+    assert!(
+        !suppressed.contains("open=") && !suppressed.contains("done="),
+        "{suppressed}"
+    );
+    assert!(suppressed.contains("|test=-|"), "{suppressed}");
 }
