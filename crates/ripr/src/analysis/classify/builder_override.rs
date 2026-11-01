@@ -21,10 +21,14 @@
 //! the field ([`setter_plainly_writes`]; a name alone proves nothing, since
 //! `with_attempts(n)` may add or clamp), a reassignment `b = b.field(arg)`, or a field
 //! assignment `b.field = value` after the binding's `let`. Setter calls inside
-//! arguments, a setter whose result is discarded (`b.with_field(5);`), and
+//! arguments, a setter whose result is discarded (`b.with_field(5);`), a
+//! non-setter chained after the setter
+//! (`RetryBuilder::new().attempts(5).reset().build()`), and
 //! anything the tree cannot tie to the owner leave the token confirming, and
 //! so does any other later statement that touches the binding
-//! (`b.reset();`, `if c { b = .. }`, `let r = &mut b;`).
+//! (`b.reset();`, `if c { b = .. }`, `let r = &mut b;`). The conventional
+//! zero-argument `.build()` terminal is the copy-through conversion to the
+//! owner's result and does not by itself withhold override credit.
 
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{
@@ -367,6 +371,19 @@ enum ValueState {
     Unknown,
 }
 
+/// Whether a setter of `field` is on the receiver chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChainWrite {
+    /// A verified setter of `field` is on the chain, and no later
+    /// non-terminal method sits outside it.
+    Setter,
+    /// No setter of `field` is on the chain.
+    None,
+    /// A non-setter method sits after a setter, so override credit is
+    /// withheld (fail closed: no gap).
+    Unknown,
+}
+
 /// Follows `expression`'s method-call receiver chain back to the owner call,
 /// directly or through `let` bindings among `visible` (the statements that
 /// run before it, nearest last). Only receivers are followed: a setter inside
@@ -378,7 +395,11 @@ fn value_state(
     field: &str,
     hops: usize,
 ) -> ValueState {
-    let (root, setter_on_chain) = chain_root(expression, owner, field);
+    let (root, chain) = chain_root(expression, owner, field);
+    if matches!(chain, ChainWrite::Unknown) {
+        return ValueState::Unknown;
+    }
+    let setter_on_chain = matches!(chain, ChainWrite::Setter);
     let combine = |state: ValueState, written: bool| match state {
         ValueState::Unknown => ValueState::Unknown,
         _ if written => ValueState::Overridden,
@@ -418,14 +439,26 @@ fn value_state(
 }
 
 /// The root of `expression`'s receiver chain (through method calls, parens
-/// and `?`), and whether a setter of `field` is on the chain.
-fn chain_root(expression: &ast::Expr, owner: OwnerCall<'_>, field: &str) -> (ast::Expr, bool) {
+/// and `?`), and whether a setter of `field` is on the chain. Walking from
+/// the outermost call inward, a non-setter other than the copy-through
+/// terminal that is seen before the setter is found sits *after* that setter
+/// in source order and makes the chain [`ChainWrite::Unknown`].
+fn chain_root(
+    expression: &ast::Expr,
+    owner: OwnerCall<'_>,
+    field: &str,
+) -> (ast::Expr, ChainWrite) {
     let mut current = expression.clone();
     let mut setter = false;
+    let mut later_non_terminal = false;
     loop {
         let next = match &current {
             ast::Expr::MethodCallExpr(call) => {
-                setter |= is_setter(call, owner, field);
+                if is_setter(call, owner, field) {
+                    setter = true;
+                } else if !is_copy_through_terminal(call) && !setter {
+                    later_non_terminal = true;
+                }
                 call.receiver()
             }
             ast::Expr::ParenExpr(paren) => paren.expr(),
@@ -434,9 +467,33 @@ fn chain_root(expression: &ast::Expr, owner: OwnerCall<'_>, field: &str) -> (ast
         };
         match next {
             Some(next) => current = next,
-            None => return (current, setter),
+            None => {
+                let write = if later_non_terminal && setter {
+                    ChainWrite::Unknown
+                } else if setter {
+                    ChainWrite::Setter
+                } else {
+                    ChainWrite::None
+                };
+                return (current, write);
+            }
         }
     }
+}
+
+/// The conventional builder terminal whose body copies fields onto the
+/// owner's result (`RetryBuilder::new().attempts(5).build()`). It is not a
+/// setter of `field`, but it also does not sit *after* the setter as a
+/// later mutation: it is the conversion that produces the value being read.
+/// A zero-argument `.build()` is recognized here from the call site; other
+/// names fail closed as unknown later methods. Indexed-body proof of that
+/// copy lives with setter verification and is not required to exempt this
+/// one terminal spelling.
+fn is_copy_through_terminal(call: &ast::MethodCallExpr) -> bool {
+    call.name_ref().is_some_and(|name| name.text() == "build")
+        && call
+            .arg_list()
+            .is_some_and(|arguments| arguments.args().next().is_none())
 }
 
 /// The setter-shaped method names for `field`: `field`, `with_field`,
@@ -553,13 +610,16 @@ fn binding_writes(
         };
         match target {
             ast::Expr::PathExpr(path) if single_identifier(&path).as_deref() == Some(binding) => {
-                let (root, setter) = chain_root(&value, owner, field);
+                let (root, chain) = chain_root(&value, owner, field);
+                if matches!(chain, ChainWrite::Unknown) {
+                    return None;
+                }
                 let rooted = matches!(&root, ast::Expr::PathExpr(path)
                     if single_identifier(path).as_deref() == Some(binding));
                 if !rooted {
                     return None;
                 }
-                written |= setter;
+                written |= matches!(chain, ChainWrite::Setter);
             }
             ast::Expr::FieldExpr(target)
                 if target.name_ref().is_some_and(|name| name.text() == field)
@@ -2755,6 +2815,28 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn method_after_verified_setter_is_not_an_override() {
+        // `.reset()` sits after the setter and may restore the default; fail
+        // closed (no override credit) rather than a false weakly_exposed gap.
+        assert!(
+            overridden(
+                "    let retry = RetryBuilder::new().attempts(5).reset().build();\n    assert_eq!(retry.attempts, 5);"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn method_before_verified_setter_is_still_an_override() {
+        assert_eq!(
+            overridden(
+                "    let retry = RetryBuilder::new().reset().attempts(5).build();\n    assert_eq!(retry.attempts, 5);"
+            ),
+            attempts()
+        );
     }
 
     #[test]

@@ -19,7 +19,7 @@ Start here:
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and
-    observes the changed behavior so a discriminator exists
+    observes the changed behavior so an assertion can notice if it is wrong
   Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -38,7 +38,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast probe:src_lib.rs:call_deletion:289dd551
   ripr context --root <cwd>/fixtures/harness_dead_construction_no_exposed_credit/input --diff <cwd>/fixtures/harness_dead_construction_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:289dd551
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: ripr found 3 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.

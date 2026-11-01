@@ -4222,7 +4222,7 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
         .as_deref()
         .ok_or_else(|| "expected recommended next step".to_string())?;
     assert!(
-        recommended.contains("broad error evidence does not establish missing discriminator")
+        recommended.contains("broad error evidence does not establish the missing check")
             && recommended.contains("no actionable repair packet is emitted"),
         "expected broad-error advisory recommendation, got {recommended:?}"
     );
@@ -4231,6 +4231,53 @@ fn typescript_preview_weak_oracle_guidance_keeps_broad_error_advisory() -> Resul
         "broad error preview guidance should not ask for an exact-value assertion: {recommended:?}"
     );
     Ok(())
+}
+
+/// #12124: the default check screen prints this text as the Next step, so
+/// every oracle kind names the gap as "the missing check" and none leaks the
+/// internal term; the packet boundary sentence stays.
+#[test]
+fn weak_oracle_recommendation_uses_plain_words_for_every_kind() {
+    for kind in [
+        OracleKind::Snapshot,
+        OracleKind::SmokeOnly,
+        OracleKind::BroadError,
+        OracleKind::ExactValue,
+    ] {
+        let recommended = weak_oracle_recommendation(&kind, "amount == threshold", None);
+        assert!(
+            recommended.contains("the missing check `amount == threshold`"),
+            "{kind:?}: {recommended}"
+        );
+        assert!(
+            !recommended.to_lowercase().contains("discriminator"),
+            "{kind:?}: {recommended}"
+        );
+        assert!(
+            recommended.contains("no actionable repair packet is emitted"),
+            "{kind:?}: {recommended}"
+        );
+    }
+    // Mock expectations have their own two wordings (no payload / payload).
+    for payload in [None, Some("toHaveBeenCalledWith(5)")] {
+        let recommended = weak_oracle_recommendation(
+            &OracleKind::MockExpectation,
+            "amount == threshold",
+            payload,
+        );
+        assert!(
+            recommended.contains("`amount == threshold`"),
+            "{recommended}"
+        );
+        assert!(
+            !recommended.to_lowercase().contains("discriminator"),
+            "{payload:?}: {recommended}"
+        );
+        assert!(
+            recommended.contains("no actionable repair packet is emitted"),
+            "{payload:?}: {recommended}"
+        );
+    }
 }
 
 #[test]
@@ -4274,7 +4321,7 @@ fn typescript_preview_weak_oracle_guidance_distinguishes_mock_payload_limits() -
         .as_deref()
         .ok_or_else(|| "expected recommended next step".to_string())?;
     assert!(
-        recommended.contains("mock payloads are not yet a safe discriminator"),
+        recommended.contains("mock payloads are not yet a safe check"),
         "expected mock-payload recommendation, got {recommended:?}"
     );
     assert!(
@@ -20206,6 +20253,7 @@ mod directory_specifier_tests;
 mod dropped_term_tests;
 mod enum_member_tests;
 mod error_payload_tests;
+mod floating_promise_tests;
 mod function_reference_callback_tests;
 mod gap_reach_config_tests;
 mod guard_entry_tests;

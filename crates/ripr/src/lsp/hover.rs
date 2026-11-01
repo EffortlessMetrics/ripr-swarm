@@ -691,6 +691,10 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
     let mut lines = vec![hover_header(&classification), String::new()];
     push_preview_boundary(&mut lines, finding);
     push_preview_actionability(&mut lines, finding);
+    if let Some(disclosure) = finding.source_currentness_disclosure() {
+        lines.push(format!("**Source:** {disclosure}"));
+        lines.push(String::new());
+    }
     lines.extend([
         diagnostic.message.clone(),
         String::new(),
@@ -2683,6 +2687,47 @@ mod top_limitation_parity_tests {
     }
 
     #[test]
+    fn a_base_side_finding_is_never_offered_as_a_repair_route_on_any_surface() -> Result<(), String>
+    {
+        // #11821: a finding whose source is not a candidate edit target
+        // (`base_deleted`) must not become a stronger route on any surface.
+        let mut finding = test_finding()?;
+        finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+
+        let item = GapItem::from_finding(&finding, Path::new("."))?;
+        let document = item.limitation_document("snap");
+        let kind = document
+            .pointer("/limitation/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("no limitation kind: {document}"))?;
+        assert_eq!(kind, "not_candidate_actionable");
+        assert_ne!(
+            document
+                .pointer("/limitation/stage")
+                .and_then(Value::as_str),
+            Some("none"),
+            "a base-side item must carry a limitation on MCP"
+        );
+
+        let cli = crate::output::human::render_finding(&finding);
+        assert!(
+            cli.contains("base_deleted \u{2014} base-side evidence, not a candidate edit target"),
+            "the CLI must say the source is not a candidate edit target:\n{cli}"
+        );
+
+        let hover = hover_text(&finding);
+        assert!(
+            hover.contains("no bounded repair instruction available"),
+            "hover must not offer a repair instruction for a base-side item:\n{hover}"
+        );
+        assert!(
+            !hover.contains("ripr repair"),
+            "hover must not offer a repair command for a base-side item:\n{hover}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_limited_finding_never_reads_as_repair_ready_on_any_surface() -> Result<(), String> {
         let mut finding = test_finding()?;
         finding.static_limit_kind = Some(StaticLimitKind::UnsupportedSyntax);
@@ -2700,5 +2745,47 @@ mod top_limitation_parity_tests {
             "hover must disclose the same limit the MCP result names:\n{hover}"
         );
         Ok(())
+    }
+
+    /// A ledger-derived limitation item (no repair route, analyzer limitation)
+    /// reaches the editor through two stored-field readers: hover and the
+    /// code-action note. They must name the same kind and detail, and neither
+    /// may turn the limitation into a repair offer.
+    #[test]
+    fn a_ledger_limitation_reads_the_same_in_hover_and_the_code_action_note() {
+        let data = serde_json::json!({
+            "source": "gap_decision_ledger",
+            "gap_state": "static_limitation",
+            "repairability": "analyzer_limitation",
+            "static_limit_kind": "rust_assertion_context_unresolved",
+            "static_limit_detail": "The assertion macro could not be read.",
+            "repair_route": Value::Null,
+        });
+        let diagnostic = Diagnostic {
+            source: Some("ripr".to_string()),
+            message: "limited".to_string(),
+            data: Some(data.clone()),
+            ..Diagnostic::default()
+        };
+        let hover = gap_diagnostic_hover_markdown(&diagnostic, &data);
+        let note = crate::lsp::actions::static_limit_note(&data).unwrap_or_default();
+        for surface in [&hover, &note] {
+            assert!(
+                surface.contains("Static limit: rust_assertion_context_unresolved"),
+                "kind missing:\n{surface}"
+            );
+            assert!(
+                surface.contains("The assertion macro could not be read."),
+                "stored detail missing:\n{surface}"
+            );
+            assert!(
+                !surface.contains("ripr repair"),
+                "a limitation must not offer a repair command:\n{surface}"
+            );
+        }
+        assert!(
+            note.contains("Boundary: static evidence only; advisory action."),
+            "the code-action note keeps its advisory boundary:\n{note}"
+        );
     }
 }

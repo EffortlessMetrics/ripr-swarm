@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_call_chain_literal_input/input
 
-Summary: 2 changed behavior(s) checked: 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 1 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
+Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 2 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
   only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
   no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
@@ -14,12 +14,14 @@ Analysis outcome: findings below (analysis complete; complete_with_findings)
 
 Shared evidence and guidance
   E1 [findings 1, 2]: reach yes: Related tests appear to reach is_adult: adults_are_adults
-  E2 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
-  E3 [findings 1, 2]: local flow reaches returned value: age >= 18 (line 2)
-  E4 [findings 1, 2]: related test tests/api.rs:11 adults_are_adults uses strong exact value oracle: assert_eq!(is_adult(age_from_env(18)), true);
-  E5 [findings 1, 2]: related test tests/api.rs:11 adults_are_adults uses strong exact value oracle: assert_eq!(is_adult(age_from_env(30)), true);
-  E6 [findings 1, 2]: source assertion argument value true at line 12
-  E7 [findings 1, 2]: source assertion argument value true at line 13
+  E2 [findings 1, 2]: infection unknown: Changed boundary input is unresolved: a related test passes `age` the result of a call (`age_from_env(18)`), whose value ripr does not evaluate statically, so it cannot tell which side of the boundary that call reaches; activation/infection is unknown
+  E3 [findings 1, 2]: observation yes: A related test observes a value or effect near the changed behavior
+  E4 [findings 1, 2]: discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
+  E5 [findings 1, 2]: local flow reaches returned value: age >= 18 (line 2)
+  E6 [findings 1, 2]: related test tests/api.rs:11 adults_are_adults uses strong exact value oracle: assert_eq!(is_adult(age_from_env(18)), true);
+  E7 [findings 1, 2]: related test tests/api.rs:11 adults_are_adults uses strong exact value oracle: assert_eq!(is_adult(age_from_env(30)), true);
+  E8 [findings 1, 2]: source assertion argument value true at line 12
+  E9 [findings 1, 2]: source assertion argument value true at line 13
 
 Finding 1: WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:596620ae
@@ -35,12 +37,9 @@ Change type
 Static exposure
   infection_unknown (warning, confidence 0.66)
 Evidence
-  shared evidence: E1
-  - infection unknown: Changed boundary input is unresolved: a related test passes `age` the result of a call (`age_from_env(18)`), whose value ripr does not evaluate statically, so it cannot tell which side of the boundary that call reaches; activation/infection is unknown
+  shared evidence: E1, E2
   - propagation yes: Changed behavior appears to influence returned value: age >= 18
-  shared evidence: E2
-  - discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
-  shared evidence: E3, E4, E5, E6, E7
+  shared evidence: E3, E4, E5, E6, E7, E8, E9
 Weakness
   - Changed boundary input is unresolved: a related test passes `age` the result of a call (`age_from_env(18)`), whose value ripr does not evaluate statically, so it cannot tell which side of the boundary that call reaches; activation/infection is unknown
   - No detected boundary input for the changed predicate
@@ -53,7 +52,7 @@ Drill in:
   ripr explain --root <cwd>/fixtures/rust_call_chain_literal_input/input --diff <cwd>/fixtures/rust_call_chain_literal_input/diff.patch --mode fast probe:src_lib.rs:predicate:596620ae
   ripr context --root <cwd>/fixtures/rust_call_chain_literal_input/input --diff <cwd>/fixtures/rust_call_chain_literal_input/diff.patch --mode fast --at probe:src_lib.rs:predicate:596620ae
 
-Finding 2: INFO ./src/lib.rs:2
+Finding 2: WARNING ./src/lib.rs:2
   id: probe:src_lib.rs:return_value:fed8ac90
 Changed
   before: age > 18
@@ -65,14 +64,18 @@ Change type
   owner:  src/lib.rs::is_adult
   gap id (for scripts): gap:rust:src/lib.rs:is_adult:return_value:return_value:age>=18
 Static exposure
-  exposed (info, confidence 1.00)
+  infection_unknown (warning, confidence 0.66)
 Evidence
-  shared evidence: E1
-  - infection yes: Reachable tests can plausibly activate this changed behavior
+  shared evidence: E1, E2
   - propagation yes: Complete propagation witness reaches returned value: age >= 18
-  shared evidence: E2
-  - discriminator yes: Strong oracle found: exact value or pattern assertion
-  shared evidence: E3, E4, E5, E6, E7
+  shared evidence: E3, E4, E5, E6, E7, E8, E9
+Weakness
+  - Changed boundary input is unresolved: a related test passes `age` the result of a call (`age_from_env(18)`), whose value ripr does not evaluate statically, so it cannot tell which side of the boundary that call reaches; activation/infection is unknown
+Stop reasons:
+  - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
+    Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
+Next step
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_call_chain_literal_input/input --diff <cwd>/fixtures/rust_call_chain_literal_input/diff.patch --mode fast probe:src_lib.rs:return_value:fed8ac90
   ripr context --root <cwd>/fixtures/rust_call_chain_literal_input/input --diff <cwd>/fixtures/rust_call_chain_literal_input/diff.patch --mode fast --at probe:src_lib.rs:return_value:fed8ac90

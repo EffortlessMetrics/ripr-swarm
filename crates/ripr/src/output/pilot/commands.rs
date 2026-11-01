@@ -182,6 +182,10 @@ pub(super) fn suggested_retry_timeout_ms(spent_ms: u64) -> u64 {
 pub(super) struct PilotCommands {
     pub(super) after_snapshot: String,
     pub(super) outcome: String,
+    /// #12108: set only when `repo-exposure.json` was byte-bounded. That file
+    /// is not a comparable `ripr outcome` baseline, so the route names a
+    /// full baseline to capture before the repair instead.
+    pub(super) before_snapshot: Option<String>,
     pub(super) retry: String,
 }
 
@@ -213,10 +217,21 @@ impl PilotCommands {
             context.mode.as_str(),
             &loop_commands::root_path_display(&after_path),
         );
+        let bounded = context.repo_exposure_byte_bound.is_some();
+        let before_path = out_dir.join("before.repo-exposure.json");
+        let before_snapshot = bounded.then(|| {
+            loop_commands::check_repo_exposure_command(
+                &command_root,
+                context.mode.as_str(),
+                &loop_commands::root_path_display(&before_path),
+            )
+        });
         let outcome = loop_commands::outcome_command(
-            &loop_commands::root_path_display(&loop_commands::bound_root_path(
-                &context.artifacts.repo_exposure_json,
-            )),
+            &loop_commands::root_path_display(&if bounded {
+                before_path.clone()
+            } else {
+                loop_commands::bound_root_path(&context.artifacts.repo_exposure_json)
+            }),
             &loop_commands::root_path_display(&after_path),
             None,
         );
@@ -232,6 +247,7 @@ impl PilotCommands {
         Self {
             after_snapshot,
             outcome,
+            before_snapshot,
             retry,
         }
     }

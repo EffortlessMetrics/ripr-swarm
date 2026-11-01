@@ -28,16 +28,21 @@ pub(super) fn extract_owners(file: &Path, source: &str) -> Vec<PythonOwner> {
     extract_source_facts(file, source).owners
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "owner collection mirrors the per-file extraction inputs; the function-context input names the enclosing def for nested owners"
+)]
 pub(super) fn collect_owners_from_statements(
     file: &Path,
     source: &SourceText<'_>,
     statements: &[Stmt],
     class_context: Option<&str>,
+    function_context: Option<&str>,
     imports: &[PythonImport],
     module_constants: &[PythonModuleConstant],
     out: &mut Vec<PythonOwner>,
 ) {
-    let function_context = PythonOwnerContext {
+    let owner_context = PythonOwnerContext {
         file,
         source,
         class_context,
@@ -46,10 +51,10 @@ pub(super) fn collect_owners_from_statements(
     };
     // A definition under a statically decided module-level `if` runs on every
     // interpreter, so it is an owner like a top-level one (#9423).
-    if class_context.is_none() {
+    if class_context.is_none() && function_context.is_none() {
         for stmt in live_conditional_functions(source, statements) {
             let first = out.len();
-            push_function_owner(stmt, function_context, out);
+            push_function_owner(stmt, owner_context, out);
             for owner in &mut out[first..] {
                 owner.version_conditional = true;
             }
@@ -57,8 +62,55 @@ pub(super) fn collect_owners_from_statements(
     }
     for stmt in statements {
         match stmt {
-            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) => {
-                push_function_owner(stmt, function_context, out);
+            Stmt::FunctionDef(function) => {
+                push_function_owner(stmt, owner_context, out);
+                if let Some(parent) = function_context {
+                    let called = body_calls_nested_def(source, statements, &function.name);
+                    if let Some(owner) = out.last_mut() {
+                        owner.qualified_name = format!("{parent}.{}", function.name);
+                        owner.owner_kind = Some(OwnerKind::Function);
+                        owner.nested_called_by_parent = called;
+                    }
+                }
+                let parent_qualified = out
+                    .last()
+                    .map(|owner| owner.qualified_name.clone())
+                    .unwrap_or_default();
+                collect_owners_from_statements(
+                    file,
+                    source,
+                    &function.body,
+                    class_context,
+                    Some(parent_qualified.as_str()),
+                    imports,
+                    module_constants,
+                    out,
+                );
+            }
+            Stmt::AsyncFunctionDef(function) => {
+                push_function_owner(stmt, owner_context, out);
+                if let Some(parent) = function_context {
+                    let called = body_calls_nested_def(source, statements, &function.name);
+                    if let Some(owner) = out.last_mut() {
+                        owner.qualified_name = format!("{parent}.{}", function.name);
+                        owner.owner_kind = Some(OwnerKind::Function);
+                        owner.nested_called_by_parent = called;
+                    }
+                }
+                let parent_qualified = out
+                    .last()
+                    .map(|owner| owner.qualified_name.clone())
+                    .unwrap_or_default();
+                collect_owners_from_statements(
+                    file,
+                    source,
+                    &function.body,
+                    class_context,
+                    Some(parent_qualified.as_str()),
+                    imports,
+                    module_constants,
+                    out,
+                );
             }
             Stmt::ClassDef(class) => {
                 let class_path = class_context.map_or_else(
@@ -71,6 +123,7 @@ pub(super) fn collect_owners_from_statements(
                     source,
                     &class.body,
                     Some(class_path.as_str()),
+                    None,
                     imports,
                     module_constants,
                     out,
@@ -148,6 +201,53 @@ struct PythonOwnerContext<'a> {
     class_context: Option<&'a str>,
     imports: &'a [PythonImport],
     module_constants: &'a [PythonModuleConstant],
+}
+
+/// Whether the statements that run when the enclosing function runs call the
+/// nested def `name` by name (#12141). `statements` is the enclosing body: the
+/// nested defs and classes in it are excluded, so a call from an unused
+/// sibling def, from the nested body itself or from a class body is not an
+/// edge from the enclosing function. A spaced call (`inner (n)`) counts. A
+/// body that rebinds the name (assignment, walrus, `for`, `as`, `import`)
+/// is fail-closed: the call may reach a different binding. Returning or
+/// passing the def without calling it is not a call.
+fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool {
+    let executed = statements
+        .iter()
+        .filter(|stmt| {
+            !matches!(
+                stmt,
+                Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_)
+            )
+        })
+        .map(|stmt| text_for_range(source, stmt.range()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ident = |ch: char| ch == '_' || ch.is_alphanumeric();
+    let mut calls = false;
+    let mut rebinds = false;
+    for (idx, _) in executed.match_indices(name) {
+        let end = idx + name.len();
+        let bounded = super::static_limits::python_callee_start_has_boundary(&executed, idx)
+            && executed[end..].chars().next().is_none_or(|ch| !ident(ch));
+        if !bounded {
+            continue;
+        }
+        let after = executed[end..].trim_start_matches([' ', '\t']);
+        let before = executed[..idx].trim_end_matches([' ', '\t']);
+        if after.starts_with('(') && super::related_tests::is_bare_call_site(&executed, idx) {
+            calls = true;
+        } else if (after.starts_with('=') && !after.starts_with("=="))
+            || after.starts_with(":=")
+            || matches!(
+                before.rsplit(char::is_whitespace).next(),
+                Some("as" | "for" | "import")
+            )
+        {
+            rebinds = true;
+        }
+    }
+    calls && !rebinds
 }
 
 fn owner_from_function(
@@ -289,6 +389,7 @@ fn owner_from_function(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 
@@ -393,6 +494,7 @@ fn owner_from_class(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 
@@ -432,6 +534,7 @@ pub(super) fn module_owner(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 
@@ -545,8 +648,9 @@ pub(super) fn collect_tests_from_statements(
     } else {
         Vec::new()
     };
-    for stmt in statements {
+    for (index, stmt) in statements.iter().enumerate() {
         apply_definition_import(file, stmt, &mut definition_imports);
+        let first_pushed = out.len();
         match stmt {
             Stmt::FunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
@@ -960,6 +1064,26 @@ pub(super) fn collect_tests_from_statements(
             }
             _ => {}
         }
+        // Pytest and unittest collect the last binding of a name in a scope:
+        // an earlier definition (or one later replaced by `name = None`) never
+        // runs.
+        let defined = match stmt {
+            Stmt::FunctionDef(function) => Some(function.name.as_str()),
+            Stmt::AsyncFunctionDef(function) => Some(function.name.as_str()),
+            Stmt::ClassDef(class) => Some(class.name.as_str()),
+            _ => None,
+        };
+        if let Some(defined) = defined
+            && super::test_activation::rebound_later(statements, index, defined, source)
+        {
+            for test in &mut out[first_pushed..] {
+                test.activation_controls.push(
+                    super::test_activation::shadowed_by_later_binding_control(
+                        super::test_activation::DeclarationSite::Function,
+                    ),
+                );
+            }
+        }
     }
 }
 
@@ -1355,6 +1479,11 @@ impl<'a> LocalTestClasses<'a> {
                         super::test_activation::DeclarationSite::Class,
                     )
                 }))
+                .chain(class_switched_off(&scope, name).then(|| {
+                    super::test_activation::test_switch_control(
+                        super::test_activation::DeclarationSite::Class,
+                    )
+                }))
                 .collect();
             found.class_activation_controls.insert(name, controls);
             let Some(mro) = scope.mro(name, &mut Vec::new()) else {
@@ -1528,6 +1657,43 @@ impl<'a> ScopeClasses<'a> {
             }
         }
         None
+    }
+}
+
+/// Whether `__test__ = False` (or an unevaluable binding) reaches `name`:
+/// pytest reads the attribute through the class hierarchy, so the first class
+/// along the MRO that binds it decides, and an intermediate literal `True`
+/// re-enables collection for its subclasses. When the MRO is unavailable or an
+/// external base precedes any binding, any ancestor that is not provably
+/// `True` counts (fail-closed).
+fn class_switched_off<'a>(scope: &ScopeClasses<'a>, name: &'a str) -> bool {
+    use super::test_activation::{TestSwitch, test_switch};
+    let switch_of = |key: &str| {
+        scope
+            .defs
+            .get(key)
+            .map(|(_, class)| test_switch(&class.body))
+    };
+    if let Some(mro) = scope.mro(name, &mut Vec::new()) {
+        for entry in &mro {
+            let MroEntry::Local(key) = entry else {
+                break;
+            };
+            match switch_of(key) {
+                Some(TestSwitch::Enabled) => return false,
+                Some(TestSwitch::Disabled) => return true,
+                _ => {}
+            }
+        }
+    }
+    let switches: Vec<TestSwitch> = scope
+        .ancestors_or_self(name)
+        .iter()
+        .filter_map(|ancestor| switch_of(ancestor))
+        .collect();
+    match switches.first() {
+        Some(TestSwitch::Enabled) => false,
+        _ => switches.contains(&TestSwitch::Disabled),
     }
 }
 

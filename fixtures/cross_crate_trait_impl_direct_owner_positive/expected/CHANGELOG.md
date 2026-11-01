@@ -114,3 +114,17 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (9)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+RIPR-SPEC-0094: a file-proximity test whose variant assertion reads a different indexed function (#11552) cannot confirm the arm; class unchanged (weakly_exposed), the discriminator summary now names why the doctest assertion on limit() cannot confirm the arm
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

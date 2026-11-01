@@ -229,24 +229,32 @@ async fn sdk_session(
             if &resource_status != status {
                 return Err("SDK tool and resource projected different status documents".into());
             }
-            for (request, code) in [
-                (
-                    CallToolRequestParams::new("ripr_everything"),
-                    rmcp::model::ErrorCode::INVALID_PARAMS,
-                ),
-                (
+            match client
+                .call_tool(CallToolRequestParams::new("ripr_everything"))
+                .await
+            {
+                Err(rmcp::service::ServiceError::McpError(error))
+                    if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {}
+                _ => return Err("SDK accepted an unknown tool".into()),
+            }
+            // A bad argument on a known tool is a typed tool failure the
+            // model can read (#11621), not a protocol error.
+            let refused = client
+                .call_tool(
                     CallToolRequestParams::new("ripr_workspace_status").with_arguments(
                         serde_json::Map::from_iter([("verbose".to_string(), Value::Bool(true))]),
                     ),
-                    rmcp::model::ErrorCode::INVALID_PARAMS,
-                ),
-            ] {
-                match client.call_tool(request).await {
-                    Err(rmcp::service::ServiceError::McpError(error)) if error.code == code => {}
-                    _ => {
-                        return Err("SDK accepted unknown tool or nonempty status arguments".into());
-                    }
-                }
+                )
+                .await
+                .map_err(|error| format!("SDK status arguments must be a tool result: {error}"))?;
+            let refused = serde_json::to_value(refused).map_err(|error| error.to_string())?;
+            if refused.get("isError") != Some(&Value::Bool(true))
+                || refused.pointer("/structuredContent/failure/code")
+                    != Some(&Value::String("invalid_argument".into()))
+            {
+                return Err(format!(
+                    "SDK accepted nonempty status arguments: {refused}"
+                ));
             }
             let expected_resource_code = if expected_version == ProtocolVersion::V_2026_07_28 {
                 -32602
