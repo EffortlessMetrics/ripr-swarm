@@ -11,6 +11,7 @@
 use super::*;
 
 mod partial_analysis;
+mod repo_seam_reports;
 
 pub(crate) const EVIDENCE_PROMOTION_HONESTY_CORPUS: &str =
     "fixtures/evidence-promotion-honesty-corpus/corpus.json";
@@ -4044,6 +4045,9 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
     let corpus_path = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS);
     let mut pure_violations = Vec::new();
     validate_evidence_promotion_honesty_corpus_at(corpus_path, &mut pure_violations)?;
+    // The repo-seam reports are hand-captured; regenerate each from its
+    // subject so a stale capture or an analyzer regression turns red (#12144).
+    repo_seam_reports::check_regenerated_reports(&mut pure_violations)?;
     let mut external_runs = Vec::new();
     if options.run_pinned_external {
         external_runs = run_evidence_promotion_pinned_external_cases(corpus_path, &options)?;

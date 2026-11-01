@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `check-evidence-promotion-honesty` now regenerates each repo-seam honesty report from its Cargo subject with the current binary and fails when a committed report's judged fields (seam set, grip class, stage states, related-test oracle strength) differ, so a stale capture or an analyzer regression turns the case red instead of passing on a stored file; the wrong-receiver snapshot case, whose report had been a copy of its sibling's, is recaptured (#12144).
