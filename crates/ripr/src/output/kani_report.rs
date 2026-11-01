@@ -95,7 +95,7 @@ mod tests {
                 .ok_or_else(|| format!("Kani projection is missing {pointer}"))? = marker.into();
         }
         let expected: serde_json::Value = serde_json::from_str(include_str!(
-            "../app/kani_import/fixtures/honesty-report-projection.json"
+            "../../../../fixtures/evidence-promotion-honesty-corpus/reports/kani-import-unattested.json"
         ))
         .map_err(|err| format!("read Kani honesty projection: {err}"))?;
         assert_eq!(actual, expected);

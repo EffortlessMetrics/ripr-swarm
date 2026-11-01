@@ -15,6 +15,6 @@ code = [
   "crates/ripr/src/output/kani_report.rs",
 ]
 fixtures = [
-  "crates/ripr/src/app/kani_import/fixtures/honesty-report-projection.json",
+  "fixtures/evidence-promotion-honesty-corpus/reports/kani-import-unattested.json",
   "fixtures/evidence-promotion-honesty-corpus/cases/kani-import-unattested.json",
 ]
