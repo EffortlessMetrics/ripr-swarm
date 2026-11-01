@@ -3154,6 +3154,24 @@ pub(crate) mod tests {
                 return Err(format!("unexpected stderr line {line:?}"));
             }
         }
+        // The command metadata's stop_states (the `help --json` surface) names
+        // every code of the enum, so a new code cannot ship without it.
+        let stop_text = crate::cli::command_metadata::metadata()
+            .iter()
+            .filter(|row| {
+                row.example.starts_with("ripr repair ") || row.example.starts_with("ripr continue")
+            })
+            .flat_map(|row| row.stop_states.iter().copied())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for code in RepairRefusalCode::ALL {
+            if !stop_text.contains(code.as_str()) {
+                return Err(format!(
+                    "repair/continue stop_states do not name `{}`",
+                    code.as_str()
+                ));
+            }
+        }
         // Retryable and terminal states are told apart by disposition alone.
         if RepairRefusalCode::AwaitingEdit.disposition() != RepairRefusalDisposition::Retryable
             || RepairRefusalCode::EditCageViolation.disposition()

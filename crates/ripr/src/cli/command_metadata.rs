@@ -1780,6 +1780,7 @@ const METADATA: &[CommandMetadata] = &[
             "no eligible seam prints the setup or limitation action instead of starting (stderr code no_eligible_seam)",
             "an explicit item that names no seam (item_names_no_seam), several seams (item_names_several_seams), or a seam that is not repair-eligible (seam_not_repair_eligible) starts nothing",
             "a start held by an uncommitted focused test file (start_refused_uncommitted_target) or with no test route (no_test_route) starts nothing",
+            "a bare `ripr repair` whose selector needs an explicit item (repair_needs_item) starts nothing",
         ],
         exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
         limitations: "records the before snapshot and packet for one subject; ripr never edits source files and never runs project verification from this command.",
@@ -1805,6 +1806,7 @@ const METADATA: &[CommandMetadata] = &[
         stop_states: &[
             "a receipt-ready attempt reports already-complete and exits 0, with or without --attempt (the newest attempt when none is named); one that ended without a receipt refuses with exit 3 (stderr code attempt_ended_without_receipt, or attempt_completion_unconfirmed when no compliant receipt confirms it)",
             "an attempt still awaiting the focused test edit refuses with exit 3 and code awaiting_edit; retry the same attempt after editing",
+            "an attempt that spent its after-phase retry budget refuses with exit 3 and code retry_budget_exhausted (terminal): start a fresh `ripr repair`",
             "no current attempt (no_current_attempt) or several (ambiguous_attempts) starts nothing",
             "an edit-cage violation exits 2 with code edit_cage_violation (attempt_stale or attempt_incomparable when HEAD moved or files cannot be compared): the attempt is terminal, start a fresh `ripr repair`",
         ],
