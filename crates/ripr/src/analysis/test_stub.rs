@@ -1612,7 +1612,7 @@ pub(crate) fn proof_obligation_for(seam: &RepoSeam) -> Option<ProofObligation> {
         ],
         property_skeleton: format!(
             "#[kani::proof] fn check_{name}_boundary() {{ /* bind {lhs} and {rhs} with kani::any(), \
-             kani::assume({lhs} == {rhs}), call {owner}, assert the exact result the spec requires */ }}",
+             kani::assume({lhs} == {rhs}), call {name}, assert the exact result the spec requires */ }}",
             name = owner.rsplit("::").next().unwrap_or(&owner),
         ),
         limits: vec![
