@@ -334,7 +334,13 @@ fn zero_record_foreign_check_preserves_the_input() -> Result<(), String> {
     );
     assert_eq!(other["selected"]["output_state"], "wrong_root", "{other}");
     assert_eq!(other_ledger["input_root"], printed(&a)?);
-    assert_eq!(other_ledger["root"], printed(&b)?);
+    // The ledger records the root as given, which is the native spelling.
+    assert_eq!(
+        other_ledger["root"]
+            .as_str()
+            .map(|root| root.replace('\\', "/")),
+        Some(printed(&b)?)
+    );
     assert!(
         other["commands"].get("regenerate_gap_ledger").is_none(),
         "{other}"
@@ -894,10 +900,14 @@ fn no_action_does_not_promote_unbound_or_stale_preview_check() -> Result<(), Str
     .map_err(|e| e.to_string())?;
     assert_eq!(
         ledger["input_root"],
-        text(&a)?,
+        printed(&a)?,
         "producer root must survive derivation: {ledger}"
     );
-    assert_eq!(ledger["root"], printed(&b)?);
+    // The ledger records its own root as given (native separators).
+    assert_eq!(
+        ledger["root"].as_str().map(|root| root.replace('\\', "/")),
+        Some(printed(&b)?)
+    );
     #[cfg(unix)]
     {
         // Execute the literal wrong-root inspection; it must use B's weak

@@ -1,3 +1,4 @@
+use super::init_agents;
 use crate::cli::commands_options::{InitCi, InitOptions};
 use crate::cli::help;
 use crate::cli::parse::expect_value;
@@ -219,7 +220,7 @@ fn non_git_root_warning_for_probe(
 
 /// What `ripr init` would do to one file.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum InitAction {
+pub(super) enum InitAction {
     /// The path does not exist; it would be created.
     Create,
     /// The path exists and `--force` was given; it would be replaced.
@@ -245,10 +246,10 @@ impl InitAction {
 }
 
 /// One file in the resolved plan, with the body that would be written.
-struct InitTarget {
-    path: PathBuf,
-    action: InitAction,
-    body: String,
+pub(super) struct InitTarget {
+    pub(super) path: PathBuf,
+    pub(super) action: InitAction,
+    pub(super) body: String,
 }
 
 /// Resolve what the run would do, or fail with the reason it cannot run.
@@ -276,17 +277,26 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     // written first, the run would half-initialize the repo before failing.
     // Checking every target up front also means a doomed run writes nothing.
     let mcp_path = options.mcp.then(|| options.root.join(MCP_CONFIG_FILE_NAME));
+    let cursor_mcp_path = (options.mcp && init_agents::wants_cursor(&options.agents))
+        .then(|| options.root.join(init_agents::CURSOR_MCP_FILE));
+    let agent_paths: Vec<PathBuf> = options
+        .agents
+        .iter()
+        .map(|agent| options.root.join(init_agents::instruction_file(*agent)))
+        .collect();
 
     for path in std::iter::once(&config_path)
         .chain(workflow_path.as_ref())
         .chain(mcp_path.as_ref())
+        .chain(cursor_mcp_path.as_ref())
+        .chain(agent_paths.iter())
     {
         ensure_creatable_parent(path)?;
     }
 
     // `--ci` and `--mcp` add files; they keep an existing ripr.toml rather
     // than refusing because it is already there.
-    let config_only = options.ci.is_none() && !options.mcp;
+    let config_only = options.ci.is_none() && !options.mcp && options.agents.is_empty();
     if path_is_occupied(&config_path)? && !options.force && config_only {
         return Err(existing_target_error(&config_path, &options.root, None));
     }
@@ -332,6 +342,14 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
     }
     if let Some(path) = mcp_path {
         targets.push(plan_mcp_target(path, options.force)?);
+    }
+    // Cursor reads its own project MCP file; reuse the same merge so the
+    // user's other servers are kept.
+    if let Some(path) = cursor_mcp_path {
+        targets.push(plan_mcp_target(path, options.force)?);
+    }
+    for (agent, path) in options.agents.iter().zip(agent_paths) {
+        targets.push(init_agents::plan_agent_target(*agent, path, options.force)?);
     }
     Ok(targets)
 }
@@ -513,7 +531,7 @@ pub(super) fn workflow_refresh_guidance(root: &Path) -> String {
 /// dangling symlink — so planning has to ask the same question the write asks.
 /// `symlink_metadata` also surfaces permission errors instead of silently
 /// reading as "absent, will create".
-fn path_is_occupied(path: &Path) -> Result<bool, String> {
+pub(super) fn path_is_occupied(path: &Path) -> Result<bool, String> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -648,8 +666,15 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         }) {
             println!();
             println!(
-                "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`."
+                "Claude Code reads `{MCP_CONFIG_FILE_NAME}` and asks you to approve the project server before its tools appear. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`. For Cursor add `--agents cursor`, which also writes `.cursor/mcp.json`."
             );
+        }
+        if plan.iter().any(|target| {
+            init_agents::is_instruction_file(&target.path)
+                && target.action != InitAction::LeaveUnchanged
+        }) {
+            println!();
+            println!("{}", init_agents::FOLLOW_UP);
         }
         if let Some(workflow) = plan
             .iter()
@@ -754,6 +779,7 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
         force: false,
         ci: None,
         mcp: false,
+        agents: Vec::new(),
     };
     let mut i = 0usize;
     while i < args.len() {
@@ -767,6 +793,10 @@ pub(super) fn parse_init_options(args: &[String]) -> Result<InitOptions, String>
                 options.ci = Some(parse_init_ci(expect_value(args, i, "--ci")?)?);
             }
             "--mcp" => options.mcp = true,
+            "--agents" => {
+                i += 1;
+                init_agents::parse_agents(expect_value(args, i, "--agents")?, &mut options.agents)?;
+            }
             "--dry-run" => options.dry_run = true,
             "--force" => options.force = true,
             other => return Err(unknown_argument("init", other)),
@@ -964,9 +994,10 @@ mod tests {
         for needle in [
             "Linux-X64) target=x86_64-unknown-linux-gnu ;;",
             "macOS-ARM64) target=aarch64-apple-darwin ;;",
-            r#"asset="ripr-server-v$version-$target.tar.gz""#,
+            "Windows-X64) target=x86_64-pc-windows-msvc ;;",
+            r#"asset="ripr-server-v$version-$target.$ext""#,
             r#"url="https://github.com/EffortlessMetrics/ripr/releases/download/v$version/$asset""#,
-            r#"curl -fsSL --retry 3 -O "$url.sha256"; then"#,
+            r#"curl -fsSL --retry 3 -O "$url.sha256" ||"#,
             r#"if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then"#,
             r#"echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH""#,
         ] {
@@ -974,11 +1005,12 @@ mod tests {
         }
         // The mismatch branch exits before the `else` that compiles.
         let mismatch = install.find("does not match its published SHA-256");
-        let exit = install.find("exit 1");
+        let exit = mismatch.and_then(|at| install[at..].find("exit 1").map(|rel| at + rel));
+        let extract = install.find("tar -xzf");
         let fallback = install.find("cargo install ripr");
         assert!(
-            mismatch < exit && exit < fallback && mismatch.is_some(),
-            "a checksum mismatch must fail before the cargo fallback"
+            mismatch < exit && exit < extract && extract < fallback && mismatch.is_some(),
+            "a checksum mismatch must fail before extraction and the cargo fallback"
         );
     }
 
@@ -1374,6 +1406,7 @@ mod tests {
             force: false,
             ci: None,
             mcp: false,
+            agents: Vec::new(),
         }
     }
 

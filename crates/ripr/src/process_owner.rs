@@ -145,12 +145,18 @@ impl PollBackoff {
         delay
     }
 
-    /// Sleep for the next delay, never past `deadline` when one is given.
-    pub(crate) fn sleep(&mut self, deadline: Option<Instant>) {
+    /// Next poll delay after applying an optional deadline clamp at `now`.
+    pub(crate) fn clamped_delay(&mut self, deadline: Option<Instant>, now: Instant) -> Duration {
         let mut delay = self.next_delay();
         if let Some(deadline) = deadline {
-            delay = delay.min(deadline.saturating_duration_since(Instant::now()));
+            delay = delay.min(deadline.saturating_duration_since(now));
         }
+        delay
+    }
+
+    /// Sleep for the next delay, never past `deadline` when one is given.
+    pub(crate) fn sleep(&mut self, deadline: Option<Instant>) {
+        let delay = self.clamped_delay(deadline, Instant::now());
         if !delay.is_zero() {
             std::thread::sleep(delay);
         }
@@ -924,17 +930,57 @@ mod tests {
         );
     }
 
-    /// A deadline already in the past makes the backoff sleep return at
-    /// once instead of sleeping the scheduled delay past it.
+    /// Deadline clamping is asserted on the computed delay, not wall-clock sleep
+    /// (see #10592).
     #[test]
-    fn poll_backoff_sleep_never_passes_the_deadline() {
+    fn poll_backoff_clamped_delay_respects_deadline() {
+        let now = Instant::now();
+
+        let mut past_deadline = PollBackoff::new();
+        for _ in 0..8 {
+            let _ = past_deadline.next_delay();
+        }
+        assert_eq!(
+            past_deadline.clamped_delay(Some(now), now),
+            Duration::ZERO,
+            "a deadline already in the past must clamp to zero"
+        );
+
+        let mut no_deadline = PollBackoff::new();
+        assert_eq!(
+            no_deadline.clamped_delay(None, now),
+            POLL_BACKOFF_FIRST,
+            "without a deadline the scheduled delay is returned"
+        );
+
+        let mut near_deadline = PollBackoff::new();
+        for _ in 0..8 {
+            let _ = near_deadline.next_delay();
+        }
+        let remaining = Duration::from_millis(10);
+        assert_eq!(
+            near_deadline.clamped_delay(Some(now + remaining), now),
+            remaining,
+            "a near deadline must clamp the scheduled ceiling delay"
+        );
+    }
+
+    /// Mutant guard: returning the scheduled delay while ignoring the deadline
+    /// would fail the past-deadline case above.
+    #[test]
+    fn poll_backoff_clamped_delay_deadline_clamp_is_load_bearing() {
+        let now = Instant::now();
         let mut backoff = PollBackoff::new();
         for _ in 0..8 {
             let _ = backoff.next_delay();
         }
-        let started = Instant::now();
-        backoff.sleep(Some(started));
-        assert!(started.elapsed() < POLL_BACKOFF_CEILING / 2);
+        let clamped = backoff.clamped_delay(Some(now), now);
+        assert_eq!(clamped, Duration::ZERO);
+        assert_eq!(POLL_BACKOFF_CEILING, Duration::from_millis(50));
+        assert_ne!(
+            POLL_BACKOFF_CEILING, clamped,
+            "ignoring the deadline would return the ceiling delay"
+        );
     }
 
     /// Normal completion, captured output and pipe teardown through the

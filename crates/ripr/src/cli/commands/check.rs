@@ -123,7 +123,7 @@ fn implicit_git_boundary(dir: &Path) -> Result<Option<WorkTreeRootProbe>, String
 }
 
 fn manifest_declares_workspace(manifest: &Path) -> bool {
-    std::fs::read_to_string(manifest)
+    crate::bounded_input::read_metadata_toml(manifest)
         .ok()
         .and_then(|contents| toml::from_str::<toml::Value>(&contents).ok())
         .is_some_and(|document| document.get("workspace").is_some_and(toml::Value::is_table))
@@ -221,7 +221,7 @@ fn non_cargo_workspace_marker(dir: &Path) -> Option<ImplicitRootReason> {
     {
         return Some(ImplicitRootReason::PackageJsonWorkspaces);
     }
-    if std::fs::read_to_string(dir.join("pyproject.toml"))
+    if crate::bounded_input::read_metadata_toml(dir.join("pyproject.toml"))
         .ok()
         .and_then(|text| toml::from_str::<toml::Value>(&text).ok())
         .is_some_and(|document| {

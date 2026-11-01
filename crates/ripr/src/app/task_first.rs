@@ -178,7 +178,7 @@ pub(crate) fn decide_repair_start(
             .subject()
             .item
             .clone()
-            .ok_or_else(|| "repair-start decision bound no subject".to_string())?;
+            .ok_or_else(|| "repair-start decision bound no subject; this is a ripr bug, report it with the command you ran".to_string())?;
         return Ok(RepairStartDecision::Start { seam_id });
     }
     // Describe exactly the candidates the stop lists, in the stop's order; its
@@ -511,11 +511,81 @@ fn route_not_ready_reason(
     // A named stub route already answers "no test calls this"; a second
     // suffix would read as competing advice.
     if !label.contains("ripr agent stub")
-        && let Some(guidance) = owner_call_absent_guidance(entry, root)
+        && let Some(guidance) =
+            owner_call_absent_guidance(entry, root).or_else(|| reaching_test_guidance(entry, root))
     {
         label.push_str(&format!(": {guidance}"));
     }
     label
+}
+
+/// A test already reaches the changed code but ripr cannot follow the changed
+/// value to an assertion on it (`*_unknown` class past activation): name that
+/// test so the reader knows where to strengthen, instead of listing missing
+/// evidence alone (#11466). An activation-unknown seam is named too, but only
+/// through a direct owner call: it reaches the owner, yet ripr cannot show its
+/// input reaches the changed branch (#11895). Refusal text only; class and
+/// eligibility are untouched.
+fn reaching_test_guidance(
+    entry: &crate::analysis::ClassifiedSeam,
+    root: RefusalRoot<'_>,
+) -> Option<String> {
+    use crate::analysis::seams::SeamGripClass;
+    use crate::domain::RelationReason;
+    // Activation unknown with a test that calls the owner directly: the test
+    // reaches the function but ripr cannot show its input reaches the changed
+    // branch (#11466 follow-up). Only a direct owner call counts there, since
+    // activation is exactly what a weaker relation fails to establish.
+    if entry.class == SeamGripClass::ActivationUnknown {
+        let test = entry
+            .evidence
+            .related_tests
+            .iter()
+            .find(|test| test.relation_reason == RelationReason::DirectOwnerCall)?;
+        let file = root
+            .source
+            .and_then(|root| test.file.strip_prefix(root).ok())
+            .unwrap_or(&test.file);
+        return Some(format!(
+            "`{}` ({}:{}) calls this code, but ripr cannot show that its input reaches the changed branch. Check by hand that it does and asserts on the result there, and add a test input only if the existing one does not",
+            test.test_name,
+            crate::analysis::stable_path_text(file),
+            test.line
+        ));
+    }
+    if !matches!(
+        entry.class,
+        SeamGripClass::PropagationUnknown
+            | SeamGripClass::ObservationUnknown
+            | SeamGripClass::DiscriminationUnknown
+    ) {
+        return None;
+    }
+    // Same pick as `RepairStartRefusal::related_test` (a direct owner call
+    // first), so one refusal never names two different tests.
+    let related = &entry.evidence.related_tests;
+    let test = related
+        .iter()
+        .find(|test| test.relation_reason == RelationReason::DirectOwnerCall)
+        .or_else(|| related.first())?;
+    if !matches!(
+        test.relation_reason,
+        RelationReason::DirectOwnerCall
+            | RelationReason::HelperOwnerCall
+            | RelationReason::ReExportChainFollowed
+    ) {
+        return None;
+    }
+    let file = root
+        .source
+        .and_then(|root| test.file.strip_prefix(root).ok())
+        .unwrap_or(&test.file);
+    Some(format!(
+        "`{}` ({}:{}) calls this code, but ripr cannot follow the changed value to an assertion on it. Check by hand that it exercises the changed branch and asserts on its result, and add the assertion there",
+        test.test_name,
+        crate::analysis::stable_path_text(file),
+        test.line
+    ))
 }
 
 /// Why `ripr agent stub` would refuse this seam, read through the stub's own
@@ -771,7 +841,7 @@ pub(crate) fn resolve_repair_start(
         && info.is_truncated()
     {
         return Err(format!(
-            "repair start refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
+            "repair start refused: the seam inventory is truncated ({} of {} seams); next step: {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
@@ -1392,8 +1462,13 @@ pub(crate) enum RepairSubjectOutcome {
         reason: String,
         kind: RefusalKind,
     },
-    /// Several seams name the item; the bounded seam IDs to choose from.
-    Ambiguous(Vec<String>),
+    /// Several seams name the item: the seam IDs to choose from, and a
+    /// parallel description of each (kind, expression, owner) so the reader
+    /// can tell the candidates apart (#11466).
+    Ambiguous {
+        seam_ids: Vec<String>,
+        descriptions: Vec<String>,
+    },
     /// No current seam names the item (stale or unmapped).
     Unknown,
 }
@@ -1411,9 +1486,9 @@ pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSu
         RepairSubjectOutcome::Ineligible {
             seam_id, reason, ..
         } => RepairSubject::Decision(ineligible_repair_item(root, item, &seam_id, &reason)),
-        RepairSubjectOutcome::Ambiguous(seam_ids) => {
-            let seam_refs: Vec<&str> = seam_ids.iter().map(String::as_str).collect();
-            RepairSubject::Decision(ambiguous_gap_item(root, item, &seam_refs))
+        RepairSubjectOutcome::Ambiguous { descriptions, .. } => {
+            let listed: Vec<&str> = descriptions.iter().map(String::as_str).collect();
+            RepairSubject::Decision(ambiguous_gap_item(root, item, &listed))
         }
         RepairSubjectOutcome::Unknown => RepairSubject::Decision(unknown_repair_item(root, item)),
     })
@@ -1440,7 +1515,7 @@ pub(crate) fn resolve_repair_subject_outcome(
         && info.is_truncated()
     {
         return Err(format!(
-            "repair item refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
+            "repair item refused: the seam inventory is truncated ({} of {} seams); next step: {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
@@ -1500,12 +1575,16 @@ pub(crate) fn resolve_repair_subject_in(
     match matches.len() {
         1 => outcome_for(matches[0]),
         0 => RepairSubjectOutcome::Unknown,
-        _ => RepairSubjectOutcome::Ambiguous(
-            matches
+        _ => RepairSubjectOutcome::Ambiguous {
+            seam_ids: matches
                 .iter()
                 .map(|entry| entry.seam.id().as_str().to_string())
                 .collect(),
-        ),
+            descriptions: matches
+                .iter()
+                .map(|entry| describe_ambiguous_seam(entry))
+                .collect(),
+        },
     }
 }
 
@@ -2554,6 +2633,31 @@ pub(crate) fn unknown_repair_item_reason(root: Option<&Path>, item: &str) -> Str
     format!("repair item `{item}` names no seam in the selected root; run {list}")
 }
 
+/// One candidate in an ambiguous-item listing: the seam ID (what the retry
+/// takes) followed by what distinguishes it, so several seams on one line can
+/// be told apart without opening `ripr pilot` (#11466).
+fn describe_ambiguous_seam(entry: &crate::analysis::ClassifiedSeam) -> String {
+    const MAX_EXPRESSION: usize = 48;
+    let expression = entry
+        .seam
+        .expression()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let expression = if expression.chars().count() > MAX_EXPRESSION {
+        let cut: String = expression.chars().take(MAX_EXPRESSION).collect();
+        format!("{cut}...")
+    } else {
+        expression
+    };
+    format!(
+        "{} ({} `{expression}` in {})",
+        entry.seam.id().as_str(),
+        entry.seam.kind().as_str(),
+        entry.seam.owner()
+    )
+}
+
 fn ambiguous_gap_item(root: &Path, item: &str, matches: &[&str]) -> String {
     const MAX_LISTED: usize = 8;
     let mut listed: Vec<&str> = matches.iter().take(MAX_LISTED).copied().collect();
@@ -3160,30 +3264,21 @@ pub(crate) mod tests {
     #[test]
     fn candidate_commands_carry_a_powershell_form_when_quoting_differs() {
         let root = "/home/o'neil/proj";
+        // The Bash single-quote form is the stimulus on every host: Windows
+        // prints a double-quoted root that PowerShell reads identically.
+        let bash_root = crate::agent::loop_commands::shell_arg_for(root, false);
         let mut first = note("src/lib.rs:2", "a >= b", "aaa");
-        first.command = format!("ripr repair aaa --root {}", shell_arg(root));
+        first.command = format!("ripr repair aaa --root {bash_root}");
         let mut second = note("src/lib.rs:10", "c >= d", "bbb");
-        second.command = format!("ripr repair bbb --root {}", shell_arg(root));
+        second.command = format!("ripr repair bbb --root {bash_root}");
         let text = render_repair_choice(&[first, second], 2, root);
         for seam in ["aaa", "bbb"] {
-            if cfg!(windows) {
-                // The Windows console form is already double-quoted, which
-                // PowerShell reads unchanged, so no second form is printed.
-                assert!(
-                    text.contains(&format!(
-                        "     ripr repair {seam} --root \"/home/o'neil/proj\"\n"
-                    )),
-                    "{text}"
-                );
-                assert!(!text.contains("PowerShell"), "{text}");
-            } else {
-                assert!(
-                    text.contains(&format!(
-                        "     (PowerShell) ripr repair {seam} --root '/home/o''neil/proj'\n"
-                    )),
-                    "{text}"
-                );
-            }
+            assert!(
+                text.contains(&format!(
+                    "     (PowerShell) ripr repair {seam} --root '/home/o''neil/proj'\n"
+                )),
+                "{text}"
+            );
         }
         assert!(
             !render_repair_choice(&[note("src/lib.rs:2", "a >= b", "aaa")], 1, ".")
@@ -3873,6 +3968,91 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// #11466: a propagation/observation-unknown seam that a test already runs
+    /// names that test; a seam no test calls directly, or a class past the
+    /// unknown stages, stays bare.
+    #[test]
+    fn unknown_stage_refusal_names_the_test_that_runs_the_code() {
+        use crate::analysis::seams::SeamGripClass;
+        let root = RefusalRoot::named(Path::new("/repo"));
+        let missing = vec!["incomplete evidence stage: propagation".to_string()];
+
+        let entry = gate_entry(SeamGripClass::PropagationUnknown, vec![weak_related_test()]);
+        let reason = route_not_ready_reason(&entry, "repair route not ready", &missing, root);
+        assert!(
+            reason.contains("`at_threshold_runs` (tests/pricing.rs:12) calls this code"),
+            "{reason}"
+        );
+
+        // The refusal's own pick wins: a direct owner call listed after a
+        // helper call is the one named, and other unknown stages name it too.
+        let mut helper = weak_related_test();
+        helper.test_name = "via_helper".to_string();
+        helper.relation_reason = crate::domain::RelationReason::HelperOwnerCall;
+        for class in [
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+        ] {
+            let both = gate_entry(class, vec![helper.clone(), weak_related_test()]);
+            let reason = route_not_ready_reason(&both, "repair route not ready", &missing, root);
+            assert!(reason.contains("`at_threshold_runs`"), "{reason}");
+            assert!(!reason.contains("`via_helper`"), "{reason}");
+        }
+
+        // Negatives: no related test, a non-reaching relation, another class.
+        let none = gate_entry(SeamGripClass::PropagationUnknown, Vec::new());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+        let mut weak = weak_related_test();
+        weak.relation_reason = crate::domain::RelationReason::SameModule;
+        let same_module = gate_entry(SeamGripClass::PropagationUnknown, vec![weak]);
+        let reason = route_not_ready_reason(&same_module, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+        let weakly = gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
+        let reason = route_not_ready_reason(&weakly, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+    }
+
+    /// Activation-unknown seam that a test calls directly: the refusal names
+    /// that test and says its input may not reach the changed branch. A weaker
+    /// relation, or a seam with no related test, names nothing.
+    #[test]
+    fn activation_unknown_with_a_direct_call_names_the_calling_test() {
+        use crate::analysis::seams::SeamGripClass;
+        let root = RefusalRoot::named(Path::new("/repo"));
+        let missing = vec!["incomplete evidence stage: activation".to_string()];
+
+        let entry = gate_entry(SeamGripClass::ActivationUnknown, vec![weak_related_test()]);
+        let reason = route_not_ready_reason(&entry, "repair route not ready", &missing, root);
+        assert!(
+            reason.contains("`at_threshold_runs` (tests/pricing.rs:12) calls this code")
+                && reason.contains("its input reaches the changed branch"),
+            "{reason}"
+        );
+
+        // A weaker relation listed before the direct caller never wins.
+        let mut via_helper = weak_related_test();
+        via_helper.test_name = "via_helper".to_string();
+        via_helper.relation_reason = crate::domain::RelationReason::HelperOwnerCall;
+        let both = gate_entry(
+            SeamGripClass::ActivationUnknown,
+            vec![via_helper, weak_related_test()],
+        );
+        let reason = route_not_ready_reason(&both, "repair route not ready", &missing, root);
+        assert!(reason.contains("`at_threshold_runs`"), "{reason}");
+        assert!(!reason.contains("`via_helper`"), "{reason}");
+
+        // Negatives: a weaker relation and no related test.
+        let mut weak = weak_related_test();
+        weak.relation_reason = crate::domain::RelationReason::HelperOwnerCall;
+        let helper = gate_entry(SeamGripClass::ActivationUnknown, vec![weak]);
+        let reason = route_not_ready_reason(&helper, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+        let none = gate_entry(SeamGripClass::ActivationUnknown, Vec::new());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+    }
+
     /// #11466: a return-value or error-path seam whose only blocker is the
     /// missing test module names its stub route too (the stub adds the module);
     /// a seam kind with no stub kind stays bare.
@@ -4528,6 +4708,38 @@ pub(crate) mod tests {
             return Err(format!("listing must stop at eight seams:\n{many}"));
         }
         Ok(())
+    }
+
+    /// #11466: each ambiguous candidate carries its seam ID first (what the
+    /// retry takes), then kind, normalized expression and owner; a long
+    /// expression is cut so one line stays readable.
+    #[test]
+    fn ambiguous_candidates_describe_what_tells_them_apart() {
+        use crate::analysis::seams::SeamGripClass;
+        let entry = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        let text = describe_ambiguous_seam(&entry);
+        assert!(
+            text.starts_with(entry.seam.id().as_str())
+                && text.contains("`amount >= discount_threshold`")
+                && text.contains("in pricing::discounted_total"),
+            "{text}"
+        );
+        let mut long = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        long.seam = crate::analysis::seams::RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            crate::analysis::seams::SeamKind::PredicateBoundary,
+            42,
+            88,
+            format!("a\n   {}", "b".repeat(80)),
+            crate::analysis::seams::RequiredDiscriminator::BoundaryValue {
+                description: "x".to_string(),
+            },
+            crate::analysis::seams::ExpectedSink::ReturnValue,
+        );
+        let text = describe_ambiguous_seam(&long);
+        assert!(text.contains("`a bbbb") && text.contains("...`"), "{text}");
+        assert!(!text.contains('\n'), "{text}");
     }
 
     /// The bound keeps the first eight matches in the order the caller supplied

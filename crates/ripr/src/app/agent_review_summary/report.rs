@@ -18,6 +18,60 @@ use super::types::{
 };
 use super::util::string_field;
 
+/// Plain-language early-state copy for Markdown when check has not run (#10696).
+pub(crate) const NO_ANALYSIS_YET: &str = "No analysis yet. Run `ripr check` first.";
+
+pub(crate) fn review_summary_before_analysis_artifact(
+    surfaces: &[AgentReviewSurface],
+    analysis_outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+) -> bool {
+    analysis_outcome.is_none()
+        && surfaces
+            .iter()
+            .any(|surface| surface.name == "analysis_outcome" && surface.state == "missing")
+}
+
+pub(crate) fn reviewer_summary_headline_markdown(
+    status: &str,
+    target_seam: Option<&AgentReviewTargetSeam>,
+    movement: &AgentReviewStaticMovement,
+    analysis_outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+    surfaces: &[AgentReviewSurface],
+) -> String {
+    if review_summary_before_analysis_artifact(surfaces, analysis_outcome) {
+        return match target_seam {
+            Some(seam) => format!(
+                "No analysis yet for {}. Run `ripr check` first.",
+                seam.seam_id
+            ),
+            None => NO_ANALYSIS_YET.to_string(),
+        };
+    }
+    let target = target_seam
+        .map(|seam| seam.seam_id.as_str())
+        .unwrap_or("unknown seam");
+    reviewer_summary_headline(status, target, movement, analysis_outcome)
+}
+
+fn reviewer_summary_headline(
+    status: &str,
+    target: &str,
+    movement: &AgentReviewStaticMovement,
+    analysis_outcome: Option<&crate::analysis_outcome::AnalysisOutcome>,
+) -> String {
+    match (movement.state.as_str(), analysis_outcome) {
+        (_, None) => format!(
+            "Review packet is incomplete for {target}: producer analysis outcome is unavailable."
+        ),
+        (_, Some(outcome)) if !outcome.kind.is_complete() => format!(
+            "Review packet is incomplete for {target}: producer analysis is {}.",
+            outcome.kind.as_str()
+        ),
+        ("missing_artifact", _) => format!("Review packet is incomplete for {target}."),
+        _ => format!("Review packet is {status} for seam {target}."),
+    }
+}
+
 pub(crate) fn build_agent_review_summary_report(
     root: &Path,
     root_argument: &Path,
@@ -225,17 +279,7 @@ fn reviewer_summary(
     let target = seam
         .map(|seam| seam.seam_id.as_str())
         .unwrap_or("unknown seam");
-    let headline = match (movement.state.as_str(), analysis_outcome) {
-        (_, None) => format!(
-            "Review packet is incomplete for {target}: producer analysis outcome is unavailable."
-        ),
-        (_, Some(outcome)) if !outcome.kind.is_complete() => format!(
-            "Review packet is incomplete for {target}: producer analysis is {}.",
-            outcome.kind.as_str()
-        ),
-        ("missing_artifact", _) => format!("Review packet is incomplete for {target}."),
-        _ => format!("Review packet is {status} for seam {target}."),
-    };
+    let headline = reviewer_summary_headline(status, target, movement, analysis_outcome);
     let what_changed = if analysis_outcome.is_none() {
         "No producer-backed completeness result is available; static review evidence cannot be treated as complete.".to_string()
     } else if let Some(outcome) = analysis_outcome.filter(|outcome| !outcome.kind.is_complete()) {
