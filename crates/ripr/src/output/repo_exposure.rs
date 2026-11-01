@@ -396,6 +396,9 @@ pub(crate) fn byte_bounded_from_parts(
         })
 }
 
+/// Bytes the writer adds between two `seams[]` entries (`,\n`).
+const SEAM_SEPARATOR_BYTES: usize = 2;
+
 /// Choose the `seams[]` entries that fit `budget` bytes. Seams `keep` names
 /// (the current change) are chosen first, then the rest in inventory order;
 /// each group stops at its first entry that does not fit, so the cut is a
@@ -412,10 +415,20 @@ pub(crate) fn bound_repo_exposure_seams(
         .iter()
         .map(|entry| render_seam_json(entry, &canonical_gaps).len())
         .collect();
-    if sizes.iter().sum::<usize>() <= budget {
+    // The writer joins entries with `,\n`, so a selection of n entries costs
+    // their bytes plus 2 * (n - 1): the budget bounds the written `seams[]`
+    // content, not just the entry payloads.
+    if sizes.iter().sum::<usize>().saturating_add(
+        classified
+            .len()
+            .saturating_sub(1)
+            .saturating_mul(SEAM_SEPARATOR_BYTES),
+    ) <= budget
+    {
         return None;
     }
     let mut used = 0usize;
+    let mut chosen_count = 0usize;
     let mut chosen = vec![false; classified.len()];
     // The first entry that does not fit ends the selection for both groups:
     // a smaller, lower-priority seam never fills budget a higher-priority one
@@ -425,10 +438,16 @@ pub(crate) fn bound_repo_exposure_seams(
             if keep(entry) != want_keep {
                 continue;
             }
-            if used.saturating_add(sizes[idx]) > budget {
+            let cost = sizes[idx].saturating_add(if chosen_count == 0 {
+                0
+            } else {
+                SEAM_SEPARATOR_BYTES
+            });
+            if used.saturating_add(cost) > budget {
                 break 'select;
             }
-            used += sizes[idx];
+            used += cost;
+            chosen_count += 1;
             chosen[idx] = true;
         }
     }
@@ -3091,7 +3110,8 @@ mod tests {
         let total: usize = classified
             .iter()
             .map(|entry| render_seam_json(entry, &canonical_gaps).len())
-            .sum();
+            .sum::<usize>()
+            + (classified.len() - 1) * SEAM_SEPARATOR_BYTES;
         for budget in [Some((total, SeamLimitSource::Default)), None] {
             let bound = bound_repo_exposure_seams(&classified, budget, |_| false);
             assert_eq!(bound, None);
@@ -3151,6 +3171,34 @@ mod tests {
         .ok_or("must be cut")?;
         let document = render_bounded(&classified, None, Some(&bound))?;
         assert_eq!(seam_files(&document), ["src/f0.rs"]);
+        Ok(())
+    }
+
+    #[test]
+    fn byte_bound_counts_the_separators_the_writer_adds_at_the_exact_threshold()
+    -> Result<(), String> {
+        let classified = byte_bound_corpus();
+        let canonical_gaps = canonical_gap_identities(&classified);
+        let sizes: Vec<usize> = classified
+            .iter()
+            .map(|entry| render_seam_json(entry, &canonical_gaps).len())
+            .collect();
+        let three = sizes[..3].iter().sum::<usize>() + 2 * SEAM_SEPARATOR_BYTES;
+        for (budget, expect) in [(three, 3usize), (three - 1, 2)] {
+            let bound = bound_repo_exposure_seams(
+                &classified,
+                Some((budget, SeamLimitSource::Configured)),
+                |_| false,
+            )
+            .ok_or("must be cut")?;
+            assert_eq!(bound.rendered(), expect, "budget {budget}");
+            assert!(bound.bytes <= budget);
+            let document = render_bounded(&classified, None, Some(&bound))?;
+            assert_eq!(document["seams"].as_array().map(Vec::len), Some(expect));
+            let written: usize = bound.kept.iter().map(|i| sizes[*i]).sum::<usize>()
+                + (expect - 1) * SEAM_SEPARATOR_BYTES;
+            assert_eq!(written, bound.bytes);
+        }
         Ok(())
     }
 

@@ -231,6 +231,12 @@ pub(crate) fn render_pilot_summary_json(
             json_escape(&commands.outcome)
         ));
     }
+    if let Some(before) = &commands.before_snapshot {
+        out.push_str(&format!(
+            "    \"before_snapshot_command\": \"{}\",\n",
+            json_escape(before)
+        ));
+    }
     match top
         .first()
         .and_then(|entry| repair_start_command(context.root, entry))
@@ -601,7 +607,19 @@ fn render_pilot_summary_md_with_target(
                     "After adding one focused test, rerun repo exposure and compare the snapshots:\n\n",
                 ),
             }
-            vec![&commands.after_snapshot, &commands.outcome]
+            let mut steps = Vec::new();
+            if let Some(before) = &commands.before_snapshot {
+                out.push_str(
+                    "`repo-exposure.json` was byte-bounded, so it is not a comparable baseline. Capture a full baseline before editing, then compare:\n\n```bash\n",
+                );
+                out.push_str(before);
+                out.push_str("\n```\n\n");
+                steps.push(&commands.after_snapshot);
+            } else {
+                steps.push(&commands.after_snapshot);
+            }
+            steps.push(&commands.outcome);
+            steps
         }
     };
     out.push_str(super::command_shell_disclosure());
@@ -688,6 +706,15 @@ fn render_pilot_terminal_with_target(
         out.push_str(&format!(
             "  limit reached: checked {} of {} spots in the code\n",
             limit.analyzed, limit.total
+        ));
+    }
+    // #12108: the terminal states the byte cut too, as JSON and Markdown do.
+    if let Some(bound) = context.repo_exposure_byte_bound {
+        out.push_str(&format!(
+            "  repo-exposure.json byte bound reached: lists {} of {} seams; set {}=0 for every seam\n",
+            bound.rendered(),
+            bound.total,
+            crate::output::repo_exposure::PILOT_REPO_EXPOSURE_BYTES_ENV
         ));
     }
     // #9368: the terminal shows the top 1 seam; without the total and a
@@ -1000,6 +1027,12 @@ fn render_pilot_terminal_with_target(
             ),
         }
         return out;
+    }
+    if let Some(before) = &commands.before_snapshot {
+        out.push_str(
+            "  repo-exposure.json is byte-bounded; capture a full baseline before editing:\n",
+        );
+        out.push_str(&format!("  {before}\n"));
     }
     out.push_str(&format!("  {}\n", commands.after_snapshot));
     out.push_str(&format!("  {}\n", commands.outcome));

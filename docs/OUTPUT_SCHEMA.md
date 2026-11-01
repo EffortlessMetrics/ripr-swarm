@@ -16763,7 +16763,12 @@ Field contract:
   fit the budget change nothing. `pilot-summary.json` carries
   `repo_exposure_byte_bound` (`seams_rendered`, `seams_total`,
   `seam_bytes_rendered`, `byte_budget`, `source`, `control`), `null` when
-  nothing was cut.
+  nothing was cut. The budget counts entry bytes plus the 2-byte `,\n`
+  separator between entries. When cut, `pilot-summary.json` `next` also carries
+  `before_snapshot_command` (a full `ripr check --format repo-exposure-json`
+  baseline to capture before editing) and `next.outcome_command` compares that
+  baseline, never the cut file; `ripr calibrate cargo-mutants` refuses a cut
+  file too.
 - Pilot packet bound (#11951) — the `ripr pilot` copy of this document
   (`target/ripr/pilot/agent-seam-packets.json`) carries at most
   `RIPR_PILOT_PACKET_BUDGET` packets (default 3; `0` writes all). The kept

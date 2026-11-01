@@ -18145,6 +18145,38 @@ fn pilot_repo_exposure_byte_bound_is_disclosed_and_refused_by_outcome()
         summary["repo_exposure_byte_bound"]["seams_total"], seams_total,
         "{summary}"
     );
+    // Every printed route is runnable: none names the cut file as the
+    // `ripr outcome` baseline, and each names a full baseline to capture.
+    let cut_file = "target/ripr/pilot/repo-exposure.json";
+    let next_json = &summary["next"];
+    let before_cmd = next_json["before_snapshot_command"]
+        .as_str()
+        .ok_or("bounded run must name a baseline snapshot command")?;
+    assert!(before_cmd.contains("repo-exposure-json"), "{before_cmd}");
+    let outcome_cmd = next_json["outcome_command"]
+        .as_str()
+        .ok_or("outcome_command")?;
+    assert!(!outcome_cmd.contains(cut_file), "{outcome_cmd}");
+    assert!(
+        outcome_cmd.contains("before.repo-exposure.json"),
+        "{outcome_cmd}"
+    );
+    let markdown = std::fs::read_to_string(pilot_dir.join("pilot-summary.md"))?;
+    assert!(markdown.contains("byte bound reached"), "{markdown}");
+    assert!(markdown.contains(before_cmd), "{markdown}");
+    assert!(
+        !markdown.contains(&format!("--before {cut_file}")),
+        "{markdown}"
+    );
+    let terminal = String::from_utf8_lossy(&cut.stdout);
+    assert!(terminal.contains("byte bound reached"), "{terminal}");
+    assert!(terminal.contains(before_cmd), "{terminal}");
+    assert!(
+        !terminal.contains(&format!("--before {cut_file}")),
+        "{terminal}"
+    );
+    // Negative: the uncut run has no baseline step and still compares the file.
+    // (checked above: repo_exposure_byte_bound is null for the default run)
     // The packets and the ranking are not cut by the file's byte budget.
     assert_ne!(
         read("agent-seam-packets.json")?["run_status"],
