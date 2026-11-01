@@ -130,6 +130,12 @@ of cap attribution: `packets_total` equals the rendered `packets` array length,
 which may be smaller than `seams_analyzed`, and, when the packet bound cuts,
 smaller than the eligible count in `limitations[].packets_eligible`.
 
+When the cut drops `write_targeted_test` packets (more of them than the
+bound), the `pilot_packet_bound_applied` limitation also carries
+`actionable_packets_omitted` and `actionable_packets_message`, so a reader
+does not take the file to list every repairable seam (#12064). A cut that only
+drops the `inspect_static_limitation` tail carries neither field.
+
 When neither cap is applied, `"run_status": "complete"` is emitted with no
 cap limitation (mirroring the existing `repo-exposure.json` contract from
 RIPR-SPEC-0074). An inventory-only cut keeps both artifacts' `repo_seam_limit_applied`

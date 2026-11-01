@@ -1,0 +1,9 @@
+diff --git a/derived/core.py b/derived/core.py
+--- a/derived/core.py
++++ b/derived/core.py
+@@ -1,4 +1,4 @@
+ def scale_setup(x):
+-    return x * 2
++    return 2 * x
+ 
+ 

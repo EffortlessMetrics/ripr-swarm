@@ -136,7 +136,9 @@ them.
   diagnostic. Because it is exempt, the producer bounds it instead: at most
   one marker per file and at most 50 markers per analysis snapshot (files in
   path order); the status `withheld_findings` counts still disclose every
-  withheld finding beyond the cap.
+  withheld finding beyond the cap. The same code, exemption and cap cover the
+  static-gap marker for non-preview files (#11798); the two share the 50-marker
+  budget and differ only in `data.kind` and message.
 - Overflow is machine-readable and cannot be presented as a complete inventory.
 - Complete evidence identity is independent of the passive budget.
 - Transport, pull/push, status, client, and gate policy are out of scope for PR A.

@@ -1435,7 +1435,7 @@ fn the_owner_named_admission_is_limited_to_infection_unknown_all_owner_named() -
         assert!(!super::needs_proximity_reach_limit(&finding), "{other:?}");
     }
     // (c) deliberate asymmetry: owner_named_test alone does not limit a
-    // weakly_exposed finding (follow-up, #11481).
+    // weakly_exposed finding (decided, #11481; see the natural-fixture pair below).
     finding.class = ExposureClass::WeaklyExposed;
     finding.related_tests = vec![base];
     assert!(!super::needs_proximity_reach_limit(&finding));
@@ -1696,5 +1696,66 @@ fn a_self_qualified_call_from_the_single_caller_behaves_as_the_plain_call() -> R
     )?;
     assert_eq!(finding.static_limit_kind, plain.static_limit_kind);
     assert_eq!(finding.evidence, plain.evidence);
+    Ok(())
+}
+
+// #11481 follow-up decision (fail-closed, no extension): `owner_named_test`
+// is NOT admitted for `weakly_exposed`. That class only exists because a
+// related test carries a credited weak assertion; an owner-named test is the
+// strongest "this test is about the owner" signal short of a call, so its weak
+// assertion is a real gap. The witness walk is repo-wide and name-only and is
+// not tied to that test, so naming "reach unresolved" and dropping the gap
+// lines could hide a weak assertion the test really holds. The pair below
+// differs only in the test's name, so the relation alone decides.
+fn weak_assertion_fixture(test_name: &str) -> Result<Finding, String> {
+    assert!(
+        MACRO_ROUTED.contains("fn outer_triples() {\n        assert_eq!(outer(4), 12);"),
+        "fixture template drifted"
+    );
+    let lib = format!(
+        "{}}}\n",
+        MACRO_ROUTED.replace(
+            "fn outer_triples() {\n        assert_eq!(outer(4), 12);",
+            &format!("fn {test_name}() {{\n        assert!(outer(4) > 0);")
+        )
+    );
+    assert!(lib.contains(&format!("fn {test_name}()")), "{lib}");
+    Fixture::new(test_name, &lib)?.rate_finding()
+}
+
+#[test]
+fn a_weakly_exposed_owner_named_weak_assertion_keeps_its_gap_while_proximity_is_limited()
+-> Result<(), String> {
+    let named = weak_assertion_fixture("inner_rate_is_positive")?;
+    // Fixture construction: one owner-named row holding a real weak oracle.
+    assert_eq!(named.class, ExposureClass::WeaklyExposed);
+    assert_eq!(named.ripr.reach.state, StageState::Weak);
+    assert!(all_relations(&named, |reason| {
+        reason == RelationReason::OwnerNamedTest
+    }));
+    assert!(
+        named.related_tests.iter().any(|test| test.oracle.is_some()
+            && test.oracle_strength == crate::domain::OracleStrength::Weak),
+        "{:?}",
+        named.related_tests
+    );
+    assert!(!super::needs_proximity_reach_limit(&named));
+    assert_unlimited(&named, "owner-named weak assertion");
+
+    // Discriminating alternate: the same shape without the owner's name in the
+    // test is proximity-only and still names the macro limit.
+    let proximity = weak_assertion_fixture("outer_is_positive")?;
+    assert_eq!(proximity.class, ExposureClass::WeaklyExposed);
+    assert!(
+        all_relations(&proximity, crate::analysis::classify::is_proximity_only),
+        "{:?}",
+        proximity.related_tests
+    );
+    assert_eq!(
+        proximity.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        proximity.evidence
+    );
     Ok(())
 }
