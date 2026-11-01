@@ -8567,8 +8567,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 182,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, and #11753 added the label-event job condition"
+            line_count <= 214,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
