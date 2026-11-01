@@ -257,6 +257,9 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     // the intake exclusion also covers that writer base (#8751).
     intake: DiffIntake<'_>,
 ) -> Result<AnalysisResult, CoreError> {
+    // NEGATIVE CONTROL ONLY (#11876): never merge. A deliberate warm-path cost
+    // so the hosted warm-ab gate can be seen failing on a real regression.
+    std::thread::sleep(std::time::Duration::from_secs(5));
     #[cfg(test)]
     {
         let mut counts = DIFF_PIPELINE_ENTRIES
