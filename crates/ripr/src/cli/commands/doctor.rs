@@ -302,18 +302,35 @@ fn detected_language_entries(
     detected: &[LanguageId],
     enabled: Option<&[LanguageId]>,
 ) -> Vec<output::doctor::DoctorDetectedLanguage> {
+    use crate::domain::language_availability::{
+        ConfiguredIntent, LanguageAvailabilityInput, resolve_language_availability,
+    };
     detected
         .iter()
-        .map(|id| output::doctor::DoctorDetectedLanguage {
-            language: id.as_str().to_string(),
-            status: language_status(*id),
-            adapter_available: id.is_available(),
+        .map(|id| {
             // JavaScript is analyzed by the `typescript` entry (and
             // `javascript` is accepted as its alias), so enablement is read
             // through the same
             // mapping the gaps path uses. `None` (no loaded configuration)
             // stays unknown rather than reading as disabled.
-            enabled: enabled.map(|list| list.contains(&config_entry(*id))),
+            let enabled = enabled.map(|list| list.contains(&config_entry(*id)));
+            let report = resolve_language_availability(&LanguageAvailabilityInput {
+                project_detected: true,
+                configured: match enabled {
+                    Some(true) => ConfiguredIntent::Enabled,
+                    Some(false) => ConfiguredIntent::Disabled,
+                    None => ConfiguredIntent::Unspecified,
+                },
+                ..LanguageAvailabilityInput::for_language(*id)
+            });
+            output::doctor::DoctorDetectedLanguage {
+                language: id.as_str().to_string(),
+                status: language_status(*id),
+                adapter_available: id.is_available(),
+                enabled,
+                availability_state: report.state.as_str(),
+                remediation: report.remediation,
+            }
         })
         .collect()
 }
@@ -6465,7 +6482,34 @@ mod tests {
             status: language_status(language),
             adapter_available,
             enabled: Some(true),
+            availability_state: "detected_compiled_enabled",
+            remediation: Vec::new(),
         }
+    }
+
+    /// The doctor entry carries the shared availability state and its ordered
+    /// remediation, so a detected-but-disabled language names the enable step
+    /// and an unconfigured one stays unknown instead of reading as disabled.
+    #[test]
+    fn detected_entries_carry_the_shared_availability_state() {
+        let disabled = detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Rust]));
+        if LanguageId::Python.is_available() {
+            assert_eq!(disabled[0].availability_state, "detected_compiled_disabled");
+            assert!(
+                disabled[0]
+                    .remediation
+                    .iter()
+                    .any(|step| step.contains("[languages]")),
+                "{:?}",
+                disabled[0].remediation
+            );
+        }
+        let enabled = detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]));
+        assert_eq!(enabled[0].availability_state, "detected_compiled_enabled");
+        assert!(enabled[0].remediation.is_empty());
+        let unknown = detected_language_entries(&[LanguageId::Rust], None);
+        assert_eq!(unknown[0].enabled, None);
+        assert_ne!(unknown[0].availability_state, "detected_compiled_disabled");
     }
 
     #[test]
