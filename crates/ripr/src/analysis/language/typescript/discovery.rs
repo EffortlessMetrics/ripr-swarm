@@ -108,8 +108,14 @@ fn has_directory_component(path: &Path, names: &[&str]) -> bool {
 
 /// Env override for [`DEFAULT_TS_MAX_WORKSPACE_FILES`].
 pub(crate) const TS_MAX_WORKSPACE_FILES_ENV: &str = "RIPR_TS_MAX_WORKSPACE_FILES";
-/// Default ceiling on directory entries visited during workspace discovery.
+/// Default ceiling on admitted TS/JS source candidates during workspace
+/// discovery. Directories, assets, and `*.generated.*` files do not consume
+/// this budget; a separate total-entry backstop still terminates huge trees.
 const DEFAULT_TS_MAX_WORKSPACE_FILES: usize = 20_000;
+/// Multiplier for the total-entry walk backstop relative to the candidate
+/// source-file limit. A huge asset tree still terminates even when few (or
+/// no) TypeScript/JavaScript sources exist.
+const TS_WORKSPACE_TOTAL_ENTRY_BACKSTOP_MULTIPLIER: usize = 10;
 
 /// Parse a positive workspace file-count limit, failing closed to the error
 /// string on invalid input (mirrors `rust/mod.rs::positive_limit_from_env`).
@@ -135,7 +141,7 @@ pub(crate) fn ts_workspace_file_limit_from_env(
     }
 }
 
-/// Resolved max-visited-files limit, failing closed to the default so a
+/// Resolved candidate-source limit, failing closed to the default so a
 /// malformed operator override cannot abort analysis.
 pub(crate) fn ts_workspace_file_limit() -> usize {
     ts_workspace_file_limit_from_env(std::env::var(TS_MAX_WORKSPACE_FILES_ENV))
@@ -143,10 +149,10 @@ pub(crate) fn ts_workspace_file_limit() -> usize {
 }
 
 /// Workspace file discovery result: the accepted source files plus whether
-/// the max-visited-files cap tripped (making `files` a partial set), and how
-/// many symlink/junction entries were seen but deliberately not followed
-/// (#4104-D: the count feeds a disclosure so link-hidden tests are not
-/// silently invisible).
+/// the candidate-source cap or the total-entry backstop tripped (making
+/// `files` a partial set), and how many symlink/junction entries were seen
+/// but deliberately not followed (#4104-D: the count feeds a disclosure so
+/// link-hidden tests are not silently invisible).
 pub(crate) struct WorkspaceScan {
     pub(crate) files: Vec<PathBuf>,
     pub(crate) truncated: bool,
@@ -166,20 +172,33 @@ pub(crate) fn collect_workspace_typescript_files_with_handwritten(
     visit_workspace_with_handwritten(root, max_entries, handwritten)
 }
 
+/// Whether `path` is a TS/JS source the walker admits: a routed extension,
+/// minus `*.generated.*` (and the same generated-name family the walk
+/// already refuses). Directories, assets, and other non-source entries are
+/// not candidates and do not consume [`TS_MAX_WORKSPACE_FILES_ENV`].
+fn is_candidate_workspace_source(path: &Path) -> bool {
+    TypeScriptAdapter.accepts_path(path) && !is_detectable_generated_typescript_path(path)
+}
+
 /// Iterative workspace walk over an explicit work stack.
 ///
 /// Recursion was replaced by a loop so pathologically deep directory trees
-/// cannot overflow the call stack (a hard abort). Every visited entry counts
-/// against `max_entries`; exceeding the cap stops the walk and reports
-/// `truncated: true` so the adapter can disclose the bound instead of
+/// cannot overflow the call stack (a hard abort). Only admitted TS/JS source
+/// candidates count against `max_entries` (#11984). Every directory entry
+/// still counts against a larger total-entry backstop (`10× max_entries`) so
+/// a huge asset tree terminates. Exceeding either cap stops the walk and
+/// reports `truncated: true` so the adapter can disclose the bound instead of
 /// silently analyzing a partial workspace.
 pub(crate) fn visit_workspace_with_handwritten(
     root: &Path,
     max_entries: usize,
     handwritten: &[String],
 ) -> WorkspaceScan {
+    let max_total_entries =
+        max_entries.saturating_mul(TS_WORKSPACE_TOTAL_ENTRY_BACKSTOP_MULTIPLIER);
     let mut out = Vec::new();
-    let mut visited = 0usize;
+    let mut candidates = 0usize;
+    let mut total_entries = 0usize;
     let mut truncated = false;
     let mut skipped_links = 0usize;
     let mut alias_links: Vec<PathBuf> = Vec::new();
@@ -190,8 +209,8 @@ pub(crate) fn visit_workspace_with_handwritten(
         };
         let mut stop = false;
         for entry in entries.flatten() {
-            visited += 1;
-            if visited > max_entries {
+            total_entries += 1;
+            if total_entries > max_total_entries {
                 truncated = true;
                 stop = true;
                 break;
@@ -238,23 +257,27 @@ pub(crate) fn visit_workspace_with_handwritten(
             }
             if file_type.is_dir() {
                 stack.push(path);
-            } else if file_type.is_file() && !is_detectable_generated_typescript_path(&path) {
-                let adapter = TypeScriptAdapter;
-                if adapter.accepts_path(&path) {
-                    let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
-                    if !crate::config::is_detectable_excluded_typescript_path(&relative)
-                        || crate::config::is_declared_handwritten_typescript_path(
-                            handwritten,
-                            &relative,
-                        )
-                    {
-                        out.push(relative);
-                    }
+            } else if file_type.is_file() && is_candidate_workspace_source(&path) {
+                candidates += 1;
+                if candidates > max_entries {
+                    truncated = true;
+                    stop = true;
+                    break;
+                }
+                let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+                if !crate::config::is_detectable_excluded_typescript_path(&relative)
+                    || crate::config::is_declared_handwritten_typescript_path(
+                        handwritten,
+                        &relative,
+                    )
+                {
+                    out.push(relative);
                 }
             } else if file_type.is_file() {
                 // A regular file the filters above refused (a `*.generated.*`
-                // source): excluded by policy, not a link-hidden entry, so it
-                // must not inflate the skipped-link disclosure.
+                // source, a minified bundle, or a non-source asset): excluded
+                // by policy, not a link-hidden entry, so it must not inflate
+                // the skipped-link disclosure or the candidate-source cap.
             } else if is_special_non_link_file(&file_type) {
                 // FIFOs, sockets and devices (Unix) are neither directories,
                 // regular files, nor links and cannot carry TypeScript
@@ -807,9 +830,10 @@ mod tests {
         workspace.write("a/one.ts", "export const a = 1;\n");
         workspace.write("b/two.ts", "export const b = 2;\n");
         workspace.write("c/three.ts", "export const c = 3;\n");
-        // Cap below the number of visited entries: each of the three
-        // subdirectory entries plus the three files exceeds a limit of 4.
-        let scan = visit_workspace_with_handwritten(&workspace.0, 4, &[]);
+        // Cap below the number of admitted source files. Directories no
+        // longer consume the budget, so a limit of 2 (not 4) is what
+        // truncates three sibling sources.
+        let scan = visit_workspace_with_handwritten(&workspace.0, 2, &[]);
         assert!(scan.truncated, "cap must trip the truncated flag");
         assert!(
             scan.files.len() < 3,
@@ -820,6 +844,87 @@ mod tests {
         let full = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
         assert!(!full.truncated);
         assert_eq!(full.files.len(), 3);
+    }
+
+    /// #11984 item 1: a large non-source tree must not consume the source
+    /// cap. `RIPR_TS_MAX_WORKSPACE_FILES` counts admitted TS/JS candidates
+    /// (minus `*.generated.*`), so a limit below `N + sources` still finds
+    /// every real source and does not report truncation.
+    #[test]
+    fn workspace_file_limit_counts_source_candidates_not_assets() {
+        let workspace = TempWorkspace::new("candidate-count");
+        workspace.write("src/keep.ts", "export const keep = 1;\n");
+        workspace.write("src/also.ts", "export const also = 2;\n");
+        workspace.write("src/extra.js", "export const extra = 3;\n");
+        for i in 0..12 {
+            workspace.write(&format!("assets/blob-{i}.png"), "not source\n");
+        }
+        for i in 0..6 {
+            workspace.write(
+                &format!("src/cart-{i}.generated.ts"),
+                "export const generated = 1;\n",
+            );
+        }
+        // 12 pngs + 6 generated + 3 sources + dirs is well above 8; counting
+        // every directory entry therefore truncates before this change.
+        let scan = visit_workspace_with_handwritten(&workspace.0, 8, &[]);
+        assert!(
+            !scan.truncated,
+            "non-source and generated entries must not trip the source cap; files={:?}",
+            scan.files
+        );
+        assert_eq!(
+            scan.files,
+            vec![
+                PathBuf::from("src/also.ts"),
+                PathBuf::from("src/extra.js"),
+                PathBuf::from("src/keep.ts"),
+            ],
+            "every admitted source must be discovered; got {:?}",
+            scan.files
+        );
+    }
+
+    /// More admitted source files than the candidate limit still truncates.
+    #[test]
+    fn workspace_file_limit_truncates_when_sources_exceed_the_cap() {
+        let workspace = TempWorkspace::new("source-cap");
+        for i in 0..5 {
+            workspace.write(&format!("src/f{i}.ts"), "export const v = 1;\n");
+        }
+        let scan = visit_workspace_with_handwritten(&workspace.0, 2, &[]);
+        assert!(scan.truncated, "more sources than the cap must truncate");
+        assert_eq!(
+            scan.files.len(),
+            2,
+            "the walk must stop at the candidate cap; got {:?}",
+            scan.files
+        );
+        let full = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
+        assert!(!full.truncated);
+        assert_eq!(full.files.len(), 5);
+    }
+
+    /// A huge asset tree still terminates through the total-entry backstop
+    /// (10× the candidate limit) and reports the existing `truncated` flag.
+    #[test]
+    fn workspace_walk_total_entry_backstop_trips_on_huge_nonsource_tree() {
+        let workspace = TempWorkspace::new("entry-backstop");
+        let limit = 2usize;
+        let backstop = limit.saturating_mul(TS_WORKSPACE_TOTAL_ENTRY_BACKSTOP_MULTIPLIER);
+        for i in 0..(backstop + 5) {
+            workspace.write(&format!("assets/blob-{i}.png"), "not source\n");
+        }
+        let scan = visit_workspace_with_handwritten(&workspace.0, limit, &[]);
+        assert!(
+            scan.truncated,
+            "a huge non-source tree must trip the total-entry backstop"
+        );
+        assert!(
+            scan.files.is_empty(),
+            "no TS/JS sources exist to discover; got {:?}",
+            scan.files
+        );
     }
 
     #[test]
