@@ -4264,26 +4264,51 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
 /// `self: &mut Self`. Anything else, including a signature that cannot be
 /// read, is not a borrow (fail closed).
 pub(in crate::analysis) fn owner_borrows_receiver(body: &str) -> bool {
+    owner_receiver_borrow(body) == Some(true)
+}
+
+/// How the method whose source starts `body` takes its receiver, when that is
+/// established: `Some(true)` for a reference receiver, `Some(false)` for a
+/// plain by-value `self` / `mut self`, and `None` when the signature cannot
+/// be read, has no receiver, or types it (`self: Box<Self>`). Guidance that
+/// names a value to assert on is worded from `Some` only (#12061).
+pub(in crate::analysis) fn owner_receiver_borrow(body: &str) -> Option<bool> {
     // Attributes (`#[inline(always)]`) may precede the item: read the
-    // parameter list after the `fn` keyword.
-    let Some(open) = body
-        .find("fn ")
-        .and_then(|at| body[at..].find('(').map(|open| at + open))
-    else {
-        return false;
-    };
-    let params = &body[open + 1..];
+    // parameter list after the `fn` keyword. Its `(` is the first one outside
+    // the generic list, since a bound such as `F: Fn(u32) -> u32` holds
+    // parentheses of its own.
+    let at = body.find("fn ")?;
+    let mut depth = 0usize;
+    let mut prev = '\0';
+    let mut open = None;
+    for (idx, ch) in body[at..].char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' if prev != '-' => depth = depth.saturating_sub(1),
+            '(' if depth == 0 => {
+                open = Some(at + idx);
+                break;
+            }
+            _ => {}
+        }
+        prev = ch;
+    }
+    let params = &body[open? + 1..];
     let first = params
         .find([',', ')'])
         .map_or(params, |end| &params[..end])
         .trim();
     if let Some(typed) = first.strip_prefix("self") {
         let typed = typed.trim_start();
-        return typed
-            .strip_prefix(':')
-            .is_some_and(|ty| ty.trim_start().starts_with('&'));
+        return match typed.strip_prefix(':') {
+            // `self: &Self` / `self: &mut Self` borrow; `self: Box<Self>` and
+            // other typed receivers are not established either way.
+            Some(ty) => ty.trim_start().starts_with('&').then_some(true),
+            None if typed.is_empty() => Some(false),
+            None => None,
+        };
     }
-    first.starts_with('&') && {
+    if first.starts_with('&') {
         let after = first.trim_start_matches('&').trim_start();
         let after = after.strip_prefix('\'').map_or(after, |lifetime| {
             lifetime
@@ -4295,8 +4320,15 @@ pub(in crate::analysis) fn owner_borrows_receiver(body: &str) -> bool {
             .strip_prefix("mut")
             .filter(|rest| rest.starts_with(char::is_whitespace))
             .map_or(after, str::trim_start);
-        after == "self"
+        return (after == "self").then_some(true);
     }
+    // `mut self` is a by-value receiver; any other first parameter means the
+    // function has no receiver at all.
+    (first == "mut self"
+        || first
+            .strip_prefix("mut")
+            .is_some_and(|r| r.trim_start() == "self"))
+    .then_some(false)
 }
 
 /// #7131: the field collection path (`lines` for `self.lines.push(Line {
@@ -7595,6 +7627,30 @@ mod method_hop_rows;
 #[cfg(test)]
 mod tests {
     #[test]
+    fn receiver_mode_is_established_only_when_the_signature_says_so() {
+        // #12061: guidance names a value to assert on from `Some` only.
+        for (body, mode) in [
+            ("fn bump(&mut self) {", Some(true)),
+            ("fn apply<F: Fn(u32) -> u32>(&mut self, f: F) {", Some(true)),
+            ("fn retries(mut self, n: u32) -> Self {", Some(false)),
+            ("fn retries(self) -> Self {", Some(false)),
+            (
+                "fn retries<F: Fn(u32)>(mut self, f: F) -> Self {",
+                Some(false),
+            ),
+            // Typed receivers, no receiver and unreadable signatures are not
+            // established either way.
+            ("fn retries(self: Box<Self>) -> Self {", None),
+            ("fn new(n: u32) -> Self {", None),
+            ("fn wrap(selfish: &mut Opts) {", None),
+            ("no signature", None),
+            ("fn broken", None),
+        ] {
+            assert_eq!(super::owner_receiver_borrow(body), mode, "{body}");
+        }
+    }
+
+    #[test]
     fn only_a_borrowed_receiver_writes_the_binding_the_test_reads() {
         // #11398 review: a by-value receiver writes a moved copy.
         for body in [
@@ -7604,6 +7660,8 @@ mod tests {
             "fn bump( & mut self ) {",
             "fn bump(&mut\n    self) {",
             "fn bump(&\n    mut\tself, n: u32) {",
+            "fn apply<F: Fn(u32) -> u32>(&mut self, f: F) {",
+            "fn apply<'a, T: Into<Vec<(u32, u32)>>>(&'a mut self, t: T) {",
             "fn bump(self: &mut Self, n: u32) {",
             "fn bump(self: &Self) {",
             "#[inline(always)]\nfn bump(&mut self) {",

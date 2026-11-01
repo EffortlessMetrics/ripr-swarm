@@ -3922,8 +3922,8 @@ fn build_seam_from_shape(
     let seam = if kind == SeamKind::FieldConstruction
         && crate::analysis::classify::field_assignment_target(seam.expression()).is_some()
     {
-        let borrows = crate::analysis::classify::owner_borrows_receiver(owner_fact.body.as_str());
-        seam.with_owner_borrows_receiver(Some(borrows))
+        let borrows = crate::analysis::classify::owner_receiver_borrow(owner_fact.body.as_str());
+        seam.with_owner_borrows_receiver(borrows)
     } else {
         seam
     };
