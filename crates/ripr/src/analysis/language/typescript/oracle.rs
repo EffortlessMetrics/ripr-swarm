@@ -918,12 +918,13 @@ fn collect_nested_callback_assertions(
             }
             if callback_parameter_count(callback) == Some(0) {
                 if let Some(statements) = function_body_statements_from_argument(callback) {
-                    collect_expect_assertions_from_statement_vec(
-                        statements,
-                        source,
-                        &context.nested(),
-                        out,
-                    );
+                    // An expression-bodied arrow returns its assertion to the
+                    // awaited chain, so it is not floating.
+                    let body = AssertionContext {
+                        expression_body: callback_is_expression_arrow(callback),
+                        ..context.nested()
+                    };
+                    collect_expect_assertions_from_statement_vec(statements, source, &body, out);
                 }
             } else if let Some(assertions) = callback_case_assertions(
                 callback,
@@ -1175,6 +1176,14 @@ fn callback_is_async_or_generator(callback: &oxc_ast::ast::Argument<'_>) -> bool
             function.r#async || function.generator
         }
         _ => true,
+    }
+}
+
+/// `true` for an expression-bodied arrow callback (`() => expect(p)...`).
+fn callback_is_expression_arrow(callback: &oxc_ast::ast::Argument<'_>) -> bool {
+    match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => arrow.expression,
+        _ => false,
     }
 }
 

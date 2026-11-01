@@ -5806,7 +5806,16 @@ pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -
 /// the test reads `static_unknown` rather than an actionable gap, like the
 /// `.then` shapes. `masked` has comments and strings blanked.
 fn floating_promise_assertion_on_owner(masked: &str, owner_name: &str) -> bool {
-    masked.match_indices("expect(").any(|(at, _)| {
+    masked.match_indices("expect").any(|(at, _)| {
+        // `expect(` or `expect.soft(`.
+        let after = &masked[at + "expect".len()..];
+        let callee_len = if after.starts_with('(') {
+            "expect".len()
+        } else if after.starts_with(".soft(") {
+            "expect.soft".len()
+        } else {
+            return false;
+        };
         if masked[..at]
             .chars()
             .next_back()
@@ -5828,14 +5837,19 @@ fn floating_promise_assertion_on_owner(masked: &str, owner_name: &str) -> bool {
         {
             return false;
         }
-        let open = at + "expect".len();
+        let open = at + callee_len;
         let Some(close) = balanced_close_offset(&masked[open + 1..]).map(|c| open + 1 + c) else {
             return false;
         };
         let chain = masked[close + 1..].trim_start();
-        let async_chain = chain
-            .strip_prefix('.')
-            .map(str::trim_start)
+        // `expect(x).not.resolves...` keeps the async modifier after `.not`.
+        let after_dot = chain.strip_prefix('.').map(str::trim_start);
+        let async_chain = after_dot
+            .map(|rest| {
+                rest.strip_prefix("not")
+                    .and_then(|tail| tail.trim_start().strip_prefix('.'))
+                    .map_or(rest, str::trim_start)
+            })
             .is_some_and(|rest| rest.starts_with("resolves") || rest.starts_with("rejects"));
         async_chain && text_calls_owner(&masked[open..=close], owner_name)
     })

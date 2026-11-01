@@ -385,7 +385,9 @@ pub(crate) fn reparse_row_assertions(
             None,
             bindings,
             returns_to_runner,
-            expression_body,
+            // A discarded callback result (`forEach`) leaves an
+            // expression-bodied assertion floating.
+            expression_body && returns_to_runner,
         ));
     }
     None

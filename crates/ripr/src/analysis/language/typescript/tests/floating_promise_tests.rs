@@ -51,6 +51,10 @@ fn awaited_returned_and_expression_bodied_promise_assertions_stay_exposed() -> R
             "test('t', async () => expect(Promise.resolve(f(100))).resolves.toBe(false));",
         ),
         (
+            "awaited-then-expression-callback",
+            "test('t', async () => { await Promise.resolve(1).then(() => expect(Promise.resolve(f(100))).resolves.toBe(false)); });",
+        ),
+        (
             "awaited-then-floating-other",
             "test('t', async () => {\n  await expect(Promise.resolve(f(100))).resolves.toBe(false);\n  expect(Promise.resolve(1)).resolves.toBe(1);\n});",
         ),
@@ -80,6 +84,14 @@ fn floating_promise_assertions_supply_no_discriminator() -> Result<(), String> {
         (
             "void-discarded",
             "test('t', async () => { void expect(Promise.resolve(f(100))).resolves.toBe(false); });",
+        ),
+        (
+            "not-resolves-floating",
+            "test('t', async () => { expect(Promise.resolve(f(100))).not.resolves.toBe(true); });",
+        ),
+        (
+            "soft-floating",
+            "test('t', async () => { expect.soft(Promise.resolve(f(100))).resolves.toBe(false); });",
         ),
         (
             "non-final-statement",
@@ -125,4 +137,13 @@ fn floating_owner_assertion_beside_an_awaited_unrelated_one_stays_a_gap() -> Res
         "mixed"
     );
     Ok(())
+}
+
+#[test]
+fn a_for_each_expression_body_assertion_floats() {
+    // `forEach` discards its callback's result, so the expression-bodied
+    // assertion cannot fail the test and earns no credit.
+    let body =
+        "test('t', () => { [100].forEach(v => expect(Promise.resolve(f(v))).resolves.toBe(false)); });";
+    assert_eq!(assertion_count(&test_file(body)), 0);
 }
