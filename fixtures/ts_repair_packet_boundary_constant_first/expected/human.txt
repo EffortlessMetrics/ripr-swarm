@@ -27,7 +27,7 @@ Start here:
   Related test (1 of 2 matched rows): tests/pricing.test.ts:3 no discount below threshold (no input this test passes was seen reaching `DISCOUNT_THRESHOLD == amount`)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `DISCOUNT_THRESHOLD == amount`; the repair packet is complete (advisory: `ripr
-    context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)
+    context --at <finding-id>` prints it; `ripr repair` covers Rust files only)
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- MCP: argument errors on a known tool are now `isError: true` `invalid_argument` tool results instead of JSON-RPC `-32602` (unknown tools stay protocol errors); `ripr_list_gaps` `limit` is capped at the 500-item working-set bound; opt-in `RIPR_MCP_TEXT_CONTENT=brief` (one line per gap) and `RIPR_MCP_TOOLS_LIST=slim` (no `outputSchema`) shrink what a host reads; the repair-card description drops its duplicated failure-code list (#11621).

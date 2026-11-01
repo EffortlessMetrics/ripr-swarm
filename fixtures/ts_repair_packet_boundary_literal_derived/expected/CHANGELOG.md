@@ -427,6 +427,18 @@ Updated:
 ## Pending — ts_repair_packet_boundary_literal_derived (36)
 
 Reason:
+RIPR-SPEC-0088: #11619 drop the seam-based qualifier from the repair-packet advisory
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (37)
+
+Reason:
 RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
 
 Command:
