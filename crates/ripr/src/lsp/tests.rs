@@ -29102,6 +29102,34 @@ fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), Strin
 }
 
 #[test]
+fn hover_discloses_base_side_currentness_with_the_cli_wording() -> Result<(), String> {
+    // #11905: hover took no part in the base-side disclosure the CLI prints.
+    let mut finding = fix_route_rust_finding();
+    finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+    let disclosure = finding
+        .source_currentness_disclosure()
+        .ok_or("base_deleted must carry a disclosure")?;
+    let markdown = finding_hover_markdown_for(&finding)?;
+    assert!(
+        markdown.contains(&format!("**Source:** {disclosure}")),
+        "{markdown}"
+    );
+    // Negative control: a candidate-current finding keeps hover unchanged.
+    finding.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+    let markdown = finding_hover_markdown_for(&finding)?;
+    assert!(!markdown.contains("**Source:**"), "{markdown}");
+    assert_eq!(finding.source_currentness_disclosure(), None);
+    // The producer-unknown state is not described as base-side evidence.
+    finding.source_currentness = crate::domain::SourceCurrentness::UnresolvedSubject;
+    let unknown = finding
+        .source_currentness_disclosure()
+        .ok_or("unresolved_subject must carry a disclosure")?;
+    assert!(unknown.starts_with("unresolved_subject"), "{unknown}");
+    assert!(!unknown.contains("base-side"), "{unknown}");
+    Ok(())
+}
+
+#[test]
 fn hover_discriminator_row_keeps_yes_for_exposed_findings() -> Result<(), String> {
     // Negative control: an exposed finding keeps the producer's stage line.
     let mut finding = fix_route_rust_finding();

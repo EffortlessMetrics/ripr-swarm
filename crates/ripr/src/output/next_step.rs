@@ -27,6 +27,15 @@ use crate::output::preview_actionability::preview_actionability_for;
 ///
 /// Returns an empty string when `finding.recommended_next_step` is `None`.
 pub(crate) fn reconcile_next_step(finding: &Finding) -> String {
+    // #11905: base-side evidence is not a candidate edit target and MCP refuses
+    // it as `not_candidate_actionable`. Every surface that reads the next step
+    // takes this refusal here instead of a "add an assertion" instruction.
+    if finding.recommended_next_step.is_some() && finding.source_currentness.is_base_side() {
+        return format!(
+            "Not a candidate edit target ({}): the changed source is not current on the candidate side, so this finding recommends no test change.",
+            finding.source_currentness.as_str()
+        );
+    }
     if let Some(guidance) = unresolved_edge_guidance(finding) {
         return guidance;
     }
@@ -337,6 +346,32 @@ mod tests {
             !step.contains("no actionable repair packet is emitted"),
             "complete packet must NOT contain blocked-case tail; got: {step}"
         );
+    }
+
+    /// #11905: a base-side finding gets the refusal, not the assertion advice,
+    /// and a candidate-current finding keeps its own step.
+    #[test]
+    fn reconcile_next_step_refuses_base_side_findings() {
+        let mut finding = incomplete_ts_finding();
+        let current = reconcile_next_step(&finding);
+        for currentness in [
+            crate::domain::SourceCurrentness::BaseDeleted,
+            crate::domain::SourceCurrentness::MovedOrRenamed,
+        ] {
+            finding.source_currentness = currentness;
+            let step = reconcile_next_step(&finding);
+            assert!(
+                step.starts_with("Not a candidate edit target")
+                    && step.contains(currentness.as_str()),
+                "{step}"
+            );
+            assert!(!step.contains("no actionable repair packet"), "{step}");
+        }
+        finding.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+        assert_eq!(reconcile_next_step(&finding), current);
+        finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        finding.recommended_next_step = None;
+        assert_eq!(reconcile_next_step(&finding), "");
     }
 
     /// Incomplete packet → blocked-state string preserved.
