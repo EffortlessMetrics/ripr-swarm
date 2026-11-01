@@ -6613,3 +6613,29 @@ mod process_names_scan_tests {
         assert_eq!(admitted("b"), Some(1), "{:?}", pins.functions.keys());
     }
 }
+
+#[cfg(test)]
+mod prelude_glob_audit_tests {
+    use super::ASSERTION_FREE_PRELUDE_GLOBS;
+
+    /// RIPR-SPEC-0369: a trusted prelude glob is credited only when its crate
+    /// is locked at an audited version. A glob whose crate has no audit row
+    /// would keep credit on the manifest proof alone (fail-open), and an audit
+    /// row no glob uses is dead trust; both directions must agree (#12049).
+    #[test]
+    fn every_trusted_prelude_glob_has_an_audit_row_and_back() {
+        let mut roots: Vec<&str> = ASSERTION_FREE_PRELUDE_GLOBS
+            .iter()
+            .filter_map(|glob| glob.first().copied())
+            .collect();
+        roots.sort_unstable();
+        roots.dedup();
+        let mut audited = crate::analysis::facts::drop_in::audited_prelude_crates();
+        audited.sort_unstable();
+        assert!(!roots.is_empty(), "the trusted glob list must not be empty");
+        assert_eq!(
+            roots, audited,
+            "trusted prelude glob roots and audited-version rows drifted"
+        );
+    }
+}
