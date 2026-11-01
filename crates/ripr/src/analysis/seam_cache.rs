@@ -604,7 +604,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// assertion credit (RIPR-SPEC-0369, #11703).
 /// `1.126`: a predicate on a self-closed `if` statement takes no branch-value
 /// sink from the next line (#10880); `1.125` credited a coincident row.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.126";
+/// `1.127`: those prelude globs keep assertion credit only when `Cargo.lock`
+/// pins an audited version of the crate (RIPR-SPEC-0369). Old entries credited
+/// by crate name alone.
+/// `1.128`: a bare imported unit variant receiver resolves to its enum's impl, so
+/// the receiver-unestablished withhold reads where a false gap was cached (#8782).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.128";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -777,7 +782,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.126";
 /// `0.132`: same `verus!` region limit and prelude-glob credit as full `1.125`
 /// (RIPR-SPEC-0369).
 /// `0.133`: same self-closed `if` rule as full `1.126` (#10880).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.133";
+/// `0.133`: same imported-variant receiver as full `1.127` (#8782).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.134";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -952,7 +958,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.133";
 /// `0.132`: same `verus!` region limit and prelude-glob credit as full `1.125`
 /// (RIPR-SPEC-0369).
 /// `0.133`: same self-closed `if` rule as full `1.126` (#10880).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.133";
+/// `0.133`: same imported-variant receiver as full `1.127` (#8782).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.134";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5542,7 +5549,10 @@ mod tests {
         // 1.124 -> 1.125: `verus!` region limit and verification-prelude glob
         // credit (RIPR-SPEC-0369, #11703).
         // 1.125 -> 1.126: self-closed `if` statement tail (#10880).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.126");
+        // 1.126 -> 1.127: those prelude globs keep assertion credit only for
+        // audited locked versions (RIPR-SPEC-0369).
+        // 1.127 -> 1.128: imported unit-variant receiver (#8782).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.128");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5655,8 +5665,9 @@ mod tests {
         // 0.130 -> 0.131: same nested expected-macro limit as full 1.124 (#9644).
         // 0.131 -> 0.132: same `verus!` region limit as full 1.125 (RIPR-SPEC-0369).
         // 0.132 -> 0.133: same self-closed `if` rule as full 1.126.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.133");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.133");
+        // 0.133 -> 0.134: same imported-variant receiver as full 1.127 (#8782).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.134");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.134");
     }
 
     #[test]

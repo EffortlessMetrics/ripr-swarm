@@ -530,3 +530,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — infect_wildcard_discard (30)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless infect_wildcard_discard --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

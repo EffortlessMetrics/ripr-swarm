@@ -1,9 +1,1 @@
-crates/ripr/src/output/agent_seam_packets_live/render.rs|agent gap packet renderer is missing its packet
-crates/ripr/src/output/agent_seam_packets_live/render.rs|agent gap packet renderer must produce an object
-crates/ripr/src/output/agent_seam_packets_live/render.rs|agent packet currentness target must be an object
-crates/ripr/src/output/agent_seam_packets_live/render.rs|parse agent gap packet JSON failed: {error}
-crates/ripr/src/output/agent_seam_packets_live/render.rs|render blocked agent gap packet failed: {error}
-crates/ripr/src/output/agent_seam_packets_live/render.rs|render current agent gap packet failed: {error}
 crates/ripr/src/output/agent_seam_packets_live/render.rs|typed swarm queue is missing must_not_infer
-crates/ripr/src/output/agent_seam_packets_live/render.rs|typed swarm queue is missing summary
-crates/ripr/src/output/agent_seam_packets_live/render.rs|typed swarm queue renderer must produce an object

@@ -30910,3 +30910,170 @@ fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
     }
     Ok(())
 }
+
+/// A committed single-crate Rust repo with no tests at all and one
+/// working-tree edit to a function nothing calls (#11798).
+fn untested_rust_edit_fixture(name: &str) -> Result<TempLspRoot, String> {
+    let root = unique_lsp_test_root(name)?;
+    std::fs::create_dir_all(root.path().join("src"))
+        .map_err(|err| format!("create src failed: {err}"))?;
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[package]\nname = \"lonely\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml failed: {err}"))?;
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn lonely(x: i32) -> i32 {\n    x * 2\n}\n",
+    )
+    .map_err(|err| format!("write lib.rs failed: {err}"))?;
+    run_lsp_scope_git(root.path(), &["init", "-q"])?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &[
+            "-c",
+            "user.email=ripr-test@example.com",
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+    )?;
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn lonely(x: i32) -> i32 {\n    x * 3\n}\n",
+    )
+    .map_err(|err| format!("edit lib.rs failed: {err}"))?;
+    Ok(root)
+}
+
+/// #11798 through the real workspace entry point and the status projection:
+/// a changed function no test calls yields a live `no_static_path` finding
+/// the actionable profile withholds. `ripr/analysisStatus` must reconcile
+/// (`withheld_findings.count == live findings - published findings`), the
+/// editor must carry one passive Hint naming the `full` route, and the
+/// full profile must publish the findings with no marker.
+#[test]
+fn untested_rust_edit_discloses_withheld_findings_and_reconciles_status() -> Result<(), String> {
+    use crate::lsp::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE;
+    let root = untested_rust_edit_fixture("withheld-live-entry")?;
+    let analyze = |profile| {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            diagnostic_profile: profile,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let is_marker = |diagnostic: &Diagnostic| {
+        diagnostic.code
+            == Some(NumberOrString::String(
+                DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+            ))
+    };
+
+    let actionable = analyze(crate::config::LspDiagnosticProfile::Actionable)?;
+    // `finding_count` counts every finding; only the candidate-current ones
+    // are live obligations (a base-side twin is historical context that the
+    // full profile alone shows), so the withheld share is the live subset.
+    let finding_count = actionable.snapshot.findings.len();
+    let live_count = actionable
+        .snapshot
+        .findings
+        .iter()
+        .filter(|finding| finding.is_candidate_actionable())
+        .count();
+    if live_count == 0
+        || !actionable
+            .snapshot
+            .findings
+            .iter()
+            .any(|finding| finding.class == ExposureClass::NoStaticPath)
+    {
+        return Err(format!(
+            "fixture must produce a live no_static_path finding: {:?}",
+            actionable.snapshot.findings
+        ));
+    }
+    let diagnostics = actionable
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    let (markers, published): (Vec<_>, Vec<_>) =
+        diagnostics.iter().copied().partition(|d| is_marker(d));
+    if !published.is_empty() {
+        return Err(format!(
+            "fixture: the profile must withhold every finding: {published:?}"
+        ));
+    }
+    let [marker] = markers.as_slice() else {
+        return Err(format!("exactly one marker expected: {diagnostics:?}"));
+    };
+    if marker.severity != Some(DiagnosticSeverity::HINT)
+        || !marker.message.contains("no static test path found")
+        || !marker
+            .message
+            .contains(&format!("{live_count} changed-behavior finding(s)"))
+        || !marker.message.contains("diagnosticProfile: full")
+    {
+        return Err(format!(
+            "marker must name count and escape hatch: {marker:?}"
+        ));
+    }
+    if marker.data.as_ref().is_some_and(|data| {
+        data.get("delivery_eligible").is_some() || data.get("finding_id").is_some()
+    }) {
+        return Err(format!("marker must carry no finding data: {marker:?}"));
+    }
+    if !actionable.snapshot.is_consistent() {
+        return Err("actionable: snapshot with the marker must be consistent".to_string());
+    }
+
+    // Status projection: commit the real snapshot and read analysisStatus.
+    let (service, socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    drop(socket);
+    let backend = service.inner();
+    let published_findings = published.len();
+    backend
+        .refresh_plan(actionable)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    let status = backend.analysis_status_payload_for_health(&AnalysisHealth::default());
+    let reported = status["analysis_outcome"]["counts"]["finding_count"]
+        .as_u64()
+        .ok_or_else(|| format!("status carries finding_count: {status:#}"))?;
+    let withheld = status["withheld_findings"]["count"]
+        .as_u64()
+        .ok_or_else(|| format!("status carries withheld count: {status:#}"))?;
+    if reported as usize != finding_count
+        || withheld as usize != live_count - published_findings
+        || withheld == 0
+        || status["withheld_findings"]["gap_count"] != withheld
+        || status["withheld_findings"]["classes"] != serde_json::json!(["no_static_path"])
+        || !status["withheld_findings"]["recovery_route"].is_string()
+    {
+        return Err(format!("withheld_findings must reconcile: {status:#}"));
+    }
+
+    let full = analyze(crate::config::LspDiagnosticProfile::Full)?;
+    let full_diagnostics = full
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    if full_diagnostics.is_empty() || full_diagnostics.iter().copied().any(is_marker) {
+        return Err(format!(
+            "full: findings published and no marker expected: {full_diagnostics:?}"
+        ));
+    }
+    if !full.snapshot.is_consistent() {
+        return Err("full: snapshot must be consistent".to_string());
+    }
+    Ok(())
+}

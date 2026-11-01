@@ -2101,7 +2101,7 @@ Status: proposed
                 "the digest job must publish its summary (or instrument-failure annotation) with if: always()".to_string(),
             );
         }
-        if !job.contains("actions/upload-artifact@v7") || !job.contains("ripr-spec-maintenance") {
+        if !job.contains("actions/upload-artifact@") || !job.contains("ripr-spec-maintenance") {
             return Err(
                 "the digest job must retain the full report as the ripr-spec-maintenance artifact"
                     .to_string(),

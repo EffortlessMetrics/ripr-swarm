@@ -1938,3 +1938,11 @@ path = "docs/specs/RIPR-SPEC-0370-npm-native-bootstrap.md"
 status = "accepted"
 owner = "release"
 standalone_reason = "Bounded native Linux npm bootstrap: the source-repository npm alpha publishes one admitted Linux payload through an exact-artifact, stage-only workflow without widening the launcher contract (renumbered from RIPR-SPEC-0180 on the ripr-into-swarm merge sync)."
+
+[[artifact]]
+id = "RIPR-SPEC-0352"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records the inherent-receiver unestablished contract: a gap whose only refusal is an assertion macro binding that cannot be verified because target-root placement is unavailable reads static_unknown under rust_inherent_receiver_unestablished, credits nothing, and keeps every real receiver mismatch and every available-placement rebinding as a gap."

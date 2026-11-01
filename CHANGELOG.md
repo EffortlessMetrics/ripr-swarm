@@ -1131,7 +1131,7 @@ are scoped or reviewed.
   `summary`, `canonical_next_action` and
   `ripr context --at <finding-id> --json --quiet` as the lean way to read the
   large report (#11139).
-- `ripr check` no longer re-runs the rust-analyzer syntax validation pass (`Parse::errors`) every time it asks whether an already-parsed Rust file is clean: the error count is computed once per distinct parse and kept with the per-thread parse memo, so memo hits and the file-fact summarizer reuse it. Findings and JSON output are unchanged (#11205).
+- `ripr check` no longer re-runs the rust-analyzer syntax validation pass (`Parse::errors`) every time it asks whether an already-parsed Rust file is clean: the error count is computed once per distinct parse and kept with the per-thread parse memo, so memo hits and the file-fact summarizer reuse it. Findings and JSON output are unchanged (#10925).
 - MCP: an empty committed `ripr_refresh` now carries `empty_scope_hint` (why, and
   the `base`/`source` to pass); not-ready repair cards and `ripr_prepare_repair`
   refusals carry `finding_guidance` (`missing`, `recommended_next_step`); and a

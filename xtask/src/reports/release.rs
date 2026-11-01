@@ -1437,7 +1437,7 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
                         .ok_or_else(|| {
                             "packaged CLI pilot packet artifact omitted run_status".to_string()
                         })?;
-                if run_status != "complete" {
+                if !pilot_packet_run_status_is_complete(run_status) {
                     return Err(format!(
                         "packaged CLI pilot did not complete: run_status={run_status}"
                     ));
@@ -1768,6 +1768,15 @@ fn installed_command_surface_check(binary: &Path) -> ReleaseReadinessCheck {
             vec![format!("missing: {}", missing.join(", "))],
         )
     }
+}
+
+/// Whether a pilot `agent-seam-packets.json` `run_status` is a finished run
+/// (#12065). `packet_bound_applied` is a presentation cut of the packet file
+/// (#11951): the analysis completed and the file discloses the cut, so it
+/// passes the gate. `seam_limit_applied`, `limited_declined_files` and every
+/// other status mean the run itself was limited and still fail.
+fn pilot_packet_run_status_is_complete(run_status: &str) -> bool {
+    matches!(run_status, "complete" | "packet_bound_applied")
 }
 
 fn pilot_fixture_check(binary: &Path) -> ReleaseReadinessCheck {
@@ -3754,6 +3763,25 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn pilot_packet_run_status_accepts_complete_and_the_packet_bound_only() {
+        use super::pilot_packet_run_status_is_complete;
+        assert!(pilot_packet_run_status_is_complete("complete"));
+        assert!(pilot_packet_run_status_is_complete("packet_bound_applied"));
+        for limited in [
+            "seam_limit_applied",
+            "limited_declined_files",
+            "incomplete",
+            "",
+            "Complete",
+        ] {
+            assert!(
+                !pilot_packet_run_status_is_complete(limited),
+                "{limited:?} must keep failing the release gate"
+            );
+        }
+    }
 
     #[test]
     fn latency_status_reasons_are_forwarded_into_readiness_detail() -> Result<(), String> {

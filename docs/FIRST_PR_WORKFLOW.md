@@ -261,7 +261,12 @@ gap ledger names no repair start), each exactly as printed with the resolved
 `--base` and `--head`, then composes the packet. It runs analysis and
 writes the missing artifacts under `target/ripr/`; it stops at the first failing
 step, or a step that exits 0 without a non-empty parseable JSON artifact (exit 2,
-no packet), and never regenerates an artifact that already exists.
+no packet), and never regenerates an artifact that already exists. Each step is
+bounded to 2 hours by default (`RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS`, whole
+seconds; `0` removes the bound; any other value that is not a whole number is
+refused with exit 2 rather than read as unbounded): a step still running at its
+bound is terminated, the failure names the step and `timed out after <N> second(s)`,
+the files it newly created are removed, and the run exits 2 with no packet.
 Only current cards that carry no repair start, or cards rendered from the gap
 ledger, end in no-action; the reason says which.
 

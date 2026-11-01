@@ -1,97 +1,97 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
-  "cases_total": 808,
+  "cases_total": 818,
   "by_truth": {
-    "discriminated": 417,
-    "not_discriminated": 264,
+    "discriminated": 420,
+    "not_discriminated": 271,
     "partially_discriminated": 127
   },
   "by_outcome": {
-    "abstained": 297,
-    "false_actionable": 3,
-    "ideal": 508
+    "abstained": 301,
+    "false_actionable": 2,
+    "ideal": 515
   },
   "by_observed_verdict": {
-    "credited": 255,
+    "credited": 261,
     "gap": 256,
-    "limited": 284,
+    "limited": 288,
     "silent": 13
   },
   "false_verdict_rate": {
-    "numerator": 3,
-    "denominator": 808,
-    "rate": "0.0037"
+    "numerator": 2,
+    "denominator": 818,
+    "rate": "0.0024"
   },
   "false_actionable_rate": {
-    "numerator": 3,
-    "denominator": 417,
-    "rate": "0.0072"
+    "numerator": 2,
+    "denominator": 420,
+    "rate": "0.0048"
   },
   "false_exposed_rate": {
     "numerator": 0,
-    "denominator": 391,
+    "denominator": 398,
     "rate": "0.0000"
   },
   "false_silent_rate": {
     "numerator": 0,
-    "denominator": 391,
+    "denominator": 398,
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 508,
-    "denominator": 808,
-    "rate": "0.6287"
+    "numerator": 515,
+    "denominator": 818,
+    "rate": "0.6296"
   },
   "abstention_rate": {
-    "numerator": 297,
-    "denominator": 808,
-    "rate": "0.3676"
+    "numerator": 301,
+    "denominator": 818,
+    "rate": "0.3680"
   },
   "contradiction_rate": {
     "numerator": 0,
-    "denominator": 996,
+    "denominator": 1006,
     "rate": "0.0000"
   },
   "contradictions_by_code": {},
   "by_origin": {
     "authored": {
-      "cases_total": 772,
+      "cases_total": 782,
       "by_observed_verdict": {
-        "credited": 252,
+        "credited": 258,
         "gap": 252,
-        "limited": 255,
+        "limited": 259,
         "silent": 13
       },
       "false_verdict_rate": {
-        "numerator": 1,
-        "denominator": 772,
-        "rate": "0.0013"
+        "numerator": 0,
+        "denominator": 782,
+        "rate": "0.0000"
       },
       "false_actionable_rate": {
-        "numerator": 1,
-        "denominator": 395,
-        "rate": "0.0025"
+        "numerator": 0,
+        "denominator": 398,
+        "rate": "0.0000"
       },
       "false_exposed_rate": {
         "numerator": 0,
-        "denominator": 377,
+        "denominator": 384,
         "rate": "0.0000"
       },
       "false_silent_rate": {
         "numerator": 0,
-        "denominator": 377,
+        "denominator": 384,
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 503,
-        "denominator": 772,
-        "rate": "0.6516"
+        "numerator": 510,
+        "denominator": 782,
+        "rate": "0.6522"
       },
       "abstention_rate": {
-        "numerator": 268,
-        "denominator": 772,
-        "rate": "0.3472"
+        "numerator": 272,
+        "denominator": 782,
+        "rate": "0.3478"
       }
     },
     "upstream": {
@@ -431,6 +431,28 @@
       "changed_since_labeling": false,
       "observed_classifications": [
         "infection_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "authored-absorbing-min-literal-floor",
+      "subject_id": "authored-absorbing-tail",
+      "origin": "authored",
+      "anchor": "src/lib.rs:2",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "exact_pin_behind_absorbing_min",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "propagation_unknown"
       ],
       "outcome": "abstained",
       "contradictions": [],
@@ -1793,13 +1815,13 @@
       "hard_case": false,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
-      "observed_verdict": "limited",
+      "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "infection_unknown"
+        "weakly_exposed"
       ],
-      "outcome": "abstained",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -4204,13 +4226,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "limited",
+      "observed_verdict": "credited",
       "followed_retarget": false,
       "changed_since_labeling": true,
       "observed_classifications": [
-        "static_unknown"
+        "exposed"
       ],
-      "outcome": "abstained",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -6750,13 +6772,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "limited",
+      "observed_verdict": "credited",
       "followed_retarget": false,
       "changed_since_labeling": false,
       "observed_classifications": [
-        "infection_unknown"
+        "exposed"
       ],
-      "outcome": "abstained",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -7102,13 +7124,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "limited",
       "followed_retarget": false,
       "changed_since_labeling": true,
       "observed_classifications": [
-        "reachable_unrevealed"
+        "static_unknown"
       ],
-      "outcome": "false_actionable",
+      "outcome": "abstained",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -7124,13 +7146,13 @@
       "hard_case": true,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
-      "observed_verdict": "gap",
+      "observed_verdict": "limited",
       "followed_retarget": false,
       "changed_since_labeling": true,
       "observed_classifications": [
-        "reachable_unrevealed"
+        "static_unknown"
       ],
-      "outcome": "ideal",
+      "outcome": "abstained",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -8193,6 +8215,28 @@
       "contradiction_counts": {}
     },
     {
+      "case_id": "prusti-prelude-glob-boundary",
+      "subject_id": "authored-verification-prelude",
+      "origin": "authored",
+      "anchor": "src/lib.rs:7",
+      "behavior_family": "return_value",
+      "test_shape": "exact_assert_eq",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": true,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
       "case_id": "push-after-early-return-empty-assert",
       "subject_id": "authored-push-after-early-return",
       "origin": "authored",
@@ -8255,6 +8299,160 @@
       "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 2,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "qualified-pin-glob-shadow",
+      "subject_id": "authored-crate-qualified-pin",
+      "origin": "authored",
+      "anchor": "src/lib.rs:36",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "false_credit_trap",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "qualified-pin-local-module-shadow",
+      "subject_id": "authored-crate-qualified-pin",
+      "origin": "authored",
+      "anchor": "src/lib.rs:28",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "false_credit_trap",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "qualified-pin-macro-shadow",
+      "subject_id": "authored-crate-qualified-pin",
+      "origin": "authored",
+      "anchor": "src/lib.rs:44",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "false_credit_trap",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "qualified-pin-module-entry",
+      "subject_id": "authored-crate-qualified-pin",
+      "origin": "authored",
+      "anchor": "src/tiers.rs:8",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "integration_test_crate_qualified_entry_pin",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "qualified-pin-root-entry",
+      "subject_id": "authored-crate-qualified-pin",
+      "origin": "authored",
+      "anchor": "src/lib.rs:11",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "integration_test_crate_qualified_entry_pin",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "qualified-pin-swallowed-owner",
+      "subject_id": "authored-crate-qualified-pin",
+      "origin": "authored",
+      "anchor": "src/lib.rs:20",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "false_credit_trap",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "propagation_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "qualified-pin-twin-entry",
+      "subject_id": "authored-crate-qualified-pin",
+      "origin": "authored",
+      "anchor": "src/lib.rs:52",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "false_credit_trap",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
       "findings_contradicted": 0,
       "contradiction_counts": {}
     },
@@ -10010,13 +10208,13 @@
       "hard_case": false,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
-      "observed_verdict": "limited",
+      "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": true,
+      "changed_since_labeling": false,
       "observed_classifications": [
-        "infection_unknown"
+        "weakly_exposed"
       ],
-      "outcome": "abstained",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -17330,13 +17528,13 @@
       "hard_case": false,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "limited",
+      "observed_verdict": "credited",
       "followed_retarget": false,
       "changed_since_labeling": true,
       "observed_classifications": [
-        "infection_unknown"
+        "exposed"
       ],
-      "outcome": "abstained",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -17755,6 +17953,28 @@
       "changed_since_labeling": true,
       "observed_classifications": [
         "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "trap-closed-if-identical-arms",
+      "subject_id": "authored-closed-if-identical-arms",
+      "origin": "authored",
+      "anchor": "src/lib.rs:3",
+      "behavior_family": "scalar_return_value",
+      "test_shape": "assert_eq_on_the_shared_arm_value",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": true,
+      "observed_classifications": [
+        "propagation_unknown"
       ],
       "outcome": "abstained",
       "contradictions": [],

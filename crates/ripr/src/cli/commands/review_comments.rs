@@ -160,14 +160,18 @@ fn positive_u64_limit_from_env(
             let parsed = raw
                 .trim()
                 .parse::<u64>()
-                .map_err(|err| format!("{env_name} must be a positive integer: {err}"))?;
+                .map_err(|err| format!("{env_name} must be a positive integer: {err}; set it to a whole number of 1 or more, or unset it"))?;
             if parsed == 0 {
-                return Err(format!("{env_name} must be a positive integer"));
+                return Err(format!(
+                    "{env_name} must be a positive integer; set it to a whole number of 1 or more, or unset it"
+                ));
             }
             Ok(parsed)
         }
         Err(std::env::VarError::NotPresent) => Ok(default),
-        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{env_name} must be valid UTF-8")),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{env_name} must be valid UTF-8; set it to plain digits, or unset it"
+        )),
     }
 }
 
@@ -305,7 +309,7 @@ fn load_review_comments_analysis_outcome(
         })?;
     if value.get("tool").and_then(serde_json::Value::as_str) != Some("ripr") {
         return Err(format!(
-            "review-comments --check-output {} is invalid: producer tool must be ripr",
+            "review-comments --check-output {} is invalid: producer tool must be ripr; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
@@ -316,7 +320,7 @@ fn load_review_comments_analysis_outcome(
             .is_none()
         {
             return Err(format!(
-                "review-comments --check-output {} is invalid: producer envelope is missing string field {field}",
+                "review-comments --check-output {} is invalid: producer envelope is missing string field {field}; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
                 path.display()
             ));
         }
@@ -325,13 +329,13 @@ fn load_review_comments_analysis_outcome(
         != Some(output::outcome::display_path(root).as_str())
     {
         return Err(format!(
-            "review-comments --check-output {} is invalid: producer root does not match requested root",
+            "review-comments --check-output {} is invalid: producer root does not match requested root; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
     if value.get("base").and_then(serde_json::Value::as_str) != Some(base) {
         return Err(format!(
-            "review-comments --check-output {} is invalid: producer base does not match requested base",
+            "review-comments --check-output {} is invalid: producer base does not match requested base; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
@@ -343,7 +347,7 @@ fn load_review_comments_analysis_outcome(
             .is_some_and(serde_json::Value::is_array)
     {
         return Err(format!(
-            "review-comments --check-output {} is invalid: producer envelope requires summary and findings",
+            "review-comments --check-output {} is invalid: producer envelope requires summary and findings; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
@@ -371,13 +375,13 @@ fn load_review_comments_analysis_outcome(
             return Err(review_comments_refusal_error(path, &refusal));
         }
         return Err(format!(
-            "review-comments --check-output {} is invalid: missing analysis_outcome",
+            "review-comments --check-output {} is invalid: missing analysis_outcome; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     };
     if envelope.is_null() {
         return Err(format!(
-            "review-comments --check-output {} is invalid: analysis_outcome is null",
+            "review-comments --check-output {} is invalid: analysis_outcome is null; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
@@ -412,7 +416,7 @@ fn load_review_comments_analysis_outcome(
     );
     if outcome.identity.input_identity.as_deref() != Some(expected_input_identity.as_str()) {
         return Err(format!(
-            "review-comments --check-output {} is invalid: producer input identity does not match the requested diff",
+            "review-comments --check-output {} is invalid: producer input identity does not match the requested diff; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
@@ -423,13 +427,13 @@ fn load_review_comments_analysis_outcome(
         .is_some_and(|revision| revision != base)
     {
         return Err(format!(
-            "review-comments --check-output {} is invalid: typed outcome base revision does not match requested base",
+            "review-comments --check-output {} is invalid: typed outcome base revision does not match requested base; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
     if declared_complete != outcome.kind.is_complete() {
         return Err(format!(
-            "review-comments --check-output {} is invalid: analysis_complete does not match typed outcome kind",
+            "review-comments --check-output {} is invalid: analysis_complete does not match typed outcome kind; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
@@ -1363,7 +1367,7 @@ mod tests {
         );
         assert_eq!(
             parse_review_comments_options(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
     }
 

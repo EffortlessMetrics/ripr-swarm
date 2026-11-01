@@ -752,21 +752,18 @@ appends the fixture expected-output changelog. Bless from the Linux arbiter
 platform, never from a Windows host; the sanctioned route is documented in
 [Validation commands](agent-context/validation.md#golden-fixtures-and-the-blessing-platform).
 
-Human goldens (`human.txt`, `human-full.txt`) mask only the explanatory prose
-of the line `no repair start offered: <reason>`. Pinned: the line's presence and
-position, the fixed opening that identifies the refusal variant (no gap ID, no seam or no binding seam, several binding seams, Rust files only, seam
-budget, unreadable config, classification failure, static evidence incomplete,
-still missing, related test already reaches the boundary), and the
-`still missing:` / `It is also still missing:` evidence lists. Masked as
-`<reason>`: the wording around those pins, such as the trailing "follow the Next
-step" advice, the Rust-files-only explanation and the boundary-variant
-explanation. A reason that matches no known variant opening is compared
-verbatim, so a new or heavily reworded variant is drift to re-bless and add to
-`REPAIR_REFUSAL_RULES` in `xtask/src/reports/fixtures.rs`. `check.json` is never
-masked. The prose has focused tests of its own, and comparing it verbatim turned
-every rewording into one re-blessed line in hundreds of fixtures (#10702). A
-repair start that flips to a refusal, a refusal that appears or disappears, and
-a change of variant or missing-evidence list are still drift.
+Human goldens (`human.txt`, `human-full.txt`) compare the line
+`no repair start offered: <reason>` verbatim, including its fixed wording,
+advice and `still missing:` / `It is also still missing:` evidence lists, so
+rewording a refusal arm is drift to re-bless (#12003). Only values that move
+with unrelated code are masked as `<reason>`: everything after the opening of
+the seam-inventory arm (language and file) and of the classification-failure
+arm (the bound command), and the seam count of the "found N seams ... could not
+tie one" arm. An arm joins `REPAIR_REFUSAL_RULES` in
+`xtask/src/reports/fixtures.rs` only when its sentence embeds such a value. A
+reason that matches no rule is compared verbatim. `check.json` is never
+masked. A repair start that flips to a refusal, a refusal that appears or
+disappears, and a change of variant or wording are drift.
 
 Transitional (#10702): `xtask/src/reports/fixtures/transitional.rs` lists the
 exact `fixture/surface` human goldens (253) whose expected refusal opening is

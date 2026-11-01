@@ -38,7 +38,7 @@ Evidence
   - local flow reaches returned value: points + SCORE_BONUS (line 4)
 
 Next step
-  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/input --diff <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/diff.patch --mode fast probe:crates_b_src_lib.rs:return_value:daf98d2c
   ripr context --root <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/input --diff <cwd>/fixtures/rust_dep_edge_cross_crate_ambiguity/diff.patch --mode fast --at probe:crates_b_src_lib.rs:return_value:daf98d2c
