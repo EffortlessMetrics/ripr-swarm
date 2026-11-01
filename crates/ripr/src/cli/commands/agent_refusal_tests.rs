@@ -348,7 +348,14 @@ fn gap_before_phase_refuses_dirty_production_premise_before_the_snapshot() -> Re
 
 fn gap_premise_exercise(root: &Path) -> Result<(), String> {
     let mut refusal = AfterPhaseRefusalContext::default();
-    match run_gap_bound_before_phase(root, "gap:0123456789abcdef", "HEAD", None, &mut refusal) {
+    match run_gap_bound_before_phase(
+        root,
+        "gap:0123456789abcdef",
+        "HEAD",
+        None,
+        false,
+        &mut refusal,
+    ) {
         Err(error) => {
             require_contains(&error, &["Uncommitted: src/lib.rs", "Nothing was started."])
         }
