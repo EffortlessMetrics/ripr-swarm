@@ -562,6 +562,26 @@ const LIVE_CASES: &[Case] = &[
         reason: "requires --json",
     },
     Case {
+        args: &["status", "--attempt", "repair-attempt-short"],
+        exit: 2,
+        reason: "suffix must contain",
+    },
+    Case {
+        args: &[
+            "agent",
+            "receipt",
+            "--seam-id",
+            "x",
+            "--verify-json",
+            "v.json",
+            "--json",
+            "--attempt",
+            "bogus",
+        ],
+        exit: 2,
+        reason: "must start with",
+    },
+    Case {
         args: &["status", "--attempt", "nope"],
         exit: 2,
         reason: "must start with",

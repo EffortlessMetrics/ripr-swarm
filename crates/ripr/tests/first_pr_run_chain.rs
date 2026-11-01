@@ -15,8 +15,18 @@ const CHANGED_SRC: &str = "pub fn add(a: i32, b: i32) -> i32 {\n    if a > 10 { 
 const DEFAULT_DISCLOSURE: &str = "ripr first-pr - side effects and cost disclosure\n  cost class:      artifact composition only; runs no analysis\n  writes to:       target/ripr/reports/\n  cache location:  none\n  git reads:       yes (base and head preflight)\n  network:         none\n  runtime hint:    seconds\n\n";
 
 fn run(dir: &Path, program: &str, args: &[&str]) -> Result<Output, String> {
+    run_env(dir, program, args, &[])
+}
+
+fn run_env(
+    dir: &Path,
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<Output, String> {
     Command::new(program)
         .current_dir(dir)
+        .envs(envs.iter().copied())
         .args(args)
         .output()
         .map_err(|err| format!("{program} {args:?}: {err}"))
@@ -344,5 +354,186 @@ fn a_ledger_with_a_repair_start_skips_the_cards_and_ends_in_a_top_gap() -> Resul
     assert!(stdout.contains("State: top gap"), "{stdout}");
     let packet = packet(&root)?;
     assert_eq!(packet["selected"]["gap_id"], "gap:pr:demo:add", "{packet}");
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+fn fresh_python_repo(label: &str) -> Result<PathBuf, String> {
+    static N: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-11720-py-{label}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::SeqCst)
+    ));
+    fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+    fs::create_dir_all(root.join("tests")).map_err(|err| err.to_string())?;
+    fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"demo-py\"\nversion = \"0.1.0\"\n",
+    )
+    .map_err(|err| err.to_string())?;
+    fs::write(
+        root.join("src/pricing.py"),
+        "def discount(total):\n    if total >= 100:\n        return total * 0.9\n    return total\n",
+    )
+    .map_err(|err| err.to_string())?;
+    fs::write(
+        root.join("tests/test_pricing.py"),
+        "from src.pricing import discount\n\n\ndef test_discount():\n    assert discount(50) == 50\n",
+    )
+    .map_err(|err| err.to_string())?;
+    fs::write(root.join(".gitignore"), "target\n").map_err(|err| err.to_string())?;
+    git(&root, &["init", "-q", "-b", "main"])?;
+    git(&root, &["add", "-A"])?;
+    git(&root, &["commit", "-q", "-m", "base"])?;
+    git(&root, &["checkout", "-q", "-b", "feature"])?;
+    fs::write(
+        root.join("src/pricing.py"),
+        "def discount(total):\n    if total > 100:\n        return total * 0.9\n    return total\n",
+    )
+    .map_err(|err| err.to_string())?;
+    git(&root, &["commit", "-q", "-am", "change"])?;
+    Ok(root)
+}
+
+#[cfg(feature = "lang-typescript")]
+fn fresh_typescript_repo(label: &str) -> Result<PathBuf, String> {
+    static N: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-11720-ts-{label}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::SeqCst)
+    ));
+    fs::create_dir_all(root.join("src")).map_err(|err| err.to_string())?;
+    fs::create_dir_all(root.join("tests")).map_err(|err| err.to_string())?;
+    fs::write(
+        root.join("package.json"),
+        "{\"name\":\"demo-ts\",\"version\":\"0.1.0\",\"private\":true}\n",
+    )
+    .map_err(|err| err.to_string())?;
+    fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"typescript\"]\n",
+    )
+    .map_err(|err| err.to_string())?;
+    fs::write(
+        root.join("src/counter.ts"),
+        "export function add(a: number, b: number): number {\n  return a + b;\n}\n",
+    )
+    .map_err(|err| err.to_string())?;
+    fs::write(
+        root.join("tests/counter.test.ts"),
+        "import { add } from '../src/counter';\n\n test('adds', () => { expect(add(1, 2)).toBe(3); });\n",
+    )
+    .map_err(|err| err.to_string())?;
+    fs::write(root.join(".gitignore"), "target\nnode_modules\n").map_err(|err| err.to_string())?;
+    git(&root, &["init", "-q", "-b", "main"])?;
+    git(&root, &["add", "-A"])?;
+    git(&root, &["commit", "-q", "-m", "base"])?;
+    git(&root, &["checkout", "-q", "-b", "feature"])?;
+    fs::write(
+        root.join("src/counter.ts"),
+        "export function add(a: number, b: number): number {\n  if (a > 10) { return a; }\n  return a + b;\n}\n",
+    )
+    .map_err(|err| err.to_string())?;
+    git(&root, &["commit", "-q", "-am", "change"])?;
+    Ok(root)
+}
+
+#[test]
+#[cfg(feature = "lang-python")]
+fn run_chain_on_a_fresh_python_repo_reaches_a_non_missing_state() -> Result<(), String> {
+    let root = fresh_python_repo("positive")?;
+    let output = ripr(&root, &["first-pr", "--base", "main", "--run-chain"])?;
+    let stdout = stdout_of(&output);
+    assert!(
+        output.status.success(),
+        "stdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("run-chain step 1/3: check output:"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("run-chain step 2/3: gap ledger:"),
+        "{stdout}"
+    );
+    let packet = packet(&root)?;
+    assert_ne!(
+        packet["selected"]["state"].as_str().unwrap_or_default(),
+        "missing_artifact",
+        "{packet}"
+    );
+    assert!(root.join("target/ripr/reports/start-here.json").is_file());
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "lang-typescript")]
+fn run_chain_on_a_fresh_typescript_repo_reaches_a_non_missing_state() -> Result<(), String> {
+    let root = fresh_typescript_repo("positive")?;
+    let output = ripr(&root, &["first-pr", "--base", "main", "--run-chain"])?;
+    let stdout = stdout_of(&output);
+    assert!(
+        output.status.success(),
+        "stdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("run-chain step 1/3: check output:"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("run-chain step 2/3: gap ledger:"),
+        "{stdout}"
+    );
+    let packet = packet(&root)?;
+    assert_ne!(
+        packet["selected"]["state"].as_str().unwrap_or_default(),
+        "missing_artifact",
+        "{packet}"
+    );
+    assert!(root.join("target/ripr/reports/start-here.json").is_file());
+    Ok(())
+}
+
+const TIMEOUT_ENV: &str = "RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS";
+
+#[test]
+fn an_unparseable_step_timeout_env_is_refused_before_any_step_runs() -> Result<(), String> {
+    let root = fresh_repo("bad-timeout")?;
+    let output = run_env(
+        &root,
+        env!("CARGO_BIN_EXE_ripr"),
+        &["first-pr", "--base", "main", "--run-chain"],
+        &[(TIMEOUT_ENV, "soon")],
+    )?;
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(TIMEOUT_ENV) && stderr.contains("set it"),
+        "{stderr}"
+    );
+    assert!(!root.join("target/ripr/reports/start-here.json").exists());
+    assert!(!stdout_of(&output).contains("run-chain step"));
+    Ok(())
+}
+
+#[test]
+fn a_zero_step_timeout_env_disables_the_bound_and_the_chain_still_runs() -> Result<(), String> {
+    let root = fresh_repo("zero-timeout")?;
+    let output = run_env(
+        &root,
+        env!("CARGO_BIN_EXE_ripr"),
+        &["first-pr", "--base", "main", "--run-chain"],
+        &[(TIMEOUT_ENV, "0")],
+    )?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout_of(&output).contains("run-chain step 1/3"));
     Ok(())
 }
