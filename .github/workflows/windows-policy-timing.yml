@@ -1,0 +1,115 @@
+name: Windows Policy Timing (experiment, #12035)
+
+# Manual sharded form of the Windows workspace test (#9272). The single-job
+# lane in windows-advisory.yml needs a 75-minute step cap for one
+# `cargo test --workspace`; this splits the same tests with nextest's
+# deterministic partitioning so each shard is a separate, shorter job and a
+# failing test names its shard. It is advisory evidence only: it does not
+# replace the required Linux gates and is not wired to pull_request events.
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: "Optional exact commit to test instead of the dispatched ref's head (40 hexadecimal characters; release candidate, #2769)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-shard:
+    name: windows-policy-timing
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      # Tests that need a real NTFS deny ACL (#9688). Git for Windows bash enables
+      # SeBackupPrivilege and SeRestorePrivilege and every child inherits them,
+      # which bypass an icacls (AD) deny, so they run in the pwsh step below.
+      ACL_TESTS: test(/denies_creation|denying_subdirectories|real_unreadable_subtree/)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1]
+    steps:
+      # Full history, like the Linux test lanes: base-resolving tests refuse
+      # on a shallow clone (#10344).
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.candidate_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # 1.95
+        with:
+          toolchain: 1.95.0
+
+      - name: Install CI tools
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: nextest
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: ripr-windows-advisory-1.95-${{ runner.os }}
+          save-if: false
+
+      - name: Prepare locked owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+
+      - name: Prepare locked JSON owner-return fixture dependencies
+        run: cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
+
+      - name: Prepare locked proptest profile dependencies
+        run: cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
+
+      # The policy tests spawn `cargo test --no-run -p xtask` themselves. That
+      # invocation unifies features differently from `nextest --workspace`, so on a
+      # cold runner it rebuilds about six minutes of dependencies inside a test
+      # (and the 6-minute kill fires). Running the same spawns here warms them.
+      - name: Warm the cargo builds the policy tests spawn
+        timeout-minutes: 20
+        shell: bash
+        run: cargo xtask check-covered-by
+
+      # Nested-build tests (#10847). nextest runs every test in its own process,
+      # so the build memoized in a OnceLock (`candidate_binary` in
+      # xtask/tests/common/ripr_help.rs, `ripr_fixture_binary` in
+      # xtask/src/reports/fixtures.rs) is paid once per test, not once per run.
+      # On a cold runner the first of those `cargo build -p ripr` calls compiles
+      # the whole crate (the guide contract uses `--jobs 1`) while every other
+      # such test, and the policy tests' own cargo spawns, block on the target
+      # directory lock until the 360 s kill fires (run 41258971406: 10 TIMEOUT
+      # rows, all nested cargo). Building the same default-feature ripr here,
+      # before the clock starts on any test, leaves each spawn a no-op build.
+      - name: Warm the ripr build the nested-cargo tests spawn
+        timeout-minutes: 25
+        shell: bash
+        run: cargo build -p ripr --locked
+
+      - name: Time the policy phases warm
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          mkdir -p target
+          t() { local s=$SECONDS; "$@"; local rc=$?; echo "TIMING $* rc=$rc $((SECONDS-s))s"; }
+          t cargo xtask check-covered-by
+          t cargo xtask check-covered-by
+          t cargo xtask check-file-policy
+          t cargo xtask check-file-policy
+          grep -n "elapsed\|timed\|cargo " target/ripr/reports/file-policy.md | head -80 || true
+
+      - name: Time the facade test under nextest (builds the workspace first)
+        timeout-minutes: 50
+        shell: bash
+        env:
+          RIPR_TOOL_BUILD_TIMEOUT_SECS: "900"
+        run: |
+          s=$SECONDS
+          cargo nextest run --profile windows-advisory --workspace --no-fail-fast -E 'test(policy_checker_facade_runs_current_repo_checks)' 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | tail -40
+          echo "TIMING nextest facade total $((SECONDS-s))s"
