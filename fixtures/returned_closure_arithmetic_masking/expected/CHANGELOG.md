@@ -124,3 +124,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — returned_closure_arithmetic_masking (11)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless returned_closure_arithmetic_masking --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

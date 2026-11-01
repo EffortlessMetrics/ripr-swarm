@@ -770,3 +770,83 @@ fn a_malformed_shared_list_reference_fails_to_decode() {
         r#"[{"shared":1,"items":[1]}]"#
     )));
 }
+
+/// Imports the changed module so the disclosure is in reach of the diff (a
+/// gap in a test file no finding relates to is deliberately not reported).
+const HELPER_TITLE_TEST_SOURCE: &str = "import { greet } from \"../src/small\";\n\nfunction register() {\n  it(`adds ${greet(\"a\")}`, () => {\n    expect(greet(\"a\")).toBe(\"Hello, a\");\n  });\n}\n";
+
+/// A test file whose registrations the extractor drops is disclosed on every
+/// run. The verdict is a function of the file's bytes, so a warm run serves the
+/// one recorded beside the extraction instead of parsing the file again, and
+/// the disclosure is identical to the cold run's.
+#[test]
+fn a_warm_run_discloses_the_recorded_partial_extraction_like_the_cold_run() -> Result<(), String> {
+    let root = build_fixture("fact-store-partial-gap")?;
+    ts_write_file(&root.join("tests/tmpl.test.ts"), HELPER_TITLE_TEST_SOURCE)?;
+
+    let cold = run_adapter(&root, &[small_changed_file()]);
+    let warm = run_adapter(&root, &[small_changed_file()]);
+    let _ = std::fs::remove_dir_all(&root);
+    let (cold, warm) = (cold?, warm?);
+
+    let cold_limits = format!("{:?}", cold.limitations);
+    assert!(
+        cold_limits.contains("template-literal title"),
+        "control: the cold run must disclose the dropped registration, got {cold_limits}"
+    );
+    assert_eq!(
+        warm.preview_fact_cache.misses, 0,
+        "the warm run must be served from the store, got {:?}",
+        warm.preview_fact_cache
+    );
+    assert_eq!(
+        format!("{:?}", warm.limitations),
+        cold_limits,
+        "the recorded verdict must disclose exactly what the check disclosed"
+    );
+    Ok(())
+}
+
+/// The recorded verdict restores to the check's own value, and a shape this
+/// build does not produce is not trusted (the caller recomputes).
+#[test]
+fn a_recorded_partial_extraction_restores_only_known_shapes() {
+    use super::types::{PersistedPartialExtraction, TypeScriptTestExtractionGap};
+    let file = Path::new("tests/x.test.ts");
+    // Every shape `UnextractedTestFinder` can emit must round-trip, or a warm
+    // run silently re-parses that file (the runner-kind mismatch was missed once).
+    for shape in [
+        "template-literal title",
+        "tagged-template .each",
+        "test/it call in loop/callback/nested body",
+        "runner registration kind mismatch",
+    ] {
+        let gap = TypeScriptTestExtractionGap {
+            file: file.to_path_buf(),
+            sample_line: 7,
+            shape,
+            snippet: "test.each`t`".to_string(),
+        };
+        assert_eq!(
+            PersistedPartialExtraction::of(Some(&gap)).restore(file),
+            Some(Some(gap)),
+            "a recorded `{shape}` gap restores to the same gap"
+        );
+    }
+    assert_eq!(
+        PersistedPartialExtraction::of(None).restore(file),
+        Some(None),
+        "a recorded clean verdict restores as clean, not as unknown"
+    );
+    let mut unknown = PersistedPartialExtraction::of(None);
+    unknown.gap = Some(super::types::PersistedExtractionGap {
+        sample_line: 1,
+        shape: "a shape from another build".to_string(),
+        snippet: String::new(),
+    });
+    assert_eq!(
+        unknown.restore(file),
+        None,
+        "an unrecognized shape is recomputed, never trusted"
+    );
+}

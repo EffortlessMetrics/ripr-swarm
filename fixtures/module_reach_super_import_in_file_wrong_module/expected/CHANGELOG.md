@@ -93,7 +93,7 @@ Updated:
 ## Pending — module_reach_super_import_in_file_wrong_module (8)
 
 Reason:
-RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+RIPR-SPEC-0197: #10046 leaves the wrong-module rival call unresolved, so the predicate reads infection_unknown with the return-value weak limitation retained; check.json still pinned the pre-change weak-transitive reading while the corpus pins infection_unknown; human surfaces re-blessed for the plain-wording render with 2 findings retained ; main also re-blessed the no-gap-ID refusal wording (#12003)
 
 Command:
 `cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
@@ -101,3 +101,17 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (9)
+
+Reason:
+RIPR-SPEC-0197: #10046 predicate stays infection_unknown (unresolved owner call identity) and return-value stays weakly_exposed; with current main's limited-finding routing the predicate finding now carries the transitive_reach_unresolved static limitation instead of a canonical gap, so classification/verdicts are unchanged, nothing becomes actionable or credited, and human.txt leads with the weak return-value finding
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

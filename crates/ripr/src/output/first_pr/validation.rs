@@ -32,7 +32,7 @@ pub(super) fn validate_selected_command_root(packet: &Value, root: &Path) -> Res
                 .is_some_and(|value| value.is_null() || value.is_string())
             {
                 return Err(format!(
-                    "selected command context {step}.{field} is missing or not a string/null"
+                    "selected command context {step}.{field} is missing or not a string/null; regenerate the input with the command that wrote it, then rerun"
                 ));
             }
         }
@@ -65,7 +65,7 @@ pub(super) fn validate_selected_command_root(packet: &Value, root: &Path) -> Res
         .map_err(|error| format!("selected repository directory is unavailable: {error}; regenerate the input with the command that wrote it, then rerun"))?;
     let carried = carried_root
         .canonicalize()
-        .map_err(|error| format!("selected command context directory is unavailable: {error}"))?;
+        .map_err(|error| format!("selected command context directory is unavailable: {error}; regenerate the input with the command that wrote it, then rerun"))?;
     if !carried.is_dir() || carried != current {
         return Err(
             "selected command context targets a different repository directory".to_string(),
