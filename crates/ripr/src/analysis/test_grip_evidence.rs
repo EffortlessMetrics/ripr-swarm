@@ -288,10 +288,23 @@ pub(crate) fn evidence_for_seams(seams: &[RepoSeam], index: &RustIndex) -> Vec<T
 /// front.
 const WARM_MIN_SEAMS: usize = 1_000;
 
+/// Stage summary of a seam answered without evidence because the shared-table
+/// warm panicked (#11524).
+pub(crate) const SEAM_EVIDENCE_INCOMPLETE: &str = "seam_evidence_incomplete: seam evidence stopped on an internal error; no exposure claim is made";
+
 pub(crate) struct EvidencePass<'index> {
     context: Option<CompactGripContext<'index>>,
     /// The whole-index tables are paid once per pass, not per stage.
     shared_tables_warmed: std::sync::Once,
+    /// #11524: the shared-table warm panicked, so the memos it fills may be
+    /// incomplete. Once set, no seam reads them; every seam gets the fail-closed
+    /// stand-in instead.
+    warm_failed: std::sync::atomic::AtomicBool,
+    /// Files of the seams answered with the stand-in, for the named limitation.
+    incomplete_files: std::sync::Mutex<BTreeSet<PathBuf>>,
+    /// Test-only fault injection: panic inside the warm.
+    #[cfg(test)]
+    inject_warm_panic: std::sync::atomic::AtomicBool,
 }
 
 impl<'index> EvidencePass<'index> {
@@ -310,7 +323,98 @@ impl<'index> EvidencePass<'index> {
         Self {
             context,
             shared_tables_warmed: std::sync::Once::new(),
+            warm_failed: std::sync::atomic::AtomicBool::new(false),
+            incomplete_files: std::sync::Mutex::new(BTreeSet::new()),
+            #[cfg(test)]
+            inject_warm_panic: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// One `producer_failure` limitation per file whose seams were answered
+    /// with the fail-closed stand-in because the shared-table warm panicked
+    /// (#11524). Empty when the warm did not fail. The seam walk has no
+    /// analysis-outcome channel yet, so only tests read this; the stage
+    /// summaries carry the named limit on every output meanwhile.
+    #[cfg(test)]
+    pub(crate) fn producer_failure_limitations(
+        &self,
+    ) -> Result<Vec<crate::analysis_outcome::AnalysisLimitation>, String> {
+        use crate::analysis_outcome::{
+            AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+            AnalysisStage,
+        };
+        let files = self
+            .incomplete_files
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let mut limitations = Vec::new();
+        for path in files {
+            let portable = path.to_string_lossy().replace('\\', "/");
+            let limitation = AnalysisLimitation::new(
+                AnalysisLimitationKind::ProducerFailure,
+                AnalysisStage::LanguageAdapter,
+                AnalysisRecovery::new(
+                    AnalysisRecoveryKind::InspectFailure,
+                    "Report the failure with the file and diff, then re-run; the affected seams read opaque until it is fixed.",
+                )?,
+            )
+            .with_detail(
+                format!(
+                    "{portable}: seam evidence stopped on an internal error ({SEAM_EVIDENCE_INCOMPLETE}); \
+                     the affected seams are opaque stand-ins that make no exposure claim."
+                )
+                .chars()
+                .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+                .collect::<String>(),
+            )?;
+            let limitation = match limitation.clone().with_path(&portable) {
+                Ok(with_path) => with_path,
+                Err(_) => limitation,
+            };
+            limitations.push(limitation);
+        }
+        Ok(limitations)
+    }
+
+    /// The fail-closed answer for a pass whose shared-table warm panicked
+    /// (#11524): no memo is read, no related test or discriminator is named,
+    /// and every stage is opaque, so the seam classifies `opaque` and is never
+    /// a repair candidate. The panic payload is not kept: it can quote
+    /// repository text.
+    fn incomplete_evidence(&self, seams: &[RepoSeam]) -> Vec<TestGripEvidence> {
+        let mut files = self
+            .incomplete_files
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let stage = || {
+            StageEvidence::new(
+                StageState::Opaque,
+                Confidence::Low,
+                SEAM_EVIDENCE_INCOMPLETE,
+            )
+        };
+        let mut out: Vec<TestGripEvidence> = seams
+            .iter()
+            .map(|seam| {
+                files.insert(seam.file().to_path_buf());
+                TestGripEvidence {
+                    seam_id: seam.id().clone(),
+                    related_tests: Vec::new(),
+                    reach: stage(),
+                    activate: stage(),
+                    propagate: stage(),
+                    observe: stage(),
+                    discriminate: stage(),
+                    observed_values: Vec::new(),
+                    missing_discriminators: Vec::new(),
+                    statically_contradicted_related_tests: 0,
+                    new_test_target: None,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.seam_id.as_str().cmp(b.seam_id.as_str()));
+        out
     }
 
     /// Drop memoized owner/AST detail at a window boundary. Immutable test
@@ -347,6 +451,9 @@ impl<'index> EvidencePass<'index> {
         // costs tens of seconds on a workspace the size of ripr-swarm.
         if seams.len() >= WARM_MIN_SEAMS {
             self.warm_shared_tables(context, token.as_ref(), &overlay);
+        }
+        if self.warm_failed.load(Ordering::Acquire) {
+            return self.incomplete_evidence(seams);
         }
         let processed = AtomicUsize::new(0);
         let mut out: Vec<TestGripEvidence> = seams
@@ -385,30 +492,44 @@ impl<'index> EvidencePass<'index> {
         overlay: &Option<std::sync::Arc<crate::analysis::committed_source::CommittedSourceOverlay>>,
     ) {
         self.shared_tables_warmed.call_once(|| {
-            cancellation::with_optional_token(token, || {
-                crate::analysis::committed_source::with_overlay(overlay.clone(), || {
-                    // A cancelled pass returns no evidence, so it stops paying
-                    // for tables nobody will read.
-                    if cancellation::checkpoint().is_err() {
-                        return;
-                    }
-                    let started = Instant::now();
-                    context.prime_pin_syntax_scan();
-                    trace_latency_phase("evidence_macro_scan", "primed", started.elapsed());
-                    if cancellation::checkpoint().is_err() {
-                        return;
-                    }
-                    let started = Instant::now();
-                    context.unseen_reach_names();
-                    trace_latency_phase("evidence_unseen_reach", "built", started.elapsed());
-                    if cancellation::checkpoint().is_err() {
-                        return;
-                    }
-                    let started = Instant::now();
-                    context.type_mentions();
-                    trace_latency_phase("evidence_type_mentions", "built", started.elapsed());
+            // #11524: a panic here must not unwind the caller or leave a
+            // possibly-incomplete memo readable. The payload is dropped: it
+            // can quote repository text.
+            let warmed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                cancellation::with_optional_token(token, || {
+                    crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                        // A cancelled pass returns no evidence, so it stops paying
+                        // for tables nobody will read.
+                        if cancellation::checkpoint().is_err() {
+                            return;
+                        }
+                        #[cfg(test)]
+                        if self.inject_warm_panic.load(Ordering::Acquire) {
+                            std::panic::resume_unwind(Box::new(
+                                "injected seam warm panic (#11524)",
+                            ));
+                        }
+                        let started = Instant::now();
+                        context.prime_pin_syntax_scan();
+                        trace_latency_phase("evidence_macro_scan", "primed", started.elapsed());
+                        if cancellation::checkpoint().is_err() {
+                            return;
+                        }
+                        let started = Instant::now();
+                        context.unseen_reach_names();
+                        trace_latency_phase("evidence_unseen_reach", "built", started.elapsed());
+                        if cancellation::checkpoint().is_err() {
+                            return;
+                        }
+                        let started = Instant::now();
+                        context.type_mentions();
+                        trace_latency_phase("evidence_type_mentions", "built", started.elapsed());
+                    });
                 });
-            });
+            }));
+            if warmed.is_err() {
+                self.warm_failed.store(true, Ordering::Release);
+            }
         });
     }
 }

@@ -84,3 +84,72 @@ fn evidence_entrypoint_cancelled_1000_pays_zero_warm_scans() -> Result<(), Strin
     );
     Ok(())
 }
+
+/// #11524: a panic inside the shared-table warm is contained, the pass keeps
+/// running, no seam reads the possibly-incomplete memos, and every seam fails
+/// closed with a named producer-failure limitation on its file.
+#[test]
+fn a_panicking_shared_table_warm_fails_every_seam_closed() -> Result<(), String> {
+    use crate::analysis::seam_classification::classify_seams;
+    use crate::analysis::seams::SeamGripClass;
+    use crate::analysis_outcome::AnalysisLimitationKind;
+
+    let (index, seams) = thousand_seam_fixture()?;
+
+    // Control: unarmed, the same pass shape reaches real evidence and names
+    // no limitation, so the armed assertions observe the containment.
+    let control_pass = EvidencePass::new(&index);
+    let control = control_pass.evidence_for(&seams);
+    assert_eq!(control.len(), 1_000);
+    assert!(
+        control
+            .iter()
+            .all(|evidence| evidence.reach.summary != SEAM_EVIDENCE_INCOMPLETE)
+    );
+    assert!(control_pass.producer_failure_limitations()?.is_empty());
+
+    let pass = EvidencePass::new(&index);
+    pass.inject_warm_panic
+        .store(true, std::sync::atomic::Ordering::Release);
+    let evidence = pass.evidence_for(&seams);
+    assert_eq!(evidence.len(), 1_000, "the run keeps going");
+    for record in &evidence {
+        assert_eq!(record.reach.summary, SEAM_EVIDENCE_INCOMPLETE);
+        assert_eq!(record.reach.state, StageState::Opaque);
+        assert_eq!(record.discriminate.state, StageState::Opaque);
+        assert!(record.related_tests.is_empty());
+        assert!(record.missing_discriminators.is_empty());
+        assert!(record.new_test_target.is_none());
+    }
+    assert!(
+        !serde_json::to_string(&evidence)
+            .map_err(|error| error.to_string())?
+            .contains("injected seam warm panic"),
+        "the panic payload is not kept in evidence"
+    );
+    let classified = classify_seams(&seams, &evidence);
+    assert_eq!(classified.len(), 1_000);
+    assert!(
+        classified
+            .iter()
+            .all(|entry| entry.class == SeamGripClass::Opaque)
+    );
+
+    // A later, smaller stage must not read the memos either.
+    let later = pass.evidence_for(&seams[..10]);
+    assert!(
+        later
+            .iter()
+            .all(|record| record.reach.summary == SEAM_EVIDENCE_INCOMPLETE)
+    );
+
+    let limitations = pass.producer_failure_limitations()?;
+    assert_eq!(limitations.len(), 1);
+    let limitation = &limitations[0];
+    assert_eq!(limitation.kind, AnalysisLimitationKind::ProducerFailure);
+    assert_eq!(limitation.path.as_deref(), Some("src/values.rs"));
+    let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+    assert!(detail.contains("seam_evidence_incomplete"));
+    assert!(!detail.contains("injected seam warm panic"));
+    Ok(())
+}
