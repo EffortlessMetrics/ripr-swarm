@@ -203,7 +203,13 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn run_ripr(args: &[&str]) -> Output {
     let bin = env!("CARGO_BIN_EXE_ripr");
-    Command::new(bin).args(args).output().unwrap()
+    // #11598: piped stderr plus a machine format is silent by default; the
+    // smoke suite keeps the stream on so its progress assertions stay real.
+    Command::new(bin)
+        .args(args)
+        .env("RIPR_PROGRESS", "1")
+        .output()
+        .unwrap()
 }
 
 #[cfg(feature = "lang-rust")]
@@ -28624,6 +28630,56 @@ fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>
         .find_map(|line| line.strip_prefix("ripr: attempt next command: "))
         .map(str::to_string)
         .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}").into())
+}
+
+/// #11598: `RIPR_QUIET` reaches the direct `ripr agent repair` phases: the
+/// narration and `wrote` lines drop, while the result (the attempt command)
+/// still prints. The control run without it narrates.
+#[test]
+fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
+-> Result<(), Box<dyn std::error::Error>> {
+    let run = |quiet: bool| -> Result<String, Box<dyn std::error::Error>> {
+        let root = repair_route_workspace(if quiet {
+            "agent repair quiet env"
+        } else {
+            "agent repair loud env"
+        })?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let args = [
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--seam-id",
+            REPAIR_ROUTE_SEAM,
+            "--phase",
+            "before",
+        ];
+        let output = if quiet {
+            run_ripr_with_env(&args, &[("RIPR_QUIET", "1")])
+        } else {
+            run_ripr(&args)
+        };
+        assert_success(&output);
+        Ok(String::from_utf8_lossy(&output.stderr).into_owned())
+    };
+    let loud = run(false)?;
+    assert!(
+        loud.contains("ripr: wrote "),
+        "control must narrate: {loud}"
+    );
+    let quiet = run(true)?;
+    assert!(!quiet.contains("ripr: wrote "), "{quiet}");
+    assert!(
+        !quiet.contains("agent repair --phase before for"),
+        "{quiet}"
+    );
+    assert!(
+        quiet.contains("ripr: attempt next command: "),
+        "the result must survive quiet: {quiet}"
+    );
+    Ok(())
 }
 
 fn repair_route_next(report: &serde_json::Value) -> (String, String) {
