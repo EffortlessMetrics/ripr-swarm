@@ -10,6 +10,7 @@ mod macro_definition;
 mod path_only_argument;
 mod propagation_boundary;
 mod repo;
+mod verification_erased;
 
 use crate::analysis::diagnostic_origin::ParserByteSpan;
 use crate::domain::Probe;
@@ -33,9 +34,11 @@ pub(crate) use ids::{
     collision_ordinals, collision_rank_key, fingerprint_probe_id, legacy_whole_line_diff_probe_id,
     normalize_expression, normalize_rust_expression, sanitize_path,
 };
+pub(crate) use macro_definition::verus_region_lines;
 #[cfg(test)]
 pub(crate) use repo::probes_for_repo_file;
 pub(crate) use repo::probes_for_repo_file_seeded;
+pub(crate) use verification_erased::changed_verification_only_lines;
 
 /// One seeded probe plus optional parser origin and #3294 binding relation.
 #[derive(Clone, Debug)]
