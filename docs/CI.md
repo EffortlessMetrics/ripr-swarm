@@ -1626,6 +1626,13 @@ and ripr's own default-branch detection elsewhere. A checkout without
 The Action prints the report to the job log. For the summary comment, inline
 comments, SARIF upload and artifacts, use the generated workflow above.
 
+The Action's `Install ripr` step follows the same contract as the generated
+workflow's (#6245): Windows x64 installs the release `zip` (extracted with the
+`tar.exe` under `%SystemRoot%\System32`, flat-root listing only), Windows ARM64
+stops with an explicit unsupported error, a missing or mismatched checksum, bad
+archive or wrong payload exits 1 with no `cargo install` fallback, and the
+installed `ripr` must report exactly the requested version.
+
 ### PR Test Guidance Annotations
 
 RIPR-SPEC-0012 defines the pinned planning contract for the PR-facing
