@@ -15,7 +15,7 @@ Analysis outcome: limitations below (analysis incomplete; partial_with_limitatio
 
 Shared evidence and guidance
   E1 [findings 1, 3]: reach yes: Related tests appear to reach quote_body: empty_body_equality_case, missing_close_returns_none, nonempty_body
-  E2 [findings 1, 3]: infection unknown: Changed boundary input is unresolved: boundary operand `end` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  E2 [findings 1, 3]: infection unknown: Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
   E3 [findings 1, 3]: observation yes: A related test observes a value or effect near the changed behavior
   E4 [findings 1, 3]: discriminator not established (infection_unknown); related oracle: Strong oracle found: exact value or pattern assertion
   E5 [findings 1, 3]: related test tests/q.rs:4 empty_body_equality_case uses strong exact value oracle: assert_eq!(quote_body("[]", '[', ']'), Some(""));
@@ -52,7 +52,7 @@ Evidence
   shared evidence: E5, E6, E7, E8, E9, E10, E11, E12, E13, E14, E15
   - source values (showing 8 of 11 read from related tests; full list in --format json)
 Weakness
-  - Changed boundary input is unresolved: boundary operand `end` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  - Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
   - No detected boundary input for the changed predicate
 Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
@@ -124,7 +124,7 @@ Evidence
   shared evidence: E5, E6, E7, E8, E9, E10, E11, E12, E13, E14, E15
   - source values (showing 8 of 11 read from related tests; full list in --format json)
 Weakness
-  - Changed boundary input is unresolved: boundary operand `end` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
+  - Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide
   - No detected boundary input for the changed predicate
 Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)

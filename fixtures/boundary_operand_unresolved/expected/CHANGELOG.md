@@ -76,3 +76,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_operand_unresolved (7)
+
+Reason:
+RIPR-SPEC-0122 plain-words check screen: ripr-origin fixture re-blessed from the merged producer after merging main (#11619, #2766)
+
+Command:
+`cargo xtask goldens bless boundary_operand_unresolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
