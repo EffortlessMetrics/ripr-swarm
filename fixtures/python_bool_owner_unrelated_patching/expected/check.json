@@ -48,7 +48,7 @@
         {"kind":"unknown","text":"return age >= 18","line":2}
       ],
       "evidence": ["owner: is_adult", "owner_kind: function", "test_framework: pytest (test_adult)", "test_fixtures: monkeypatch (test_adult)", "test_verify_command: python -m pytest tests/test_rules.py::test_adult (test_adult)", "related_test_relation: syntactic_call (test_adult)", "test_oracle: exact_value strong (test_adult)"],
-      "missing": ["Related Python test reaches `is_adult` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `is_adult` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
         "8": "assert is_adult(18)",
         "9": "assert not is_adult(17)"

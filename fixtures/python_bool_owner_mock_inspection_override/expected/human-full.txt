@@ -77,7 +77,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `age == threshold`
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `age == threshold`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_bool_owner_mock_inspection_override/input --diff <cwd>/fixtures/python_bool_owner_mock_inspection_override/diff.patch --mode fast probe:rules.py:python_preview:53196aa2
   ripr context --root <cwd>/fixtures/python_bool_owner_mock_inspection_override/input --diff <cwd>/fixtures/python_bool_owner_mock_inspection_override/diff.patch --mode fast --at probe:rules.py:python_preview:53196aa2
