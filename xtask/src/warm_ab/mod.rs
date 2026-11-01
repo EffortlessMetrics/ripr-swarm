@@ -42,6 +42,11 @@ pub(crate) struct Options {
     out: PathBuf,
     work: PathBuf,
     limits: Limits,
+    /// Negative-control mode (#12244): after each candidate warm check the
+    /// harness waits `(ratio - 1) x` that run's paired baseline time, so the
+    /// candidate's recorded time is `ratio x` the baseline's on every pin, large
+    /// or small, with no product code touched. Never set in a real measurement.
+    control_slowdown: Option<f64>,
     /// Present for the nightly orchestration: builds and pins are made here.
     nightly: Option<nightly::Plan>,
 }
@@ -69,6 +74,9 @@ struct Packet {
     baseline_median_ms: Option<u128>,
     candidate_median_ms: Option<u128>,
     ratio: Option<f64>,
+    /// Set only for a negative control: the packet then proves the gate can
+    /// fail on this pin, and says nothing about the candidate's real speed.
+    control_slowdown: Option<f64>,
     findings_identical: bool,
     verdict: String,
     detail: String,
@@ -131,6 +139,7 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Options, String> {
         out: PathBuf::from(DEFAULT_OUT),
         work: PathBuf::from(DEFAULT_WORK),
         limits: Limits::default(),
+        control_slowdown: None,
         nightly: None,
     };
     let mut baseline_ref = None;
@@ -165,6 +174,20 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Options, String> {
                 options.limits.max_ratio = value("--max-ratio")?
                     .parse()
                     .map_err(|_error| "--max-ratio must be a number".to_string())?;
+            }
+            "--control-slowdown" => {
+                let ratio: f64 = value("--control-slowdown")?
+                    .parse()
+                    .map_err(|_error| "--control-slowdown must be a number".to_string())?;
+                // Above 1 so the control actually slows; bounded so a typo
+                // cannot sleep past the per-run deadline.
+                if !ratio.is_finite() || ratio <= 1.0 || ratio > 10.0 {
+                    return Err(
+                        "--control-slowdown must be a finite ratio above 1.0 and at most 10.0"
+                            .to_string(),
+                    );
+                }
+                options.control_slowdown = Some(ratio);
             }
             "--ceiling-secs" => {
                 let secs: u64 = value("--ceiling-secs")?
@@ -351,6 +374,14 @@ fn check_once(
     })
 }
 
+/// The wait that makes a candidate run `ratio` times its paired baseline run.
+fn control_delay_ms(baseline_ms: u128, ratio: f64) -> u128 {
+    // Round-trip through text: a float-to-integer cast trips the sign-loss lint,
+    // and millisecond resolution is all the measurement has anyway.
+    let extra = ((ratio - 1.0) * baseline_ms as f64).max(0.0);
+    format!("{extra:.0}").parse().unwrap_or(0)
+}
+
 fn measure_pair(
     options: &Options,
     tree: &Path,
@@ -374,7 +405,14 @@ fn measure_pair(
     // Alternate sides so a drifting runner touches both alike.
     for run in 0..options.runs {
         let base = check_once(&baseline, tree, diff, &home, "baseline warm check")?;
-        let cand = check_once(&candidate, tree, diff, &home, "candidate warm check")?;
+        let mut cand = check_once(&candidate, tree, diff, &home, "candidate warm check")?;
+        if let Some(ratio) = options.control_slowdown {
+            let extra = control_delay_ms(base.millis, ratio);
+            std::thread::sleep(Duration::from_millis(
+                u64::try_from(extra).unwrap_or(u64::MAX),
+            ));
+            cand.millis += extra;
+        }
         eprintln!(
             "warm-ab {}: run {}: baseline {} ms, candidate {} ms",
             options.pin,
@@ -425,6 +463,7 @@ fn measure_pair(
         baseline_median_ms: judged.baseline_ms,
         candidate_median_ms: judged.candidate_ms,
         ratio: judged.ratio,
+        control_slowdown: options.control_slowdown,
         findings_identical: identical,
         verdict: verdict.as_str().to_string(),
         detail,

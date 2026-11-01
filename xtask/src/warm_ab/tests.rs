@@ -246,6 +246,15 @@ mod stub {
         base_script: &str,
         cand_script: &str,
     ) -> Result<super::super::Packet, String> {
+        packet_with(name, base_script, cand_script, &[])
+    }
+
+    fn packet_with(
+        name: &str,
+        base_script: &str,
+        cand_script: &str,
+        extra: &[&str],
+    ) -> Result<super::super::Packet, String> {
         let dir = std::env::temp_dir().join(format!("ripr-warm-ab-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
@@ -274,6 +283,7 @@ mod stub {
             &dir.join("out").to_string_lossy(),
         ]
         .iter()
+        .chain(extra.iter())
         .map(|s| (*s).to_string())
         .collect();
         let options = parse_args(&args)?;
@@ -314,5 +324,52 @@ mod stub {
             error.contains("findings"),
             "missing candidate findings must be rejected naming findings: {error:?}"
         );
+    }
+
+    /// #12244: a synthetic pin whose baseline takes ~4 s (a 1.6x delta of 2.4 s clears the 2 s noise
+    /// floor). The control scales with that baseline, so it can fail a pin that
+    /// a fixed sleep would not, and the same pin passes with no control.
+    const SLOW: &str = "sleep 4\nprintf '%s' '{\"findings\":[{\"id\":1}]}'\nexit 0";
+
+    #[test]
+    fn control_slowdown_fails_a_pin_at_1_6x_and_a_clean_run_passes_at_1_0x() -> TestResult {
+        let clean = packet_for("control-clean", SLOW, SLOW)?;
+        assert!(clean.passed, "no control must pass: {}", clean.detail);
+        assert!(clean.control_slowdown.is_none());
+        let control = packet_with("control-1-6", SLOW, SLOW, &["--control-slowdown", "1.6"])?;
+        assert!(
+            !control.passed,
+            "1.6x control passed (ratio {:?}): {}",
+            control.ratio, control.detail
+        );
+        assert_eq!(control.control_slowdown, Some(1.6));
+        assert!(
+            control.ratio.is_some_and(|ratio| ratio >= 1.55),
+            "the injected ratio did not reach the judge: {:?}",
+            control.ratio
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn control_slowdown_accepts_only_a_finite_ratio_above_one_and_at_most_ten() {
+        for bad in ["1.0", "0.9", "11", "nan", "inf", "x"] {
+            let args: Vec<String> = [
+                "--baseline",
+                "b",
+                "--candidate",
+                "c",
+                "--tree",
+                "t",
+                "--diff",
+                "d",
+                "--control-slowdown",
+                bad,
+            ]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+            assert!(parse_args(&args).is_err(), "{bad} must be refused");
+        }
     }
 }
