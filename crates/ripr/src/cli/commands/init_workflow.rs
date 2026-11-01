@@ -53,12 +53,13 @@ defaults:
     shell: bash
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}
   cancel-in-progress: true
 
 jobs:
   ripr:
     name: RIPR advisory reports
+    if: ${{ (github.event.action != 'labeled' && github.event.action != 'unlabeled') || (vars.RIPR_GATE_MODE != '' && vars.RIPR_GATE_MODE != 'visible-only') }}
     runs-on: ubuntu-latest
     # Advisory unless RIPR_GATE_MODE names a blocking mode.
     continue-on-error: ${{ vars.RIPR_GATE_MODE == '' || vars.RIPR_GATE_MODE == 'visible-only' }}
@@ -73,8 +74,8 @@ jobs:
         run: rm -rf target/ripr target/ci # a pull request must not supply its own RIPR inputs
 
 @RIPR_PIN_FIRST_LINE@
-      # its commands. Downloads the prebuilt release and checks its SHA-256;
-      # with none for this runner, `cargo install` (needs Rust).
+      # its commands. Downloads the prebuilt release (a zip on Windows x64) and
+      # checks its SHA-256; with none for this runner, `cargo install` (needs Rust).
       - name: Install ripr
         id: install
         run: |
@@ -84,18 +85,49 @@ jobs:
             Linux-ARM64) target=aarch64-unknown-linux-gnu ;;
             macOS-X64) target=x86_64-apple-darwin ;;
             macOS-ARM64) target=aarch64-apple-darwin ;;
+            Windows-X64) target=x86_64-pc-windows-msvc ;;
+            Windows-ARM64) echo "::error::Unsupported runner Windows-ARM64: ripr $version publishes no prebuilt Windows ARM64 build, and this installer does not run the x64 build under emulation. Use a Windows x64 runner."; exit 1 ;;
             *) target="" ;;
           esac
-          asset="ripr-server-v$version-$target.tar.gz"
+          case "$target" in
+            *-windows-*) ext=zip exe=ripr.exe ;;
+            *) ext=tar.gz exe=ripr ;;
+          esac
+          asset="ripr-server-v$version-$target.$ext"
           url="https://github.com/EffortlessMetrics/ripr/releases/download/v$version/$asset"
           cd "$RUNNER_TEMP" && mkdir -p ripr-bin
-          if [ -n "$target" ] && curl -fsSL --retry 3 -O "$url" && curl -fsSL --retry 3 -O "$url.sha256"; then
+          ripr=ripr
+          if [ -n "$target" ] && curl -fsSL --retry 3 -O "$url"; then
+            # The release asset exists: from here every failure is final. A missing or
+            # mismatched checksum, a bad archive or a wrong payload never falls back to
+            # cargo or to a ripr already on PATH.
+            curl -fsSL --retry 3 -O "$url.sha256" || { echo "::error::$asset has no downloadable SHA-256 ($url.sha256); refusing to install it unverified"; exit 1; }
             expected="$(awk 'NR == 1 { print $1 }' "$asset.sha256")"
             actual="$( { sha256sum "$asset" 2>/dev/null || shasum -a 256 "$asset"; } | awk '{ print $1 }')"
             if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
               echo "::error::$asset does not match its published SHA-256 (expected ${expected:-nothing}, got $actual)"; exit 1
             fi
-            tar -xzf "$asset" -C ripr-bin; echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH"
+            if [ "$ext" = zip ]; then
+              # Git for Windows' bash ships GNU tar (no zip support) and no unzip, so use the
+              # bsdtar that Windows itself ships, by absolute path so nothing on PATH can stand in.
+              ziptool="${SYSTEMROOT:-${SystemRoot:-}}/System32/tar.exe"
+              [ -x "$ziptool" ] || { echo "::error::Cannot extract $asset: Windows tar not found at $ziptool"; exit 1; }
+              entries="$("$ziptool" -tf "$asset" | tr -d '\r' | sed 's#^\./##' | LC_ALL=C sort)" || { echo "::error::$asset is not a readable zip archive"; exit 1; }
+              if [ -z "$entries" ] || grep -Eq '[/\\:]|^\.\.?$|^$' <<< "$entries"; then
+                echo "::error::$asset lists an entry outside a flat archive root (nested, absolute, traversal or empty name)"; exit 1
+              fi
+              [ -z "$(printf '%s\n' "$entries" | uniq -d)" ] || { echo "::error::$asset lists a duplicate entry"; exit 1; }
+              grep -qx "$exe" <<< "$entries" || { echo "::error::$asset does not contain $exe at its root"; exit 1; }
+              "$ziptool" -xf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
+            else
+              tar -xzf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
+            fi
+            if [ ! -f "$RUNNER_TEMP/ripr-bin/$exe" ] || [ -L "$RUNNER_TEMP/ripr-bin/$exe" ]; then
+              echo "::error::$asset did not extract a regular file named $exe"; exit 1
+            fi
+            ripr="$RUNNER_TEMP/ripr-bin/$exe"
+            echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH"
+            echo "::notice title=ripr install::version $version, target $target, archive $asset, sha256 $actual, executable $ripr"
           else
             why="no prebuilt ripr $version for $RUNNER_OS-$RUNNER_ARCH"; [ -z "$target" ] || why="downloading $url failed"
             if ! command -v cargo >/dev/null 2>&1; then
@@ -104,7 +136,8 @@ jobs:
             echo "::notice::$why; building it with cargo install"
             cargo install ripr --version @RIPR_VERSION@ --locked
           fi
-          PATH="$RUNNER_TEMP/ripr-bin:$PATH" ripr --version
+          reported="$("$ripr" --version)"; echo "$reported"
+          case "$reported" in "ripr $version" | "ripr $version "*) ;; *) echo "::error::the installed ripr reports \"$reported\", not ripr $version"; exit 1 ;; esac
           echo "RIPR_CACHE_DIR=$RUNNER_TEMP/ripr-cache" >> "$GITHUB_ENV"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0; reuses unchanged files' analysis
@@ -377,14 +410,17 @@ mod template_pin_tests {
     /// lines). #4452 moved pull-request number, head SHA, and repository
     /// interpolations out of `run:` shell text into step `env:`, and
     /// re-measured the hash below. #11145 added the SARIF upload step ids and
-    /// the `Explain failed SARIF upload` step. #11205 exposed the optional
-    /// pilot timeout repository variable; both changes re-measured the pin.
+    /// the `Explain failed SARIF upload` step, and re-measured it again. #11205 exposed the
+    /// optional pilot timeout repository variable and re-measured it. #6245
+    /// added the Windows x64 zip route, the Windows ARM64 unsupported error and
+    /// the fail-closed integrity/archive handling to the install step, and
+    /// re-measured it once more.
     /// The unrendered template is the stable identity:
     /// rendering additionally substitutes the install version, the pin
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "d50c1c808b2dc6daf760c9d8f284b8b10d01981f5174b3b555a198276f333514";
+        "7a0d77223bd5b961373996e55447d76b9a3448a21d1d07230a3af4e7bbf9f69c";
 
     #[test]
     fn template_matches_the_pinned_bytes() {

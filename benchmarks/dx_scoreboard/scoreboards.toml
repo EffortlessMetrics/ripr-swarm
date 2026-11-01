@@ -75,6 +75,27 @@ note = "large long-lived binary workspace (~1400 .rs files); shared corpus pin"
 heavy = true
 
 [[corpus]]
+id = "rust-analyzer"
+url = "https://github.com/rust-lang/rust-analyzer"
+sha = "8399dcb353388061755fad89b0eadb7f74ca34cb"
+note = "large IDE workspace (~100 crates); the pinned change edits crates/hir and crates/ide-diagnostics"
+heavy = true
+
+[[corpus]]
+id = "tokio"
+url = "https://github.com/tokio-rs/tokio"
+sha = "6470b5e4b8e943ad014383a5bf6a93ba415678a3"
+note = "async runtime workspace, cfg- and macro-heavy; the pinned change edits tokio/src/sync/barrier.rs and its test"
+heavy = true
+
+[[corpus]]
+id = "servo"
+url = "https://github.com/servo/servo"
+sha = "436d98daa8cc128d96371709bc514b5b4d9cbce3"
+note = "browser engine workspace (several thousand .rs files); the pinned change edits components/net/http_cache.rs"
+heavy = true
+
+[[corpus]]
 id = "ripr-swarm-2026-10"
 url = "https://github.com/EffortlessMetrics/ripr-swarm"
 sha = "8fbe8bd1598e0b11752c6c989aa54198a0510a2f"
@@ -210,6 +231,38 @@ url = "https://github.com/remeda/remeda"
 sha = "d02c3bdb5e18cfa53e76f33f4ae525adce515379"
 language = "typescript"
 note = "pnpm monorepo whose package is packages/remeda; the commit edits packages/remeda/src/funnel.ts and its test, and only nested detection (#10941) selects the TypeScript adapter without a ripr.toml"
+
+# The largest TypeScript workspace pinned (#11676): VS Code's own tree, a
+# three-file edit in src/vs/platform/agentHost (5,328 files). Before the
+# per-file fact store wrote each shared list once, one test file persisted a
+# 267 MB envelope and the 256 MiB store budget was spent before the workspace
+# was warm (about four runs). The ceilings are a regression gate set above the
+# measured second run (48.6 s, 457 MiB on 4 cores), not the 2 s target; tighten
+# them as the steady-state costs come down.
+[[corpus]]
+id = "vscode-typescript"
+url = "https://github.com/microsoft/vscode"
+sha = "c198526d8e64ba6f9944e9f7bcc079ed1f6d7fcc"
+language = "typescript"
+note = "very large TypeScript application (5,328 files); commit edits agentHostChangesetCoordinator.ts, agentHostChangesetFileMonitorCoordinator.ts and the coordinator test"
+heavy = true
+ceilings = { "speed.warm_check_ms" = 90000, "speed.warm_check_peak_rss_mb" = 1024 }
+
+# The TypeScript compiler's own repository: the workspace walk stops at the
+# 20,000-entry cap, so the row pins the refusal rather than a verdict (#11794).
+# The pinned diff's findings are `static_unknown` with the named
+# `typescript_workspace_discovery_truncated` limit; before #11794 the same diff
+# reported zero findings because the changed file was never discovered. Measured
+# on 4 cores: 16.1 s cold, 2.6 s warm, 62 MiB. The ceilings are a regression
+# gate above those numbers, not a claim that the 2 s bar is met.
+[[corpus]]
+id = "typescript-compiler"
+url = "https://github.com/microsoft/TypeScript"
+sha = "ad04bf7488384a5dcdf7d250ccb8e5263021a8ff"
+language = "typescript"
+note = "TypeScript compiler repository (over the 20,000-entry workspace-walk cap); commit fixes declaration emit for nested binding patterns in src/compiler and adds baseline files"
+heavy = true
+ceilings = { "speed.warm_check_ms" = 5000, "speed.warm_check_peak_rss_mb" = 256 }
 
 [[corpus]]
 id = "hono-typescript"
@@ -381,6 +434,19 @@ id = "trust.self_contradictions"
 board = "trust"
 title = "Findings or seams whose own evidence contradicts itself"
 unit = "findings"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "measured"
+per_repo = true
+
+[[metric]]
+id = "trust.editor_resilience_failures"
+board = "trust"
+title = "Editor-server resilience checks that failed (save burst, restart after termination)"
+unit = "checks"
 direction = "lower_is_better"
 target = 0
 regression_pct = 0
@@ -932,6 +998,68 @@ direction = "lower_is_better"
 target = 15
 regression_pct = 25
 regression_floor = 3
+runner_dependent = false
+per_repo = true
+source = "ingest:agent-as-user"
+
+# Bytes the first `ripr check` writes (stdout plus stderr) on each pinned
+# target's gap commit, one metric per output format so a change in one format
+# cannot hide in another (#11816). The compact `--format agent` is the format
+# an agent is meant to read, so it gets the tightest margin: growth above the
+# larger of 10 percent and 300 bytes fails. The margin covers the checkout
+# path that the output echoes, which differs between runners.
+[[metric]]
+id = "agent.check_bytes_human"
+board = "agent"
+title = "Bytes written by the first `ripr check` (default human format) on the gap commit"
+unit = "bytes"
+direction = "lower_is_better"
+target = 8000
+regression_pct = 25
+regression_floor = 500
+runner_dependent = false
+per_repo = true
+source = "ingest:agent-as-user"
+
+[[metric]]
+id = "agent.check_bytes_agent_format"
+board = "agent"
+title = "Bytes written by the first `ripr check --format agent` on the gap commit"
+unit = "bytes"
+direction = "lower_is_better"
+target = 4000
+regression_pct = 10
+regression_floor = 300
+runner_dependent = false
+per_repo = true
+source = "ingest:agent-as-user"
+
+[[metric]]
+id = "agent.check_bytes_json"
+board = "agent"
+title = "Bytes written by the first `ripr check --json` on the gap commit"
+unit = "bytes"
+direction = "lower_is_better"
+target = 40000
+regression_pct = 25
+regression_floor = 2000
+runner_dependent = false
+per_repo = true
+source = "ingest:agent-as-user"
+
+# Gaps `ripr check --format agent` names on the unfixed gap commit, where the
+# answer key says all three mutants survive. A count of zero means the compact
+# format told the agent there is nothing to do (a false stop); any fall below
+# the baseline fails.
+[[metric]]
+id = "agent.agent_format_gaps_before_fix"
+board = "agent"
+title = "Gaps named by `ripr check --format agent` on the gap commit, before any fix"
+unit = "gaps"
+direction = "higher_is_better"
+target = 1
+regression_pct = 0
+regression_floor = 0
 runner_dependent = false
 per_repo = true
 source = "ingest:agent-as-user"

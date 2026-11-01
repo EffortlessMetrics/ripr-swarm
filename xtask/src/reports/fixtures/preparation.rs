@@ -124,6 +124,23 @@ pub(super) fn build_perl_variant(target_dir: &Path) -> Result<(), String> {
     })
 }
 
+/// Default-feature `cargo build -p ripr` under a private `CARGO_TARGET_DIR`, for
+/// lanes whose suite binary is built with other features (see
+/// `RIPR_FIXTURE_BINARY_ISOLATE` in `fixtures.rs`). Plain argv, like the Perl
+/// variant, so native-lock observers keep matching it.
+pub(super) fn build_default_isolated(target_dir: &Path) -> Result<(), String> {
+    let environment = proxy_environment(environment()?, offline_mode(false));
+    let dir = target_dir.to_str().ok_or_else(|| {
+        format!(
+            "fixture isolated target dir must be UTF-8: {}",
+            target_dir.display()
+        )
+    })?;
+    let mut envs: Vec<(&str, &str)> = environment.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    envs.push(("CARGO_TARGET_DIR", dir));
+    crate::run::run_with_envs("cargo", &["build", "-p", "ripr"], &envs).map(|_| ())
+}
+
 type VariantRunner = dyn Fn(&str, &[&str], &[(&str, &str)]) -> Result<(), String>;
 
 fn build_perl_variant_with(

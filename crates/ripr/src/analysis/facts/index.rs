@@ -100,7 +100,7 @@ fn validate<'a, T: 'a>(
         }
         if id.offset >= arena.len() {
             return Err(format!(
-                "invalid {kind} fact membership: {} >= {}",
+                "invalid {kind} fact membership: {} >= {}; report this as a ripr bug with the command and workspace shape",
                 id.offset,
                 arena.len()
             ));
