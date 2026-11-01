@@ -793,9 +793,13 @@ fn push_ambiguous_stub_choices(
 }
 
 fn hidden_finding_reason(finding: &Finding) -> String {
-    let reason = finding
+    // The family-aware wording, so a hidden match-arm finding reads the same
+    // limit text as its hover, MCP and full CLI explanation (#11821).
+    let limit_reason = finding
         .static_limit_kind
-        .map(|kind| kind.describe())
+        .map(|kind| kind.describe_for_family(&finding.probe.family));
+    let reason: &str = limit_reason
+        .as_deref()
         .or_else(|| finding.missing.first().map(String::as_str))
         .unwrap_or_else(|| match finding.class {
             ExposureClass::NoStaticPath => &finding.ripr.reach.summary,
@@ -1717,6 +1721,28 @@ pub(super) fn is_preview_limited(finding: &Finding) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn hidden_finding_reason_words_a_match_arm_limit_like_hover_and_mcp() -> Result<(), String> {
+        // #11821: `describe()` and `describe_for_family()` differ only for this
+        // kind on a match arm; the hidden-finding line must use the family form.
+        let mut finding = crate::mcp::gaps::test_finding()?;
+        finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustAssertionContextUnresolved);
+        let reason = hidden_finding_reason(&finding);
+        assert!(
+            reason.contains("`assert!`") && !reason.contains("`assert_eq!`"),
+            "a hidden match-arm limit must read the family wording: {reason}"
+        );
+        finding.probe.family = crate::domain::ProbeFamily::Predicate;
+        let other = hidden_finding_reason(&finding);
+        assert!(
+            other.contains("`assert_eq!`"),
+            "a non-match-arm limit keeps the standard wording: {other}"
+        );
+        Ok(())
+    }
     use super::*;
     use crate::app::Mode;
     use crate::domain::{
