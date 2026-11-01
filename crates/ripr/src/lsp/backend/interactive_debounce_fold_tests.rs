@@ -44,10 +44,7 @@ fn overlapping_interactive_triggers_issue_one_scheduler_request_at_the_latest_re
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
-        let scratch = std::env::temp_dir().join(format!("ripr-debounce-leak-{}", std::process::id()));
-        std::fs::create_dir_all(&scratch).map_err(|err| format!("scratch root: {err}"))?;
-        let scratch_root = scratch.clone();
-        let (service, socket) = LspService::new(move |client| Backend::new(client, scratch_root.clone()));
+        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
         drop(socket);
         let backend = service.inner();
         backend.initialize_test_workspace_root();
@@ -102,9 +99,10 @@ fn overlapping_interactive_triggers_issue_one_scheduler_request_at_the_latest_re
                 backend.refresh_telemetry_for_test().did_open_requests
             ))
         });
+        let mut burst_finished = false;
         tokio::select! {
             result = &mut saw_request => result?,
-            () = &mut burst => {}
+            () = &mut burst => { burst_finished = true; }
         }
 
         let telemetry = backend.refresh_telemetry_for_test();
@@ -119,6 +117,25 @@ fn overlapping_interactive_triggers_issue_one_scheduler_request_at_the_latest_re
             return Err(format!(
                 "window owner must request the latest folded workspace revision {OVERLAPPING_INTERACTIVE_TRIGGERS}, got {revision}"
             ));
+        }
+        // Let the window owner's refresh finish before the runtime is dropped,
+        // so no analysis work is still in flight when the process exits (#12221).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if burst_finished && backend.refresh_scheduler.is_idle() {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                return Err("refresh did not settle before the test ended".to_string());
+            }
+            if burst_finished {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            } else {
+                tokio::select! {
+                    () = &mut burst => { burst_finished = true; }
+                    () = tokio::task::yield_now() => {}
+                }
+            }
         }
         Ok(())
     })
