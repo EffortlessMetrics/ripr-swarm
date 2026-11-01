@@ -284,3 +284,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — human_full_shared_parse_port (22)
+
+Reason:
+RIPR-SPEC-0122: plain wording for the Evidence stage name and the stage and state legend in the check digest (#10692)
+
+Command:
+`cargo xtask goldens bless human_full_shared_parse_port --reason "..."`
+
+Updated:
+- `expected/human.txt`
