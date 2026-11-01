@@ -35,3 +35,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — undeclared_target_glob_public_call (4)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless undeclared_target_glob_public_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

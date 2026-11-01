@@ -126,3 +126,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_mask_unexercised (10)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_mask_unexercised --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

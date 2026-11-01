@@ -167,3 +167,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_pin_written_alias_not_a_pin (14)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless owner_pin_written_alias_not_a_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

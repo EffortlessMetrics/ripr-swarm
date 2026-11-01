@@ -196,7 +196,7 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     );
     assert!(
         check.contains(
-            "seams in this finding's file, but could not tie one to this finding's changed line"
+            "spots in this finding's file, but could not tie one to this finding's changed line"
         ),
         "check must name the one reason it cannot bind a seam:\n{check}"
     );
