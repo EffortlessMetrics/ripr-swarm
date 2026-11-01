@@ -167,17 +167,17 @@ fn require_string(
 ) -> Result<String, String> {
     match object.get(field) {
         None => Err(format!(
-            "python repair verification: subject=`{subject}` field=`{field}`: required field is missing; the retained artifact is malformed, so start a new attempt with `ripr agent repair --phase before --seam-id <id>` rather than editing it by hand"
+            "python repair verification: subject=`{subject}` field=`{field}`: required field is missing; the retained artifact is malformed, so start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags) rather than editing it by hand"
         )),
         Some(Value::Null) => Err(format!(
-            "python repair verification: subject=`{subject}` field=`{field}`: a present null is not a value; the retained artifact is malformed, so start a new attempt with `ripr agent repair --phase before --seam-id <id>` rather than editing it by hand"
+            "python repair verification: subject=`{subject}` field=`{field}`: a present null is not a value; the retained artifact is malformed, so start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags) rather than editing it by hand"
         )),
         Some(Value::String(text)) if !text.trim().is_empty() => Ok(text.clone()),
         Some(Value::String(_)) => Err(format!(
-            "python repair verification: subject=`{subject}` field=`{field}`: required field must be non-empty; the retained artifact is malformed, so start a new attempt with `ripr agent repair --phase before --seam-id <id>` rather than editing it by hand"
+            "python repair verification: subject=`{subject}` field=`{field}`: required field must be non-empty; the retained artifact is malformed, so start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags) rather than editing it by hand"
         )),
         Some(_) => Err(format!(
-            "python repair verification: subject=`{subject}` field=`{field}`: field must be a string; the retained artifact is malformed, so start a new attempt with `ripr agent repair --phase before --seam-id <id>` rather than editing it by hand"
+            "python repair verification: subject=`{subject}` field=`{field}`: field must be a string; the retained artifact is malformed, so start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags) rather than editing it by hand"
         )),
     }
 }
@@ -269,7 +269,7 @@ fn revalidate_for_verification(
     if !after.current || after.verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant
     {
         return Err(format!(
-            "python repair verification refuses attempt `{}`: the after verdict is not a current compliant edit (current {}, cage status {:?}); rerun `ripr agent repair --attempt <id> --phase after` to refresh the after verdict, or start a new attempt with `ripr agent repair --phase before --seam-id <id>`",
+            "python repair verification refuses attempt `{}`: the after verdict is not a current compliant edit (current {}, cage status {:?}); rerun `ripr agent repair --attempt <id> --phase after` to refresh the after verdict, or start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)",
             attempt_id.as_str(),
             after.current,
             after.verdict.status
@@ -282,7 +282,7 @@ fn revalidate_for_verification(
     let repository_head = crate::agent::artifact::current_git_head(root)?;
     if repository_head != manifest.repository_head || repository_head != after.repository_head {
         return Err(format!(
-            "python repair verification refuses attempt `{}`: stale tree — the attempt pins head `{}` (after `{}`) but the repository HEAD is `{repository_head}`; a moved repository requires a new re-authorized attempt; check out the pinned head again, or start a new attempt with `ripr agent repair --phase before --seam-id <id>`",
+            "python repair verification refuses attempt `{}`: stale tree — the attempt pins head `{}` (after `{}`) but the repository HEAD is `{repository_head}`; a moved repository requires a new re-authorized attempt; check out the pinned head again, or start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)",
             attempt_id.as_str(),
             manifest.repository_head,
             after.repository_head
@@ -302,7 +302,7 @@ fn revalidate_for_verification(
     let (_, verdict) = crate::edit_cage::evaluate_repository_edit_cage_with_delta(&baseline)?;
     if verdict.status != crate::edit_cage::EditCageVerdictStatus::Compliant {
         return Err(format!(
-            "python repair verification refuses attempt `{}`: stale tree — the worktree no longer matches the files the repair allows ({:?}); the exact post-edit state is gone; revert changes outside the allowed edit surface, or start a new attempt with `ripr agent repair --phase before --seam-id <id>`",
+            "python repair verification refuses attempt `{}`: stale tree — the worktree no longer matches the files the repair allows ({:?}); the exact post-edit state is gone; revert changes outside the allowed edit surface, or start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)",
             attempt_id.as_str(),
             verdict.status
         ));
@@ -323,14 +323,14 @@ fn revalidate_for_verification(
     let retained_surface = on_surface(&after.verdict.changed_paths);
     if fresh_surface != retained_surface || fresh_surface.is_empty() {
         return Err(format!(
-            "python repair verification refuses attempt `{}`: stale tree — the worktree no longer carries the applied edit on the declared surface (fresh {fresh_surface:?}, retained {retained_surface:?}); the exact post-edit state is gone; restore the applied edit on the declared surface, or start a new attempt with `ripr agent repair --phase before --seam-id <id>`",
+            "python repair verification refuses attempt `{}`: stale tree — the worktree no longer carries the applied edit on the declared surface (fresh {fresh_surface:?}, retained {retained_surface:?}); the exact post-edit state is gone; restore the applied edit on the declared surface, or start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)",
             attempt_id.as_str()
         ));
     }
     let patch_sha256 = after.delta_sha256.trim_start_matches("sha256:").to_string();
     if !is_sha256_hex(&patch_sha256) {
         return Err(
-            "python repair verification refuses the attempt: the durable patch digest is malformed; start a new attempt with `ripr agent repair --phase before --seam-id <id>`"
+            "python repair verification refuses the attempt: the durable patch digest is malformed; start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)"
                 .to_string(),
         );
     }
@@ -368,7 +368,7 @@ fn revalidate_for_verification(
         .to_string();
     if !is_sha256_hex(&before_snapshot_sha256) {
         return Err(
-            "python repair verification refuses the attempt: the retained before-snapshot digest is malformed; start a new attempt with `ripr agent repair --phase before --seam-id <id>`"
+            "python repair verification refuses the attempt: the retained before-snapshot digest is malformed; start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)"
                 .to_string(),
         );
     }
@@ -438,7 +438,7 @@ fn revalidate_for_verification(
         .unwrap_or_default();
     if record_profile != config_profile {
         return Err(format!(
-            "python repair verification refuses attempt `{}`: stale config — the apply record pins config profile `{record_profile}` but the analyzed root now detects `{config_profile}`; restore the analyzed root's `ripr.toml` to the retained profile, or start a new attempt with `ripr agent repair --phase before --seam-id <id>`",
+            "python repair verification refuses attempt `{}`: stale config — the apply record pins config profile `{record_profile}` but the analyzed root now detects `{config_profile}`; restore the analyzed root's `ripr.toml` to the retained profile, or start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)",
             attempt_id.as_str()
         ));
     }
@@ -495,7 +495,7 @@ fn revalidate_for_verification(
             None if command_display.trim().is_empty() => None,
             None => {
                 return Err(format!(
-                    "python repair verification refuses attempt `{}`: stale command — the retained packet's verify route is not a canonical typed route; a non-canonical display is never executed; start a new attempt with `ripr agent repair --phase before --seam-id <id>` so the packet is produced again",
+                    "python repair verification refuses attempt `{}`: stale command — the retained packet's verify route is not a canonical typed route; a non-canonical display is never executed; start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags) so the packet is produced again",
                     attempt_id.as_str()
                 ));
             }
@@ -538,7 +538,7 @@ fn load_baseline(
         std::fs::read(&path).map_err(|error| format!("read {} failed: {error}; check that the file exists and is readable, then rerun the verify phase", path.display()))?;
     if sha256_hex(&bytes) != artifact.sha256.trim_start_matches("sha256:") {
         return Err(
-            "python repair verification refuses the attempt: the edit-cage baseline binding failed; the retained baseline no longer matches its recorded digest, so start a new attempt with `ripr agent repair --phase before --seam-id <id>`"
+            "python repair verification refuses the attempt: the edit-cage baseline binding failed; the retained baseline no longer matches its recorded digest, so start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)"
                 .to_string(),
         );
     }
@@ -575,21 +575,21 @@ fn check_apply_record(
     let record_attempt = require_string("apply record", apply, "durable_attempt_id")?;
     if record_attempt != attempt_id.as_str() {
         return Err(format!(
-            "python repair verification refuses the attempt: the apply record names durable attempt `{record_attempt}`, not `{}`; pass the attempt this apply record names with `--attempt`, or start a new attempt with `ripr agent repair --phase before --seam-id <id>`",
+            "python repair verification refuses the attempt: the apply record names durable attempt `{record_attempt}`, not `{}`; pass the attempt this apply record names with `--attempt`, or start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)",
             attempt_id.as_str()
         ));
     }
     let record_binding_digest = require_string("apply record", apply, "binding_artifact_sha256")?;
     if record_binding_digest != binding.artifact_sha256 {
         return Err(format!(
-            "python repair verification refuses the attempt: the apply record chains binding artifact `{record_binding_digest}` but the retained binding digests to `{}`; start a new attempt with `ripr agent repair --phase before --seam-id <id>`",
+            "python repair verification refuses the attempt: the apply record chains binding artifact `{record_binding_digest}` but the retained binding digests to `{}`; start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)",
             binding.artifact_sha256
         ));
     }
     let record_head = require_string("apply record", apply, "repository_head")?;
     if record_head != verified.head || repository_head != verified.head {
         return Err(format!(
-            "python repair verification refuses the attempt: stale tree — the apply record pins head `{record_head}`, the binding pins `{}`, and the repository HEAD is `{repository_head}`; all three must agree; start a new attempt with `ripr agent repair --phase before --seam-id <id>`",
+            "python repair verification refuses the attempt: stale tree — the apply record pins head `{record_head}`, the binding pins `{}`, and the repository HEAD is `{repository_head}`; all three must agree; start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)",
             verified.head
         ));
     }
@@ -602,14 +602,14 @@ fn check_apply_record(
     let record_trust_attempt = require_string("apply record trust", trust, "attempt_id")?;
     if record_trust_attempt != verified.attempt_id {
         return Err(format!(
-            "python repair verification refuses the attempt: the apply record binds trust attempt `{record_trust_attempt}` but the retained binding binds `{}`; start a new attempt with `ripr agent repair --phase before --seam-id <id>`",
+            "python repair verification refuses the attempt: the apply record binds trust attempt `{record_trust_attempt}` but the retained binding binds `{}`; start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)",
             verified.attempt_id
         ));
     }
     let record_selection_digest = require_string("apply record trust", trust, "selection_digest")?;
     if record_selection_digest != verified.selection_digest {
         return Err(
-            "python repair verification refuses the attempt: the apply record's selection digest leaves the retained binding; start a new attempt with `ripr agent repair --phase before --seam-id <id>`"
+            "python repair verification refuses the attempt: the apply record's selection digest leaves the retained binding; start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)"
                 .to_string(),
         );
     }
@@ -622,19 +622,19 @@ fn check_apply_record(
     let record_patch = require_string("apply record apply block", record_apply, "patch_sha256")?;
     if record_patch != patch_sha256 {
         return Err(format!(
-            "python repair verification refuses the attempt: stale patch — the apply record pins patch `{record_patch}` but the durable verdict digests to `{patch_sha256}`; start a new attempt with `ripr agent repair --phase before --seam-id <id>`"
+            "python repair verification refuses the attempt: stale patch — the apply record pins patch `{record_patch}` but the durable verdict digests to `{patch_sha256}`; start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)"
         ));
     }
     if !opt_bool(record_apply, "current").unwrap_or(false) {
         return Err(
-            "python repair verification refuses the attempt: the apply record does not carry a current repository; start a new attempt with `ripr agent repair --phase before --seam-id <id>`"
+            "python repair verification refuses the attempt: the apply record does not carry a current repository; start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)"
                 .to_string(),
         );
     }
     let record_cage = require_string("apply record apply block", record_apply, "cage_status")?;
     if record_cage != "compliant" {
         return Err(format!(
-            "python repair verification refuses the attempt: the apply record's edit-cage decision is `{record_cage}`, not compliant; revert changes outside the allowed edit surface, then start a new attempt with `ripr agent repair --phase before --seam-id <id>`"
+            "python repair verification refuses the attempt: the apply record's edit-cage decision is `{record_cage}`, not compliant; revert changes outside the allowed edit surface, then start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)"
         ));
     }
     let input = as_object(
@@ -646,13 +646,13 @@ fn check_apply_record(
     let record_packet = require_string("apply record input", input, "packet_sha256")?;
     if record_packet != packet_sha256 {
         return Err(format!(
-            "python repair verification refuses the attempt: stale packet — the apply record pins packet `{record_packet}` but the retained packet digests to `{packet_sha256}`; start a new attempt with `ripr agent repair --phase before --seam-id <id>`"
+            "python repair verification refuses the attempt: stale packet — the apply record pins packet `{record_packet}` but the retained packet digests to `{packet_sha256}`; start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)"
         ));
     }
     let record_before = require_string("apply record input", input, "before_snapshot_sha256")?;
     if record_before != before_snapshot_sha256 {
         return Err(format!(
-            "python repair verification refuses the attempt: stale input — the apply record pins before snapshot `{record_before}` but the attempt retains `{before_snapshot_sha256}`; start a new attempt with `ripr agent repair --phase before --seam-id <id>`"
+            "python repair verification refuses the attempt: stale input — the apply record pins before snapshot `{record_before}` but the attempt retains `{before_snapshot_sha256}`; start a new attempt with `ripr agent repair --phase before --seam-id <id>` (repeating the original `--root` and any `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags)"
         ));
     }
     Ok(())
