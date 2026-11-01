@@ -13683,10 +13683,14 @@ fn cached_disk_content_digest(
 /// content is digested once per `(len, mtime, ctime, ino)` stat key on Unix,
 /// except that a file whose mtime or ctime is within
 /// [`DISK_EQUALITY_RACY_WINDOW`] of the check is not cached; off Unix every
-/// lookup rereads (#12046). The window assumes filesystem timestamps finer
-/// than the window and a clock that does not step backwards; a filesystem with
-/// timestamps as coarse as the window (for example 2 s FAT) can still reuse a
-/// digest across a same-key rewrite.
+/// lookup rereads (#12046). A cached entry needs `now - mtime >= window`, and
+/// any later rewrite happens at or after `now`, so its floored timestamp
+/// differs from the cached one whenever the filesystem's timestamp granularity
+/// is no larger than the window (2 s FAT is covered). That relies on the
+/// filesystem stamping with a clock that agrees with the local clock; a
+/// network mount with a skewed clock can still reuse a digest across a
+/// same-key rewrite. A clock stepping backwards reads as racy, which is safe
+/// (#12115).
 fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
     let Ok(text_len) = u64::try_from(text.len()) else {
         return false;
