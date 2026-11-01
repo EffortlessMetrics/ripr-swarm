@@ -3521,6 +3521,9 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/asymmetric_matcher_tests.rs::top_level_asymmetric_matchers_read_weak",
+  "crates/ripr/src/analysis/language/typescript/asymmetric_matcher_tests.rs::derived_property_observations_read_weak",
+  "crates/ripr/src/analysis/language/typescript/asymmetric_matcher_tests.rs::literal_and_value_expectations_stay_exact_value",
   "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::single_const_in_callback_block_resolves",
   "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::rebound_shadowed_or_computed_local_never_resolves",
   "crates/ripr/src/analysis/language/typescript/local_constant_tests.rs::nested_only_or_unparsed_binding_is_refused_not_rescued_by_outer_scope",

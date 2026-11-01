@@ -141,6 +141,8 @@ mod ambient_declaration_tests;
 #[cfg(test)]
 mod assertion_form_tests;
 #[cfg(test)]
+mod asymmetric_matcher_tests;
+#[cfg(test)]
 mod conditional_assertion_tests;
 mod loop_count_guard;
 mod loop_rows;
