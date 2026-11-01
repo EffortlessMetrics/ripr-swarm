@@ -1,0 +1,35 @@
+name: Predicate inventory proof (non-shipping)
+on:
+  push:
+    branches: [codex/8547-stub-tail-proof]
+    paths: [.github/workflows/predicate-inventory-proof.yml]
+permissions:
+  contents: read
+concurrency:
+  group: ripr-11358-proof
+  cancel-in-progress: false
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: a7431a52d9a00e6a256be5ee2038ed1b5519f588
+          persist-credentials: false
+      - name: Retain exact source context, no build products
+        shell: bash
+        run: |
+          set -euo pipefail
+          E="$RUNNER_TEMP/predicate-inventory-source"
+          mkdir -p "$E"
+          test "$(git rev-parse HEAD)" = a7431a52d9a00e6a256be5ee2038ed1b5519f588
+          git archive --format=tar HEAD AGENTS.md .agents/skills docs/agent-context docs/PR_AUTOMATION.md docs/MERGE_FLOW.md changelog.d/README.md Cargo.toml Cargo.lock rust-toolchain.toml .cargo crates/ripr/Cargo.toml crates/ripr/build.rs crates/ripr/src/analysis/seam_inventory.rs crates/ripr/src/analysis/seam_inventory crates/ripr/src/analysis/seam_cache.rs crates/ripr/src/analysis/seam_cache crates/ripr/src/analysis/mod.rs crates/ripr/src/analysis/cancellation.rs crates/ripr/src/analysis/facts/mod.rs crates/ripr/src/analysis/repair_route.rs crates/ripr/src/analysis/test_grip_evidence.rs crates/ripr/src/analysis/test_grip_evidence crates/ripr/src/app/test_stub.rs crates/ripr/src/app/test_stub_inventory_tests.rs crates/ripr/src/app/task_first.rs crates/ripr/src/config.rs crates/ripr/tests/agent_stub_compiles.rs crates/ripr/tests/common .github/workflows/rust-gates.yml > "$E/source.tar"
+          git rev-parse HEAD HEAD^{tree} > "$E/identity.txt"
+          sha256sum "$E/source.tar" > "$E/source.sha256"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: predicate-inventory-source
+          path: ${{ runner.temp }}/predicate-inventory-source/
+          if-no-files-found: error
+          retention-days: 14
