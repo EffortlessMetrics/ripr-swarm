@@ -493,7 +493,7 @@ fn build_document(
     let violations = document_violations(entries, command_rows, workflows);
     if !violations.is_empty() {
         return Err(format!(
-            "help --json catalog integrity failed: {violations:?}"
+            "help --json catalog integrity failed: {violations:?}; report this as a ripr bug with the command you ran"
         ));
     }
 
@@ -554,7 +554,7 @@ fn catalog_digest(document: &HelpJsonDocument) -> Result<String, String> {
         workflows: &document.workflows,
     };
     let serialized = serde_json::to_string(&input)
-        .map_err(|error| format!("help --json digest serialization failed: {error}"))?;
+        .map_err(|error| format!("help --json digest serialization failed: {error}; report this as a ripr bug with the command you ran"))?;
     Ok(sha256_hex(serialized.as_bytes()))
 }
 
@@ -577,7 +577,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 pub(crate) fn render_help_json() -> Result<String, String> {
     let document = build_document(catalog(), metadata(), workflow_catalog())?;
     serde_json::to_string(&document)
-        .map_err(|error| format!("help --json serialization failed: {error}"))
+        .map_err(|error| format!("help --json serialization failed: {error}; report this as a ripr bug with the command you ran"))
 }
 
 /// `ripr help --json`: emit the document on stdout. The document is built in

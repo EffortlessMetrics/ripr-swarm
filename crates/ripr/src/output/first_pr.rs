@@ -3582,7 +3582,7 @@ mod tests {
         assert!(!FirstPrOptions::default().preflight);
         assert_eq!(
             parse_options(&["--gap-ledger".to_string(), "".to_string()]),
-            Err("first-pr --gap-ledger requires a non-empty value".to_string())
+            Err("first-pr --gap-ledger requires a non-empty value; pass a value right after --gap-ledger".to_string())
         );
         match parse_options(&["--gap-ledgr".to_string()]) {
             Err(unknown)

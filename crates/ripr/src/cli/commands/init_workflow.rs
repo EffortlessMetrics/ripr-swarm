@@ -41,6 +41,8 @@ env:
   # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.
   RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}
   RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}
+  # Optional positive milliseconds; empty keeps the pilot's default deadline.
+  RIPR_PILOT_TIMEOUT_MS: ${{ vars.RIPR_PILOT_TIMEOUT_MS || '' }}
   # RIPR_COMMENT_MODE: off, plan or inline.
   RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}
   # RIPR_SUMMARY_COMMENT: "false" turns off the one summary comment on the pull request.
@@ -408,7 +410,8 @@ mod template_pin_tests {
     /// lines). #4452 moved pull-request number, head SHA, and repository
     /// interpolations out of `run:` shell text into step `env:`, and
     /// re-measured the hash below. #11145 added the SARIF upload step ids and
-    /// the `Explain failed SARIF upload` step, and re-measured it again. #6245
+    /// the `Explain failed SARIF upload` step, and re-measured it again. #11205 exposed the
+    /// optional pilot timeout repository variable and re-measured it. #6245
     /// added the Windows x64 zip route, the Windows ARM64 unsupported error and
     /// the fail-closed integrity/archive handling to the install step, and
     /// re-measured it once more.
@@ -417,7 +420,7 @@ mod template_pin_tests {
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "7a0d77223bd5b961373996e55447d76b9a3448a21d1d07230a3af4e7bbf9f69c";
+        "f1773a7c70be426820f7983d3b3eca41a3f6516baa72b1f1691166f44c3027cc";
 
     #[test]
     fn template_matches_the_pinned_bytes() {

@@ -489,6 +489,14 @@ pub enum StaticLimitKind {
     /// class stays `no_static_path`. This label names the unevaluated proof,
     /// not a coverage claim. See RIPR-SPEC-0367.
     ProofHarnessNotEvaluated,
+    /// A Rust test calls an inherent method of the changed owner through a
+    /// standard assertion, and the call resolves if the assertion macro is the
+    /// standard one, but ripr cannot verify the macro binding because
+    /// target-root placement is unavailable (an unresolved `include!` or
+    /// `#[path]` somewhere in the workspace). The receiver was never shown to
+    /// mismatch. The gap is withheld and the class is `static_unknown`. See
+    /// RIPR-SPEC-0352.
+    RustInherentReceiverUnestablished,
     /// TypeScript workspace discovery stopped at its candidate-source cap
     /// (`RIPR_TS_MAX_WORKSPACE_FILES`) or its 5x total-entry backstop before
     /// the walk covered the workspace, so the test universe is incomplete. A finding that would say no test
@@ -561,6 +569,9 @@ impl StaticLimitKind {
             StaticLimitKind::RustImplicitCallUnresolved => "rust_implicit_call_unresolved",
             StaticLimitKind::RustIndirectOwnerCallUnresolved => {
                 "rust_indirect_owner_call_unresolved"
+            }
+            StaticLimitKind::RustInherentReceiverUnestablished => {
+                "rust_inherent_receiver_unestablished"
             }
             StaticLimitKind::RustCallerLoopSelectorUnresolved => {
                 "rust_caller_loop_selector_unresolved"
@@ -734,6 +745,14 @@ impl StaticLimitKind {
                  expand, or is called as the argument of an executor helper such as `block_on`. \
                  Whether the test's assertion observes the changed behavior is not established, so \
                  ripr does not claim a gap; this is a named limitation, not a coverage claim."
+            }
+            StaticLimitKind::RustInherentReceiverUnestablished => {
+                "A Rust test calls the changed inherent method inside a standard assertion, and \
+                 the receiver resolves to the owner's type if that assertion macro is the \
+                 standard one, but ripr cannot verify the macro binding because it cannot place \
+                 the test in a Cargo target (an unresolved `include!` or `#[path]` in the \
+                 workspace). The receiver was not shown to differ. ripr does not claim a gap; \
+                 this is a named limitation, not a coverage claim."
             }
             StaticLimitKind::RustCallerLoopSelectorUnresolved => {
                 "This match arm is selected by a bounded loop inside an iterator's `next`, and a \
@@ -1116,6 +1135,10 @@ mod tests {
             "proof_harness_not_evaluated"
         );
         assert_eq!(
+            StaticLimitKind::RustInherentReceiverUnestablished.as_str(),
+            "rust_inherent_receiver_unestablished"
+        );
+        assert_eq!(
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated.as_str(),
             "typescript_workspace_discovery_truncated"
         );
@@ -1155,6 +1178,7 @@ mod tests {
             StaticLimitKind::RustIndirectOwnerCallUnresolved,
             StaticLimitKind::RustCallerLoopSelectorUnresolved,
             StaticLimitKind::ProofHarnessNotEvaluated,
+            StaticLimitKind::RustInherentReceiverUnestablished,
             StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
         ];
         // Every variant has a non-empty, distinct explanation. Conservative
