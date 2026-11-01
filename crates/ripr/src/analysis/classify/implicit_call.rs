@@ -37,7 +37,7 @@ use crate::analysis::rust_index::{FunctionSummary, RustIndex};
 use crate::domain::*;
 use ra_ap_syntax::{
     AstNode, ast,
-    ast::{HasModuleItem, HasName},
+    ast::{HasAttrs, HasGenericParams, HasModuleItem, HasName},
 };
 
 const LIMIT: StaticLimitKind = StaticLimitKind::RustImplicitCallUnresolved;
@@ -1322,10 +1322,254 @@ fn type_path_owner(owner: &FunctionSummary, index: &RustIndex) -> Option<TypePat
     Some(TypePathOwner {
         self_type,
         trait_name,
-        sole_method: same_name == 1,
+        sole_method: same_name == 1 && !unindexed_impl_may_define(owner, index),
         trait_unique: same_trait == 1,
         trait_args: owner_trait_args(&owner.id.0),
     })
+}
+
+/// std derives and the methods they define. A derive absent from this table is
+/// a derive ripr cannot read, so it may define any method.
+const STD_DERIVE_METHODS: &[(&str, &[&str])] = &[
+    ("Clone", &["clone", "clone_from"]),
+    ("Copy", &[]),
+    ("Debug", &["fmt"]),
+    ("Default", &["default"]),
+    ("Eq", &[]),
+    ("Hash", &["hash", "hash_slice"]),
+    ("Ord", &["cmp", "max", "min", "clamp"]),
+    ("PartialEq", &["eq", "ne"]),
+    ("PartialOrd", &["partial_cmp", "lt", "le", "gt", "ge"]),
+];
+
+/// What a type's derives may define.
+#[derive(Default)]
+struct DerivedMethods {
+    /// A derive ripr cannot read (non-std, or behind `cfg_attr`): any method.
+    unreadable: bool,
+    /// Methods the std derives on the type define.
+    methods: std::collections::BTreeSet<String>,
+}
+
+/// The impl sources the workspace index cannot list, read once per index
+/// (owner independent) so each owner's question is a lookup, not a corpus walk.
+/// Only item headers are visited; function bodies are skipped (#10625).
+#[derive(Default)]
+pub(super) struct HiddenImpls {
+    /// A file the syntax snapshot cannot read: nothing can be ruled out.
+    unreadable_source: bool,
+    derives: std::collections::BTreeMap<String, DerivedMethods>,
+    /// Method names defined by a blanket impl (`impl<T> Trait for T`).
+    blanket_methods: std::collections::BTreeSet<String>,
+    /// Words of every `macro_rules!`/`macro` definition that writes an `impl`.
+    impl_macro_words: std::collections::BTreeSet<String>,
+    /// Words of every item-level macro invocation's arguments.
+    item_macro_words: std::collections::BTreeSet<String>,
+}
+
+impl HiddenImpls {
+    pub(super) fn build(index: &RustIndex) -> Self {
+        let mut table = Self::default();
+        for (file, _) in index.files().iter() {
+            let Some(tree) = index
+                .source_syntax
+                .get(index, file)
+                .and_then(|snapshot| snapshot.tree())
+            else {
+                table.unreadable_source = true;
+                continue;
+            };
+            table.read_items(tree.syntax());
+        }
+        table
+    }
+
+    fn read_items(&mut self, root: &ra_ap_syntax::SyntaxNode) {
+        use ra_ap_syntax::{SyntaxKind, WalkEvent};
+        let mut walk = root.preorder();
+        while let Some(event) = walk.next() {
+            let WalkEvent::Enter(node) = event else {
+                continue;
+            };
+            // Function bodies hold no item that expands at item level.
+            if node.kind() == SyntaxKind::FN {
+                walk.skip_subtree();
+                continue;
+            }
+            let Some(item) = ast::Item::cast(node) else {
+                continue;
+            };
+            match &item {
+                ast::Item::Struct(it) => self.read_derives(it, it.name()),
+                ast::Item::Enum(it) => self.read_derives(it, it.name()),
+                ast::Item::Union(it) => self.read_derives(it, it.name()),
+                ast::Item::MacroRules(_) | ast::Item::MacroDef(_) => {
+                    let text = masked_text(item.syntax());
+                    if contains_as_whole_word(&text, "impl") {
+                        self.impl_macro_words
+                            .extend(words_of(&text).into_iter().map(String::from));
+                    }
+                }
+                ast::Item::MacroCall(call) => {
+                    // Expression and statement macros (`assert_eq!`) are not items.
+                    let at_item_level = item.syntax().parent().is_some_and(|parent| {
+                        matches!(
+                            parent.kind(),
+                            SyntaxKind::SOURCE_FILE | SyntaxKind::ITEM_LIST
+                        )
+                    });
+                    if at_item_level && let Some(tokens) = call.token_tree() {
+                        self.item_macro_words.extend(
+                            words_of(&masked_text(tokens.syntax()))
+                                .into_iter()
+                                .map(String::from),
+                        );
+                    }
+                }
+                ast::Item::Impl(imp) => {
+                    self.read_blanket_impl(imp);
+                    walk.skip_subtree();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn read_derives<T: HasAttrs>(&mut self, adt: &T, type_name: Option<ast::Name>) {
+        let Some(type_name) = type_name else {
+            return;
+        };
+        let entry = self
+            .derives
+            .entry(type_name.text().trim_start_matches("r#").to_string())
+            .or_default();
+        for attr in adt.attrs() {
+            let text = attr.syntax().text().to_string();
+            let idents: Vec<&str> = words_of(&text);
+            match idents.split_first() {
+                Some((&"derive", derived)) => {
+                    for derived in derived {
+                        match STD_DERIVE_METHODS
+                            .iter()
+                            .find(|(known, _)| known == derived)
+                        {
+                            Some((_, methods)) => {
+                                entry.methods.extend(methods.iter().map(|m| m.to_string()));
+                            }
+                            None if *derived != "std" && *derived != "core" => {
+                                entry.unreadable = true;
+                            }
+                            None => {}
+                        }
+                    }
+                }
+                // `cfg_attr(.., derive(..))` hides the derive list behind a cfg.
+                Some((&"cfg_attr", rest)) if rest.contains(&"derive") => entry.unreadable = true,
+                _ => {}
+            }
+        }
+    }
+
+    /// A trait impl whose self type is one of its own generic parameters
+    /// (`impl<T: Into<i64>> Wide for T`, also through `&T`, `&'a mut T` or a
+    /// raw pointer) records the methods it defines.
+    fn read_blanket_impl(&mut self, imp: &ast::Impl) {
+        if imp.trait_().is_none() {
+            return;
+        }
+        let (Some(self_ty), Some(params)) = (imp.self_ty(), imp.generic_param_list()) else {
+            return;
+        };
+        let Some(param) = referent_type_name(self_ty) else {
+            return;
+        };
+        let generic = params.generic_params().any(|generic| {
+            matches!(&generic, ast::GenericParam::TypeParam(p)
+                if p.name().is_some_and(|n| n.text() == param))
+        });
+        if !generic {
+            return;
+        }
+        if let Some(items) = imp.assoc_item_list() {
+            for item in items.assoc_items() {
+                if let ast::AssocItem::Fn(f) = item
+                    && let Some(name) = f.name()
+                {
+                    self.blanket_methods.insert(name.text().to_string());
+                }
+            }
+        }
+    }
+
+    fn may_define(&self, self_type: &str, name: &str) -> bool {
+        self.unreadable_source
+            || self.blanket_methods.contains(name)
+            || self
+                .derives
+                .get(self_type)
+                .is_some_and(|d| d.unreadable || d.methods.contains(name))
+            || self.impl_macro_words.contains(self_type)
+            || self.item_macro_words.contains(self_type)
+    }
+}
+
+/// The single-segment path a type names after peeling references (with any
+/// lifetime), raw pointers and parentheses: `&'a mut T` gives `T`.
+fn referent_type_name(mut ty: ast::Type) -> Option<String> {
+    loop {
+        ty = match ty {
+            ast::Type::RefType(it) => it.ty()?,
+            ast::Type::PtrType(it) => it.ty()?,
+            ast::Type::ParenType(it) => it.ty()?,
+            ast::Type::PathType(it) => {
+                let path = it.path()?;
+                if path.qualifier().is_some() {
+                    return None;
+                }
+                return Some(path.segment()?.name_ref()?.text().to_string());
+            }
+            _ => return None,
+        };
+    }
+}
+
+fn masked_text(node: &ra_ap_syntax::SyntaxNode) -> String {
+    crate::analysis::extract::mask_comments_and_strings(&node.text().to_string())
+}
+
+fn words_of(text: &str) -> Vec<&str> {
+    text.split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// Whether an impl the index does not list could define the owner's method for
+/// its self type, so `Type::name(..)` is not known to resolve to the owner
+/// (#10625). The index lists only written, indexed `impl` blocks. Three other
+/// sources are invisible to it, and any one makes the answer yes (the
+/// conservative reading: when unsure, never claim a sole method):
+///
+/// - a `#[derive(..)]` on the type naming a derive that defines the method, or
+///   a derive ripr cannot read (any non-std derive, or one behind `cfg_attr`,
+///   withholds the credit for every method name on that type);
+/// - a blanket impl (`impl<T> Trait for T`) that defines the method;
+/// - a macro: any `macro_rules!`/`macro` definition in the workspace that
+///   mentions the type and writes an `impl`, or any item-level macro
+///   invocation that names the type.
+///
+/// A file the syntax snapshot cannot read also answers yes. Not covered: a
+/// statement-position macro that expands to a local impl inside a function
+/// body, a macro from another crate that never names the type, a trait default
+/// method reached through a blanket impl, and a `type Money = Other;` alias
+/// (not followed).
+fn unindexed_impl_may_define(owner: &FunctionSummary, index: &RustIndex) -> bool {
+    let Some(self_type) = impl_self_type_name(&owner.id.0) else {
+        return true;
+    };
+    index
+        .call_identity_memos
+        .hidden_impls(index)
+        .may_define(&self_type, owner.name.as_str())
 }
 
 /// Whether the test body brings another item in under the impl type's name, by

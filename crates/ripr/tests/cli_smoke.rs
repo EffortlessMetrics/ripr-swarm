@@ -17495,7 +17495,10 @@ fn baseline_create_from_check_baselines_a_whole_repo_artifact_and_refuses_a_scop
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains("not a whole-repository run"), "{stderr}");
-    assert!(stderr.contains("--candidate-tree HEAD^{tree}"), "{stderr}");
+    assert!(
+        stderr.contains("--candidate-tree $(git rev-parse HEAD^{tree})"),
+        "{stderr}"
+    );
     assert!(!refused_out.exists(), "no baseline is written on refusal");
 
     ignore_remove_dir_all(&workspace);

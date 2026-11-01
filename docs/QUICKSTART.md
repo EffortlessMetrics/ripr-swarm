@@ -639,7 +639,10 @@ analysis (cost scales with the repository, minutes on a large one), writes the
 missing artifacts under `target/ripr/` and uses no network. The first failing
 step, or a step that exits 0 without leaving a non-empty, parseable `.json`
 artifact, stops it with exit `2` and names the step; no packet is written from
-partial artifacts. It cannot be combined with `--check` or `--check-output`.
+partial artifacts. Each step is also bounded: 2 hours by default; set
+`RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS` (whole seconds, `0` for no bound) to
+change it. A step past its bound is terminated and reported as
+`timed out after <N> second(s)`; a value that is not a whole number is refused. It cannot be combined with `--check` or `--check-output`.
 The packet JSON (`selected.also_missing`) still carries every later step with
 its literal command. Commit your test first, because the
 committed diff does not include uncommitted edits. After a successful repair
