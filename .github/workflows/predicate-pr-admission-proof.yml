@@ -1,0 +1,96 @@
+name: Predicate PR focused admission (non-shipping)
+on:
+  push:
+    branches: [codex/8547-stub-tail-proof]
+    paths: [.github/workflows/predicate-pr-admission-proof.yml]
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: ripr-11358-pr-admission
+  cancel-in-progress: false
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      SUBJECT: df24c42a4e9fb8dedc5eb6268dc954468aa9a5f2
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: df24c42a4e9fb8dedc5eb6268dc954468aa9a5f2
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          shared-key: ripr-8547-focused
+          save-if: 'false'
+      - name: Bind the published head and body
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export EVIDENCE="$RUNNER_TEMP/predicate-pr-admission"
+          mkdir -p "$EVIDENCE"
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$SUBJECT"
+          test -z "$(git status --porcelain)"
+          gh api repos/$GITHUB_REPOSITORY/pulls/12008 > "$EVIDENCE/pr.json"
+          python3 - <<'PY'
+          import json, os, shutil
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']); pr=json.loads((e/'pr.json').read_text())
+          assert pr['head']['sha']==os.environ['SUBJECT'] and pr['state']=='open'
+          (e/'pr-body.json').write_text(json.dumps({'body':pr['body']})+'\n')
+          assert shutil.disk_usage('.').free>=18*1024**3, 'focused owned target plus reserve unavailable'
+          PY
+          {
+            printf 'subject=%s\ncontroller=%s\nrun=%s\nattempt=%s\n' "$SUBJECT" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            git rev-parse HEAD^{tree}
+            rustc +1.95.0 -Vv
+            df -h .
+            printf 'Owner: this job; one ephemeral target, 13 GiB additional allowance plus 5 GiB reserve; no unrelated cleanup or persisted binaries.\n'
+          } > "$EVIDENCE/identity.txt"
+      - name: Exercise concurrent cache tests without changing source
+        run: |
+          set -euo pipefail
+          for trial in 1 2 3; do
+            name="parallel-$trial"
+            printf '%s\n' 'cargo +1.95.0 test --locked -p ripr --lib file_guidance_inventory_tests -- --nocapture --test-threads=8' > "$EVIDENCE/$name.command"
+            set +e
+            timeout --signal=TERM --kill-after=30s 1200s cargo +1.95.0 test --locked -p ripr --lib file_guidance_inventory_tests -- --nocapture --test-threads=8 > "$EVIDENCE/$name.stdout" 2> "$EVIDENCE/$name.stderr"
+            code=$?
+            set -e
+            echo "$name exit=$code" | tee -a "$EVIDENCE/status.txt"
+            tail -n 25 "$EVIDENCE/$name.stdout"
+            if [ "$code" != 0 ]; then tail -n 80 "$EVIDENCE/$name.stderr"; exit "$code"; fi
+            grep -F 'test result: ok. 7 passed; 0 failed; 0 ignored;' "$EVIDENCE/$name.stdout"
+          done
+          git diff --exit-code
+      - name: Validate the actual published PR body
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'cargo +1.95.0 run --locked -p xtask -- check-pr-shape --body-file <retained pr-body.json>' > "$EVIDENCE/pr-shape.command"
+          set +e
+          timeout --signal=TERM --kill-after=30s 900s cargo +1.95.0 run --locked -p xtask -- check-pr-shape --body-file "$EVIDENCE/pr-body.json" > "$EVIDENCE/pr-shape.stdout" 2> "$EVIDENCE/pr-shape.stderr"
+          code=$?
+          set -e
+          echo "pr-shape exit=$code" | tee -a "$EVIDENCE/status.txt"
+          cat "$EVIDENCE/pr-shape.stdout"
+          if [ "$code" != 0 ]; then tail -n 80 "$EVIDENCE/pr-shape.stderr"; exit "$code"; fi
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$SUBJECT"
+      - name: Retain native results and captured body
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: predicate-pr-admission-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/predicate-pr-admission/
+            target/ripr/reports/pr-shape*
+          if-no-files-found: error
+          retention-days: 14
