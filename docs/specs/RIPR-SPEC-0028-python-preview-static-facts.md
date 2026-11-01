@@ -1580,24 +1580,6 @@ a non-strong oracle (`assert not pick(0, 3)`), and an owner doctest the
 reader does not see. The change is only `exposed` to `weakly_exposed`, the
 conservative direction.
 
-## Object-Base Class Header Amendment (2026-10-31, #11888)
-
-A changed single-line `class` header whose only difference is a sole bare
-`object` base (`class X(object):` against `class X:` or `class X():`, in either
-direction) earns no probe: Python 3 gives both spellings the same bases, so no
-test can discriminate the edit and crediting `exposed` would imply a behavior
-change that does not exist. The rule is a closed allow-list that keeps the
-existing verdict on anything unrecognized: it needs the paired old header at
-the same indentation, the same class name, an identical list of other bases and
-identical keyword arguments (`metaclass=...`), and a header that parses as one
-statement on its own. A different base, `object` among several bases
-(`class X(Base, object):`), `builtins.object`, a starred base, a changed
-keyword, any keyword beside a dropped `object` (a metaclass can observe the
-bases), a changed PEP 695 type parameter, a decorated or multi-line header and a one-line
-`class X: pass` all keep their probe. A line inside a multi-line string, or in
-a file that cannot be lexed, keeps its probe as well. A module that rebinds the name `object` is not read; the
-edit is treated as the builtin.
-
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python

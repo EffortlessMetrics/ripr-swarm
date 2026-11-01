@@ -18,8 +18,7 @@ use super::module_value::{ModuleEdit, module_constant_credits};
 use super::no_behavior::{
     changed_default_overridden_params, format_param_name_list, is_annotation_only_def_change,
     is_annotation_only_var_change, is_comment_or_whitespace_only_change,
-    is_new_def_header_without_defaults, is_object_base_only_class_change,
-    is_python_no_behavior_line, is_structural_def_header_text,
+    is_new_def_header_without_defaults, is_python_no_behavior_line, is_structural_def_header_text,
 };
 use super::probe_shape::{
     canonical_python_gap_for, classify_probe_shape_with_old, python_flow_sink_for,
@@ -290,20 +289,12 @@ fn classify_change_full<'a>(
     // behavior delta. Emit no probe rather than crediting `exposed` from a test that
     // reaches the owner. Requires the paired old line; fails closed when anything
     // beyond an annotation differs (e.g. a default-value change, which IS behavioral).
-    if let Some(old) = old_line_text
-        && same_indentation(old, line_text)
-        && is_annotation_only_def_change(old, line_text)
-    {
-        return None;
-    }
-    // Sole-`object`-base `class`-header guard (#11888): `class X(object):` and
-    // `class X:` are the same class in Python 3, so a header edit that only adds
-    // or drops that one base has no behavior delta. Requires the paired old line
-    // and fails closed on any other base, a keyword or a multi-line header.
+    // A line inside a multi-line string (or in a file that could not be
+    // lexed) is data, not a header, so it keeps its probe (#11888).
     if let Some(old) = old_line_text
         && !no_behavior.new_line_in_multiline_string
         && same_indentation(old, line_text)
-        && is_object_base_only_class_change(old, line_text)
+        && is_annotation_only_def_change(old, line_text)
     {
         return None;
     }

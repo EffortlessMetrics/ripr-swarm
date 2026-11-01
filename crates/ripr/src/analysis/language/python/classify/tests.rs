@@ -3835,79 +3835,10 @@ fn truthiness_swap_fails_open_on_a_separating_default_or_a_branch_value_edit() -
 const OBJECT_BASE_TESTS: &str =
     "from src.subject import Box\n\ndef test_double():\n    assert Box(2).double() == 4\n";
 
-fn class_header_case(after: &str, before: &str) -> Option<Finding> {
-    let source = format!(
-        "{after}\n    def __init__(self, value):\n        self.value = value\n\n    def double(self):\n        return self.value * 2\n"
-    );
-    let file = Path::new("src/subject.py");
-    let owners = extract_owners(file, &source);
-    let tests = extract_tests(Path::new("tests/test_subject.py"), OBJECT_BASE_TESTS);
-    classify_change_with_old(file, 1, after, Some(before), &owners, &tests)
-}
-
-// RIPR-SPEC-0028 / #11888: `class X(object):` and `class X:` are the same
-// class in Python 3, so a header edit that only adds or drops the sole
-// `object` base has no behavior delta and earns no probe, whatever test
-// reaches the class.
+// #11888 hardening: a class-header lookalike inside a multi-line string (or an
+// unlexable file) is data, so it keeps its probe; a real header does not.
 #[test]
-fn a_sole_object_base_edit_to_a_class_header_earns_no_probe() {
-    for (before, after) in [
-        ("class Box(object):", "class Box:"),
-        ("class Box:", "class Box(object):"),
-        ("class Box(object):", "class Box():"),
-        ("class Box(object):  # legacy", "class Box:"),
-    ] {
-        assert!(
-            class_header_case(after, before).is_none(),
-            "{before} -> {after}"
-        );
-    }
-}
-
-// Discriminating negatives: every other header edit keeps its probe and the
-// existing `exposed` credit from the strong related test.
-#[test]
-fn a_class_header_edit_beyond_the_sole_object_base_keeps_its_probe() -> Result<(), String> {
-    for (before, after) in [
-        ("class Box(object):", "class Box(Base):"),
-        ("class Box(Base):", "class Box(Other):"),
-        ("class Box(Base, object):", "class Box(Base):"),
-        ("class Box(object, Base):", "class Box(Base):"),
-        ("class Box(object):", "class Box(object, metaclass=Meta):"),
-        (
-            "class Box(object, metaclass=Meta):",
-            "class Box(metaclass=Other):",
-        ),
-        ("class Box(object):", "class Box(builtins.object):"),
-        ("class Box(object):", "class Box(object, object):"),
-        ("class Box(object):", "class Box(*bases):"),
-        // A metaclass can observe the bases, so dropping `object` beside a
-        // keyword is not a no-op.
-        (
-            "class Box(object, metaclass=Meta):",
-            "class Box(metaclass=Meta):",
-        ),
-        ("class Box(object, flag=True):", "class Box(flag=True):"),
-    ] {
-        let finding = class_header_case(after, before)
-            .ok_or_else(|| format!("{before} -> {after} must keep a probe"))?;
-        // A metaclass keyword makes the class opaque to the admission gate, so
-        // it reads `static_unknown`; the probe is kept either way.
-        let expected = if after.contains("metaclass") {
-            ExposureClass::StaticUnknown
-        } else {
-            ExposureClass::Exposed
-        };
-        assert_eq!(finding.class, expected, "{before} -> {after}");
-    }
-    Ok(())
-}
-
-// The guard is bound to the same preconditions as the comment/whitespace
-// guard: a line inside a multi-line string (or an unlexable file) is data, not
-// a header, so it keeps its probe.
-#[test]
-fn a_class_header_lookalike_inside_a_multiline_string_keeps_its_probe() -> Result<(), String> {
+fn a_class_header_lookalike_inside_a_multiline_string_keeps_its_probe() {
     let source = "class Box:\n    def double(self):\n        return self.value * 2\n";
     let file = Path::new("src/subject.py");
     let owners = extract_owners(file, source);
@@ -3931,13 +3862,28 @@ fn a_class_header_lookalike_inside_a_multiline_string_keeps_its_probe() -> Resul
         );
         assert_eq!(finding.is_none(), !in_string, "in_string={in_string}");
     }
-    Ok(())
 }
 
-// Pinned shapes the allow-list must not widen to.
+// Pinned shapes the object-base allow-list must not widen to.
 #[test]
-fn object_base_class_change_pins_indentation_nesting_and_header_shapes() {
-    use super::super::no_behavior::is_object_base_only_class_change as noop;
+fn object_base_class_change_pins_type_params_keywords_and_header_shapes() {
+    use super::super::no_behavior::is_annotation_only_def_change as noop;
+    assert!(noop("    class Inner(object):", "    class Inner:"));
+    assert!(noop("class A[T](object):", "class A[T]:"));
+    assert!(!noop("class A[T](object):", "class A[U]:"));
+    assert!(!noop("class A[T](object):", "class A:"));
+    assert!(!noop("class Box(object): pass", "class Box: pass"));
+    assert!(!noop("class Box(object,", "class Box("));
+    assert!(!noop(
+        "class Box(object, metaclass=Meta):",
+        "class Box(metaclass=Meta):"
+    ));
+    assert!(!noop(
+        "class Box(object, flag=True):",
+        "class Box(flag=True):"
+    ));
+    assert!(!noop("class Box(Base, object):", "class Box(Base):"));
+    assert!(!noop("class Box(object):", "class Box(Base):"));
     // Indentation mismatch is a moved statement: the classify guard refuses it.
     let source = "class Box:\n    def double(self):\n        return 1\n";
     let file = Path::new("src/subject.py");
@@ -3954,13 +3900,4 @@ fn object_base_class_change_pins_indentation_nesting_and_header_shapes() {
         )
         .is_some()
     );
-    // A nested class edit is the same no-op as a top-level one.
-    assert!(noop("    class Inner(object):", "    class Inner:"));
-    // One-line bodies, multi-line headers and PEP 695 headers fail closed.
-    assert!(!noop("class Box(object): pass", "class Box: pass"));
-    assert!(!noop("class Box(object,", "class Box("));
-    // PEP 695 headers parse; the type parameters must match exactly.
-    assert!(noop("class A[T](object):", "class A[T]:"));
-    assert!(!noop("class A[T](object):", "class A[U]:"));
-    assert!(!noop("class A[T](object):", "class A:"));
 }
