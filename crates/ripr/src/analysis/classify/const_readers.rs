@@ -57,7 +57,8 @@ pub(in crate::analysis) fn same_file_const_readers<'a>(
 ///   run time) whose name is declared once in the file;
 /// - the file has exactly one production reader ([`function_reads`]:
 ///   shadows, other-path qualifiers and escaped `{{NAME}}` are not reads),
-///   and no other production code anywhere names that reader;
+///   which nothing but `#[test]` functions calls anywhere in the workspace
+///   text ([`name_confined`]);
 /// - no code outside a function reads the name, and no `use` anywhere in the
 ///   file imports an item spelled like it or a `format`;
 /// - the name occurs, over the raw text of every workspace Rust file, only on
@@ -109,15 +110,13 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
         .filter(|function| function.source_role == FunctionSourceRole::Production)
         .filter(|function| function_reads(&function.body, name))
         .collect::<Vec<_>>();
-    // Exactly one reader, which no other production code calls: then a test
-    // can reach the constant's value only through the reader itself, and a
-    // second reader or caller cannot feed the expected side of its check.
+    // Exactly one reader, which only tests call (checked over the raw
+    // workspace text by `name_confined`): then a test can reach the
+    // constant's value only through the reader itself, and a second reader
+    // or caller cannot feed the expected side of its check.
     let [reader] = readers.as_slice() else {
         return Vec::new();
     };
-    if reader_has_production_callers(index, reader) {
-        return Vec::new();
-    }
     // One module scope for the declaration and every reader, and the
     // declaration directly in a module (never in an `impl` or trait), so the
     // spelling names this constant and no associated or imported one.
@@ -175,15 +174,19 @@ const SCAN_MAX_RUST_FILES: usize = 20_000;
 const SCAN_MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Every `.rs` file under `root` as (relative path, raw text), from a walk
-/// that skips only `.git` and `target`: unlike workspace discovery it reads
-/// `fixtures`, `.ripr` and every other directory, since a test can compile
-/// any of them (`mod fixtures;`). `None` (refuse) on a symlink, an entry of
-/// unknown type, an unreadable or non-UTF-8 Rust file, or past the bounds.
+/// that skips only the root's own `.git` and `target`: unlike workspace
+/// discovery it reads `fixtures`, `.ripr`, a nested `target` module directory
+/// and every other directory, since a test can compile any of them
+/// (`mod fixtures;`). `None` (refuse) on any entry that is neither a
+/// directory nor a regular file (`file_type` does not follow links, so a
+/// symlink is one), on an unreadable or non-UTF-8 Rust file, or past the
+/// bounds.
 fn read_workspace_rust(root: &Path) -> Option<Vec<(PathBuf, String)>> {
     let mut pending = vec![PathBuf::new()];
     let mut files = Vec::new();
     let mut entries = 0usize;
     while let Some(relative) = pending.pop() {
+        let at_root = relative.as_os_str().is_empty();
         for entry in std::fs::read_dir(root.join(&relative)).ok()? {
             let entry = entry.ok()?;
             entries += 1;
@@ -193,10 +196,8 @@ fn read_workspace_rust(root: &Path) -> Option<Vec<(PathBuf, String)>> {
             let kind = entry.file_type().ok()?;
             let name = entry.file_name();
             let child = relative.join(&name);
-            if kind.is_symlink() {
-                return None;
-            } else if kind.is_dir() {
-                if name != ".git" && name != "target" {
+            if kind.is_dir() {
+                if !(at_root && (name == ".git" || name == "target")) {
                     pending.push(child);
                 }
             } else if kind.is_file() {
@@ -220,15 +221,20 @@ fn read_workspace_rust(root: &Path) -> Option<Vec<(PathBuf, String)>> {
 /// Whether, over the raw text (comments, strings, doc comments and macro
 /// bodies included) of every Rust file under `root` ([`read_workspace_rust`]):
 /// - the whole word `name` occurs exactly once on `declaration_line` and once
-///   on `return_line` of `file`, and nowhere else;
-/// - no file pulls in text ripr does not scan (`include!`, `#[path`);
+///   on `return_line` of `file`, and nowhere else (so a doc test or comment
+///   that names the constant refuses);
+/// - no file pulls in text ripr does not scan or builds names it cannot read
+///   ([`pulls_in_unscanned_text`]);
 /// - no file defines `macro_rules! format`;
-/// - the reader `reader` is named only by its own `fn` line, by calls, and by
-///   plain `use` lines (no `as` rename): any other mention, such as
-///   `const X: fn() -> String = reader;`, can carry its value elsewhere.
+/// - the reader `reader` is defined once, in `file`, and is otherwise named
+///   only by calls inside `#[test]` functions and by lines that are exactly
+///   one plain `use ..;` ([`reader_mentions`]). A call from any other
+///   function (production code or a test helper) or any other mention, such
+///   as `const X: fn() -> String = reader;`, can carry its value elsewhere.
 ///
 /// It fails closed when the scan refuses or does not list `file`. `ripr
-/// check` and `ripr repair` both read this same scan.
+/// check` and `ripr repair` both read this same scan, never an index, so the
+/// decision does not depend on which files a mode indexed.
 pub(in crate::analysis) fn name_confined(
     root: &Path,
     file: &Path,
@@ -243,49 +249,193 @@ pub(in crate::analysis) fn name_confined(
     let target = super::related_tests::normalize_path(file);
     let mut saw_file = false;
     for (path, text) in &files {
-        if text.contains("include!") || text.contains("#[path") || text_defines_format_macro(text) {
+        if pulls_in_unscanned_text(text) || text_defines_format_macro(text) {
             return false;
         }
-        if !reader_mentions_are_plain(text, reader) {
+        let Some(definitions) = reader_mentions(text, reader) else {
             return false;
-        }
+        };
         let lines = word_lines(text, name);
         if super::related_tests::normalize_path(path) == target {
             saw_file = true;
-            if lines != [declaration_line, return_line] {
+            if definitions != 1 || lines != [declaration_line, return_line] {
                 return false;
             }
-        } else if !lines.is_empty() {
+        } else if definitions != 0 || !lines.is_empty() {
             return false;
         }
     }
     saw_file
 }
 
-/// Whether every whole-word mention of `reader` in `text` is its `fn` line,
-/// a call (`reader(`), or a `use` line that does not rename.
-fn reader_mentions_are_plain(text: &str, reader: &str) -> bool {
-    text.lines().all(|line| {
-        let trimmed = line.trim_start();
-        let bytes = line.as_bytes();
-        line.match_indices(reader).all(|(start, _)| {
-            let end = start + reader.len();
-            let whole = start
+/// Whether `text` can bring in source the scan does not read, or build an
+/// identifier no whole-word scan sees: any `include`-prefixed macro
+/// (`include!`, `include_str!`, `include_bytes!`, spaces before `!`
+/// allowed), a `path` attribute in any spacing (`# [ path = ..]`), a
+/// `cfg_attr` naming `path`, or `paste!`.
+fn pulls_in_unscanned_text(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        let starts = bytes.get(at).is_some_and(|byte| is_ident_byte(*byte))
+            && at
                 .checked_sub(1)
                 .and_then(|before| bytes.get(before))
-                .is_none_or(|byte| !is_ident_byte(*byte))
-                && !bytes.get(end).is_some_and(|byte| is_ident_byte(*byte));
-            if !whole {
-                return true;
+                .is_none_or(|byte| !is_ident_byte(*byte));
+        if !starts {
+            at += 1;
+            continue;
+        }
+        let end = bytes
+            .iter()
+            .skip(at)
+            .position(|byte| !is_ident_byte(*byte))
+            .map_or(bytes.len(), |length| at + length);
+        let word = text.get(at..end).unwrap_or_default();
+        let rest = text.get(end..).unwrap_or_default();
+        let bang = rest.trim_start().starts_with('!');
+        let hit = ((word.starts_with("include") || word == "paste") && bang)
+            || (word == "path" && opens_attribute(text.get(..at).unwrap_or_default()))
+            || (word == "cfg_attr"
+                && rest
+                    .split(']')
+                    .next()
+                    .is_none_or(|attribute| contains_word(attribute, "path")));
+        if hit {
+            return true;
+        }
+        at = end;
+    }
+    false
+}
+
+/// Whether `before` ends with an attribute opener, `#[` or `#![`, in any
+/// spacing.
+fn opens_attribute(before: &str) -> bool {
+    before
+        .trim_end()
+        .strip_suffix('[')
+        .map(str::trim_end)
+        .map(|rest| rest.strip_suffix('!').map_or(rest, str::trim_end))
+        .is_some_and(|rest| rest.ends_with('#'))
+}
+
+/// The number of `fn reader` definitions in `text`, or `None` when some
+/// whole-word mention of `reader` is anything other than such a definition,
+/// a call (`reader(`) inside a `#[test]` function, or a line that is exactly
+/// one plain `use ..;` without `as`. Mentions inside comments or strings
+/// are not definitions or calls, so they refuse too.
+fn reader_mentions(text: &str, reader: &str) -> Option<usize> {
+    let masked = mask_comments_and_strings(text);
+    let bodies = function_bodies(&masked);
+    let bytes = text.as_bytes();
+    let mut definitions = 0;
+    for (start, _) in text.match_indices(reader) {
+        let end = start + reader.len();
+        let whole = start
+            .checked_sub(1)
+            .and_then(|before| bytes.get(before))
+            .is_none_or(|byte| !is_ident_byte(*byte))
+            && !bytes.get(end).is_some_and(|byte| is_ident_byte(*byte));
+        if !whole {
+            continue;
+        }
+        if masked.get(start..end) != Some(reader) {
+            return None;
+        }
+        let line_start = text
+            .get(..start)
+            .and_then(|head| head.rfind('\n'))
+            .map_or(0, |at| at + 1);
+        let line_end = text
+            .get(end..)
+            .and_then(|tail| tail.find('\n'))
+            .map_or(text.len(), |at| end + at);
+        let before = text.get(line_start..start).unwrap_or_default();
+        let after = text.get(end..line_end).unwrap_or_default();
+        let line = text.get(line_start..line_end).unwrap_or_default();
+        if ends_with_word(before.trim_end(), "fn") {
+            definitions += 1;
+        } else if is_single_plain_use(line) {
+            continue;
+        } else if !(after.trim_start().starts_with('(') && inside_test_function(&bodies, start)) {
+            return None;
+        }
+    }
+    Some(definitions)
+}
+
+/// Whether `line` is exactly one `use` (or `pub use`) statement that does
+/// not rename.
+fn is_single_plain_use(line: &str) -> bool {
+    let trimmed = line.trim();
+    let statement = trimmed.strip_prefix("pub ").unwrap_or(trimmed);
+    statement.starts_with("use ")
+        && statement.ends_with(';')
+        && statement.matches(';').count() == 1
+        && !contains_word(statement, "as")
+}
+
+/// Every function body in `masked` as (open brace, close brace, whether the
+/// function carries `#[test]`). A function's body is the first `{` after its
+/// `fn` with no `;` between; its attributes are the text since the previous
+/// `;`, `{` or `}`.
+fn function_bodies(masked: &str) -> Vec<(usize, usize, bool)> {
+    let bytes = masked.as_bytes();
+    let mut bodies: Vec<(usize, usize, bool)> = Vec::new();
+    let mut open: Vec<Option<usize>> = Vec::new();
+    let mut pending: Option<bool> = None;
+    let mut boundary = 0;
+    for (at, byte) in bytes.iter().enumerate() {
+        match byte {
+            b'{' => {
+                let slot = pending.take().map(|test| {
+                    bodies.push((at, masked.len(), test));
+                    bodies.len() - 1
+                });
+                open.push(slot);
+                boundary = at + 1;
             }
-            let before = line.get(..start).unwrap_or_default();
-            let after = line.get(end..).unwrap_or_default().trim_start();
-            ends_with_word(before.trim_end(), "fn")
-                || after.starts_with('(')
-                || ((trimmed.starts_with("use ") || trimmed.starts_with("pub use "))
-                    && !contains_word(line, "as"))
-        })
-    })
+            b'}' => {
+                if let Some(Some(slot)) = open.pop()
+                    && let Some(body) = bodies.get_mut(slot)
+                {
+                    body.1 = at;
+                }
+                boundary = at + 1;
+            }
+            b';' => {
+                pending = None;
+                boundary = at + 1;
+            }
+            b'f' if masked.get(at..at + 2) == Some("fn")
+                && at
+                    .checked_sub(1)
+                    .and_then(|before| bytes.get(before))
+                    .is_none_or(|byte| !is_ident_byte(*byte))
+                && !bytes.get(at + 2).is_some_and(|byte| is_ident_byte(*byte)) =>
+            {
+                let attributes: String = masked
+                    .get(boundary..at)
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .collect();
+                pending = Some(attributes.contains("#[test]"));
+            }
+            _ => {}
+        }
+    }
+    bodies
+}
+
+/// Whether the innermost function body around byte `at` is a `#[test]`
+/// function's.
+fn inside_test_function(bodies: &[(usize, usize, bool)], at: usize) -> bool {
+    bodies
+        .iter()
+        .filter(|(open, close, _)| *open < at && at < *close)
+        .max_by_key(|(open, _, _)| *open)
+        .is_some_and(|(_, _, test)| *test)
 }
 
 /// The 1-based line of every whole-word occurrence of `name` in `text`, one
@@ -307,19 +457,6 @@ fn word_lines(text: &str, name: &str) -> Vec<usize> {
                 .map(move |_| at + 1)
         })
         .collect()
-}
-
-/// Whether production code other than `reader` names it. A caller such as
-/// `fn tag() -> String { banner_line() }` gives a test a second way to the
-/// constant's value, so a test can build its expected side from it.
-fn reader_has_production_callers(index: &RustIndex, reader: &FunctionSummary) -> bool {
-    index.files().iter().any(|(_, facts)| {
-        facts.functions.iter().any(|function| {
-            function.source_role == FunctionSourceRole::Production
-                && function.id != reader.id
-                && contains_word(&function.body, &reader.name)
-        })
-    })
 }
 
 /// Whether `text` defines `macro_rules! format`, which could replace
@@ -795,16 +932,89 @@ mod tests {
     }
 
     #[test]
-    fn only_definition_calls_and_plain_imports_mention_the_reader() {
-        use super::reader_mentions_are_plain as plain;
-        assert!(plain(
-            "use fx::greet;\npub fn greet(n: &str) -> String {\n    x\n}\nfn t() { greet (\"a\"); }\n",
-            "greet"
-        ));
-        assert!(!plain("const X: fn(&str) -> String = greet;\n", "greet"));
-        assert!(!plain("use fx::greet as g;\n", "greet"));
-        assert!(!plain("let f = greet;\n", "greet"));
-        assert!(plain("fn greeting() {}\n", "greet"));
+    fn only_a_definition_test_calls_and_plain_imports_mention_the_reader() {
+        use super::reader_mentions as mentions;
+        assert_eq!(
+            mentions(
+                "use fx::greet;\npub fn greet(n: &str) -> String {\n    x\n}\n#[test]\nfn t() { greet (\"a\"); }\n",
+                "greet"
+            ),
+            Some(1)
+        );
+        assert_eq!(mentions("fn greeting() {}\n", "greet"), Some(0));
+        for refused in [
+            "const X: fn(&str) -> String = greet;\n",
+            "use fx::greet as g;\n",
+            "use fx::greet; static F: fn(&str) -> String = greet;\n",
+            "#[test]\nfn t() { let f = greet; }\n",
+            "pub fn framed() -> String { crate::greet(\"a\") }\n",
+            "#[test]\nfn t() {\n    fn expected() -> String { greet(\"a\") }\n}\n",
+            "// greet(\"a\")\n",
+        ] {
+            assert_eq!(mentions(refused, "greet"), None, "{refused}");
+        }
+    }
+
+    #[test]
+    fn included_pathed_or_pasted_text_is_unscanned() {
+        use super::pulls_in_unscanned_text as unscanned;
+        for refused in [
+            "include!(\"a.rs\");",
+            "include !(\"a.rs\");",
+            "#![doc = include_str!(\"../README.md\")]",
+            "static B: &[u8] = include_bytes!(\"x\");",
+            "#[path = \"a.rs.in\"]\nmod a;",
+            "# [ path = \"a.rs.in\" ]\nmod a;",
+            "#[cfg_attr(unix, path = \"a.rs.in\")]\nmod a;",
+            "paste::paste! { fn f() {} }",
+        ] {
+            assert!(unscanned(refused), "{refused}");
+        }
+        for kept in [
+            "use std::path::Path;\nfn f(path: &Path) {}\n",
+            "#[cfg_attr(test, derive(Debug))]\nstruct S;\n",
+            "fn included() {}\n",
+        ] {
+            assert!(!unscanned(kept), "{kept}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_refuses_the_scan_even_to_a_harmless_file() -> Result<(), String> {
+        let root =
+            std::env::temp_dir().join(format!("ripr-const-scan-link-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n")
+            .map_err(|error| error.to_string())?;
+        let plain = super::read_workspace_rust(&root).map(|files| files.len());
+        std::os::unix::fs::symlink("lib.rs", root.join("src/same.rs"))
+            .map_err(|error| error.to_string())?;
+        let linked = super::read_workspace_rust(&root).map(|files| files.len());
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        assert_eq!(plain, Some(1));
+        assert_eq!(linked, None);
+        Ok(())
+    }
+
+    #[test]
+    fn only_the_root_target_and_git_are_skipped() -> Result<(), String> {
+        let root =
+            std::env::temp_dir().join(format!("ripr-const-scan-target-{}", std::process::id()));
+        for dir in ["target", ".git", "src/target"] {
+            std::fs::create_dir_all(root.join(dir)).map_err(|error| error.to_string())?;
+            std::fs::write(root.join(dir).join("a.rs"), "fn a() {}\n")
+                .map_err(|error| error.to_string())?;
+        }
+        let scanned = super::read_workspace_rust(&root).map(|files| {
+            files
+                .into_iter()
+                .map(|(path, _)| path.to_string_lossy().replace('\\', "/"))
+                .collect::<Vec<_>>()
+        });
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        assert_eq!(scanned, Some(vec!["src/target/a.rs".to_string()]));
+        Ok(())
     }
 
     #[test]

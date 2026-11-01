@@ -92,7 +92,14 @@ impl Repo {
 
     /// The `ripr check` screen and bare `ripr repair` (started, text).
     fn answers(&self) -> Result<(String, bool, String), String> {
-        let check = text(&self.ripr(&["check", "--base", "main"])?);
+        self.answers_with(&[])
+    }
+
+    /// `answers`, with `check_args` added to the `ripr check` command.
+    fn answers_with(&self, check_args: &[&str]) -> Result<(String, bool, String), String> {
+        let mut args = vec!["check", "--base", "main"];
+        args.extend_from_slice(check_args);
+        let check = text(&self.ripr(&args)?);
         let repair = self.ripr(&["repair", "--root", "."])?;
         Ok((check, repair.status.success(), text(&repair)))
     }
@@ -127,7 +134,16 @@ fn greet_case(new_value: &str, test: &str) -> Result<Repo, String> {
 
 /// Neither command starts a repair, and check offers no start line.
 fn assert_no_start(case: &str, repo: &Repo) -> Result<(String, String), String> {
-    let (check, started, repair) = repo.answers()?;
+    assert_no_start_with(case, repo, &[])
+}
+
+/// `assert_no_start`, with `check_args` added to `ripr check`.
+fn assert_no_start_with(
+    case: &str,
+    repo: &Repo,
+    check_args: &[&str],
+) -> Result<(String, String), String> {
+    let (check, started, repair) = repo.answers_with(check_args)?;
     if started {
         return Err(format!("{case}: repair must not start:\n{repair}"));
     }
@@ -476,7 +492,16 @@ fn banner_new(old: &str) -> String {
 /// Neither command starts, and check keeps the declaration as the change
 /// (so no exact check of a reader is read as a check of the constant).
 fn assert_declaration_kept(case: &str, repo: &Repo) -> Result<(), String> {
-    let (check, _) = assert_no_start(case, repo)?;
+    assert_declaration_kept_with(case, repo, &[])
+}
+
+/// `assert_declaration_kept`, with `check_args` added to `ripr check`.
+fn assert_declaration_kept_with(
+    case: &str,
+    repo: &Repo,
+    check_args: &[&str],
+) -> Result<(), String> {
+    let (check, _) = assert_no_start_with(case, repo, check_args)?;
     if !check.contains("Changed behavior: pub const BANNER") {
         return Err(format!(
             "{case}: check must keep the declaration as the change:\n{check}"
@@ -715,4 +740,147 @@ fn symlinked_test_file_keeps_the_declaration() -> Result<(), String> {
     repo.git(&["add", "tests/shared.rs"])?;
     repo.git(&["commit", "-qm", "link"])?;
     assert_declaration_kept("symlink", &repo)
+}
+
+#[test]
+fn unchanged_production_caller_in_another_file_keeps_the_declaration_in_a_narrow_check()
+-> Result<(), String> {
+    // Round 6 (1): with unchanged tests left out, check reads only the
+    // changed files and their parent modules, so `src/other.rs` is outside
+    // its index; the caller rule reads the workspace text instead.
+    let (old, new) = banner_with("\npub mod other;\n");
+    let repo = Repo::create_with_files(
+        &old,
+        &new,
+        "use fx::{banner_line, other::framed};\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), framed());\n}\n",
+        &[(
+            "src/other.rs",
+            "pub fn framed() -> String {\n    crate::banner_line()\n}\n",
+        )],
+    )?;
+    assert_declaration_kept_with("narrow check, caller", &repo, &["--no-unchanged-tests"])?;
+    assert_declaration_kept_with("instant check, caller", &repo, &["--mode", "instant"])?;
+    assert_declaration_kept("full check, caller", &repo)
+}
+
+#[test]
+fn test_helper_calling_the_reader_keeps_the_declaration() -> Result<(), String> {
+    // Round 6 (2): `common::expected()` is not a test, and it calls the reader.
+    let repo = Repo::create_with_files(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        "mod common;\n\nuse fx::banner_line;\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), common::expected());\n}\n",
+        &[(
+            "tests/common/mod.rs",
+            "pub fn expected() -> String {\n    fx::banner_line()\n}\n",
+        )],
+    )?;
+    assert_declaration_kept("test-side caller", &repo)
+}
+
+#[test]
+fn import_line_that_also_holds_the_reader_keeps_the_declaration() -> Result<(), String> {
+    // Round 6 (3): one line, a plain import and then a value use.
+    let repo = Repo::create(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        "use fx::banner_line; static F: fn() -> String = banner_line;\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), F());\n}\n",
+    )?;
+    assert_declaration_kept("import line with a value use", &repo)
+}
+
+#[test]
+fn doc_text_included_from_another_file_keeps_the_declaration() -> Result<(), String> {
+    // Round 6 (4): the README's doc test reads the constant.
+    let old = format!("#![doc = include_str!(\"../README.md\")]\n\n{BANNER_OLD}");
+    let repo = Repo::create_with_files(
+        &old,
+        &banner_new(&old),
+        BANNER_SELF_TEST,
+        &[(
+            "README.md",
+            "```\nassert_eq!(fx::banner_line(), format!(\"[{}]\", fx::BANNER));\n```\n",
+        )],
+    )?;
+    assert_declaration_kept("include_str doc", &repo)
+}
+
+#[test]
+fn spaced_include_keeps_the_declaration() -> Result<(), String> {
+    let repo = Repo::create_with_files(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        &format!("include !(\"expected.inc\");\n\n{BANNER_FROM_EXPECTED}"),
+        &[(
+            "tests/expected.inc",
+            "fn expected() -> String {\n    format!(\"[{}]\", fx::BANNER)\n}\n",
+        )],
+    )?;
+    assert_declaration_kept("include !", &repo)
+}
+
+/// A test file loading `tests/helpers.rs.in` through `attribute`, a
+/// spelling of `#[path = "helpers.rs.in"]`.
+fn path_module_case(attribute: &str) -> Result<Repo, String> {
+    Repo::create_with_files(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        &format!("{attribute}\nmod helpers;\nuse helpers::expected;\n\n{BANNER_FROM_EXPECTED}"),
+        &[(
+            "tests/helpers.rs.in",
+            "pub fn expected() -> String {\n    format!(\"[{}]\", fx::BANNER)\n}\n",
+        )],
+    )
+}
+
+#[test]
+fn spaced_path_attribute_keeps_the_declaration() -> Result<(), String> {
+    let repo = path_module_case("# [ path = \"helpers.rs.in\" ]")?;
+    assert_declaration_kept("# [ path", &repo)
+}
+
+#[test]
+fn conditional_path_attribute_keeps_the_declaration() -> Result<(), String> {
+    let repo = path_module_case("#[cfg_attr(all(), path = \"helpers.rs.in\")]")?;
+    assert_declaration_kept("cfg_attr path", &repo)
+}
+
+#[test]
+fn pasted_identifier_keeps_the_declaration() -> Result<(), String> {
+    // `[<BAN NER>]` spells the constant's name without the whole word.
+    let repo = Repo::create(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        &format!(
+            "paste::paste! {{\n    fn expected() -> String {{\n        format!(\"[{{}}]\", fx::[<BAN NER>])\n    }}\n}}\n\n{BANNER_FROM_EXPECTED}"
+        ),
+    )?;
+    assert_declaration_kept("paste!", &repo)
+}
+
+#[test]
+fn module_directory_named_target_is_scanned() -> Result<(), String> {
+    // Round 6 (5): only the root `target/` is build output.
+    let (old, new) = banner_with("\npub mod target;\n");
+    let repo = Repo::create_with_files(
+        &old,
+        &new,
+        "use fx::{banner_line, target::expected};\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), expected());\n}\n",
+        &[(
+            "src/target/mod.rs",
+            "pub fn expected() -> String {\n    format!(\"[{}]\", crate::BANNER)\n}\n",
+        )],
+    )?;
+    assert_declaration_kept("src/target module", &repo)
+}
+
+#[test]
+fn reader_called_only_from_tests_still_starts_in_both_commands() -> Result<(), String> {
+    // Positive twin for round 6: test-file and same-file test calls of the
+    // reader, plus a plain import, leave the start in place.
+    let old = format!(
+        "{BANNER_OLD}\n#[cfg(test)]\nmod tests {{\n    use super::banner_line;\n\n    #[test]\n    fn banner_is_not_empty() {{\n        assert!(!banner_line().is_empty());\n    }}\n}}\n"
+    );
+    let repo = Repo::create(&old, &banner_new(&old), BANNER_SELF_TEST)?;
+    assert_same_start("test-only calls", &repo)
 }

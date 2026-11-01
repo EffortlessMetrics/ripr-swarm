@@ -318,30 +318,44 @@ only when all of these hold:
 - the declaration line holds no `{` or `}`; the file declares the name
   exactly once, directly in a module (not in an `impl` or trait); no `use`
   anywhere in the file imports an item spelled like it or a `format`; no
-  inline module chain is opened twice (`#[cfg]` alternatives); and no
-  `macro_rules! format` exists in the indexed workspace;
+  inline module chain is opened twice (`#[cfg]` alternatives);
 - over the raw text (comments, strings, doc comments and macro bodies
-  included) of every `.rs` file under the root, walked skipping only `.git`
-  and `target` (so `fixtures` and every other directory a test can compile
-  are read), the name as a whole word occurs exactly twice: once on the declaration and once in the
-  reader's returned `format!`. Any other occurrence refuses: a test, a test
-  helper, a doc test, a `use .. as` alias, a path-qualified read
-  (`crate::fx::BANNER`), a copy into another constant, a macro body or a
-  comment. Such a mention may carry the constant's value into a test's
-  expected side (`assert_eq!(banner_line(), format!("[{BANNER}]"))` tracks
-  the edit), which only the value-flow evaluation on the declaration judges.
-  The rule does not depend on where tests live, so an alias cannot dodge it.
-  The same scan refuses when any entry is a symlink or of unknown type, a
-  Rust file is unreadable or not UTF-8, any file holds `include!` or
-  `#[path`, any file defines `macro_rules! format`, or the reader is named
-  other than by its `fn` line, a call, or a plain `use` (for example
-  `const X: fn() -> String = banner_line;`). It also refuses past 200,000
-  directory entries, 20,000 Rust files or a 4 MiB Rust file. It runs only
-  after every cheaper guard has passed, once per surviving changed
-  constant;
-- there is exactly one reader, and no other production code names it, so a
-  test cannot build its expected side from a second reader (`tag()`) or a
-  caller of the reader;
+  included) of every `.rs` file under the root, the name as a whole word
+  occurs exactly twice: once on the declaration and once in the reader's
+  returned `format!`. The walk skips only the root's own `.git` and
+  `target` directories, so `fixtures`, `tests/fixtures` and a nested
+  `src/target/` module directory are read. Any other occurrence refuses: a
+  test, a test helper, a doc test written in the file, a `use .. as` alias,
+  a path-qualified read (`crate::fx::BANNER`), a copy into another constant,
+  a macro body or a comment. Such a mention may carry the constant's value
+  into a test's expected side (`assert_eq!(banner_line(), format!("[{BANNER}]"))`
+  tracks the edit), which only the value-flow evaluation on the declaration
+  judges. The rule does not depend on where tests live, so an alias cannot
+  dodge it;
+- the same scan refuses when any file can bring in text it does not read or
+  build a name it cannot see: an `include`-prefixed macro (`include!`,
+  `include_str!` including `#![doc = include_str!(..)]` doc tests,
+  `include_bytes!`, with or without spaces before `!`), a `path` attribute in
+  any spacing (`#[path`, `# [ path`), a `cfg_attr` that names `path`, or
+  `paste!`. It also refuses when any file defines `macro_rules! format`;
+- the same scan refuses when any directory entry is neither a directory nor
+  a regular file (the walk does not follow links, so any symlink refuses,
+  even one to a harmless file), when a Rust file is unreadable or not UTF-8,
+  or past 200,000 directory entries, 20,000 Rust files or a 4 MiB Rust file.
+  It runs only after every cheaper guard has passed, once per surviving
+  changed constant;
+- there is exactly one reader in the file, defined once in the workspace
+  text, and every other mention of its name anywhere is a call inside a
+  `#[test]` function or a line that is exactly one plain `use ..;` with no
+  `as`. A call from production code or from a test helper that is not a
+  `#[test]` function (`fn expected() -> String { fx::banner_line() }`), a
+  mention as a value (`const X: fn() -> String = banner_line;`), or a mention
+  in a comment or string refuses, so a test cannot build its expected side
+  from the reader's own output by another route. This rule reads the same
+  raw scan as the name rule, never check's index, so `ripr check` in any
+  mode (including `--mode instant` and `--no-unchanged-tests`, whose index
+  holds only changed files and their parent modules) and `ripr repair`
+  reach the same decision;
 - shadowing and other-path reads are not reads. The reader sits in the
   declaration's own module, no module line leaves its `{` to a later line, and
   no code outside a function reads the name (another constant's initializer,
