@@ -74,6 +74,7 @@ fn any_discriminator_state() -> DiscriminatorState {
 /// never be relabeled with a different explanation or routed to a fix site.
 /// These tables are pure data, so this proof is exhaustive and cheap.
 #[kani::proof]
+#[kani::unwind(12)]
 fn reason_and_recovery_tables_keep_staleness_exclusive() {
     let reason = any_reason();
     let recovery = any_recovery();

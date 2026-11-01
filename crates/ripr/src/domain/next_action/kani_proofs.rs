@@ -157,6 +157,7 @@ fn base_input(spec: Option<&CommandSpec>) -> NextActionInput<'_> {
 /// are bound and equal, and an unbound axis is never divergence and never
 /// fresh. Config divergence likewise requires both sides bound.
 #[kani::proof]
+#[kani::unwind(6)]
 fn currentness_fresh_requires_bound_equal_heads() {
     let currentness = any_currentness();
     let fresh = currentness.heads_bound_and_fresh();
@@ -186,6 +187,7 @@ fn currentness_fresh_requires_bound_equal_heads() {
 /// typed stop exactly when it is not executable. Every action class and every
 /// presence combination of item / command / stop / transition is covered.
 #[kani::proof]
+#[kani::unwind(6)]
 fn mint_executable_iff_command_and_never_with_stop() {
     let index: u8 = kani::any();
     kani::assume(index < 8);
