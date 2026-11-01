@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A change inside the body of an ordinary TypeScript `#private` method of a top-level class is now a `static_unknown` finding instead of a silent `typescript_owner_extraction_partial` gap. Reach through a public caller is not modeled, so it earns no credit and its output does not invent a test path or missing assertion. Deleting an entire `#private` method stays a silent gap. Private accessors, function-valued private fields and nested private members stay partial; nested changes do not borrow an enclosing public owner's credit (#10440).

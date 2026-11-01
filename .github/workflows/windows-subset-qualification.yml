@@ -248,8 +248,8 @@ jobs:
               def test_cache_target_is_owned_before_restore_and_all_subset_builds(self):
                   text = WORKFLOW.read_text()
                   section = text[text.index('\n      - name: Own stable same-volume Cargo target before cache and subset builds\n'):]
-                  self.assertLess(section.index('$target_setup'), section.index('uses: Swatinem/rust-cache@v2'))
-                  self.assertLess(section.index('uses: Swatinem/rust-cache@v2'), section.index('cargo test -p ripr'))
+                  self.assertLess(section.index('$target_setup'), section.index('uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'))
+                  self.assertLess(section.index('uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0'), section.index('cargo test -p ripr'))
                   self.assertIn('"CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV', section)
                   self.assertIn('workspaces: ". -> target/selector-cargo-cache"', section)
                   self.assertIn('cache-targets: false', section)
