@@ -7596,13 +7596,13 @@ jobs:
   dependency-review:
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8362,14 +8362,14 @@ fn workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count() {
 jobs:
   dependency-review:
     steps:
-      - uses: actions/dependency-review-action@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8378,7 +8378,7 @@ jobs:
         workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
 
     assert!(violations.iter().any(|violation| {
-        violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
+        violation.contains("uses `actions/dependency-review-action@` 2 time(s), allowed 1")
     }));
 }
 
@@ -49204,8 +49204,13 @@ fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
     if upload.contains("if: always()") || upload.contains("if: success()") {
         violations.push("diagnostics upload must not run on success".to_string());
     }
-    if !upload.contains("actions/upload-artifact@v7") {
-        violations.push("diagnostics upload must use actions/upload-artifact@v7".to_string());
+    // The repo pins first-party actions to a commit SHA with the major in the
+    // trailing comment (`actions/upload-artifact@<sha> # v7.x.y`).
+    let pinned_v7 = upload
+        .lines()
+        .any(|line| line.contains("actions/upload-artifact@") && line.contains("# v7"));
+    if !pinned_v7 {
+        violations.push("diagnostics upload must use actions/upload-artifact v7".to_string());
     }
     if !upload.contains("target/ripr/vscode-test-host-diagnostics/") {
         violations
