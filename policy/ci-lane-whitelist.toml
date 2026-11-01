@@ -224,7 +224,7 @@ id = "pilot-measure"
 posture = "advisory"
 workflow = ".github/workflows/pilot-measure.yml"
 jobs = ["measure"]
-commands = ["cargo build --release --locked -p ripr", "target/release/ripr pilot --root \"$GITHUB_WORKSPACE\" --out \"$RUNNER_TEMP/pilot-self\" --quiet", "cargo xtask pilot-ranking fetch --allow-network --repo humantime --root \"$RUNNER_TEMP/pilot-ranking\"", "target/release/ripr check --root \"$RUNNER_TEMP/pilot-ranking/humantime\" --base \"$pin\" --committed --format agent"]
+commands = ["cargo build --release --locked -p ripr", "\"$RUNNER_TEMP/ripr-target/release/ripr\" pilot --root \"$GITHUB_WORKSPACE\" --out \"$RUNNER_TEMP/pilot-self\" --timeout-ms \"$TIMEOUT_MS\" --quiet", "cargo xtask pilot-ranking fetch --allow-network --repo humantime --root \"$RUNNER_TEMP/pilot-ranking\"", "\"$RUNNER_TEMP/ripr-target/release/ripr\" check --root \"$RUNNER_TEMP/pilot-ranking/humantime\" --base \"$pin\" --committed --format agent"]
 estimated_lem = 15
 artifact_families = ["pilot-measure"]
 description = "On-demand hosted measurement of a current-main release ripr (#11951, #12058): reports pilot artifact byte sizes, exit code and run_status for this repository and the agent-format open=/stop= state on the pinned humantime fortnight gap commit; reports only, never asserts."

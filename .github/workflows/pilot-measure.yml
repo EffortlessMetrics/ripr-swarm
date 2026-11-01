@@ -19,6 +19,12 @@ name: Pilot Measure
 
 on:
   workflow_dispatch:
+    inputs:
+      timeout_ms:
+        description: "ripr pilot --timeout-ms (milliseconds)"
+        required: false
+        default: "1800000"
+        type: string
 
 permissions:
   contents: read
@@ -43,18 +49,26 @@ jobs:
         with:
           cache-on-failure: true
 
+      # Build output lives outside the pilot root so the pilot walk never
+      # sees it.
       - name: Build ripr
         run: cargo build --release --locked -p ripr
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/ripr-target
 
       - name: Measure ripr pilot on this repository
         continue-on-error: true
+        env:
+          TIMEOUT_MS: ${{ inputs.timeout_ms }}
         run: |
           out="$RUNNER_TEMP/pilot-self"
+          ripr="$RUNNER_TEMP/ripr-target/release/ripr"
           status=0
-          target/release/ripr pilot --root "$GITHUB_WORKSPACE" --out "$out" --quiet >/dev/null 2>"$RUNNER_TEMP/pilot-self.stderr" || status=$?
+          "$ripr" pilot --root "$GITHUB_WORKSPACE" --out "$out" --timeout-ms "${TIMEOUT_MS:-1800000}" --quiet >/dev/null 2>"$RUNNER_TEMP/pilot-self.stderr" || status=$?
           {
             echo "## ripr pilot on this repository (${GITHUB_SHA})"
-            echo "exit code: ${status}"
+            echo "exit code: ${status}; timeout_ms: ${TIMEOUT_MS:-1800000}; build dir: $RUNNER_TEMP/ripr-target (outside the pilot root $GITHUB_WORKSPACE; target/ in root: $([ -d "$GITHUB_WORKSPACE/target" ] && echo present || echo absent))"
+            if [ -f "$out/repo-exposure.json" ]; then echo "repo-exposure.json: present, $(stat -c %s "$out/repo-exposure.json") bytes"; else echo "repo-exposure.json: absent"; fi
             echo "pilot-summary.json: $(jq -r '"status \(.status // "absent"); reason \(.reason // "none")"' "$out/pilot-summary.json" 2>&1 || echo absent)"
             echo '```'
             for f in repo-exposure agent-seam-packets; do
@@ -68,7 +82,9 @@ jobs:
             done
             echo "stderr tail:"
             tail -n 5 "$RUNNER_TEMP/pilot-self.stderr" || echo "no stderr file"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "artifact contents:"
+          find "$out" -type f 2>/dev/null | sort || true
 
       - name: Fetch pinned humantime
         if: ${{ !cancelled() }}
@@ -88,7 +104,7 @@ jobs:
           if [ -d "$repo/.git" ] && [ -s "$RUNNER_TEMP/fortnight.patch" ] && git -C "$repo" apply "$RUNNER_TEMP/fortnight.patch" && git -C "$repo" -c user.name=pilot-measure -c user.email=pilot-measure@invalid commit -qam "feat: accept fortnight as a duration unit" && [ "$(git -C "$repo" rev-parse HEAD)" != "$pin" ]; then
             state=ready
             status=0
-            target/release/ripr check --root "$repo" --base "$pin" --committed --format agent > "$RUNNER_TEMP/pilot-humantime/agent-format.txt" 2>&1 || status=$?
+            "$RUNNER_TEMP/ripr-target/release/ripr" check --root "$repo" --base "$pin" --committed --format agent > "$RUNNER_TEMP/pilot-humantime/agent-format.txt" 2>&1 || status=$?
             detail="check exit ${status}"
           fi
           {
@@ -101,7 +117,8 @@ jobs:
             else
               echo "terminal state: unavailable (no gap commit was made; no check was run)"
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          find "$RUNNER_TEMP/pilot-humantime" -type f 2>/dev/null | sort || true
 
       - name: Upload pilot output
         if: always()
