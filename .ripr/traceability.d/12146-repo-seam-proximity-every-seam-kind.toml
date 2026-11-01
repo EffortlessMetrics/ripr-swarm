@@ -1,0 +1,6 @@
+# Registers the every-seam-kind proximity refusal test (#12146) under RIPR-SPEC-0094.
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::proximity_test_pinning_another_function_cannot_credit_a_predicate_seam",
+]

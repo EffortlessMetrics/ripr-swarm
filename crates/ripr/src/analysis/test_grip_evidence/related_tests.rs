@@ -762,19 +762,24 @@ pub(super) fn sort_related_tests_for_seam<'a>(
 ) -> Vec<BestOracle> {
     let owner = seam_owner_activation(seam, context);
     let boolean_pin = BooleanBoundaryPin::establish(seam, owner_fn, context.index);
+    // #12060: rank and publish the oracle the stages credit. A proximity test
+    // whose assertion pins another function keeps its identity but offers no
+    // oracle for this match arm. Built once per seam: the owner's reverse
+    // reach is walked per call, not per test.
+    let credited_views = {
+        let pairs: Vec<(&TestSummary, RelationReason)> = related
+            .iter()
+            .map(|(indexed, reason)| (indexed.test, *reason))
+            .collect();
+        super::credited_related_tests(context, owner_fn, &pairs)
+    };
     let mut ranked: Vec<_> = related
         .iter()
-        .map(|&entry| {
+        .enumerate()
+        .map(|(position, &entry)| {
             let (indexed, reason) = entry;
-            // #12060: rank and publish the oracle the stages credit. A
-            // proximity test whose assertion pins another function keeps its
-            // identity but offers no oracle for this match arm.
-            let credited = (seam.kind() == SeamKind::MatchArm).then(|| {
-                super::credited_related_tests(seam, context, owner_fn, &[(indexed.test, reason)])
-            });
-            let credited_test = credited
-                .as_ref()
-                .and_then(|views| views.first())
+            let credited_test = credited_views
+                .get(position)
                 .map_or(indexed.test, AsRef::as_ref);
             let oracle = best_oracle(
                 credited_test,
