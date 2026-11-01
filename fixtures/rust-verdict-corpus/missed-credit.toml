@@ -321,6 +321,14 @@ case = "semver-tilde-pre-ge"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "serde-derive-rename-field-upper"
+reason = "Tests discriminate the change; the row reads limited (RIPR-SPEC-0352) because serde_core mounts generated code through an unresolved include!, so macro trust cannot be established. On main it read credited; the identity gate alone would read a false gap."
+
+[[entry]]
+case = "serde-derive-rename-variant-lower"
+reason = "Tests discriminate the change; the row reads limited (RIPR-SPEC-0352) because serde_core mounts generated code through an unresolved include!, so macro trust cannot be established. On main it read credited; the identity gate alone would read a false gap."
+
+[[entry]]
 case = "serde-format-u8-hundreds"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 

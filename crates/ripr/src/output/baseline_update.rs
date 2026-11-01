@@ -360,7 +360,7 @@ pub(crate) fn build_baseline_update_remove_resolved(
 
 pub(crate) fn render_baseline_update_json(report: &BaselineUpdateReport) -> Result<String, String> {
     serde_json::to_string_pretty(&report.updated_baseline)
-        .map_err(|err| format!("failed to render updated baseline JSON: {err}"))
+        .map_err(|err| format!("failed to render updated baseline JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn baseline_update_before_entry_count(report: &BaselineUpdateReport) -> usize {

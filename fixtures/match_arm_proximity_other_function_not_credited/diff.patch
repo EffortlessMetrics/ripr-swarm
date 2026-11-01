@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -26,7 +26,7 @@ impl Limiter {
+         match reduce(tokens, self.budget) {
+             Reduction::Failure => false,
+             Reduction::Success => true,
+-            Reduction::Over(wait) => wait.as_millis() < 5,
++            Reduction::Over(wait) => wait.as_millis() < 10,
+         }
+     }
+ }

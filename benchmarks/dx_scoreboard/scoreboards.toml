@@ -1048,13 +1048,15 @@ per_repo = true
 source = "ingest:agent-as-user"
 
 # Gaps `ripr check --format agent` names on the unfixed gap commit, where the
-# answer key says all three mutants survive. A count of zero means the compact
-# format told the agent there is nothing to do (a false stop); any fall below
-# the baseline fails.
+# answer key says all three mutants survive. The count is the test-side work the
+# format names: gap lines plus `open=` lines (a reach-limited finding with a
+# weak related assertion, #11825). A count of zero means the compact format
+# told the agent there is nothing to do (a false stop); any fall below the
+# baseline fails.
 [[metric]]
 id = "agent.agent_format_gaps_before_fix"
 board = "agent"
-title = "Gaps named by `ripr check --format agent` on the gap commit, before any fix"
+title = "Gap or open lines named by `ripr check --format agent` on the gap commit, before any fix"
 unit = "gaps"
 direction = "higher_is_better"
 target = 1

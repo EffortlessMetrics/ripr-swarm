@@ -673,6 +673,33 @@ normalization behavior surfaced only on a maintainer's local run.
   shape as the merge-ready label flow in #4984/#8327; add `macos-ci` first,
   `merge-ready` last, and re-apply `merge-ready` for a later head).
 
+### Advisory Kani Lane
+
+`.github/workflows/kani.yml` (RIPR-SPEC-0371) runs Kani bounded model checking
+over pure cores. It follows "lighter, later, tighter": it is not a required
+check and does not run on ordinary pushes or PR updates.
+
+- **What runs.** `cargo xtask kani`, which runs `cargo kani -p ripr` over every
+  `#[kani::proof]` harness (harnesses live in `#[cfg(kani)]` modules next to the
+  code they prove; `crates/ripr/src/kani_smoke.rs` is the lane's own smoke
+  harness) with `kani-verifier` pinned to 0.68.0, installed with `cargo install
+  --locked` and `cargo kani setup`, cached through `Swatinem/rust-cache`
+  (`~/.kani` and the cargo bin directory).
+- **Contract.** Per harness the report (`target/ripr/reports/kani.md`) says
+  `VERIFIED` (within the harness's documented `kani::assume` bounds), `FAILED`
+  (counterexample, or an unreachable `kani::cover!` that makes the proof
+  vacuous) or `NOT-ESTABLISHED` (tool missing, timeout, no verdict). Anything
+  but `VERIFIED` fails the job, and so does a missing tool or zero harnesses
+  (`--allow-empty` is a local-only opt-out). Nothing passes by absence.
+- **Not a claim.** A `VERIFIED` row is a bounded check of a pure core. It is not a
+  full-program proof, not a runtime-mutation result and not evidence about code
+  a harness does not call.
+- **Selection.** A daily schedule, `workflow_dispatch`, and `merge-ready` on a
+  pull request that touches `crates/ripr/src/**`, `xtask/src/kani_lane.rs` or the
+  workflow (same guard shape as the merge-ready label flow; re-apply
+  `merge-ready` for a later head). Kani compiles the whole `ripr` library, so a
+  run takes minutes and several GB of memory.
+
 ### Advisory Printed-Command Paste Lane
 
 `.github/workflows/printed-command-paste.yml` runs the
@@ -1364,6 +1391,7 @@ EM self-hosted runners.
 | `coverage.yml` | `em-ci-small` | `rust-heavy-medium` |
 | `test-analytics.yml` | `em-ci-small` | `rust-medium` |
 | `future-clippy.yml` | `em-ci-small` | `rust-medium` |
+| `kani.yml` | GitHub-hosted | `ubuntu-latest` |
 | `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
 | `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
 | `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
@@ -1783,10 +1811,10 @@ configure the workflow, so changing a mode never means editing the file:
   `RIPR SARIF upload failed` warning to the run page. Set `"false"` to stop
   trying; the job summary, annotations and artifacts do not depend on it.
 
-Pilot deadline (#11205). `RIPR_PILOT_TIMEOUT_MS` is optional and not in the
-generated file. Add it to
-the workflow `env:` (positive milliseconds) when `ripr pilot` stops at its
-deadline on a large repository. The `ripr reports ci-packet` pilot step then
+Pilot deadline (#11205). Set the optional `RIPR_PILOT_TIMEOUT_MS` repository
+variable (positive milliseconds) when `ripr pilot` stops at its deadline on a
+large repository. The generated workflow passes it through its `env:`. The
+`ripr reports ci-packet` pilot step then
 passes it as an explicit `ripr pilot --timeout-ms` hard limit, with no
 automatic extension; unset keeps pilot's 30 s default plus its automatic
 extension, and a non-numeric or zero value is refused. When the pilot packet
@@ -1795,6 +1823,9 @@ deadline as the cause of the missing artifacts, the effect, and this next
 step (#11205). Per-file facts computed before the deadline are written to
 `target/ripr/cache`, so restoring that directory between runs lets the retry
 resume.
+The workflow only forwards the variable; it takes effect with a ripr release
+that reads it, and a workflow pinned to an older release ignores it without
+error.
 
 Permissions and job settings:
 

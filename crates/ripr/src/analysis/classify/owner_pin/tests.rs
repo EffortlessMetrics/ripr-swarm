@@ -710,6 +710,76 @@ fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
     ));
 }
 
+/// #8782: a bare variant names the owner's enum value only when exactly one
+/// non-aliased `use` of that enum's glob or of the variant brings it in, the
+/// enum has one declaration, and nothing else can bind the spelling.
+#[test]
+fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
+    const ENUM: &str = "pub enum Rule {\n    None,\n    Upper,\n    Tagged(u32),\n}\n";
+    let decide = |name: &str, test_file: &str| {
+        let index = index(&[(HELPERS, ENUM), (LIB, test_file)]);
+        imported_enum_variant_value(name, "Rule", Path::new(LIB), &index)
+    };
+    let glob = "use crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n";
+    assert!(decide("Upper", glob));
+    assert!(decide(
+        "Upper",
+        "use crate::Rule::Upper;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    // A prelude spelling, a tuple variant and an unknown name are refused.
+    assert!(!decide("None", glob));
+    assert!(!decide("Tagged", glob));
+    assert!(!decide("Missing", glob));
+    // No import, an aliased import, a second import and a macro are refused.
+    assert!(!decide(
+        "Upper",
+        "#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::Upper as Top;\n#[test]\nfn t() {}\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\nuse crate::Rule::Upper;\n#[test]\nfn t() {}\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\nuse other::Upper;\n#[test]\nfn t() {}\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\nmacro_rules! m { () => {}; }\n#[test]\nfn t() {}\n"
+    ));
+    // A local item of the same spelling shadows the glob.
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\n#[test]\nfn t() { let Upper = 1; }\n"
+    ));
+    // A second glob (file-wide use scan) or a same-named parameter keeps the
+    // spelling ambiguous.
+    assert!(!decide(
+        "Upper",
+        "use std::cmp::Ordering::*;\nuse crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\n#[test]\nfn t(Upper: u32) { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\n#[test]\nfn t() { let f = |Upper| Upper; f(1); }\n"
+    ));
+    // Two declarations of the enum make it ambiguous.
+    let two = index(&[(HELPERS, ENUM), (LIB, glob), ("src/other.rs", ENUM)]);
+    assert!(!imported_enum_variant_value(
+        "Upper",
+        "Rule",
+        Path::new(LIB),
+        &two
+    ));
+}
+
 /// #7172: per-assertion unit-struct pin admission must not rescan the
 /// workspace. `ASSERTIONS` admissions over one `FILLER_FILES`-file index
 /// share one run-scoped [`OwnerPinSyntax`], exactly as production shares
@@ -6343,6 +6413,59 @@ fn a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit() {
         assert!(
             found.is_some_and(|refusal| refusal.is_analyzer_limit()),
             "{guard}"
+        );
+    }
+}
+
+/// #11543: a model-checking runner's closure is a limit of ripr's reading,
+/// never a shape that can keep the assertion from running, so it must not
+/// read as a test gap. Local closures stay real refusals.
+#[test]
+fn a_model_check_closure_is_an_analyzer_limit_and_other_closures_are_not() {
+    let refusal = |body: &str| {
+        weight_refusal(
+            &format!("use demo::weight;\n#[test]\nfn weighs() {{\n{body}\n}}\n"),
+            &[],
+        )
+    };
+    let pin = "assert_eq!(weight(4), 12);";
+    for runner in [
+        "loom::model(|| { PIN })",
+        "::loom::model(|| { PIN });",
+        "shuttle::check_random(|| { PIN }, 100);",
+        "shuttle::check_dfs(|| { PIN }, None);",
+    ] {
+        let body = runner.replace("PIN", pin);
+        let found = refusal(&body);
+        assert_eq!(
+            found,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::ModelCheckClosure
+            )),
+            "{body}"
+        );
+        assert!(
+            found.is_some_and(|found| found.is_analyzer_limit()),
+            "{body}"
+        );
+    }
+    // Not a runner: a closure handed to an unknown function, a method named
+    // `model`, or a closure that is not the runner's first argument keeps the
+    // real-gap reading.
+    for runner in [
+        "run_it(|| { PIN });",
+        "loom.model(|| { PIN });",
+        "other::model(|| { PIN });",
+        "shuttle::check_random(100, || { PIN });",
+        "shuttle::replay(|| { PIN });",
+    ] {
+        let body = runner.replace("PIN", pin);
+        let found = refusal(&body);
+        assert!(
+            found
+                .as_ref()
+                .is_some_and(|found| !found.is_analyzer_limit()),
+            "{body}: {found:?}"
         );
     }
 }
@@ -12996,6 +13119,157 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
     Ok(())
 }
 
+const REGISTRY: &str = "registry+https://github.com/rust-lang/crates.io-index";
+
+/// A `Cargo.lock` locking each `(name, version, source)`; an empty source is
+/// a workspace-local package, as Cargo writes it.
+fn lock_of(packages: &[(&str, &str, &str)]) -> String {
+    let mut lock = String::from("version = 4\n");
+    for (name, version, source) in packages {
+        lock.push_str(&format!(
+            "\n[[package]]\nname = \"{name}\"\nversion = \"{version}\"\n"
+        ));
+        if !source.is_empty() {
+            lock.push_str(&format!("source = \"{source}\"\n"));
+        }
+    }
+    lock
+}
+
+/// The refusal of the `weighs` assertion with `sibling` in the same crate,
+/// the manifest `dependencies` and, when given, a `Cargo.lock` beside it.
+fn prelude_refusal(
+    label: &str,
+    dependencies: &str,
+    lock: Option<&str>,
+    sibling: &str,
+) -> Result<Option<AssertionRefusal>, String> {
+    let manifest = format!(
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}"
+    );
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let mut files = vec![("Cargo.toml", manifest.as_str())];
+    if let Some(lock) = lock {
+        files.push(("Cargo.lock", lock));
+    }
+    let root = crate::analysis::facts::drop_in::temp_workspace(label, &files)?;
+    let mut index = index(&[
+        (LIB, WEIGHT_LIB),
+        ("src/prelude_user.rs", sibling),
+        (TESTS, tests),
+    ]);
+    index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&root);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new(TESTS))
+        .ok_or("the fixture test must be indexed")?;
+    let assertion = test
+        .assertions
+        .iter()
+        .find(|assertion| assertion.text.starts_with("assert_eq!(weight(4)"))
+        .ok_or("the fixture assertion must be indexed")?;
+    Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
+}
+
+fn prelude_rebound(refusal: Option<AssertionRefusal>) -> bool {
+    matches!(
+        refusal,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    )
+}
+
+/// RIPR-SPEC-0369 (audited versions only): the glob keeps assertion credit
+/// only when the lockfile locks the crate exactly once, from the registry, at
+/// an audited version. Every other lock state keeps the pre-#11703 refusal.
+#[test]
+fn verification_prelude_globs_credit_only_audited_locked_versions() -> Result<(), String> {
+    let audited = [
+        (
+            "creusot-std",
+            "0.14.0",
+            "creusot_std",
+            "creusot-std = \"0.14\"\n",
+            "use creusot_std::prelude::*;\n",
+        ),
+        (
+            "vstd",
+            "0.0.0-2026-10-25-0158",
+            "vstd",
+            "vstd = \"0.0.0-2026-10-25-0158\"\n",
+            "use vstd::prelude::*;\n",
+        ),
+        (
+            "prusti-contracts",
+            "0.3.3",
+            "prusti",
+            "prusti-contracts = \"0.3\"\n",
+            "use prusti_contracts::*;\n",
+        ),
+    ];
+    for (name, version, label, dependencies, glob) in audited {
+        let at = |label: &str, lock: Option<String>| {
+            prelude_refusal(
+                &format!("audit-{label}"),
+                dependencies,
+                lock.as_deref(),
+                glob,
+            )
+        };
+        let locked = |version: &str, source: &str| lock_of(&[(name, version, source)]);
+        // Audited version from the registry credits.
+        assert_eq!(
+            at(&format!("{label}-ok"), Some(locked(version, REGISTRY)))?,
+            None,
+            "{name}"
+        );
+        // Workspace member of the same name (no registry source) refuses.
+        assert!(
+            prelude_rebound(at(&format!("{label}-member"), Some(locked(version, "")))?),
+            "{name} member"
+        );
+        // Git source refuses.
+        assert!(
+            prelude_rebound(at(
+                &format!("{label}-git"),
+                Some(locked(version, "git+https://example.invalid/p#abc"))
+            )?),
+            "{name} git"
+        );
+        // Newer, older and unknown versions refuse.
+        for other in ["99.0.0", "0.0.1", "0.14.1-alpha"] {
+            assert!(
+                prelude_rebound(at(
+                    &format!("{label}-{other}"),
+                    Some(locked(other, REGISTRY))
+                )?),
+                "{name} {other}"
+            );
+        }
+        // No lockfile, and a lockfile that does not lock the crate, refuse.
+        assert!(
+            prelude_rebound(at(&format!("{label}-nolock"), None)?),
+            "{name} no lock"
+        );
+        assert!(
+            prelude_rebound(at(
+                &format!("{label}-unlocked"),
+                Some(lock_of(&[("other", "1.0.0", REGISTRY)]))
+            )?),
+            "{name} unlocked"
+        );
+        // Several locked versions of the crate refuse, even with the audited one present.
+        let both = lock_of(&[(name, version, REGISTRY), (name, "99.0.0", REGISTRY)]);
+        assert!(
+            prelude_rebound(at(&format!("{label}-multi"), Some(both))?),
+            "{name} multiple"
+        );
+    }
+    Ok(())
+}
+
 /// RIPR-SPEC-0369: the verification preludes of creusot-std, vstd and
 /// prusti-contracts export no assertion macro, so an exact glob of one, beside a
 /// plain registry dependency on it, keeps the standard assertion's meaning. The
@@ -13004,41 +13278,15 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
 #[test]
 fn verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crates()
 -> Result<(), String> {
-    let manifest = |dependencies: &str| {
-        format!("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}")
+    let lock = lock_of(&[
+        ("creusot-std", "0.14.0", REGISTRY),
+        ("vstd", "0.0.0-2026-10-25-0158", REGISTRY),
+        ("prusti-contracts", "0.3.3", REGISTRY),
+    ]);
+    let refusal_under = |label: &str, dependencies: &str, sibling: &str| {
+        prelude_refusal(label, dependencies, Some(&lock), sibling)
     };
-    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
-    let refusal_under = |label: &str, dependencies: &str, sibling: &str| -> Result<_, String> {
-        let root = crate::analysis::facts::drop_in::temp_workspace(
-            label,
-            &[("Cargo.toml", &manifest(dependencies))],
-        )?;
-        let mut index = index(&[
-            (LIB, WEIGHT_LIB),
-            ("src/prelude_user.rs", sibling),
-            (TESTS, tests),
-        ]);
-        index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&root);
-        let test = index
-            .tests()
-            .iter()
-            .find(|test| test.file == Path::new(TESTS))
-            .ok_or("the fixture test must be indexed")?;
-        let assertion = test
-            .assertions
-            .iter()
-            .find(|assertion| assertion.text.starts_with("assert_eq!(weight(4)"))
-            .ok_or("the fixture assertion must be indexed")?;
-        Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
-    };
-    let rebound = |refusal: Option<AssertionRefusal>| {
-        matches!(
-            refusal,
-            Some(AssertionRefusal::Syntax(
-                AssertionContextRefusal::MacroBinding(_)
-            ))
-        )
-    };
+    let rebound = prelude_rebound;
     let creusot = "creusot-std = \"0.14\"\n";
     let vstd = "vstd = \"0.0.0-2026-10-25-0158\"\n";
     let prusti = "prusti-contracts = \"0.3\"\n";
@@ -13358,6 +13606,24 @@ fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() 
     assert!(!imported("use float_cmp::approx_eq::other;\n"));
     assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
     assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
+}
+
+/// The crate roots a file imports are read through any whitespace or comment
+/// between the keyword and the path, so a spelling cannot hide a glob import.
+#[test]
+fn imported_crate_roots_read_through_whitespace_and_comments() {
+    for source in [
+        "use mac::*;",
+        "use\tmac::*;",
+        "use\nmac::*;",
+        "use/* note */mac::*;",
+        "use /* note */ mac::*;",
+        "extern\ncrate\nmac;",
+    ] {
+        let mut roots = BTreeSet::new();
+        imported_crate_roots(source, &mut roots);
+        assert!(roots.contains("mac"), "{source:?}: {roots:?}");
+    }
 }
 
 #[test]
