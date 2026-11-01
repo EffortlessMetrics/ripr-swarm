@@ -41,6 +41,29 @@ const PLAIN_KEYS: &[&str] = &[
     "public",
 ];
 
+/// RIPR-SPEC-0369 audit table: `(source crate name, Cargo.lock package name,
+/// audited versions)` for the verification-prelude crates whose published
+/// export lists were read and found to hold no trusted assertion macro. The
+/// trust is these exact versions, not the crate name. To audit a new release,
+/// re-read the published crate's prelude exports (no macro named like a trusted
+/// assertion), then append its exact version string here and in the spec table.
+const AUDITED_PRELUDE_VERSIONS: &[(&str, &str, &[&str])] = &[
+    ("creusot_std", "creusot-std", &["0.14.0"]),
+    ("vstd", "vstd", &["0.0.0-2026-10-25-0158"]),
+    ("prusti_contracts", "prusti-contracts", &["0.3.3"]),
+];
+
+/// Whether `krate` needs an audited locked version beyond the manifest proof,
+/// and if so whether the lockfile has one.
+fn audited_version_locked(root: &Path, krate: &str) -> bool {
+    AUDITED_PRELUDE_VERSIONS
+        .iter()
+        .find(|(name, _, _)| *name == krate)
+        .is_none_or(|(_, lock_name, versions)| {
+            crate::analysis::workspace::locked_at_audited_version(root, lock_name, versions)
+        })
+}
+
 type LiteralJsonMemo = Option<(
     String,
     Option<crate::analysis::workspace::LiteralJsonIdentity>,
@@ -127,7 +150,7 @@ impl DropInManifests {
         {
             return verdict;
         }
-        let verdict = verify(root, directory, krate);
+        let verdict = verify(root, directory, krate) && audited_version_locked(root, krate);
         if let Ok(mut verdicts) = self.verdicts.lock() {
             verdicts.insert(key, verdict);
         }

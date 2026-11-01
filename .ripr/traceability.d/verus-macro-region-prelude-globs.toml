@@ -11,6 +11,7 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::verus_region_lines_seed_one_static_unknown_not_expression_probes",
   "crates/ripr/src/analysis/language/rust/probes.rs::verus_region_limit_names_the_region_and_changes_nothing_else",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crates",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::verification_prelude_globs_credit_only_audited_locked_versions",
 ]
 code = [
   "crates/ripr/src/analysis/probes/macro_definition.rs",
@@ -18,6 +19,8 @@ code = [
   "crates/ripr/src/analysis/language/rust/probes.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
   "crates/ripr/src/analysis/syntax/owner_pin.rs",
+  "crates/ripr/src/analysis/facts/drop_in.rs",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/registry.rs",
 ]
 metrics = [
   "unit_test_pass_rate",

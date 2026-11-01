@@ -602,7 +602,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// per region and side and name `verus_macro_region_unsupported`; verification
 /// prelude globs (`vstd`, `creusot_std`, `prusti_contracts`) no longer refuse
 /// assertion credit (RIPR-SPEC-0369, #11703).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.125";
+/// `1.126`: those prelude globs keep assertion credit only when `Cargo.lock`
+/// pins an audited version of the crate (RIPR-SPEC-0369). Old entries credited
+/// by crate name alone.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.126";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.

@@ -99,7 +99,7 @@ no longer reported as "no changed line is behavior ripr checks".
 A glob import is not a foreign glob for the trusted assertion macros when it
 is exactly one of:
 
-| Glob path | Published crate checked |
+| Glob path | Audited version |
 | --- | --- |
 | `creusot_std::prelude::*` | creusot-std 0.14.0 |
 | `vstd::prelude::*` | vstd 0.0.0-2026-10-25-0158 |
@@ -128,9 +128,25 @@ sources (the clones are not vendored):
   `closure!` and `ghost!`. None is named `assert_eq`, `assert_ne` or any
   other trusted assertion.
 
-The allowlist is by exact path and crate name, not by version; a future
-release that exports a trusted assertion name must be re-checked and the entry
-removed or narrowed. This grants no credit of its own: an assertion in a file
+The audit is of the listed versions only. The glob keeps assertion credit only
+when the nearest `Cargo.lock` at or above the analysis root locks the crate
+exactly once, from the crates.io registry, at an audited version (the table
+above; the same lockfile reader as the audited proptest profile). An
+unlocked crate, a missing or unreadable lockfile, a newer, older or unknown
+version, a path, git or other-registry package, a workspace member of the same
+name, or several locked versions of the crate refuse credit with the same named
+macro-binding refusal as before this spec, and the reason says the version is
+not audited. A future release that exports a trusted assertion name is never
+covered by this entry until it is re-read and added.
+
+New-audit procedure: re-read the published crate's prelude export list at the
+exact version (no macro named like a trusted assertion), add that exact version
+string to `AUDITED_PRELUDE_VERSIONS` in `analysis/facts/drop_in.rs` and to the
+table above, extend `verification_prelude_globs_credit_only_audited_locked_versions`,
+and bump `CACHE_SCHEMA_VERSION`. Remove a version the same way if a re-read finds
+an assertion-like export.
+
+This grants no credit of its own: an assertion in a file
 with such a glob is credited exactly as it would be without the glob, and a
 local `macro_rules! assert_eq`, another foreign glob, a `#[macro_use]` or any
 import of a trusted name in the same scope still refuses. `use
@@ -146,6 +162,8 @@ substituted dependencies remain foreign globs.
 - No change to run-level `limitations[]` of the analysis outcome, which
   records incomplete-analysis state; the limitation here is finding-level.
 - No new `static_limit_kind`, stop reason, schema field or verdict name.
+- No claim about any crate version outside the audited table; the audit is of
+  the listed versions only, not of the crate name or later releases.
 - Creusot `#[logic]` items and `proof_assert!`/`ghost!` macros outside
   `verus!` are not covered by this spec.
 
@@ -159,6 +177,9 @@ substituted dependencies remain foreign globs.
   plain registry dependency and loses it under a `path`/`package`/patched
   dependency, a local `assert_eq` macro, a second foreign glob and the
   non-allowlisted spellings above.
+- Version-matrix tests: an audited locked version credits; a newer, older or
+  unknown version, a missing lockfile, a lockfile that omits the crate, several
+  locked versions, a workspace member of the same name and a git source refuse.
 
 ## Acceptance Examples
 
@@ -175,6 +196,9 @@ substituted dependencies remain foreign globs.
    exact `assert_eq!`, as it would be without the glob.
 5. The same file with `prusti-contracts = { path = ".." }`, or with a local
    `macro_rules! assert_eq`, still refuses assertion credit.
+6. The file of example 4 with `Cargo.lock` locking prusti-contracts at a
+   version outside the audited set (for example a newer release), or with no
+   `Cargo.lock`, refuses assertion credit exactly as before this spec.
 
 ## Test Mapping
 
@@ -182,7 +206,7 @@ substituted dependencies remain foreign globs.
 - `crates/ripr/src/analysis/probes/diff.rs`: seeding tests.
 - `crates/ripr/src/analysis/language/rust/probes.rs`: finding limit tests.
 - `crates/ripr/src/analysis/syntax/owner_pin.rs` and the classify owner-pin
-  tests: prelude-glob tests.
+  tests: prelude-glob tests, including `verification_prelude_globs_credit_only_audited_locked_versions`.
 - Corpus: `prusti-prelude-glob-boundary` in `fixtures/rust-verdict-corpus`
   (credited under the allowlisted glob, runtime-labeled). Verus and Creusot
   prelude cases need their toolchains to produce runtime truth and are not in
@@ -197,7 +221,10 @@ substituted dependencies remain foreign globs.
   `apply_verus_macro_region_limit`, applied with the other probe/oracle limits.
 - `crates/ripr/src/analysis/syntax/owner_pin.rs`:
   `ASSERTION_FREE_PRELUDE_GLOBS`, consulted in the macro-binding scan before a
-  glob is recorded as foreign.
+  glob is recorded as foreign; `AUDITED_PRELUDE_VERSIONS` in
+  `analysis/facts/drop_in.rs` with `locked_at_audited_version` in
+  `analysis/workspace/assertion_dependency/registry.rs` (the lockfile reader
+  shared with the proptest profile) supply the version gate.
 
 ## Metrics
 
