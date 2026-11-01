@@ -264,10 +264,21 @@ fn provider_assertion_macro_inventory_matches_current_behavior() -> Result<(), S
             include_unchanged_tests: true,
             ..CheckInput::default()
         })?;
-        let finding = report
+        // Every subject changes one predicate. A `Result` owner also yields an
+        // error-path finding for the same line, so the finding under test is
+        // chosen by its probe family, and exactly one must match.
+        let predicates: Vec<_> = report
             .findings
-            .first()
-            .ok_or_else(|| format!("{}: no return_value finding", case.name))?;
+            .iter()
+            .filter(|f| f.probe.family.as_str() == "predicate")
+            .collect();
+        let [finding] = predicates.as_slice() else {
+            return Err(format!(
+                "{}: expected one predicate finding, got {}",
+                case.name,
+                predicates.len()
+            ));
+        };
         let test = finding
             .related_tests
             .first()
