@@ -396,6 +396,17 @@ mod stub {
             long.is_some_and(|reason| reason.contains("ceiling")),
             "a control past the ceiling must be refused"
         );
+        // A raised ceiling must not lift the per-check deadline: 100 s at 10x
+        // would otherwise sleep ~15 minutes outside check_once's 10-minute bound.
+        let raised = Limits {
+            ceiling_ms: 1_200_000,
+            ..Limits::default()
+        };
+        let beyond_deadline = control_refusal(100_000, 10.0, &raised);
+        assert!(
+            beyond_deadline.is_some_and(|reason| reason.contains("600000 ms bound")),
+            "a raised ceiling must still be bounded by the per-check deadline"
+        );
         assert!(control_refusal(4000, 1.6, &limits).is_none());
     }
 

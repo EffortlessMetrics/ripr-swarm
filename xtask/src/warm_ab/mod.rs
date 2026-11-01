@@ -386,14 +386,16 @@ fn control_delay_ms(baseline_ms: u128, candidate_ms: u128, ratio: f64) -> u128 {
 }
 
 /// Why a control cannot be applied to this run, if it cannot: the control must
-/// stay inside the ceiling and must exceed the judge's noise floor, otherwise a
+/// stay inside the ceiling and per-check deadline and must exceed the judge's noise floor, otherwise a
 /// pass would say nothing about the gate (#12244).
 fn control_refusal(baseline_ms: u128, ratio: f64, limits: &Limits) -> Option<String> {
     let target = control_delay_ms(baseline_ms, 0, ratio);
-    if target > limits.ceiling_ms {
+    // The injected wait sits outside `check_once`'s own deadline, so the control
+    // honours the tighter of that deadline and the configured ceiling.
+    let bound = limits.ceiling_ms.min(DEADLINE.as_millis());
+    if target > bound {
         return Some(format!(
-            "the control needs {target} ms for a {baseline_ms} ms baseline, past the {} ms ceiling",
-            limits.ceiling_ms
+            "the control needs {target} ms for a {baseline_ms} ms baseline, past the {bound} ms bound (ceiling or per-check deadline)"
         ));
     }
     if target.saturating_sub(baseline_ms) <= limits.noise_floor_ms {
