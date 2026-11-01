@@ -143,3 +143,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_platform_guarded_test (13)
+
+Reason:
+RIPR-SPEC-0027: plain wording for the conditional-credit recovery text (glossary: discriminator -> check)
+
+Command:
+`cargo xtask goldens bless typescript_platform_guarded_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

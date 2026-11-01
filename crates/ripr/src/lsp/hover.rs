@@ -12,7 +12,7 @@ use crate::output::agent_seam_packets::{
 };
 use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
-use crate::output::human::plain_observation_wording;
+use crate::output::human::{plain_observation_wording, plain_stop_condition};
 use crate::output::preview_actionability::{PreviewActionability, preview_actionability_for};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use serde_json::Value;
@@ -571,7 +571,7 @@ fn push_gap_repair_route(lines: &mut Vec<String>, data: &Value) {
         if !stops.is_empty() {
             lines.push("- stop if:".to_string());
             for stop in stops {
-                lines.push(format!("  - {stop}"));
+                lines.push(format!("  - {}", plain_stop_condition(stop)));
             }
         }
     }

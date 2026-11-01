@@ -20281,6 +20281,7 @@ mod module_entry_tests;
 mod namespace_reexport_tests;
 mod nested_callback_tests;
 mod nullish_chain_tests;
+mod object_row_tests;
 mod out_dir_specifier_tests;
 mod playwright_fixture_tests;
 mod playwright_unit_tests;
