@@ -536,3 +536,63 @@ mod cfg_test_leak_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod verus_region_tests {
+    use super::probes_for_repo_file;
+    use crate::domain::ProbeFamily;
+    use std::path::Path;
+
+    /// RIPR-SPEC-0369: repository mode must not seed expression probes inside
+    /// `verus! { .. }` (the macro token tree is not indexed as Rust), while
+    /// ordinary Rust beside the block keeps its probe. The one probe allowed
+    /// inside the region is the named `StaticUnknown` limitation (#12006).
+    #[test]
+    fn repo_mode_verus_region_seeds_no_expression_probes() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-repo-verus-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='repo-verus'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let source = "use vstd::prelude::*;\nverus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 100,\n    ensures r <= 200,\n{\n    if x > 5 { x + 2 } else { x }\n}\nspec fn adult(age: u32) -> bool { age >= 21 }\n}\nfn check(n: usize) -> bool {\n    n >= 4\n}\n";
+        std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+        let index =
+            crate::analysis::facts::build_index(&root, &[std::path::PathBuf::from("src/lib.rs")])
+                .map_err(|error| error.to_string())?;
+        let probes = probes_for_repo_file(&root, Path::new("src/lib.rs"), &index);
+        let _ = std::fs::remove_dir_all(&root);
+        let (start, end) = crate::analysis::probes::macro_definition::verus_region_lines(source, 3)
+            .ok_or("fixture must contain a located verus! region")?;
+        assert_eq!((start, end), (2, 10), "region extent of the fixture");
+        let inside = probes
+            .iter()
+            .filter(|probe| (start..=end).contains(&probe.location.line))
+            .collect::<Vec<_>>();
+        assert!(
+            inside
+                .iter()
+                .all(|probe| probe.family == ProbeFamily::StaticUnknown),
+            "no expression probe inside the region: {inside:?}"
+        );
+        assert_eq!(
+            inside.len(),
+            1,
+            "exactly one named limitation probe for the region: {inside:?}"
+        );
+        assert!(
+            probes
+                .iter()
+                .any(|probe| probe.location.line == 12 && probe.family == ProbeFamily::Predicate),
+            "ordinary fn beside the block keeps its probe: {probes:?}"
+        );
+        Ok(())
+    }
+}

@@ -160,9 +160,12 @@ fn inventory_page_limit_echoes_the_effective_cap() -> Result<(), String> {
         // A request above the typed cap stays invalid params at the dispatch
         // edge instead of being silently clamped (#8735).
         let reply = session.call("over-cap-limit", &name, json!({"limit": 1000}))?;
-        if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+        if reply.pointer("/result/structuredContent/failure/code")
+            != Some(&json!("invalid_argument"))
+            || reply.pointer("/result/isError") != Some(&json!(true))
+        {
             return Err(format!(
-                "a limit above the 256-row cap must stay invalid params: {reply}"
+                "a limit above the 256-row cap must stay an invalid_argument failure: {reply}"
             ));
         }
         // The typed page echoes the limit that was actually served.
@@ -220,9 +223,12 @@ fn inventory_discovery_empty_store_and_argument_refusals() -> Result<(), String>
             json!({"snapshot_id": "invented"}),
         ] {
             let reply = session.call("bad-inventory-input", &name, args.clone())?;
-            if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+            if reply.pointer("/result/structuredContent/failure/code")
+                != Some(&json!("invalid_argument"))
+                || reply.pointer("/result/isError") != Some(&json!(true))
+            {
                 return Err(format!(
-                    "invalid inventory args {args} must be Invalid Params: {reply}"
+                    "invalid inventory args {args} must be invalid_argument failures: {reply}"
                 ));
             }
         }
