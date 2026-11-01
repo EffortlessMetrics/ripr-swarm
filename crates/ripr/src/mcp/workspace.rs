@@ -300,6 +300,7 @@ impl AttemptFailure {
             "code": self.code,
             "detail": self.detail,
             "recovery": self.recovery,
+            "remedy": crate::domain::RefusalRemedy::from_prose(&self.recovery),
             "data": self.data,
         })
     }
@@ -2458,6 +2459,23 @@ mod tests {
     };
     use std::path::PathBuf;
 
+    #[test]
+    fn check_retry_recovery_remedy_is_the_tool_not_the_conditional_command() {
+        // Real producer: the instructed step is `ripr_refresh`; the `ripr
+        // check` command is only the `if the failure persists` fallback.
+        let recovery = check_retry_recovery(Path::new("."), Some("main"), RefreshSource::Committed);
+        let value = AttemptFailure::new("analysis_failed", "x", recovery).value();
+        assert_eq!(value["remedy"]["kind"], "mcp_tool", "{value}");
+        assert_eq!(value["remedy"]["tool"], "ripr_refresh", "{value}");
+        assert_eq!(value["remedy"]["command"], Value::Null, "{value}");
+        assert!(
+            value["remedy"]["alternatives"]
+                .as_array()
+                .is_some_and(|alternatives| alternatives.len() == 1),
+            "{value}"
+        );
+    }
+
     fn limitation(kind: AnalysisLimitationKind) -> Result<AnalysisLimitation, String> {
         Ok(AnalysisLimitation::new(
             kind,
@@ -2897,6 +2915,37 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[test]
+    fn a_missing_stale_or_unknown_limitation_read_never_yields_a_limitation_document()
+    -> Result<(), String> {
+        // #11821: the limitation read is committed-facts only. Every state in
+        // which the item's limitation cannot be established answers with a
+        // typed failure (and its recovery), never with a limitation document a
+        // client could read as "no limitation, so a repair route".
+        expect_code(
+            WorkspaceSession::default().get_limitation("gap:any", None),
+            CODE_NO_SNAPSHOT,
+        )?;
+        expect_code(
+            WorkspaceSession {
+                in_flight: true,
+                ..Default::default()
+            }
+            .get_limitation("gap:any", None),
+            CODE_ANALYSIS_IN_FLIGHT,
+        )?;
+        let session = session_with_findings(1)?;
+        expect_code(
+            session.get_limitation("gap:any", Some("snapshot:sha256:old")),
+            CODE_STALE_SNAPSHOT,
+        )?;
+        expect_code(
+            session.get_limitation("gap:does-not-exist", None),
+            CODE_ITEM_NOT_FOUND,
+        )?;
+        Ok(())
     }
 
     /// A snapshot carrying `count` distinct canonical items, built from the

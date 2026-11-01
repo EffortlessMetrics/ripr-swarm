@@ -31,10 +31,12 @@ pub(in crate::cli) fn config(args: &[String]) -> Result<(), String> {
 fn parse_validate_root(args: &[String]) -> Result<PathBuf, String> {
     match args {
         [] => Ok(PathBuf::from(".")),
-        [flag] if flag == "--root" => Err("missing value for --root".to_string()),
+        [flag] if flag == "--root" => {
+            Err("missing value for --root; pass a value right after it".to_string())
+        }
         // `--root` is an option token here; `./--root` names the literal path.
         [flag, value, ..] if flag == "--root" && value == "--root" => {
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         }
         [flag, value] if flag == "--root" => Ok(PathBuf::from(value)),
         [flag, _value, extra, ..] if flag == "--root" => {
@@ -333,7 +335,7 @@ path = ".ripr/suppressions\u0000.toml"
         let cases = [
             (
                 args(&["validate", "--root"]),
-                "missing value for --root".to_string(),
+                "missing value for --root; pass a value right after it".to_string(),
             ),
             (
                 args(&["validate", "--wat"]),

@@ -484,3 +484,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_transitive_reach_negative (27)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_negative --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

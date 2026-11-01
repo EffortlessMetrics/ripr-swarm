@@ -73,3 +73,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_build_script_no_test_reach (6)
+
+Reason:
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
+
+Command:
+`cargo xtask goldens bless rust_build_script_no_test_reach --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

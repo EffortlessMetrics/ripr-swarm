@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The sharded Windows advisory lane streams each shard's nextest log to the step output as it is written, and its Summarize and Upload steps now also run when the job is cancelled at its cap. This is intended to leave the SLOW rows and the log so far from a shard that wedges, instead of nothing; it is not yet observed on Windows. The job result is unchanged (#12092).

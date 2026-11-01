@@ -2742,3 +2742,6 @@ mod tests {
         assert_eq!(current_command_platform(), Some(CommandPlatform::Macos));
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs;

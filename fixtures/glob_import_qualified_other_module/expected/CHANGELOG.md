@@ -182,3 +182,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — glob_import_qualified_other_module (16)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+
+Command:
+`cargo xtask goldens bless glob_import_qualified_other_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
