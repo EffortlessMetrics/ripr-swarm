@@ -6,6 +6,11 @@ dir = "target/nextest"
 [profile.ci]
 retries = 0
 failure-output = "immediate-final"
+# #12092/#9272: a test that hangs printed nothing for 30 minutes and then the job
+# hit its cap (#11854, #12017). SLOW rows name it from 2 minutes in; terminate-after
+# 10 (20 minutes) fails it as a named TIMEOUT row before the 40-minute cap, far
+# above the slowest legitimate test, so no passing test changes outcome.
+slow-timeout = { period = "120s", terminate-after = 10 }
 
 # #9272: the sharded Windows advisory lane. A test that never finishes must show
 # up as a named TIMEOUT row instead of cancelling the whole shard and losing its
