@@ -32,6 +32,40 @@ fn source_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
+/// Skip a `/* ... */` block (nested) and return the suffix after the closer.
+fn skip_block_comment(rest: &str) -> &str {
+    debug_assert!(rest.starts_with('*'));
+    let mut tail = &rest[1..];
+    let mut depth = 1usize;
+    while depth > 0 && !tail.is_empty() {
+        if let Some(after) = tail.strip_prefix("/*") {
+            depth += 1;
+            tail = after;
+        } else if let Some(after) = tail.strip_prefix("*/") {
+            depth -= 1;
+            tail = after;
+        } else {
+            let skip = tail.chars().next().map_or(0, |c| c.len_utf8());
+            tail = &tail[skip..];
+        }
+    }
+    tail
+}
+
+/// Push a raw string literal starting at `rest` (`#"..."#` grammar) and return
+/// the suffix after the closing delimiter.
+fn lex_raw_string_literal<'a>(rest: &'a str, out: &mut Vec<String>) -> Option<&'a str> {
+    let hashes = rest.chars().take_while(|c| *c == '#').count();
+    if !rest[hashes..].starts_with('"') {
+        return None;
+    }
+    let body = &rest[hashes + 1..];
+    let closer = format!("\"{}", "#".repeat(hashes));
+    let end = body.find(&closer)?;
+    out.push(body[..end].to_string());
+    Some(&body[end + closer.len()..])
+}
+
 /// Plain `"..."` literals of `source`, escapes kept as written.
 fn string_literals(source: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -64,6 +98,28 @@ fn string_literals(source: &str) -> Vec<String> {
                 let rest = chars.as_str();
                 chars = rest.split_once('\n').map_or("", |(_, tail)| tail).chars();
             }
+            None if ch == '/' && chars.as_str().starts_with('*') => {
+                let rest = chars.as_str();
+                chars = skip_block_comment(rest).chars();
+                prev = None;
+                continue;
+            }
+            None if ch == 'b' && prev.is_none_or(|p: char| !p.is_alphanumeric() && p != '_') => {
+                let rest = chars.as_str();
+                if rest.starts_with('"') {
+                    current = Some(String::new());
+                    chars.next();
+                    prev = Some('"');
+                    continue;
+                }
+                if rest.starts_with('r')
+                    && let Some(tail) = lex_raw_string_literal(&rest[1..], &mut out)
+                {
+                    chars = tail.chars();
+                    prev = None;
+                    continue;
+                }
+            }
             None if ch == '\'' => {
                 // Char literal such as '"' or '\\'; a lifetime has no closer.
                 let rest = chars.as_str();
@@ -82,14 +138,10 @@ fn string_literals(source: &str) -> Vec<String> {
             }
             None if ch == 'r' && prev.is_none_or(|p: char| !p.is_alphanumeric() && p != '_') => {
                 let rest = chars.as_str();
-                let hashes = rest.chars().take_while(|c| *c == '#').count();
-                if rest[hashes..].starts_with('"') {
-                    let body = &rest[hashes + 1..];
-                    let closer = format!("\"{}", "#".repeat(hashes));
-                    if let Some(end) = body.find(&closer) {
-                        out.push(body[..end].to_string());
-                        chars = body[end + closer.len()..].chars();
-                    }
+                if let Some(tail) = lex_raw_string_literal(rest, &mut out) {
+                    chars = tail.chars();
+                    prev = None;
+                    continue;
                 }
             }
             None => {}
@@ -150,6 +202,45 @@ fn stated_ripr_command_span(prose: &str) -> bool {
         let imperative = words.iter().any(|w| IMPERATIVES.contains(&w.as_str()));
         let describing = words.iter().any(|w| DESCRIBING.contains(&w.as_str()));
         if imperative && !describing {
+            return true;
+        }
+    }
+    false
+}
+
+/// When the clause names a conditional step (`if/unless/when/otherwise` plus an
+/// imperative, but not a description `is/are`), the structured remedy must be
+/// non-`none` and marked `conditional`.
+fn stated_conditional_ripr_command_span(prose: &str) -> bool {
+    const IMPERATIVES: &[&str] = &["run", "call", "use", "try", "rerun", "re-run", "execute"];
+    const CONDITIONAL: &[&str] = &["if", "unless", "when", "otherwise"];
+    const DESCRIBING: &[&str] = &["is", "are"];
+    let mut offset = 0;
+    for (index, part) in prose.split('`').enumerate() {
+        let at = offset;
+        offset += part.len() + 1;
+        if index % 2 == 0 {
+            continue;
+        }
+        let is_command = part.trim().strip_prefix("ripr ").is_some_and(|rest| {
+            rest.chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase() || c == '-')
+        });
+        if !is_command || part.len() > MAX_COMMAND_LEN {
+            continue;
+        }
+        let before = &prose[..at.saturating_sub(1)];
+        let clause = before.rsplit([';', ':']).next().unwrap_or(before);
+        let words: Vec<String> = clause
+            .split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
+            .filter(|word| !word.is_empty())
+            .map(str::to_ascii_lowercase)
+            .collect();
+        let imperative = words.iter().any(|w| IMPERATIVES.contains(&w.as_str()));
+        let conditional = words.iter().any(|w| CONDITIONAL.contains(&w.as_str()));
+        let describing = words.iter().any(|w| DESCRIBING.contains(&w.as_str()));
+        if imperative && conditional && !describing {
             return true;
         }
     }
@@ -245,6 +336,17 @@ fn every_message_yields_a_grounded_remedy_or_an_explicit_none() -> Result<(), St
                 }
             }
         }
+        if stated_conditional_ripr_command_span(message) {
+            if matches!(remedy.kind, RemedyKind::None) {
+                failures.push(format!(
+                    "stated conditional command dropped to none: {message}"
+                ));
+            } else if !remedy.conditional {
+                failures.push(format!(
+                    "conditional step not marked conditional: {message}"
+                ));
+            }
+        }
         // Recall: when a step is stated, every `--flag` the message names
         // outside a command span must be reported, and the remedy must say
         // the prose has more.
@@ -320,4 +422,42 @@ fn a_dropped_command_would_be_caught_by_the_corpus_oracle() {
     let prose = "stale; run `ripr doctor --root .` first";
     assert!(stated_ripr_command_span(prose));
     assert_ne!(RefusalRemedy::from_prose(prose).kind, RemedyKind::None);
+}
+
+#[test]
+fn the_oracle_tells_a_conditional_command_from_a_description() {
+    assert!(stated_conditional_ripr_command_span(
+        "if stale, run `ripr doctor`"
+    ));
+    assert!(!stated_conditional_ripr_command_span(
+        "this is run by `ripr x`"
+    ));
+    assert!(stated_conditional_ripr_command_span(
+        "otherwise run `ripr y`"
+    ));
+}
+
+#[test]
+fn a_dropped_conditional_command_would_be_caught_by_the_corpus_oracle() {
+    let prose = "if stale, run `ripr doctor`";
+    assert!(stated_conditional_ripr_command_span(prose));
+    let remedy = RefusalRemedy::from_prose(prose);
+    assert_ne!(remedy.kind, RemedyKind::None);
+    assert!(remedy.conditional);
+}
+
+#[test]
+fn string_literals_skip_comments_and_lex_byte_forms() {
+    let source = r##"
+        /* "not a literal" */
+        /* /* inner */ still comment */
+        br#"raw"#
+        b"bytes"
+        '"'
+        "after" /* /* */ "in comment" */
+    "##;
+    assert_eq!(
+        string_literals(source),
+        vec!["raw".to_string(), "bytes".to_string(), "after".to_string(),]
+    );
 }
