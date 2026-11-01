@@ -81,7 +81,7 @@ Machine catalog: ripr help --json  (this route accepts no other arguments); drop
 
 Global flags (accepted in any position, before or after the command, except on ripr help --json):
   -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
-                  mode, and probe/finding counts; ripr pilot also prints a
+                  mode, and change-point/finding counts; ripr pilot also prints a
                   per-stage timing table after a complete run. A -v/--verbose
                   token is always this global flag, never another flag's
                   value.
@@ -192,7 +192,7 @@ Reports:
 
 What it does:
   Reads changed Rust code (Python and TypeScript in preview), creates
-  mutation-like probes, and estimates whether tests appear to reach, infect,
+  mutation-like change points, and estimates whether tests appear to reach, infect,
   propagate, and reveal the changed behavior through meaningful oracles. It
   does not run mutants.
 
@@ -208,7 +208,7 @@ Quick start (one command per group):
 Start-here path:
   - `ripr doctor` checks whether the local workspace and config can produce evidence.
   - `ripr check` is the ordinary first-value analysis; `ripr pilot` is the guided repo-adoption workflow.
-  - `ripr repair`, `ripr continue`, and `ripr status` are the ordinary repair transaction; `ripr agent repair` and `ripr agent status` stay as the advanced spellings, `ripr agent card` is the compact default handoff for one seam, and the lower-level brief, packet, verify, and receipt commands remain available for control and debugging.
+  - `ripr repair`, `ripr continue`, and `ripr status` are the ordinary repair transaction; `ripr agent repair` and `ripr agent status` stay as the advanced spellings, `ripr agent card` is the compact default handoff for one gap, and the lower-level brief, packet, verify, and receipt commands remain available for control and debugging.
   - `ripr first-pr` and `ripr start-here` compose `target/ripr/reports/start-here.{json,md}` from existing artifacts; they do not run analysis or repair a gap.
   - Safe next action means repair one named gap, regenerate a missing or malformed artifact, or stop on no-action.
   - Missing artifact, stale evidence, wrong root, malformed artifact, and no actionable gap are explicit recovery states.

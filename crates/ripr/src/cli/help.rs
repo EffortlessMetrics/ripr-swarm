@@ -943,7 +943,7 @@ mod tests {
         // #5065: CI authors who only read `--help` must not treat findings as
         // a nonzero lint. The typed contract is docs/EXIT_CODES.md.
         assert!(CHECK_HELP.contains("`exposed`"));
-        assert!(CHECK_HELP.contains("`weakly_exposed`"));
+        assert!(CHECK_HELP.contains("or weak"));
         assert!(CHECK_HELP.contains("A non-zero exit means the analysis did not"));
         assert!(CHECK_HELP.contains("`ripr gate evaluate`"));
         assert!(CHECK_HELP.contains("exit 3 on `blocked`"));

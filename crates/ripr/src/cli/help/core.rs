@@ -76,7 +76,7 @@ Options:
                     target/ripr/pilot under the resolved root (`--root .` pins
                     this directory).
   --mode MODE       instant, draft, fast, deep, or ready. Defaults to draft unless ripr.toml sets one.
-  --max-seams N     Maximum ranked seams in the pilot summary. Defaults to 5.
+  --max-seams N     Maximum ranked gaps in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
                     30000; when the default passes, the same run continues for up to
                     240000 more. An explicit value is a hard limit.
@@ -98,7 +98,7 @@ Progress:
 Environment variables:
   RIPR_PILOT_SEAM_BUDGET        Maximum gaps written to pilot artifacts (repo-exposure.json,
                                  agent-seam-packets.json). Default: 2000. Set to 0 to disable
-                                 the budget and write all seams (may produce very large files).
+                                 the budget and write all gaps (may produce very large files).
                                  When the budget is applied, both artifacts include a
                                  limitations[] disclosure naming the env var and a repair route.
   RIPR_PILOT_REPO_EXPOSURE_BYTES Byte budget for the entries in repo-exposure.json. Default:
@@ -117,7 +117,7 @@ Environment variables:
                                  classify seams it would not rank; `ripr check` keeps 10000.
                                  Set to 0 to analyze every seam. When the
                                  limit cuts the ranking, the terminal and summary state
-                                 "ranked N of M seams" and actionable seam totals become
+                                 the summary reports how many spots were ranked, and actionable totals become
                                  lower bounds until you raise or remove the limit.
   RIPR_GIT_TIMEOUT              Cooperative deadline in seconds for each git invocation
                                  in the current-change discovery path, exactly as `ripr
@@ -133,7 +133,7 @@ Outputs:
   - agent-seam-packets.json
   - pilot-summary.json and pilot-summary.md
 
-The pilot packet is advisory. It reports saved-workspace static seam evidence
+The pilot packet is advisory. It reports saved-workspace static gap evidence
 and points to one next focused test action; it does not run mutation testing,
 edit source files, or configure CI policy. If analysis exceeds the timeout,
 pilot-summary.json and pilot-summary.md are written with status=partial and an
@@ -205,11 +205,11 @@ Common options:
   --quiet           Suppress stderr progress. Unknown totals show no
                     percentage or ETA, and progress makes no speed claim.
   --timeout SECS    Wall-clock analysis budget (600s default; 0 disables;
-                    excludes repo seam-inventory formats). On analysis_timeout,
+                    excludes the repo-wide formats). On analysis_timeout,
                     raise/disable it or narrow the diff; re-run.
 
-Exit status: 0 for a completed run, including `exposed` and `weakly_exposed`
-findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
+Exit status: 0 for a completed run, including findings that are `exposed` or weak.
+`unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
   ripr check
@@ -392,8 +392,8 @@ Options:
                            instead of the one-screen summary.
 
 Exit status:
-  Complete and partial_with_limitations reports exit 0, including `exposed`
-  and `weakly_exposed` findings. A non-zero exit means the analysis did not
+  Complete and partial_with_limitations reports exit 0, including findings
+  that are `exposed` or weak. A non-zero exit means the analysis did not
   complete, not that it disapproved of the diff.
   `unsupported_input` reports exit 2 after the original report is written;
   limitations and recovery routes remain available in that report. Usage and
@@ -602,7 +602,7 @@ Filesystem effects:
 Performance:
   Use --from to skip re-analysis when you already ran
   `ripr check --write-artifact PATH`. This avoids re-parsing the diff and
-  re-classifying every probe — useful for large diffs and scripted workflows
+  re-classifying every changed behavior — useful for large diffs and scripted workflows
   that run check, explain, and context in sequence.
 "#;
 pub(super) const CONTEXT_HELP: &str = r#"Print the per-change context packet for one finding or location.
@@ -745,7 +745,7 @@ root, an ancestor Cargo project bounded by git, or nested in this tree; when
 detected or enabled. Otherwise (for example a Python-only or TypeScript-only
 root with no nested or ancestor Cargo.toml) the analysis profile skips the
 Cargo.toml, cargo, and rustc checks with the reason and does not fail doctor.
-`--profile source-build` still probes cargo and rustc.
+`--profile source-build` still runs cargo and rustc checks.
 
 First-run diagnosis:
   - Detected languages: shallow file-marker scan; each language shows its

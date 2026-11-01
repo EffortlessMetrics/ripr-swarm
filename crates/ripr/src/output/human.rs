@@ -7778,7 +7778,7 @@ mod tests {
 
         assert!(
             digest.contains(
-                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator no\n"
+                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · assertion no\n"
             ),
             "digest must name all five stage states; got:\n{digest}"
         );
@@ -7859,19 +7859,19 @@ mod tests {
 
         assert_eq!(rendered.matches("  Evidence: reach ").count(), 1);
         assert_eq!(rendered.matches("    Stages (static evidence):").count(), 1);
-        assert!(rendered.contains("· discriminator no\n    Stages (static evidence):"));
+        assert!(rendered.contains("· assertion no\n    Stages (static evidence):"));
         for meaning in [
             "reach = test path to changed owner",
             "infection = inputs can activate change",
             "propagation = changed effect reaches output",
             "observation = related test/assertion evidence",
-            "discriminator = assertion distinguishes intended from wrong behavior",
+            "assertion = a test assertion tells intended from wrong behavior",
             "yes = evidence found",
             "weak = partial evidence",
             "no = evidence not found",
             "unknown/opaque = analysis limited",
-            "missing = named discriminator absent from tests",
-            "not established = discriminator unconfirmed",
+            "missing = a needed test input or assertion is absent",
+            "not established = assertion unconfirmed",
             "not applicable = stage unused",
             // #9244 item 4: the words the Summary count line prints.
             "changed behavior = one change point ripr checked",
@@ -7972,7 +7972,7 @@ mod tests {
             Path::new("."),
         );
         assert!(digest.contains(
-            "  Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator weak\n"
+            "  Evidence: reach yes · infection weak · propagation yes · observation yes · assertion weak\n"
         ));
         assert!(digest.contains("observation = related test/assertion evidence"));
         assert!(!digest.contains("observation = assertion observes changed effect"));
@@ -8086,13 +8086,22 @@ mod tests {
 
         assert!(
             digest.contains(
-                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · discriminator missing\n"
+                "  Evidence: reach yes · infection weak · propagation unknown · observation yes · assertion missing\n"
             ),
             "a yes oracle grade on a non-exposed finding must not read as a present discriminator; got:\n{digest}"
         );
         assert!(
             !digest.contains("discriminator yes"),
             "the compact line must not contradict the missing-discriminator wording; got:\n{digest}"
+        );
+
+        assert!(
+            digest.contains("missing = a needed test input or assertion is absent"),
+            "{digest}"
+        );
+        assert!(
+            !digest.contains("missing = no matching assertion in tests"),
+            "{digest}"
         );
 
         // Missing facts also come from assertion gaps, even when the test
@@ -8107,12 +8116,12 @@ mod tests {
             &RiprConfig::default(),
             Path::new("."),
         );
-        assert!(digest.contains("· discriminator missing\n"), "{digest}");
+        assert!(digest.contains("· assertion missing\n"), "{digest}");
         assert!(
-            digest.contains("missing = named discriminator absent from tests"),
+            digest.contains("missing = a needed test input or assertion is absent"),
             "{digest}"
         );
-        assert!(!digest.contains("missing = named input absent from tests"));
+        assert!(!digest.contains("missing = no matching assertion in tests"));
 
         let missing = finding.activation.missing_discriminators.clone();
         finding.activation.missing_discriminators = Vec::new();
@@ -8122,7 +8131,7 @@ mod tests {
             Path::new("."),
         );
         assert!(
-            digest.contains("· discriminator not established\n"),
+            digest.contains("· assertion not established\n"),
             "without a named missing discriminator the token keeps the full line's wording; got:\n{digest}"
         );
 
@@ -8132,7 +8141,7 @@ mod tests {
             &RiprConfig::default(),
             Path::new("."),
         );
-        assert!(digest.contains("· discriminator yes\n"), "{digest}");
+        assert!(digest.contains("· assertion yes\n"), "{digest}");
 
         finding.class = ExposureClass::WeaklyExposed;
         finding.ripr.reveal.discriminate.state = StageState::Weak;
@@ -8142,7 +8151,7 @@ mod tests {
             &RiprConfig::default(),
             Path::new("."),
         );
-        assert!(digest.contains("· discriminator weak\n"), "{digest}");
+        assert!(digest.contains("· assertion weak\n"), "{digest}");
     }
 
     // RIPR-SPEC-0115: a transitive-reach witness line in `evidence` (recognized
