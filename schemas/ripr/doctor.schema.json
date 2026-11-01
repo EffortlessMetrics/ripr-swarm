@@ -243,7 +243,14 @@
     "detected_language": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["language", "status", "adapter_available", "enabled"],
+      "required": [
+        "language",
+        "status",
+        "adapter_available",
+        "enabled",
+        "availability_state",
+        "remediation"
+      ],
       "properties": {
         "language": { "type": "string", "minLength": 1 },
         "status": { "$ref": "#/$defs/language_status" },
@@ -255,6 +262,16 @@
           "description": "Whether the effective configuration enables this language; null when the configuration could not be loaded, so enablement is unknown rather than disabled.",
           "$ref": "#/$defs/nullable_boolean",
           "type": ["boolean", "null"]
+        },
+        "availability_state": {
+          "description": "The shared language-availability state (for example `detected_compiled_disabled` or `detected_not_compiled`). Availability never means the adapter ran or that the support tier moved.",
+          "type": "string",
+          "minLength": 1
+        },
+        "remediation": {
+          "description": "Ordered remediation steps for the availability state; empty when none applies.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
         }
       }
     },
