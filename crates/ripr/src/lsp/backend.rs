@@ -13582,6 +13582,17 @@ mod disk_bytes_equal_text_tests {
             return Err("initial equality check failed".to_string());
         }
         std::fs::write(&path, "abd").map_err(|err| format!("rewrite failed: {err}"))?;
+        // The cache key is (len, mtime, ino). A same-length rewrite inside one
+        // filesystem timestamp tick (coarse on Windows and some Linux
+        // filesystems) keeps the key, so move the mtime explicitly: the test
+        // asserts that a changed key rereads, not how fine the clock is.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| {
+                file.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5))
+            })
+            .map_err(|err| format!("mtime bump failed: {err}"))?;
         if !disk_bytes_equal_text(&path, "abd") {
             return Err("post-rewrite equality check failed".to_string());
         }

@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use crate::app::task_first::{
-    ContinueSelection, RepairStartDecision, RepairSubject, resolve_repair_start,
+    ContinueSelection, RepairRefusalCode, RepairStartDecision, RepairSubject, resolve_repair_start,
     resolve_repair_subject, select_continue_attempt,
 };
 use crate::cli::CommandError;
@@ -181,7 +181,10 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
                 index += 1;
                 let value = expect_value(args, index, "--base")?;
                 if value.trim().is_empty() {
-                    return Err("repair requires a non-empty --base".to_string());
+                    return Err(
+                        "repair requires a non-empty --base; pass a git ref right after --base"
+                            .to_string(),
+                    );
                 }
                 base = Some(value.to_string());
             }
@@ -190,7 +193,10 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
             }
             other => {
                 if other.trim().is_empty() {
-                    return Err("repair requires a non-empty item".to_string());
+                    return Err(
+                        "repair requires a non-empty item; pass the finding or seam ID to repair"
+                            .to_string(),
+                    );
                 }
                 if item.is_some() {
                     return Err(format!(
@@ -236,7 +242,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
                 index += 1;
                 let value = expect_value(args, index, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("continue --attempt requires a non-empty ID".to_string());
+                    return Err("continue --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -271,7 +277,7 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
                 index += 1;
                 let value = expect_value(args, index, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("status --attempt requires a non-empty ID".to_string());
+                    return Err("status --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -318,6 +324,13 @@ pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
     }
 }
 
+/// A façade decision (exit 3) carrying its typed reason code: the code line
+/// goes to stderr beside the unchanged prose (#11597).
+fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
+    eprintln!("{}", code.stderr_line());
+    CommandError::Decision(message)
+}
+
 fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
     let prefix =
@@ -329,7 +342,9 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 super::check::bind_member_selector_item(prefix.as_deref(), &options.root, item)?;
             match resolve_repair_subject(&options.root, &item).map_err(CommandError::from)? {
                 RepairSubject::Seam(seam_id) => seam_id,
-                RepairSubject::Decision(message) => return Err(CommandError::Decision(message)),
+                RepairSubject::Decision(code, message) => {
+                    return Err(typed_decision(code, message));
+                }
             }
         }
         None => match resolve_repair_start(&options.root, options.base.as_deref())
@@ -344,14 +359,17 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
             } => {
                 // A deliberate named outcome, not a failure: the honest
                 // setup/limitation message on stderr, stdout empty.
-                return Err(CommandError::Decision(no_eligible_seam_message(
-                    &options.root,
-                    options.base.as_deref(),
-                    change,
-                    total_seams,
-                    &reasons,
-                    reasons_total,
-                )));
+                return Err(typed_decision(
+                    RepairRefusalCode::NoEligibleSeam,
+                    no_eligible_seam_message(
+                        &options.root,
+                        options.base.as_deref(),
+                        change,
+                        total_seams,
+                        &reasons,
+                        reasons_total,
+                    ),
+                ));
             }
             RepairStartDecision::Action(action, candidates) => {
                 // A deliberate named outcome, not a failure: stderr, stdout
@@ -373,7 +391,8 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                         "{}",
                         crate::app::task_first::render_repair_choice(&candidates, total, &bound)
                     );
-                    return Err(CommandError::Decision(
+                    return Err(typed_decision(
+                        RepairRefusalCode::SeveralEligibleSeams,
                         "no repair started; run one of the commands above".to_string(),
                     ));
                 }
@@ -390,7 +409,8 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                         crate::agent::loop_commands::shell_arg(&bound)
                     ));
                 }
-                return Err(CommandError::Decision(
+                return Err(typed_decision(
+                    RepairRefusalCode::RepairNeedsItem,
                     "repair selected no seam; rerun with an explicit item".to_string(),
                 ));
             }
@@ -559,18 +579,21 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             let root = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
-            Err(CommandError::Decision(format!(
-                "repair attempt `{}` ended {} without a receipt; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; {}",
-                report.attempt.attempt_id,
-                report.attempt.status_class,
-                report.attempt.attempt_id,
-                start_fresh_clause(
-                    &options.root,
-                    &root,
-                    report.attempt.seam_id.as_deref(),
-                    &format!("start fresh: `ripr repair --root {root}`")
-                )
-            )))
+            Err(typed_decision(
+                RepairRefusalCode::AttemptEndedWithoutReceipt,
+                format!(
+                    "repair attempt `{}` ended {} without a receipt; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; {}",
+                    report.attempt.attempt_id,
+                    report.attempt.status_class,
+                    report.attempt.attempt_id,
+                    start_fresh_clause(
+                        &options.root,
+                        &root,
+                        report.attempt.seam_id.as_deref(),
+                        &format!("start fresh: `ripr repair --root {root}`")
+                    )
+                ),
+            ))
         }
         ContinueSelection::EndedUnconfirmed { report } => {
             // The after phase committed, but the status authority's
@@ -587,18 +610,21 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             let root = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
-            Err(CommandError::Decision(format!(
-                "repair attempt `{}` ended `{}` without confirming completion; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; {}",
-                report.attempt.attempt_id,
-                report.attempt.status_class,
-                report.attempt.attempt_id,
-                start_fresh_clause(
-                    &options.root,
-                    &root,
-                    report.attempt.seam_id.as_deref(),
-                    &format!("start fresh when appropriate: `ripr repair --root {root}`")
-                )
-            )))
+            Err(typed_decision(
+                RepairRefusalCode::AttemptCompletionUnconfirmed,
+                format!(
+                    "repair attempt `{}` ended `{}` without confirming completion; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; {}",
+                    report.attempt.attempt_id,
+                    report.attempt.status_class,
+                    report.attempt.attempt_id,
+                    start_fresh_clause(
+                        &options.root,
+                        &root,
+                        report.attempt.seam_id.as_deref(),
+                        &format!("start fresh when appropriate: `ripr repair --root {root}`")
+                    )
+                ),
+            ))
         }
         ContinueSelection::NoneAvailable {
             prepared,
@@ -608,11 +634,14 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             let root = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
-            Err(CommandError::Decision(format!(
-                "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; {}",
-                none_available_detail(prepared, terminal, trust_bound, &root),
-                start_with_repair_clause(&options.root, &root)
-            )))
+            Err(typed_decision(
+                RepairRefusalCode::NoCurrentAttempt,
+                format!(
+                    "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; {}",
+                    none_available_detail(prepared, terminal, trust_bound, &root),
+                    start_with_repair_clause(&options.root, &root)
+                ),
+            ))
         }
         ContinueSelection::Ambiguous { candidates } => {
             let root = crate::agent::loop_commands::shell_arg(
@@ -633,7 +662,8 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             print_retry_line(&format!(
                 "ripr continue --attempt <attempt-id> --root {root}"
             ));
-            Err(CommandError::Decision(
+            Err(typed_decision(
+                RepairRefusalCode::AmbiguousAttempts,
                 "continue selected no attempt; rerun with --attempt".to_string(),
             ))
         }
