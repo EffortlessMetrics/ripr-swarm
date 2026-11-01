@@ -664,8 +664,7 @@ fn terminal_result_rejects_late_eligibility_changes_and_old_attempts() -> Result
 fn refused_eligibility_names_the_stage_that_refused() -> Result<(), String> {
     let source = workflow()?;
     let closed = LIVE_PR.replace("\"open\"", "\"closed\"");
-    let unresolved =
-        LIVE_GRAPHQL.replace("\"nodes\":[]", "\"nodes\":[{\"isResolved\":false}]");
+    let unresolved = LIVE_GRAPHQL.replace("\"nodes\":[]", "\"nodes\":[{\"isResolved\":false}]");
     for (overrides, stage) in [
         (vec![("MOCK_PR", closed.as_str())], "pull_request_state"),
         (
