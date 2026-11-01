@@ -1217,8 +1217,10 @@ impl AnalysisSnapshot {
     pub(super) fn prepare_diagnostic_uri_index(&mut self) {
         let uris = self.diagnostics_by_uri.keys().cloned().collect::<Vec<_>>();
         let mut by_relative = BTreeMap::new();
+        let root = self.root.clone();
+        let mut projector = super::uri::RelativeKeyProjector::new(&root);
         for (position, uri) in uris.iter().enumerate() {
-            if let Some(relative) = file_uri_relative_to_root(&self.root, uri) {
+            if let Some(relative) = projector.relative(uri) {
                 by_relative
                     .entry(relative)
                     .and_modify(|stored| *stored = None)

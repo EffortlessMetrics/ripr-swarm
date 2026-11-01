@@ -294,6 +294,11 @@ impl<'a> RelativeKeyProjector<'a> {
                 .unwrap_or_else(|| canonical_or_normalized(candidate))
         })
     }
+
+    /// [`file_uri_is_within_root`] over the projector's shared resolutions.
+    pub(super) fn is_within_root(&mut self, uri: &Uri) -> bool {
+        self.relative(uri).is_some()
+    }
 }
 
 pub(super) fn file_uris_relative_to_root<'a>(
@@ -402,6 +407,7 @@ fn carries_uri_separator(path: &Path) -> bool {
     }
 }
 
+#[cfg(test)]
 pub(super) fn file_uri_is_within_root(root: &Path, uri: &Uri) -> bool {
     path_from_file_uri(uri).is_some_and(|path| path_is_within_root(root, &path))
 }
