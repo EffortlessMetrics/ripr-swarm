@@ -611,12 +611,27 @@ fn wrapper_that_transforms_the_argument_binds_the_folded_boundary_value() -> Res
 #[test]
 fn wrapper_that_transforms_the_argument_by_an_unreadable_value_transfers_no_boundary_value()
 -> Result<(), String> {
-    for computed in [
-        "    if is_bulk(qty + step()) {\n        5\n    } else {\n        0\n    }",
-        "    if is_bulk((qty + 1) as u32) {\n        5\n    } else {\n        0\n    }",
-        "    if is_bulk(qty * LIMIT) {\n        5\n    } else {\n        0\n    }",
+    // Each stimulus is consistent with its wrapper's runtime value (`qty + 1`
+    // is the boundary at 9, `qty * 1` at 10), so a retained abstention is the
+    // unreadable argument stopping the transfer and not the stimulus
+    // contradicting a folded reading.
+    let plus_one_tests =
+        "        assert_eq!(order_discount(9), 5);\n        assert_eq!(order_discount(8), 0);";
+    for (computed, tests) in [
+        (
+            "    if is_bulk(qty + step()) {\n        5\n    } else {\n        0\n    }",
+            plus_one_tests,
+        ),
+        (
+            "    if is_bulk((qty + 1) as u32) {\n        5\n    } else {\n        0\n    }",
+            plus_one_tests,
+        ),
+        (
+            "    if is_bulk(qty * LIMIT) {\n        5\n    } else {\n        0\n    }",
+            BOUNDARY_TESTS,
+        ),
     ] {
-        let source = bulk_source(computed, BOUNDARY_TESTS).replace(
+        let source = bulk_source(computed, tests).replace(
             "fn is_bulk",
             "const LIMIT: u32 = 1;\nfn step() -> u32 {\n    1\n}\n\nfn is_bulk",
         );
