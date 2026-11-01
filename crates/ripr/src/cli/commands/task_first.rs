@@ -778,34 +778,39 @@ fn no_eligible_seam_message(
         );
     }
     let noun = if total_seams == 1 { "spot" } else { "spots" };
-    let mut message = format!(
-        "ripr looked at {total_seams} {noun} in the code under {root}; none is ready for an automatic repair"
-    );
-    if !reasons.is_empty() {
-        message.push_str(&format!(" ({})", reasons.join("; ")));
-        // The list is bounded (#8728): when the total count exceeds what
-        // was rendered, disclose the remainder instead of letting three
-        // read as the whole story.
-        if reasons_total > reasons.len() {
-            message.push_str(&format!(
-                " (and {} more; run `ripr pilot --root {root}` for per-seam detail)",
-                reasons_total - reasons.len()
-            ));
-        }
-    }
     // The closing step follows what the outcome says about the change
     // (#11111 burn-down): nothing to do when every changed spot is already
     // checked, a hand-written test when the change touches no repairable
     // code, and otherwise the repository-wide route first, since `repair`
     // inventories saved repository seams while `check` reads a diff.
-    match change {
-        NoEligibleChange::AlreadyChecked => message.push_str(&format!(
-            ". Nothing to do for this change: the existing tests already check it, and `{check}` reports the same. To look for gaps elsewhere in the repository, run `ripr pilot --root {root}`"
-        )),
-        NoEligibleChange::NoRepairableCode => message.push_str(&by_hand),
-        NoEligibleChange::Other => message.push_str(&format!(
-            ". Next: `ripr pilot --root {root}` explores the whole repository; when this branch has changed code, `{check}` names a gap in it to test by hand"
-        )),
+    let next = match change {
+        NoEligibleChange::AlreadyChecked => format!(
+            "Nothing to do for this change: the existing tests already check it, and `{check}` reports the same. To look for gaps elsewhere in the repository, run `ripr pilot --root {root}`"
+        ),
+        NoEligibleChange::NoRepairableCode => by_hand.trim_start_matches(". ").to_string(),
+        NoEligibleChange::Other => format!(
+            "Next: `ripr pilot --root {root}` explores the whole repository; when this branch has changed code, `{check}` names a gap in it to test by hand"
+        ),
+    };
+    // #11883: the next step leads on its own sentence and the reasons follow
+    // as one bullet each, instead of one unwrapped line with the command last.
+    let mut message = format!(
+        "ripr looked at {total_seams} {noun} in the code under {root}; none is ready for an automatic repair. {next}"
+    );
+    if !reasons.is_empty() {
+        message.push_str("\nWhy:");
+        for reason in reasons {
+            message.push_str(&format!("\n  - {reason}"));
+        }
+        // The list is bounded (#8728): when the total count exceeds what
+        // was rendered, disclose the remainder instead of letting three
+        // read as the whole story.
+        if reasons_total > reasons.len() {
+            message.push_str(&format!(
+                "\n  (and {} more; run `ripr pilot --root {root}` for per-seam detail)",
+                reasons_total - reasons.len()
+            ));
+        }
     }
     message
 }
@@ -1421,7 +1426,7 @@ mod tests {
         {
             return Err(format!("one seam must be singular:\n{one}"));
         }
-        if one.contains("automatic repair (") {
+        if one.contains("Why:") || one.contains('\n') {
             return Err(format!("no reasons must print no reason list:\n{one}"));
         }
         let several = no_eligible_seam_message(
@@ -1437,12 +1442,24 @@ mod tests {
         );
         for expected in [
             "ripr looked at 3 spots in the code under ",
-            "none is ready for an automatic repair (repair route not ready; configured off). Next:",
+            "none is ready for an automatic repair. Next:",
+            "\n  - repair route not ready\n  - configured off",
             "`ripr check --root ",
         ] {
             if !several.contains(expected) {
                 return Err(format!("limitation must carry {expected:?}:\n{several}"));
             }
+        }
+        // #11883: next step on the first line, then `Why:` and one indented
+        // bullet per reason.
+        let lines: Vec<&str> = several.lines().collect();
+        if lines.len() != 4
+            || !lines[0].contains("Next:")
+            || lines[1] != "Why:"
+            || lines[2] != "  - repair route not ready"
+            || lines[3] != "  - configured off"
+        {
+            return Err(format!("layout must be next step then bullets:\n{several}"));
         }
         // A bounded reason list discloses the omitted remainder (#8728).
         let bounded = no_eligible_seam_message(
@@ -1453,7 +1470,12 @@ mod tests {
             &["repair route not ready".to_string()],
             4,
         );
-        if !bounded.contains("(and 3 more; run `ripr pilot --root ") {
+        if !bounded
+            .lines()
+            .last()
+            .is_some_and(|l| l.starts_with("  (and 3 more; run `ripr pilot --root "))
+            || !bounded.contains("\n  (and 3 more; run `ripr pilot --root ")
+        {
             return Err(format!(
                 "bounded reasons must disclose the rest:\n{bounded}"
             ));
