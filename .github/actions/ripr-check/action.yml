@@ -6,7 +6,9 @@ inputs:
   version:
     description: >-
       ripr release to install. The prebuilt archive is checked against its
-      published SHA-256; where none exists the action falls back to
+      published SHA-256 (a missing or mismatched checksum, or a bad archive,
+      fails the step); only where no prebuilt archive exists for the runner,
+      or it cannot be downloaded, does the action fall back to
       `cargo install ripr --version <version> --locked`.
     required: false
     default: '0.10.0'
