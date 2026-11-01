@@ -2588,6 +2588,18 @@ pub(crate) fn non_rust_item_language(item: &str) -> Option<&'static str> {
 /// no repair start (#9102). `file` is the finding's file, or empty when only
 /// the gap id names the language.
 pub(crate) fn no_seam_inventory_reason(language: &str, file: &str) -> String {
+    render_no_seam_inventory_reason(language, file, false)
+}
+
+/// The same terminal reason in the plain words the default `ripr check`
+/// screen uses (RIPR-SPEC-0122, glossary: seam to spot, discriminator to
+/// missing check). Only the human check triage renders this; repair, agent
+/// and JSON surfaces keep `no_seam_inventory_reason` (#11619).
+pub(crate) fn no_seam_inventory_reason_plain(language: &str, file: &str) -> String {
+    render_no_seam_inventory_reason(language, file, true)
+}
+
+fn render_no_seam_inventory_reason(language: &str, file: &str, plain: bool) -> String {
     let subject = if file.is_empty() {
         format!("this {language} gap")
     } else {
@@ -2600,8 +2612,13 @@ pub(crate) fn no_seam_inventory_reason(language: &str, file: &str) -> String {
     } else {
         ""
     };
+    let (inventory, start_noun, missing) = if plain {
+        ("spot list", "spot", "check")
+    } else {
+        ("seam inventory", "seam", "discriminator")
+    };
     format!(
-        "the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so {subject} has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command{verified_route}"
+        "the {inventory} behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so {subject} has no {start_noun} to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing {missing} to that test by hand and run the printed verify command{verified_route}"
     )
 }
 
@@ -4867,6 +4884,33 @@ pub(crate) mod tests {
             python.contains("run the printed verify command"),
             "{python}"
         );
+    }
+
+    /// #11619: the check screen's plain terminal reason keeps the same route
+    /// and verify pointers as the shared reason and only swaps jargon, so the
+    /// repair, agent and JSON surfaces stay on the shared wording.
+    #[test]
+    fn plain_terminal_reason_swaps_only_jargon() {
+        for (language, file) in [
+            ("TypeScript", "src/pricing.ts"),
+            ("Python", "pricing/core.py"),
+        ] {
+            let shared = no_seam_inventory_reason(language, file);
+            let plain = no_seam_inventory_reason_plain(language, file);
+            assert!(shared.contains("seam inventory") && shared.contains("discriminator"));
+            assert!(
+                !plain.contains("seam") && !plain.contains("discriminator"),
+                "{plain}"
+            );
+            assert_eq!(
+                plain,
+                shared
+                    .replace("seam inventory", "spot list")
+                    .replace("no seam to start", "no spot to start")
+                    .replace("missing discriminator", "missing check"),
+                "plain wording drifted from the shared route"
+            );
+        }
     }
 
     /// #9102: a canonical gap id or preview finding id of a routed non-Rust

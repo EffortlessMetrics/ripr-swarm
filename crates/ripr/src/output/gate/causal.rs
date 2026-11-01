@@ -53,7 +53,7 @@ impl CausalDeltaAuthority {
         let mut unknown_items = coverage
             .get("unknown_items")
             .and_then(Value::as_u64)
-            .ok_or_else(|| "canonical delta coverage missing unknown_items".to_string())?
+            .ok_or_else(|| "canonical delta coverage missing unknown_items; regenerate the input with the command that wrote it, then rerun".to_string())?
             as usize;
         let producer_claimed_complete = coverage
             .get("complete")

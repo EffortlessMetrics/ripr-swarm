@@ -1,2 +1,0 @@
-crates/ripr/src/output/first_pr/validation.rs|selected command context directory is unavailable: {error}
-crates/ripr/src/output/first_pr/validation.rs|selected command context {step}.{field} is missing or not a string/null

@@ -165,6 +165,26 @@ case = "loop-accumulator-bound-input"
 reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
 
 [[entry]]
+case = "macro-export-crate-call"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-crate-call. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-export-group-import"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-group-import. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-export-path-boundary"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-path-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-module-child-boundary"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-module-child-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-module-import-boundary"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-module-import-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
 case = "method-hop-field-read-rebound"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 

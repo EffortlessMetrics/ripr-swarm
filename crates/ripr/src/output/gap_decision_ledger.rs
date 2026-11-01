@@ -1351,8 +1351,11 @@ fn input_findings_total_from_source_value(source_value: Option<&Value>) -> usize
 }
 
 fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let items = value
         .get("finding_alignment")
         .and_then(|alignment| alignment.get("items"))
@@ -1462,8 +1465,11 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
 }
 
 fn gap_records_from_repo_exposure_json(contents: &str) -> Result<Vec<GapRecord>, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let seams = value
         .get("seams")
         .and_then(Value::as_array)

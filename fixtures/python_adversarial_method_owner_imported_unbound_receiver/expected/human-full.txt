@@ -76,7 +76,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_adversarial_method_owner_imported_unbound_receiver/input --diff <cwd>/fixtures/python_adversarial_method_owner_imported_unbound_receiver/diff.patch --mode fast probe:src_auth.py:python_preview:d982555b
   ripr context --root <cwd>/fixtures/python_adversarial_method_owner_imported_unbound_receiver/input --diff <cwd>/fixtures/python_adversarial_method_owner_imported_unbound_receiver/diff.patch --mode fast --at probe:src_auth.py:python_preview:d982555b

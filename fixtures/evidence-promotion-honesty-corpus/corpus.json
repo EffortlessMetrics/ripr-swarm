@@ -2926,6 +2926,30 @@
       ]
     },
     {
+      "id": "rust_returned_comparison_rival_import",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/returned_comparison_rival_import",
+      "vector": "bare_rival_import_cannot_supply_owner_boundary_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
       "id": "rust_predicate_boundary_oracle_refused",
       "language": "rust",
       "tier": "pure",
@@ -14266,6 +14290,10 @@
       "probe_family": "predicate",
       "assertions": [
         {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        },
+        {
           "type": "must_not_report_clean"
         },
         {
@@ -15527,7 +15555,7 @@
         },
         {
           "type": "expected_class",
-          "class": "static_unknown"
+          "class": "infection_unknown"
         }
       ]
     },
@@ -15551,7 +15579,7 @@
         },
         {
           "type": "expected_class",
-          "class": "static_unknown"
+          "class": "infection_unknown"
         }
       ]
     },
@@ -15575,7 +15603,7 @@
         },
         {
           "type": "expected_class",
-          "class": "static_unknown"
+          "class": "infection_unknown"
         }
       ]
     },
