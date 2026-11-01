@@ -45,7 +45,8 @@ authorities into one strict JSON document on `ripr help --json`. The
 document carries:
 
 - `schema_version` (integer, currently `4`; bumped on any material DTO shape
-  change, pinned by tests, and registered in `docs/OUTPUT_SCHEMA.md`),
+  change once per landed change, not per iteration within one PR (a version
+  no release has shipped is still open to shape edits), pinned by tests, and registered in `docs/OUTPUT_SCHEMA.md`),
   `product_version`, and `catalog_contract_version`;
 - `commands`: one row per C1 catalog entry joined to its C2 metadata row on
   the catalog identity — id, path, class, discovery posture, replacement or
