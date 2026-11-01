@@ -322,17 +322,26 @@ fn split_guard(pattern: &str) -> Option<(&str, bool)> {
 /// Whether `int`, `float`, `str` and `bool` still name the builtins: no
 /// parameter, assignment, `def`/`class`, import or star import of the file
 /// rebinds one, so a `case int()` class pattern means what it spells.
-fn builtin_classes_intact(owner: &PythonOwner, owner_source: &str) -> bool {
-    const BUILTINS: [&str; 4] = ["int", "float", "str", "bool"];
+pub(super) fn builtin_classes_intact(owner: &PythonOwner, owner_source: &str) -> bool {
+    builtin_names_intact(owner, owner_source, &["int", "float", "str", "bool"])
+}
+
+/// Whether every name in `builtins` still names the builtin in the owner's
+/// file (same rebinding rules as [`builtin_classes_intact`]).
+pub(super) fn builtin_names_intact(
+    owner: &PythonOwner,
+    owner_source: &str,
+    builtins: &[&str],
+) -> bool {
     if owner
         .parameters
         .iter()
-        .any(|parameter| BUILTINS.contains(&parameter.name.as_str()))
+        .any(|parameter| builtins.contains(&parameter.name.as_str()))
     {
         return false;
     }
     let lines: Vec<&str> = owner_source.lines().collect();
-    BUILTINS.iter().all(|name| {
+    builtins.iter().all(|name| {
         !lines.iter().any(|line| binds_name(line.trim(), name))
             && !lines.iter().any(|line| {
                 let trimmed = line.trim();
@@ -409,7 +418,7 @@ fn is_capture_name(text: &str) -> bool {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ScalarKind {
+pub(super) enum ScalarKind {
     None,
     Bool,
     Int,
@@ -417,7 +426,7 @@ enum ScalarKind {
     Str,
 }
 
-fn scalar_kind(value: &str) -> Option<ScalarKind> {
+pub(super) fn scalar_kind(value: &str) -> Option<ScalarKind> {
     match value {
         "None" => return Some(ScalarKind::None),
         "True" | "False" => return Some(ScalarKind::Bool),
