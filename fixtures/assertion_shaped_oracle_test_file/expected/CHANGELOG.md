@@ -505,3 +505,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (34)
+
+Reason:
+RIPR-SPEC-0108: the narrowed identical-arm guard leaves this differing-arm fixture at its previous confidence (#10880)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

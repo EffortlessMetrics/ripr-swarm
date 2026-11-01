@@ -1,7 +1,7 @@
-# Registers the self-closed `if` statement tail controls (#10880) under RIPR-SPEC-0108.
+# Registers the identical inline-arm controls (#10880) under RIPR-SPEC-0108.
 [[extend]]
 id = "RIPR-SPEC-0108"
 tests = [
-  "crates/ripr/src/analysis/classify/flow.rs::a_closed_one_line_if_statement_does_not_lend_the_next_line_as_its_branch_value",
-  "crates/ripr/src/analysis/classify/flow.rs::an_open_block_header_still_lends_its_first_line_as_the_branch_value",
+  "crates/ripr/src/analysis/classify/flow.rs::identical_inline_arms_do_not_lend_the_next_line_as_a_branch_value",
+  "crates/ripr/src/analysis/classify/flow.rs::differing_inline_arms_and_closures_keep_the_adjacent_value",
 ]

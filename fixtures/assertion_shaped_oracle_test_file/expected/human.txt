@@ -11,8 +11,8 @@ Start here:
   State: ripr cannot tell from reading the code whether tests would notice this
   Safe next action: look at the reason below before adding a test
   File: ./src/fragment_checks.rs:8
-  Static exposure: unknown (severity: warning, confidence 0.61)
-  Why unknown: ripr could not tell which inputs would trigger the change, and could not follow it to something a test can check
+  Static exposure: unknown (severity: warning, confidence 0.66)
+  Why unknown: the change reaches something a test can check, but ripr could not tell which inputs would trigger it
   Gap ID (for scripts): gap:rust:src/fragment_checks.rs:assert_workspace_source_paths_are_stable:predicate_boundary:predicate:fragment.crate_root.is_none
   Changed behavior: fragment.crate_root.is_none()
   Missing check (1 of 3): No detected boundary input for the changed predicate
@@ -23,7 +23,7 @@ Start here:
     this inspection finds a gap. Compare the original and changed implementations with a focused run
     using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static
     classification may remain unknown
-  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
+  Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
@@ -36,7 +36,7 @@ Start here:
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach assert_workspace_source_paths_are_stable: workspace_source_paths_are_stable
     - infection unknown: Predicate changed, but no literal boundary was visible in the changed expression
-    - 4 more detail line(s) in --format human-full
+    - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/assertion_shaped_oracle_test_file/input --diff <cwd>/fixtures/assertion_shaped_oracle_test_file/diff.patch --mode fast probe:src_fragment_checks.rs:predicate:41d9e03a

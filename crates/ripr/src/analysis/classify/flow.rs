@@ -1017,6 +1017,33 @@ fn chain_repeats_adjacent_value(body: &str, value_offset: usize) -> bool {
     false
 }
 
+/// Whether a later `{ .. }` arm on one line repeats the first arm's statement.
+fn inline_arms_repeat_the_first(line: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
+    let mut arms = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, ch) in masked.char_indices() {
+        match ch {
+            '{' => {
+                if depth == 0 {
+                    start = index + 1;
+                }
+                depth += 1;
+            }
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    arms.push(masked[start..index].trim().trim_end_matches(';').trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    arms.split_first()
+        .is_some_and(|(first, rest)| !first.is_empty() && rest.contains(first))
+}
+
 fn next_branch_value(
     owner_fn: Option<&FunctionSummary>,
     probe_line: usize,
@@ -1028,13 +1055,17 @@ fn next_branch_value(
     if chain_repeats_adjacent_value(&function.body, adjacent_offset) {
         return None;
     }
-    // A predicate line that closes its own block (`if c { r = 1; } else { r = 1; }`)
-    // has no branch body on the next line: that line is whatever follows the
-    // statement, so it is not the branch's produced value (#10880).
-    if function.body.lines().nth(start_index).is_some_and(|line| {
-        let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
-        masked.trim().ends_with(['}', ';'])
-    }) {
+    // A one-line `if` whose arms hold the same statement (`if c { r = 1; }
+    // else { r = 1; }`) decides nothing the next line can observe, so that
+    // line is not the predicate's produced value (#10880; #9843 for the tail
+    // form). Arms that differ keep the adjacency rule: `let r = if c { 1 }
+    // else { 0 };` really does feed `r` to the next line.
+    if function
+        .body
+        .lines()
+        .nth(start_index)
+        .is_some_and(inline_arms_repeat_the_first)
+    {
         return None;
     }
     function
@@ -2133,7 +2164,7 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_one_line_if_statement_does_not_lend_the_next_line_as_its_branch_value() {
+    fn identical_inline_arms_do_not_lend_the_next_line_as_a_branch_value() {
         for tail in ["r + 0", "r * 2", "r.max(0)"] {
             let body = format!(
                 "pub fn f(x: i32) -> i32 {{\n    let r;\n    if x > 5 {{ r = 1; }} else {{ r = 1; }}\n    {tail}\n}}"
@@ -2153,16 +2184,24 @@ mod tests {
     }
 
     #[test]
-    fn an_open_block_header_still_lends_its_first_line_as_the_branch_value() {
-        let owner = tail_owner(
-            "pub fn f(x: i32) -> i32 {\n    if x > 5 {\n        r + 0\n    } else {\n        2\n    }\n}",
-        );
-        let probe = probe(ProbeFamily::Predicate, "x > 5", 2);
+    fn differing_inline_arms_and_closures_keep_the_adjacent_value() {
+        for (body, line) in [
+            (
+                "pub fn f(x: i32) -> i32 {\n    let r = if x > 5 { 1 } else { 0 };\n    r + 0\n}",
+                2,
+            ),
+            (
+                "pub fn f(x: u32) -> u32 {\n    let _unused = || x > 1;\n    7\n}",
+                2,
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 5", line);
 
-        let sinks = local_flow_sinks(&probe, Some(&owner));
+            let sinks = local_flow_sinks(&probe, Some(&owner));
 
-        assert_eq!(sinks.len(), 1);
-        assert_eq!(sinks[0].text, "r + 0");
+            assert_eq!(sinks.len(), 1, "`{body}`: {sinks:?}");
+        }
     }
 
     #[test]
