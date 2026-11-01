@@ -651,11 +651,9 @@ mod tests {
             "{projected:?}"
         );
         assert!(
-            projected
-                .iter()
-                .any(|line| line.starts_with(
-                    "repair_action: add a focused assertion for the missing check `amount == threshold`"
-                )),
+            projected.iter().any(|line| line.starts_with(
+                "repair_action: add a focused assertion for the missing check `amount == threshold`"
+            )),
             "{projected:?}"
         );
         assert!(
