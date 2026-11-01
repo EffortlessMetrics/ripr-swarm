@@ -16761,6 +16761,10 @@ Field contract:
   `limitations[]` entry. A bound at or above the eligible count changes
   nothing, and the document is the unbounded one. `packets_total` stays the
   rendered `packets` length; `packets_eligible` is the packet-eligible count.
+  When the cut drops `write_targeted_test` packets themselves (more of them
+  than the bound), the entry also carries `actionable_packets_omitted` (their
+  count) and `actionable_packets_message`; both are absent when only the
+  `inspect_static_limitation` tail is cut (#12064).
   The `next` block, packet eligibility, `task` and classification are
   unchanged by the bound. `ripr check --format agent-seam-packets-json` is
   not bounded.
