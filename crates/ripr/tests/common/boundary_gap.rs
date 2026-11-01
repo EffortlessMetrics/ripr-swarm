@@ -5,12 +5,15 @@
 //! substitution cannot hide behind a second program lookup.
 
 use super::common::fixture_git::{fixture_git_ok, fixture_git_output};
+use ripr::process_owner::OwnedProcess;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::ffi::OsStr;
+use std::cell::Cell;
+use std::ffi::{OsStr, OsString};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[path = "printed_words.rs"]
 mod printed_words;
@@ -103,10 +106,358 @@ impl Drop for JourneyRoots {
     }
 }
 
+impl JourneyRoots {
+    /// Explicit cleanup is required before an installed journey is complete.
+    /// Drop remains a best-effort fallback for a failed assertion.
+    pub(crate) fn cleanup(&self) -> Result<(), String> {
+        for path in [
+            &self.fixture,
+            &self.install,
+            &self.cargo_target,
+            &self.decoy,
+        ] {
+            match std::fs::remove_dir_all(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("cleanup {} failed: {error}", path.display())),
+            }
+        }
+        Ok(())
+    }
+}
+
 pub(crate) struct InstalledCandidate {
     pub(crate) binary: PathBuf,
     pub(crate) digest: String,
     pub(crate) version: String,
+    pub(crate) evidence: Option<CommandEvidence>,
+}
+
+/// These are admission inputs, not a package-producer provenance claim. The
+/// package lane binds them to its installed artifact and uploads the evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InstalledInputs {
+    pub(crate) binary: PathBuf,
+    pub(crate) digest: String,
+    pub(crate) version: String,
+    pub(crate) evidence_dir: PathBuf,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum OrdinaryMode {
+    CopiedCargoBinary,
+    Installed(InstalledInputs),
+}
+
+pub(crate) const ORDINARY_INPUT_KEYS: [&str; 5] = [
+    "RIPR_ORDINARY_MODE",
+    "RIPR_ORDINARY_INSTALLED_BINARY",
+    "RIPR_ORDINARY_EXPECTED_SHA256",
+    "RIPR_ORDINARY_EXPECTED_VERSION",
+    "RIPR_ORDINARY_EVIDENCE_DIR",
+];
+
+/// An injected reader keeps refusal controls independent of process-wide
+/// environment mutation. Any partial opt-in refuses instead of falling back.
+pub(crate) fn ordinary_mode(
+    read: impl FnMut(&str) -> Option<OsString>,
+) -> Result<OrdinaryMode, String> {
+    let values = ORDINARY_INPUT_KEYS.map(read);
+    if values.iter().all(Option::is_none) {
+        return Ok(OrdinaryMode::CopiedCargoBinary);
+    }
+    let mut inputs = Vec::new();
+    for (key, value) in ORDINARY_INPUT_KEYS.iter().zip(values) {
+        let value = value
+            .ok_or_else(|| format!("strict installed ordinary journey requires {key}"))?
+            .into_string()
+            .map_err(|invalid| {
+                format!(
+                    "{key} must be UTF-8 for exact command evidence ({} OS bytes supplied)",
+                    invalid.as_encoded_bytes().len()
+                )
+            })?;
+        if value.is_empty() {
+            return Err(format!(
+                "strict installed ordinary journey requires nonempty {key}"
+            ));
+        }
+        inputs.push(value);
+    }
+    if inputs[0] != "installed" {
+        return Err("RIPR_ORDINARY_MODE must be installed when any ordinary input is set".into());
+    }
+    let binary = PathBuf::from(&inputs[1]);
+    let evidence_dir = PathBuf::from(&inputs[4]);
+    if !binary.is_absolute() || !evidence_dir.is_absolute() {
+        return Err("installed binary and evidence directory must be absolute paths".into());
+    }
+    if inputs[2].len() != 64 || !inputs[2].bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("RIPR_ORDINARY_EXPECTED_SHA256 must contain exactly 64 hex digits".into());
+    }
+    validate_full_version(&inputs[3])?;
+    Ok(OrdinaryMode::Installed(InstalledInputs {
+        binary,
+        digest: format!("sha256:{}", inputs[2].to_ascii_lowercase()),
+        version: inputs[3].clone(),
+        evidence_dir,
+    }))
+}
+
+fn validate_full_version(version: &str) -> Result<(), String> {
+    let Some((release, source)) = version
+        .strip_prefix("ripr ")
+        .and_then(|v| v.split_once(" ("))
+    else {
+        return Err("expected version must be the complete ripr --version line".into());
+    };
+    let source = source.strip_suffix(')').unwrap_or("");
+    let source = source.strip_suffix("-dirty").unwrap_or(source);
+    if release.is_empty()
+        || release.chars().any(char::is_whitespace)
+        || source.len() != 40
+        || !source.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err("expected ripr version must include its full 40-digit source identity".into());
+    }
+    Ok(())
+}
+
+/// Raw command records are kept outside the disposable fixture. A completed
+/// record is written only after all controls, identity readback and cleanup.
+pub(crate) struct CommandEvidence {
+    root: PathBuf,
+    next_command: Cell<usize>,
+}
+
+impl CommandEvidence {
+    pub(crate) fn create(root: &Path) -> Result<Self, String> {
+        if !root.is_absolute() {
+            return Err("evidence directory must be absolute".into());
+        }
+        std::fs::create_dir(root)
+            .map_err(|error| format!("create fresh evidence {}: {error}", root.display()))?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            next_command: Cell::new(0),
+        })
+    }
+
+    pub(crate) fn write(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        let path = self.root.join(name);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| format!("create evidence {}: {error}", path.display()))?;
+        file.write_all(bytes)
+            .map_err(|error| format!("write evidence {}: {error}", path.display()))
+    }
+
+    pub(crate) fn json(&self, name: &str, value: &Value) -> Result<(), String> {
+        self.write(name, &json_bytes(value)?)
+    }
+
+    fn command_dir(&self) -> Result<PathBuf, String> {
+        let ordinal = self.next_command.get();
+        self.next_command.set(ordinal + 1);
+        let directory = self.root.join(format!("command-{ordinal:03}"));
+        std::fs::create_dir(&directory)
+            .map_err(|error| format!("create command evidence: {error}"))?;
+        Ok(directory)
+    }
+}
+
+fn json_bytes(value: &Value) -> Result<Vec<u8>, String> {
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+impl InstalledCandidate {
+    pub(crate) fn record(&self, name: &str, value: &Value) -> Result<(), String> {
+        if let Some(evidence) = &self.evidence {
+            evidence.json(name, value)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn record_source(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        if let Some(evidence) = &self.evidence {
+            evidence.write(name, bytes)?;
+        }
+        Ok(())
+    }
+
+    fn verify_digest(&self) -> Result<(), String> {
+        if self.evidence.is_some() && file_digest(&self.binary)? != self.digest {
+            return Err("admitted installed executable changed before invocation".into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn verify_final_identity(&self) -> Result<(), String> {
+        self.verify_digest()?;
+        let output = run_program_recorded(
+            &self.binary,
+            None,
+            &["--version"],
+            &[],
+            self.evidence.as_ref(),
+            COMMAND_BUDGET,
+        )?;
+        require_success("final installed ripr --version", &output)?;
+        if version_line(&output)? != self.version {
+            return Err("installed executable full version changed during the journey".into());
+        }
+        self.verify_digest()?;
+        Ok(())
+    }
+}
+
+pub(crate) fn ordinary_candidate(roots: &JourneyRoots) -> Result<InstalledCandidate, String> {
+    match ordinary_mode(|key| std::env::var_os(key))? {
+        OrdinaryMode::CopiedCargoBinary => {
+            eprintln!("ordinary journey input: copied_cargo_binary (workspace regression)");
+            install_candidate(&roots.install)
+        }
+        OrdinaryMode::Installed(inputs) => {
+            let parent = inputs
+                .evidence_dir
+                .parent()
+                .ok_or_else(|| "evidence directory has no parent".to_string())?
+                .canonicalize()
+                .map_err(|error| format!("resolve evidence parent: {error}"))?;
+            for disposable in [
+                &roots.fixture,
+                &roots.install,
+                &roots.cargo_target,
+                &roots.decoy,
+            ] {
+                if parent.starts_with(
+                    disposable
+                        .canonicalize()
+                        .map_err(|error| error.to_string())?,
+                ) {
+                    return Err("strict evidence must be outside disposable journey roots".into());
+                }
+            }
+            admit_installed_candidate(inputs)
+        }
+    }
+}
+
+pub(crate) fn admit_installed_candidate(
+    inputs: InstalledInputs,
+) -> Result<InstalledCandidate, String> {
+    let evidence = CommandEvidence::create(&inputs.evidence_dir)?;
+    evidence.json("started.json", &serde_json::json!({
+        "state": "not_completed",
+        "input_kind": "requested_installed_executable",
+        "requested_binary": inputs.binary,
+        "expected_sha256": inputs.digest,
+        "expected_full_version": inputs.version,
+        "package_provenance": "supplied by invoking package lane; not inferred from executable identity",
+    }))?;
+    let admission = (|| {
+        if !inputs.binary.is_absolute() {
+            return Err("installed executable must be absolute".to_string());
+        }
+        validate_full_version(&inputs.version)?;
+        let binary = inputs
+            .binary
+            .canonicalize()
+            .map_err(|error| format!("resolve installed executable: {error}"))?;
+        if Path::new(env!("CARGO_BIN_EXE_ripr"))
+            .canonicalize()
+            .ok()
+            .as_ref()
+            == Some(&binary)
+        {
+            return Err(
+                "strict installed mode refuses the workspace CARGO_BIN_EXE_ripr path".into(),
+            );
+        }
+        let metadata = std::fs::metadata(&binary)
+            .map_err(|error| format!("stat installed executable: {error}"))?;
+        if !metadata.is_file() {
+            return Err("installed executable is not a regular file".into());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            if metadata.permissions().mode() & 0o111 == 0 {
+                return Err("installed input is not executable".into());
+            }
+        }
+        let digest = file_digest(&binary)?;
+        if digest != inputs.digest {
+            return Err(format!(
+                "installed executable SHA-256 mismatch: expected {}, got {digest}",
+                inputs.digest
+            ));
+        }
+        let version_output = run_program_recorded(
+            &binary,
+            None,
+            &["--version"],
+            &[],
+            Some(&evidence),
+            COMMAND_BUDGET,
+        )?;
+        require_success("admitted installed ripr --version", &version_output)?;
+        let version = version_line(&version_output)?;
+        if version != inputs.version {
+            return Err(format!(
+                "installed full version mismatch: expected {:?}, got {version:?}",
+                inputs.version
+            ));
+        }
+        if file_digest(&binary)? != digest {
+            return Err("installed executable changed during version admission".into());
+        }
+        evidence.json(
+            "admitted.json",
+            &serde_json::json!({
+                "resolved_binary": binary, "sha256": digest, "full_version": version,
+            }),
+        )?;
+        Ok((binary, digest, version))
+    })();
+    match admission {
+        Ok((binary, digest, version)) => {
+            eprintln!(
+                "ordinary journey input: admitted_installed_executable; raw evidence {}",
+                inputs.evidence_dir.display()
+            );
+            Ok(InstalledCandidate {
+                binary,
+                digest,
+                version,
+                evidence: Some(evidence),
+            })
+        }
+        Err(error) => {
+            evidence.json(
+                "admission-refused.json",
+                &serde_json::json!({"error": error}),
+            )?;
+            Err(error)
+        }
+    }
+}
+
+fn version_line(output: &Output) -> Result<String, String> {
+    let text = std::str::from_utf8(&output.stdout)
+        .map_err(|error| format!("installed --version was not UTF-8: {error}"))?;
+    let line = text
+        .strip_suffix("\r\n")
+        .or_else(|| text.strip_suffix('\n'))
+        .unwrap_or(text);
+    if line.is_empty() || line.contains(['\r', '\n']) {
+        return Err("installed --version did not print exactly one nonempty line".into());
+    }
+    Ok(line.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +479,17 @@ pub(crate) struct FocusedExecution {
     pub(crate) ignored: u64,
     pub(crate) exit_code: Option<i32>,
     pub(crate) command: Vec<String>,
+}
+
+impl FocusedExecution {
+    pub(crate) fn as_json(&self) -> Value {
+        serde_json::json!({
+            "selector": self.selector, "selected": self.selected,
+            "executed": self.executed, "passed": self.passed,
+            "failed": self.failed, "ignored": self.ignored,
+            "native_exit_code": self.exit_code, "command": self.command,
+        })
+    }
 }
 
 pub(crate) fn unique_dir(label: &str) -> Result<PathBuf, String> {
@@ -236,9 +598,7 @@ pub(crate) fn install_candidate(install_root: &Path) -> Result<InstalledCandidat
             installed.display()
         )
     })?;
-    let bytes = std::fs::read(&installed)
-        .map_err(|error| format!("read installed binary failed: {error}"))?;
-    let digest = sha256_hex(&bytes);
+    let digest = file_digest(&installed)?;
     let version_output = run_program(&installed, None, &["--version"], &[])?;
     if !version_output.status.success() {
         return Err(command_failure("installed ripr --version", &version_output));
@@ -254,6 +614,7 @@ pub(crate) fn install_candidate(install_root: &Path) -> Result<InstalledCandidat
         binary: installed,
         digest,
         version,
+        evidence: None,
     })
 }
 
@@ -305,13 +666,18 @@ pub(crate) fn run_installed(
     decoy_dir: &Path,
     args: &[&str],
 ) -> Result<Output, String> {
+    candidate.verify_digest()?;
     let path = isolated_path(decoy_dir)?;
-    run_program(
+    let output = run_program_recorded(
         &candidate.binary,
         Some(fixture),
         args,
         &[(OsStr::new("PATH"), path.as_os_str())],
-    )
+        candidate.evidence.as_ref(),
+        COMMAND_BUDGET,
+    )?;
+    candidate.verify_digest()?;
+    Ok(output)
 }
 
 pub(crate) fn require_success(label: &str, output: &Output) -> Result<(), String> {
@@ -586,6 +952,15 @@ pub(crate) fn run_focused_cargo_test(
     cargo_target: &Path,
     selector: &str,
 ) -> Result<FocusedExecution, String> {
+    run_focused_cargo_test_recorded(fixture, cargo_target, selector, None)
+}
+
+pub(crate) fn run_focused_cargo_test_recorded(
+    fixture: &Path,
+    cargo_target: &Path,
+    selector: &str,
+    evidence: Option<&CommandEvidence>,
+) -> Result<FocusedExecution, String> {
     std::fs::create_dir_all(cargo_target)
         .map_err(|error| format!("create cargo target dir failed: {error}"))?;
     let manifest = fixture.join("Cargo.toml");
@@ -603,7 +978,7 @@ pub(crate) fn run_focused_cargo_test(
         "--nocapture".to_string(),
     ];
     let args: Vec<&str> = command.iter().skip(1).map(String::as_str).collect();
-    let output = run_program(
+    let output = run_program_recorded(
         "cargo",
         Some(fixture),
         &args,
@@ -611,6 +986,8 @@ pub(crate) fn run_focused_cargo_test(
             (OsStr::new("CARGO_TARGET_DIR"), cargo_target.as_os_str()),
             (OsStr::new("CARGO_TERM_COLOR"), OsStr::new("never")),
         ],
+        evidence,
+        COMMAND_BUDGET,
     )?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -707,15 +1084,20 @@ pub(crate) fn run_printed_ripr(
     decoy_dir: &Path,
     printed: &str,
 ) -> Result<Output, String> {
+    candidate.verify_digest()?;
     let tokens = split_printed_ripr_command(printed)?;
     let args: Vec<&str> = tokens.iter().skip(1).map(String::as_str).collect();
     let path = isolated_path(decoy_dir)?;
-    run_program(
+    let output = run_program_recorded(
         &candidate.binary,
         Some(fixture),
         &args,
         &[(OsStr::new("PATH"), path.as_os_str())],
-    )
+        candidate.evidence.as_ref(),
+        COMMAND_BUDGET,
+    )?;
+    candidate.verify_digest()?;
+    Ok(output)
 }
 
 fn run_program(
@@ -724,6 +1106,21 @@ fn run_program(
     args: &[&str],
     extra_env: &[(&OsStr, &OsStr)],
 ) -> Result<Output, String> {
+    run_program_recorded(program, current_dir, args, extra_env, None, COMMAND_BUDGET)
+}
+
+const COMMAND_BUDGET: Duration = Duration::from_mins(2);
+const CAPTURE_LIMIT: u64 = 4 * 1024 * 1024;
+
+/// One construction site serves product, native test and containment controls.
+/// The latter can deliberately use default ownership to test the isolated
+/// entry point without adding a second executable-resolution path.
+pub(crate) fn prepared_command(
+    program: impl AsRef<OsStr>,
+    current_dir: Option<&Path>,
+    args: &[&str],
+    extra_env: &[(&OsStr, &OsStr)],
+) -> Command {
     let mut command = Command::new(program.as_ref());
     if let Some(dir) = current_dir {
         command.current_dir(dir);
@@ -740,9 +1137,180 @@ fn run_program(
     for (key, value) in extra_env {
         command.env(key, value);
     }
+    command.stdin(Stdio::null());
     command
-        .output()
-        .map_err(|error| format!("spawn {:?} {args:?} failed: {error}", program.as_ref()))
+}
+
+/// File capture avoids a pipe reader that can outlive a terminated primary. The
+/// existing owner settles the isolated group/job before any terminal record.
+pub(crate) fn run_program_recorded(
+    program: impl AsRef<OsStr>,
+    current_dir: Option<&Path>,
+    args: &[&str],
+    extra_env: &[(&OsStr, &OsStr)],
+    evidence: Option<&CommandEvidence>,
+    budget: Duration,
+) -> Result<Output, String> {
+    let capture = match evidence {
+        Some(evidence) => evidence.command_dir()?,
+        None => unique_dir("boundary-command")?,
+    };
+    let stdout_path = capture.join("stdout");
+    let stderr_path = capture.join("stderr");
+    let mut command = prepared_command(program.as_ref(), current_dir, args, extra_env);
+    let explicit_env: Vec<_> = command
+        .get_envs()
+        .map(|(key, value)| {
+            (
+                key.to_string_lossy().into_owned(),
+                value.map(|v| v.to_string_lossy().into_owned()),
+            )
+        })
+        .collect();
+    let cwd = match current_dir {
+        Some(path) => path.to_path_buf(),
+        None => std::env::current_dir().map_err(|error| error.to_string())?,
+    };
+    std::fs::write(
+        capture.join("command.json"),
+        json_bytes(&serde_json::json!({
+            "program": program.as_ref().to_string_lossy(), "args": args, "cwd": cwd,
+            "explicit_env": explicit_env, "budget_ms": budget.as_millis(),
+            "capture_limit_bytes": CAPTURE_LIMIT, "containment": "OwnedProcess::spawn_isolated",
+        }))?,
+    )
+    .map_err(|error| format!("write command identity: {error}"))?;
+    let output_file = |path: &Path| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|error| format!("create capture {}: {error}", path.display()))
+    };
+    command
+        .stdout(output_file(&stdout_path)?)
+        .stderr(output_file(&stderr_path)?);
+    let started = Instant::now();
+    let mut owned = match OwnedProcess::spawn_isolated(command) {
+        Ok(owned) => owned,
+        Err(error) => {
+            std::fs::write(
+                capture.join("result.json"),
+                json_bytes(&serde_json::json!({
+                    "spawn_error": error.to_string(), "native_exit_code": null,
+                    "cleanup": "no_child_created_or_setup_owner_returned_error",
+                }))?,
+            )
+            .map_err(|write_error| write_error.to_string())?;
+            return Err(format!(
+                "spawn {:?} failed: {error}; raw evidence {}",
+                program.as_ref(),
+                capture.display()
+            ));
+        }
+    };
+    let primary_pid = owned.id();
+    let mut stopped_by = None;
+    let waited = (|| loop {
+        let captured = std::fs::metadata(&stdout_path)
+            .and_then(|out| {
+                std::fs::metadata(&stderr_path).map(|err| out.len().saturating_add(err.len()))
+            })
+            .map_err(|error| format!("stat command capture: {error}"))?;
+        if captured > CAPTURE_LIMIT {
+            stopped_by = Some("output_limit");
+            break Err("command exceeded its raw output limit".to_string());
+        }
+        if let Some(status) = owned
+            .try_wait()
+            .map_err(|error| format!("observe command exit: {error}"))?
+        {
+            break Ok(status);
+        }
+        if started.elapsed() >= budget {
+            stopped_by = Some("deadline");
+            break Err("command exceeded its harness deadline".to_string());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    })();
+    let cleanup = owned.terminate_tree();
+    // Re-admit both settled streams together. A child can write and exit
+    // between the running-size observation and try_wait; per-stream limits
+    // alone would admit two individually small streams over the shared cap.
+    let mut capture_overflow = false;
+    let captured = (|| {
+        let total = std::fs::metadata(&stdout_path)
+            .and_then(|out| {
+                std::fs::metadata(&stderr_path).map(|err| out.len().saturating_add(err.len()))
+            })
+            .map_err(|error| format!("stat settled command capture: {error}"))?;
+        if total > CAPTURE_LIMIT {
+            capture_overflow = true;
+            return Err("settled command capture exceeded its combined byte limit".to_string());
+        }
+        let read_capture = |path: &Path| -> Result<Vec<u8>, String> {
+            let mut bytes = Vec::new();
+            std::fs::File::open(path)
+                .map_err(|error| error.to_string())?
+                .take(CAPTURE_LIMIT + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|error| error.to_string())?;
+            Ok(bytes)
+        };
+        let stdout = read_capture(&stdout_path)?;
+        let stderr = read_capture(&stderr_path)?;
+        if stdout.len().saturating_add(stderr.len()) as u64 > CAPTURE_LIMIT {
+            capture_overflow = true;
+            return Err("read command capture exceeded its combined byte limit".to_string());
+        }
+        Ok((stdout, stderr))
+    })();
+    if capture_overflow && stopped_by.is_none() {
+        stopped_by = Some("output_limit");
+    }
+    let result = serde_json::json!({
+        "primary_pid": primary_pid,
+        "native_exit_code": waited.as_ref().ok().and_then(|status| status.code()),
+        "native_success": waited.as_ref().ok().map(|status| status.success()),
+        "harness_stop": stopped_by,
+        "wait_error": waited.as_ref().err(),
+        "cleanup_error": cleanup.as_ref().err(),
+        "capture_error": captured.as_ref().err(),
+        "elapsed_ms": started.elapsed().as_millis(),
+        "stdout_sha256": file_digest(&stdout_path)?,
+        "stderr_sha256": file_digest(&stderr_path)?,
+    });
+    std::fs::write(capture.join("result.json"), json_bytes(&result)?)
+        .map_err(|error| format!("write command terminal record: {error}"))?;
+    cleanup.map_err(|error| format!("{error}; raw evidence {}", capture.display()))?;
+    let status = waited.map_err(|error| format!("{error}; raw evidence {}", capture.display()))?;
+    let (stdout, stderr) =
+        captured.map_err(|error| format!("{error}; raw evidence {}", capture.display()))?;
+    let output = Output {
+        status,
+        stdout,
+        stderr,
+    };
+    if evidence.is_none() {
+        std::fs::remove_dir_all(&capture)
+            .map_err(|error| format!("cleanup capture {}: {error}", capture.display()))?;
+    }
+    Ok(output)
+}
+
+pub(crate) fn file_digest(path: &Path) -> Result<String, String> {
+    let mut file = std::fs::File::open(path)
+        .map_err(|error| format!("read {} for SHA-256: {error}", path.display()))?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let count = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(format!("sha256:{:x}", digest.finalize()))
 }
 
 fn command_failure(label: &str, output: &Output) -> String {

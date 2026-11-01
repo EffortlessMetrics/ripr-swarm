@@ -77,7 +77,7 @@ pub(super) const HELP_ALL: &str = r#"ripr — complete command reference.
 
 Task-oriented overview: ripr --help
 Options for one command: ripr help <command>
-Machine catalog: ripr help --json  (this route accepts no other arguments)
+Machine catalog: ripr help --json  (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands
 
 Global flags (accepted in any position, before or after the command, except on ripr help --json):
   -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
