@@ -42,8 +42,11 @@ pub(crate) fn statement_list_has_dynamic_code(list_text: &str) -> bool {
 /// not follow: `eval`, `Function`, `with`, `arguments`, `this`, `new.target`,
 /// and any backslash outside a string or template (`\u` identifier escapes)
 /// are refused wherever they appear in code, and so is a `/` that could open
-/// a regular expression. Quoted text and comments are skipped, so a title
-/// such as `"this works"` is fine. Fails closed on anything it cannot lex.
+/// a regular expression. The lexer pass skips quoted text and comments, but
+/// the whole-word backstop below does not: those words are refused even
+/// inside strings and comments, so a title such as `"this works"` or
+/// `"handles input with spaces"` is deliberately over-refused (fail closed).
+/// Fails closed on anything it cannot lex.
 pub(crate) fn row_text_is_inert(text: &str) -> bool {
     // Lexer-independent backstop: the same words anywhere, even in a string,
     // so a lexing gap (an odd regex or quote) cannot hide one.
@@ -611,6 +614,7 @@ mod tests {
             "typeof /'a/, (t) => { expect(f(t.a, arguments[0].out = 3, \"it's\")).toBe(t.out); }, typeof /\"a/",
             "typeof /'a/, (t) => { with (t) { expect(f(a, \"it's\")).toBe(out); } }, typeof /\"a/",
             "(t) => { expect(f(t.a, \"this\")).toBe(t.out); }",
+            "test(\"handles input with spaces\", (t) => { expect(f(t.a)).toBe(t.out); })",
             "(t) => { expect(f(`${arguments[0]}`)).toBe(t.out); }",
         ] {
             assert!(!super::row_text_is_inert(bad), "{bad}");
