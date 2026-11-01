@@ -18080,6 +18080,11 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/catch_arm_tests.rs::an_operator_on_the_call_result_keeps_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::owner_tie_reads_multi_line_chains_and_member_or_generic_calls",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::multi_line_then_chain_reads_static_unknown_through_the_classifier",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::awaited_returned_and_expression_bodied_promise_assertions_stay_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::floating_promise_assertions_supply_no_discriminator",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::promise_all_wrapping_is_never_newly_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::floating_owner_assertion_beside_an_awaited_unrelated_one_stays_a_gap",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::a_for_each_expression_body_assertion_floats",
   "crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs::comparison_edit_reads_one_condition_changed_in_a_template_or_ternary",
   "crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs::comparison_edit_refuses_everything_but_one_bare_condition",
   "crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs::inputs_both_comparisons_treat_alike_leave_the_edit_unreached",
@@ -18606,6 +18611,11 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::awaited_returned_and_expression_bodied_promise_assertions_stay_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::floating_promise_assertions_supply_no_discriminator",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::promise_all_wrapping_is_never_newly_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::floating_owner_assertion_beside_an_awaited_unrelated_one_stays_a_gap",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::a_for_each_expression_body_assertion_floats",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::capped_mock_call_count_alias_receivers_do_not_become_identifier_dependencies",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::unconditional_block_mock_call_count_aliases_are_not_argument_pins",
   "crates/ripr/src/analysis/language/typescript/tests/mock_call_count_tests.rs::unconditional_block_mock_call_count_aliases_preserve_argument_and_added_call_credit",
