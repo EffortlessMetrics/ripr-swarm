@@ -1217,8 +1217,10 @@ impl AnalysisSnapshot {
     pub(super) fn prepare_diagnostic_uri_index(&mut self) {
         let uris = self.diagnostics_by_uri.keys().cloned().collect::<Vec<_>>();
         let mut by_relative = BTreeMap::new();
+        let root = self.root.clone();
+        let mut projector = super::uri::RelativeKeyProjector::new(&root);
         for (position, uri) in uris.iter().enumerate() {
-            if let Some(relative) = file_uri_relative_to_root(&self.root, uri) {
+            if let Some(relative) = projector.relative(uri) {
                 by_relative
                     .entry(relative)
                     .and_modify(|stored| *stored = None)
@@ -2122,13 +2124,18 @@ impl DocumentStore {
     ) -> (BTreeMap<Uri, Option<String>>, Vec<Uri>) {
         let mut digests = BTreeMap::new();
         let mut entered = Vec::new();
+        // One projector per refresh: the root and each directory are
+        // canonicalized once, not once per open document (#11763).
+        let mut projector = super::uri::RelativeKeyProjector::new(root);
         for (uri, state) in &self.documents {
             let analyzed = if state
                 .path
                 .extension()
                 .is_some_and(|extension| extension == "rs")
             {
-                file_uri_relative_to_root(root, uri).and_then(|relative| consumed.digest(&relative))
+                projector
+                    .relative(uri)
+                    .and_then(|relative| consumed.digest(&relative))
             } else {
                 read_saved_digest(uri).or_else(|| state.saved_digest.clone())
             };
