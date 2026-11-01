@@ -181,7 +181,7 @@ impl EditAuthorization {
     fn verify(&self, action: &str) -> Result<&str, String> {
         if !self.authorized {
             return Err(format!(
-                "python repair-trust binding refuses to {action}: explicit --edit-authorized and --edit-authority <identity> are required; the driver never authorizes an edit automatically"
+                "python repair-trust binding refuses to {action}: explicit --edit-authorized and --edit-authority <identity> are required; the driver never authorizes an edit automatically; pass both flags on this invocation"
             ));
         }
         let authority = self
@@ -191,7 +191,7 @@ impl EditAuthorization {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
                 format!(
-                    "python repair-trust binding refuses to {action}: --edit-authorized requires --edit-authority <identity>"
+                    "python repair-trust binding refuses to {action}: --edit-authorized requires --edit-authority <identity>; pass the identity of whoever authorizes the edit"
                 )
             })?;
         Ok(authority)
@@ -382,24 +382,31 @@ fn is_git_sha(value: &str) -> bool {
 /// components. Mirrors the RIPR-SPEC-0176 portability contract.
 fn check_portable_path(path: &str) -> Result<(), String> {
     if path.trim().is_empty() {
-        return Err("path must be non-empty".to_string());
+        return Err(
+            "path must be non-empty; name a repo-relative path such as `tests/test_x.py`"
+                .to_string(),
+        );
     }
     if path.contains('\\') {
         return Err(format!(
-            "path `{path}` is not portable: backslash separators are not allowed"
+            "path `{path}` is not portable: backslash separators are not allowed; use forward slashes, as in `tests/test_x.py`"
         ));
     }
     if path.starts_with('/') {
-        return Err(format!("path `{path}` must be repo-relative, not absolute"));
+        return Err(format!(
+            "path `{path}` must be repo-relative, not absolute; use a path relative to the repository root"
+        ));
     }
     let bytes = path.as_bytes();
     if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
         return Err(format!(
-            "path `{path}` must be repo-relative, not a drive-letter absolute path"
+            "path `{path}` must be repo-relative, not a drive-letter absolute path; use a path relative to the repository root"
         ));
     }
     if path.split('/').any(|component| component == "..") {
-        return Err(format!("path `{path}` must not contain `..` components"));
+        return Err(format!(
+            "path `{path}` must not contain `..` components; use a path that stays inside the repository"
+        ));
     }
     Ok(())
 }
@@ -419,13 +426,33 @@ fn normalize_repo_relative_path(path: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Shared refusal remedies
+// ---------------------------------------------------------------------------
+
+/// A strict-field refusal. The field may come from the selection manifest
+/// (hand-reviewed input) or from a retained binding record (driver output that
+/// is never hand-edited), so the next step names both routes.
+fn field_refusal(location: &str, problem: &str) -> String {
+    format!(
+        "python repair-trust binding: {location}: {problem}; fix the selection manifest field, or for a retained record start a new attempt with `ripr agent repair --seam-id <id> --phase before`"
+    )
+}
+
+/// A refusal about retained attempt state (the binding record or the attempt
+/// manifest artifacts). That state is driver output, so the remedy is a fresh
+/// attempt, never a hand edit or regeneration of the retained artifact.
+fn new_attempt_refusal(problem: String) -> String {
+    format!("{problem}; start a new attempt with `ripr agent repair --seam-id <id> --phase before`")
+}
+
+// ---------------------------------------------------------------------------
 // Small strict-object accessors
 // ---------------------------------------------------------------------------
 
 fn as_object<'a>(value: &'a Value, subject: &str) -> Result<&'a Map<String, Value>, String> {
-    value.as_object().ok_or_else(|| {
-        format!("python repair-trust binding: subject=`{subject}`: must be a JSON object")
-    })
+    value
+        .as_object()
+        .ok_or_else(|| field_refusal(&format!("subject=`{subject}`"), "must be a JSON object"))
 }
 
 fn reject_unknown_keys(
@@ -435,8 +462,9 @@ fn reject_unknown_keys(
 ) -> Result<(), String> {
     for key in object.keys() {
         if !allowed.contains(&key.as_str()) {
-            return Err(format!(
-                "python repair-trust binding: subject=`{subject}`: unknown field `{key}` (denied to catch schema rot and typos)"
+            return Err(field_refusal(
+                &format!("subject=`{subject}`"),
+                &format!("unknown field `{key}` (denied to catch schema rot and typos)"),
             ));
         }
     }
@@ -448,20 +476,13 @@ fn require_string(
     object: &Map<String, Value>,
     field: &str,
 ) -> Result<String, String> {
+    let at = format!("subject=`{subject}` field=`{field}`");
     match object.get(field) {
-        None => Err(format!(
-            "python repair-trust binding: subject=`{subject}` field=`{field}`: required field is missing"
-        )),
-        Some(Value::Null) => Err(format!(
-            "python repair-trust binding: subject=`{subject}` field=`{field}`: a present null is not a value"
-        )),
+        None => Err(field_refusal(&at, "required field is missing")),
+        Some(Value::Null) => Err(field_refusal(&at, "a present null is not a value")),
         Some(Value::String(text)) if !text.trim().is_empty() => Ok(text.clone()),
-        Some(Value::String(_)) => Err(format!(
-            "python repair-trust binding: subject=`{subject}` field=`{field}`: required field must be non-empty"
-        )),
-        Some(_) => Err(format!(
-            "python repair-trust binding: subject=`{subject}` field=`{field}`: field must be a string"
-        )),
+        Some(Value::String(_)) => Err(field_refusal(&at, "required field must be non-empty")),
+        Some(_) => Err(field_refusal(&at, "field must be a string")),
     }
 }
 
@@ -469,11 +490,13 @@ fn opt_string(object: &Map<String, Value>, field: &str) -> Result<Option<String>
     match object.get(field) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(text)) if !text.trim().is_empty() => Ok(Some(text.clone())),
-        Some(Value::String(_)) => Err(format!(
-            "python repair-trust binding: field=`{field}`: string field must be non-empty when present"
+        Some(Value::String(_)) => Err(field_refusal(
+            &format!("field=`{field}`"),
+            "string field must be non-empty when present",
         )),
-        Some(_) => Err(format!(
-            "python repair-trust binding: field=`{field}`: field must be a string when present"
+        Some(_) => Err(field_refusal(
+            &format!("field=`{field}`"),
+            "field must be a string when present",
         )),
     }
 }
@@ -491,7 +514,7 @@ fn canonical_selection_digest(row: &Map<String, Value>) -> Result<String, String
     canonical.remove(SELECTION_DIGEST_FIELD);
     let sorted: std::collections::BTreeMap<String, Value> = canonical.into_iter().collect();
     let text = serde_json::to_string(&sorted)
-        .map_err(|error| format!("canonical selection serialization failed: {error}"))?;
+        .map_err(|error| format!("canonical selection serialization failed: {error}; this is a ripr bug, report it with the command you ran"))?;
     Ok(sha256_hex(text.as_bytes()))
 }
 
@@ -514,7 +537,7 @@ fn load_selection_manifest(
         )
     })?;
     let text = String::from_utf8(bytes)
-        .map_err(|error| format!("python repair-trust selection manifest is not UTF-8: {error}"))?;
+        .map_err(|error| format!("python repair-trust selection manifest is not UTF-8: {error}; check that --python-repair-trust-manifest names the UTF-8 JSON selection manifest"))?;
     let value = parse_strict_json(&text).map_err(|error| {
         format!("python repair-trust selection manifest is not well-formed JSON: {error}")
     })?;
@@ -538,7 +561,7 @@ fn load_selection_manifest(
         let actual = require_string("selection manifest", top, field)?;
         if actual != expected {
             return Err(format!(
-                "python repair-trust selection manifest field `{field}` must be `{expected}`, got `{actual}`"
+                "python repair-trust selection manifest field `{field}` must be `{expected}`, got `{actual}`; point --python-repair-trust-manifest at the accepted selection manifest"
             ));
         }
     }
@@ -546,7 +569,7 @@ fn load_selection_manifest(
         Some(Value::Array(rows)) => rows,
         _ => {
             return Err(
-                "python repair-trust selection manifest must contain a selections array"
+                "python repair-trust selection manifest must contain a selections array; add a `selections` array or point --python-repair-trust-manifest at the accepted selection manifest"
                     .to_string(),
             );
         }
@@ -606,20 +629,20 @@ fn verify_row_binding(
     let attempt_id = require_string("selection row", row, "attempt_id")?;
     if attempt_id != request_attempt_id {
         return Err(format!(
-            "selection row identity `{attempt_id}` does not match the requested attempt `{request_attempt_id}`"
+            "selection row identity `{attempt_id}` does not match the requested attempt `{request_attempt_id}`; this is a ripr bug, report it with the command you ran"
         ));
     }
     let recorded = require_string(&attempt_id, row, SELECTION_DIGEST_FIELD)?;
     if !is_sha256_hex(&recorded) {
         return Err(format!(
-            "selection row `{attempt_id}` selection_digest must be bare lowercase sha256 hex"
+            "selection row `{attempt_id}` selection_digest must be bare lowercase sha256 hex; fix the field in the selection manifest or create a new selection, then rerun `ripr agent repair`"
         ));
     }
     let recomputed = canonical_selection_digest(row)
         .map_err(|error| format!("selection row `{attempt_id}`: {error}"))?;
     if recorded != recomputed {
         return Err(format!(
-            "selection row `{attempt_id}` digest mismatch: recorded `{recorded}` but the canonical content digests to `{recomputed}`; a replaced or edited selected row requires a new selection"
+            "selection row `{attempt_id}` digest mismatch: recorded `{recorded}` but the canonical content digests to `{recomputed}`; a replaced or edited selected row requires a new selection; edit the row back to its recorded content or create a new selection, then rerun `ripr agent repair`"
         ));
     }
 
@@ -633,25 +656,25 @@ fn verify_row_binding(
     let target_state = require_string(&attempt_id, row, "target_state")?;
     if target_state != BINDABLE_TARGET_STATE {
         return Err(format!(
-            "selection row `{attempt_id}` declares target_state `{target_state}`; the driver binds only `{BINDABLE_TARGET_STATE}` targets because a changed or ambiguous target requires a new or re-authorized selection"
+            "selection row `{attempt_id}` declares target_state `{target_state}`; the driver binds only `{BINDABLE_TARGET_STATE}` targets because a changed or ambiguous target requires a new or re-authorized selection; create a new selection naming an existing test file, then rerun `ripr agent repair`"
         ));
     }
     if is_denied_edit_surface(&target_path) {
         return Err(format!(
-            "selection row `{attempt_id}` target `{target_path}` falls under a production/generated/vendor/environment edit surface; test-only paths are the only allowed edit surface and this selection must not be bound"
+            "selection row `{attempt_id}` target `{target_path}` falls under a production/generated/vendor/environment edit surface; test-only paths are the only allowed edit surface and this selection must not be bound; create a new selection whose target is an existing test file"
         ));
     }
 
     let row_head = require_string(&attempt_id, row, "head")?;
     if !is_git_sha(&row_head) {
         return Err(format!(
-            "selection row `{attempt_id}` head must be a bare lowercase 40-character commit SHA"
+            "selection row `{attempt_id}` head must be a bare lowercase 40-character commit SHA; fix the field in the selection manifest or create a new selection, then rerun `ripr agent repair`"
         ));
     }
     let base = require_string(&attempt_id, row, "base")?;
     if !is_git_sha(&base) {
         return Err(format!(
-            "selection row `{attempt_id}` base must be a bare lowercase 40-character commit SHA"
+            "selection row `{attempt_id}` base must be a bare lowercase 40-character commit SHA; fix the field in the selection manifest or create a new selection, then rerun `ripr agent repair`"
         ));
     }
 
@@ -660,7 +683,7 @@ fn verify_row_binding(
         && !is_sha256_hex(tree)
     {
         return Err(format!(
-            "selection row `{attempt_id}` tree must be bare lowercase sha256 hex when present"
+            "selection row `{attempt_id}` tree must be bare lowercase sha256 hex when present; fix the field in the selection manifest or create a new selection, then rerun `ripr agent repair`"
         ));
     }
     let source_currentness = opt_string(row, "source_currentness")?;
@@ -713,7 +736,7 @@ fn verify_row_for_prepare(
     let verified = verify_row_binding(row, request_attempt_id)?;
     if verified.head != repository_head {
         return Err(format!(
-            "stale selection: row `{}` pins head `{}` but the repository HEAD is `{repository_head}`; a changed repository state requires a new selection before editing",
+            "stale selection: row `{}` pins head `{}` but the repository HEAD is `{repository_head}`; a changed repository state requires a new selection before editing; check out the pinned head or create a new selection for the current HEAD, then rerun `ripr agent repair`",
             verified.attempt_id, verified.head
         ));
     }
@@ -724,13 +747,13 @@ fn verify_row_for_prepare(
     let matches = repository_target_matches(root, &verified.target_path)?;
     if matches.is_empty() {
         return Err(format!(
-            "selection row `{}` target `{}` matches no file in the repository inventory; a zero-match target requires a new selection before editing",
+            "selection row `{}` target `{}` matches no file in the repository inventory; a zero-match target requires a new selection before editing; create a new selection naming a file that exists in the repository",
             verified.attempt_id, verified.target_path
         ));
     }
     if matches.len() > 1 {
         return Err(format!(
-            "selection row `{}` target `{}` matches {} candidate files in the repository inventory; a multiple-match target is ambiguous and requires a new selection before editing",
+            "selection row `{}` target `{}` matches {} candidate files in the repository inventory; a multiple-match target is ambiguous and requires a new selection before editing; rename the case-colliding files or create a new selection with an unambiguous target",
             verified.attempt_id,
             verified.target_path,
             matches.len()
@@ -793,10 +816,10 @@ fn git_inventory(root: &Path, args: &[&str]) -> Result<Vec<String>, String> {
         Duration::from_secs(30),
         4 * 1024 * 1024,
     )
-    .map_err(|error| format!("python repair-trust binding repository inventory failed: {error}"))?;
+    .map_err(|error| format!("python repair-trust binding repository inventory failed: {error}; check that --root is a git checkout and `git` runs there, then rerun the command"))?;
     if !output.status.success() {
         return Err(format!(
-            "python repair-trust binding repository inventory failed: {}",
+            "python repair-trust binding repository inventory failed: {}; check that --root is a git checkout and `git` runs there, then rerun the command",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
@@ -866,7 +889,7 @@ fn render_record(
     });
     let trust_object = trust
         .as_object_mut()
-        .ok_or_else(|| "binding record construction failed: trust must be an object".to_string())?;
+        .ok_or_else(|| "binding record construction failed: trust must be an object; this is a ripr bug, report it with the command you ran".to_string())?;
     if let Some(tree) = &verified.tree {
         trust_object.insert("tree".to_string(), Value::String(tree.clone()));
     }
@@ -911,7 +934,7 @@ fn render_record(
         "non_claims": BINDING_NON_CLAIMS,
     });
     let object = record.as_object_mut().ok_or_else(|| {
-        "binding record construction failed: record must be an object".to_string()
+        "binding record construction failed: record must be an object; this is a ripr bug, report it with the command you ran".to_string()
     })?;
     if let Some(attempt_id) = identity.durable_attempt_id {
         object.insert(
@@ -945,7 +968,7 @@ fn detect_config_profile(root: &Path) -> String {
 
 fn write_record_file(path: &Path, record: &Value) -> Result<(), String> {
     let mut rendered = serde_json::to_vec_pretty(record)
-        .map_err(|error| format!("serialize python repair-trust binding record failed: {error}"))?;
+        .map_err(|error| format!("serialize python repair-trust binding record failed: {error}; this is a ripr bug, report it with the command you ran"))?;
     rendered.push(b'\n');
     // Compatibility projections are shared repository-global files, so they
     // publish through the staged atomic-rename pattern (the same semantics as
@@ -992,15 +1015,15 @@ pub(crate) fn prepare_binding(
         )
     })?;
     let canonical_root = std::fs::canonicalize(root)
-        .map_err(|error| format!("canonicalize repository root failed: {error}"))?;
+        .map_err(|error| format!("canonicalize repository root failed: {error}; check that --root names an existing readable directory"))?;
     if !manifest_location.starts_with(&canonical_root) {
         return Err(format!(
-            "python repair-trust selection manifest {} is outside the repository root; a binding must cite a manifest inside the repository it governs",
+            "python repair-trust selection manifest {} is outside the repository root; a binding must cite a manifest inside the repository it governs; pass a --python-repair-trust-manifest path inside --root",
             request.manifest_path.display()
         ));
     }
     let (manifest_sha256, rows) = load_selection_manifest(&manifest_location)
-        .map_err(|error| format!("stale packet rejected before editing: {error}"))?;
+        .map_err(|error| format!("stale packet rejected before editing: {error}; fix the selection manifest named by --python-repair-trust-manifest, then rerun `ripr agent repair`"))?;
     let row = rows
         .iter()
         .find(|row| {
@@ -1085,8 +1108,11 @@ pub(crate) fn load_retained_binding_from(
             artifact.path
         )
     })?;
-    let text = String::from_utf8(bytes)
-        .map_err(|error| format!("retained python repair-trust binding is not UTF-8: {error}"))?;
+    let text = String::from_utf8(bytes).map_err(|error| {
+        new_attempt_refusal(format!(
+            "retained python repair-trust binding is not UTF-8: {error}"
+        ))
+    })?;
     let value = parse_strict_json(&text).map_err(|error| {
         format!("retained python repair-trust binding is not well-formed JSON: {error}")
     })?;
@@ -1121,28 +1147,28 @@ pub(crate) fn reverify_for_apply(
     ] {
         let actual = require_string("retained binding record", record, field)?;
         if actual != expected {
-            return Err(format!(
+            return Err(new_attempt_refusal(format!(
                 "retained binding record field `{field}` must be `{expected}` for the apply phase, got `{actual}`"
-            ));
+            )));
         }
     }
     if record.contains_key("apply") {
-        return Err(
+        return Err(new_attempt_refusal(
             "retained binding record already carries an apply block; a prepare record cannot be replayed as an apply"
                 .to_string(),
-        );
+        ));
     }
     let record_seam = require_string("retained binding record", record, "seam_id")?;
     if record_seam != seam_id {
-        return Err(format!(
+        return Err(new_attempt_refusal(format!(
             "retained binding record names seam `{record_seam}` but the selected attempt belongs to seam `{seam_id}`"
-        ));
+        )));
     }
 
     let retained_authorization = as_object(
-        record
-            .get("authorization")
-            .ok_or_else(|| "retained binding record is missing authorization".to_string())?,
+        record.get("authorization").ok_or_else(|| {
+            new_attempt_refusal("retained binding record is missing authorization".to_string())
+        })?,
         "retained authorization",
     )?;
     reject_unknown_keys(
@@ -1153,9 +1179,9 @@ pub(crate) fn reverify_for_apply(
     let retained_status =
         require_string("retained authorization", retained_authorization, "status")?;
     if retained_status != AUTHORIZATION_STATUS {
-        return Err(format!(
+        return Err(new_attempt_refusal(format!(
             "retained binding authorization status is `{retained_status}`; the driver records no applied edit without explicit operator or agent authorization"
-        ));
+        )));
     }
     let retained_authority = require_string(
         "retained authorization",
@@ -1164,15 +1190,15 @@ pub(crate) fn reverify_for_apply(
     )?;
     if retained_authority != authority {
         return Err(format!(
-            "apply authorization authority `{authority}` does not match the retained authorization authority; a different authority requires a new re-authorized attempt"
+            "apply authorization authority `{authority}` does not match the retained authorization authority; a different authority requires a new re-authorized attempt; pass the same --edit-authority used at prepare, or start a new attempt with `ripr agent repair --seam-id <id> --phase before`"
         ));
     }
     let retained_method =
         require_string("retained authorization", retained_authorization, "method")?;
     if retained_method != AUTHORIZATION_METHOD {
-        return Err(format!(
+        return Err(new_attempt_refusal(format!(
             "retained binding authorization method `{retained_method}` is not the explicit-operator-flags authority"
-        ));
+        )));
     }
 
     // The closed nested blocks are shape-checked on the retained record so a
@@ -1198,9 +1224,9 @@ pub(crate) fn reverify_for_apply(
     ];
     for (field, subject, allowed) in nested_blocks {
         let block = as_object(
-            record
-                .get(field)
-                .ok_or_else(|| format!("retained binding record is missing {field}"))?,
+            record.get(field).ok_or_else(|| {
+                new_attempt_refusal(format!("retained binding record is missing {field}"))
+            })?,
             subject,
         )?;
         reject_unknown_keys(block, allowed, subject)?;
@@ -1208,8 +1234,9 @@ pub(crate) fn reverify_for_apply(
             "driver" => {
                 let binary = require_string(subject, block, "binary_sha256")?;
                 if !is_sha256_hex(&binary) {
-                    return Err(format!(
-                        "python repair-trust binding: subject=`{subject}` field=`binary_sha256`: must be bare lowercase sha256 hex"
+                    return Err(field_refusal(
+                        &format!("subject=`{subject}` field=`binary_sha256`"),
+                        "must be bare lowercase sha256 hex",
                     ));
                 }
                 require_string(subject, block, "version")?;
@@ -1221,8 +1248,9 @@ pub(crate) fn reverify_for_apply(
                 for digest_field in ["packet_sha256", "before_snapshot_sha256"] {
                     let digest = require_string(subject, block, digest_field)?;
                     if !is_sha256_hex(&digest) {
-                        return Err(format!(
-                            "python repair-trust binding: subject=`{subject}` field=`{digest_field}`: must be bare lowercase sha256 hex"
+                        return Err(field_refusal(
+                            &format!("subject=`{subject}` field=`{digest_field}`"),
+                            "must be bare lowercase sha256 hex",
                         ));
                     }
                 }
@@ -1232,27 +1260,24 @@ pub(crate) fn reverify_for_apply(
                     let paths = match block.get(surface_field) {
                         Some(Value::Array(values)) => values,
                         _ => {
-                            return Err(format!(
-                                "python repair-trust binding: subject=`{subject}` field=`{surface_field}`: must be an array of paths"
+                            return Err(field_refusal(
+                                &format!("subject=`{subject}` field=`{surface_field}`"),
+                                "must be an array of paths",
                             ));
                         }
                     };
                     if surface_field == "allowed" && paths.is_empty() {
-                        return Err(format!(
-                            "python repair-trust binding: subject=`{subject}` field=`allowed`: must name at least one allowed path"
+                        return Err(field_refusal(
+                            &format!("subject=`{subject}` field=`allowed`"),
+                            "must name at least one allowed path",
                         ));
                     }
                     for (index, value) in paths.iter().enumerate() {
-                        let path = value.as_str().ok_or_else(|| {
-                            format!(
-                                "python repair-trust binding: subject=`{subject}` field=`{surface_field}[{index}]`: path must be a string"
-                            )
-                        })?;
-                        check_portable_path(path).map_err(|error| {
-                            format!(
-                                "python repair-trust binding: subject=`{subject}` field=`{surface_field}[{index}]`: {error}"
-                            )
-                        })?;
+                        let at = format!("subject=`{subject}` field=`{surface_field}[{index}]`");
+                        let path = value
+                            .as_str()
+                            .ok_or_else(|| field_refusal(&at, "path must be a string"))?;
+                        check_portable_path(path).map_err(|error| field_refusal(&at, &error))?;
                     }
                 }
             }
@@ -1263,7 +1288,11 @@ pub(crate) fn reverify_for_apply(
     }
     let record_non_claims = match record.get("non_claims") {
         Some(Value::Array(values)) => values,
-        _ => return Err("retained binding record must carry its non_claims".to_string()),
+        _ => {
+            return Err(new_attempt_refusal(
+                "retained binding record must carry its non_claims".to_string(),
+            ));
+        }
     };
     // The standing claim boundary must ride verbatim: every element must be a
     // string and the collection must be exactly the standing list — a dropped
@@ -1277,15 +1306,15 @@ pub(crate) fn reverify_for_apply(
     }
     let expected_non_claims: BTreeSet<&str> = BINDING_NON_CLAIMS.into_iter().collect();
     if recorded_non_claims != expected_non_claims {
-        return Err(format!(
+        return Err(new_attempt_refusal(format!(
             "retained binding record must carry exactly the standing non-claims {BINDING_NON_CLAIMS:?}; a dropped or extra entry fails"
-        ));
+        )));
     }
 
     let trust = as_object(
-        record
-            .get("trust")
-            .ok_or_else(|| "retained binding record is missing trust".to_string())?,
+        record.get("trust").ok_or_else(|| {
+            new_attempt_refusal("retained binding record is missing trust".to_string())
+        })?,
         "retained binding trust",
     )?;
     reject_unknown_keys(trust, &TRUST_KEYS, "retained binding trust")?;
@@ -1306,7 +1335,7 @@ pub(crate) fn reverify_for_apply(
         require_string("retained binding trust", trust, "selection_manifest_sha256")?;
     if recorded_manifest_sha256 != manifest_sha256 {
         return Err(format!(
-            "stale selection manifest: the retained binding pins manifest sha256 `{recorded_manifest_sha256}` but {} now digests to `{manifest_sha256}`; a changed manifest requires a new re-authorized attempt",
+            "stale selection manifest: the retained binding pins manifest sha256 `{recorded_manifest_sha256}` but {} now digests to `{manifest_sha256}`; a changed manifest requires a new re-authorized attempt; restore the pinned manifest bytes or start a new attempt with `ripr agent repair --seam-id <id> --phase before`",
             request.manifest_path.display()
         ));
     }
@@ -1340,9 +1369,9 @@ pub(crate) fn reverify_for_apply(
     })?;
 
     let input = as_object(
-        record
-            .get("input")
-            .ok_or_else(|| "retained binding record is missing input".to_string())?,
+        record.get("input").ok_or_else(|| {
+            new_attempt_refusal("retained binding record is missing input".to_string())
+        })?,
         "retained binding input",
     )?;
     reject_unknown_keys(input, &INPUT_KEYS, "retained binding input")?;
@@ -1350,7 +1379,7 @@ pub(crate) fn reverify_for_apply(
     let packet_sha256 = sha256_hex(packet_bytes);
     if retained_packet_sha256 != packet_sha256 {
         return Err(format!(
-            "stale packet: the retained binding pins packet sha256 `{retained_packet_sha256}` but the attempt's retained packet digests to `{packet_sha256}`"
+            "stale packet: the retained binding pins packet sha256 `{retained_packet_sha256}` but the attempt's retained packet digests to `{packet_sha256}`; start a new attempt with `ripr agent repair --seam-id <id> --phase before` so the binding pins the current packet"
         ));
     }
     Ok(verified)
@@ -1437,7 +1466,7 @@ pub(crate) fn confirm_manifest_unchanged(
     })?;
     if current != pinned {
         return Err(ManifestConfirmationError::Replaced(format!(
-            "stale selection manifest: the retained binding pins manifest sha256 `{pinned}` but {path} now digests to `{current}`; a changed manifest requires a new re-authorized attempt"
+            "stale selection manifest: the retained binding pins manifest sha256 `{pinned}` but {path} now digests to `{current}`; a changed manifest requires a new re-authorized attempt; restore the pinned manifest bytes or start a new attempt with `ripr agent repair --seam-id <id> --phase before`"
         )));
     }
     Ok(())
@@ -1478,18 +1507,26 @@ pub(crate) fn write_apply_record_from(
         )
     })?;
     if sha256_hex(&binding_bytes) != binding_artifact.sha256.trim_start_matches("sha256:") {
-        return Err(
+        return Err(new_attempt_refusal(
             "apply record refuses a retained prepare artifact whose bytes leave its digest"
                 .to_string(),
-        );
+        ));
     }
     check_binding_artifact_chain(&binding_artifact.sha256, retained_artifact_sha256)?;
     let packet_artifact =
         crate::app::repair_attempt::find_manifest_artifact_by_role(&manifest, "agent_packet")
-            .ok_or_else(|| "durable attempt is missing its retained agent packet".to_string())?;
+            .ok_or_else(|| {
+                new_attempt_refusal(
+                    "durable attempt is missing its retained agent packet".to_string(),
+                )
+            })?;
     let before_artifact =
         crate::app::repair_attempt::find_manifest_artifact_by_role(&manifest, "before_snapshot")
-            .ok_or_else(|| "durable attempt is missing its retained before snapshot".to_string())?;
+            .ok_or_else(|| {
+                new_attempt_refusal(
+                    "durable attempt is missing its retained before snapshot".to_string(),
+                )
+            })?;
     let packet_sha256 = packet_artifact
         .sha256
         .trim_start_matches("sha256:")
@@ -1499,20 +1536,22 @@ pub(crate) fn write_apply_record_from(
         .trim_start_matches("sha256:")
         .to_string();
     if !is_sha256_hex(&packet_sha256) || !is_sha256_hex(&before_snapshot_sha256) {
-        return Err("apply record refuses malformed durable attempt digests".to_string());
+        return Err(new_attempt_refusal(
+            "apply record refuses malformed durable attempt digests".to_string(),
+        ));
     }
     let patch_sha256 = after.delta_sha256.trim_start_matches("sha256:").to_string();
     if !is_sha256_hex(&patch_sha256) {
-        return Err("apply record refuses a malformed patch digest".to_string());
+        return Err("apply record refuses a malformed patch digest; this is a ripr bug, report it with the command you ran".to_string());
     }
     if after.packet_sha256 != packet_artifact.sha256 {
-        return Err(
+        return Err(new_attempt_refusal(
             "apply record refuses an after verdict whose packet digest leaves the retained artifacts"
                 .to_string(),
-        );
+        ));
     }
     let cage_status = serde_json::to_value(after.verdict.status)
-        .map_err(|error| format!("serialize edit-cage status failed: {error}"))?;
+        .map_err(|error| format!("serialize edit-cage status failed: {error}; this is a ripr bug, report it with the command you ran"))?;
     let changed_paths = after
         .verdict
         .changed_paths
