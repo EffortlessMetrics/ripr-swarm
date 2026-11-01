@@ -55,17 +55,18 @@ pub(in crate::analysis) fn same_file_const_readers<'a>(
 /// Fail closed (empty) unless all of these hold:
 /// - the line declares a `const` (not a `static`, whose value may change at
 ///   run time) whose name is declared once in the file;
-/// - the file has at most [`READER_LIMIT`] production readers
-///   ([`function_reads`]: shadows, other-path qualifiers and escaped
-///   `{{NAME}}` are not reads), at least one;
-/// - no code outside a function reads the name and no `use` anywhere in the
-///   file imports an item spelled like it;
-/// - the declaration sits directly in a module (not an `impl` or trait) and
-///   every reader is in that same module;
-/// - every reader's whole body is one one-line returned expression that
+/// - the file has exactly one production reader ([`function_reads`]:
+///   shadows, other-path qualifiers and escaped `{{NAME}}` are not reads),
+///   and no other production code anywhere names that reader;
+/// - no code outside a function reads the name, no `use` anywhere in the file
+///   imports an item spelled like it or a `format`, and no test code in the
+///   workspace mentions it ([`tests_mention`]);
+/// - the declaration sits directly in a module (not an `impl` or trait), the
+///   reader is in that same module, and no module chain is opened twice;
+/// - the reader's whole body is one one-line returned expression that
 ///   carries the whole constant ([`returns_constant_whole`]). A branch,
-///   binding, closure, async block or second return keeps the whole change
-///   unknown, so no reader is chosen over another.
+///   binding, closure, async block or second return keeps the change
+///   unknown.
 ///
 /// The caller also requires the paired old and new values to differ.
 pub(in crate::analysis) fn const_reader_returns<'a>(
@@ -107,7 +108,13 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
         .filter(|function| function.source_role == FunctionSourceRole::Production)
         .filter(|function| function_reads(&function.body, name))
         .collect::<Vec<_>>();
-    if readers.is_empty() || readers.len() > READER_LIMIT {
+    // Exactly one reader, which no other production code calls: then a test
+    // can reach the constant's value only through the reader itself, and a
+    // second reader or caller cannot feed the expected side of its check.
+    let [reader] = readers.as_slice() else {
+        return Vec::new();
+    };
+    if reader_has_production_callers(index, reader) {
         return Vec::new();
     }
     // One module scope for the declaration and every reader, and the
@@ -141,16 +148,57 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
     found
 }
 
-/// Whether any test or test helper in the index mentions `name`, in code or
-/// in a format string. Such a test may build its expected value from the
-/// constant itself (`assert_eq!(banner(), format!("[{BANNER}]"))`), which
-/// tracks the edit and cannot notice it; only the value-flow evaluation on the
-/// declaration judges that, so the declaration keeps its probe.
+/// Whether any test code in the index mentions `name`, in code, in a format
+/// string, in a `use` (also renamed: `use fx::BANNER as B`) or in an item
+/// outside a function (`const EXP: &str = fx::BANNER`). Such a test may build
+/// its expected value from the constant itself
+/// (`assert_eq!(banner(), format!("[{BANNER}]"))`), which tracks the edit and
+/// cannot notice it; only the value-flow evaluation on the declaration judges
+/// that, so the declaration keeps its probe.
+///
+/// Test code is, conservatively: the whole text of a file under a `tests`
+/// directory (helpers there are not marked as tests); in any other file, all
+/// text from its first test attribute (`#[test]`, `#[cfg(test)]`,
+/// `#[tokio::test]`, ...) on; and the body of every function the index marks
+/// as a test.
 fn tests_mention(index: &RustIndex, name: &str) -> bool {
+    index.files().iter().any(|(path, facts)| {
+        let in_tests_dir = path
+            .components()
+            .any(|component| component.as_os_str() == "tests");
+        let source: &str = &facts.source;
+        let test_text = if in_tests_dir {
+            Some(source)
+        } else {
+            first_test_attribute(source).and_then(|at| source.get(at..))
+        };
+        test_text.is_some_and(|text| contains_word(text, name))
+            || facts.functions.iter().any(|function| {
+                function.source_role != FunctionSourceRole::Production
+                    && contains_word(&function.body, name)
+            })
+    })
+}
+
+/// The byte offset of the first attribute (`#[..]`) whose text names `test`
+/// as a word.
+fn first_test_attribute(source: &str) -> Option<usize> {
+    source.match_indices("#[").find_map(|(at, _)| {
+        let rest = source.get(at..)?;
+        let attribute = rest.get(..rest.find(']')?)?;
+        contains_word(attribute, "test").then_some(at)
+    })
+}
+
+/// Whether production code other than `reader` names it. A caller such as
+/// `fn tag() -> String { banner_line() }` gives a test a second way to the
+/// constant's value, so a test can build its expected side from it.
+fn reader_has_production_callers(index: &RustIndex, reader: &FunctionSummary) -> bool {
     index.files().iter().any(|(_, facts)| {
         facts.functions.iter().any(|function| {
-            function.source_role != FunctionSourceRole::Production
-                && contains_word(&function.body, name)
+            function.source_role == FunctionSourceRole::Production
+                && function.id != reader.id
+                && contains_word(&function.body, &reader.name)
         })
     })
 }
@@ -192,6 +240,11 @@ fn repeats_inline_module(masked: &str) -> bool {
             {
                 module = Some(name.trim_end_matches(['{', ';']).to_string());
             }
+        }
+        // `mod a` with its `{` on a later line: the chain cannot be read
+        // line by line, so treat it as ambiguous.
+        if module.is_some() && !line.contains(['{', ';']) {
+            return true;
         }
         for ch in line.chars() {
             match ch {
@@ -615,8 +668,24 @@ fn declaration_count(masked_source: &str, name: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        body_is_only, declaration_count, function_reads, imports_name, returns_constant_whole,
+        body_is_only, declaration_count, first_test_attribute, function_reads, imports_name,
+        repeats_inline_module, returns_constant_whole,
     };
+
+    #[test]
+    fn a_module_opened_twice_or_split_from_its_brace_is_ambiguous() {
+        assert!(repeats_inline_module("mod a {\n}\nmod a {\n}\n"));
+        assert!(repeats_inline_module("pub mod a\n{\n}\n"));
+        assert!(!repeats_inline_module("mod a {\n}\nmod b {\n}\nmod c;\n"));
+    }
+
+    #[test]
+    fn test_code_starts_at_the_first_test_attribute() {
+        let source = "pub fn f() {}\n#[cfg(test)]\nmod tests {}\n";
+        assert_eq!(first_test_attribute(source), source.find("#[cfg(test)]"));
+        assert!(first_test_attribute("#[derive(Debug)]\nstruct Contest;\n").is_none());
+        assert!(first_test_attribute("#[tokio::test]\nasync fn t() {}\n").is_some());
+    }
 
     #[test]
     fn only_a_body_that_is_the_returned_expression_is_followed() {

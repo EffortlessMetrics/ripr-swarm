@@ -20,6 +20,16 @@ struct Repo(PathBuf);
 impl Repo {
     /// `old_src` + `test` on `main`, then `new_src` on `feature`.
     fn create(old_src: &str, new_src: &str, test: &str) -> Result<Self, String> {
+        Self::create_with_files(old_src, new_src, test, &[])
+    }
+
+    /// `create`, with extra test-side `files` committed in the base.
+    fn create_with_files(
+        old_src: &str,
+        new_src: &str,
+        test: &str,
+        files: &[(&str, &str)],
+    ) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-const-reader-{}-{}",
@@ -33,6 +43,12 @@ impl Repo {
         repo.write("Cargo.toml", CARGO_TOML)?;
         repo.write("src/lib.rs", old_src)?;
         repo.write("tests/t.rs", test)?;
+        for (name, text) in files {
+            if let Some(parent) = std::path::Path::new(name).parent() {
+                std::fs::create_dir_all(repo.0.join(parent)).map_err(|e| e.to_string())?;
+            }
+            repo.write(name, text)?;
+        }
         repo.git(&["-c", "init.templateDir=", "init", "-q"])?;
         repo.git(&["config", "user.email", "t@example.com"])?;
         repo.git(&["config", "user.name", "t"])?;
@@ -449,4 +465,97 @@ fn cfg_alternative_module_opened_twice_does_not_start() -> Result<(), String> {
         "use fx::a::greet;\n\n#[test]\nfn greet_mentions_name() {\n    assert!(greet(\"bob\").contains(\"bob\"));\n}\n",
     )?;
     assert_no_start("duplicate module", &repo).map(|_| ())
+}
+
+const BANNER_OLD: &str = "pub const BANNER: &str = \"v1\";\n\npub fn banner_line() -> String {\n    format!(\"[{BANNER}]\")\n}\n";
+
+fn banner_new(old: &str) -> String {
+    old.replace("\"v1\"", "\"v2\"")
+}
+
+/// Neither command starts, and check keeps the declaration as the change
+/// (so no exact check of a reader is read as a check of the constant).
+fn assert_declaration_kept(case: &str, repo: &Repo) -> Result<(), String> {
+    let (check, _) = assert_no_start(case, repo)?;
+    if !check.contains("Changed behavior: pub const BANNER") {
+        return Err(format!(
+            "{case}: check must keep the declaration as the change:\n{check}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn loosely_checked_banner_reader_starts_in_both_commands() -> Result<(), String> {
+    // Positive twin of the four self-computed negatives below.
+    let repo = Repo::create(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        "use fx::banner_line;\n\n#[test]\nfn banner_is_bracketed() {\n    assert!(banner_line().starts_with('['));\n}\n",
+    )?;
+    assert_same_start("banner positive", &repo)
+}
+
+#[test]
+fn helper_in_a_test_file_that_builds_the_expected_value_keeps_the_declaration() -> Result<(), String>
+{
+    // (a) `expected()` is an ordinary fn in tests/common/mod.rs, not a test.
+    let repo = Repo::create_with_files(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        "mod common;\n\nuse fx::banner_line;\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), common::expected());\n}\n",
+        &[(
+            "tests/common/mod.rs",
+            "pub fn expected() -> String {\n    format!(\"[{}]\", fx::BANNER)\n}\n",
+        )],
+    )?;
+    assert_declaration_kept("test helper", &repo)
+}
+
+#[test]
+fn renamed_import_of_the_constant_in_a_test_keeps_the_declaration() -> Result<(), String> {
+    // (b) The test reads the constant as `B`.
+    let repo = Repo::create(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        "use fx::banner_line;\nuse fx::BANNER as B;\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), format!(\"[{B}]\"));\n}\n",
+    )?;
+    assert_declaration_kept("renamed import", &repo)
+}
+
+#[test]
+fn test_file_constant_copied_from_the_constant_keeps_the_declaration() -> Result<(), String> {
+    // (c) An item outside any function holds the constant's value.
+    let repo = Repo::create(
+        BANNER_OLD,
+        &banner_new(BANNER_OLD),
+        "use fx::banner_line;\n\nconst EXP: &str = fx::BANNER;\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), format!(\"[{EXP}]\"));\n}\n",
+    )?;
+    assert_declaration_kept("copied constant", &repo)
+}
+
+#[test]
+fn second_reader_used_for_the_expected_value_keeps_the_declaration() -> Result<(), String> {
+    // (d) `tag()` also returns the constant whole; the test builds its
+    // expected value from it.
+    let old = format!("{BANNER_OLD}\npub fn tag() -> String {{\n    format!(\"{{BANNER}}\")\n}}\n");
+    let repo = Repo::create(
+        &old,
+        &banner_new(&old),
+        "use fx::{banner_line, tag};\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), format!(\"[{}]\", tag()));\n}\n",
+    )?;
+    assert_declaration_kept("second reader", &repo)
+}
+
+#[test]
+fn production_caller_of_the_reader_used_for_the_expected_value_keeps_the_declaration()
+-> Result<(), String> {
+    // `framed()` calls the reader, so it carries the constant's value too.
+    let old = format!("{BANNER_OLD}\npub fn framed() -> String {{\n    banner_line()\n}}\n");
+    let repo = Repo::create(
+        &old,
+        &banner_new(&old),
+        "use fx::{banner_line, framed};\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), framed());\n}\n",
+    )?;
+    assert_declaration_kept("production caller", &repo)
 }

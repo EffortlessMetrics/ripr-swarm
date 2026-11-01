@@ -320,12 +320,19 @@ only when all of these hold:
   anywhere in the file imports an item spelled like it or a `format`; no
   inline module chain is opened twice (`#[cfg]` alternatives); and no
   `macro_rules! format` exists in the indexed workspace;
-- no test or test helper anywhere in the indexed workspace mentions the name.
-  Such a test may build its expected value from the constant itself
+- no test code anywhere in the indexed workspace mentions the name, in code,
+  a format string, a `use` (renamed or not) or an item outside a function.
+  Test code is the whole text of a file under a `tests` directory (its
+  helpers included), all text from the first test attribute on in any other
+  file, and every function the index marks as a test. Such a test may build
+  its expected value from the constant itself
   (`assert_eq!(banner_line(), format!("[{BANNER}]"))`), which tracks the
   edit; only the value-flow evaluation on the declaration judges that;
-- one to six production functions read the name. Shadowing and other-path
-  reads are not reads. Every reader sits in the declaration's own module, and
+- there is exactly one reader, and no other production code names it, so a
+  test cannot build its expected side from a second reader (`tag()`) or a
+  caller of the reader;
+- shadowing and other-path reads are not reads. The reader sits in the
+  declaration's own module, no module line leaves its `{` to a later line, and
   no code outside a function reads the name (another constant's initializer,
   a compile-time `assert!`, an array length);
 - each reader's whole body is one one-line returned value (a tail expression
@@ -339,9 +346,10 @@ only when all of these hold:
 
 Any failure keeps the declaration's `static_unknown` probe, with no repair
 start. `ripr repair` scopes to the same returned lines and expressions by
-running the same probe pipeline over the change with the whole workspace
-indexed, so `ripr check` and
-`ripr repair` offer the same start or neither does. A returned value that a
+running the same probe pipeline over the change with every workspace Rust
+file indexed. That is a superset of check's index, so repair can only refuse
+more: on the same files the two commands offer the same start or neither
+does, and repair never starts on a reader check did not name. A returned value that a
 test checks exactly is reported as checked; a weak check gets the ordinary
 return-value repair.
 
