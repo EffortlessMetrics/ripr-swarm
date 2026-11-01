@@ -101,6 +101,11 @@ Environment variables:
                                  the budget and write all seams (may produce very large files).
                                  When the budget is applied, both artifacts include a
                                  limitations[] disclosure naming the env var and a repair route.
+  RIPR_PILOT_REPO_EXPOSURE_BYTES Byte budget for the entries in repo-exposure.json. Default:
+                                 8000000 (the entry count alone let it reach 13 MB). A cut sets
+                                 run_status limited_repo_exposure_bytes, reports the rendered
+                                 and total counts in limitations[] and pilot-summary.json, and
+                                 `ripr outcome` refuses the file. Set to 0 to write every entry.
   RIPR_PILOT_PACKET_BUDGET      Maximum packets in the pilot packet file. Default: 3, with
                                  actionable packets first, so the file stays small enough to
                                  read. Set to 0 to write every packet (often 2-4 MB). When the
