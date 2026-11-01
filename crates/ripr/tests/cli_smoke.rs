@@ -11134,12 +11134,18 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
         );
         std::fs::remove_file(&out)?;
         for (omitted, diagnostic) in [
-            ("all", "agent receipt requires --verify-json <path>"),
+            (
+                "all",
+                "agent receipt requires --verify-json <path>; add `--verify-json <path>` to the command",
+            ),
             (
                 "--verify-json",
-                "agent receipt requires --verify-json <path>",
+                "agent receipt requires --verify-json <path>; add `--verify-json <path>` to the command",
             ),
-            ("--seam-id", "agent receipt requires --seam-id"),
+            (
+                "--seam-id",
+                "agent receipt requires --seam-id; add `--seam-id` to the command",
+            ),
             (
                 "--json",
                 "agent receipt requires --json (the supported output for this subcommand); add --json to the command",
@@ -13480,7 +13486,7 @@ fn config_validate_does_not_consume_root_flag_as_a_path() -> Result<(), String> 
             assert!(output.stdout.is_empty(), "args: {args:?}");
             assert_eq!(
                 String::from_utf8_lossy(&output.stderr).trim(),
-                "ripr: missing value for --root",
+                "ripr: missing value for --root; pass a value right after it",
                 "args: {args:?}"
             );
         }
@@ -17805,7 +17811,7 @@ fn baseline_update_removes_resolved_without_adopting_new_debt() -> Result<(), St
     assert_failure(&no_mode);
     let stderr = String::from_utf8_lossy(&no_mode.stderr);
     assert!(stderr.contains("--remove-resolved"));
-    assert!(stderr.contains("adopting new debt is not supported"));
+    assert!(stderr.contains("adopting new debt is not supported; pass `--remove-resolved` or `--migrate-legacy-identities`"));
 
     ignore_remove_dir_all(&workspace);
     Ok(())
