@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Finding SARIF fingerprints (`riprFingerprintV1`) omit the display line so supported native identities follow pure line moves. Named-owner Perl findings now distinguish changed semantic payloads instead of sharing an owner-line ID; old Perl suppression selectors need reviewed replacement and are never automatically aliased. Old finding SARIF baselines require review and refresh once. Repo seams retain their existing offset/line-bound identity; fallback, duplicate-payload and producer-digest collision limits remain explicit (#10517).
