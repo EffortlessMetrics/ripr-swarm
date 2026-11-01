@@ -19190,7 +19190,7 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         command,
         10,
         workflow,
-        &summary.replace("pass/fail authority", "decision source"),
+        &summary.replace("remains pass/fail authority", "remains the decision source"),
     );
     assert!(!no_gate.gate_authority_boundary);
     assert!(
@@ -19201,6 +19201,15 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         "{:?}",
         no_gate.errors
     );
+
+    let no_gate_command = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "missing-gate-command",
+        command,
+        10,
+        workflow,
+        &summary.replace("ripr gate evaluate", "the gate"),
+    );
+    assert!(!no_gate_command.gate_authority_boundary);
 
     // Workflow text that still carries the retired shell cannot satisfy the
     // summary properties.

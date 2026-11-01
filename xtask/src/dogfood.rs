@@ -3602,11 +3602,12 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     .filter(|command| summary.contains(**command))
     .count();
     let expected_repair_commands = 4usize;
-    // #11585 removed the generic `Gate authority:` Start here bullet; the
-    // boundary is stated where it applies, as pass/fail authority naming
-    // `ripr gate evaluate`.
-    let gate_authority_boundary = summary.contains("ripr gate evaluate")
-        && summary.to_ascii_lowercase().contains("pass/fail authority");
+    // #11585 removed the generic `Gate authority:` Start here bullet. The
+    // first-run summary states the boundary on the preview-language grouping
+    // line, so pin that line: other blocks that name pass/fail authority only
+    // render when their artifacts exist and must not satisfy this.
+    let gate_authority_boundary = summary
+        .contains("advisory presentation only; `ripr gate evaluate` remains pass/fail authority");
     let summary_step = generated_ci_advisory_summary_step(workflow);
     let summary_step_head = summary_step.is_some();
     let summary_invoke = summary_step.is_some_and(generated_ci_summary_step_has_executable_invoke);
