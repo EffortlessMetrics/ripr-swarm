@@ -851,10 +851,13 @@ fn run_facade_status(mut options: StatusFacadeOptions) -> Result<(), CommandErro
 /// #11600: the façade's `status --attempt` shares the agent status body, whose
 /// errors name `agent status`; name the command the caller actually typed.
 fn facade_status_message(message: String) -> String {
-    match message.strip_prefix("agent status --attempt") {
+    let message = match message.strip_prefix("agent status --attempt") {
         Some(rest) => format!("status --attempt{rest}"),
         None => message,
-    }
+    };
+    // The shared ID error also tells the caller where IDs are listed; point
+    // at the command they typed.
+    message.replace("`ripr agent status`", "`ripr status`")
 }
 
 /// Print one retry template and, when PowerShell needs a different spelling
@@ -1637,6 +1640,17 @@ mod facade_status_message_tests {
                     .to_string()
             ),
             "status --attempt: repair attempt ID must start with `repair-attempt-`"
+        );
+    }
+
+    #[test]
+    fn the_id_hint_names_status_not_agent_status() {
+        assert_eq!(
+            facade_status_message(
+                "agent status --attempt: bad; copy the ID that `ripr agent repair` printed or `ripr agent status` lists"
+                    .to_string()
+            ),
+            "status --attempt: bad; copy the ID that `ripr agent repair` printed or `ripr status` lists"
         );
     }
 
