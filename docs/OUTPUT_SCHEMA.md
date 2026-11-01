@@ -875,9 +875,13 @@ next=ripr context ... --at SELECTOR
 - Exactly one terminal line: `open=` for a candidate-current test-side gap
   (`weakly_exposed` or `reachable_unrevealed`, not limited) or for a
   reach-only limit that still carries a weak related test (the `check` `open=`
-  rule); `done=` for an exposed finding; `stop=` otherwise (limited,
-  preview-only, base-side, `no_static_path`, unknown classes). All are static
-  advisory, never runtime mutation outcomes.
+  rule); `done=` for a candidate-current, unsuppressed exposed finding;
+  `stop=` otherwise (limited, preview-only, `no_static_path`, unknown classes).
+  A finding that is not a current edit target (`base_deleted`, `moved_or_renamed`,
+  `unresolved_subject`) never prints `open=` or `done=`: its `stop=` names the
+  currentness. A policy-suppressed finding prints a suppression `stop=`; a
+  `--from` replay with `--suppression-policy` is refused for this format. All
+  are static advisory, never runtime mutation outcomes.
 - `next=` is the scope-bound `ripr context` command for this finding.
 
 `ripr check --format human` is the bounded default terminal surface. It prints
