@@ -1351,7 +1351,11 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         false_actionable.numerator,
         false_actionable.denominator,
         percent(false_actionable.rate),
-        false_cases.join(", "),
+        if false_cases.is_empty() {
+            "no case recorded".to_string()
+        } else {
+            false_cases.join(", ")
+        },
         authored_false_actionable.numerator,
         authored_false_actionable.denominator,
         percent(authored_false_actionable.rate)
@@ -2090,7 +2094,7 @@ fn agent_section(page: &mut Page, agent: &Value) -> Result<(), String> {
             "ripr commands to fix",
             "Tool steps to fix",
             "False weak findings after the fix",
-            "Gaps `--format agent` names before the fix",
+            "Gap or open lines `--format agent` names before the fix",
             "First `check` bytes: human / agent / JSON",
         ],
         &rows,

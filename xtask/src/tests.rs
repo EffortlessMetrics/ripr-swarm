@@ -7596,13 +7596,13 @@ jobs:
   dependency-review:
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8362,14 +8362,14 @@ fn workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count() {
 jobs:
   dependency-review:
     steps:
-      - uses: actions/dependency-review-action@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8378,7 +8378,7 @@ jobs:
         workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
 
     assert!(violations.iter().any(|violation| {
-        violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
+        violation.contains("uses `actions/dependency-review-action@` 2 time(s), allowed 1")
     }));
 }
 
@@ -29452,18 +29452,28 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
 }
 
 fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
+    // Each phase is announced on stderr before it starts. When the child outlives
+    // its tool-build deadline the parent's diagnostic carries this stream, so a
+    // stall names the check it was inside instead of an anonymous TIMEOUT (#12035).
+    fn phase(name: &str, check: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        eprintln!("policy facade phase: {name}");
+        check()
+    }
     with_repo_cwd(|| {
-        check_static_language()?;
-        check_no_panic_family()?;
-        check_allow_attributes()?;
-        check_local_context()?;
-        check_file_policy()?;
-        assert_packet_coverage_report()?;
-        check_executable_files()?;
-        check_workflows()?;
-        check_droid_review_config()?;
-        check_process_policy()?;
-        check_network_policy()
+        phase("check_static_language", check_static_language)?;
+        phase("check_no_panic_family", check_no_panic_family)?;
+        phase("check_allow_attributes", check_allow_attributes)?;
+        phase("check_local_context", check_local_context)?;
+        phase("check_file_policy", check_file_policy)?;
+        phase(
+            "assert_packet_coverage_report",
+            assert_packet_coverage_report,
+        )?;
+        phase("check_executable_files", check_executable_files)?;
+        phase("check_workflows", check_workflows)?;
+        phase("check_droid_review_config", check_droid_review_config)?;
+        phase("check_process_policy", check_process_policy)?;
+        phase("check_network_policy", check_network_policy)
     })
 }
 
@@ -49194,8 +49204,13 @@ fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
     if upload.contains("if: always()") || upload.contains("if: success()") {
         violations.push("diagnostics upload must not run on success".to_string());
     }
-    if !upload.contains("actions/upload-artifact@v7") {
-        violations.push("diagnostics upload must use actions/upload-artifact@v7".to_string());
+    // The repo pins first-party actions to a commit SHA with the major in the
+    // trailing comment (`actions/upload-artifact@<sha> # v7.x.y`).
+    let pinned_v7 = upload
+        .lines()
+        .any(|line| line.contains("actions/upload-artifact@") && line.contains("# v7"));
+    if !pinned_v7 {
+        violations.push("diagnostics upload must use actions/upload-artifact v7".to_string());
     }
     if !upload.contains("target/ripr/vscode-test-host-diagnostics/") {
         violations

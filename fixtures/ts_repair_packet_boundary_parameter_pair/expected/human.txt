@@ -26,7 +26,7 @@ Start here:
   Related test (1 of 2 matched rows): tests/pricing.test.ts:3 no discount below threshold (the preview adapter could not confirm that this assertion observes the changed behavior)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `amount == threshold`; the repair packet is complete (advisory: `ripr context --at
-    <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)
+    <finding-id>` prints it; `ripr repair` covers Rust files only)
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -45,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/input --diff <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:0fb82713
   ripr context --root <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/input --diff <cwd>/fixtures/ts_repair_packet_boundary_parameter_pair/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:0fb82713
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

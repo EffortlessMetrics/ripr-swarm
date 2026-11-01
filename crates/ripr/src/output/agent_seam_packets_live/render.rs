@@ -86,12 +86,12 @@ pub(crate) fn render_agent_gap_record_queue_json_with_currentness(
     );
     let object = envelope
         .as_object_mut()
-        .ok_or_else(|| "typed swarm queue renderer must produce an object".to_string())?;
+        .ok_or_else(|| "typed swarm queue renderer must produce an object; regenerate the input with the command that wrote it, then rerun".to_string())?;
 
     let summary = object
         .get_mut("summary")
         .and_then(Value::as_object_mut)
-        .ok_or_else(|| "typed swarm queue is missing summary".to_string())?;
+        .ok_or_else(|| "typed swarm queue is missing summary; regenerate the input with the command that wrote it, then rerun".to_string())?;
     summary.insert("current_total".to_string(), json!(current_total));
     summary.insert("stale_total".to_string(), json!(stale_total));
     summary.insert(
@@ -168,20 +168,20 @@ pub(crate) fn render_agent_gap_record_packet_json_with_live_currentness(
 
     if effective.is_assignable() {
         let mut envelope = serde_json::from_str::<Value>(&legacy_packet)
-            .map_err(|error| format!("parse agent gap packet JSON failed: {error}"))?;
+            .map_err(|error| format!("parse agent gap packet JSON failed: {error}; regenerate the input with the command that wrote it, then rerun"))?;
         let object = envelope
             .as_object_mut()
-            .ok_or_else(|| "agent gap packet renderer must produce an object".to_string())?;
+            .ok_or_else(|| "agent gap packet renderer must produce an object; regenerate the input with the command that wrote it, then rerun".to_string())?;
         let packet = object
             .get_mut("packets")
             .and_then(Value::as_array_mut)
             .and_then(|packets| packets.first_mut())
-            .ok_or_else(|| "agent gap packet renderer is missing its packet".to_string())?;
+            .ok_or_else(|| "agent gap packet renderer is missing its packet; regenerate the input with the command that wrote it, then rerun".to_string())?;
         decorate_packet_currentness(packet, &effective)?;
         object.insert("status".to_string(), Value::String("advisory".to_string()));
         object.insert("source_currentness".to_string(), effective.json());
         let mut rendered = serde_json::to_string_pretty(&envelope)
-            .map_err(|error| format!("render current agent gap packet failed: {error}"))?;
+            .map_err(|error| format!("render current agent gap packet failed: {error}; this is a ripr bug, report it with the command you ran"))?;
         rendered.push('\n');
         return Ok(rendered);
     }
@@ -231,7 +231,7 @@ fn render_blocked_agent_gap_packet(
         ],
     });
     let mut rendered = serde_json::to_string_pretty(&envelope)
-        .map_err(|error| format!("render blocked agent gap packet failed: {error}"))?;
+        .map_err(|error| format!("render blocked agent gap packet failed: {error}; this is a ripr bug, report it with the command you ran"))?;
     rendered.push('\n');
     Ok(rendered)
 }
@@ -298,7 +298,7 @@ fn decorate_packet_currentness(
 ) -> Result<(), String> {
     let object = packet
         .as_object_mut()
-        .ok_or_else(|| "agent packet currentness target must be an object".to_string())?;
+        .ok_or_else(|| "agent packet currentness target must be an object; regenerate the input with the command that wrote it, then rerun".to_string())?;
     object.insert(
         "queue_state".to_string(),
         Value::String(currentness.queue_state.clone()),

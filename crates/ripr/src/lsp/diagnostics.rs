@@ -173,7 +173,22 @@ pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Ve
     }
 
     let mut buckets = BTreeMap::<String, Vec<usize>>::new();
+    // Group order must not depend on the order the snapshot lists findings in
+    // (that order is an analysis detail and shifts with unrelated changes).
+    // Each finding contributes the key it had before groups could merge
+    // (`canonical:<gap>` or `raw:<anchor>`), and a group sorts by the lowest
+    // key among its members.
+    let mut order_key = vec![String::new(); count];
     for (index, finding) in findings.iter().enumerate() {
+        order_key[index] = match &finding.canonical_gap {
+            Some(gap) => format!("canonical:{}", gap.id),
+            None => {
+                let anchor = overlap_signature(finding)
+                    .and_then(|key| overlap_anchor.get(&key).copied())
+                    .unwrap_or(finding.id.as_str());
+                format!("raw:{anchor}")
+            }
+        };
         if let Some(gap) = &finding.canonical_gap {
             buckets
                 .entry(format!("canonical:{}", gap.id))
@@ -213,9 +228,19 @@ pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Ve
         let root = find(index, &mut parent);
         grouped.entry(root).or_default().push(index);
     }
+    let mut ordered = grouped.into_values().collect::<Vec<_>>();
+    ordered.sort_by_cached_key(|indices| {
+        let lowest = indices
+            .iter()
+            .map(|&index| order_key[index].as_str())
+            .min()
+            .unwrap_or_default()
+            .to_string();
+        (lowest, indices.first().copied().unwrap_or_default())
+    });
 
-    grouped
-        .into_values()
+    ordered
+        .into_iter()
         .filter_map(|mut indices| {
             indices.sort_unstable();
             let mut group = indices
@@ -1714,22 +1739,25 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     Ok(WorkspaceDiagnostics { snapshot, batches })
 }
 
-/// A preview-language (`language_status = "preview"`) finding of a gap class
-/// that the actionable profile withheld from diagnostics because it carries
-/// no producer-backed fix route (#11296). Actionable eligibility is NOT
-/// relaxed: this only names what `finding_is_visible_in_profile` withheld.
-/// The `*_unknown` classes are disclosed by their own set (#5276), so the
-/// two are disjoint.
-pub(super) fn finding_is_withheld_preview_gap(finding: &Finding) -> bool {
-    finding.language_status == Some(LanguageStatus::Preview)
-        && finding.is_candidate_actionable()
-        && is_actionable_gap_class(&finding.class)
+/// A candidate-actionable gap-class finding that the actionable profile
+/// withheld from diagnostics because it carries no producer-backed fix route
+/// (#11296 for preview languages, #11798 for every other language). Actionable
+/// eligibility is NOT relaxed: this only names what
+/// `finding_is_visible_in_profile` withheld. The `*_unknown` classes are
+/// disclosed by their own set (#5276), so the sets are disjoint.
+pub(super) fn finding_is_withheld_gap(finding: &Finding) -> bool {
+    finding.is_candidate_actionable() && is_actionable_gap_class(&finding.class)
 }
 
-/// The raw findings of unpublished canonical groups that are withheld
-/// preview gaps under the actionable profile (#11296); empty for any other
+/// The preview-language share of [`finding_is_withheld_gap`] (#11296).
+pub(super) fn finding_is_withheld_preview_gap(finding: &Finding) -> bool {
+    finding.language_status == Some(LanguageStatus::Preview) && finding_is_withheld_gap(finding)
+}
+
+/// The raw findings of unpublished canonical groups that are withheld gaps
+/// under the actionable profile (#11296, #11798); empty for any other
 /// profile. One owner for the editor marker and every disclosure count.
-pub(super) fn withheld_preview_gap_findings(
+pub(super) fn withheld_gap_findings(
     profile: LspDiagnosticProfile,
     findings: &[Finding],
 ) -> Vec<&Finding> {
@@ -1740,19 +1768,32 @@ pub(super) fn withheld_preview_gap_findings(
         .into_iter()
         .filter(|(primary, _)| !finding_is_visible_in_profile(profile, primary))
         .flat_map(|(_, members)| members)
+        .filter(|finding| finding_is_withheld_gap(finding))
+        .collect()
+}
+
+/// The preview-language subset of [`withheld_gap_findings`] (#11296).
+pub(super) fn withheld_preview_gap_findings(
+    profile: LspDiagnosticProfile,
+    findings: &[Finding],
+) -> Vec<&Finding> {
+    withheld_gap_findings(profile, findings)
+        .into_iter()
         .filter(|finding| finding_is_withheld_preview_gap(finding))
         .collect()
 }
 
-/// Most withheld-preview markers one analysis snapshot publishes (files in
+/// Most withheld-gap markers one analysis snapshot publishes (files in
 /// path order). The budget exempts the marker, so the producer bounds it; the
 /// status `withheld_findings` counts still disclose every withheld finding.
 pub(super) const MAX_WITHHELD_PREVIEW_MARKERS: usize = 50;
 
-/// One Hint on each file whose preview findings the actionable profile
-/// withheld (#11296), anchored on the first withheld finding, so an empty
-/// list never reads as a clean file. It carries no finding identity, repair
-/// data, or actionability, and the delivery budget exempts it.
+/// One Hint on each file whose gap findings the actionable profile withheld
+/// (#11296, #11798), anchored on the first withheld finding, so an empty
+/// list never reads as a clean file. A preview-language file gets the
+/// preview wording; every other file gets the static-gap wording under the
+/// same governed code. It carries no finding identity, repair data, or
+/// actionability, and the delivery budget exempts it.
 fn append_withheld_preview_diagnostics(
     root: &Path,
     findings: &[Finding],
@@ -1761,7 +1802,7 @@ fn append_withheld_preview_diagnostics(
     grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
 ) {
     let mut by_file = BTreeMap::<PathBuf, Vec<&Finding>>::new();
-    for finding in withheld_preview_gap_findings(config.diagnostic_profile, findings) {
+    for finding in withheld_gap_findings(config.diagnostic_profile, findings) {
         by_file
             .entry(finding.probe.location.file.clone())
             .or_default()
@@ -1792,16 +1833,55 @@ fn append_withheld_preview_diagnostics(
         let language = first.language.map(|language| language.as_str());
         let count = members.len();
         let recovery = "set diagnosticProfile: full or run `ripr check`";
-        grouped
-            .entry(uri)
-            .or_default()
-            .push(withheld_preview_diagnostic(
-                anchor.range,
-                language,
-                count,
-                recovery,
-                &display_repo_path(root, &file).to_string(),
-            ));
+        let path = display_repo_path(root, &file).to_string();
+        let marker = if finding_is_withheld_preview_gap(first) {
+            withheld_preview_diagnostic(anchor.range, language, count, recovery, &path)
+        } else {
+            let mut classes = members
+                .iter()
+                .map(|finding| finding.class.as_str())
+                .collect::<Vec<_>>();
+            classes.sort_unstable();
+            classes.dedup();
+            withheld_static_gap_diagnostic(anchor.range, count, &classes, recovery, &path)
+        };
+        grouped.entry(uri).or_default().push(marker);
+    }
+}
+
+/// The marker for a non-preview file whose gap findings the actionable
+/// profile withheld (#11798), e.g. a changed function no test calls. Static
+/// vocabulary only: it reports that no static test path was found or that the
+/// static evidence is weak, never a runtime outcome.
+pub(super) fn withheld_static_gap_diagnostic(
+    range: Range,
+    count: usize,
+    classes: &[&str],
+    recovery: &str,
+    path: &str,
+) -> Diagnostic {
+    Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::HINT),
+        code: Some(NumberOrString::String(
+            super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+        )),
+        source: Some("ripr".to_string()),
+        message: format!(
+            "ripr: {count} changed-behavior finding(s) with no static test path found or weak \
+             static evidence not shown under the actionable profile; {recovery}"
+        ),
+        // Deliberately no `delivery_eligible`, `finding_id`, repair, witness
+        // or `preview_actionability` data: this is a passive limitation.
+        data: Some(serde_json::json!({
+            "kind": "gap_findings_withheld",
+            "limitation": "actionable_profile_withheld_gap",
+            "classes": classes,
+            "withheld_count": count,
+            "recovery": recovery,
+            "path": path,
+        })),
+        ..Default::default()
     }
 }
 
@@ -6590,14 +6670,6 @@ mod diagnostic_policy_tests {
             "full profile must not duplicate the real diagnostic with a marker"
         );
 
-        let mut rust = preview.clone();
-        rust.language = Some(LanguageId::Rust);
-        rust.language_status = None;
-        assert!(
-            withheld_markers(LspDiagnosticProfile::Actionable, &[rust]).is_empty(),
-            "a non-preview hidden gap is named by hidden_gaps, not this marker"
-        );
-
         let mut unknown = preview.clone();
         unknown.class = ExposureClass::StaticUnknown;
         assert!(
@@ -6657,6 +6729,170 @@ mod diagnostic_policy_tests {
                 "below the cap every file keeps a marker: {}",
                 few.len()
             ));
+        }
+        Ok(())
+    }
+
+    fn static_policy_finding(file: &str, line: usize, id: &str, class: ExposureClass) -> Finding {
+        let mut finding = policy_finding();
+        finding.id = id.to_string();
+        finding.class = class;
+        finding.probe.location.file = std::path::PathBuf::from(file);
+        finding.probe.location.line = line;
+        finding.language = Some(LanguageId::Rust);
+        finding.language_status = None;
+        finding.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+        finding
+    }
+
+    /// #11798: a Rust file whose gap findings the actionable profile
+    /// withheld (a changed function no test calls) carries exactly one
+    /// passive Hint under the same governed code, in static vocabulary, with
+    /// the count and the `full` escape hatch and no finding identity.
+    #[test]
+    fn withheld_static_gap_findings_publish_one_passive_hint_per_file() -> Result<(), String> {
+        let late =
+            static_policy_finding("src/lib.rs", 40, "probe:late", ExposureClass::NoStaticPath);
+        let first =
+            static_policy_finding("src/lib.rs", 7, "probe:first", ExposureClass::WeaklyExposed);
+        for finding in [&late, &first] {
+            if finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, finding) {
+                return Err("fixture must be withheld".to_string());
+            }
+        }
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[late, first]);
+        let all = grouped.values().flatten().collect::<Vec<_>>();
+        let [marker] = all.as_slice() else {
+            return Err(format!("exactly one marker expected: {all:?}"));
+        };
+        if marker.severity != Some(DiagnosticSeverity::HINT)
+            || marker.range.start.line != 6
+            || marker.code
+                != Some(NumberOrString::String(
+                    super::super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+                ))
+            || !marker
+                .message
+                .starts_with("ripr: 2 changed-behavior finding(s)")
+            || !marker.message.contains("no static test path found")
+            || !marker.message.contains("diagnosticProfile: full")
+            || !marker.message.contains("ripr check")
+            || marker.message.contains("preview")
+        {
+            return Err(format!("marker shape wrong: {marker:?}"));
+        }
+        let data = marker.data.as_ref().ok_or("marker carries data")?;
+        if data["classes"] != serde_json::json!(["no_static_path", "weakly_exposed"])
+            || data["withheld_count"] != 2
+        {
+            return Err(format!("marker data wrong: {data}"));
+        }
+        for forbidden in [
+            "delivery_eligible",
+            "finding_id",
+            "canonical_gap_id",
+            "headline_eligible",
+            "preview_actionability",
+            "witness",
+            "verification_commands",
+            "receipt_command",
+        ] {
+            if data.get(forbidden).is_some() {
+                return Err(format!("marker must not carry {forbidden}: {data}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// #11798 negative controls: the full profile publishes the real
+    /// diagnostics (no duplicate marker), a finding that is already published
+    /// gets no marker, and neither does an `*_unknown` or non-current one.
+    #[test]
+    fn withheld_static_gap_marker_stays_silent_for_every_other_case() {
+        let withheld =
+            static_policy_finding("src/lib.rs", 3, "probe:w", ExposureClass::NoStaticPath);
+        assert!(
+            withheld_markers(LspDiagnosticProfile::Full, std::slice::from_ref(&withheld))
+                .is_empty(),
+            "full profile must not duplicate the real diagnostic with a marker"
+        );
+
+        let mut published =
+            static_policy_finding("src/lib.rs", 9, "probe:p", ExposureClass::WeaklyExposed);
+        published.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "Price::Boundary".to_string(),
+            reason: "exact boundary is not observed".to_string(),
+            flow_sink: None,
+        }];
+        published.related_tests.push(RelatedTest {
+            name: "checks_boundary".to_string(),
+            file: std::path::PathBuf::from("tests/pricing.rs"),
+            line: 12,
+            oracle: Some("assert_eq!(price, expected)".to_string()),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: crate::domain::RelatedTestRole::Contributing,
+        });
+        assert!(
+            finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, &published),
+            "fixture must be a published finding"
+        );
+        assert!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[published]).is_empty(),
+            "a finding already published gets no marker"
+        );
+
+        let mut unknown = withheld.clone();
+        unknown.class = ExposureClass::StaticUnknown;
+        assert!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[unknown]).is_empty(),
+            "*_unknown findings keep their own disclosure"
+        );
+
+        let mut stale = withheld.clone();
+        stale.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+        assert!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[stale]).is_empty(),
+            "a non-current finding is not a live obligation"
+        );
+
+        // Positive control for the same input, so the silences above are not
+        // a vacuous fixture.
+        assert_eq!(
+            withheld_markers(LspDiagnosticProfile::Actionable, &[withheld])
+                .values()
+                .flatten()
+                .count(),
+            1
+        );
+    }
+
+    /// #11798: the shared per-snapshot cap bounds the static-gap markers too,
+    /// while the disclosure counts stay uncapped.
+    #[test]
+    fn withheld_static_gap_markers_share_the_snapshot_cap() -> Result<(), String> {
+        let total = MAX_WITHHELD_PREVIEW_MARKERS + 5;
+        let findings = (0..total)
+            .map(|index| {
+                static_policy_finding(
+                    &format!("src/m{index:03}.rs"),
+                    3,
+                    &format!("probe:{index:03}"),
+                    ExposureClass::NoStaticPath,
+                )
+            })
+            .collect::<Vec<_>>();
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &findings);
+        if grouped.len() != MAX_WITHHELD_PREVIEW_MARKERS {
+            return Err(format!("cap not applied: {} markers", grouped.len()));
+        }
+        let withheld = withheld_gap_findings(LspDiagnosticProfile::Actionable, &findings);
+        if withheld.len() != total {
+            return Err(format!("counts must stay uncapped: {}", withheld.len()));
         }
         Ok(())
     }
@@ -7587,7 +7823,7 @@ mod lsp_next_step_parity_tests {
         let finding = complete_ts_finding();
         let message = lsp_message(&finding);
         assert!(
-            message.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
+            message.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only)"),
             "LSP diagnostic must contain reconciled next-step for complete packet; got: {message}"
         );
         assert!(
@@ -7782,6 +8018,44 @@ mod canonical_group_member_tests {
             .collect::<BTreeSet<_>>();
         if ids.len() != 3 {
             return Err("group must retain every finding id".to_string());
+        }
+        Ok(())
+    }
+
+    /// Group order is a function of the groups' stable keys, not of the order
+    /// the snapshot lists findings in (#11862 made it follow list order).
+    #[test]
+    fn group_order_does_not_depend_on_the_order_findings_are_listed() -> Result<(), String> {
+        let canonical = gapped_site_finding(
+            "probe:lib:9:predicate",
+            ProbeFamily::Predicate,
+            "gap:rust:src/lib.rs:can_vote:predicate_boundary:predicate:age==18",
+            "age == 18",
+        );
+        let mut raw = gapped_site_finding(
+            "probe:lib:2:predicate",
+            ProbeFamily::Predicate,
+            "unused",
+            "other == 1",
+        );
+        raw.canonical_gap = None;
+        raw.probe.location.line = 2;
+
+        let primaries = |findings: &[Finding]| -> Vec<String> {
+            canonical_group_members(findings)
+                .into_iter()
+                .map(|(primary, _)| primary.id.clone())
+                .collect()
+        };
+        let forward = primaries(&[canonical.clone(), raw.clone()]);
+        let reversed = primaries(&[raw, canonical]);
+        if forward != reversed {
+            return Err(format!(
+                "order moved with input: {forward:?} vs {reversed:?}"
+            ));
+        }
+        if forward != ["probe:lib:9:predicate", "probe:lib:2:predicate"] {
+            return Err(format!("canonical group must sort before raw: {forward:?}"));
         }
         Ok(())
     }

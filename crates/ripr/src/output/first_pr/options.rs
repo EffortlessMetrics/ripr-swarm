@@ -160,10 +160,14 @@ pub(super) fn parse_options(args: &[String]) -> Result<FirstPrOptions, String> {
 
 fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
     let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}"));
+        return Err(format!(
+            "missing value for {flag}; pass a value right after it"
+        ));
     };
     if value.trim().is_empty() {
-        return Err(format!("first-pr {flag} requires a non-empty value"));
+        return Err(format!(
+            "first-pr {flag} requires a non-empty value; pass a value right after {flag}"
+        ));
     }
     Ok(value)
 }
