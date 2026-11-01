@@ -1,0 +1,33 @@
+# Registers the shared language-availability resolver and its first public
+# projection, the `availability_state` / `remediation` fields on
+# `ripr doctor --json` `detected_languages[]` (#2961, #12130).
+[[behavior]]
+id = "RIPR-SPEC-0376"
+name = "One shared resolver decides a language's availability state and doctor publishes it"
+spec = "docs/specs/RIPR-SPEC-0376-language-availability-resolver.md"
+tests = [
+  "crates/ripr/src/domain/language_availability.rs::detected_compiled_enabled",
+  "crates/ripr/src/domain/language_availability.rs::detected_compiled_disabled_overrides_auto_detection",
+  "crates/ripr/src/domain/language_availability.rs::detected_not_compiled_names_complete_route_and_never_enables",
+  "crates/ripr/src/domain/language_availability.rs::configured_enabled_without_adapter_is_unavailable_not_silent",
+  "crates/ripr/src/domain/language_availability.rs::auto_detection_is_visible_when_it_changes_enablement",
+  "crates/ripr/src/domain/language_availability.rs::explicit_disable_outranks_missing_adapter_and_detection",
+  "crates/ripr/src/domain/language_availability.rs::adapter_limitation_cannot_enable_an_unavailable_or_undetected_language",
+  "crates/ripr/src/domain/language_availability.rs::available_states_carry_no_remediation",
+  "crates/ripr/src/cli/commands/doctor.rs::detected_entries_carry_the_shared_availability_state",
+  "crates/ripr/src/cli/commands/doctor.rs::auto_defaulted_python_reads_as_auto_detected_not_configured",
+  "crates/ripr/tests/doctor_json_schema.rs::doctor_json_conforms_to_the_published_schema",
+  "crates/ripr/tests/doctor_json_schema.rs::published_doctor_schema_rejects_documents_the_schema_forbids",
+]
+code = [
+  "crates/ripr/src/domain/language_availability.rs",
+  "crates/ripr/src/cli/commands/doctor.rs",
+  "crates/ripr/src/output/doctor.rs",
+]
+outputs = [
+  "schemas/ripr/doctor.schema.json",
+  "tests/fixtures/verification/ripr/doctor.valid.json",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
