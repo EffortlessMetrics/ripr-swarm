@@ -796,7 +796,7 @@ fn no_eligible_seam_message(
         // test, not the repository-seam route.
         if change == NoEligibleChange::NoRepairableCode {
             let notes = reasons.join("; ");
-            return format!("no seams visible under {root} ({notes}){by_hand}");
+            return format!("no gaps visible under {root} ({notes}){by_hand}");
         }
         // #11246: with no seams there is no list to narrow, but a missing diff
         // still decides what the reader may conclude, so the unscoped note
@@ -1461,7 +1461,7 @@ mod tests {
             &lead,
             1,
         );
-        if !zero.starts_with("no seams visible under ")
+        if !zero.starts_with("no gaps visible under ")
             || !zero.contains("touch no code ripr can start a repair on")
             || !zero.contains("write a test for this change by hand")
             || !zero.contains("--base main`")
