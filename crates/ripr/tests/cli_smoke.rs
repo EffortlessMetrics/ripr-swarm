@@ -171,6 +171,9 @@ mod typescript_finally_completion;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/typescript_partial_star.rs"]
 mod typescript_partial_star;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/typescript_private_methods.rs"]
+mod typescript_private_methods;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
@@ -1734,7 +1737,7 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
         // sha256 hex digest. A partial document must not pass as complete.
         let value: serde_json::Value = serde_json::from_slice(&baseline_stdout)
             .map_err(|error| format!("help --json is not valid JSON: {error}"))?;
-        if value["schema_version"] != serde_json::json!(3) {
+        if value["schema_version"] != serde_json::json!(4) {
             return Err(format!(
                 "help --json schema_version moved: {}",
                 value["schema_version"]
@@ -1976,10 +1979,11 @@ fn help_leads_with_a_bounded_first_screen_that_routes_onward() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // #9865 added the exit-code contract and -v lines to the first screen;
-    // 48 keeps the scannability budget with headroom (observed 47).
+    // 49 keeps the scannability budget (observed 49 with the `ripr init
+    // --agents` route; it was 48 before, so the cap moved by exactly one line).
     let lines = stdout.lines().count();
     assert!(
-        lines <= 48,
+        lines <= 49,
         "the default help screen should stay scannable, got {lines} lines:\n{stdout}"
     );
     assert!(
@@ -2671,12 +2675,14 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
                         )
                         .into());
                     }
+                    // Explain misses spell the listing `--format json` (#11844).
                     let listing = stderr
                         .split('`')
                         .find(|part| part.starts_with("ripr check "))
                         .ok_or_else(|| {
                             format!("selector miss omitted its retry command: {stderr}")
-                        })?;
+                        })?
+                        .replace(" --format json", " --json");
                     if listing != expected_listing || !stderr.contains("list available finding ids")
                     {
                         return Err(
@@ -16447,6 +16453,107 @@ fn init_dry_run_prints_config_without_writing() -> Result<(), String> {
     Ok(())
 }
 
+/// `ripr init --agents` end to end: dry run writes nothing, the real run
+/// appends a marked section to the user's file and creates the others, a rerun
+/// leaves every byte alone, and a malformed marker is refused without a write.
+#[test]
+fn init_agents_appends_marked_section_idempotently_and_never_clobbers() -> Result<(), String> {
+    let workspace = make_temp_workspace(None)?;
+    let root = workspace.display().to_string();
+    let claude = workspace.join("CLAUDE.md");
+    let mine = "# Mine\n\nKeep this line.\n";
+    std::fs::write(&claude, mine).map_err(|e| format!("write CLAUDE.md: {e}"))?;
+
+    let dry = run_ripr(&[
+        "init",
+        "--root",
+        &root,
+        "--agents",
+        "all",
+        "--mcp",
+        "--dry-run",
+    ]);
+    assert_success(&dry);
+    let dry_out = String::from_utf8_lossy(&dry.stdout);
+    for path in [
+        "CLAUDE.md",
+        "AGENTS.md",
+        ".cursor/rules/ripr.mdc",
+        ".cursor/mcp.json",
+    ] {
+        assert!(
+            dry_out.contains(path),
+            "dry run should name {path}: {dry_out}"
+        );
+    }
+    assert!(!workspace.join("AGENTS.md").exists());
+    assert!(!workspace.join(".cursor").exists());
+    assert_eq!(
+        std::fs::read_to_string(&claude).map_err(|e| e.to_string())?,
+        mine
+    );
+
+    let first = run_ripr(&["init", "--root", &root, "--agents", "all", "--mcp"]);
+    assert_success(&first);
+    let after_claude = std::fs::read_to_string(&claude).map_err(|e| e.to_string())?;
+    assert!(
+        after_claude.starts_with(mine),
+        "user content must stay first"
+    );
+    assert!(after_claude.contains("<!-- ripr:agents:end -->"));
+    assert!(after_claude.contains("STOP and report"));
+    let rule = std::fs::read_to_string(workspace.join(".cursor/rules/ripr.mdc"))
+        .map_err(|e| e.to_string())?;
+    assert!(rule.starts_with("---\n"), "{rule}");
+    let cursor_mcp =
+        std::fs::read_to_string(workspace.join(".cursor/mcp.json")).map_err(|e| e.to_string())?;
+    assert!(
+        cursor_mcp.contains("\"mcpServers\"") && cursor_mcp.contains("\"ripr\""),
+        "{cursor_mcp}"
+    );
+    let agents_before =
+        std::fs::read_to_string(workspace.join("AGENTS.md")).map_err(|e| e.to_string())?;
+
+    let second = run_ripr(&["init", "--root", &root, "--agents", "all", "--mcp"]);
+    assert_success(&second);
+    assert_eq!(
+        std::fs::read_to_string(&claude).map_err(|e| e.to_string())?,
+        after_claude,
+        "a rerun must not change CLAUDE.md"
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("AGENTS.md")).map_err(|e| e.to_string())?,
+        agents_before
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.join(".cursor/rules/ripr.mdc"))
+            .map_err(|e| e.to_string())?,
+        rule
+    );
+
+    // Negative: an unterminated marker fails the whole run before any write.
+    let broken = "keep\n<!-- ripr:agents:begin -->\nmy notes\n";
+    std::fs::write(workspace.join("AGENTS.md"), broken).map_err(|e| e.to_string())?;
+    let refused = run_ripr(&["init", "--root", &root, "--agents", "codex", "--force"]);
+    assert!(!refused.status.success(), "unterminated marker must fail");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("without its end marker"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("AGENTS.md")).map_err(|e| e.to_string())?,
+        broken
+    );
+
+    let unknown = run_ripr(&["init", "--root", &root, "--agents", "copilot"]);
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("copilot"));
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
 /// #4378: on Windows the init preview mixed a forward-slash argv prefix with the
 /// joined `\ripr.toml` suffix, and doctor mixed `.\`-relative lines with a
 /// verbatim `\\?\` executable. Both surfaces render one slash convention.
@@ -16861,7 +16968,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // A newer push cancels the older run of the same PR, so two runs never
     // publish the same inline cards (#4448).
     assert!(workflow.contains(
-        "\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"
+        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}\n  cancel-in-progress: true\n"
     ));
     // The prebuilt install needs no third-party toolchain or cache action.
     assert!(!workflow.contains("dtolnay/rust-toolchain"));
@@ -17281,6 +17388,162 @@ fn baseline_create_warns_when_source_predates_build_identity() -> Result<(), Str
     assert!(
         baseline.contains("\"analyzer_version\": null"),
         "{baseline}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn baseline_create_from_check_baselines_a_whole_repo_artifact_and_refuses_a_scoped_one()
+-> Result<(), String> {
+    // Issue #11206 item 3: the whole-repository route goes through the real
+    // binary, and a diff-scoped artifact is refused with the producer command.
+    let workspace = unique_temp_workspace("baseline-create-from-check");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let artifact = |name: &str, base_tree: &str| -> Result<String, String> {
+        let path = workspace.join(name);
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "root": ".",
+  "analysis_outcome": {{
+    "analysis_complete": true,
+    "outcome": {{
+      "kind": "complete_with_findings",
+      "identity": {{"git_candidate_subject": {{"base_tree": "{base_tree}"}}}}
+    }}
+  }},
+  "findings": [
+    {{
+      "canonical_gap_id": "gap:rust:src/lib.rs:price:predicate_boundary:predicate:n==10",
+      "classification": "reachable_unrevealed",
+      "severity": "warning",
+      "probe": {{"file": "./src/lib.rs", "line": 2}},
+      "missing_discriminators": [{{"value": "n == 10"}}]
+    }},
+    {{
+      "canonical_gap_id": "gap:rust:src/lib.rs:other:predicate_boundary:predicate:x==1",
+      "classification": "static_unknown",
+      "probe": {{"file": "src/lib.rs", "line": 5}}
+    }}
+  ]
+}}"#
+            ),
+        )
+        .map_err(|e| format!("write artifact: {e}"))?;
+        Ok(path.display().to_string())
+    };
+    let whole = artifact(
+        "check-whole.json",
+        "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+    )?;
+    let scoped = artifact(
+        "check-scoped.json",
+        "1f0f141e3f5501c293980d256a55df8bbda6b24c",
+    )?;
+    let out = workspace.join(".ripr/gate-baseline.json");
+    let out_arg = out.display().to_string();
+
+    let output = run_ripr(&[
+        "baseline",
+        "create",
+        "--from-check",
+        &whole,
+        "--out",
+        &out_arg,
+    ]);
+    assert_success(&output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Entries: 1"), "{stdout}");
+    let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
+    assert!(
+        baseline.contains("gap:rust:src/lib.rs:price:predicate_boundary:predicate:n==10"),
+        "{baseline}"
+    );
+    assert!(
+        !baseline.contains("other:predicate_boundary"),
+        "an unknown-class finding must not be baselined: {baseline}"
+    );
+    assert!(
+        baseline.contains("\"mode\": \"whole_repo_check\""),
+        "{baseline}"
+    );
+
+    let refused_out = workspace.join("refused.json");
+    let refused_arg = refused_out.display().to_string();
+    let refused = run_ripr(&[
+        "baseline",
+        "create",
+        "--from-check",
+        &scoped,
+        "--out",
+        &refused_arg,
+    ]);
+    assert!(
+        !refused.status.success(),
+        "a scoped artifact must fail closed"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(stderr.contains("not a whole-repository run"), "{stderr}");
+    assert!(stderr.contains("--candidate-tree HEAD^{tree}"), "{stderr}");
+    assert!(!refused_out.exists(), "no baseline is written on refusal");
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+#[test]
+fn baseline_create_from_check_accepts_a_real_whole_tree_producer_artifact() -> Result<(), String> {
+    // Issue #11206 item 3, producer-driven: the artifact is written by the real
+    // `ripr check --candidate-tree` over the committed tree (compared with the
+    // empty tree), not hand-written, so the accepted schema is the producer's.
+    let workspace = unique_temp_workspace("baseline-create-from-producer");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    init_producer_fixture_repo(&workspace).map_err(|e| format!("fixture repo: {e}"))?;
+    let tree = run_command("git", Some(&workspace), &["rev-parse", "HEAD^{tree}"])
+        .map_err(|e| format!("rev-parse tree: {e}"))?;
+    assert!(tree.status.success(), "rev-parse failed: {tree:?}");
+    let tree = String::from_utf8_lossy(&tree.stdout).trim().to_string();
+    let root_arg = workspace.display().to_string();
+
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--candidate-tree",
+        &tree,
+        "--format",
+        "json",
+        "--quiet",
+    ]);
+    assert_success(&check);
+    let artifact = workspace.join("whole-check.json");
+    std::fs::write(&artifact, &check.stdout).map_err(|e| format!("write artifact: {e}"))?;
+    let artifact_arg = artifact.display().to_string();
+    let out = workspace.join("baseline.json");
+    let out_arg = out.display().to_string();
+
+    let created = run_ripr(&[
+        "baseline",
+        "create",
+        "--from-check",
+        &artifact_arg,
+        "--out",
+        &out_arg,
+    ]);
+    assert_success(&created);
+    let baseline = std::fs::read_to_string(&out).map_err(|e| format!("read baseline: {e}"))?;
+    assert!(
+        baseline.contains("\"mode\": \"whole_repo_check\""),
+        "{baseline}"
+    );
+    assert!(
+        baseline.contains("\"canonical_gap_id\": \"gap:rust:"),
+        "the producer's boundary gap must be baselined with its canonical id: {baseline}"
     );
 
     ignore_remove_dir_all(&workspace);
@@ -27602,6 +27865,10 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
         recoveries.push((label, String::from_utf8_lossy(&missing.stderr).into_owned()));
     }
     for (label, stderr) in recoveries {
+        // The explain miss spells the listing `--format json` (#11844); the
+        // missing-selector hint keeps the `--json` alias. Both name the same
+        // scoped command, so compare on the alias spelling.
+        let stderr = stderr.replace(" --format json`", " --json`");
         if !stderr.contains(&format!("`{expected_listing}`")) {
             return Err(format!(
                 "{label} must name the scoped listing `{expected_listing}`:\n{stderr}"
@@ -28943,6 +29210,21 @@ fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
         assert_eq!(refused.status.code(), Some(3), "{refused:?}");
         let stderr = String::from_utf8_lossy(&refused.stderr);
         assert!(stderr.contains("no repository movement"), "{stderr}");
+        // #11597: exactly one typed line; the refusal that spends the budget
+        // is terminal, like the call after it, and earlier ones are retryable.
+        let expected = if refusal_number == 5 {
+            "ripr: refusal code=retry_budget_exhausted disposition=terminal"
+        } else {
+            "ripr: refusal code=awaiting_edit disposition=retryable"
+        };
+        assert_eq!(
+            stderr
+                .lines()
+                .filter(|line| line.starts_with("ripr: refusal code="))
+                .collect::<Vec<_>>(),
+            vec![expected],
+            "{stderr}"
+        );
         // Escalation starts at the second refusal, never on the first.
         assert_eq!(
             stderr.contains("retry budget for this attempt"),
@@ -29043,6 +29325,14 @@ fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
     let stopped_stderr = String::from_utf8_lossy(&stopped.stderr);
     assert!(
         stopped_stderr.contains("spent its after-phase retry budget"),
+        "{stopped_stderr}"
+    );
+    assert_eq!(
+        stopped_stderr
+            .lines()
+            .filter(|line| line.starts_with("ripr: refusal code="))
+            .collect::<Vec<_>>(),
+        vec!["ripr: refusal code=retry_budget_exhausted disposition=terminal"],
         "{stopped_stderr}"
     );
     // The recovery names a new attempt; the shared repair gate may withhold
@@ -31595,7 +31885,9 @@ fn plus_partial_zero_cannot_be_used_as_a_current_quality_gate() -> Result<(), St
         }))
         .err()
         .as_deref(),
-        Some("RIPR+ receipt warnings must be an array")
+        Some(
+            "RIPR+ receipt warnings must be an array; this is a ripr bug, report it with the command you ran"
+        )
     );
     let ledger = include_str!(
         "../../../fixtures/first_successful_pr/empty-diff/inputs/reports/gap-decision-ledger.json"
@@ -34366,6 +34658,13 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
     );
     assert!(repair.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&repair.stderr);
+    // #11597: the held start carries its typed reason beside the prose.
+    assert!(
+        stderr.contains(
+            "ripr: refusal code=start_refused_uncommitted_target disposition=not_started"
+        ),
+        "{stderr}"
+    );
     assert!(
         stderr.contains(
             "No repair attempt started. Commit or stash `src/lib.rs`, then run `ripr repair "

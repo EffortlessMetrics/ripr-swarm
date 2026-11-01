@@ -1017,6 +1017,35 @@ fn chain_repeats_adjacent_value(body: &str, value_offset: usize) -> bool {
     false
 }
 
+/// Whether every `{ .. }` arm on one line holds the same statement, so the
+/// predicate decides nothing the next line can observe.
+fn inline_arms_all_agree(line: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
+    let mut arms = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, ch) in masked.char_indices() {
+        match ch {
+            '{' => {
+                if depth == 0 {
+                    start = index + 1;
+                }
+                depth += 1;
+            }
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    arms.push(masked[start..index].trim().trim_end_matches(';').trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    arms.split_first().is_some_and(|(first, rest)| {
+        !first.is_empty() && !rest.is_empty() && rest.iter().all(|arm| arm == first)
+    })
+}
+
 fn next_branch_value(
     owner_fn: Option<&FunctionSummary>,
     probe_line: usize,
@@ -1026,6 +1055,19 @@ fn next_branch_value(
     let start_index = probe_line.saturating_sub(function.start_line);
     let adjacent_offset = start_index + 1;
     if chain_repeats_adjacent_value(&function.body, adjacent_offset) {
+        return None;
+    }
+    // A one-line `if` whose arms hold the same statement (`if c { r = 1; }
+    // else { r = 1; }`) decides nothing the next line can observe, so that
+    // line is not the predicate's produced value (#10880; #9843 for the tail
+    // form). Arms that differ keep the adjacency rule: `let r = if c { 1 }
+    // else { 0 };` really does feed `r` to the next line.
+    if function
+        .body
+        .lines()
+        .nth(start_index)
+        .is_some_and(inline_arms_all_agree)
+    {
         return None;
     }
     function
@@ -1088,7 +1130,7 @@ fn first_field_construction(
     })
 }
 
-fn flow_sink(
+pub(super) fn flow_sink(
     kind: FlowSinkKind,
     text: impl Into<String>,
     line: usize,
@@ -2120,6 +2162,61 @@ mod tests {
                     .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
                 "`{body}` must not produce a return-value sink: {sinks:?}"
             );
+        }
+    }
+
+    #[test]
+    fn identical_inline_arms_do_not_lend_the_next_line_as_a_branch_value() {
+        for tail in ["r + 0", "r * 2", "r.max(0)"] {
+            let body = format!(
+                "pub fn f(x: i32) -> i32 {{\n    let r;\n    if x > 5 {{ r = 1; }} else {{ r = 1; }}\n    {tail}\n}}"
+            );
+            let owner = tail_owner(&body);
+            let probe = probe(ProbeFamily::Predicate, "x > 5", 3);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn three_identical_inline_arms_lose_the_sink_and_a_differing_last_arm_keeps_it() {
+        let identical = "pub fn f(c: bool, d: bool) -> i32 {\n    let r;\n    if c { r = 1; } else if d { r = 1; } else { r = 1; }\n    r + 0\n}";
+        let owner = tail_owner(identical);
+        let first = probe(ProbeFamily::Predicate, "c", 3);
+        assert!(local_flow_sinks(&first, Some(&owner)).is_empty());
+
+        // The last arm differs, so the condition still decides what `r` is.
+        let differing = "pub fn f(c: bool, d: bool) -> i32 {\n    let r;\n    if c { r = 1; } else if d { r = 1; } else { r = 2; }\n    r + 0\n}";
+        let owner = tail_owner(differing);
+        let second = probe(ProbeFamily::Predicate, "c", 3);
+        assert_eq!(local_flow_sinks(&second, Some(&owner)).len(), 1);
+    }
+
+    #[test]
+    fn differing_inline_arms_and_closures_keep_the_adjacent_value() {
+        for (body, line) in [
+            (
+                "pub fn f(x: i32) -> i32 {\n    let r = if x > 5 { 1 } else { 0 };\n    r + 0\n}",
+                2,
+            ),
+            (
+                "pub fn f(x: u32) -> u32 {\n    let _unused = || x > 1;\n    7\n}",
+                2,
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 5", line);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert_eq!(sinks.len(), 1, "`{body}`: {sinks:?}");
         }
     }
 

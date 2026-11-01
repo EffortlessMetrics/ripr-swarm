@@ -10,6 +10,7 @@ mod commands_options;
 mod commands_timestamps;
 mod execute;
 pub(crate) mod help;
+mod help_flags;
 mod help_json;
 pub(crate) mod interrupt;
 mod parse;

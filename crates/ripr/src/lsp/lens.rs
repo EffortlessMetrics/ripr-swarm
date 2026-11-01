@@ -53,6 +53,14 @@ impl LensViewIdentity {
     }
 }
 
+#[cfg(test)]
+impl LensViewIdentity {
+    /// The zero-based rows of the visible lens set, for row-owner tests.
+    pub(super) fn rows(&self) -> Vec<u32> {
+        self.items.iter().map(|item| item.line).collect()
+    }
+}
+
 /// One finding's contribution to the visible lens set.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct LensViewItem {
@@ -89,7 +97,7 @@ pub(super) fn lens_view_identity(snapshot: &AnalysisSnapshot) -> LensViewIdentit
             LensViewItem {
                 finding_id: finding.id.clone(),
                 document_uri,
-                line: finding.probe.location.line.saturating_sub(1) as u32,
+                line: lens_line(snapshot, finding),
                 related_test_count: finding.related_tests.len(),
                 class: finding.class.as_str().to_string(),
                 preview: finding
@@ -123,7 +131,9 @@ pub(super) fn code_lens_response(uri: &Uri, snapshot: Option<&AnalysisSnapshot>)
     };
     let age = snapshot.refresh.age();
     let mut lenses: Vec<CodeLens> = Vec::new();
-    for lens in lens_findings(uri, snapshot).map(|finding| finding_to_code_lens(finding, age)) {
+    for lens in
+        lens_findings(uri, snapshot).map(|finding| finding_to_code_lens(snapshot, finding, age))
+    {
         // Several probes on one line (a predicate and its returned value) often
         // read identically; one lens per distinct line and title keeps the
         // editor from stacking repeated text. Hover still lists every finding.
@@ -162,12 +172,25 @@ pub(super) fn lens_findings_at_line<'a>(
     line: u32,
 ) -> Vec<&'a Finding> {
     lens_findings(uri, snapshot)
-        .filter(|finding| lens_line(finding) == line)
+        .filter(|finding| lens_line(snapshot, finding) == line)
         .collect()
 }
 
-fn lens_line(finding: &Finding) -> u32 {
-    finding.probe.location.line.saturating_sub(1) as u32
+/// The single row owner for code-lens placement, the semantic lens-view
+/// identity and unpublished line-hover lookup (#10609, RIPR-SPEC-0100).
+///
+/// A finding with a captured Rust diagnostic origin uses that origin's editor
+/// row, the same numeric row published diagnostics use, so standalone-CR files
+/// agree across surfaces. The row is read from the snapshot, never from disk,
+/// so a later save cannot move it, and it does not depend on whether a
+/// diagnostic was published. Without an origin (non-Rust finding or a producer
+/// that captured none) the fallback is the analyzer row; no text search is
+/// performed and no exact span is claimed. A lens is always zero-width.
+fn lens_line(snapshot: &AnalysisSnapshot, finding: &Finding) -> u32 {
+    match snapshot.rust_diagnostic_origins.for_finding(finding) {
+        Some(origin) => origin.line,
+        None => finding.probe.location.line.saturating_sub(1) as u32,
+    }
 }
 
 /// Build one `CodeLens` for a single finding.
@@ -175,14 +198,18 @@ fn lens_line(finding: &Finding) -> u32 {
 /// The resolved command refreshes saved-workspace analysis through the existing
 /// registered server command. Its title keeps the cached advisory distinct from
 /// the explicit action. No arguments or resolve round-trip are needed.
-fn finding_to_code_lens(finding: &Finding, age: Option<Duration>) -> CodeLens {
-    let line = lens_line(finding);
+fn finding_to_code_lens(
+    snapshot: &AnalysisSnapshot,
+    finding: &Finding,
+    age: Option<Duration>,
+) -> CodeLens {
+    let line = lens_line(snapshot, finding);
     let range = Range {
         start: Position { line, character: 0 },
         end: Position { line, character: 0 },
     };
     let title = format!(
-        "Refresh saved-workspace analysis · {}",
+        "{} · refresh saved workspace",
         related_test_lens_title(finding, age)
     );
     CodeLens {
@@ -221,11 +248,14 @@ fn finding_matches_uri(finding: &Finding, uri: &Uri, root: &Path) -> bool {
 ///
 /// - Preview tier (`language_status == Some(Preview)`): prefix `preview:`,
 ///   use softened phrasing — the count may be incomplete for preview adapters.
+/// - `NoStaticPath`: `ripr: no test reaches this change (PLAIN) · static, cached`
+///   regardless of file/name-token overlap in `related_tests` (count is not shown
+///   as a positive related-test grip).
 /// - N > 0 + discriminating class (`Exposed`):
-///   `ripr: N related tests (exposed) · static, cached`
+///   `ripr: N related test(s) (exposed) · static, cached`
 /// - N > 0 + non-discriminating class (anything except `Exposed`):
-///   `ripr: N related tests, no static discriminator (PLAIN) · static, cached`
-/// - N == 0: `ripr: no related tests found (PLAIN) · static, cached`
+///   `ripr: N related test(s), no static discriminator (PLAIN) · static, cached`
+/// - N == 0 (non-`NoStaticPath`): `ripr: no related tests found (PLAIN) · static, cached`
 ///   where `PLAIN` is the same plain vocabulary word (`exposed`, `weak`,
 ///   `unrevealed`, `no path`, `unknown`) the `ripr check` summary uses, not
 ///   the schema value (`as_str` stays in JSON / `human-full` / `explain`).
@@ -241,26 +271,39 @@ pub(super) fn related_test_lens_title(finding: &Finding, age: Option<Duration>) 
     let class_label = finding.class.plain_label();
     let count = finding.related_tests.len();
 
+    let related_tests_phrase = |n: usize| {
+        if n == 1 {
+            "1 related test".to_string()
+        } else {
+            format!("{n} related tests")
+        }
+    };
+
     let body = if is_preview {
         // Preview tier: count may be incomplete; soften claim.
-        if count == 0 {
+        if matches!(finding.class, ExposureClass::NoStaticPath) {
+            format!("preview: no test reaches this change ({class_label}) · static, cached")
+        } else if count == 0 {
             format!("preview: no related tests found ({class_label}) · static, cached")
         } else {
-            format!("preview: {count} related tests (preview, {class_label}) · static, cached")
+            format!(
+                "preview: {} (preview, {class_label}) · static, cached",
+                related_tests_phrase(count)
+            )
         }
+    } else if matches!(finding.class, ExposureClass::NoStaticPath) {
+        format!("ripr: no test reaches this change ({class_label}) · static, cached")
     } else {
-        match (count, &finding.class) {
-            (0, _) => {
-                format!("ripr: no related tests found ({class_label}) · static, cached")
-            }
-            (n, ExposureClass::Exposed) => {
-                format!("ripr: {n} related tests (exposed) · static, cached")
-            }
-            (n, _) => {
-                format!(
-                    "ripr: {n} related tests, no static discriminator ({class_label}) · static, cached"
-                )
-            }
+        match count {
+            0 => format!("ripr: no related tests found ({class_label}) · static, cached"),
+            n if finding.class == ExposureClass::Exposed => format!(
+                "ripr: {} (exposed) · static, cached",
+                related_tests_phrase(n)
+            ),
+            n => format!(
+                "ripr: {}, no static discriminator ({class_label}) · static, cached",
+                related_tests_phrase(n)
+            ),
         }
     };
 
@@ -444,6 +487,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
@@ -619,8 +663,8 @@ mod tests {
                 .get("title")
                 .and_then(serde_json::Value::as_str)
                 .ok_or("missing wire command title")?;
-            if !title.starts_with("Refresh saved-workspace analysis · ")
-                || !title.contains("2 related tests")
+            if !title.contains("2 related tests")
+                || !title.ends_with("· refresh saved workspace")
                 || !title.contains("exposed")
                 || !title.contains("static, cached")
                 || preview != title.contains("preview")
@@ -738,9 +782,9 @@ mod tests {
             .ok_or("expected command in lens")?
             .title
             .clone();
-        if !title.contains("no related tests found") {
+        if !title.contains("no test reaches this change") {
             return Err(format!(
-                "title must say 'no related tests found', got: {title}"
+                "title must say no test reaches this change, got: {title}"
             ));
         }
         if !title.contains("no path") {
@@ -755,6 +799,50 @@ mod tests {
             return Err(format!(
                 "title must not use forbidden static-language vocabulary, got: {title}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn related_test_lens_title_no_static_path_never_claims_related_test_grip() -> Result<(), String>
+    {
+        for count in [0_usize, 1, 3] {
+            let finding = make_finding("src/lib.rs", 5, ExposureClass::NoStaticPath, count, None);
+            let title = related_test_lens_title(&finding, None);
+            if !title.contains("no test reaches this change") {
+                return Err(format!(
+                    "NoStaticPath count={count} must not imply reach, got: {title}"
+                ));
+            }
+            if title.contains("related test") {
+                return Err(format!(
+                    "NoStaticPath count={count} must not cite related-test count, got: {title}"
+                ));
+            }
+            if !title.contains("no path") {
+                return Err(format!(
+                    "NoStaticPath must include plain class label, got: {title}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn related_test_lens_title_pluralizes_related_test_count() -> Result<(), String> {
+        let one = related_test_lens_title(
+            &make_finding("src/lib.rs", 1, ExposureClass::Exposed, 1, None),
+            None,
+        );
+        if !one.contains("1 related test (exposed)") || one.contains("1 related tests") {
+            return Err(format!("expected singular related test label, got: {one}"));
+        }
+        let many = related_test_lens_title(
+            &make_finding("src/lib.rs", 1, ExposureClass::Exposed, 2, None),
+            None,
+        );
+        if !many.contains("2 related tests (exposed)") {
+            return Err(format!("expected plural related tests label, got: {many}"));
         }
         Ok(())
     }
