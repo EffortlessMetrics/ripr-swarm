@@ -1357,6 +1357,33 @@ fn open_rust_index_cache_invalidation_is_scoped_to_the_affected_documents() -> R
 }
 
 #[cfg(unix)]
+#[test]
+fn equivalent_file_uri_spellings_invalidate_the_same_index_key() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("open-rust-index-localhost")?;
+    let uri = file_uri_for_path(&fixture.file)?;
+    let mut store = DocumentStore::default();
+    open_for_index_test(&mut store, &fixture.file)?;
+    store.open_rust_index_paths(&fixture.root);
+    if !store.rust_index_key_is_cached(&uri) {
+        return Err("the open document must have a cached index key".into());
+    }
+    // `file://localhost/...` names the same file as `file:///...`.
+    let localhost: tower_lsp_server::ls_types::Uri = uri
+        .as_str()
+        .replacen("file:///", "file://localhost/", 1)
+        .parse()
+        .map_err(|error| format!("localhost uri: {error:?}"))?;
+    if localhost.as_str() == uri.as_str() {
+        return Err("the localhost spelling must differ from the event-free spelling".into());
+    }
+    store.invalidate_rust_index_keys_under(&localhost);
+    if store.rust_index_key_is_cached(&uri) {
+        return Err("an equivalent URI spelling must drop the cached key".into());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
 #[tokio::test]
 async fn save_and_watched_file_handlers_invalidate_only_affected_index_keys() -> Result<(), String>
 {

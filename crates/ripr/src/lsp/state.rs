@@ -2002,12 +2002,21 @@ impl DocumentStore {
     /// re-resolution.
     pub(super) fn invalidate_rust_index_keys_under(&mut self, event: &Uri) {
         let prefix = event.as_str().trim_end_matches('/');
+        // Equivalent spellings of one file (`file://localhost/...`, percent
+        // escapes) differ as raw strings, so the decoded paths are compared
+        // too.
+        let event_path = path_from_file_uri(event);
         self.rust_index_keys.retain(|uri, _| {
             let candidate = uri.as_str();
-            !(candidate == prefix
+            let raw_below = candidate == prefix
                 || candidate
                     .strip_prefix(prefix)
-                    .is_some_and(|rest| rest.starts_with('/')))
+                    .is_some_and(|rest| rest.starts_with('/'));
+            let path_below = match (&event_path, path_from_file_uri(uri)) {
+                (Some(event_path), Some(path)) => path.starts_with(event_path),
+                _ => false,
+            };
+            !(raw_below || path_below)
         });
     }
 
