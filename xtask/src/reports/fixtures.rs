@@ -11,7 +11,7 @@
 
 use super::fixture_workspace;
 use crate::no_panic::contains_word;
-use crate::run::{run_output_bytes, run_output_optional, run_output_owned_with_envs};
+use crate::run::{capture_process_output_in, run_output_bytes, run_output_optional};
 use crate::{
     collect_pr_changes, forbidden_static_terms, has_markdown_heading, json_escape, markdown_cell,
     normalize_path, read_text_lossy, ripr_debug_binary, ripr_debug_binary_in,
@@ -1471,14 +1471,26 @@ fn run_fixture_check_with_context(
         .iter()
         .map(|(key, value)| (*key, value.as_str()))
         .collect::<Vec<_>>();
-    match cache_dir {
-        Some(dir) => {
-            let value = dir.to_string_lossy().into_owned();
-            envs.push((FIXTURE_CACHE_DIR_ENV, &value));
-            envs.push(("RAYON_NUM_THREADS", "1"));
-            run_output_owned_with_envs(&binary, &args, &envs)
-        }
-        None => run_output_owned_with_envs(&binary, &args, &envs),
+    let cache_value = cache_dir.map(|dir| dir.to_string_lossy().into_owned());
+    if let Some(value) = cache_value.as_deref() {
+        envs.push((FIXTURE_CACHE_DIR_ENV, value));
+        envs.push(("RAYON_NUM_THREADS", "1"));
+    }
+    // The child resolves relative paths from `cwd` when given; the directory is set on the child
+    // only, because the fixture runs are rayon-parallel and share this process.
+    let output = capture_process_output_in(binary, &args, cwd, &[], &[], &envs)
+        .map_err(|error| error.message)?;
+    let text = String::from_utf8_lossy(&output).into_owned();
+    // An isolated workspace mirrors the repository layout, so the paths the child prints under it
+    // are the same `fixtures/<name>/...` paths a checkout run prints under the repository root.
+    // Rewrite the workspace prefix to the repository prefix so the shared `<cwd>/` projection and
+    // the checked-in goldens stay machine- and workspace-independent.
+    match (cwd, std::env::current_dir()) {
+        (Some(workspace), Ok(repository)) => Ok(text.replace(
+            &format!("{}/", normalize_path(workspace)),
+            &format!("{}/", normalize_path(&repository)),
+        )),
+        _ => Ok(text),
     }
 }
 

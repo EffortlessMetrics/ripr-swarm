@@ -237,7 +237,7 @@ unchanged and continues to identify its exact native source.
 
 ## Spec, tests, implementation, proof
 
-- Contract: `RIPR-SPEC-0370` and source #1784/#1781
+- Contract: `RIPR-SPEC-0374` and source #1784/#1781
 - Native and tar admission: `.github/scripts/npm_package.py`
 - Discriminating controls: `.github/scripts/test_npm_package.py`
 - Installed consumer: `.github/scripts/npm_consumer.py`

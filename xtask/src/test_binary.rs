@@ -156,29 +156,6 @@ fn resolve_llvm_cov_target(target_dir: &Path, profile: &str) -> Result<String, S
     ))
 }
 
-/// Thin environment wrapper over [`resolve_built_ripr_binary`]: the override,
-/// active target dir, and llvm-cov target dir come from the environment, the
-/// workspace root from the xtask manifest location, and the profile from the
-/// test build itself.
-pub(crate) fn resolve_built_ripr_binary_from_env() -> Result<String, String> {
-    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or("xtask manifest has no repository parent")?;
-    let profile = if cfg!(debug_assertions) {
-        "debug"
-    } else {
-        "release"
-    };
-    resolve_built_ripr_binary(&BinarySearch {
-        override_binary: std::env::var_os("RIPR_TEST_BINARY").map(PathBuf::from),
-        cargo_target_dir: std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from),
-        llvm_cov_target_dir: std::env::var_os("CARGO_LLVM_COV_TARGET_DIR").map(PathBuf::from),
-        workspace_root,
-        profile,
-    })
-}
-
 fn built_ripr_binary_candidates(search: &BinarySearch) -> Vec<PathBuf> {
     let file_name = format!("ripr{}", std::env::consts::EXE_SUFFIX);
     let mut candidates = Vec::new();

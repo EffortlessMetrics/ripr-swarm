@@ -44,9 +44,9 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --diff <cwd>/fixtures/rust_binding_status_wrong_owner_observer/diff.patch --mode fast probe:src_lib.rs:predicate:1ce6138c
   ripr context --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --diff <cwd>/fixtures/rust_binding_status_wrong_owner_observer/diff.patch --mode fast --at probe:src_lib.rs:predicate:1ce6138c
-  no repair start offered: ripr found 5 seams in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
-Choose a test-stub seam for probe:src_lib.rs:predicate:1ce6138c: src/lib.rs:18 holds more than one predicate_boundary seam, so --at cannot pick one
-  Each command below produces a stub, but ripr could not tell which seam your change touches.
+  no repair start offered: ripr found 5 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
+Choose a test-stub spot for probe:src_lib.rs:predicate:1ce6138c: src/lib.rs:18 holds more than one predicate_boundary spot, so --at cannot pick one
+  Each command below produces a stub, but ripr could not tell which spot your change touches.
   They do not establish a repair binding or close a static limitation.
   ripr agent stub --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --seam-id e4df2237f070660c
   ripr agent stub --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --seam-id 20904e3811fb86d5

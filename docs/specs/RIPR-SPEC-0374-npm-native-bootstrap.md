@@ -1,4 +1,4 @@
-# RIPR-SPEC-0370: Bounded native npm bootstrap
+# RIPR-SPEC-0374: Bounded native npm bootstrap
 
 Status: accepted
 

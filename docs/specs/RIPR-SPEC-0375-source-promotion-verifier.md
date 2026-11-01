@@ -1,4 +1,4 @@
-# RIPR-SPEC-0371: Exact source-promotion verifier
+# RIPR-SPEC-0375: Exact source-promotion verifier
 
 Status: proposed
 

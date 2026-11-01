@@ -1455,4 +1455,3 @@ The PR body should link the issue, proposal/spec/plan references when present,
 acceptance text, non-goals, and proof commands. Support-tier and policy impact
 checkboxes must be reviewed from the actual diff and proof, not inferred from
 issue metadata.
-

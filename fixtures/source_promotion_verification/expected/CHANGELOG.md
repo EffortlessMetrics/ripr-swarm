@@ -27,7 +27,31 @@ Updated:
 ## Pending — source_promotion_verification (2)
 
 Reason:
-RIPR-SPEC-0371: ripr-main merge sync re-bless to swarm analyzer output; ripr-side behavior not carried, see merge PR residuals
+RIPR-SPEC-0375: ripr-main merge sync re-bless to swarm analyzer output; ripr-side behavior not carried, see merge PR residuals
+
+Command:
+`cargo xtask goldens bless source_promotion_verification --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — source_promotion_verification (3)
+
+Reason:
+RIPR-SPEC-0122 plain-words check screen: ripr-origin fixture re-blessed from the merged producer after #12069 (#11619, #2766)
+
+Command:
+`cargo xtask goldens bless source_promotion_verification --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — source_promotion_verification (4)
+
+Reason:
+RIPR-SPEC-0122 plain-words check screen: ripr-origin fixture re-blessed from the merged producer after #12069 (#11619, #2766)
 
 Command:
 `cargo xtask goldens bless source_promotion_verification --reason "..."`

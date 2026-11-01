@@ -685,9 +685,9 @@ owner = "release-swarm"
 standalone_reason = "Issue #3100 defines the exact-object, ancestry-preserving source-to-swarm back-sync verifier and deterministic closeout receipts required before ordinary swarm development resumes. Renumbered from RIPR-SPEC-0152 on the 0.11 J join (cross-repo collision with the candidate-actionable projection spec); content unchanged."
 
 [[artifact]]
-id = "RIPR-SPEC-0371"
+id = "RIPR-SPEC-0375"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0371-source-promotion-verifier.md"
+path = "docs/specs/RIPR-SPEC-0375-source-promotion-verifier.md"
 status = "proposed"
 owner = "release"
 standalone_reason = "Exact-J graph/tree verifier and deterministic reviewed-resolution manifest contract for ripr#1493."
@@ -1932,9 +1932,9 @@ owner = "product-analysis"
 standalone_reason = "Issue #8999 records the uncompiled-file contract: a Rust file that no Cargo target, manifest path, module declaration or include can compile contributes no related test and no lexical-fallback limitation, and any doubt keeps it indexed as before."
 
 [[artifact]]
-id = "RIPR-SPEC-0370"
+id = "RIPR-SPEC-0374"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0370-npm-native-bootstrap.md"
+path = "docs/specs/RIPR-SPEC-0374-npm-native-bootstrap.md"
 status = "accepted"
 owner = "release"
 standalone_reason = "Bounded native Linux npm bootstrap: the source-repository npm alpha publishes one admitted Linux payload through an exact-artifact, stage-only workflow without widening the launcher contract (renumbered from RIPR-SPEC-0180 on the ripr-into-swarm merge sync)."

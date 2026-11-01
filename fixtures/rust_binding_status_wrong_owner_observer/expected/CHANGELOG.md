@@ -71,3 +71,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_binding_status_wrong_owner_observer (7)
+
+Reason:
+RIPR-SPEC-0122 plain-words check screen: ripr-origin fixture re-blessed from the merged producer after #12069 (#11619, #2766)
+
+Command:
+`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_binding_status_wrong_owner_observer (8)
+
+Reason:
+RIPR-SPEC-0122 plain-words check screen: ripr-origin fixture re-blessed from the merged producer after #12069 (#11619, #2766)
+
+Command:
+`cargo xtask goldens bless rust_binding_status_wrong_owner_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

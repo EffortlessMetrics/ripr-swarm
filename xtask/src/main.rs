@@ -1971,15 +1971,6 @@ fn vscode_verify_vsix_path(args: &[String]) -> Result<PathBuf, String> {
         .ok_or_else(|| "vscode-verify-vsix requires a VSIX path".to_string())
 }
 
-fn package_and_verify_vsix(
-    dist: &Path,
-    version: &str,
-    notices: &RepositoryLicenseNotices,
-) -> Result<String, String> {
-    run_cwd_command(&vscode_package_command(version))?;
-    verify_packaged_vsix(&dist.join(format!("ripr-{version}.vsix")), notices)
-}
-
 /// Reads the built VSIX and applies the production inventory bounds plus
 /// regular-file complete-notice membership. Returns the one-line summary
 /// `vscode-package` prints.
@@ -24466,13 +24457,6 @@ mod inherited_failure_tests {
 
 // ---- ported from ripr main: items with no swarm equivalent (merge sync) ----
 
-/// Origin-main rooted selector for callers that run from the repository
-/// root — including the strict check-fast module, which binds this
-/// function as its discovery authority.
-fn changed_files_vs_origin_main() -> Result<Vec<String>, String> {
-    changed_files_vs_base(Path::new("."))
-}
-
 fn parse_vscode_package_args(args: &[String]) -> Result<Option<PathBuf>, String> {
     if args.is_empty() {
         return Ok(None);
@@ -24678,6 +24662,7 @@ fn read_vsix_catalog(vsix_path: &Path) -> Result<Vec<u8>, String> {
     })
 }
 
+#[cfg(test)]
 /// Every live review-comments cross-check must consume a current producer from
 /// the same job path. This keeps workflow orchestration from silently dropping
 /// the producer, moving it after consumption, or checking a different subject.
@@ -24753,6 +24738,7 @@ fn workflow_review_comments_cross_check_violations(path: &str, text: &str) -> Ve
     violations
 }
 
+#[cfg(test)]
 fn workflow_step_disabled_or_shielded(lines: &[&str], command_index: usize) -> bool {
     let start = (0..=command_index)
         .rev()
@@ -24771,10 +24757,12 @@ fn workflow_step_disabled_or_shielded(lines: &[&str], command_index: usize) -> b
     })
 }
 
+#[cfg(test)]
 fn workflow_command_failure_shielded(command: &str) -> bool {
     command.contains("|| true") || command.contains("|| :")
 }
 
+#[cfg(test)]
 fn workflow_command_text(line: &str) -> &str {
     let command = line
         .trim()
@@ -24786,6 +24774,7 @@ fn workflow_command_text(line: &str) -> &str {
         .map_or(command, |(command, _)| command.trim_end())
 }
 
+#[cfg(test)]
 fn workflow_xtask_invocation(command: &str, subcommand: &str) -> bool {
     let invocation = format!("cargo xtask {subcommand} ");
     if command.starts_with(&invocation) {
@@ -24796,6 +24785,7 @@ fn workflow_xtask_invocation(command: &str, subcommand: &str) -> bool {
     })
 }
 
+#[cfg(test)]
 fn workflow_job_name(line: &str) -> Option<&str> {
     if !line.starts_with("  ") || line.starts_with("   ") {
         return None;
@@ -24803,6 +24793,7 @@ fn workflow_job_name(line: &str) -> Option<&str> {
     line.trim().strip_suffix(':')
 }
 
+#[cfg(test)]
 fn workflow_command_subject(command: &str) -> Option<(String, String)> {
     Some((
         workflow_shell_flag_value(command, "--base")?,
@@ -24810,98 +24801,13 @@ fn workflow_command_subject(command: &str) -> Option<(String, String)> {
     ))
 }
 
+#[cfg(test)]
 fn workflow_shell_flag_value(command: &str, flag: &str) -> Option<String> {
     let tail = command.split_once(&format!("{flag} "))?.1.trim_start();
     if let Some(quoted) = tail.strip_prefix('"') {
         return quoted.split_once('"').map(|(value, _)| value.to_string());
     }
     tail.split_whitespace().next().map(str::to_string)
-}
-
-fn review_thread_mutation_line(line: &str) -> bool {
-    let normalized = line
-        .chars()
-        .map(|character| character.to_ascii_lowercase())
-        .filter(|character| character.is_ascii_alphanumeric())
-        .collect::<String>();
-    normalized.contains(&review_thread_mutation_token())
-}
-
-fn review_thread_mutation_token() -> String {
-    [
-        'r', 'e', 's', 'o', 'l', 'v', 'e', 'r', 'e', 'v', 'i', 'e', 'w', 't', 'h', 'r', 'e', 'a',
-        'd',
-    ]
-    .into_iter()
-    .collect()
-}
-
-/// Flag a `run:` written as a plain YAML scalar that contains ` #`.
-///
-/// YAML treats ` #` in a plain scalar as the start of a comment, so the command
-/// is silently truncated at that point. When the truncated remainder holds an
-/// unterminated quote the shell fails with `unexpected EOF`, and when it does
-/// not the step runs a *different, shorter* command with no error at all — the
-/// worse outcome. A block scalar (`run: |`) has no comment rule and is immune.
-///
-/// This is enforced because it actually happened: a `printf` summary line
-/// containing an issue reference was cut mid-string, and nothing local caught it
-/// — `check-workflows` passed because it never parsed the YAML.
-fn workflow_plain_scalar_comment_violations(path: &str, text: &str) -> Vec<String> {
-    let mut violations = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        let Some((_, after)) = line.split_once("run:") else {
-            continue;
-        };
-        // Only plain scalars are affected; `run: |` and `run: >` are safe, and a
-        // fully quoted scalar carries its own delimiters.
-        let body = after.trim_start();
-        if body.starts_with('|') || body.starts_with('>') || body.is_empty() {
-            continue;
-        }
-        if body.starts_with('"') || body.starts_with('\'') {
-            continue;
-        }
-        if body.contains(" #") {
-            violations.push(format!(
-                "{path}:{} plain-scalar `run:` contains ` #`, which YAML reads as a comment and truncates the command; use a `run: |` block scalar",
-                index + 1
-            ));
-        }
-    }
-    violations
-}
-
-fn routed_rust_workflow_contract_violations_for_repo() -> Result<Vec<String>, String> {
-    let workflow_path = Path::new(".github/workflows/routed-rust.yml");
-    if !workflow_path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let workflow = read_text_lossy(workflow_path)?;
-    let reusable_workflow = if workflow.contains(ROUTED_RUST_REUSABLE_WORKFLOW_REF) {
-        optional_policy_text(ROUTED_RUST_REUSABLE_WORKFLOW_PATH)?
-    } else {
-        None
-    };
-    let settings = optional_policy_text(".github/settings.yml")?;
-    let lane_whitelist = optional_policy_text("policy/ci-lane-whitelist.toml")?;
-
-    Ok(routed_rust_workflow_contract_violations_with_reusable(
-        &workflow,
-        reusable_workflow.as_deref(),
-        settings.as_deref(),
-        lane_whitelist.as_deref(),
-    ))
-}
-
-fn optional_policy_text(path: &str) -> Result<Option<String>, String> {
-    let path = Path::new(path);
-    if path.exists() {
-        read_text_lossy(path).map(Some)
-    } else {
-        Ok(None)
-    }
 }
 
 /// Routed-rust jobs that must each carry an explicit `timeout-minutes`
@@ -26531,123 +26437,4 @@ pub(crate) fn ci_docs_only(args: &[String]) -> Result<(), String> {
     }
     println!("docs_only={docs_only}");
     Ok(())
-}
-
-const ROUTED_RUST_DEADLINE_JOBS: [&str; 5] = [
-    "route",
-    "detect-docs-only",
-    "rust-github",
-    "docs-gate",
-    "result",
-];
-
-const ROUTED_RUST_REUSABLE_WORKFLOW_PATH: &str = ".github/workflows/rust-gates.yml";
-
-const ROUTED_RUST_REUSABLE_WORKFLOW_REF: &str = "uses: ./.github/workflows/rust-gates.yml";
-
-/// Whether any line in the named job block satisfies `predicate`.
-/// Job keys are exactly two-space-indented `name:` lines under `jobs:`;
-/// anything deeper belongs to the current block.
-fn routed_rust_job_block_any(
-    workflow: &str,
-    job: &str,
-    mut predicate: impl FnMut(&str) -> bool,
-) -> bool {
-    let job_header = format!("{job}:");
-    let mut in_jobs = false;
-    let mut in_block = false;
-    for line in workflow.lines() {
-        if !line.is_empty() && !line.starts_with(' ') && !line.starts_with('#') {
-            in_jobs = line.trim() == "jobs:";
-            in_block = false;
-            continue;
-        }
-        let job_level_key = line.starts_with("  ")
-            && !line.starts_with("   ")
-            && line.trim_end().ends_with(':')
-            && !line.trim_start().starts_with('-');
-        if job_level_key {
-            in_block = in_jobs && line.trim() == job_header;
-            continue;
-        }
-        if in_block && !line.is_empty() && !line.starts_with(' ') {
-            break;
-        }
-        if in_block && line.starts_with("    ") && !line.starts_with("     ") && predicate(line) {
-            return true;
-        }
-    }
-    false
-}
-
-fn routed_rust_concurrency_group_has_isolation(workflow: &str, isolation: &str) -> bool {
-    let mut in_concurrency = false;
-    for line in workflow.lines() {
-        if !line.is_empty() && !line.starts_with(' ') && !line.starts_with('#') {
-            in_concurrency = line.trim() == "concurrency:";
-            continue;
-        }
-        if in_concurrency && let Some(value) = line.strip_prefix("  group: ") {
-            let value = value.trim_start();
-            // Only the workflow's plain scalar style is supported. Text in
-            // a YAML comment must never satisfy the isolation contract.
-            if value.starts_with(['\'', '"', '|', '>']) {
-                return false;
-            }
-            let comment = value.char_indices().find_map(|(index, character)| {
-                (character == '#'
-                    && (index == 0
-                        || value[..index]
-                            .chars()
-                            .next_back()
-                            .is_some_and(char::is_whitespace)))
-                .then_some(index)
-            });
-            let value = &value[..comment.unwrap_or(value.len())];
-            return value.trim_end().ends_with(isolation);
-        }
-    }
-    false
-}
-
-fn routed_rust_job_block_has_deadline(workflow: &str, job: &str) -> bool {
-    routed_rust_job_block_any(workflow, job, |line| {
-        !line.trim_start().starts_with('#') && line.contains("timeout-minutes:")
-    })
-}
-
-const SOURCE_RUST_EVENT_GUARD: &str = r#"github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')"#;
-
-const SOURCE_RUST_IGNORED_EVENT: &str = "github.event_name == 'pull_request' && (github.event.action == 'unlabeled' || (github.event.action == 'labeled' && github.event.label.name != 'full-ci'))";
-
-fn deprecated_workflow_action_refs() -> &'static [(&'static str, &'static str)] {
-    &[
-        ("actions/checkout@v4", "actions/checkout@v6"),
-        ("actions/setup-node@v4", "actions/setup-node@v6"),
-        ("actions/upload-artifact@v4", "actions/upload-artifact@v7"),
-        (
-            "actions/download-artifact@v4",
-            "actions/download-artifact@v8",
-        ),
-        (
-            "actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809",
-            "actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25",
-        ),
-        (
-            "actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809",
-            "actions/cache/save@caa296126883cff596d87d8935842f9db880ef25",
-        ),
-        ("codecov/codecov-action@v4", "codecov/codecov-action@v6"),
-    ]
-}
-
-fn workflow_runtime_exception_patterns() -> &'static [&'static str] {
-    &["actions/dependency-review-action@v4"]
-}
-
-fn is_extension_node_workflow(path: &str) -> bool {
-    matches!(
-        path,
-        ".github/workflows/ci.yml" | ".github/workflows/publish-extension.yml"
-    )
 }

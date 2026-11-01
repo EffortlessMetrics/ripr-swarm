@@ -9493,9 +9493,9 @@ outputs = [
 metrics = ["unit_test_pass_rate"]
 
 [[behavior]]
-id = "RIPR-SPEC-0371"
+id = "RIPR-SPEC-0375"
 name = "exact source-promotion graph and resolution verification"
-spec = "docs/specs/RIPR-SPEC-0371-source-promotion-verifier.md"
+spec = "docs/specs/RIPR-SPEC-0375-source-promotion-verifier.md"
 tests = [
   "xtask/src/reports/source_promotion_verify.rs::tests::identity_arguments_are_exact_and_lowercase",
   "xtask/src/reports/source_promotion_verify.rs::tests::merge_base_selection_rejects_ambiguous_history",
@@ -21003,9 +21003,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0370"
+id = "RIPR-SPEC-0374"
 name = "bounded native npm bootstrap"
-spec = "docs/specs/RIPR-SPEC-0370-npm-native-bootstrap.md"
+spec = "docs/specs/RIPR-SPEC-0374-npm-native-bootstrap.md"
 tests = [
   ".github/scripts/test_npm_package.py::NpmPackageTests",
   ".github/scripts/test_npm_package.py::NpmNativeEvidenceTests",

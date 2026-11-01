@@ -50,3 +50,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — boundary_operand_unresolved (5)
+
+Reason:
+RIPR-SPEC-0122 plain-words check screen: ripr-origin fixture re-blessed from the merged producer after #12069 (#11619, #2766)
+
+Command:
+`cargo xtask goldens bless boundary_operand_unresolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — boundary_operand_unresolved (6)
+
+Reason:
+RIPR-SPEC-0122 plain-words check screen: ripr-origin fixture re-blessed from the merged producer after #12069 (#11619, #2766)
+
+Command:
+`cargo xtask goldens bless boundary_operand_unresolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
