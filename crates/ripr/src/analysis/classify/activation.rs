@@ -4023,8 +4023,7 @@ fn missing_field_value_discriminator(
     // write from a kept one, so it does not confirm the assignment.
     let assigned_field_observed = |test: &TestSummary, assertion: &OracleFact| {
         assigned.as_ref().is_some_and(|(owner, path)| {
-            !super::propagation_witness::assertion_expects_default_like(&assertion.text)
-                && pushed_collection_compared_whole(owner, path, test, assertion, index)
+            assigned_field_read_confirms(owner, path, test, assertion, index)
         })
     };
     // #6578: the variant-field pattern rule's workspace scan depends only on
@@ -4156,6 +4155,24 @@ pub(in crate::analysis) fn assigned_field_of(
             })
         },
     )
+}
+
+/// RIPR-SPEC-0228, #11398: whether `assertion` confirms the changed write of
+/// `self.<path>` in `owner`: an `assert_eq!` that reads the whole field from
+/// the binding the test called `owner` on, after the call and under the
+/// pushed-literal binding rules ([`pushed_collection_compared_whole`]). A
+/// default-like expected value (`0`, `false`) cannot tell a deleted write
+/// from a kept one. This is the one read rule for a field write: the diff
+/// probe and the repository seam both ask it, so check and repair agree.
+pub(in crate::analysis) fn assigned_field_read_confirms(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    !super::propagation_witness::assertion_expects_default_like(&assertion.text)
+        && pushed_collection_compared_whole(owner, path, test, assertion, index)
 }
 
 /// #7131: the field collection path (`lines` for `self.lines.push(Line {
