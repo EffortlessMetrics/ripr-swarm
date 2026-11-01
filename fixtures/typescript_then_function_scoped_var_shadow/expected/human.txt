@@ -12,17 +12,17 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview found related test evidence but cannot name a safe target check or observer shape); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
   File: src/total.ts:2
   Language: typescript
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.40)
-  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a discriminator exists is not established. Preview score, not on the same scale as Rust confidence.
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: return 30;
   Analyzer limit: Related tests reach `total` but hold assertion-like code the TypeScript extractor
-    could not resolve (a `.then` with a rejection handler or an async `forEach` callback); the
-    discriminator is not established either way
+    could not resolve (a `.then` with a rejection handler or an async `forEach` callback); whether a
+    test checks the changed behavior is not established either way
   Related test: tests/total.test.ts:3 function scoped var shadow
   Next step — TypeScript preview advisory: the related test asserts inside a callback the extractor
     cannot resolve (a `.then` with a rejection handler or an async `forEach`); no new assertion is
@@ -45,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_then_function_scoped_var_shadow/input --diff <cwd>/fixtures/typescript_then_function_scoped_var_shadow/diff.patch --mode fast probe:src_total.ts:typescript_preview:44386250
   ripr context --root <cwd>/fixtures/typescript_then_function_scoped_var_shadow/input --diff <cwd>/fixtures/typescript_then_function_scoped_var_shadow/diff.patch --mode fast --at probe:src_total.ts:typescript_preview:44386250
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

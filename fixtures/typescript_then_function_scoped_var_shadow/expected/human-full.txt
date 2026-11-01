@@ -34,10 +34,10 @@ Language
 
 Preview actionability
   authority: preview_advisory_only
-  gap state: advisory
+  gap state: unknown
   category: missing_target_shape
   repair packet ready: false
-  why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   repair route: add probe-specific discriminator extraction for this expression before repair packet projection
   missing fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
   evidence needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
@@ -45,7 +45,7 @@ Preview actionability
 
 Static exposure
   static_unknown (note, confidence 0.40)
-  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a discriminator exists is not established. Preview score, not on the same scale as Rust confidence.
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related test(s) found for owner `total`
@@ -57,7 +57,7 @@ Evidence
   - related test tests/total.test.ts:3 function scoped var shadow uses no oracle
 
 Weakness
-  - Related tests reach `total` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); the discriminator is not established either way
+  - Related tests reach `total` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); whether a test checks the changed behavior is not established either way
 
 Stop reasons:
   - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
@@ -73,7 +73,7 @@ TypeScript preview card (advisory)
   oracle: unknown (unknown)
   suggested assertion shape: Add an exact return-value assertion for the changed output.
   repair packet ready: false
-  why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   repair route: add probe-specific discriminator extraction for this expression before repair packet projection
   limits:
     - Syntax-first TypeScript/JavaScript preview evidence only.
@@ -82,7 +82,7 @@ TypeScript preview card (advisory)
 
 TypeScript repair packet (advisory)
   status: not actionable
-  limitation: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  limitation: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   next capability needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
 
 Next step

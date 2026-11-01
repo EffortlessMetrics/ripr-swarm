@@ -19,9 +19,9 @@
       "confidence_basis": [
         {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
         {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
-        {"code": "discriminator_not_established", "summary": "whether a discriminator exists is not established"}
+        {"code": "discriminator_not_established", "summary": "whether a test checks this behavior is not established"}
       ],
-      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a discriminator exists is not established. Preview score, not on the same scale as Rust confidence.",
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_total.ts:typescript_preview:44386250",
         "family": "return_value",
@@ -42,8 +42,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return 30;","line":2}
       ],
-      "evidence": ["owner: total", "gap_state: advisory", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/total.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_total.ts:typescript_preview:44386250;owner=total", "test_assertion_admission: assertion_like_present_but_unresolved (function scoped var shadow)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related tests reach `total` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); the discriminator is not established either way.", "TypeScript preview actionability `advisory` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
+      "evidence": ["owner: total", "gap_state: unknown", "actionability_category: missing_target_shape", "why_not_actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape", "repair_route: add probe-specific discriminator extraction for this expression before repair packet projection", "missing_actionability_fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/total.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_total.ts:typescript_preview:44386250;owner=total", "test_assertion_admission: assertion_like_present_but_unresolved (function scoped var shadow)", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["Related tests reach `total` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); whether a test checks the changed behavior is not established either way.", "TypeScript preview actionability `unknown` / `missing_target_shape`: TypeScript preview found related test evidence but cannot name a safe target check or observer shape. Repair route: add probe-specific discriminator extraction for this expression before repair packet projection"],
       "assertion_texts": {
       },
       "activation": {
@@ -100,13 +100,13 @@
         "verify": {
           "command": null
         },
-        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
       },
       "preview_actionability": {
         "actionability_category": "missing_target_shape",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "repair_kind",
           "target_test_shape",
@@ -132,7 +132,7 @@
         "repair_packet_ready": false,
         "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
         "unlock_condition": null,
-        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape"
+        "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape"
       },
       "stop_reasons": ["gap_evidence_unresolved"],
       "oracle_kind": "unknown",
