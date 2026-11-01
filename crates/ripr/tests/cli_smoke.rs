@@ -28636,24 +28636,22 @@ fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
             "agent repair loud env"
         })?;
         let root_arg = root.to_string_lossy().into_owned();
-        let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
-        command
-            .args([
-                "agent",
-                "repair",
-                "--json",
-                "--root",
-                &root_arg,
-                "--seam-id",
-                REPAIR_ROUTE_SEAM,
-                "--phase",
-                "before",
-            ])
-            .env_remove("RIPR_QUIET");
-        if quiet {
-            command.env("RIPR_QUIET", "1");
-        }
-        let output = command.output()?;
+        let args = [
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--seam-id",
+            REPAIR_ROUTE_SEAM,
+            "--phase",
+            "before",
+        ];
+        let output = if quiet {
+            run_ripr_with_env(&args, &[("RIPR_QUIET", "1")])
+        } else {
+            run_ripr(&args)
+        };
         assert_success(&output);
         Ok(String::from_utf8_lossy(&output.stderr).into_owned())
     };
