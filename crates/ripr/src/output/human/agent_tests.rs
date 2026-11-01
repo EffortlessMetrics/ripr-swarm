@@ -277,9 +277,8 @@ fn open_limited_findings_over_the_cap_report_the_omitted_count() {
     let text = rendered(&output(findings));
     assert!(text.contains("\nopen="), "{text}");
     assert!(!text.contains("stop="), "{text}");
-    assert_eq!(
+    assert!(
         text.matches("|test=t1|id=probe:open").count() <= MAX_GAP_LINES,
-        true,
         "{text}"
     );
     assert!(
