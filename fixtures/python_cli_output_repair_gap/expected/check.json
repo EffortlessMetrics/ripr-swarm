@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_commands.py:python_preview:e40b24a9",
+      "id": "probe:src_commands.py:python_preview:v1-814210a5",
       "canonical_gap_id": "gap:python:src/commands.py:ship:call_or_output_effect:side_effect:click.echo_shipment_queued",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -28,7 +28,7 @@
       "severity": "warning",
       "confidence": 0.40,
       "probe": {
-        "id": "probe:src_commands.py:python_preview:e40b24a9",
+        "id": "probe:src_commands.py:python_preview:v1-814210a5",
         "family": "side_effect",
         "delta": "effect",
         "file": "src/commands.py",

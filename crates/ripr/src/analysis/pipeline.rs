@@ -6045,7 +6045,7 @@ mod tests {
              diff --git a/calc.py b/calc.py\n\
              --- /dev/null\n\
              +++ b/calc.py\n\
-             @@ -0,0 +2 @@\n\
+             @@ -0,0 +1,2 @@\n\
              +def double(x):\n\
              +    return x * 2\n",
         )?;

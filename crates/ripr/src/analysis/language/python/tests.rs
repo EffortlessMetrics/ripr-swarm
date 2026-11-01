@@ -7558,7 +7558,7 @@ fn analyze_diff_discloses_unreadable_changed_file() -> Result<(), String> {
 fn analyze_diff_small_workspace_is_unaffected_by_default_bounds() -> Result<(), String> {
     let root = unique_test_root("diff-small-workspace");
     std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
-    write_repo_file(&root.join("app.py"), "def run():\n    return 1\n")?;
+    write_repo_file(&root.join("app.py"), "def run():\n    return 2\n")?;
     write_repo_file(
         &root.join("test_app.py"),
         "from app import run\n\n\ndef test_run():\n    assert run() == 1\n",
