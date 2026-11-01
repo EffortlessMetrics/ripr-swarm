@@ -637,7 +637,9 @@ pub(crate) struct DoctorDetectedLanguage {
     /// closed vocabulary such as `detected_compiled_disabled` or
     /// `detected_not_compiled`. It states whether the language is available
     /// for analysis, never that an adapter ran or that the support tier moved.
-    pub(crate) availability_state: &'static str,
+    /// `null` when the configuration could not be loaded: enablement is then
+    /// unknown (`enabled: null`), and a definite state would contradict it.
+    pub(crate) availability_state: Option<&'static str>,
     /// Ordered remediation steps for that state from the same report; empty
     /// when none applies.
     pub(crate) remediation: Vec<String>,
@@ -4870,7 +4872,7 @@ mod tests {
                 status: LanguageStatus::Preview,
                 adapter_available: true,
                 enabled: Some(false),
-                availability_state: "detected_compiled_disabled",
+                availability_state: Some("detected_compiled_disabled"),
                 remediation: vec!["enable `python` under `[languages]`".to_string()],
             }],
             unanalyzed_source_languages: vec![DoctorUnanalyzedLanguage {

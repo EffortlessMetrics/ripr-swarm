@@ -328,8 +328,15 @@ fn detected_language_entries(
                 status: language_status(*id),
                 adapter_available: id.is_available(),
                 enabled,
-                availability_state: report.state.as_str(),
-                remediation: report.remediation,
+                // Unloaded configuration leaves enablement unknown; the resolver
+                // has no unknown state, so publish none rather than a definite
+                // `not_enabled` plus an enable step the config may already satisfy.
+                availability_state: enabled.map(|_| report.state.as_str()),
+                remediation: if enabled.is_some() {
+                    report.remediation
+                } else {
+                    Vec::new()
+                },
             }
         })
         .collect()
@@ -6482,7 +6489,7 @@ mod tests {
             status: language_status(language),
             adapter_available,
             enabled: Some(true),
-            availability_state: "detected_compiled_enabled",
+            availability_state: Some("detected_compiled_enabled"),
             remediation: Vec::new(),
         }
     }
@@ -6494,7 +6501,10 @@ mod tests {
     fn detected_entries_carry_the_shared_availability_state() {
         let disabled = detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Rust]));
         if LanguageId::Python.is_available() {
-            assert_eq!(disabled[0].availability_state, "detected_compiled_disabled");
+            assert_eq!(
+                disabled[0].availability_state,
+                Some("detected_compiled_disabled")
+            );
             assert!(
                 disabled[0]
                     .remediation
@@ -6505,11 +6515,16 @@ mod tests {
             );
         }
         let enabled = detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]));
-        assert_eq!(enabled[0].availability_state, "detected_compiled_enabled");
+        assert_eq!(
+            enabled[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
         assert!(enabled[0].remediation.is_empty());
         let unknown = detected_language_entries(&[LanguageId::Rust], None);
         assert_eq!(unknown[0].enabled, None);
-        assert_ne!(unknown[0].availability_state, "detected_compiled_disabled");
+        // Unknown enablement publishes no state and no enable step.
+        assert_eq!(unknown[0].availability_state, None);
+        assert!(unknown[0].remediation.is_empty());
     }
 
     #[test]
