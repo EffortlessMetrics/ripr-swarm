@@ -13650,18 +13650,20 @@ fn given_boundary_owner_call_when_input_operand_is_closure_local_then_activation
     Ok(())
 }
 
-/// #12060: a test related to a match arm's owner only by file cannot raise
-/// the arm's discrimination through an assertion that pins another indexed
+/// #12060: a test related to a match arm's owner only by proximity cannot
+/// raise the arm's grip through an assertion that pins another indexed
 /// function (`assert_eq!(reduce(..), Reduction::Over(..))`), while the same
-/// assertion in a test that calls the owner still counts.
+/// assertion in a test that also calls the owner still counts. Pinned through
+/// both the full and the compact entry points, which must agree.
 #[test]
 fn proximity_test_pinning_another_function_cannot_grade_a_match_arm_up() -> Result<(), String> {
-    let discriminate_for = |extra_test: &str| -> Result<StageState, String> {
+    type Stages = (StageState, StageState, StageState);
+    let stages_for = |extra_test: &str| -> Result<(Stages, Stages, Vec<OracleStrength>), String> {
         let prod = format!(
             "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
              pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
              pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
-             #[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn consume_runs() {{ let _ = consume(1); }}\n    {extra_test}\n}}\n"
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {extra_test}\n}}\n"
         );
         let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
         let index = index_from_files(&files)?;
@@ -13670,23 +13672,59 @@ fn proximity_test_pinning_another_function_cannot_grade_a_match_arm_up() -> Resu
             .iter()
             .find(|s| s.kind() == SeamKind::MatchArm && s.expression().contains("Over"))
             .ok_or_else(|| "Over arm seam present".to_string())?;
-        Ok(evidence_for_seam(arm, &index).discriminate.state)
+        let full = evidence_for_seam(arm, &index);
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(arm, &context);
+        let published: Vec<OracleStrength> = full
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect();
+        Ok((
+            (
+                full.propagate.state,
+                full.observe.state,
+                full.discriminate.state,
+            ),
+            (
+                compact.propagate.state,
+                compact.observe.state,
+                compact.discriminate.state,
+            ),
+            published,
+        ))
     };
-    let other_function = discriminate_for(
-        "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }",
+    let other_function =
+        stages_for("#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }")?;
+    let owner_and_other = stages_for(
+        "#[test] fn consume_and_reduce() { let _ = consume(3); assert_eq!(reduce(3), Reduction::Over(3)); }",
     )?;
-    let owner_call =
-        discriminate_for("#[test] fn consume_over() { assert_eq!(consume(3), true); }")?;
-    assert_ne!(
-        other_function, owner_call,
-        "an assertion on another function must not grade the arm like one on the owner"
+    assert_eq!(other_function.0, other_function.1, "full and compact agree");
+    assert_eq!(
+        owner_and_other.0, owner_and_other.1,
+        "full and compact agree"
     );
-    assert!(
-        matches!(
-            other_function,
-            StageState::Weak | StageState::No | StageState::Unknown
-        ),
-        "{other_function:?}"
+    assert_eq!(
+        other_function.0,
+        (StageState::Unknown, StageState::No, StageState::No),
+        "other-function"
+    );
+    assert_eq!(
+        owner_and_other.0,
+        (StageState::Yes, StageState::Yes, StageState::Yes),
+        "owner+other"
+    );
+    // The related-test record and the agent's strong-test pick read the same
+    // credited view: an excluded assertion is not published as an oracle.
+    assert_eq!(
+        other_function.2,
+        vec![OracleStrength::None],
+        "published other-function"
+    );
+    assert_eq!(
+        owner_and_other.2,
+        vec![OracleStrength::Strong],
+        "published owner+other"
     );
     Ok(())
 }
