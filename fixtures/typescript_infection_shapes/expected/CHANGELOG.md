@@ -123,7 +123,7 @@ Updated:
 ## Pending — typescript_infection_shapes (11)
 
 Reason:
-RIPR-SPEC-0246: plain wording for TypeScript preview check text (#11619)
+RIPR-SPEC-0088: #11619 drop the seam-based qualifier from the repair-packet advisory
 
 Command:
 `cargo xtask goldens bless typescript_infection_shapes --reason "..."`
@@ -133,6 +133,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — typescript_infection_shapes (12)
+
+Reason:
+RIPR-SPEC-0246: plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless typescript_infection_shapes --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_infection_shapes (13)
 
 Reason:
 RIPR-SPEC-0246: re-render after merging main; plain wording for TypeScript preview check text (#11619)

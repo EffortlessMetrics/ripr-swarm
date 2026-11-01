@@ -619,11 +619,8 @@ pub(super) fn render_finding_with_shared_sections(
     // Revision labelling (#3281): base-side evidence stays visible here —
     // the human surface explicitly supports historical context — but is
     // labelled non-actionable so it cannot read as a current obligation.
-    if !finding.is_candidate_actionable() {
-        out.push_str(&format!(
-            "  source:  {} — base-side evidence, not a candidate edit target\n",
-            finding.source_currentness.as_str()
-        ));
+    if let Some(disclosure) = finding.source_currentness_disclosure() {
+        out.push_str(&format!("  source:  {disclosure}\n"));
     }
 
     // #10691: lead with the plain change type; the stable family/delta tokens
