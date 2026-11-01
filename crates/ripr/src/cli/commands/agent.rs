@@ -811,7 +811,7 @@ fn render_agent_packet_with_context(
     }
 
     let seam_id = options.seam_id.as_deref().ok_or_else(|| {
-        CoreError::from("agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`")
+        CoreError::from("agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. Get an id from `ripr check` or `ripr pilot --root <dir>`")
     })?;
     let config =
         load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
