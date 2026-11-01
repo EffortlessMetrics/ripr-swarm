@@ -655,6 +655,8 @@ impl<'a> SelfTypeMethods<'a> {
     }
 }
 
+type TestBodyTokenCache = RefCell<BTreeMap<(PathBuf, usize, usize), Arc<[Tok]>>>;
+
 /// The owner-side half: the fields the deleted call may write and the
 /// self-type methods that read one of them.
 pub(in crate::analysis) struct EffectStateCarrier {
@@ -674,7 +676,7 @@ pub(in crate::analysis) struct EffectStateCarrier {
     /// asserts (`inv.reorder()` turning `low_stock` into log entries).
     mutating_readers: BTreeSet<String>,
     /// Tokenized test bodies keyed by `(file, start_line, body len)`.
-    body_token_cache: RefCell<BTreeMap<(PathBuf, usize, usize), Arc<[Tok]>>>,
+    body_token_cache: TestBodyTokenCache,
 }
 
 impl EffectStateCarrier {
