@@ -1886,6 +1886,14 @@ fn mask_test_file_citations(text: &str) -> String {
     out
 }
 
+/// True when the rest of a pretty-printed member line is exactly an unsigned
+/// integer, with an optional trailing comma. `null`, a quoted string or a
+/// malformed number is not masked, so a broken test pointer stays drift.
+fn is_unsigned_json_number_member(rest: &str) -> bool {
+    let value = rest.trim_end().trim_end_matches(',');
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 /// In pretty `check.json`, mask `"line": N` when the nearest preceding
 /// `"file"` member names a JS/TS test file (#12163). Related-test entries put
 /// `file` immediately before `line`; a `line` after any other file, or with no
@@ -1898,7 +1906,11 @@ fn mask_test_lines_in_check_json(text: &str) -> String {
         if let Some(value) = trimmed.strip_prefix("\"file\": \"") {
             let name = value.split('"').next().unwrap_or("");
             last_file_is_test = ends_with_test_file(name);
-        } else if last_file_is_test && trimmed.starts_with("\"line\": ") {
+        } else if last_file_is_test
+            && trimmed
+                .strip_prefix("\"line\": ")
+                .is_some_and(is_unsigned_json_number_member)
+        {
             let indent = &chunk[..chunk.len() - trimmed.len()];
             let comma = if trimmed.trim_end().ends_with(',') {
                 ","
@@ -4029,6 +4041,22 @@ mod tests {
                 );
             }
             if surface == "check.json" {
+                for broken in ["null", "\"7\"", "7x", "-7", ""] {
+                    let invalid = moved.replace(
+                        "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 7",
+                        &format!(
+                            "\"file\": \"tests/pricing.test.ts\",\n          \"line\": {broken}"
+                        ),
+                    );
+                    assert_ne!(
+                        invalid, moved,
+                        "the invalid-line control must edit the JSON"
+                    );
+                    assert!(
+                        !compare(&write("invalid_line", &invalid)?)?,
+                        "a test line of `{broken}` is drift, not a masked line"
+                    );
+                }
                 let source_moved = shift(&moved, "\"line\": 2", "\"line\": 3");
                 assert_ne!(
                     source_moved, moved,
