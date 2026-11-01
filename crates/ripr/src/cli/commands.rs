@@ -3328,6 +3328,9 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // looked like a hang. The same stderr-only stage lines `ripr check`
     // projects disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
+    // `explain` has no machine output format (its stdout is the human or
+    // markdown explanation), so only `--quiet` / `RIPR_QUIET` silence it; the
+    // machine-format default that `check` and `pilot` adopt has nothing to key on.
     let progress = (!crate::cli::progress::progress_silenced(quiet, false)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),

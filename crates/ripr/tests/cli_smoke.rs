@@ -28617,6 +28617,58 @@ fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>
         .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}").into())
 }
 
+/// #11598: `RIPR_QUIET` reaches the direct `ripr agent repair` phases: the
+/// narration and `wrote` lines drop, while the result (the attempt command)
+/// still prints. The control run without it narrates.
+#[test]
+fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
+-> Result<(), Box<dyn std::error::Error>> {
+    let run = |quiet: bool| -> Result<String, Box<dyn std::error::Error>> {
+        let root = repair_route_workspace(if quiet {
+            "agent repair quiet env"
+        } else {
+            "agent repair loud env"
+        })?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+        command
+            .args([
+                "agent",
+                "repair",
+                "--json",
+                "--root",
+                &root_arg,
+                "--seam-id",
+                REPAIR_ROUTE_SEAM,
+                "--phase",
+                "before",
+            ])
+            .env_remove("RIPR_QUIET");
+        if quiet {
+            command.env("RIPR_QUIET", "1");
+        }
+        let output = command.output()?;
+        assert_success(&output);
+        Ok(String::from_utf8_lossy(&output.stderr).into_owned())
+    };
+    let loud = run(false)?;
+    assert!(
+        loud.contains("ripr: wrote "),
+        "control must narrate: {loud}"
+    );
+    let quiet = run(true)?;
+    assert!(!quiet.contains("ripr: wrote "), "{quiet}");
+    assert!(
+        !quiet.contains("agent repair --phase before for"),
+        "{quiet}"
+    );
+    assert!(
+        quiet.contains("ripr: attempt next command: "),
+        "the result must survive quiet: {quiet}"
+    );
+    Ok(())
+}
+
 fn repair_route_next(report: &serde_json::Value) -> (String, String) {
     let text = |pointer: &str| {
         report

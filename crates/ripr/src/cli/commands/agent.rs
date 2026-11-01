@@ -2164,6 +2164,10 @@ fn run_agent_repair_phase(
     // #11598: `--quiet` / `RIPR_QUIET` drop this phase's progress narration
     // and `wrote <path>` lines. Refusal prose, the attempt id and the next
     // command are results and always print.
+    // `--json` here does not imply quiet: the phase narration is the
+    // protocol-bearing stderr (attempt command, refusal prose) that agents
+    // read, so only `--quiet` / `RIPR_QUIET` drop the progress and `wrote`
+    // lines. The machine-format default belongs to the check-style stream.
     let quiet = crate::cli::progress::progress_silenced(quiet, false);
     let store_ref = store.as_deref();
 
