@@ -206,16 +206,116 @@ fn open_test_side_gap_suppresses_stop_when_selected_finding_is_limited() {
 }
 
 /// #11825 negative: a weakly_exposed finding that is itself static-limited
-/// is not an open test-side gap, so `stop=` stays.
+/// is not an open test-side gap, so `stop=` stays, unless it also carries a
+/// `weak_assertion` row (see `reach_limit_with_weak_assertion_row_does_not_stop`).
 #[test]
 fn static_limited_weakly_exposed_alone_keeps_stop() {
     let mut limited_weak = weak_gap("probe:limited-weak", 4);
     limited_weak.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    limited_weak.related_tests[0].oracle_strength = OracleStrength::Strong;
     let text = rendered(&output(vec![limited_weak]));
     assert!(text.contains("\nstop="), "{text}");
     assert!(text.contains(" gaps=0 "), "{text}");
     assert!(!text.contains("|id=probe:limited-weak"), "{text}");
     assert!(!text.contains("\nnext="), "{text}");
+}
+
+/// A weakly exposed finding behind the reach-only limit, shaped like the
+/// humantime fortnight commit: the one related test asserts only `is_ok()`.
+fn reach_limited_weak(id: &str, line: usize) -> Finding {
+    let mut limited = weak_gap(id, line);
+    limited.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    limited
+}
+
+/// #11825: every finding is static-limited, so `gaps=0`, but a reach-only
+/// limit does not make a smoke-only related test fixable-from-nowhere. The
+/// report must not print `stop=`; it prints `open=` and the drill-in.
+#[test]
+fn reach_limit_with_weak_assertion_row_does_not_stop() {
+    let text = rendered(&output(vec![
+        reach_limited_weak("probe:fortnight", 264),
+        finding("probe:enum", ExposureClass::StaticUnknown, 316),
+    ]));
+    assert!(!text.contains("stop="), "{text}");
+    assert!(text.contains(" gaps=0 "), "{text}");
+    assert!(
+        text.contains("\nopen=a static limit leaves reach unconfirmed"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "weakly_exposed|src/lib.rs:264|pct >= 50|missing=-|test=t1|id=probe:fortnight"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("miss=weak_assertion"), "{text}");
+    assert!(
+        text.contains("\nlimits=static_unknown:1,weakly_exposed:1\n"),
+        "{text}"
+    );
+    assert!(
+        text.lines()
+            .any(|line| line == "next=ripr explain probe:fortnight"),
+        "{text}"
+    );
+}
+
+/// #11825: more open findings than `MAX_GAP_LINES` print the cap and an
+/// exact omitted count; `reachable_unrevealed` opens the same way.
+#[test]
+fn open_limited_findings_over_the_cap_report_the_omitted_count() {
+    let total = MAX_GAP_LINES + 2;
+    let mut findings = Vec::new();
+    for index in 0..total {
+        let mut open = reach_limited_weak(&format!("probe:open{index}"), 10 + index);
+        if index == 0 {
+            open.class = ExposureClass::ReachableUnrevealed;
+        }
+        findings.push(open);
+    }
+    let text = rendered(&output(findings));
+    assert!(text.contains("\nopen="), "{text}");
+    assert!(!text.contains("stop="), "{text}");
+    assert!(
+        text.matches("|test=t1|id=probe:open").count() <= MAX_GAP_LINES,
+        "{text}"
+    );
+    assert!(
+        text.contains("\n+2 more open findings not shown; `--format json` lists all\n"),
+        "{text}"
+    );
+}
+
+/// #11825 negative: the same reach limit with no weak-assertion row (the
+/// fixed-tree shape: exact-value tests remain, only the limit is left) still
+/// stops, and so does a weak row behind a different limit kind.
+#[test]
+fn reach_limit_without_weak_assertion_row_keeps_stop() {
+    let mut fixed = reach_limited_weak("probe:fixed", 264);
+    fixed.related_tests[0].miss = Some(RelatedTestMiss::ObservationUnconfirmed);
+    fixed.related_tests[0].oracle_strength = OracleStrength::Strong;
+    let text = rendered(&output(vec![fixed]));
+    assert!(text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    assert!(!text.contains("\nnext="), "{text}");
+
+    let mut other_kind = weak_gap("probe:macro", 5);
+    other_kind.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+    let text = rendered(&output(vec![other_kind]));
+    assert!(text.contains("\nstop="), "{text}");
+    assert!(!text.contains("open="), "{text}");
+}
+
+/// #11825 negative: a non-current (base-side) limited weak finding is not
+/// open work.
+#[test]
+fn base_side_reach_limited_weak_row_keeps_stop() {
+    let mut old = reach_limited_weak("probe:old", 3);
+    old.source_currentness = SourceCurrentness::BaseDeleted;
+    let text = rendered(&output(vec![old]));
+    assert!(!text.contains("open="), "{text}");
+    assert!(text.contains("\nstop="), "{text}");
 }
 
 #[test]
