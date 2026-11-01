@@ -12881,8 +12881,9 @@ mod list_actionable_items_tests {
             response["withheld_unknown_truncated"], false,
             "{response:#}"
         );
-        // Group order follows the canonical-group key order: the mixed
-        // canonical group sorts before the raw finding's own group.
+        // Group order follows each group's first member in snapshot order
+        // (`canonical_group_members`, #11862): the raw `:94` finding precedes
+        // the mixed canonical group whose first member is `:96`.
         let withheld_ids: Vec<&str> = response["withheld_unknown_findings"]
             .as_array()
             .ok_or("withheld_unknown_findings is not an array")?
@@ -12891,7 +12892,7 @@ mod list_actionable_items_tests {
             .collect();
         assert_eq!(
             withheld_ids,
-            vec!["probe:pricing:98:predicate", "probe:pricing:94:predicate"],
+            vec!["probe:pricing:94:predicate", "probe:pricing:98:predicate"],
             "{response:#}"
         );
         assert!(

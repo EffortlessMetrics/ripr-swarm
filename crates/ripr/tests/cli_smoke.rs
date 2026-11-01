@@ -2578,11 +2578,17 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
     let bin = env!("CARGO_BIN_EXE_ripr");
     let root_arg = root.display().to_string();
     let diff_arg = diff.display().to_string();
-    let expected_listing = format!(
-        "ripr check --root {} --diff {} --json",
-        renderer_shell_arg(&rendered_path(&root_arg)),
-        renderer_shell_arg(&rendered_path(&diff_arg))
-    );
+    let listing_for = |format_flag: &str| {
+        format!(
+            "ripr check --root {} --diff {} {format_flag}",
+            renderer_shell_arg(&rendered_path(&root_arg)),
+            renderer_shell_arg(&rendered_path(&diff_arg))
+        )
+    };
+    // `explain` hints spell the documented `--format json` (#11844); the
+    // `context` hint still prints the `--json` alias.
+    let explain_listing = listing_for("--format json");
+    let context_listing = listing_for("--json");
     let result = (|| -> Result<(), Box<dyn std::error::Error>> {
         let listed = run_command(
             bin,
@@ -2681,7 +2687,13 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
                         .ok_or_else(|| {
                             format!("selector miss omitted its retry command: {stderr}")
                         })?;
-                    if listing != expected_listing || !stderr.contains("list available finding ids")
+                    let expected_listing = if command == "explain" {
+                        &explain_listing
+                    } else {
+                        &context_listing
+                    };
+                    if listing != expected_listing.as_str()
+                        || !stderr.contains("list available finding ids")
                     {
                         return Err(
                             format!("selector retry lost the requested scope: {stderr}").into()
@@ -27862,10 +27874,18 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
         }
         recoveries.push((label, String::from_utf8_lossy(&missing.stderr).into_owned()));
     }
+    // `explain` hints spell the documented `--format json` (#11844); the
+    // `context` hint still prints the `--json` alias.
+    let explain_listing = expected_listing.replace(" --json", " --format json");
     for (label, stderr) in recoveries {
-        if !stderr.contains(&format!("`{expected_listing}`")) {
+        let wanted = if label.ends_with("context") {
+            &expected_listing
+        } else {
+            &explain_listing
+        };
+        if !stderr.contains(&format!("`{wanted}`")) {
             return Err(format!(
-                "{label} must name the scoped listing `{expected_listing}`:\n{stderr}"
+                "{label} must name the scoped listing `{wanted}`:\n{stderr}"
             ));
         }
     }
