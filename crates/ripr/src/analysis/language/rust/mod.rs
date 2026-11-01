@@ -1452,7 +1452,8 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
 
 /// Whether a `weakly_exposed`, `reachable_unrevealed` or `infection_unknown`
 /// (#11481) finding's only reach is proximity: every
-/// related test shares the owner's file, module or a name token. With reach
+/// related test shares the owner's file, module or a name token (an
+/// owner-named test counts only for `infection_unknown`). With reach
 /// `weak`, the reach stage has already found no test calling the owner, so
 /// the weak reach rests on ripr not tracing a path, the same unresolved
 /// negative a `no_static_path` finding has, and a transitive or macro witness
@@ -1475,7 +1476,10 @@ fn needs_proximity_reach_limit(finding: &Finding) -> bool {
                     // #11481: a test related to an `infection_unknown`
                     // finding only by naming the owner never has to call it
                     // (RelationReason::establishes_reach is false), so it is
-                    // as unresolved as a shared file or token.
+                    // as unresolved as a shared file or token. Only that
+                    // class: a `weakly_exposed` owner-named test holds a real
+                    // weak assertion the repo-wide witness cannot replace
+                    // (decided under #11481).
                     || (finding.class == ExposureClass::InfectionUnknown
                         && reason == crate::domain::RelationReason::OwnerNamedTest)
             })
