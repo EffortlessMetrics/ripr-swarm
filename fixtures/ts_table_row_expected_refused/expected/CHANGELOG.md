@@ -44,3 +44,15 @@ Command:
 
 Updated:
 - `expected/check.json`
+
+## Pending — ts_table_row_expected_refused (5)
+
+Reason:
+RIPR-SPEC-0243: re-bless after merging main (finding wording discriminator->check; refused gap_state advisory->unknown); row-table logic unchanged
+
+Command:
+`cargo xtask goldens bless ts_table_row_expected_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
