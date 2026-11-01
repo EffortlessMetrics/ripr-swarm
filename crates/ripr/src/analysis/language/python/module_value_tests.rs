@@ -2940,6 +2940,7 @@ fn package_init_prefilter_skips_inert_sources_without_parsing() {
         "'''package docs'''\n",
         "\"docs\"\n",
         "r\"\"\"raw docs\"\"\"\n",
+        "r\"docs \\x\"\n",
         "# comment\n\n\"\"\"docs\"\"\"\n# trailing\n",
     ];
     for source in skipped {
@@ -2971,6 +2972,9 @@ fn package_init_prefilter_parses_sources_that_may_bind() {
         "s = \"#\"\n",
         "\"\"\"docs \\\"\"\"\n# \"\"\"; table = 1\n",
         "ur\"docs\"\n",
+        "\"docs \\x\"\n",
+        "\"docs\\n\"\n",
+        "\"docs \\N{NotAName}\"\n",
     ];
     for source in must_parse {
         let (shadows, opaque, parsed) =
@@ -3016,6 +3020,12 @@ fn package_init_prefilter_parses_sources_that_may_bind() {
     let (shadows, opaque, parsed) =
         super::module_value::package_init_submodule_facts_parsed_for_test(init, "ur\"docs\"\n");
     assert!(parsed && opaque && shadows.is_empty(), "{shadows:?}");
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "\"docs \\x\"\n");
+    assert!(parsed && opaque && shadows.is_empty(), "{shadows:?}");
+    let (shadows, opaque, parsed) =
+        super::module_value::package_init_submodule_facts_parsed_for_test(init, "\"docs\\n\"\n");
+    assert!(parsed && !opaque && shadows.is_empty(), "{shadows:?}");
 }
 
 #[test]

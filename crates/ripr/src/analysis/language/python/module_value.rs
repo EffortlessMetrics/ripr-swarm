@@ -1654,7 +1654,23 @@ fn package_init_source_cannot_shadow(source: &str) -> bool {
         return true;
     }
     match skip_complete_string_literal(after_comments) {
-        Some(after_docstring) => skip_blank_and_full_line_comment_lines(after_docstring).is_empty(),
+        Some(after_docstring) => {
+            let literal_len = after_comments.len().saturating_sub(after_docstring.len());
+            let Some(literal) = after_comments.get(..literal_len) else {
+                return false;
+            };
+            let prefix_is_raw = literal
+                .chars()
+                .take_while(|c| c.is_ascii_alphabetic())
+                .any(|c| matches!(c, 'r' | 'R'));
+            // A non-raw string containing a backslash may have an escape the
+            // parser rejects (`\x`, `\u`, `\N{...}`); fall through to parse so
+            // the result stays opaque rather than skipping as inert.
+            if literal.contains('\\') && !prefix_is_raw {
+                return false;
+            }
+            skip_blank_and_full_line_comment_lines(after_docstring).is_empty()
+        }
         None => false,
     }
 }
