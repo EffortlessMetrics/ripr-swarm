@@ -570,6 +570,14 @@ pub(super) fn related_test_relation(
     // group instead (`cli_subcommand.rs`).
     if let Some(name) = name_anchor(owner)
         && !test_text_mentions(test, name)
+        && !(owner.owner_kind == Some(OwnerKind::Function)
+            && owner
+                .qualified_name
+                .rsplit_once('.')
+                .is_some_and(|(parent, _)| {
+                    let parent_name = parent.rsplit('.').next().unwrap_or(parent);
+                    test_text_mentions(test, parent_name) || test_text_mentions(test, parent)
+                }))
         && !owner
             .cli_subcommand
             .as_ref()
@@ -1579,6 +1587,16 @@ pub(super) fn body_calls_owner(body_text: &str, owner: &PythonOwner) -> bool {
     contains_call_name(body_text, &owner.name)
         || (owner.qualified_name != owner.name
             && contains_call_name(body_text, &owner.qualified_name))
+        || (owner.owner_kind == Some(OwnerKind::Function)
+            && owner.qualified_name != owner.name
+            && owner
+                .qualified_name
+                .rsplit_once('.')
+                .is_some_and(|(parent, _)| {
+                    let parent_name = parent.rsplit('.').next().unwrap_or(parent);
+                    contains_call_name(body_text, parent_name)
+                        || contains_call_name(body_text, parent)
+                }))
         || (matches!(
             owner.owner_kind,
             Some(OwnerKind::Method | OwnerKind::ClassMethod)
@@ -2478,6 +2496,14 @@ pub(super) fn strong_test_imports_owner_from_module(
 /// Python keeps only the last binding and this reader does not order them.
 fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner, test: &PythonTest) -> bool {
     import.imported == owner.name
+        || (owner.owner_kind == Some(OwnerKind::Function)
+            && owner.qualified_name != owner.name
+            && owner
+                .qualified_name
+                .rsplit_once('.')
+                .is_some_and(|(parent, _)| {
+                    import.imported == parent.rsplit('.').next().unwrap_or(parent)
+                }))
         || (import.imported == "*"
             && !owner.name.starts_with('_')
             && owner.star_exported
