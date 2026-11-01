@@ -41,8 +41,8 @@
       "evidence_path": ["reach unknown: 0 related test(s) found for owner `#limit`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator unknown: TypeScript preview adapter: the changed owner is a `#private` class member no test can call by name; discriminate unknown (RIPR-SPEC-0243)."],
       "flow_sinks": [
       ],
-      "evidence": ["owner: #limit", "gap_state: advisory", "actionability_category: private_member_reach_unknown", "why_not_actionable: reach into the private member through public callers is not established; no related-test path or missing assertion is inferred", "repair_route: establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test", "missing_actionability_fields: related_test_or_observer", "evidence_needed_to_promote: modeled public-to-private reach and an observer of the changed behavior", "raw_evidence_ref: file=src/counter.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_counter.ts:typescript_preview:1aa358b1;owner=#limit", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["`#limit` is a `#private` class member, so no test can call it by name; whether a test reaches it through a public method of the class is not established either way.", "TypeScript preview actionability `advisory` / `private_member_reach_unknown`: reach into the private member through public callers is not established; no related-test path or missing assertion is inferred. Repair route: establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test"],
+      "evidence": ["owner: #limit", "gap_state: unknown", "actionability_category: private_member_reach_unknown", "why_not_actionable: reach into the private member through public callers is not established; no related-test path or missing assertion is inferred", "repair_route: establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test", "missing_actionability_fields: related_test_or_observer", "evidence_needed_to_promote: modeled public-to-private reach and an observer of the changed behavior", "raw_evidence_ref: file=src/counter.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_counter.ts:typescript_preview:1aa358b1;owner=#limit", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["`#limit` is a `#private` class member, so no test can call it by name; whether a test reaches it through a public method of the class is not established either way.", "TypeScript preview actionability `unknown` / `private_member_reach_unknown`: reach into the private member through public callers is not established; no related-test path or missing assertion is inferred. Repair route: establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test"],
       "assertion_texts": {
       },
       "activation": {
@@ -91,7 +91,7 @@
         "actionability_category": "private_member_reach_unknown",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "modeled public-to-private reach and an observer of the changed behavior",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "related_test_or_observer"
         ],

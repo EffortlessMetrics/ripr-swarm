@@ -251,6 +251,85 @@ The budget-version constant lives in
 `crates/ripr/src/domain/repair_card.rs` and is pinned by unit tests and
 `cargo xtask check-output-contracts`.
 
+## Structured refusal remedy (`remedy`, additive, #11790, #11584)
+
+Every refusal already names its next step in prose (#11539). Machine
+consumers get the same step as a `remedy` object, derived from that prose by
+one owner (`RefusalRemedy::from_prose` in `crates/ripr/src/domain/`); the
+renderers only serialize it. The prose is the source of truth, so the
+derivation is fail-closed: it copies what the message states and never
+composes, completes or guesses a command.
+
+`remedy` is additive and carried beside the existing refusal fields, without
+a schema-version bump, on:
+
+- `ripr check --format json` refusal envelopes: `run_limitations[0].remedy`
+  (both `0.2` and the `analysis_timeout` `0.3` generation; the two frozen
+  scope-guard documents are unchanged);
+- `ripr agent card --json` refusals: `error.remedy`, beside the typed
+  `error.remedy_route`;
+- `ripr agent stub --json` refusals (`state: refused`): `refusal.remedy`;
+- `ripr agent repair --phase after --json` refusals
+  (`repair_after_refusal`): `remedy`, derived from `error` and the recovery
+  `narration`;
+- MCP typed failures: `failure.remedy`, derived from `failure.recovery`
+  (`data.next`, where a tool returns one, stays the typed route).
+
+The field set is fixed; absent facts are `null` or empty, never omitted:
+
+```json
+{
+  "kind": "command",
+  "command": "ripr check --base <ref>",
+  "alternatives": [],
+  "tool": null,
+  "flags": [],
+  "fill_in": ["<ref>"],
+  "retry_stated": true,
+  "env": [],
+  "conditional": false,
+  "prose_has_more": false
+}
+```
+
+- `kind` — `command` (the message names a backticked `ripr ...` command),
+  `mcp_tool` (it names a `ripr_<tool>` MCP tool and no command), `flags` (it
+  tells the reader to pass flags and names no command or tool) or `none` (it
+  states no machine-readable remedy). `none` is explicit: the human message
+  may still carry a prose step, but no command, tool or flag is invented.
+- `command` — the primary stated command, verbatim. The primary step is the
+  instructed one, not the first mention: a fallback after an `if`/`unless`/
+  `when` condition ranks below an unconditional step, and a mention that only
+  describes (`X is a `ripr check` finding ID`) or sits in an `if` premise is
+  never used. When the instructed step is an MCP tool, `kind` is `mcp_tool`
+  and a conditional command is listed in `alternatives`, not as `command`.
+  `alternatives` — further distinct stated commands in message order (at most
+  three).
+- `tool` — the first stated MCP tool name, verbatim.
+- `flags` — `--flag` tokens the message tells the reader to pass, add, use or
+  repeat (flags already inside `command` are not repeated).
+- `fill_in` — placeholders in `command` (`<ref>`, `BASE`, `{root}`) the
+  consumer must fill before running it.
+- `retry_stated` — `true` only when the message itself tells the reader to
+  rerun or retry, `false` only when it says repeating the call changes
+  nothing, `null` when it says neither. It reports what the message states;
+  it does not say an unchanged retry succeeds (the message may require a fix
+  or a prerequisite first), and it is not an analysis of side effects.
+- `env` — `NAME=value` environment prerequisites the message names outside
+  the command span, verbatim.
+- `conditional` — `true` when the only step the message gives is conditional
+  (`if it persists, run ...`): the command or tool is a fallback, not a first
+  move. An unconditional step always outranks a conditional one.
+- `prose_has_more` — `true` when `command` or `tool` is not self-sufficient:
+  the message names flags (`flags`, every `--flag` outside the command span)
+  or `env` prerequisites the span does not carry, for example a restart that
+  must repeat the original `--root` and trust-binding flags. A consumer must
+  not run `command` as-is when this is `true`; `command` may omit
+  prerequisites the prose states.
+
+A consumer branches on `remedy.kind` and `remedy.command`, never on the prose.
+`kind` values are listed under `refusal_remedy_kind` in Enums.
+
 ## Agent card refusal envelope (`agent_card_refusal`, schema `0.1`)
 
 Every deliberate named refusal of the `ripr agent card` handoff — the default
@@ -559,7 +638,7 @@ document.
 
 | Field | Meaning |
 | --- | --- |
-| `detected_languages[]` | Languages the root marker scan found: `language`, `status` (`stable` or `preview`), `adapter_available` (whether the adapter was compiled into this binary), `enabled` (whether the effective config enables it; `null` when the configuration could not be loaded, so enablement is unknown rather than disabled; JavaScript reads through its `typescript` entry). Omitted when no marker was found. |
+| `detected_languages[]` | Languages the root marker scan found: `language`, `status` (`stable` or `preview`), `adapter_available` (whether the adapter was compiled into this binary), `enabled` (whether the effective config enables it; `null` when the configuration could not be loaded, so enablement is unknown rather than disabled; JavaScript reads through its `typescript` entry), `availability_state` (the shared language-availability state, such as `detected_compiled_disabled` or `detected_not_compiled`, or `auto_detected_enabled` when no `ripr.toml` was loaded and marker detection enabled Python or TypeScript; `null` when the configuration could not be loaded; availability never means the adapter ran) and `remediation` (ordered steps for that state, empty when none). Both are additive within schema 0.4 and optional in the schema, so earlier 0.4 documents stay valid; the producer always emits them (#2961). Omitted when no marker was found. |
 | `unanalyzed_source_languages[]` | Source in languages no adapter reads: `language` and `file_count`. A non-coverage disclosure, never a finding. Omitted when no such source exists. |
 | `preview_language_gaps[]` | Detected preview languages `ripr check` skips until they are enabled: `config_entry` (what `[languages] enabled` accepts) and `detected_language` (the source it analyzes). The two differ for a JavaScript-only workspace, which the `typescript` entry analyzes. Omitted when there is no such gap. |
 | `config_defaults` | The effective configuration: `source_path` (`null` when the built-in defaults apply), `analysis_mode`, `lsp_seam_diagnostics`, `suppressions_path`, `bun_ub_profile_configured`, `bun_ub_test_roots[]`, `bun_ub_bridge_hints` (the bridge-hints path, `null` when the profile is absent). The whole field is `null` when the configuration could not be loaded, so it never claims a default the run did not verify. |
@@ -850,6 +929,39 @@ format is for reading by a model with a small token budget. On a two-finding
 demo diff it measured 528 bytes against 2,549 (`human`), 4,475 (`human-full`)
 and 11,845 (`json`); it grows by roughly 150 bytes per listed gap and stops at
 five.
+
+`ripr explain <finding-id|file:line> --format agent` (#12104) is the one-finding
+counterpart of `check --format agent`: the same line-oriented text grammar, no
+JSON and no `schema_version`. `--format human` (alias `text`) stays the default.
+`--format json` is refused with a pointer to `ripr context`, which remains the
+JSON packet. It reuses the check projection's record, `tK` row and gap
+predicates, so a finding is a "gap" in both or in neither, and adds no verdict,
+class or ranking. Errors (no match, ambiguous selector, bad scope) stay prose on
+stderr with empty stdout.
+
+```text
+#ripr explain agent static-advisory class=CLASS
+CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
+tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
+limit=STATIC_LIMIT_KIND
+done=... | open=... | stop=...
+next=ripr context ... --at SELECTOR
+```
+
+- Exactly one record; `tK` is the strongest contributing related test (the
+  weak-assertion row for the limited `open=` case) and is absent when none
+  exists. `limit=` appears only when the producer named a static limit.
+- Exactly one terminal line: `open=` for a candidate-current test-side gap
+  (`weakly_exposed` or `reachable_unrevealed`, not limited) or for a
+  reach-only limit that still carries a weak related test (the `check` `open=`
+  rule); `done=` for a candidate-current, unsuppressed exposed finding;
+  `stop=` otherwise (limited, preview-only, `no_static_path`, unknown classes).
+  A finding that is not a current edit target (`base_deleted`, `moved_or_renamed`,
+  `unresolved_subject`) never prints `open=` or `done=`: its `stop=` names the
+  currentness. A policy-suppressed finding prints a suppression `stop=`; a
+  `--from` replay with `--suppression-policy` is refused for this format. All
+  are static advisory, never runtime mutation outcomes.
+- `next=` is the scope-bound `ripr context` command for this finding.
 
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
@@ -3280,7 +3392,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `rust_caller_loop_selector_unresolved` -- (RIPR-SPEC-0240, additive, #5503) The changed integer match arm is fed by a bounded `for` loop inside an `Iterator::next` whose selector range includes the arm, and a related test collects the iterator and compares the whole collection. ripr reads the range (with its file and line) but does not prove the loop runs for the test's input or that the arm's value reaches the compared items, so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited; this is a named limitation, not a coverage claim.
 - `proof_harness_not_evaluated` -- (RIPR-SPEC-0367, additive) A Rust function carrying `#[kani::proof]` or `#[kani::proof_for_contract]` (or the same path under `cfg_attr`) calls the changed owner and no test path is established. The harness is neither a test nor oracle evidence and gains no credit; the class stays `no_static_path` and the next step says a proof harness exists that ripr does not evaluate. Not a coverage claim.
 - `rust_inherent_receiver_unestablished` -- (RIPR-SPEC-0352, additive) A related test calls the changed inherent method inside a standard assertion macro and the receiver resolves to the owner's type if that macro is the standard one, but ripr cannot verify the macro binding because target-root placement is unavailable (an unresolved `include!` or `#[path]` in the workspace), so a `weakly_exposed` or `reachable_unrevealed` gap is withheld: classification is `static_unknown` with stop reason `gap_evidence_unresolved`. Nothing is credited, and a receiver that would not resolve even with the macro trusted keeps its gap; this is a named limitation, not a coverage claim.
-- `typescript_workspace_discovery_truncated` -- (RIPR-SPEC-0240, additive, #11767) TypeScript workspace discovery stopped at `RIPR_TS_MAX_WORKSPACE_FILES` before covering the workspace, so the test universe is incomplete. A TypeScript or JavaScript finding that would be `no_static_path` is `static_unknown` instead, with this kind; findings that have a related test are unchanged. It names an incomplete walk, not a coverage claim; the existing typed-limitation contract withholds canonical repair-gap projection. The optional kind uses the existing wire shape/version.
+- `typescript_workspace_discovery_truncated` -- (RIPR-SPEC-0240, additive, #11767) TypeScript workspace discovery stopped at `RIPR_TS_MAX_WORKSPACE_FILES` (candidate source files) or its 5x total-entry backstop before covering the workspace, so the test universe is incomplete. A TypeScript or JavaScript finding that would be `no_static_path` is `static_unknown` instead, with this kind; findings that have a related test are unchanged. It names an incomplete walk, not a coverage claim; the existing typed-limitation contract withholds canonical repair-gap projection. The optional kind uses the existing wire shape/version.
 
 Reserved `flow_sink` values:
 
@@ -3366,6 +3478,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `gap_evidence_unresolved`
 - `helper_identity_unresolved`
 - `compile_time_invariant`
+- `unsafe_obligation`
 - `transitive_reach_unresolved`
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
@@ -3406,6 +3519,13 @@ while `call_effect` remains the fallback for other observable calls.
 - `retry_current_subject`
 - `terminal_no_action`
 - `unsupported_or_limited`
+
+`refusal_remedy_kind` values:
+
+- `command`
+- `mcp_tool`
+- `flags`
+- `none`
 
 ## Badge Output
 
@@ -16747,6 +16867,28 @@ Field contract:
   reports the outer inventory total, and each entry names its own recovery
   control. Full recovery requires lifting every active cap. Uncapped output
   has no stale cap limitation.
+- Pilot byte bound (#12108) — the `ripr pilot` copy of this document
+  (`target/ripr/pilot/repo-exposure.json`) keeps its `seams[]` entries within
+  `RIPR_PILOT_REPO_EXPOSURE_BYTES` bytes (default 8,000,000; `0` writes all).
+  Current-change seams are kept first, then inventory order, each group
+  stopping at its first entry that does not fit. A cut adds a `limitations[]`
+  object `{category: "pilot_repo_exposure_byte_bound_applied", seams_rendered,
+  seams_total, seam_bytes_rendered, byte_budget, limit_source, control:
+  "RIPR_PILOT_REPO_EXPOSURE_BYTES", repair_route}`. When no seam cap and no
+  declined file already owns `run_status`, a cut sets it to
+  `"limited_repo_exposure_bytes"`; otherwise that status is kept and the bound
+  is an additional entry. `metrics` describe the entries the file carries.
+  A bounded document carries no `artifact` identity, so `ripr outcome` and
+  `ripr agent verify` refuse it by name rather than comparing it. Entries that
+  fit the budget change nothing. `pilot-summary.json` carries
+  `repo_exposure_byte_bound` (`seams_rendered`, `seams_total`,
+  `seam_bytes_rendered`, `byte_budget`, `source`, `control`), `null` when
+  nothing was cut. The budget counts entry bytes plus the 2-byte `,\n`
+  separator between entries. When cut, `pilot-summary.json` `next` also carries
+  `before_snapshot_command` (a full `ripr check --format repo-exposure-json`
+  baseline to capture before editing) and `next.outcome_command` compares that
+  baseline, never the cut file; `ripr calibrate cargo-mutants` refuses a cut
+  file too.
 - Pilot packet bound (#11951) — the `ripr pilot` copy of this document
   (`target/ripr/pilot/agent-seam-packets.json`) carries at most
   `RIPR_PILOT_PACKET_BUDGET` packets (default 3; `0` writes all). The kept
@@ -19232,7 +19374,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.129",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.131",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20017,7 +20159,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.129",
+      "schema_version": "1.131",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

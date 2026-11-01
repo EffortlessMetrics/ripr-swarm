@@ -300,6 +300,7 @@ impl AttemptFailure {
             "code": self.code,
             "detail": self.detail,
             "recovery": self.recovery,
+            "remedy": crate::domain::RefusalRemedy::from_prose(&self.recovery),
             "data": self.data,
         })
     }
@@ -2457,6 +2458,23 @@ mod tests {
         AnalysisRecoveryKind, AnalysisStage,
     };
     use std::path::PathBuf;
+
+    #[test]
+    fn check_retry_recovery_remedy_is_the_tool_not_the_conditional_command() {
+        // Real producer: the instructed step is `ripr_refresh`; the `ripr
+        // check` command is only the `if the failure persists` fallback.
+        let recovery = check_retry_recovery(Path::new("."), Some("main"), RefreshSource::Committed);
+        let value = AttemptFailure::new("analysis_failed", "x", recovery).value();
+        assert_eq!(value["remedy"]["kind"], "mcp_tool", "{value}");
+        assert_eq!(value["remedy"]["tool"], "ripr_refresh", "{value}");
+        assert_eq!(value["remedy"]["command"], Value::Null, "{value}");
+        assert!(
+            value["remedy"]["alternatives"]
+                .as_array()
+                .is_some_and(|alternatives| alternatives.len() == 1),
+            "{value}"
+        );
+    }
 
     fn limitation(kind: AnalysisLimitationKind) -> Result<AnalysisLimitation, String> {
         Ok(AnalysisLimitation::new(

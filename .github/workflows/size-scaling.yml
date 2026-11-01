@@ -77,15 +77,20 @@ jobs:
 
   # Same-run A/B on pinned ripr-on-ripr diffs (#10639). `warm-ab --pins` builds
   # the baseline and candidate release binaries, checks out each pinned commit
-  # and runs the A/B on one runner with alternating warm runs. `baseline_ref` and `candidate_ref` exist so
+  # and runs the A/B on one runner with alternating warm runs. `--external-pins`
+  # adds the scoreboard's rust-analyzer, tokio and servo pins (#11876), cloned
+  # from the corpus declared in benchmarks/dx_scoreboard/scoreboards.toml, so a
+  # regression on those rows is judged against a baseline built on the same
+  # runner instead of a stored number from another runner class. `baseline_ref` and `candidate_ref` exist so
   # the negative control (a pre-fix build as candidate) can run on a hosted runner.
   warm-ab:
     runs-on: ubuntu-latest
-    # Worst case: 2 pins x (2 cold + 2x3 warm checks) x the 10-minute check
-    # deadline is 160 minutes, plus two cold release builds and checkout /
-    # toolchain setup; the report is written per pin, so the job must
-    # outlive that worst case rather than lose the verdict to the cap.
-    timeout-minutes: 200
+    # Worst case: 5 pins (2 of this repository, 3 external) x (2 cold + 2x3 warm
+    # checks) x the 10-minute check deadline is 400 minutes, which exceeds the
+    # hosted job cap, so 330 minutes is the most this job can be given; the
+    # report is written per pin, so a pin that finishes keeps its verdict. Real
+    # runs take a small fraction of this (a warm check is seconds).
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -109,7 +114,7 @@ jobs:
           INPUT_CANDIDATE: ${{ inputs.candidate_ref }}
         run: |
           rm -rf target/ripr/warm-ab
-          cargo xtask warm-ab --baseline-ref "$INPUT_BASELINE" --candidate-ref "$INPUT_CANDIDATE" --pins xtask-tests=a58975de,product-rust=af8136f7
+          cargo xtask warm-ab --baseline-ref "$INPUT_BASELINE" --candidate-ref "$INPUT_CANDIDATE" --pins xtask-tests=a58975de,product-rust=af8136f7 --external-pins rust-analyzer,tokio,servo
 
       - name: Upload warm-ab report
         if: always()

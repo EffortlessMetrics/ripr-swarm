@@ -1049,7 +1049,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     `py-trap-swallowed-assert`, #9691; the `py-unrun-*` cases add `if 0:`,
     `if None:` and `while False:` dead arms, tuple, bare and
     `builtins.AssertionError` handlers, and the live `else` arm, `else` and
-    `finally` blocks and `fail`-calling handler that stay credited).
+    `finally` blocks and `fail`-calling handler that stay credited). An
+    assertion after a definite exit in the same statement list (`return`,
+    `raise`, `pytest.skip`/`fail`/`exit`/`xfail`, `sys.exit`, `os._exit`,
+    `self.skipTest`) or in a `for` over an empty literal is dead too, and a
+    test definition rebound later in the same scope (a second `def` of the
+    name, `name = None`) is never collected, so it carries an activation
+    control (`py-trap-exit-before-assert`, `py-trap-shadowed-test`; the
+    `py-trap-conditional-exit` control stays credited).
 24. **A test the collector skips is activation-controlled.** A parametrize
     decorator over an empty literal table (`[]` or `()`) and an
     unconditional module-level `pytest.importorskip(...)`,
@@ -1077,6 +1084,30 @@ mutant calibrates the rule; ripr reports only the static shape.
     `importorskip` of a missing module and an empty tuple table, which
     abstain, and `xfail(False, reason=...)` and
     `unittest.skipUnless(True, ...)`, which stay active and credited).
+    A test pytest never collects is controlled the same way
+    (`pytest.collection(...)`, #11527): a class or module that binds `__test__`
+    to anything not provably the literal `True` (an absent binding stays
+    collected and credited; an existing binding that cannot be resolved, such
+    as a computed, destructured, `match`-arm or conditional one, withholds
+    credit because collection is uncertain), a `conftest.py` `collect_ignore` or
+    `collect_ignore_glob` entry that covers the file, and the pytest options
+    `python_files`, `python_classes` (pytest-style classes),
+    `python_functions` (pytest-style tests), `testpaths`, `norecursedirs`
+    and `--ignore` / `--ignore-glob` in `addopts`, read from `pytest.ini`,
+    `.pytest.ini`, `tox.ini`, `setup.cfg`, `pyproject.toml`
+    `pytest.toml` and `.pytest.toml` on the test file's directory chain. The read is
+    parse-everything-or-refuse: a collection form the adapter cannot
+    evaluate (a computed `collect_ignore`, a collection hook, a character
+    class, an unparsable or unreadable file, `-o`, `-c` or `--rootdir` in
+    `addopts`) withholds credit for its scope. Not modelled, so credit is
+    unchanged: the default `norecursedirs`, `-k`, `-m` and `--deselect`,
+    `pytest_collection_modifyitems`, and command-line arguments. Known
+    limits: `testpaths` is assumed to govern collection (an invocation that
+    passes explicit paths bypasses it); a function-level `__test__` is not
+    read; and a base class imported from another module is not resolved, so
+    its `__test__` binding is unseen. A space-separated value of a known
+    value-taking option (`--junitxml`, `--html`, `--log-file`,
+    `--basetemp`, ...) is not treated as a positional path.
 25. **A property check pins no value.** A single `==` in an `assert`
     statement is a weak relational check, as a tautology is (rule 1), when
     one side is a call and the other side is either a call that appears in
@@ -1268,6 +1299,30 @@ mutant calibrates the rule; ripr reports only the static shape.
     `weakly_exposed`. The `py-nested-independent-outer-owner` corpus case
     retains the credit; `py-nested-repeated-inner-owner` and
     `py-nested-idempotent-owner` retain the negative controls.
+
+30. **A coarse projection of the owner's result pins no value.** An
+    assertion credits a changed owner only when it reads the result itself.
+    When every call of the owner in the assertion sits under a projection
+    that an edit commonly leaves unchanged, the assertion keeps its
+    `exact_value` kind but earns no `exposed` credit (`weakly_exposed`, the
+    same fail-closed reading as an opaque wrapper): a comparison, `is` or
+    `not` result used as a value in an operand (`assertEqual(f(2) > 0, True)`,
+    `assertEqual(f(2) is None, False)`), a numeric remainder (`assert f(3) % 3 == 0`; string formatting is not one),
+    `.__class__` or `.__name__` of the result, `len(str(f(x)))` or
+    `len(repr(f(x)))`, and `len(...)` directly over the owner's result (through
+    `list`, `tuple`, `sorted`, `reversed`) when the edit replaces only the element
+    expression of a `yield` or comprehension, so the element count cannot
+    move. A direct operand beside such a read (`assert f(3) == 6 and f(3) % 3
+    == 0`), a top-level `>` boundary, other arithmetic and a `len` over an
+    edit that can change the count keep their verdict. A first `==` operand
+    that holds the owner's value at an input the edit leaves fixed is a
+    separate problem and is not read here. The walk follows comprehensions,
+    generator expressions, set and dict literals, conditional expressions and
+    lambda bodies, so `assert all(f(2) > 0 for _ in xs)` is coarse while
+    `assert [f(x) for x in xs] == [6]` is a direct read. A shape the walk does
+    not follow that mentions the owner counts as a direct read: the demotion
+    needs proof that every owner call is coarse, so an unknown shape never
+    invents one.
 
 ### Verdict ladder
 
@@ -1774,6 +1829,12 @@ and the test is `tests/test_subject.py`, which imports each owner from
     parametrize mark keeps only the mark's cases, and the fixture stays
     unresolved: `static_unknown`, `unresolved_pytest_fixture` (today
     `exposed`, a false credit for off-boundary rows).
+
+43. Owner `def f(x): return x * 3`, changed from `x * 2`: tests
+    `self.assertEqual(f(2) > 0, True)`, `assert f(3) % 3 == 0` and
+    `assert len(str(f(3))) == 1` are each `weakly_exposed` (today `exposed`;
+    `py-coarse-sign`, `py-coarse-residue`, `py-coarse-text-length`), and
+    `assert f(3) == 6` stays `exposed` (`py-coarse-exact-control`).
 
 ## Test Mapping
 
