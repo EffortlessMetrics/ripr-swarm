@@ -46,7 +46,8 @@ const PLAIN_KEYS: &[&str] = &[
 /// export lists were read and found to hold no trusted assertion macro. The
 /// trust is these exact versions, not the crate name. To audit a new release,
 /// re-read the published crate's prelude exports (no macro named like a trusted
-/// assertion), then append its exact version string here and in the spec table.
+/// assertion), then append its exact version string here; the spec table is checked against
+/// this const by `spec_audited_version_table_matches_the_code_authority`.
 const AUDITED_PRELUDE_VERSIONS: &[(&str, &str, &[&str])] = &[
     ("creusot_std", "creusot-std", &["0.14.0"]),
     ("vstd", "vstd", &["0.0.0-2026-10-25-0158"]),
@@ -443,6 +444,52 @@ mod tests {
 
     const KRATE: &str = "pretty_assertions";
     const FILE: &str = "src/lib.rs";
+
+    /// The spec's audited-version table is a view of `AUDITED_PRELUDE_VERSIONS`:
+    /// the code const is the one authority and this test fails on any drift in
+    /// crate, lock package or version (RIPR-SPEC-0369).
+    #[test]
+    fn spec_audited_version_table_matches_the_code_authority() -> Result<(), String> {
+        let spec = include_str!(
+            "../../../../../docs/specs/RIPR-SPEC-0369-verus-macro-region-and-verification-prelude-globs.md"
+        );
+        let mut from_spec: Vec<(String, String, String)> = Vec::new();
+        for line in spec.lines().filter(|line| line.starts_with("| `")) {
+            let cells = line.split('|').map(str::trim).collect::<Vec<_>>();
+            let (Some(glob), Some(audited)) = (cells.get(1), cells.get(2)) else {
+                continue;
+            };
+            let krate = glob
+                .trim_matches('`')
+                .split("::")
+                .next()
+                .unwrap_or_default();
+            let (lock_name, version) = audited
+                .split_once(' ')
+                .ok_or_else(|| format!("table cell without a version: {audited}"))?;
+            from_spec.push((
+                krate.to_string(),
+                lock_name.to_string(),
+                version.to_string(),
+            ));
+        }
+        let mut from_code: Vec<(String, String, String)> = AUDITED_PRELUDE_VERSIONS
+            .iter()
+            .flat_map(|(krate, lock, versions)| {
+                versions
+                    .iter()
+                    .map(move |v| (krate.to_string(), lock.to_string(), v.to_string()))
+            })
+            .collect();
+        from_spec.sort();
+        from_code.sort();
+        assert!(!from_code.is_empty(), "the audit table must not be empty");
+        assert_eq!(
+            from_spec, from_code,
+            "spec table and code authority drifted"
+        );
+        Ok(())
+    }
 
     fn verified(label: &str, files: &[(&str, &str)], file: &str) -> Result<bool, String> {
         let root = temp_workspace(label, files)?;

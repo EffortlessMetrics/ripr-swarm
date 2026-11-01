@@ -5,6 +5,7 @@ id = "RIPR-SPEC-0369"
 name = "verus macro region limit and verification prelude globs"
 spec = "docs/specs/RIPR-SPEC-0369-verus-macro-region-and-verification-prelude-globs.md"
 tests = [
+  "crates/ripr/src/analysis/facts/drop_in.rs::spec_audited_version_table_matches_the_code_authority",
   "crates/ripr/src/analysis/probes/macro_definition.rs::verus_regions_cover_the_token_tree_and_ignore_lookalikes",
   "crates/ripr/src/analysis/probes/macro_definition.rs::a_verus_region_braces_in_comments_strings_and_chars_do_not_unbalance_it",
   "crates/ripr/src/analysis/probes/macro_definition.rs::an_unclosed_verus_region_runs_to_the_end_and_a_mixed_line_is_unowned",
