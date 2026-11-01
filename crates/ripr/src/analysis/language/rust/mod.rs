@@ -3585,6 +3585,13 @@ impl RustAdapter {
                     None,
                     pre_cap_syntax_only,
                 );
+                // RIPR-SPEC-0369 (#12006): name the file's `verus!` region.
+                probes::apply_verus_macro_region_limit_in_repo_file(
+                    &mut finding,
+                    &probe,
+                    &index,
+                    path,
+                );
                 // #5268: same producer-owned canonical gap identity as the
                 // diff loop, behind the same typed static-limitation gate.
                 if finding.static_limit_kind.is_none() {
@@ -4072,6 +4079,98 @@ mod tests {
         assert_eq!(
             gap.id, "gap:rust:src/lib.rs:discount:predicate_boundary:predicate:total==100",
             "diff and repo producers must derive the same identity for the same seam"
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    fn repo_options(root: &Path) -> AnalysisOptions {
+        AnalysisOptions {
+            root: root.to_path_buf(),
+            base: None,
+            diff_file: None,
+            mode: AnalysisMode::Ready,
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+            include_unchanged_tests: true,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+        }
+    }
+
+    /// RIPR-SPEC-0369 (#12006): repository mode over a file with a `verus!`
+    /// region names the limitation, as the diff path does, instead of
+    /// reporting nothing. The finding stays non-actionable and credits no
+    /// test; a file without the macro gets no such finding.
+    #[test]
+    fn repo_analysis_names_a_verus_region_limitation() -> Result<(), String> {
+        let root = temp_root("verus-repo")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='vcrate'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "use vstd::prelude::*;\nverus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 100,\n    ensures r <= 200,\n{\n    x + 2\n}\n}\n",
+        )?;
+        write(
+            &root.join("src/plain.rs"),
+            "pub fn plain(x: u32) -> u32 {\n    x + 1\n}\n",
+        )?;
+        let result = RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+        let verus: Vec<&Finding> = result
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains("verus_macro_region_unsupported"))
+            })
+            .collect();
+        assert_eq!(verus.len(), 1, "{:?}", result.findings);
+        let finding = verus[0];
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        );
+        assert_eq!(finding.probe.location.line, 2);
+        assert!(finding.related_tests.is_empty(), "no test is credited");
+        assert!(finding.canonical_gap.is_none(), "no repair target is named");
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("spanning lines 2-9")),
+            "{:?}",
+            finding.evidence
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(
+                    |step| step.contains("Verus verifier") && step.contains("no test is requested")
+                ),
+            "{:?}",
+            finding.recommended_next_step
+        );
+        // Negative control: the plain file gets no verus finding.
+        assert!(
+            result
+                .findings
+                .iter()
+                .filter(|finding| finding.probe.location.file.ends_with("src/plain.rs"))
+                .all(|finding| !finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains("verus_macro_region_unsupported")))
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())

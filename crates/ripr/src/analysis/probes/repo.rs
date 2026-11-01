@@ -6,7 +6,7 @@ use super::expectations::{expected_sinks, required_oracles};
 use super::family::family_for_probe_shape;
 use super::ids::repo_probe_id;
 use crate::analysis::diagnostic_origin::ParserByteSpan;
-use crate::domain::{DeltaKind, Probe, SourceLocation};
+use crate::domain::{DeltaKind, Probe, ProbeFamily, SourceLocation};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -81,6 +81,42 @@ pub(crate) fn probes_for_repo_file_seeded(
             .then(|| ParserByteSpan::same_line(&shape.text, shape.start_byte))
             .flatten();
         probes.push(SeededProbe::maybe_with_span(probe, parser_span));
+    }
+
+    // RIPR-SPEC-0369 (#12006): a `verus! { .. }` token tree is Verus syntax,
+    // which the syntax index does not parse, so the loop above seeds nothing
+    // inside it. Without one probe per region a repository run over a
+    // Verus-only file would report nothing, and silence reads as "nothing to
+    // see". The region is a file-level fact, so it is seeded here, outside the
+    // per-shape loop, as a `static_unknown` probe the Rust adapter names with
+    // the same limitation the diff path uses. It credits no test.
+    for (ordinal, region) in super::macro_definition::verus_regions(&facts.source)
+        .into_iter()
+        .enumerate()
+    {
+        let expression = format!(
+            "verus! {{ .. }} (lines {}-{})",
+            region.start_line, region.end_line
+        );
+        let id = repo_probe_id(
+            path,
+            &ProbeFamily::StaticUnknown,
+            None,
+            &expression,
+            u32::try_from(ordinal + 1).unwrap_or(u32::MAX),
+        );
+        probes.push(SeededProbe::from_probe(Probe {
+            id,
+            location: SourceLocation::new(root.join(path), region.start_line, 1),
+            owner: None,
+            family: ProbeFamily::StaticUnknown,
+            delta: DeltaKind::Unknown,
+            before: None,
+            after: Some(expression.clone()),
+            expression,
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        }));
     }
 
     // Post-hoc collision de-dup: if two probes got the same id, append .2, .3, …
