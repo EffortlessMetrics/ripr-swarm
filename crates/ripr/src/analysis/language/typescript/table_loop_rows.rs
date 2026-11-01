@@ -42,6 +42,9 @@ pub(crate) fn table_loop_consts(
     let Some(body_text) = text.get(first.span().start as usize..last.span().end as usize) else {
         return Vec::new();
     };
+    if super::table_rows::statement_list_has_dynamic_code(body_text) {
+        return Vec::new();
+    }
     let mut declared: Vec<String> = Vec::new();
     let mut tables = Vec::new();
     for stmt in statements {

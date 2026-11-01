@@ -436,8 +436,9 @@ every row-table entry path (`for...of`, `test.each` over arrays or object
 rows, destructured and array-row parameters), refuses the table when code
 (outside quoted text and comments) contains `eval`, `Function`, `with`,
 `arguments`, `this`, `new.target`, any backslash (identifier `\u` escapes),
-or any `/` outside a comment (a division or a regex literal is refused outright; the same words are also refused by a plain text count even inside strings); the `for...of` form also
-bans `eval`, `with` and `\u` anywhere in its statement list. A destructured
+or any `/` outside a comment (a division or a regex literal is refused outright; the same words are also refused by a plain text count even inside strings); the object-row `for...of` form and the
+array-table `for...of` form (#9533) also ban `eval`, `with` and `\u` anywhere
+in their statement list (one shared helper). A destructured
 scalar local is a copy of the cell, so it is exempt from the lone-`expect`
 rule that every `row.key` read obeys. A pattern that repeats a row key
 (`({ input: a, input: b })`) refuses the table, and in the `for...of` form

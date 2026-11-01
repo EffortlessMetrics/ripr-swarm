@@ -215,6 +215,11 @@ fn touched_partial_or_derived_tables_keep_the_dynamic_refusal() -> Result<(), St
                 .to_string(),
         ),
         (
+            "array-loop-eval-rewrite",
+            "describe(\"tier\", () => {\n  test(\"tiers\", () => {\n    const rows = [[999, \"silver\"], [1000, \"gold\"]];\n    eval(\"ro\" + \"ws[1][1] = tier(0)\");\n    for (const [points, want] of rows) {\n      expect(tier(points)).toBe(want);\n    }\n  });\n});"
+                .to_string(),
+        ),
+        (
             "each-regex-hidden-eval",
             "describe(\"tier\", () => {\n  test.each([\n    { input: 999, out: \"silver\" },\n    { input: 1000, out: \"gold\" },\n  ])(typeof /'a/, (t) => {\n    expect(tier(t.input, eval(\"t.out = tier(0)\"), \"it's\")).toBe(t.out);\n  }, typeof /\"a/);\n});"
                 .to_string(),

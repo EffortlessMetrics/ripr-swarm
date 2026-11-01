@@ -179,9 +179,7 @@ pub(crate) fn row_loop_of(
     }
     let list_text = text.get(first.span().start as usize..last.span().end as usize)?;
     if super::match_object_guard::whole_word_count(list_text, &table_name) != 2
-        || super::match_object_guard::whole_word_count(list_text, "eval") > 0
-        || super::match_object_guard::whole_word_count(list_text, "with") > 0
-        || list_text.contains("\\u")
+        || super::table_rows::statement_list_has_dynamic_code(list_text)
     {
         return None;
     }
@@ -474,7 +472,7 @@ fn destructured_case_assertions(
             .iter()
             .map(|(_, key)| row.cell(key).map(str::to_string))
             .collect::<Option<_>>()?;
-        let substituted = substitute_row(body, &names, &cells)?;
+        let substituted = super::table_rows::substitute_row_with(body, &names, &cells, true)?;
         assertions.extend(reparse_row_callback(
             text,
             &callback_span,

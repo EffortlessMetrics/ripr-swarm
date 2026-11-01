@@ -24,6 +24,16 @@ use super::*;
 /// Rows beyond this bound leave the table unresolved.
 const MAX_TABLE_ROWS: usize = 64;
 
+/// Lexer-independent ban on a statement list that holds dynamic-code routes
+/// (`eval`, `with`, a `\u` escape) anywhere, even in a string: such a list
+/// could rewrite a table the scanner counted as untouched. Shared by every
+/// path that decides a table is never reassigned by counting its name.
+pub(crate) fn statement_list_has_dynamic_code(list_text: &str) -> bool {
+    super::match_object_guard::whole_word_count(list_text, "eval") > 0
+        || super::match_object_guard::whole_word_count(list_text, "with") > 0
+        || list_text.contains("\\u")
+}
+
 /// The one guard every row-table entry path runs on its whole call text
 /// (registration plus callback) before a row literal is substituted.
 ///
@@ -322,6 +332,18 @@ const BINDING_KEYWORDS: [&str; 6] = ["const", "let", "var", "catch", "function",
 /// The body with every read of a parameter replaced by its row cell, or
 /// `None` when any occurrence is not a plain read (see the module docs).
 pub(crate) fn substitute_row(body: &str, params: &[String], row: &[String]) -> Option<String> {
+    substitute_row_with(body, params, row, false)
+}
+
+/// [`substitute_row`], optionally accepting a spread of a container cell
+/// (`f(...cell)`): only the destructured object-row route does, because its
+/// locals are copies of the row cells.
+pub(crate) fn substitute_row_with(
+    body: &str,
+    params: &[String],
+    row: &[String],
+    allow_container_spread: bool,
+) -> Option<String> {
     let bytes = body.as_bytes();
     let mut out = String::with_capacity(body.len());
     let mut brackets: Vec<u8> = Vec::new();
@@ -366,16 +388,21 @@ pub(crate) fn substitute_row(body: &str, params: &[String], row: &[String]) -> O
                     // member that could mutate the shared row.
                     let container = cell.starts_with(['[', '{']);
                     // (see `container_read_is_direct`: one direct read only)
-                    if !plain_read_with(body, idx, end, brackets.last().copied(), container)
-                        || (container
-                            && (container_seen.contains(&position)
-                                || !super::object_rows::single_expect_statement(body)
-                                || !super::object_rows::container_read_is_direct(
-                                    body,
-                                    idx,
-                                    end,
-                                    opens.last().copied(),
-                                )))
+                    if !plain_read_with(
+                        body,
+                        idx,
+                        end,
+                        brackets.last().copied(),
+                        container && allow_container_spread,
+                    ) || (container
+                        && (container_seen.contains(&position)
+                            || !super::object_rows::single_expect_statement(body)
+                            || !super::object_rows::container_read_is_direct(
+                                body,
+                                idx,
+                                end,
+                                opens.last().copied(),
+                            )))
                     {
                         return None;
                     }
@@ -554,6 +581,7 @@ mod tests {
         for ok in [
             "test.each([{ a: 1 }])(\"plain title\", (t) => { expect(f(t.a)).toBe(1); })",
             "test(`${t.a} -> x`, () => { expect(f(t.a)).toBe(1); // note\n })",
+            "test(\"x\", () => { /* a note */ expect(f(t.a)).toBe(1); })",
         ] {
             assert!(super::row_text_is_inert(ok), "{ok}");
         }
@@ -569,6 +597,7 @@ mod tests {
             "(t) => { with (t) { expect(f(a)).toBe(out); } }",
             "(t) => { expect(f(t.a, x = /\"/)).toBe(t.out); }",
             "(t) => { expect(f(t.a / 2)).toBe(t.out); }",
+            "(t) => { /* unterminated expect(f(t.a)).toBe(t.out); }",
             "typeof /'a/, (t) => { expect(f(t.a, eval(\"t.out=3\"), \"it's\")).toBe(t.out); }, typeof /\"a/",
             "typeof /'a/, (t) => { expect(f(t.a, arguments[0].out = 3, \"it's\")).toBe(t.out); }, typeof /\"a/",
             "typeof /'a/, (t) => { with (t) { expect(f(a, \"it's\")).toBe(out); } }, typeof /\"a/",

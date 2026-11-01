@@ -241,6 +241,47 @@ fn hidden_mutation_routes_are_refused_on_every_entry_path() -> Result<(), String
     Ok(())
 }
 
+/// The tuple-row `test.each([[cell, want], ..])` route shares
+/// `substitute_row`. Container cells never resolve there (pre-#11196
+/// behavior): a bare read, a direct spread, a spread after a mutation and a
+/// spread through an alias all stay dynamic, while a scalar control resolves.
+#[test]
+fn tuple_row_container_cells_never_resolve() -> Result<(), String> {
+    let source = |rows: &str, callback: &str| {
+        format!("{PREAMBLE}test.each({rows})(\"x\", (xs, want) => {{ {callback} }});\n")
+    };
+    let control = assertions_of(&source(
+        "[[1, \"A\"], [2, \"B\"]]",
+        "expect(encode(xs)).toBe(want);",
+    ))?;
+    assert_eq!(
+        expected_values(&control),
+        vec![Some("\"A\""), Some("\"B\"")]
+    );
+    let rows = "[[[\"a\"], \"A\"], [[\"b\"], \"B\"]]";
+    for (label, callback) in [
+        ("a bare read", "expect(encode(xs)).toBe(want);"),
+        ("a direct spread", "expect(encode(...xs)).toBe(want);"),
+        (
+            "a spread after a mutation",
+            "xs.push(\"z\"); expect(encode(...xs)).toBe(want);",
+        ),
+        (
+            "a spread through an alias",
+            "const ys = xs; ys.push(\"z\"); expect(encode(...ys)).toBe(want);",
+        ),
+    ] {
+        let assertions = assertions_of(&source(rows, callback))?;
+        if assertions
+            .iter()
+            .any(|a| a.expected_value_or_variant.as_deref() == Some("\"A\""))
+        {
+            return Err(format!("{label} resolved: {assertions:?}"));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn every_row_must_hold_a_literal_at_every_key_read() -> Result<(), String> {
     for (label, table) in [
