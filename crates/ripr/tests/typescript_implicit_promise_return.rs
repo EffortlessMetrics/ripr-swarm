@@ -184,6 +184,12 @@ fn inline_receiver_bindings_cannot_supply_promise_credit() -> Result<(), String>
                             ExposureClass::Exposed,
                             "{extension} {runner} {callback}: {got:?}"
                         );
+                        assert!(
+                            got.related_tests
+                                .iter()
+                                .all(|related| related.oracle_kind != OracleKind::ExactValue),
+                            "a refused receiver shadow must not grant exact-value credit: {got:?}"
+                        );
                     }
                 }
             }
@@ -245,6 +251,12 @@ fn nested_binding_used_inside_its_scope_withholds_credit() -> Result<(), String>
                 ExposureClass::Exposed,
                 "{extension} {callback}: {got:?}"
             );
+            assert!(
+                got.related_tests
+                    .iter()
+                    .all(|related| related.oracle_kind != OracleKind::ExactValue),
+                "a refused receiver shadow must not grant exact-value credit: {got:?}"
+            );
         }
     }
     Ok(())
@@ -277,6 +289,12 @@ fn nested_var_binds_the_entire_promise_callback() -> Result<(), String> {
                             got.class,
                             ExposureClass::Exposed,
                             "{extension} {runner} {callback}: {got:?}"
+                        );
+                        assert!(
+                            got.related_tests
+                                .iter()
+                                .all(|related| related.oracle_kind != OracleKind::ExactValue),
+                            "a refused receiver shadow must not grant exact-value credit: {got:?}"
                         );
                     }
                 }
@@ -336,6 +354,12 @@ fn hoisted_function_assertions_do_not_confirm_the_imported_owner() -> Result<(),
                     ExposureClass::Exposed,
                     "{extension} {runner} {callback}: {got:?}"
                 );
+                assert!(
+                    got.related_tests
+                        .iter()
+                        .all(|related| related.oracle_kind != OracleKind::ExactValue),
+                    "a refused receiver shadow must not grant exact-value credit: {got:?}"
+                );
             }
         }
     }
@@ -359,6 +383,12 @@ fn a_named_callback_expression_rebinds_the_receiver_to_itself() -> Result<(), St
                 got.class,
                 ExposureClass::Exposed,
                 "{extension} {runner} {fake}: {got:?}"
+            );
+            assert!(
+                got.related_tests
+                    .iter()
+                    .all(|related| related.oracle_kind != OracleKind::ExactValue),
+                "a refused receiver shadow must not grant exact-value credit: {got:?}"
             );
             // A different function-expression name leaves the owner reachable.
             let other = format!("() => total().then(function check(value) {{ {assertion}; }})");
@@ -395,6 +425,12 @@ fn a_declarator_continued_onto_the_next_line_still_shadows_the_receiver() -> Res
                     got.class,
                     ExposureClass::Exposed,
                     "{extension} {runner} {callback}: {got:?}"
+                );
+                assert!(
+                    got.related_tests
+                        .iter()
+                        .all(|related| related.oracle_kind != OracleKind::ExactValue),
+                    "a refused receiver shadow must not grant exact-value credit: {got:?}"
                 );
             }
         }
