@@ -350,6 +350,44 @@ fn patching_a_builtin_through_the_builtins_module_is_not_read_as_the_builtin() -
 }
 
 #[test]
+fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Result<(), String> {
+    // Aliased module, `vars()`, `__builtins__`, a call split across lines and
+    // a spaced attribute all rewrite a builtin (#12206).
+    let arm = "def label(x):\n    if isinstance(x, str):\n        return 'text'\n";
+    let patches = [
+        "import builtins as b\nb.isinstance = checker\n\n\n",
+        "import builtins\nvars(builtins)['isinstance'] = checker\n\n\n",
+        "__builtins__.isinstance = checker\n\n\n",
+        "__builtins__['isinstance'] = checker\n\n\n",
+        "import builtins\nbuiltins . isinstance = checker\n\n\n",
+        "import builtins\nsetattr(\n    builtins,\n    'isinstance',\n    checker,\n)\n\n\n",
+    ];
+    for patch in patches {
+        let owner = format!("{patch}{arm}");
+        assert_eq!(
+            classify(&owner, OLD_NIL, &test_of("label(3)", "None"))?,
+            ExposureClass::Exposed,
+            "builtins patch must fail closed: {patch:?}"
+        );
+    }
+    // Controls: reading through an alias, comparing, or calling `vars` on
+    // something else patches nothing.
+    for harmless in [
+        "import builtins as b\nlimit = b.len(CHECKS)\n\n\n",
+        "import builtins as b\nsame = b.isinstance == checker\n\n\n",
+        "values = vars(CONFIG)\n\n\n",
+    ] {
+        let owner = format!("{harmless}{arm}");
+        assert_eq!(
+            classify(&owner, OLD_NIL, &test_of("label(3)", "None"))?,
+            ExposureClass::WeaklyExposed,
+            "a harmless mention must not suppress the guard: {harmless:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_for_body_over_an_empty_literal_never_runs() -> Result<(), String> {
     let body = "def label(items):\n    for item in items:\n        return item + 1\n";
     assert_eq!(
