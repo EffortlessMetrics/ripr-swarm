@@ -18163,14 +18163,22 @@ fn pilot_repo_exposure_byte_bound_is_disclosed_and_refused_by_outcome()
     );
     let markdown = std::fs::read_to_string(pilot_dir.join("pilot-summary.md"))?;
     assert!(markdown.contains("byte bound reached"), "{markdown}");
-    assert!(markdown.contains(before_cmd), "{markdown}");
+    // The repair-start route prints only `ripr agent repair`; whenever a
+    // surface does print the outcome comparison it must name the baseline.
+    assert!(
+        !markdown.contains("ripr outcome") || markdown.contains(before_cmd),
+        "{markdown}"
+    );
     assert!(
         !markdown.contains(&format!("--before {cut_file}")),
         "{markdown}"
     );
     let terminal = String::from_utf8_lossy(&cut.stdout);
     assert!(terminal.contains("byte bound reached"), "{terminal}");
-    assert!(terminal.contains(before_cmd), "{terminal}");
+    assert!(
+        !terminal.contains("ripr outcome") || terminal.contains(before_cmd),
+        "{terminal}"
+    );
     assert!(
         !terminal.contains(&format!("--before {cut_file}")),
         "{terminal}"

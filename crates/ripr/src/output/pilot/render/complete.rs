@@ -315,7 +315,7 @@ fn render_pilot_summary_md_with_target(
     // actionable count is a lower bound.
     if let Some(bound) = context.repo_exposure_byte_bound {
         out.push_str(&format!(
-            "- repo-exposure.json byte bound reached: it lists {} of {} seams ({} byte budget); ranking and `agent-seam-packets.json` cover all {}. Set `{}=0` for every seam\n",
+            "- repo-exposure.json byte bound reached: it lists {} of {} spots ({} byte budget); ranking and `agent-seam-packets.json` cover all {}. Set `{}=0` to list every spot\n",
             bound.rendered(),
             bound.total,
             bound.budget,
@@ -711,7 +711,7 @@ fn render_pilot_terminal_with_target(
     // #12108: the terminal states the byte cut too, as JSON and Markdown do.
     if let Some(bound) = context.repo_exposure_byte_bound {
         out.push_str(&format!(
-            "  repo-exposure.json byte bound reached: lists {} of {} seams; set {}=0 for every seam\n",
+            "  repo-exposure.json byte bound reached: lists {} of {} spots; set {}=0 to list every spot\n",
             bound.rendered(),
             bound.total,
             crate::output::repo_exposure::PILOT_REPO_EXPOSURE_BYTES_ENV
