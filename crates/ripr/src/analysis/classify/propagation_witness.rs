@@ -1879,7 +1879,29 @@ pub(in crate::analysis) fn assigned_field_path(
     }
     let end = at + masked[at..].find(';')? + 1;
     let mut visited = Vec::new();
-    (!may_write_field(&masked[end..], path, method_body, &mut visited)).then(|| path.to_string())
+    let after = without_returned_self(&masked[end..]);
+    (!may_write_field(after, path, method_body, &mut visited)).then(|| path.to_string())
+}
+
+/// #11398: `rest` (the masked owner body after a statement, through the
+/// body's closing `}`) without a bare `self` that is the body's tail
+/// expression. A builder (`fn timeout(mut self, t: u32) -> Self`) hands the
+/// written value to its caller with that tail; it does not write the field
+/// again. A `self` anywhere else (an argument, a reborrow, an assignment
+/// right-hand side) is kept, since it may write through.
+fn without_returned_self(rest: &str) -> &str {
+    let Some(inner) = rest.trim_end().strip_suffix('}') else {
+        return rest;
+    };
+    let Some(before) = inner.trim_end().strip_suffix("self") else {
+        return rest;
+    };
+    let before = before.trim_end();
+    if before.is_empty() || before.ends_with([';', '{', '}']) {
+        before
+    } else {
+        rest
+    }
 }
 
 /// RIPR-SPEC-0228: whether the right-hand side of a changed field assignment
@@ -4388,6 +4410,29 @@ mod tests {
                 None,
                 "{changed}"
             );
+        }
+    }
+
+    #[test]
+    fn assigned_field_path_treats_a_builders_tail_self_as_the_handoff_not_a_write() {
+        let none = |_: &str| None;
+        let at = |statements: &str| {
+            let body = format!("fn timeout(mut self, t: u32) -> Self {{\n{statements}\n}}");
+            assigned_field_path(&body, 1, 2, "self.timeout = t * 2", &none)
+        };
+        // The tail `self` returns the value to the caller.
+        assert_eq!(
+            at("self.timeout = t * 2;\nself").as_deref(),
+            Some("timeout")
+        );
+        // Any other use of `self` after the write may write through it.
+        for tail in [
+            "self.timeout = t * 2;\nlet moved = self;\nmoved",
+            "self.timeout = t * 2;\nfinish(self)",
+            "self.timeout = t * 2;\nself.reset();\nself",
+            "self.timeout = t * 2;\nlet n = self",
+        ] {
+            assert_eq!(at(tail), None, "{tail}");
         }
     }
 

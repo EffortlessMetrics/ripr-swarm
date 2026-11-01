@@ -145,7 +145,9 @@ fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
                 index += 1;
                 let path = expect_value(args, index, arg)?;
                 if path.trim().is_empty() || path.starts_with('-') {
-                    return Err(format!("pr-summary {arg} requires a non-empty path value"));
+                    return Err(format!(
+                        "pr-summary {arg} requires a non-empty path value; pass `{arg} <path>`"
+                    ));
                 }
                 #[cfg(windows)]
                 {
@@ -159,7 +161,7 @@ fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
                     {
                         return Err(format!(
                             "pr-summary {arg} requires a fully qualified or ordinary relative path; \
-                             Windows partially qualified paths are not supported"
+                             Windows partially qualified paths are not supported; pass a drive-qualified absolute path or a plain relative path"
                         ));
                     }
                 }
@@ -209,8 +211,9 @@ Outputs:
 ";
 
 fn check_summary(path: &Path, expected: &str) -> Result<(), String> {
-    let actual = fs::read_to_string(path)
-        .map_err(|err| format!("missing or unreadable {PR_SUMMARY_MD}: {err}"))?;
+    let actual = fs::read_to_string(path).map_err(|err| {
+        format!("missing or unreadable {PR_SUMMARY_MD}: {err}; run `ripr pr-summary` to write it")
+    })?;
     if actual == expected {
         println!("PR evidence summary contract ok: {PR_SUMMARY_MD}");
         Ok(())
@@ -233,16 +236,16 @@ fn repo_root(root: &Path) -> Result<PathBuf, String> {
     }
     std::env::current_dir()
         .map(|cwd| cwd.join(root))
-        .map_err(|err| format!("failed to determine working directory: {err}"))
+        .map_err(|err| format!("failed to determine working directory: {err}; run ripr from an existing directory or pass an absolute `--root`"))
 }
 
 fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .map_err(|err| format!("failed to create parent dir for {label}: {err}"))?;
+            .map_err(|err| format!("failed to create parent dir for {label}: {err}; check the output directory is writable"))?;
     }
     crate::output::file_write::write(path, contents.as_ref())
-        .map_err(|err| format!("failed to write {label}: {err}"))
+        .map_err(|err| format!("failed to write {label}: {err}; check the output path is writable"))
 }
 
 #[cfg(test)]

@@ -106,11 +106,11 @@ fn parse_options(args: &[String]) -> Result<ImpactedEvidenceOptions, String> {
 
 fn non_empty_arg<'a>(args: &'a [String], index: usize, flag: &str) -> Result<&'a str, String> {
     let Some(value) = args.get(index) else {
-        return Err(format!("missing value for {flag}"));
+        return Err(format!("missing value for {flag}; pass a value after it"));
     };
     if value.trim().is_empty() {
         return Err(format!(
-            "impacted-evidence {flag} requires a non-empty value"
+            "impacted-evidence {flag} requires a non-empty value; pass `{flag} <value>`"
         ));
     }
     Ok(value)
@@ -764,7 +764,8 @@ mod tests {
         };
         assert_eq!(
             err,
-            "impacted-evidence --label requires a non-empty value".to_string()
+            "impacted-evidence --label requires a non-empty value; pass `--label <value>`"
+                .to_string()
         );
         Ok(())
     }

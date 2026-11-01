@@ -19,8 +19,7 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:src/constants.py:f:return_value:return_value:1
   Changed behavior: return 1
-  Discriminator (observed, advisory): Related Python test reaches `f` with an `exact_value` oracle.
-    Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  Check (observed, advisory): Related Python test reaches `f` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check
   Related test: tests/test_constants.py:4 test_constants
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
@@ -41,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_empty_sink_observed_short_function/input --diff <cwd>/fixtures/python_empty_sink_observed_short_function/diff.patch --mode fast probe:src_constants.py:python_preview:21c1d18e
   ripr context --root <cwd>/fixtures/python_empty_sink_observed_short_function/input --diff <cwd>/fixtures/python_empty_sink_observed_short_function/diff.patch --mode fast --at probe:src_constants.py:python_preview:21c1d18e
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/constants.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 More:
   Full evidence: rerun with --format human-full

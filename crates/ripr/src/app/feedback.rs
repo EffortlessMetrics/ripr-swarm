@@ -135,11 +135,18 @@ pub(crate) fn load_feedback_receipts(root: &Path) -> Result<Vec<FeedbackReceipt>
         return Ok(Vec::new());
     }
     let mut receipts = Vec::new();
-    for entry in fs::read_dir(&directory)
-        .map_err(|error| format!("read {} failed: {error}", directory.display()))?
-    {
-        let entry =
-            entry.map_err(|error| format!("read {} failed: {error}", directory.display()))?;
+    for entry in fs::read_dir(&directory).map_err(|error| {
+        format!(
+            "read {} failed: {error}; check the directory is readable",
+            directory.display()
+        )
+    })? {
+        let entry = entry.map_err(|error| {
+            format!(
+                "read {} failed: {error}; check the directory is readable",
+                directory.display()
+            )
+        })?;
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
             continue;
@@ -168,7 +175,7 @@ pub(crate) fn export_feedback_join(
         .components()
         .any(|component| matches!(component, Component::ParentDir))
     {
-        return Err("feedback export --route-quality must not contain `..`".to_string());
+        return Err("feedback export --route-quality must not contain `..`; pass the path without `..` components".to_string());
     }
     let route_quality = load_optional_json(&route_quality_path)?;
     let join = build_join(
@@ -184,26 +191,31 @@ pub(crate) fn export_feedback_join(
 pub(crate) fn feedback_directory(root: &Path) -> Result<PathBuf, String> {
     let directory = root.join(FEEDBACK_DIRECTORY);
     fs::create_dir_all(&directory)
-        .map_err(|error| format!("create {} failed: {error}", directory.display()))?;
+        .map_err(|error| format!("create {} failed: {error}; check the directory is writable or pass `--root` in a writable location", directory.display()))?;
     Ok(directory)
 }
 
 fn confine_root(root: &Path) -> Result<PathBuf, String> {
     if root.as_os_str().is_empty() {
-        return Err("feedback --root must be a non-empty directory".to_string());
+        return Err(
+            "feedback --root must be a non-empty directory; pass `--root <dir>`".to_string(),
+        );
     }
     if root
         .components()
         .any(|component| matches!(component, Component::ParentDir))
     {
-        return Err("feedback --root must not contain `..`".to_string());
+        return Err(
+            "feedback --root must not contain `..`; pass the directory without `..` components"
+                .to_string(),
+        );
     }
     if !root.exists() {
         fs::create_dir_all(root)
-            .map_err(|error| format!("create {} failed: {error}", root.display()))?;
+            .map_err(|error| format!("create {} failed: {error}; check the parent directory is writable or pass another `--root`", root.display()))?;
     }
     fs::canonicalize(root)
-        .map_err(|error| format!("canonicalize {} failed: {error}", root.display()))
+        .map_err(|error| format!("canonicalize {} failed: {error}; check the path is accessible or pass another `--root`", root.display()))
 }
 
 fn receipt_path(directory: &Path, key: &str) -> Result<PathBuf, String> {
@@ -212,7 +224,7 @@ fn receipt_path(directory: &Path, key: &str) -> Result<PathBuf, String> {
         .any(|ch| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.'))
     {
         return Err(
-            "feedback --idempotency-key may contain only ASCII letters, digits, `.`, `_`, and `-`"
+            "feedback --idempotency-key may contain only ASCII letters, digits, `.`, `_`, and `-`; pass a key made of those characters"
                 .to_string(),
         );
     }
@@ -232,11 +244,11 @@ fn resolve_idempotency_key(
 ) -> Result<String, String> {
     if let Some(key) = explicit {
         if key.trim().is_empty() {
-            return Err("feedback --idempotency-key requires a non-empty value".to_string());
+            return Err("feedback --idempotency-key requires a non-empty value; pass a key or omit the flag to use the automatic one".to_string());
         }
         if key.len() > MAX_IDEMPOTENCY_KEY_BYTES {
             return Err(format!(
-                "feedback --idempotency-key exceeds {MAX_IDEMPOTENCY_KEY_BYTES} bytes"
+                "feedback --idempotency-key exceeds {MAX_IDEMPOTENCY_KEY_BYTES} bytes; pass a shorter key"
             ));
         }
         return Ok(key.to_string());
@@ -274,7 +286,7 @@ fn check_note_privacy(note: Option<&str>) -> Result<(), String> {
     };
     if note.len() > FEEDBACK_NOTE_MAX_BYTES {
         return Err(format!(
-            "feedback --note exceeds {FEEDBACK_NOTE_MAX_BYTES} bytes"
+            "feedback --note exceeds {FEEDBACK_NOTE_MAX_BYTES} bytes; pass a shorter note"
         ));
     }
     let lowered = note.to_ascii_lowercase();
@@ -293,10 +305,18 @@ fn load_receipt_file(path: &Path) -> Result<Option<FeedbackReceipt>, String> {
     if !path.exists() {
         return Ok(None);
     }
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("read {} failed: {error}", path.display()))?;
-    let value: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|error| format!("parse {} failed: {error}", path.display()))?;
+    let text = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "read {} failed: {error}; check the file is readable",
+            path.display()
+        )
+    })?;
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "parse {} failed: {error}; fix the JSON or delete the file",
+            path.display()
+        )
+    })?;
     Ok(Some(rendered_receipt_from_value(&value)?))
 }
 
@@ -326,10 +346,18 @@ fn load_optional_json(path: &Path) -> Result<Option<serde_json::Value>, String> 
     if !path.exists() {
         return Ok(None);
     }
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("read {} failed: {error}", path.display()))?;
-    let value = serde_json::from_str(&text)
-        .map_err(|error| format!("parse {} failed: {error}", path.display()))?;
+    let text = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "read {} failed: {error}; check the file is readable",
+            path.display()
+        )
+    })?;
+    let value = serde_json::from_str(&text).map_err(|error| {
+        format!(
+            "parse {} failed: {error}; fix the JSON or delete the file",
+            path.display()
+        )
+    })?;
     Ok(Some(value))
 }
 
@@ -578,7 +606,7 @@ fn count_reviewed_human(receipts: &[FeedbackReceipt]) -> usize {
 pub(crate) fn record_result_json(recorded: &RecordedFeedback) -> Result<String, String> {
     let mut document = render_receipt_document(&recorded.receipt, recorded.status.as_str())?;
     let mut value: serde_json::Value = serde_json::from_str(&document)
-        .map_err(|error| format!("parse recorded feedback JSON failed: {error}"))?;
+        .map_err(|error| format!("parse recorded feedback JSON failed: {error}; this is a ripr bug, report it with the command you ran"))?;
     value["path"] = serde_json::json!(crate::output::path::display_path(&recorded.path));
     document = json::render_pretty_with_newline(&value, "usefulness-feedback receipt")?;
     Ok(document)
@@ -1244,7 +1272,13 @@ mod tests {
         );
         let warning = &warnings[0];
         assert!(
-            warning.contains(&bad_path.display().to_string()),
+            // Windows prints the canonical (verbatim-prefix) spelling of the
+            // path, so match the unique scratch directory and file name.
+            warning.contains("bad.json")
+                && root
+                    .path
+                    .file_name()
+                    .is_some_and(|dir| warning.contains(&dir.to_string_lossy().into_owned())),
             "skip warning must name the skipped file: {warning}"
         );
         assert!(

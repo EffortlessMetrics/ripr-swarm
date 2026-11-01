@@ -212,8 +212,9 @@ fn test_pairs_boundary_input_with_oracle(
     index: &RustIndex,
 ) -> bool {
     let scope = super::argument_fold::FoldScope::of_test(test, index);
-    let calls_resolve =
-        |text: &str| super::call_identity::boundary_owner_calls_resolve(index, owner, test, text);
+    let calls_resolve = |text: &str, line: usize| {
+        super::call_identity::boundary_owner_calls_resolve(index, owner, test, text, line)
+    };
     let bound_names = boundary_bound_locals(probe, owner, test, activation, scope, &calls_resolve);
     // Computed at most once per test, and only when the entry path is live.
     let own_rows: std::cell::OnceCell<ActivationEvidence> = std::cell::OnceCell::new();
@@ -249,7 +250,7 @@ fn test_pairs_boundary_input_with_oracle(
         }
         let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
             .unwrap_or_else(|| assertion.text.clone());
-        (calls_resolve(&operands)
+        (calls_resolve(&operands, assertion.line)
             && assertion_observes_boundary_owner_call(
                 probe, owner, test, assertion, &operands, activation, scope,
             ))
@@ -527,7 +528,13 @@ fn test_pairs_boundary_element(
         }
         let operands = crate::analysis::extract::assertion_oracle_text(&assertion.text)
             .unwrap_or_else(|| assertion.text.clone());
-        if !super::call_identity::boundary_owner_calls_resolve(index, owner, test, &operands) {
+        if !super::call_identity::boundary_owner_calls_resolve(
+            index,
+            owner,
+            test,
+            &operands,
+            assertion.line,
+        ) {
             return false;
         }
         whole_owner_call_operands(test, &assertion.text, owner)
@@ -813,7 +820,7 @@ fn boundary_bound_locals(
     test: &TestSummary,
     activation: &ActivationEvidence,
     scope: super::argument_fold::FoldScope<'_>,
-    calls_resolve: &dyn Fn(&str) -> bool,
+    calls_resolve: &dyn Fn(&str, usize) -> bool,
 ) -> Vec<String> {
     // Last binding of a name wins so `let got = gate(10); let got = gate(100)`
     // does not keep the shadowed boundary result. A post-let mutation
@@ -851,7 +858,7 @@ fn boundary_bound_locals(
             };
             let is_boundary =
                 bound_result::boundary_call(binding, owner, &test.body).is_some_and(|result| {
-                    calls_resolve(&result.text)
+                    calls_resolve(&result.text, line_number)
                         && owner_call_activates_boundary(
                             probe, owner, test, &call, activation, scope, &result,
                         )
