@@ -1,7 +1,6 @@
 //! CLI projection of an explicitly supplied Kani result and its source binding.
 //!
-//! Import and native-result decisions belong to the app/domain owners. This
-//! command reads bounded artifacts and writes reports; it never runs Kani.
+//! Import and native-result decisions belong to the app/domain owners; this command only reads bounded artifacts, writes reports, and never runs Kani.
 
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
