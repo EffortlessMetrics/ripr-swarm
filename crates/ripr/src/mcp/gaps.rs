@@ -286,6 +286,12 @@ pub(crate) struct GapItem {
     /// (#7464).
     pub(crate) list_summary: Value,
     list_summary_bytes: usize,
+    /// The `ripr agent stub --at FILE:LINE --kind FAMILY` location the shared
+    /// stub resolver (`stub_route_location`, the owner `ripr check` and
+    /// `ripr repair` use) names for this finding, if any. A refused
+    /// `ripr_prepare_repair` carries it in `next` for `seam_not_found` and
+    /// `seam_ambiguous` (#11622); it is not part of any served document.
+    pub(crate) stub_route: Option<(String, usize, &'static str)>,
     /// Complete bounded evidence document (without the per-request snapshot
     /// binding and links, which are injected at serve time). The repair
     /// projection reads `changed_behavior` and the discriminator from it.
@@ -368,6 +374,7 @@ impl GapItem {
             language,
             list_summary,
             list_summary_bytes,
+            stub_route: crate::app::test_stub::stub_route_location(finding, root),
             evidence_core,
             evidence_bytes,
             candidate_actionable: finding.is_candidate_actionable(),
