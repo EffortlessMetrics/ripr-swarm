@@ -6499,20 +6499,30 @@ mod tests {
     /// and an unconfigured one stays unknown instead of reading as disabled.
     #[test]
     fn detected_entries_carry_the_shared_availability_state() {
-        let disabled = detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Rust]));
-        if LanguageId::Python.is_available() {
-            assert_eq!(
-                disabled[0].availability_state,
-                Some("detected_compiled_disabled")
+        // Rust is always compiled in, so the disabled branch is exercised on
+        // every feature set rather than only where the Python adapter exists.
+        let disabled = detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Python]));
+        assert_eq!(
+            disabled[0].availability_state,
+            Some("detected_compiled_disabled")
+        );
+        assert!(
+            disabled[0]
+                .remediation
+                .iter()
+                .any(|step| step.contains("[languages]")),
+            "{:?}",
+            disabled[0].remediation
+        );
+        // JavaScript reads enablement through its `typescript` entry, so the
+        // availability state follows the same mapping as `enabled`.
+        if LanguageId::JavaScript.is_available() {
+            let js = detected_language_entries(
+                &[LanguageId::JavaScript],
+                Some(&[LanguageId::TypeScript]),
             );
-            assert!(
-                disabled[0]
-                    .remediation
-                    .iter()
-                    .any(|step| step.contains("[languages]")),
-                "{:?}",
-                disabled[0].remediation
-            );
+            assert_eq!(js[0].enabled, Some(true));
+            assert_eq!(js[0].availability_state, Some("detected_compiled_enabled"));
         }
         let enabled = detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]));
         assert_eq!(
