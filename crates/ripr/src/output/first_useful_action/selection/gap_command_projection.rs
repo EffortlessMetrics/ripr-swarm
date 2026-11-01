@@ -111,7 +111,7 @@ fn producer_gap_verify_spec(
     }
 
     let record: GapRecord = serde_json::from_value(record_value.clone())
-        .map_err(|error| format!("selected gap record {gap_id} is invalid: {error}"))?;
+        .map_err(|error| format!("selected gap record {gap_id} is invalid: {error}; regenerate the input with the command that wrote it, then rerun"))?;
     if record.source_currentness.as_deref() != Some("candidate_current") {
         return Ok(None);
     }
