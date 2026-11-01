@@ -275,7 +275,9 @@ pub(crate) struct CommandMetadata {
     /// The exact spelling that makes this command print its JSON result
     /// document, as a script must type it (#11599). `None` means the command
     /// rejects both `--json` and `--format json` (a `ripr pilot --json` exits
-    /// 2); a test runs the declared spelling of every command that claims one.
+    /// 2). `cli_help_json_flags` checks the declared spelling only against
+    /// the command's own parsed help body (shared-body rows and four
+    /// documented gaps are exempt); no test invokes the spelling at runtime.
     pub(crate) accepts_json_flag: JsonFlag,
     /// Whether the command writes JSON artifact files (a fixed
     /// `target/ripr/...json` path or `--out`), independent of any flag. Many

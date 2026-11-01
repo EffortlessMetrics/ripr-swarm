@@ -87,10 +87,14 @@ struct CommandJsonRow {
     outputs: OutputsJson,
     state_target: Option<&'static str>,
     /// The exact spelling that makes this command print JSON on stdout, or
-    /// null when it has none. Machine-checked by `cli_help_json_flags`.
+    /// null when it has none. `cli_help_json_flags` compares it to the
+    /// command's own parsed help body (shared-body rows and four documented
+    /// gaps exempt); it is not invoked at runtime by any test.
     accepts_json_flag: Option<&'static str>,
-    /// True when the command writes JSON artifacts to files without a stdout
-    /// JSON mode of its own (distinct from `accepts_json_flag`).
+    /// True when the command writes JSON artifact files (a fixed
+    /// `target/ripr/...json` path or `--out`), independent of any flag. It is
+    /// not exclusive of `accepts_json_flag`: a command may do both (for example
+    /// `check`, `pilot`), and many write artifacts with no JSON flag.
     writes_json_artifacts: bool,
     /// Flags parsed from the command's help body.
     flags: Vec<crate::cli::help_flags::FlagJson>,

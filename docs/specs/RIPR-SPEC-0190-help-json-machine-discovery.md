@@ -52,7 +52,7 @@ document carries:
   retirement relation (canonical, `alias_of` with its canonical target, or
   `retired` with an optional replacement), aliases, summary, task label,
   workflow tags, operation, cost, all six side-effect flags, primary inputs,
-  output roles, state target, `accepts_json_flag` (the exact spelling that prints JSON on stdout, or null), `writes_json_artifacts` (file-only JSON, kept distinct), a `flags` inventory parsed from the help body (name, `takes_value`, closed `values`, `required`, `repeatable`, `env`) with `flags_scope` (`own_help_body`, or `shared_help_body` where one body documents several subcommands), example, next routes, stop
+  output roles, state target, `accepts_json_flag` (the exact spelling that prints JSON on stdout, or null), `writes_json_artifacts` (the command writes JSON artifact files, independent of any flag and not exclusive of `accepts_json_flag`), a `flags` inventory parsed from the help body (name, `takes_value`, closed `values`, `required`, `repeatable`, `env`) with `flags_scope` (`own_help_body`, or `shared_help_body` where one body documents several subcommands), example, next routes, stop
   states, a typed `exit` object (closed `kind` plus the implemented 0/2/3
   codes, and stdout-on-refusal disclosure where a command can exit 3),
   limitations, and the not-applicable reason;
