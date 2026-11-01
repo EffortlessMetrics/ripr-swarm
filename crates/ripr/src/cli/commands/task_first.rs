@@ -1486,7 +1486,7 @@ mod tests {
             &["unscoped note".to_string()],
             1,
         );
-        if !setup.starts_with("no seams visible under ")
+        if !setup.starts_with("no gaps visible under ")
             || setup.contains("automatic repair")
             || !setup.contains(" (unscoped note); ")
             || !setup.contains("`ripr pilot --root ")

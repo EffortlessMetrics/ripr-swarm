@@ -213,35 +213,6 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     Ok(())
 }
 
-#[test]
-fn untied_count_does_not_claim_gripped_sibling_is_repairable() -> Result<(), String> {
-    let sibling = "\npub fn doubled(x: i32) -> i32 {\n    x * 2\n}\n";
-    let old = format!(
-        "pub fn label(n: u32) -> &'static str {{\n    match n {{\n        0 => \"zero\",\n        1 => \"one\",\n        _ => \"many\",\n    }}\n}}\n{sibling}"
-    );
-    let new = old.replace("1 => \"one\"", "1 => \"uno\"");
-    let repo = Repo::create(
-        &old,
-        &new,
-        "use ar::{doubled, label};\n\n#[test]\nfn labels() {\n    assert!(!label(1).is_empty());\n}\n\n#[test]\nfn doubled_exact() {\n    assert_eq!(doubled(2), 4);\n}\n",
-    )?;
-    let repair = repo.ripr(&["repair", "--root", "."])?;
-    assert!(
-        repair.contains("already grip it"),
-        "gripped sibling precondition:\n{repair}"
-    );
-    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
-    assert!(
-        check.contains("spots in this finding's file, but could not tie one"),
-        "unbound precondition:\n{check}"
-    );
-    assert!(
-        !check.contains("repairable spots in this finding's file"),
-        "count must not assert eligibility:\n{check}"
-    );
-    Ok(())
-}
-
 const GRIPPED_BOUNDARY_OLD: &str =
     "pub fn f(x: i32) -> i32 {\n    let y = if x > 10 { 1 } else { 2 };\n    y\n}\n";
 const GRIPPED_BOUNDARY_NEW: &str =

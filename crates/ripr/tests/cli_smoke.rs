@@ -6643,7 +6643,7 @@ fn agent_packet_unknown_seam_id_names_the_seam_id_source() -> Result<(), Box<dyn
     // packet surface's `agent packet` wording.
     assert!(
         stderr.contains("agent repair --seam-id")
-            && stderr.contains("the `ripr check` finding ID is stale or maps to no current gap"),
+            && stderr.contains("the `ripr check` finding ID is stale or maps to no current seam"),
         "the refusal must name the stale state in this command's terms:\n{stderr}"
     );
     assert!(
@@ -11051,7 +11051,7 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
     let stderr = String::from_utf8_lossy(&ambiguous.stderr);
     assert!(
         stderr.contains(&format!(
-            "receipt requires exactly one repair attempt for gap `{BOUNDARY_GAP_SEAM_ID}`"
+            "receipt requires exactly one repair attempt for seam `{BOUNDARY_GAP_SEAM_ID}`"
         )),
         "the ambiguity refusal must fire:\n{stderr}"
     );
