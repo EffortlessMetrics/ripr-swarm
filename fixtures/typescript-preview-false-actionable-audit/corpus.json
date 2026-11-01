@@ -143,11 +143,11 @@
       "disposition": "safe_advisory",
       "repair_packet_ready": false,
       "authority_boundary": "preview_advisory_only",
-      "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape",
+      "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape",
       "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
       "future_support": "repair-card guidance may suggest replacing or augmenting truthiness with exact evidence, but packet routing still requires strict actionability fields",
       "must_remain_non_actionable": true,
-      "required_evidence_fragment": "cannot name a safe target discriminator",
+      "required_evidence_fragment": "cannot name a safe target check",
       "raw_evidence_refs": [
         "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json#probe:src_signals.ts:typescript_preview:54d687f5"
       ],

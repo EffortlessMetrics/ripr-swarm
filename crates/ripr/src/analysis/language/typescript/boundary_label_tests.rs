@@ -865,3 +865,12 @@ fn added_comparison_clause_names_no_boundary() {
         assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
     }
 }
+
+#[test]
+fn single_token_edit_in_a_line_with_an_added_neighbour_clause_names_no_boundary() {
+    // Two edits at once: a substitution in `a > 1` plus a new clause.
+    assert_eq!(
+        boundary_label(Some("  if (a > 1) {"), "  if (a >= 1 && b < 2) {"),
+        None
+    );
+}

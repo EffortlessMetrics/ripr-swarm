@@ -92,7 +92,7 @@
       "receipt_command": "ripr agent receipt --source fixtures/typescript_jest_vitest_assertion_facts --out target/ripr/reports/typescript-smoke-return-preview-receipt.json",
       "receipt_state": "not_run_preview_route",
       "outcome": "weak_oracle_downgraded",
-      "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape",
+      "why_not_actionable": "TypeScript preview found related test evidence but cannot name a safe target check or observer shape",
       "repair_route": "add probe-specific discriminator extraction for this expression before repair packet projection",
       "operator_note": "Smoke-only evidence on a returned comparison stays weak and records the boundary observer shape without becoming actionability proof.",
       "must_not_change": [
