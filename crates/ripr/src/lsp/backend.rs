@@ -5453,7 +5453,8 @@ mod bounded_failure_message_tests {
             .path()
             .join("a long folder name with spaces ".repeat(6))
             .join("another long folder name");
-        std::fs::create_dir_all(&deep).map_err(|error| format!("create root failed: {error}"))?;
+        // The refusal only formats the path, so the long root is never created:
+        // on Windows it would pass MAX_PATH and fail with "path not found".
         // The production builder of the non-Git refusal; a non-Git temp root
         // is not constructible here because unit-test temp roots sit inside
         // the checkout's own work tree.
