@@ -506,6 +506,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             generated_skip.as_ref(),
         ),
     )?;
+    let packet_bound = analysis::pilot_packet_budget()?
+        .map(|(max, source)| output::agent_seam_packets::PacketBound { max, source });
     write_pilot_file(
         &artifacts.agent_seam_packets_json,
         output::agent_seam_packets::render_agent_seam_packets_json_for_root(
@@ -514,6 +516,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             &declined_rust_files,
+            packet_bound,
         ),
     )?;
 

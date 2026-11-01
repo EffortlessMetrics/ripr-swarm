@@ -101,6 +101,12 @@ Environment variables:
                                  the budget and write all seams (may produce very large files).
                                  When the budget is applied, both artifacts include a
                                  limitations[] disclosure naming the env var and a repair route.
+  RIPR_PILOT_PACKET_BUDGET      Maximum packets in the pilot packet file. Default: 3, with
+                                 actionable packets first, so the file stays small enough to
+                                 read. Set to 0 to write every packet (often 2-4 MB). When the
+                                 bound cuts, limitations[] reports packets_emitted and
+                                 packets_eligible. The `ripr check` packet format is unaffected
+                                 and writes the full set.
   RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum gaps analyzed and ranked in one pilot run.
                                  Default: the pilot seam budget (2000), so pilot does not
                                  classify seams it would not rank; `ripr check` keeps 10000.
