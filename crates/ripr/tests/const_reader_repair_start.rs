@@ -178,10 +178,10 @@ fn constant_declared_twice_in_the_file_does_not_start() -> Result<(), String> {
 }
 
 #[test]
-fn reader_that_shadows_the_name_does_not_start() -> Result<(), String> {
-    let old = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    let GREETING = \"hey\";\n    format!(\"{GREETING}, {name}\")\n}\n";
-    let repo = Repo::create(old, &old.replace("\"hello\"", "\"hi\""), WEAK_TEST)?;
-    assert_no_start("shadowed", &repo).map(|_| ())
+fn reader_that_shadows_the_name_with_its_own_constant_does_not_start() -> Result<(), String> {
+    let old = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    const GREETING: &str = \"hey\";\n    format!(\"{GREETING}, {name}\")\n}\n";
+    let repo = Repo::create(old, &old.replacen("\"hello\"", "\"hi\"", 1), WEAK_TEST)?;
+    assert_no_start("inner const shadow", &repo).map(|_| ())
 }
 
 #[test]
@@ -236,4 +236,127 @@ fn constant_read_outside_any_function_does_not_start() -> Result<(), String> {
     let old = format!("{GREET_OLD}\nconst _: () = assert!(!GREETING.is_empty());\n");
     let repo = Repo::create(&old, &old.replace("\"hello\"", "\"hi\""), WEAK_TEST)?;
     assert_no_start("item-level read", &repo).map(|_| ())
+}
+
+/// `pub fn n() -> u32 { N }` with `N` changed from `old` to `new`, tested by
+/// `test_body`.
+fn number_case(old: &str, new: &str, reader: &str, test_body: &str) -> Result<Repo, String> {
+    let source = |value: &str| format!("pub const N: {value};\n\n{reader}\n");
+    Repo::create(
+        &source(old),
+        &source(new),
+        &format!("use fx::n;\n\n#[test]\nfn n_case() {{\n    {test_body}\n}}\n"),
+    )
+}
+
+const N_READER: &str = "pub fn n() -> u32 {\n    N\n}";
+
+#[test]
+fn bare_name_return_is_left_to_the_value_evaluation_in_both_commands() -> Result<(), String> {
+    // `n()` returns `N` itself: the declaration keeps its probe, so neither
+    // command starts on `n`'s return while check reads the change as unknown.
+    let repo = number_case("u32 = 10", "u32 = 11", N_READER, "assert!(n() > 0);")?;
+    let (check, _) = assert_no_start("bare name return", &repo)?;
+    if check.contains("Changed behavior: N\n") {
+        return Err(format!(
+            "bare name return: check must keep the declaration:\n{check}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn value_flow_decided_bare_return_reads_exposed_and_does_not_start() -> Result<(), String> {
+    // The pin holds on the old value and fails on the new one, so the
+    // RIPR-SPEC-0048 evaluation decides the declaration: exposed.
+    let repo = number_case("u32 = 10", "u32 = 11", N_READER, "assert_eq!(n(), 10);")?;
+    let (check, _) = assert_no_start("exact whole return", &repo)?;
+    if !check.contains("Static exposure: exposed") {
+        return Err(format!(
+            "exact whole return: check must read exposed:\n{check}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn same_value_rewritten_does_not_start() -> Result<(), String> {
+    let repo = number_case("u32 = 10", "u32 = 5 + 5", N_READER, "assert!(n() > 0);")?;
+    assert_no_start("10 to 5 + 5", &repo).map(|_| ())
+}
+
+#[test]
+fn type_only_change_does_not_start() -> Result<(), String> {
+    let repo = number_case(
+        "u32 = 10",
+        "u64 = 10",
+        "pub fn n() -> u64 {\n    N.into()\n}",
+        "assert!(n() > 0);",
+    )?;
+    assert_no_start("type only", &repo).map(|_| ())
+}
+
+#[test]
+fn visibility_only_change_does_not_start() -> Result<(), String> {
+    let old = GREET_OLD.replace("pub const GREETING", "const GREETING");
+    let repo = Repo::create(&old, GREET_OLD, WEAK_TEST)?;
+    assert_no_start("const to pub const", &repo).map(|_| ())
+}
+
+#[test]
+fn associated_constant_with_an_imported_free_reader_does_not_start() -> Result<(), String> {
+    // (a) The free `greet` reads the imported `defaults::GREETING`, not the
+    // edited associated constant.
+    let old = "pub mod defaults {\n    pub const GREETING: &str = \"yo\";\n}\n\nuse crate::defaults::GREETING;\n\npub struct Greeter;\n\nimpl Greeter {\n    pub const GREETING: &'static str = \"hello\";\n}\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}\n";
+    let repo = Repo::create(old, &old.replace("\"hello\"", "\"hi\""), WEAK_TEST)?;
+    assert_no_start("associated const", &repo).map(|_| ())
+}
+
+#[test]
+fn reader_in_another_module_importing_the_name_does_not_start() -> Result<(), String> {
+    // (b) `fr::greet` reads `lang::GREETING` through a `use`.
+    let old = "pub const GREETING: &str = \"hello\";\n\npub mod fr {\n    use crate::lang::GREETING;\n\n    pub fn greet(name: &str) -> String {\n        format!(\"{GREETING}, {name}\")\n    }\n}\n";
+    let repo = Repo::create(
+        old,
+        &old.replace("\"hello\"", "\"hi\""),
+        "use fx::fr::greet;\n\n#[test]\nfn greet_mentions_name() {\n    assert!(greet(\"bob\").contains(\"bob\"));\n}\n",
+    )?;
+    assert_no_start("other module", &repo).map(|_| ())
+}
+
+#[test]
+fn trait_default_read_through_self_does_not_start() -> Result<(), String> {
+    // (c) `Self::GREETING` is whatever the implementing type says.
+    let old = "pub trait Greet {\n    const GREETING: &'static str = \"hello\";\n\n    fn greet(&self) -> String {\n        Self::GREETING.to_string()\n    }\n}\n\npub struct En;\n\nimpl Greet for En {}\n";
+    let repo = Repo::create(
+        old,
+        &old.replace("\"hello\"", "\"hi\""),
+        "use fx::{En, Greet};\n\n#[test]\nfn greet_is_not_empty() {\n    assert!(!En.greet().is_empty());\n}\n",
+    )?;
+    assert_no_start("trait default", &repo).map(|_| ())
+}
+
+#[test]
+fn return_inside_a_closure_does_not_start() -> Result<(), String> {
+    let old = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    [name].iter().map(|_| { return GREETING; }).count().to_string()\n}\n";
+    let repo = Repo::create(old, &old.replace("\"hello\"", "\"hi\""), WEAK_TEST)?;
+    assert_no_start("closure return", &repo).map(|_| ())
+}
+
+#[test]
+fn named_format_argument_that_shadows_the_name_does_not_start() -> Result<(), String> {
+    let old = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    format!(\"{GREETING}\", GREETING = name)\n}\n";
+    let repo = Repo::create(old, &old.replace("\"hello\"", "\"hi\""), WEAK_TEST)?;
+    assert_no_start("named format argument", &repo).map(|_| ())
+}
+
+#[test]
+fn conditional_return_of_the_constant_does_not_start() -> Result<(), String> {
+    let old = "pub const GREETING: &str = \"hello\";\n\npub fn greet(flag: bool) -> &'static str {\n    if flag {\n        return GREETING;\n    }\n    \"fixed\"\n}\n";
+    let repo = Repo::create(
+        old,
+        &old.replace("\"hello\"", "\"hi\""),
+        "use fx::greet;\n\n#[test]\nfn greet_is_not_empty() {\n    assert!(!greet(true).is_empty());\n}\n",
+    )?;
+    assert_no_start("conditional return", &repo).map(|_| ())
 }

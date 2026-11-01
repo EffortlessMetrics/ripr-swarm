@@ -1264,7 +1264,7 @@ pub(crate) fn changed_const_reader_return_lines(
     root: &Path,
     files: &[ChangedFile],
     test_harnesses: &[crate::config::TestHarnessRegistration],
-) -> Vec<(PathBuf, usize)> {
+) -> Vec<(PathBuf, usize, String)> {
     let declaring = files
         .iter()
         .filter(|file| file.path.extension().is_some_and(|ext| ext == "rs"))
@@ -1292,7 +1292,13 @@ pub(crate) fn changed_const_reader_return_lines(
             probes::probes_for_file_with_relations(root, file, &index, test_harnesses)
                 .into_iter()
                 .filter(|seeded| seeded.const_reader)
-                .map(|seeded| (file.path.clone(), seeded.probe.location.line))
+                .map(|seeded| {
+                    (
+                        file.path.clone(),
+                        seeded.probe.location.line,
+                        seeded.probe.expression.clone(),
+                    )
+                })
                 .collect::<Vec<_>>()
         })
         .collect()

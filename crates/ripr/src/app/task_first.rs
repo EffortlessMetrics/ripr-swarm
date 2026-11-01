@@ -1210,16 +1210,21 @@ fn seam_touches_change(
         })
 }
 
-/// #11400: whether `entry` is the return-value seam on a line the changed
-/// constant reaches (`changed_const_reader_return_lines`).
+/// #11400: whether `entry` is the return-value seam on a line, with the same
+/// returned expression, that the changed constant reaches
+/// (`changed_const_reader_return_lines`).
 fn seam_reads_changed_const(
     entry: &crate::analysis::ClassifiedSeam,
-    const_readers: &[(std::path::PathBuf, usize)],
+    const_readers: &[(std::path::PathBuf, usize, String)],
 ) -> bool {
+    let squeeze = |text: &str| text.split_whitespace().collect::<String>();
     entry.seam.kind() == crate::analysis::seams::SeamKind::ReturnValue && {
         let seam_file = normalized_relative_path(entry.seam.file());
-        const_readers.iter().any(|(file, line)| {
-            normalized_relative_path(file) == seam_file && entry.seam.display_line() == *line
+        let seam_text = squeeze(entry.seam.expression());
+        const_readers.iter().any(|(file, line, expression)| {
+            normalized_relative_path(file) == seam_file
+                && entry.seam.display_line() == *line
+                && squeeze(expression) == seam_text
         })
     }
 }

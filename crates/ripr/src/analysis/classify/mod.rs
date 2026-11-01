@@ -75,7 +75,8 @@ pub(in crate::analysis) use call_identity::{
 };
 pub(in crate::analysis) use caller_loop_selector::withhold_caller_loop_selector_gap;
 pub(in crate::analysis) use const_flow::{
-    ChangedConsts, ConstFlow, associated_const_binding, evaluate_const_flow, shares_module_scope,
+    ChangedConsts, ConstFlow, associated_const_binding, const_value_changes, evaluate_const_flow,
+    shares_module_scope,
 };
 pub(in crate::analysis) use const_readers::{const_reader_returns, same_file_const_readers};
 pub(in crate::analysis) use context::ProbeContext;

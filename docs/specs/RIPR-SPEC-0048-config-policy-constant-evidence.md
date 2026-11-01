@@ -297,33 +297,46 @@ supported scope.
 
 #### Returned-reader retarget (#11400)
 
-When the value-flow evaluation above cannot read a changed constant, a
-changed `const` whose every same-file reader returns it is described as the
-change to those readers' return values. The diff probe for the declaration is
-replaced by one return-value probe per reader, on the reader's returned line,
+The retarget is decided when the diff probes are built, before any finding
+is classified. A retargeted constant has no declaration probe left, so the
+value-flow evaluation above never sees it. The retarget is therefore limited
+to readers whose returned value changes whenever the constant does, for every
+input. For those readers an exact check of the return is a check of the
+constant. Every other reader shape keeps the declaration probe, and the
+evaluation decides it as before. That includes a bare `N` return: a literal
+pin such as `assert_eq!(n(), 10)` on `fn n() -> u32 { N }`, with `N` changed
+from 10 to 11, is still decided by the evaluation and reads `exposed`.
+
+A changed `const` is described as the change to its readers' returned values
 only when all of these hold:
 
-- the changed line declares a `const` (never a `static`), and the file
-  declares that name exactly once;
-- one to six production functions of the same file read the name (shadowing
-  and other-path reads are not reads), and no code outside a function reads
-  it (another constant's initializer, a compile-time `assert!`, an array
-  length); `use` imports are not reads;
-- every reader has a one-line returned value inside that reader (not a nested
-  function), none of those lines is itself changed, and the returned value
-  carries the whole constant: the bare name (or `Self::`/`self::` path),
-  optionally `.to_string()`, `.to_owned()` or `.into()`, or one `format!`
-  whose only reads are plain `{NAME}` arguments. Such a return differs
-  whenever the constant does, for the same inputs, so an exact check of it is
-  a check of the constant. A comparison (`x > LIMIT`), arithmetic, a format
-  spec or any other use can hide the change for some inputs; it keeps the
-  declaration's probe, and the value-flow evaluation above keeps deciding it.
+- the changed line declares a `const` (never a `static`); a removed
+  declaration of the same name pairs with it; the pair has the same type; and
+  the two initializers evaluate to different values. A visibility-only edit,
+  a rewrite to the same value (`10` to `5 + 5`), a type-only edit or a value
+  that cannot be evaluated is not a changed value;
+- the file declares the name exactly once, directly in a module (not in an
+  `impl` or trait), and no `use` anywhere in the file imports an item
+  spelled like it;
+- one to six production functions read the name. Shadowing and other-path
+  reads are not reads. Every reader sits in the declaration's own module, and
+  no code outside a function reads the name (another constant's initializer,
+  a compile-time `assert!`, an array length);
+- each reader's whole body is one one-line returned value (a tail expression
+  or a single `return`): no branch, binding, closure, async block or second
+  return. None of those lines is itself changed, and the returned value is
+  one `format!` whose only reads of the constant are plain `{NAME}` inline
+  arguments, with no named argument and no other argument naming it. A bare
+  name or conversion return is left to the evaluation. A comparison
+  (`x > LIMIT`), arithmetic, a format spec or any other use can hide the
+  change for some input.
 
 Any failure keeps the declaration's `static_unknown` probe, with no repair
-start. `ripr repair` scopes to the same returned lines by running the same
-probe pipeline over the change, so `ripr check` and `ripr repair` offer the
-same start or neither does. A returned value that a test checks exactly is
-reported as checked; a weak check gets the ordinary return-value repair.
+start. `ripr repair` scopes to the same returned lines and expressions by
+running the same probe pipeline over the change, so `ripr check` and
+`ripr repair` offer the same start or neither does. A returned value that a
+test checks exactly is reported as checked; a weak check gets the ordinary
+return-value repair.
 
 #### Associated-constant extension (selected by `shape-assoc-const-value`)
 

@@ -594,7 +594,7 @@ pub(crate) fn probes_for_file_with_relations(
         // static-unknown const probe.
         if families == [ProbeFamily::StaticUnknown]
             && let Some(retargeted) =
-                retarget_changed_const_readers(&build_context, text, &changed_lines)
+                retarget_changed_const_readers(&build_context, added, text, &changed_lines)
         {
             probes.extend(retargeted);
             continue;
@@ -879,14 +879,26 @@ fn retarget_changed_binding_predicates(
 /// diff already changes (that line carries its own probe).
 fn retarget_changed_const_readers(
     context: &ProbeBuildContext<'_>,
+    added: &ChangedLine,
     text: &str,
     changed_lines: &[usize],
 ) -> Option<Vec<SeededProbe>> {
     if !text.trim_end().ends_with(';') {
         return None;
     }
-    let readers =
-        crate::analysis::classify::const_reader_returns(text, &context.changed.path, context.index);
+    // Only a value that really changed: the removed declaration of the same
+    // name pairs with this one, and the two evaluate differently.
+    let pairs = crate::analysis::classify::ChangedConsts::from_changed_files([context.changed]);
+    let change = pairs.lookup(&context.changed.path, added.line)?;
+    if !crate::analysis::classify::const_value_changes(change) {
+        return None;
+    }
+    let readers = crate::analysis::classify::const_reader_returns(
+        text,
+        added.line,
+        &context.changed.path,
+        context.index,
+    );
     if readers.is_empty()
         || readers
             .iter()

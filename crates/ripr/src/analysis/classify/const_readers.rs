@@ -58,12 +58,19 @@ pub(in crate::analysis) fn same_file_const_readers<'a>(
 /// - the file has at most [`READER_LIMIT`] production readers
 ///   ([`function_reads`]: shadows, other-path qualifiers and escaped
 ///   `{{NAME}}` are not reads), at least one;
-/// - every reader has a one-line return-value shape whose own text reads the
-///   name and whose innermost function is that reader. A reader that uses the
-///   name only elsewhere (a guard, a loop bound, a nested closure) keeps the
-///   whole change unknown, so no reader is chosen over another.
+/// - no code outside a function reads the name and no `use` anywhere in the
+///   file imports an item spelled like it;
+/// - the declaration sits directly in a module (not an `impl` or trait) and
+///   every reader is in that same module;
+/// - every reader's whole body is one one-line returned expression that
+///   carries the whole constant ([`returns_constant_whole`]). A branch,
+///   binding, closure, async block or second return keeps the whole change
+///   unknown, so no reader is chosen over another.
+///
+/// The caller also requires the paired old and new values to differ.
 pub(in crate::analysis) fn const_reader_returns<'a>(
     changed: &str,
+    declaration_line: usize,
     file: &Path,
     index: &'a RustIndex,
 ) -> Vec<&'a ProbeShapeFact> {
@@ -84,7 +91,10 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
         .iter()
         .map(|function| (function.start_line, function.end_line))
         .collect();
-    if declaration_count(&masked, name) != 1 || item_level_read(&masked, name, &spans) {
+    if declaration_count(&masked, name) != 1
+        || item_level_read(&masked, name, &spans)
+        || imports_name(&masked, name)
+    {
         return Vec::new();
     }
     let readers = facts
@@ -96,75 +106,123 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
     if readers.is_empty() || readers.len() > READER_LIMIT {
         return Vec::new();
     }
-    let innermost = |line: usize| {
-        facts
-            .functions
-            .iter()
-            .filter(|function| function.start_line <= line && line <= function.end_line)
-            .min_by_key(|function| function.end_line - function.start_line)
-    };
+    // One module scope for the declaration and every reader, and the
+    // declaration directly in a module (never in an `impl` or trait), so the
+    // spelling names this constant and no associated or imported one.
+    let reader_lines: Vec<usize> = readers.iter().map(|reader| reader.start_line).collect();
+    if !super::shares_module_scope(&facts.source, declaration_line, &reader_lines) {
+        return Vec::new();
+    }
     let mut found = Vec::new();
     for owner in readers {
-        let before = found.len();
-        for shape in &facts.data().probe_shapes {
-            if shape.kind == ProbeShapeKind::ReturnValue
-                && shape.start_line == shape.end_line
+        let mut returns = facts.data().probe_shapes.iter().filter(|shape| {
+            shape.kind == ProbeShapeKind::ReturnValue
                 && owner.start_line <= shape.start_line
                 && shape.end_line <= owner.end_line
-                && innermost(shape.start_line).is_some_and(|inner| inner.id == owner.id)
-                && returns_constant_whole(&shape.text, name)
-            {
-                found.push(shape);
-            }
-        }
-        if found.len() == before {
+        });
+        // The reader's whole body is one returned expression: no branch,
+        // binding, closure or async block can stand between the constant and
+        // the value the caller gets.
+        let (Some(shape), None) = (returns.next(), returns.next()) else {
+            return Vec::new();
+        };
+        if shape.start_line != shape.end_line
+            || !returns_constant_whole(&shape.text, name)
+            || !body_is_only(&owner.body, &shape.text)
+        {
             return Vec::new();
         }
+        found.push(shape);
     }
     found
+}
+
+/// Whether the function `body` (signature included) consists of exactly the
+/// returned expression `returned`, as a tail expression or one `return`.
+fn body_is_only(body: &str, returned: &str) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let (Some(open), Some(close)) = (masked.find('{'), masked.rfind('}')) else {
+        return false;
+    };
+    if body.find('{') != Some(open) || body.rfind('}') != Some(close) || close <= open {
+        return false;
+    }
+    let squeeze = |text: &str| {
+        let text = text.trim();
+        let text = text.strip_prefix("return ").unwrap_or(text);
+        let text = text.strip_suffix(';').unwrap_or(text);
+        text.split_whitespace().collect::<String>()
+    };
+    let inner = body.get(open + 1..close).unwrap_or_default();
+    !squeeze(returned).is_empty() && squeeze(inner) == squeeze(returned)
+}
+
+/// Whether a `use` declaration anywhere in the file names `name`: an import
+/// of another item spelled like the constant.
+fn imports_name(masked: &str, name: &str) -> bool {
+    let mut rest = masked;
+    while let Some(at) = rest.find("use") {
+        let before_ok = at
+            .checked_sub(1)
+            .and_then(|before| rest.as_bytes().get(before))
+            .is_none_or(|byte| !is_ident_byte(*byte));
+        let after = rest.get(at + 3..).unwrap_or_default();
+        let after_ok = after
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_whitespace());
+        if before_ok && after_ok {
+            let statement = after.split(';').next().unwrap_or_default();
+            if contains_word(statement, name) {
+                return true;
+            }
+        }
+        rest = after;
+    }
+    false
+}
+
+/// Whether `text` holds `name` as a whole identifier.
+fn contains_word(text: &str, name: &str) -> bool {
+    let bytes = text.as_bytes();
+    text.match_indices(name).any(|(at, _)| {
+        let end = at + name.len();
+        at.checked_sub(1)
+            .and_then(|before| bytes.get(before))
+            .is_none_or(|byte| !is_ident_byte(*byte))
+            && !bytes.get(end).is_some_and(|byte| is_ident_byte(*byte))
+    })
 }
 
 /// Whether code outside every function reads `name`: another constant's
 /// initializer, a compile-time `assert!`, an array length or a `static`. Such
 /// a read is not a returned value, so the change is not described through the
-/// readers. The declaration line and `use` imports are not reads.
+/// readers. The declaration line is not a read.
 fn item_level_read(masked: &str, name: &str, functions: &[(usize, usize)]) -> bool {
     masked.lines().enumerate().any(|(at, line)| {
         let number = at + 1;
-        let trimmed = line.trim_start();
         !functions
             .iter()
             .any(|&(start, end)| start <= number && number <= end)
-            && !trimmed.starts_with("use ")
-            && !trimmed.starts_with("pub use ")
             && crate::domain::declared_const_name(line) != Some(name)
             && code_reads(line, name)
     })
 }
 
 /// Whether the returned expression `text` changes whenever the constant
-/// `name` does, for the same inputs: the bare name (or `Self::`/`self::`
-/// path), optionally converted with `.to_string()`, `.to_owned()` or
-/// `.into()`, or one `format!` whose only reads are plain `{NAME}` inline
-/// arguments. A comparison (`x > NAME`), arithmetic, a format spec
-/// (`{NAME:.3}`) or any other use may hide the change for some input, so it is
-/// not followed: the value-flow evaluation or the unknown answer stays.
+/// `name` does, for the same inputs: one `format!` whose only reads are plain
+/// `{NAME}` inline arguments, with no named argument and no other argument
+/// naming the constant. A bare `NAME` return is not followed: the value-flow
+/// evaluation decides it (an exact pin reads exposed), and a retargeted bare
+/// name would read as a value ripr cannot follow while repair started on it.
+/// A comparison (`x > NAME`), arithmetic, a format spec (`{NAME:.3}`) or any
+/// other use may hide the change for some input, so it is not followed either.
 fn returns_constant_whole(text: &str, name: &str) -> bool {
     let text = text
         .trim()
         .trim_start_matches("return ")
         .trim_end_matches(';')
         .trim();
-    let bare = ["", "Self::", "self::"]
-        .iter()
-        .flat_map(|prefix| {
-            ["", ".to_string()", ".to_owned()", ".into()"]
-                .map(move |suffix| format!("{prefix}{name}{suffix}"))
-        })
-        .any(|candidate| candidate == text);
-    if bare {
-        return true;
-    }
     let Some(inner) = text
         .strip_prefix("format!(")
         .and_then(|rest| rest.strip_suffix(')'))
@@ -188,8 +246,8 @@ fn returns_constant_whole(text: &str, name: &str) -> bool {
     literal.contains(&plain)
         && !literal.replace(&plain, "").contains(&format!("{{{name}"))
         && !literal.contains("{{")
-        && !code_reads(&mask_comments_and_strings(arguments), name)
-        && !arguments.contains(['"', '('])
+        && !contains_word(arguments, name)
+        && !arguments.contains(['"', '(', '='])
 }
 
 /// Whether `body` reads the constant `name`: a bare identifier, `Self::NAME`
@@ -477,21 +535,52 @@ fn declaration_count(masked_source: &str, name: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{declaration_count, function_reads, returns_constant_whole};
+    use super::{
+        body_is_only, declaration_count, function_reads, imports_name, returns_constant_whole,
+    };
+
+    #[test]
+    fn only_a_body_that_is_the_returned_expression_is_followed() {
+        let returned = "format!(\"{GREETING}, {name}\")";
+        for body in [
+            "pub fn greet(name: &str) -> String {\n    format!(\"{GREETING}, {name}\")\n}",
+            "pub fn greet(name: &str) -> String {\n    return format!(\"{GREETING}, {name}\");\n}",
+        ] {
+            assert!(body_is_only(body, returned), "{body}");
+        }
+        for body in [
+            "pub fn greet(name: &str, f: bool) -> String {\n    if f { return format!(\"{GREETING}, {name}\"); }\n    String::new()\n}",
+            "pub fn greet(name: &str) -> String {\n    let _ = 1;\n    format!(\"{GREETING}, {name}\")\n}",
+        ] {
+            assert!(!body_is_only(body, returned), "{body}");
+        }
+    }
+
+    #[test]
+    fn any_use_of_the_name_is_an_import() {
+        assert!(imports_name("use crate::lang::GREETING;", "GREETING"));
+        assert!(imports_name(
+            "mod fr {\n    use crate::{\n        lang::GREETING,\n    };\n}",
+            "GREETING"
+        ));
+        assert!(!imports_name("use crate::lang::GREETING_X;", "GREETING"));
+        assert!(!imports_name("fn reuse() { GREETING }", "GREETING"));
+    }
 
     #[test]
     fn only_a_return_that_carries_the_whole_constant_is_followed() {
         for text in [
-            "GREETING",
-            "Self::GREETING",
-            "GREETING.to_string()",
-            "return GREETING;",
             "format!(\"{GREETING}, {name}\")",
+            "return format!(\"{GREETING}\");",
             "format!(\"{GREETING}{GREETING}\")",
         ] {
             assert!(returns_constant_whole(text, "GREETING"), "{text}");
         }
         for text in [
+            "GREETING",
+            "self::GREETING",
+            "GREETING.to_string()",
+            "return GREETING;",
             "x > GREETING",
             "GREETING + 1",
             "GREETING.len()",
@@ -502,6 +591,9 @@ mod tests {
             "format!(\"\\\"{GREETING}\")",
             "format!(\"{GREETING}{n}\", n = f(1))",
             "Other::GREETING",
+            "Self::GREETING",
+            "format!(\"{GREETING}\", GREETING = name)",
+            "format!(\"{GREETING}{x}\", x = GREETING)",
         ] {
             assert!(!returns_constant_whole(text, "GREETING"), "{text}");
         }
