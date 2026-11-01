@@ -308,7 +308,9 @@ fn nested_owner_records_when_the_enclosing_body_discards_the_result() -> Result<
             "def statement_and_return(n):\n    def a4(m):\n        return m\n    a4(n)\n    return a4(n)\n\n",
             "def statement_in_if(n):\n    def a5(m):\n        return m\n    if (n):\n        a5(n)\n    return 2\n\n",
             "def passed_on(n):\n    def a6(m):\n        return m\n    print(a6(n))\n    return 2\n\n",
-            "def never_called(n):\n    def a7(m):\n        return m\n    return 2\n",
+            "def never_called(n):\n    def a7(m):\n        return m\n    return 2\n\n",
+            "def returns_the_def(n):\n    def a8(m):\n        return m\n    a8(n)\n    return a8\n\n",
+            "def registers_the_def(n):\n    def a9(m):\n        return m\n    a9(n)\n    register(a9)\n    return 2\n",
         ),
     );
     let discarded = |qualified: &str| -> Result<bool, String> {
@@ -332,6 +334,8 @@ fn nested_owner_records_when_the_enclosing_body_discards_the_result() -> Result<
         ("statement_and_return.a4", "one call that is returned"),
         ("passed_on.a6", "a call passed to another call"),
         ("never_called.a7", "no call at all"),
+        ("returns_the_def.a8", "a returned def that a caller can run"),
+        ("registers_the_def.a9", "a def handed to another call"),
     ] {
         assert!(
             !discarded(qualified)?,

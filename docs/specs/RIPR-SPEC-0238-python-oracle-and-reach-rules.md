@@ -1356,7 +1356,9 @@ mutant calibrates the rule; ripr reports only the static shape.
     that is only returned or passed are fail-closed: they give no reach. A direct test call of the nested name is
     unchanged. Reach is a call path; credit needs a result path. When every
     call the enclosing body makes is an expression statement of its own
-    (`inner()` on a line by itself), the nested function's result reaches
+    (`inner()` on a line by itself) and the name is never referenced any
+    other way (`return inner`, `register(inner)` and `x = inner` let a caller
+    run it later), the nested function's result reaches
     nothing the enclosing function returns, so a strong assertion on the
     enclosing function's result gives a changed `return` in the nested body no
     direct return-value credit: the finding is `weakly_exposed` with the

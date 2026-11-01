@@ -261,6 +261,7 @@ fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> Neste
         .join("\n");
     let ident = |ch: char| ch == '_' || ch.is_alphanumeric();
     let mut calls = 0usize;
+    let mut references = 0usize;
     let mut rebinds = false;
     for (idx, _) in executed.match_indices(name) {
         let end = idx + name.len();
@@ -281,14 +282,20 @@ fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> Neste
             )
         {
             rebinds = true;
+        } else {
+            // `return inner`, `register(inner)`, `x = inner`, `@inner`: the
+            // def escapes and a caller may run it later.
+            references += 1;
         }
     }
     let called = calls > 0 && !rebinds;
     // The result is discarded only when every call is a statement of its own
-    // (`inner()` on a line by itself, #12182). A call whose value may be
+    // (`inner()` on a line by itself, #12182) and the name is never referenced
+    // any other way. A call whose value may be
     // returned, bound, passed or asserted leaves the result path open, so the
     // fact stays false and today's reading is kept.
-    let result_discarded = called && calls == discarded_statement_calls(statements, name);
+    let result_discarded =
+        called && references == 0 && calls == discarded_statement_calls(statements, name);
     NestedCallReading {
         called,
         result_discarded,
