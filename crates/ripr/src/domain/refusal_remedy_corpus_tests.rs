@@ -86,14 +86,40 @@ fn corpus() -> Result<Vec<String>, String> {
     Ok(messages)
 }
 
+/// Independent oracle: a backticked `ripr <word>` span the prose uses as an
+/// instruction or fallback, i.e. not merely described (`X is a `ripr check`
+/// finding ID`). A `none` result must have no such span.
 fn stated_ripr_command_span(prose: &str) -> bool {
-    prose.split('`').skip(1).step_by(2).any(|span| {
-        span.trim().strip_prefix("ripr ").is_some_and(|rest| {
+    let mut offset = 0;
+    for (index, part) in prose.split('`').enumerate() {
+        let at = offset;
+        offset += part.len() + 1;
+        if index % 2 == 0 {
+            continue;
+        }
+        let is_command = part.trim().strip_prefix("ripr ").is_some_and(|rest| {
             rest.chars()
                 .next()
                 .is_some_and(|c| c.is_ascii_lowercase() || c == '-')
-        })
-    })
+        });
+        if !is_command {
+            continue;
+        }
+        let before = &prose[..at.saturating_sub(1)];
+        let sentence = before
+            .rsplit([';'])
+            .next()
+            .unwrap_or(before)
+            .to_ascii_lowercase();
+        let described = [" is a ", " is an ", " is the "]
+            .iter()
+            .any(|copula| sentence.contains(copula))
+            && !sentence.contains("run ");
+        if !described {
+            return true;
+        }
+    }
+    false
 }
 
 #[test]
@@ -184,6 +210,21 @@ fn a_reason_only_message_is_never_given_a_guessed_remedy() {
         "ripr could not read `src/lib.rs`: the flag --json was ignored by the internal state",
     );
     assert_eq!(remedy, RefusalRemedy::none());
+}
+
+#[test]
+fn the_oracle_tells_an_instructed_command_from_a_contextual_mention() {
+    // Negative control: a described mention is not a stated command, an
+    // instructed one is.
+    assert!(!stated_ripr_command_span(
+        "`probe:x` is a `ripr check` finding ID"
+    ));
+    assert!(stated_ripr_command_span(
+        "`probe:x` is a finding ID; run `ripr check`"
+    ));
+    assert!(stated_ripr_command_span(
+        "pass the id; if stale, run `ripr doctor`"
+    ));
 }
 
 #[test]

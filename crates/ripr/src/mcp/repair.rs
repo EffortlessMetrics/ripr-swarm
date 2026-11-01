@@ -1215,6 +1215,16 @@ pub(super) mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    #[test]
+    fn unknown_attempt_remedy_leads_with_refresh_not_the_conditional_mention() {
+        let value = unknown_attempt("repair-attempt-x", true).value();
+        assert_eq!(value["remedy"]["tool"], "ripr_refresh", "{value}");
+        // The no-root variant states a real command and a retry.
+        let rootless = unknown_attempt("repair-attempt-x", false).value();
+        assert_eq!(rootless["remedy"]["kind"], "command", "{rootless}");
+        assert_eq!(rootless["remedy"]["retry_safe"], true, "{rootless}");
+    }
+
     fn output(
         kind: AnalysisOutcomeKind,
         findings: &[crate::domain::Finding],

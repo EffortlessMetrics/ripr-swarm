@@ -294,8 +294,14 @@ The field set is fixed; absent facts are `null` or empty, never omitted:
   tells the reader to pass flags and names no command or tool) or `none` (it
   states no machine-readable remedy). `none` is explicit: the human message
   may still carry a prose step, but no command, tool or flag is invented.
-- `command` — the first stated command, verbatim; `alternatives` — further
-  distinct stated commands in message order (at most three).
+- `command` — the primary stated command, verbatim. The primary step is the
+  instructed one, not the first mention: a fallback after an `if`/`unless`/
+  `when` condition ranks below an unconditional step, and a mention that only
+  describes (`X is a `ripr check` finding ID`) or sits in an `if` premise is
+  never used. When the instructed step is an MCP tool, `kind` is `mcp_tool`
+  and a conditional command is listed in `alternatives`, not as `command`.
+  `alternatives` — further distinct stated commands in message order (at most
+  three).
 - `tool` — the first stated MCP tool name, verbatim.
 - `flags` — `--flag` tokens the message tells the reader to pass, add, use or
   repeat (flags already inside `command` are not repeated).

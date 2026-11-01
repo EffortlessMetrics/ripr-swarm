@@ -126,41 +126,76 @@ impl RefusalRemedy {
     }
 
     /// Derive the remedy from refusal prose. Total and side-effect free.
+    ///
+    /// The primary step is the instructed one, not the first mention: a
+    /// conditional fallback (`if it persists, run ...`) or an explanatory
+    /// mention (`X is a `ripr check` finding ID`) never becomes the primary
+    /// remedy while an instructed step exists. See [`Role`].
     pub(crate) fn from_prose(prose: &str) -> Self {
-        let mut commands = stated_commands(prose);
-        let command = if commands.is_empty() {
-            None
-        } else {
-            Some(commands.remove(0))
+        let commands = stated_mentions(prose, is_ripr_command);
+        let tools = stated_tool_mentions(prose);
+        let pick = |mentions: &[Mention], role: Role| -> Vec<String> {
+            let mut out: Vec<String> = Vec::new();
+            for mention in mentions.iter().filter(|mention| mention.role == role) {
+                if !out.contains(&mention.text) {
+                    out.push(mention.text.clone());
+                }
+            }
+            out
         };
-        commands.truncate(MAX_ALTERNATIVES);
-        let tool = stated_tool(prose);
+        let instructed_commands = pick(&commands, Role::Instructed);
+        let conditional_commands = pick(&commands, Role::Conditional);
+        let instructed_tools = pick(&tools, Role::Instructed);
+        let conditional_tools = pick(&tools, Role::Conditional);
+
+        // Precedence: an instructed step beats any conditional one; within a
+        // role a command beats a tool. Explanatory mentions are never used.
+        let (kind, mut command_pool, tool) = if !instructed_commands.is_empty() {
+            let mut pool = instructed_commands;
+            pool.extend(conditional_commands);
+            (RemedyKind::Command, pool, instructed_tools.first().cloned())
+        } else if let Some(tool) = instructed_tools.first() {
+            (
+                RemedyKind::McpTool,
+                conditional_commands,
+                Some(tool.clone()),
+            )
+        } else if !conditional_commands.is_empty() {
+            (
+                RemedyKind::Command,
+                conditional_commands,
+                conditional_tools.first().cloned(),
+            )
+        } else if let Some(tool) = conditional_tools.first() {
+            (RemedyKind::McpTool, Vec::new(), Some(tool.clone()))
+        } else {
+            (RemedyKind::None, Vec::new(), None)
+        };
+        let command = if kind == RemedyKind::Command && !command_pool.is_empty() {
+            Some(command_pool.remove(0))
+        } else {
+            None
+        };
+        // A command kind keeps the tool only as extra information; a tool
+        // kind keeps conditional commands as alternatives, never as primary.
+        command_pool.truncate(MAX_ALTERNATIVES);
         let flags = stated_flags(prose, command.as_deref());
-        let fill_in = command.as_deref().map(placeholders).unwrap_or_default();
-        let kind = if command.is_some() {
-            RemedyKind::Command
-        } else if tool.is_some() {
-            RemedyKind::McpTool
-        } else if !flags.is_empty() {
+        let kind = if kind == RemedyKind::None && !flags.is_empty() {
             RemedyKind::Flags
         } else {
-            RemedyKind::None
+            kind
         };
+        let fill_in = command.as_deref().map(placeholders).unwrap_or_default();
         Self {
             kind,
             command,
-            alternatives: commands,
+            alternatives: command_pool,
             tool,
             flags,
             fill_in,
             retry_safe: retry_safe(prose),
         }
     }
-}
-
-/// Backticked spans of `prose`, in order.
-fn backtick_spans(prose: &str) -> impl Iterator<Item = &str> {
-    prose.split('`').skip(1).step_by(2)
 }
 
 /// True when `span` is a runnable ripr command: `ripr` followed by a space
@@ -181,23 +216,122 @@ fn is_ripr_command(span: &str) -> bool {
     subcommand_shaped && !span.contains('\n') && span.len() <= MAX_COMMAND_LEN
 }
 
-fn stated_commands(prose: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for span in backtick_spans(prose) {
-        let span = span.trim();
-        if is_ripr_command(span) && !out.iter().any(|seen| seen == span) {
-            out.push(span.to_string());
+/// How the prose uses one mentioned command or tool.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Role {
+    /// The reader is told to do it (the default for a mention).
+    Instructed,
+    /// A fallback inside an `if`/`unless`/`when` clause.
+    Conditional,
+    /// Described, not requested: `X is a `ripr check` finding ID`.
+    Explanatory,
+}
+
+struct Mention {
+    text: String,
+    role: Role,
+}
+
+/// Words that make the text after a copula an instruction again
+/// (`... is stale, so run `ripr x``).
+const IMPERATIVE_WORDS: &[&str] = &[
+    "run", "call", "use", "try", "retry", "rerun", "re-run", "pass", "add", "execute", "see",
+    "with", "via", "start", "restart", "then",
+];
+
+const COPULAS: &[&str] = &[
+    " is a ",
+    " is an ",
+    " is the ",
+    " are a ",
+    " are the ",
+    " are ",
+];
+
+/// Text of the clause that precedes byte offset `at`. Clauses end at `;` and
+/// at `. ` outside backticks, so a `.` inside a command never splits one.
+fn clause_prefix(prose: &str, at: usize) -> &str {
+    let mut start = 0;
+    let mut in_tick = false;
+    let mut chars = prose.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if index >= at {
+            break;
+        }
+        match ch {
+            '`' => in_tick = !in_tick,
+            ';' if !in_tick => start = index + 1,
+            '.' if !in_tick && chars.peek().is_none_or(|(_, next)| next.is_whitespace()) => {
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    &prose[start.min(at)..at]
+}
+
+fn role_of(prefix: &str) -> Role {
+    let lower = prefix.to_ascii_lowercase();
+    if let Some(cond) = ["if", "unless", "when", "otherwise"]
+        .iter()
+        .filter_map(|word| phrase_position(&lower, word))
+        .max()
+    {
+        // After the condition's comma the mention is the conditional step;
+        // before it the mention is part of the premise (`if the id came from
+        // ripr_x, ...`), which describes and does not instruct.
+        return if lower[cond..].contains([',', ':']) {
+            Role::Conditional
+        } else {
+            Role::Explanatory
+        };
+    }
+    let after_copula = COPULAS
+        .iter()
+        .filter_map(|copula| lower.rfind(copula).map(|at| at + copula.len()))
+        .max();
+    match after_copula {
+        Some(after)
+            if !IMPERATIVE_WORDS
+                .iter()
+                .any(|word| contains_phrase(&lower[after..], word)) =>
+        {
+            Role::Explanatory
+        }
+        _ => Role::Instructed,
+    }
+}
+
+/// Backticked spans accepted by `accept`, with the role the prose gives them.
+fn stated_mentions(prose: &str, accept: fn(&str) -> bool) -> Vec<Mention> {
+    let mut out = Vec::new();
+    let mut offset = 0;
+    for (index, part) in prose.split('`').enumerate() {
+        let at = offset;
+        offset += part.len() + 1;
+        if index % 2 == 0 {
+            continue;
+        }
+        let span = part.trim();
+        if accept(span) {
+            // `at` is the first byte inside the span; the tick sits before it.
+            let prefix = clause_prefix(prose, at.saturating_sub(1));
+            out.push(Mention {
+                text: span.to_string(),
+                role: role_of(prefix),
+            });
         }
     }
     out
 }
 
-fn stated_tool(prose: &str) -> Option<String> {
+fn stated_tool_mentions(prose: &str) -> Vec<Mention> {
     let bytes = prose.as_bytes();
+    let identifier_byte = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let mut out = Vec::new();
     let mut from = 0;
     while let Some(found) = prose[from..].find("ripr_") {
         let at = from + found;
-        let identifier_byte = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
         let boundary_before = at == 0 || !identifier_byte(bytes[at - 1]);
         let mut end = at + "ripr_".len();
         while end < bytes.len()
@@ -210,11 +344,14 @@ fn stated_tool(prose: &str) -> Option<String> {
         let name = prose[at..end].trim_end_matches('_');
         let boundary_after = end >= bytes.len() || !identifier_byte(bytes[end]);
         if boundary_before && boundary_after && name.len() > "ripr_".len() {
-            return Some(name.to_string());
+            out.push(Mention {
+                text: name.to_string(),
+                role: role_of(clause_prefix(prose, at)),
+            });
         }
         from = end.max(at + 1);
     }
-    None
+    out
 }
 
 fn is_word_byte(byte: u8) -> bool {
@@ -248,7 +385,7 @@ fn stated_flags(prose: &str, command: Option<&str>) -> Vec<String> {
                 .get(2)
                 .is_some_and(|byte| byte.is_ascii_lowercase());
         // `---` rules and mid-word dashes are not flags.
-        let boundary_before = at == 0 || !is_word_byte(bytes[at - 1]) || bytes[at - 1] == b'`';
+        let boundary_before = at == 0 || !is_word_byte(bytes[at - 1]);
         if !starts_ok || !boundary_before {
             continue;
         }
@@ -305,21 +442,28 @@ fn placeholders(command: &str) -> Vec<String> {
     out
 }
 
-/// Whole-word match of `phrase` in lowercase `text`.
-fn contains_phrase(text: &str, phrase: &str) -> bool {
+/// Byte position of the last whole-word match of `phrase` in lowercase `text`.
+fn phrase_position(text: &str, phrase: &str) -> Option<usize> {
     let bytes = text.as_bytes();
+    let word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
     let mut from = 0;
+    let mut last = None;
     while let Some(found) = text[from..].find(phrase) {
         let at = from + found;
         let end = at + phrase.len();
-        let before_ok = at == 0 || !bytes[at - 1].is_ascii_alphanumeric();
-        let after_ok = end >= bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        let before_ok = at == 0 || !word(bytes[at - 1]);
+        let after_ok = end >= bytes.len() || !word(bytes[end]);
         if before_ok && after_ok {
-            return true;
+            last = Some(at);
         }
         from = at + 1;
     }
-    false
+    last
+}
+
+/// Whole-word match of `phrase` in lowercase `text`; `_` is a word character.
+fn contains_phrase(text: &str, phrase: &str) -> bool {
+    phrase_position(text, phrase).is_some()
 }
 
 fn retry_safe(prose: &str) -> Option<bool> {
@@ -420,6 +564,59 @@ mod tests {
         assert_eq!(silent.retry_safe, None);
         let lookalike = RefusalRemedy::from_prose("the field is retryable");
         assert_eq!(lookalike.retry_safe, None);
+    }
+
+    #[test]
+    fn conditional_fallback_never_outranks_the_instructed_tool() {
+        // mcp/workspace.rs check_retry_recovery
+        let remedy = RefusalRemedy::from_prose(
+            "retry ripr_refresh with {\"base\":\"main\"}; if the failure persists, run `ripr check --root .` outside MCP for the full diagnostic",
+        );
+        assert_eq!(remedy.kind, RemedyKind::McpTool, "{remedy:?}");
+        assert_eq!(remedy.tool.as_deref(), Some("ripr_refresh"));
+        assert_eq!(remedy.command, None);
+        assert_eq!(remedy.alternatives, vec!["ripr check --root .".to_string()]);
+    }
+
+    #[test]
+    fn explanatory_mention_is_not_the_primary_command() {
+        // cli agent.rs unknown_seam_id_hint for a gap-shaped id
+        let remedy = RefusalRemedy::from_prose(
+            "`gap:...` is a `ripr check` canonical gap ID, not a seam ID; `ripr repair <gap-id> --root .` resolves it to its repair seam, or run `ripr pilot --root .` to list current seam IDs",
+        );
+        assert_eq!(remedy.kind, RemedyKind::Command);
+        assert_eq!(
+            remedy.command.as_deref(),
+            Some("ripr repair <gap-id> --root .")
+        );
+        assert_eq!(remedy.alternatives, vec!["ripr pilot --root .".to_string()]);
+        assert_eq!(remedy.fill_in, vec!["<gap-id>".to_string()]);
+        // Only an explanatory mention: explicit none, never a guess.
+        let only = RefusalRemedy::from_prose("`probe:x` is a `ripr check` finding ID");
+        assert_eq!(only, RefusalRemedy::none());
+    }
+
+    #[test]
+    fn conditional_tool_clause_does_not_lead_the_steps() {
+        // mcp/repair.rs unknown_attempt
+        let remedy = RefusalRemedy::from_prose(
+            "if the id came from ripr_prepare_repair, call ripr_refresh and ripr_prepare_repair again to create a current transaction; durable attempts are listed by ripr_list_repair_attempts",
+        );
+        assert_eq!(remedy.tool.as_deref(), Some("ripr_refresh"), "{remedy:?}");
+    }
+
+    #[test]
+    fn a_lone_conditional_step_is_still_reported_not_dropped() {
+        let remedy = RefusalRemedy::from_prose("if it persists, run `ripr doctor`");
+        assert_eq!(remedy.command.as_deref(), Some("ripr doctor"));
+    }
+
+    #[test]
+    fn underscore_is_a_word_character_for_retry_words() {
+        assert_eq!(
+            RefusalRemedy::from_prose("see the ripr_retry_budget field").retry_safe,
+            None
+        );
     }
 
     #[test]
