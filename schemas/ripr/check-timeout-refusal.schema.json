@@ -94,7 +94,30 @@
         "basis": { "type": "string", "minLength": 1 },
         "downstream_consumable": { "const": false },
         "message": { "type": "string", "minLength": 1 },
-        "repair_route": { "type": "string", "minLength": 1 }
+        "repair_route": { "type": "string", "minLength": 1 },
+        "remedy": { "$ref": "#/$defs/refusal_remedy" }
+      }
+    },
+    "refusal_remedy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "command",
+        "alternatives",
+        "tool",
+        "flags",
+        "fill_in",
+        "retry_safe"
+      ],
+      "properties": {
+        "kind": { "enum": ["command", "mcp_tool", "flags", "none"] },
+        "command": { "type": ["string", "null"], "minLength": 1 },
+        "alternatives": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "tool": { "type": ["string", "null"], "minLength": 1 },
+        "flags": { "type": "array", "items": { "type": "string", "pattern": "^--[a-z]" } },
+        "fill_in": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "retry_safe": { "type": ["boolean", "null"] }
       }
     },
     "input_context": {

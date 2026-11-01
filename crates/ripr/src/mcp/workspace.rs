@@ -300,6 +300,7 @@ impl AttemptFailure {
             "code": self.code,
             "detail": self.detail,
             "recovery": self.recovery,
+            "remedy": crate::domain::RefusalRemedy::from_prose(&self.recovery),
             "data": self.data,
         })
     }

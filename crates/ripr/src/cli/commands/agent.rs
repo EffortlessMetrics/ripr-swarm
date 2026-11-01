@@ -2097,6 +2097,12 @@ fn render_repair_after_refusal_json(
         "attempt_id": attempt_id,
         "error": error.trim(),
         "narration": narration,
+        // The next step the error and its recovery narration state in prose.
+        "remedy": crate::domain::RefusalRemedy::from_prose(&format!(
+            "{}\n{}",
+            error.trim(),
+            narration.join("\n")
+        )),
     });
     serde_json::to_string_pretty(&document)
         .map(|rendered| format!("{rendered}\n"))

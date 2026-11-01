@@ -2023,3 +2023,34 @@ async fn argument_errors_are_typed_tool_failures_and_unknown_tools_stay_protocol
     }
     Ok(())
 }
+
+#[test]
+fn typed_failure_carries_the_remedy_its_recovery_prose_states() {
+    // Positive: the recovery names a tool and a retry.
+    let stated = workspace::AttemptFailure::new(
+        "item_not_found",
+        "no canonical item gap:x exists",
+        "list the current canonical ids with ripr_list_gaps, then retry",
+    )
+    .value();
+    assert_eq!(stated["remedy"]["kind"], "mcp_tool", "{stated}");
+    assert_eq!(stated["remedy"]["tool"], "ripr_list_gaps", "{stated}");
+    assert_eq!(stated["remedy"]["retry_safe"], true, "{stated}");
+    // Negative: a recovery that names no route is an explicit none, and a
+    // recovery that says repeating changes nothing is not retry-safe.
+    let silent =
+        workspace::AttemptFailure::new("item_not_found", "gone", "read the detail").value();
+    assert_eq!(silent["remedy"]["kind"], "none", "{silent}");
+    assert_eq!(
+        silent["remedy"]["tool"],
+        serde_json::Value::Null,
+        "{silent}"
+    );
+    let pointless = workspace::AttemptFailure::new(
+        "item_not_found",
+        "gone",
+        "calling it again changes nothing; read next.static_limit",
+    )
+    .value();
+    assert_eq!(pointless["remedy"]["retry_safe"], false, "{pointless}");
+}
