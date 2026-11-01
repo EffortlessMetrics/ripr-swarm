@@ -8,6 +8,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// User-facing grip phrase from `GRIPPED_SPOT_REASON` in `app/task_first.rs`.
 const EXISTING_TESTS_ALREADY_CHECK: &str = "existing tests already check it";
 
+fn clear_git_selectors(command: &mut Command) {
+    for key in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+    ] {
+        command.env_remove(key);
+    }
+}
+
 struct Repo(PathBuf);
 
 impl Repo {
@@ -18,13 +29,14 @@ impl Repo {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
+        let _ = std::fs::remove_dir_all(&root);
+        let repo = Self(root.clone());
         let fixture = fixture_dir();
         std::fs::create_dir_all(root.join("src")).map_err(|e| e.to_string())?;
         std::fs::copy(fixture.join("Cargo.toml"), root.join("Cargo.toml"))
             .map_err(|e| e.to_string())?;
         let mut lib =
             std::fs::read_to_string(fixture.join("src/lib.rs.txt")).map_err(|e| e.to_string())?;
-        let repo = Self(root);
         repo.write("src/lib.rs", &lib)?;
         repo.git(&["-c", "init.templateDir=", "init", "-q"])?;
         repo.git(&["config", "user.email", "t@example.com"])?;
@@ -43,7 +55,9 @@ impl Repo {
     }
 
     fn git(&self, args: &[&str]) -> Result<(), String> {
-        let output = Command::new("git")
+        let mut command = Command::new("git");
+        clear_git_selectors(&mut command);
+        let output = command
             .current_dir(&self.0)
             .args(args)
             .output()
@@ -61,10 +75,9 @@ impl Repo {
     fn ripr(&self, args: &[&str]) -> Result<Output, String> {
         let mut attempt = 0;
         loop {
-            let launched = Command::new(env!("CARGO_BIN_EXE_ripr"))
-                .current_dir(&self.0)
-                .args(args)
-                .output();
+            let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+            clear_git_selectors(&mut command);
+            let launched = command.current_dir(&self.0).args(args).output();
             match launched {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound && attempt < 20 => {
                     attempt += 1;
