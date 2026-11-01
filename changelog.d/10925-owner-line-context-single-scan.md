@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr check` on TypeScript/JavaScript workspaces now runs the related-test relation scan once per owner instead of twice. The related mock paths used for the `mocked_module` limit are projected from the candidates the owner line context already holds, rather than from a second identical scan. On a warm zod 680d19f7 run (`ripr check --base HEAD~10 --mode draft --json --quiet`, callgrind) total instructions fell from 19,498,304,302 to 12,984,980,620 with byte-identical JSON on bases HEAD~1 and HEAD~10 (#10925).

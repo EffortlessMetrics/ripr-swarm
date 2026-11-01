@@ -7653,10 +7653,164 @@ fn collect_related_mock_paths_dedups_across_tests_in_same_file() {
     let scans = related_tests::RELATED_CANDIDATE_SCANS.with(|count| count.get()) - before;
     assert_eq!(scans, 1, "owner_line_context must scan candidates once");
     assert_eq!(context.mock_paths, paths);
-    assert_eq!(
-        mock_paths_from_candidates(&context.related_candidates),
-        paths
+    // The workspace-root branch also runs the unresolved-ownership scan; it
+    // must enumerate through the relation index, not a second candidate scan.
+    let root = PathBuf::from("/ripr-no-such-workspace");
+    let before = related_tests::RELATED_CANDIDATE_SCANS.with(|count| count.get());
+    let rooted = owner_line_context(
+        &owner,
+        &tests,
+        Some(root.as_path()),
+        &ReExportIndex::empty(),
+        &RelationIndex::empty(),
+        None,
     );
+    let scans = related_tests::RELATED_CANDIDATE_SCANS.with(|count| count.get()) - before;
+    assert_eq!(
+        scans, 1,
+        "rooted owner_line_context must scan candidates once"
+    );
+    assert_eq!(rooted.mock_paths, paths);
+}
+
+/// Independent reference for the mock-path projection: the original
+/// collector loop, inlined (candidate order, `mocks_in_file` order, dedup with
+/// `iter().any`, push in order).
+fn reference_mock_paths(candidates: &[TypeScriptRelatedCandidate<'_>]) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    for candidate in candidates {
+        for path in &candidate.test.mocks_in_file {
+            if !paths.iter().any(|existing| existing == path) {
+                paths.push(path.clone());
+            }
+        }
+    }
+    paths
+}
+
+#[test]
+fn mock_paths_projection_matches_reference_loop_in_order() {
+    let owner = TypeScriptOwner {
+        name: "applyDiscount".to_string(),
+        file: PathBuf::from("src/lib.ts"),
+        start_line: 1,
+        end_line: 5,
+        owner_kind: OwnerKind::Function,
+        class_name: None,
+        decorated: false,
+        exported_as_default: false,
+        class_default_export: false,
+        default_object_member: false,
+        commonjs_default_export: false,
+        commonjs_whole_function: false,
+        module_entries: Vec::new(),
+        arity: None,
+        params: Vec::new(),
+        source_text: None,
+        imports: Vec::new(),
+        method_kind: TypeScriptMethodKind::Ordinary,
+    };
+    let make = |name: &str, line: usize, mocks: &[&str]| TypeScriptTest {
+        name: name.to_string(),
+        local_name: name.to_string(),
+        describe_names: Vec::new(),
+        file: PathBuf::from("tests/lib.test.ts"),
+        line,
+        reach_body_text: None,
+        body_text: "applyDiscount(1, 2)".to_string(),
+        assertions: Vec::new(),
+        mocks_in_file: mocks
+            .iter()
+            .map(|path| path.to_string())
+            .collect::<Vec<_>>()
+            .into(),
+        unstable_member_roots_in_file: Default::default(),
+        scope_bindings: Default::default(),
+        identity_helpers_in_file: Default::default(),
+        default_member_only_locals_in_file: Default::default(),
+        written_locals_in_file: Default::default(),
+        member_replacements_in_file: Default::default(),
+        mock_factories_in_file: Default::default(),
+        mock_spread_sources_in_file: Default::default(),
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
+        conditional_registration: None,
+        factory_call_line: None,
+        setup_hook_bodies: Vec::new(),
+        imports_in_file: vec![TypeScriptImport {
+            source: "../src/lib".to_string(),
+            imported: Some("applyDiscount".to_string()),
+            local: "applyDiscount".to_string(),
+            namespace: false,
+        }]
+        .into(),
+    };
+    let candidates_of = |tests: &[TypeScriptTest]| {
+        related_test_candidates(
+            &owner,
+            tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+            &RelationIndex::empty(),
+        )
+        .iter()
+        .map(|candidate| candidate.test.name.clone())
+        .collect::<Vec<_>>()
+    };
+
+    // Overlapping, differently ordered lists across three candidates.
+    let tests = vec![
+        make("alpha", 1, &["./a", "./b"]),
+        make("beta", 2, &["./b", "./c", "./a"]),
+        make("gamma", 3, &["./d"]),
+    ];
+    assert_eq!(candidates_of(&tests), ["alpha", "beta", "gamma"]);
+    let candidates = related_test_candidates(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
+    let expected: Vec<String> = ["./a", "./b", "./c", "./d"]
+        .iter()
+        .map(|path| path.to_string())
+        .collect();
+    assert_eq!(reference_mock_paths(&candidates), expected);
+    assert_eq!(mock_paths_from_candidates(&candidates), expected);
+    let context = owner_line_context(
+        &owner,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        &RelationIndex::empty(),
+        None,
+    );
+    assert_eq!(context.mock_paths, expected);
+
+    // No test declares a mock: the projection is empty.
+    let bare = vec![make("alpha", 1, &[]), make("beta", 2, &[])];
+    let candidates = related_test_candidates(
+        &owner,
+        &bare,
+        None,
+        &ReExportIndex::empty(),
+        None,
+        &RelationIndex::empty(),
+    );
+    assert_eq!(candidates.len(), 2, "fixture must relate both tests");
+    assert!(reference_mock_paths(&candidates).is_empty());
+    assert!(mock_paths_from_candidates(&candidates).is_empty());
+    let context = owner_line_context(
+        &owner,
+        &bare,
+        None,
+        &ReExportIndex::empty(),
+        &RelationIndex::empty(),
+        None,
+    );
+    assert!(context.mock_paths.is_empty());
 }
 
 #[test]

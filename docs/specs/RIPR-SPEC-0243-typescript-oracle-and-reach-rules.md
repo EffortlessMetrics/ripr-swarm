@@ -1154,7 +1154,7 @@ with control flow stays `no_static_path` exactly as before.
 `dynamic_dispatch`, `metaprogramming`, `decorator_indirection`,
 `mocked_module`, then `missing_import_graph`. `mocked_module` reads the
 mocks of every related test the mock collector selects
-(`collect_related_mock_paths`), including heuristic-only links. The limit
+(`mock_paths_from_candidates`), including heuristic-only links. The limit
 is appended to `missing` after the class is chosen. Actionability reads
 `gap_state: static_limitation` before the `already_observed` branch
 (RIPR-SPEC-0087 F10); RIPR-SPEC-0087 orders actionability only and says
@@ -2282,7 +2282,7 @@ keys); do not take the next number.
   (`static_limit_for_change`, `imported_symbol_call`,
   `named_limitation_for_static_limit`).
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
-  `collect_related_mock_paths`, unchanged for the advisory limit; rule 8
+  `mock_paths_from_candidates`, unchanged for the advisory limit; rule 8
   reads mock paths per test file.
 - #8569: `crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs`
   reads the enclosing conditions and evaluates literal call inputs;
