@@ -99,12 +99,14 @@ fn has_directory_component(path: &Path, names: &[&str]) -> bool {
     })
 }
 
-// Directory prune authority for the workspace walk: a single table owned by
-// `config::typescript` (`TYPESCRIPT_EXCLUDED_DIRS`), shared with the diff
-// loop's pre-count refusal (#3743). The walk must prune exactly the trees
-// the diff loop refuses, otherwise the denominator counts files no facts
-// can back, or facts exist for files the denominator hides.
-// `*.generated.*` files are additionally skipped at the file level below.
+// Directory prune authority for the workspace walk: the shared path helper
+// owned by `config::typescript` (`is_detectable_excluded_typescript_path`,
+// covering `TYPESCRIPT_EXCLUDED_DIRS` plus path-shaped reference-output
+// trees), shared with the diff loop's pre-count refusal (#3743, #11984
+// item 2). The walk must prune exactly the trees the diff loop refuses,
+// otherwise the denominator counts files no facts can back, or facts exist
+// for files the denominator hides. `*.generated.*` files are additionally
+// skipped at the file level below.
 
 /// Env override for [`DEFAULT_TS_MAX_WORKSPACE_FILES`].
 pub(crate) const TS_MAX_WORKSPACE_FILES_ENV: &str = "RIPR_TS_MAX_WORKSPACE_FILES";
@@ -251,14 +253,12 @@ pub(crate) fn visit_workspace_with_handwritten(
                 .file_name()
                 .and_then(|name| name.to_str())
                 .unwrap_or_default();
+            let relative = path.strip_prefix(root).unwrap_or(&path);
             // `*.generated.*` files are additionally skipped at the file level
             // below. A declared hand-written file keeps an excluded-name
             // ancestor reachable instead (#7386).
             if is_typescript_dir_pruned_from_discovery(name)
-                && !crate::config::declared_typescript_handwritten_under(
-                    handwritten,
-                    path.strip_prefix(root).unwrap_or(&path),
-                )
+                && !crate::config::declared_typescript_handwritten_under(handwritten, relative)
             {
                 continue;
             }
@@ -287,6 +287,18 @@ pub(crate) fn visit_workspace_with_handwritten(
                 continue;
             }
             if file_type.is_dir() {
+                // Path-shaped reference-output trees (`baselines/reference`,
+                // `baselines/local`) share `is_detectable_excluded_typescript_path`
+                // with the diff loop (#11984 item 2). Name-table dirs already
+                // returned above; this catches consecutive-component trees the
+                // name table must not list (a bare `baselines` is ordinary
+                // source). A declared hand-written descendant keeps the
+                // ancestor reachable (#7386).
+                if crate::config::is_detectable_excluded_typescript_path(relative)
+                    && !crate::config::declared_typescript_handwritten_under(handwritten, relative)
+                {
+                    continue;
+                }
                 stack.push(path);
             } else if file_type.is_file() && is_candidate_workspace_source(&path) {
                 candidates += 1;
@@ -295,7 +307,7 @@ pub(crate) fn visit_workspace_with_handwritten(
                     stop = true;
                     break;
                 }
-                let relative = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+                let relative = relative.to_path_buf();
                 if !crate::config::is_detectable_excluded_typescript_path(&relative)
                     || crate::config::is_declared_handwritten_typescript_path(
                         handwritten,
@@ -820,6 +832,9 @@ mod tests {
             "vendor/lib.ts",
             "node_modules/pkg/index.ts",
             "target/debug/build.ts",
+            "src/__snapshots__/keep.ts",
+            "tests/baselines/reference/case.js",
+            "tests/baselines/local/case.js",
         ] {
             workspace.write(generated, "export const generated = 1;\n");
         }
@@ -830,6 +845,136 @@ mod tests {
             vec![PathBuf::from("src/keep.ts")],
             "generated/vendor dirs must be excluded; got {:?}",
             scan.files
+        );
+    }
+
+    /// #11984 item 2: compiler `tests/baselines/reference` (and `local`)
+    /// trees are candidate `.js` sources. Without a path-shaped prune they
+    /// consume `RIPR_TS_MAX_WORKSPACE_FILES` before `src/` is indexed.
+    #[test]
+    fn workspace_walk_prunes_baselines_reference_before_the_source_cap() {
+        let workspace = TempWorkspace::new("baselines-prune");
+        workspace.write("src/a.ts", "export const a = 1;\n");
+        workspace.write(
+            "src/a.test.ts",
+            "import { a } from './a';\ntest('a', () => { expect(a).toBe(1); });\n",
+        );
+        let baseline_count = 40usize;
+        for i in 0..baseline_count {
+            workspace.write(
+                &format!("tests/baselines/reference/case{i}.js"),
+                "export const baseline = 1;\n",
+            );
+            workspace.write(
+                &format!("tests/baselines/local/case{i}.js"),
+                "export const local = 1;\n",
+            );
+        }
+        let cap = 5usize;
+        assert!(
+            baseline_count + 2 > cap,
+            "premise: baseline .js files would exceed the candidate cap without the prune"
+        );
+        let scan = visit_workspace_with_handwritten(&workspace.0, cap, &[]);
+        assert!(
+            !scan.truncated,
+            "pruned baselines/reference and baselines/local must not consume the source cap; files={:?} entries={}",
+            scan.files,
+            LAST_WALK_TOTAL_ENTRIES.get()
+        );
+        assert_eq!(
+            scan.files,
+            vec![PathBuf::from("src/a.test.ts"), PathBuf::from("src/a.ts")],
+            "the walk must index src and skip reference output; got {:?}",
+            scan.files
+        );
+        assert!(
+            LAST_WALK_TOTAL_ENTRIES.get() < baseline_count,
+            "the walk must not visit pruned reference-output children; entries={}",
+            LAST_WALK_TOTAL_ENTRIES.get()
+        );
+    }
+
+    /// A declared hand-written file under a pruned reference-output tree
+    /// keeps that ancestor reachable (#7386); siblings stay skipped.
+    #[test]
+    fn declared_handwritten_file_under_pruned_reference_output_stays_reachable() {
+        let workspace = TempWorkspace::new("handwritten-baseline");
+        workspace.write("src/a.ts", "export const a = 1;\n");
+        workspace.write(
+            "tests/baselines/reference/keep.ts",
+            "export const keep = 1;\n",
+        );
+        workspace.write(
+            "tests/baselines/reference/skip.ts",
+            "export const skip = 1;\n",
+        );
+        let declared = vec!["tests/baselines/reference/keep.ts".to_string()];
+        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &declared);
+        assert!(!scan.truncated, "scan must not trip the cap");
+        assert_eq!(
+            scan.files,
+            vec![
+                PathBuf::from("src/a.ts"),
+                PathBuf::from("tests/baselines/reference/keep.ts"),
+            ],
+            "declared file under a pruned tree must stay reachable; got {:?}",
+            scan.files
+        );
+    }
+
+    /// A plain `src/baselines/foo.ts` (no `reference`/`local` child) is
+    /// ordinary source. A bare `baselines` name is too broad to prune.
+    #[test]
+    fn workspace_walk_indexes_plain_baselines_source_without_reference_or_local_child() {
+        let workspace = TempWorkspace::new("baselines-source");
+        workspace.write("src/a.ts", "export const a = 1;\n");
+        workspace.write("src/baselines/foo.ts", "export const foo = 1;\n");
+        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
+        assert!(!scan.truncated, "scan must not trip the cap");
+        assert_eq!(
+            scan.files,
+            vec![
+                PathBuf::from("src/a.ts"),
+                PathBuf::from("src/baselines/foo.ts"),
+            ],
+            "plain baselines source must stay indexed; got {:?}",
+            scan.files
+        );
+    }
+
+    /// Jest `__snapshots__` directories never hold TS/JS sources. Their
+    /// entries must not consume the candidate cap or the total-entry
+    /// backstop.
+    #[test]
+    fn workspace_walk_prunes_snapshots_so_they_do_not_count_toward_the_cap() {
+        let workspace = TempWorkspace::new("snapshots-prune");
+        workspace.write("src/a.ts", "export const a = 1;\n");
+        let cap = 2usize;
+        let backstop = cap.saturating_mul(TS_WORKSPACE_TOTAL_ENTRY_BACKSTOP_MULTIPLIER);
+        for i in 0..(backstop + 5) {
+            workspace.write(
+                &format!("src/__snapshots__/case{i}.ts"),
+                "export const snap = 1;\n",
+            );
+        }
+        let scan = visit_workspace_with_handwritten(&workspace.0, cap, &[]);
+        assert!(
+            !scan.truncated,
+            "__snapshots__ must not consume the candidate cap or the entry backstop; files={:?} entries={}",
+            scan.files,
+            LAST_WALK_TOTAL_ENTRIES.get()
+        );
+        assert_eq!(
+            scan.files,
+            vec![PathBuf::from("src/a.ts")],
+            "__snapshots__ content must not be indexed; got {:?}",
+            scan.files
+        );
+        assert!(
+            LAST_WALK_TOTAL_ENTRIES.get() < backstop,
+            "the walk must prune __snapshots__ before reading its children; entries={}",
+            LAST_WALK_TOTAL_ENTRIES.get()
         );
     }
 

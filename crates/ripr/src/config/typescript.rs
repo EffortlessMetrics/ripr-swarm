@@ -18,10 +18,15 @@ use std::path::Path;
 /// - build and coverage output: `dist`, `build`, `out`, `coverage`;
 /// - toolchain caches and generated sites: `.next`, `.cache`;
 /// - vendored third-party trees: `vendor`;
-/// - generated-output directories: `__generated__`.
+/// - generated-output directories: `__generated__`;
+/// - Jest snapshot output: `__snapshots__` (never TypeScript/JavaScript
+///   sources; #11984 item 2).
 ///
 /// Matching is an exact component comparison, not a substring, so
-/// `src/build.ts` and `src/vendor.ts` stay ordinary source.
+/// `src/build.ts` and `src/vendor.ts` stay ordinary source. Compiler
+/// reference-output trees (`baselines/reference`, `baselines/local`) are
+/// path-shaped and live beside this table: a bare `baselines` name is too
+/// broad to add here.
 pub(crate) const TYPESCRIPT_EXCLUDED_DIRS: &[&str] = &[
     ".git",
     "target",
@@ -36,7 +41,47 @@ pub(crate) const TYPESCRIPT_EXCLUDED_DIRS: &[&str] = &[
     ".cache",
     "vendor",
     "__generated__",
+    "__snapshots__",
 ];
+
+/// Consecutive directory components that name TypeScript compiler
+/// reference-output trees (#11984 item 2). A bare `baselines` name is too
+/// broad (a real source directory can use that name); only these children
+/// are pruned. `__snapshots__` is a name-table entry instead: Jest snapshot
+/// directories never hold TS/JS sources.
+const TYPESCRIPT_REFERENCE_OUTPUT_DIR_PAIRS: &[(&str, &str)] =
+    &[("baselines", "reference"), ("baselines", "local")];
+
+/// Whether `path` contains a consecutive `parent/child` directory pair.
+///
+/// A component that cannot be read as UTF-8 is skipped (fail-open), matching
+/// [`is_detectable_excluded_typescript_path`]. Non-normal components reset
+/// the pair so `baselines/./reference` is not treated as the compiler tree.
+fn path_has_consecutive_dir_pair(path: &Path, parent: &str, child: &str) -> bool {
+    let mut previous: Option<&str> = None;
+    for component in path.components() {
+        let std::path::Component::Normal(part) = component else {
+            previous = None;
+            continue;
+        };
+        let Some(name) = part.to_str() else {
+            previous = None;
+            continue;
+        };
+        if previous == Some(parent) && name == child {
+            return true;
+        }
+        previous = Some(name);
+    }
+    false
+}
+
+/// Path-shaped TypeScript compiler reference-output trees.
+fn is_typescript_reference_output_path(path: &Path) -> bool {
+    TYPESCRIPT_REFERENCE_OUTPUT_DIR_PAIRS
+        .iter()
+        .any(|(parent, child)| path_has_consecutive_dir_pair(path, parent, child))
+}
 
 /// Whether a directory component is excluded from every TypeScript preview
 /// surface: diff counting, finding generation, and workspace indexing.
@@ -58,17 +103,22 @@ pub(crate) fn is_typescript_dir_pruned_from_discovery(name: &str) -> bool {
     is_typescript_excluded_dir_everywhere(name)
 }
 
-/// Path-level form of [`is_typescript_excluded_dir_everywhere`].
+/// Path-level form of [`is_typescript_excluded_dir_everywhere`], plus the
+/// path-shaped reference-output trees (`baselines/reference`,
+/// `baselines/local`).
 ///
 /// A component that cannot be read as UTF-8 is never compared against the
-/// UTF-8 table and is therefore not excluded by this predicate.
+/// UTF-8 table and is therefore not excluded by this predicate. The same
+/// helper feeds the workspace walk prune and the diff loop's pre-count
+/// refusal, so a pruned tree is also named by the existing
+/// generated/excluded-path limitation when a changed file sits under it.
 pub(crate) fn is_detectable_excluded_typescript_path(path: &Path) -> bool {
     path.components().any(|component| {
         component
             .as_os_str()
             .to_str()
             .is_some_and(is_typescript_excluded_dir_everywhere)
-    })
+    }) || is_typescript_reference_output_path(path)
 }
 
 /// Whether an exact normalized repository-relative declaration admits this
@@ -534,10 +584,29 @@ mod tests {
             "src/vendor.ts",
             "src/coverage.ts",
             "packages/app/src/index.tsx",
+            // A bare `baselines` directory is ordinary source; only the
+            // compiler's `baselines/reference` and `baselines/local` children
+            // are reference-output trees (#11984 item 2).
+            "src/baselines/foo.ts",
+            "src/reference/foo.ts",
+            "src/local/foo.ts",
+            "src/baselines/reference.ts",
         ] {
             assert!(
                 !is_detectable_excluded_typescript_path(Path::new(path)),
                 "{path} is ordinary source"
+            );
+        }
+        for path in [
+            "tests/baselines/reference/case.js",
+            "tests/baselines/local/case.js",
+            "src/tests/baselines/reference/nested.ts",
+            "src/__snapshots__/lib.test.ts.snap",
+            "packages/app/src/__snapshots__/a.ts.snap",
+        ] {
+            assert!(
+                is_detectable_excluded_typescript_path(Path::new(path)),
+                "{path} is a reference-output subtree"
             );
         }
     }
@@ -584,6 +653,16 @@ mod tests {
             assert!(is_typescript_excluded_dir_everywhere(name));
         }
         assert!(!is_typescript_dir_pruned_from_discovery("src"));
+        // Path-shaped reference-output trees must not exclude a bare
+        // `baselines`, `reference`, or `local` name: a real source directory
+        // can use those names (#11984 item 2).
+        for name in ["baselines", "reference", "local"] {
+            assert!(
+                !is_typescript_dir_pruned_from_discovery(name),
+                "{name} is too broad to prune by name"
+            );
+            assert!(!is_typescript_excluded_dir_everywhere(name));
+        }
     }
 
     fn detection_root(label: &str) -> Result<std::path::PathBuf, String> {
