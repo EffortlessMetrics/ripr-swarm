@@ -3696,7 +3696,7 @@ mod tests {
         // Fixed-wording arms are compared verbatim (#12003): rewording one,
         // even to another word for the same idea, is golden drift.
         let fixed = [
-            "this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above",
+            "this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above",
             "ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above",
             "several seams bind this finding and the check screen never picks one",
             "nothing to repair here; the related tests already notice this change (exposed)",
