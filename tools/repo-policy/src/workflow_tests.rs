@@ -176,13 +176,13 @@ jobs:
   dependency-review:
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -271,14 +271,14 @@ fn workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count() {
 jobs:
   dependency-review:
     steps:
-      - uses: actions/dependency-review-action@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -287,7 +287,7 @@ jobs:
         workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
 
     assert!(violations.iter().any(|violation| {
-        violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
+        violation.contains("uses `actions/dependency-review-action@` 2 time(s), allowed 1")
     }));
 }
 
@@ -1561,12 +1561,13 @@ fn unpinned_third_party_action_is_rejected_and_the_sha_pin_passes() -> Result<()
 }
 
 #[test]
-fn unpinned_action_rule_scopes_to_third_party_and_rejects_short_or_branch_refs() {
+fn unpinned_action_rule_covers_first_party_and_rejects_short_or_branch_refs() {
     let text = r#"
 jobs:
   build:
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/local
       - uses: peter-evans/create-pull-request@5f6978f # short sha is mutable-ambiguous
       - name: branch
@@ -1576,7 +1577,12 @@ jobs:
       - uses: EffortlessMetrics/em-ci-workflows/.github/workflows/rust.yml@8ff77e5876b4a7808a58e053aa6248b1020e02d0
 "#;
     let violations = workflow_unpinned_action_violations("w.yml", text, &BTreeMap::new());
-    assert_eq!(violations.len(), 2, "{violations:?}");
+    assert_eq!(violations.len(), 3, "{violations:?}");
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("`actions/checkout@v6`"))
+    );
     assert!(
         violations
             .iter()
@@ -1914,4 +1920,33 @@ fn publish_jobs_run_locked_tools_with_scoped_pat_and_gate() -> Result<(), String
         assert!(!publish_job_violations(&commented, job, environment, pat, tool).is_empty());
     }
     Ok(())
+}
+
+#[test]
+fn retired_major_is_rejected_when_a_sha_pin_comment_names_it() {
+    let sha = "d23441a48e516b6c34aea4fa41551a30e30af803";
+    let rejects = |line: &str| {
+        workflow_runtime_violations(".github/workflows/ci.yml", line, &BTreeMap::new())
+            .iter()
+            .any(|violation| violation.contains("actions/checkout@v4"))
+    };
+    // A SHA pinned to a retired major still trips the gate through its comment.
+    assert!(rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v4.2.0\n"
+    )));
+    assert!(rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v4\n"
+    )));
+    // The current major, a longer major that merely starts with `v4`, a
+    // non-SHA ref and a different action do not.
+    assert!(!rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v6.1.0\n"
+    )));
+    assert!(!rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v40.1.0\n"
+    )));
+    assert!(!rejects("      - uses: actions/checkout@main # v4.2.0\n"));
+    assert!(!rejects(&format!(
+        "      - uses: actions/cache@{sha} # v4.2.0\n"
+    )));
 }

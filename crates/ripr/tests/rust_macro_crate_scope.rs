@@ -136,6 +136,190 @@ fn field_glob_without_macro_use_keeps_credit() -> Result<(), String> {
     Ok(())
 }
 
+const FIELD_EXPORT_FILES: &[(&str, &str)] = &[
+    (
+        "Cargo.toml",
+        "[package]\nname='demo'\nversion='0.0.0'\nedition='2024'\n[dev-dependencies]\nother={path='target/other'}\n",
+    ),
+    (
+        "target/other/Cargo.toml",
+        "[package]\nname='other'\nversion='0.0.0'\n",
+    ),
+    (
+        "target/other/src/lib.rs",
+        "pub mod empty {}\n#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n#[macro_export]\nmacro_rules! unrelated { () => {} }\n",
+    ),
+];
+
+fn assert_field_macro_refused(finding: &serde_json::Value, site: &str) -> Result<(), String> {
+    assert_ne!(finding["classification"], "exposed", "{finding}");
+    assert_ne!(finding["ripr"]["observe"]["state"], "yes", "{finding}");
+    assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+    let tests = finding["related_tests"].as_array().ok_or("missing tests")?;
+    assert_eq!(tests.len(), 1, "{finding}");
+    assert_eq!(tests[0]["oracle_strength"], "none", "{finding}");
+    assert_eq!(tests[0]["oracle_kind"], "unknown", "{finding}");
+    assert_eq!(tests[0]["miss"], "assertion_not_credited", "{finding}");
+    assert!(
+        finding["evidence"]
+            .as_array()
+            .ok_or("missing evidence")?
+            .iter()
+            .any(|note| note.as_str().is_some_and(|text| {
+                text.contains("assertion not credited")
+                    && text.contains("assert_eq!")
+                    && text.contains(site)
+            })),
+        "{finding}"
+    );
+    Ok(())
+}
+
+#[test]
+fn field_macro_use_of_a_literal_export_refuses_credit_in_either_order() -> Result<(), String> {
+    for prefix in [
+        "#[macro_use] extern crate other;",
+        "use other::empty::*; #[macro_use] extern crate other;",
+        "#[macro_use] extern crate other; use other::empty::*;",
+    ] {
+        for operands in ["value(), Value { minor: 8 }", "value().minor, 8"] {
+            let assertion = format!("assert_eq!({operands});");
+            let finding = field_subject(prefix, &assertion, FIELD_EXPORT_FILES)?
+                .finding_for("field_construction", "minor: 8")?;
+            assert_field_macro_refused(&finding, "extern crate other;")?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn field_macro_use_export_respects_raw_renamed_and_library_identities() -> Result<(), String> {
+    for (dependency, library, prefix) in [
+        (
+            "other={path='target/other'}",
+            "",
+            "#[macro_use(r#assert_eq)] extern crate r#other as renamed;",
+        ),
+        (
+            "renamed={package='other',path='target/other'}",
+            "",
+            "#[macro_use] extern crate renamed as local_alias;",
+        ),
+        (
+            "other={path='target/other'}",
+            "[lib]\nname='exported_macros'\npath='lib/macros.rs'\n",
+            "#[macro_use(assert_eq, unrelated)] extern crate exported_macros;",
+        ),
+    ] {
+        let manifest = format!(
+            "[package]\nname='demo'\nversion='0.0.0'\nedition='2024'\n[dev-dependencies]\n{dependency}\n"
+        );
+        let exporter = format!("[package]\nname='other'\nversion='0.0.0'\n{library}");
+        let mut extra = FIELD_EXPORT_FILES.to_vec();
+        extra.extend([
+            ("Cargo.toml", manifest.as_str()),
+            ("target/other/Cargo.toml", exporter.as_str()),
+            ("target/other/lib/macros.rs", FIELD_EXPORT_FILES[2].1),
+        ]);
+        for operands in ["value(), Value { minor: 8 }", "value().minor, 8"] {
+            let assertion = format!("assert_eq!({operands});");
+            let finding = field_subject(prefix, &assertion, &extra)?
+                .finding_for("field_construction", "minor: 8")?;
+            assert_field_macro_refused(&finding, "#[macro_use]")?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn field_macro_use_selected_other_name_keeps_the_standard_assertion() -> Result<(), String> {
+    for prefix in [
+        "#[macro_use(unrelated)] extern crate other;",
+        "#[macro_use(unrelated,)] extern crate other as renamed;",
+    ] {
+        for operands in ["value(), Value { minor: 8 }", "value().minor, 8"] {
+            let assertion = format!("assert_eq!({operands});");
+            let finding = field_subject(prefix, &assertion, FIELD_EXPORT_FILES)?
+                .finding_for("field_construction", "minor: 8")?;
+            assert_eq!(finding["classification"], "exposed", "{finding}");
+            assert_eq!(finding["ripr"]["observe"]["state"], "yes", "{finding}");
+            assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn field_macro_use_witness_refreshes_after_only_auxiliary_inputs_change() -> Result<(), String> {
+    let mut extra = FIELD_EXPORT_FILES.to_vec();
+    extra.extend([
+        ("target/other/src/lib.rs", "pub mod empty {}\n"),
+        ("target/harmless/Cargo.toml", FIELD_EXPORT_FILES[1].1),
+        ("target/harmless/src/lib.rs", "pub mod empty {}\n"),
+    ]);
+    let subject = field_subject(
+        "#[macro_use] extern crate other;",
+        "assert_eq!(value().minor, 8);",
+        &extra,
+    )?;
+    let owner = std::fs::read(subject.0.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    let tests = std::fs::read(subject.0.join("tests/pin.rs")).map_err(|error| error.to_string())?;
+    let initial = subject.finding_for("field_construction", "minor: 8")?;
+    assert_eq!(initial["classification"], "exposed", "{initial}");
+    let renamed = FIELD_EXPORT_FILES[0]
+        .1
+        .replace("target/other", "target/harmless");
+    for (source, manifest, refused) in [
+        (FIELD_EXPORT_FILES[2].1, FIELD_EXPORT_FILES[0].1, true),
+        (FIELD_EXPORT_FILES[2].1, renamed.as_str(), false),
+        (FIELD_EXPORT_FILES[2].1, FIELD_EXPORT_FILES[0].1, true),
+        ("pub mod empty {}\n", FIELD_EXPORT_FILES[0].1, false),
+    ] {
+        std::fs::write(subject.0.join("target/other/src/lib.rs"), source)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(subject.0.join("Cargo.toml"), manifest)
+            .map_err(|error| error.to_string())?;
+        let finding = subject.finding_for("field_construction", "minor: 8")?;
+        if refused {
+            assert_field_macro_refused(&finding, "extern crate other;")?;
+        } else {
+            assert_eq!(finding["classification"], "exposed", "{finding}");
+            assert_eq!(finding["ripr"]["observe"]["state"], "yes", "{finding}");
+            assert_eq!(finding["ripr"]["discriminate"]["state"], "yes", "{finding}");
+        }
+        assert_eq!(
+            std::fs::read(subject.0.join("src/lib.rs")).map_err(|e| e.to_string())?,
+            owner
+        );
+        assert_eq!(
+            std::fs::read(subject.0.join("tests/pin.rs")).map_err(|e| e.to_string())?,
+            tests
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn field_retained_opaque_blocker_is_not_masked_by_an_earlier_glob() -> Result<(), String> {
+    // The conditional export is outside #11810's plain-export witness. Rust
+    // still imports this no-op assertion, so the independently retained opaque
+    // argument site must refuse it. This cannot pass solely on the new witness.
+    let exporter = "pub mod empty {}\n#[cfg(all())]\n#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n#[macro_export]\nmacro_rules! emit { ($name:ident) => { const _: () = (); }; }\n";
+    let mut extra = FIELD_EXPORT_FILES.to_vec();
+    extra.push(("target/other/src/lib.rs", exporter));
+    for operands in ["value(), Value { minor: 8 }", "value().minor, 8"] {
+        let assertion = format!("assert_eq!({operands});");
+        let finding = field_subject(
+            "use other::empty::*; #[macro_use] extern crate other; other::emit!(assert_eq);",
+            &assertion,
+            &extra,
+        )?
+        .finding_for("field_construction", "minor: 8")?;
+        assert_field_macro_refused(&finding, "other::emit!")?;
+    }
+    Ok(())
+}
+
 #[test]
 fn field_assertion_rebindings_refuse_credit_and_disclose_the_site() -> Result<(), String> {
     for (prefix, extra) in [

@@ -317,7 +317,9 @@ where
 fn parse_quoted_value(raw: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.len() < 2 || !trimmed.starts_with('"') || !trimmed.ends_with('"') {
-        return Err(format!("expected quoted string, got `{trimmed}`"));
+        return Err(format!(
+            "expected quoted string, got `{trimmed}`; edit the file to fix it, then rerun"
+        ));
     }
     Ok(trimmed[1..trimmed.len() - 1].to_string())
 }
