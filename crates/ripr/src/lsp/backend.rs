@@ -13477,10 +13477,10 @@ fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
 /// same-length rewrite in the same tick is reread (#12046). A future mtime is
 /// treated the same way.
 ///
-/// Known limit: on Windows std exposes no inode change time, so a writer that
-/// rewrites a file in place with the same length and then restores its old
-/// mtime still matches the key. Unix keys include ctime, which cannot be
-/// restored, and are not affected.
+/// Off Unix the cache is bypassed entirely: std exposes no inode change time,
+/// so a writer that rewrites a file in place with the same length and restores
+/// its old mtime would still match the key. Unix keys include ctime, which
+/// cannot be restored.
 const DISK_EQUALITY_RACY_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn disk_mtime_is_racy(meta: &fs::Metadata) -> bool {
@@ -13514,7 +13514,7 @@ fn reset_disk_equality_read_cache_for_tests() {
 fn cached_disk_content_digest(
     path: &Path,
     stat_key: &DiskContentStatKey,
-    racy: bool,
+    bypass_cache: bool,
 ) -> Option<String> {
     if let Ok(cache) = DISK_EQUALITY_DIGEST_CACHE.lock()
         && let Some((cached_key, digest)) = cache.get(path)
@@ -13528,9 +13528,9 @@ fn cached_disk_content_digest(
 
     let digest = super::state::read_saved_bytes(path).map(|disk| content_digest(&disk));
     if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
-        if racy {
-            // Drop any older entry too, so a racy read never leaves a key that
-            // a later same-tick rewrite could match.
+        if bypass_cache {
+            // Drop any older entry too, so an uncacheable read never leaves a
+            // key that a later same-tick rewrite could match.
             cache.remove(path);
         } else {
             cache.insert(path.to_path_buf(), (stat_key.clone(), digest.clone()));
@@ -13543,8 +13543,9 @@ fn cached_disk_content_digest(
 /// A cheap length check precedes the read. The path may be a device or FIFO
 /// (`/dev/zero` reports length 0), so the read goes through the bounded
 /// regular-file reader, never an unbounded `fs::read`. Unchanged on-disk
-/// content is digested once per `(len, mtime, ino)` stat key, except that a
-/// file modified within [`DISK_EQUALITY_RACY_WINDOW`] is never cached (#12046).
+/// content is digested once per `(len, mtime, ctime, ino)` stat key on Unix,
+/// except that a file modified within [`DISK_EQUALITY_RACY_WINDOW`] is never
+/// cached; off Unix every lookup rereads (#12046).
 fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
     let Ok(text_len) = u64::try_from(text.len()) else {
         return false;
@@ -13556,8 +13557,11 @@ fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
         return false;
     }
     let stat_key = disk_content_stat_key(&meta);
-    let racy = disk_mtime_is_racy(&meta);
-    let Some(disk_digest) = cached_disk_content_digest(path, &stat_key, racy) else {
+    // Off Unix std exposes no inode change time, so (len, mtime, ino) cannot
+    // prove the bytes are unchanged and the cache is bypassed there: a stale
+    // digest is a correctness bug, a reread is only a cost (#12046).
+    let bypass_cache = !cfg!(unix) || disk_mtime_is_racy(&meta);
+    let Some(disk_digest) = cached_disk_content_digest(path, &stat_key, bypass_cache) else {
         return false;
     };
     disk_digest == content_digest(text.as_bytes())
@@ -13635,8 +13639,10 @@ mod disk_bytes_equal_text_tests {
         assert!(!disk_bytes_equal_text(&path, "abx"));
         let reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
         let _ = std::fs::remove_file(&path);
-        if reads != 1 {
-            return Err(format!("expected one disk read, got {reads}"));
+        // Off Unix the cache is bypassed, so each of the three checks rereads.
+        let expected = if cfg!(unix) { 1 } else { 3 };
+        if reads != expected {
+            return Err(format!("expected {expected} disk reads, got {reads}"));
         }
         Ok(())
     }
@@ -13676,9 +13682,8 @@ mod disk_bytes_equal_text_tests {
 
     /// #12046: a writer that rewrites in place with the same length and puts the
     /// old mtime back leaves (len, mtime, ino) unchanged and the mtime outside the
-    /// racy window. Only the inode change time exposes the rewrite. Unix only:
-    /// std exposes no change time on Windows (documented limit).
-    #[cfg(unix)]
+    /// racy window. Unix keys include the inode change time; off Unix the cache
+    /// is bypassed. Runs on every platform, including the Windows lane.
     #[test]
     fn same_length_rewrite_with_restored_old_mtime_is_reread() -> Result<(), String> {
         reset_disk_equality_read_cache_for_tests();
