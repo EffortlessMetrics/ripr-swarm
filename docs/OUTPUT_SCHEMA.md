@@ -1572,7 +1572,26 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
 
 ## Finding
 
-The `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display. For Rust expressions, formatting whitespace is collapsed outside literal contents, except that an actual line-comment terminator remains one LF; literal whitespace is part of the value. CRLF, trailing comment whitespace and following indentation normalize to that same boundary. Comment text otherwise remains part of the source identity. Older IDs that collapsed literal whitespace or a significant line-comment boundary become stale and must be reviewed rather than automatically retargeted (#8832). The existing fail-closed compatibility procedure applies: an unmatched selector remains unapplied with a visible warning; review the current finding before recording its current ID. An ambiguous old ID is never an alias for either new value. The fingerprint format and output schema are unchanged. When distinct expressions at one owner share an `<fp8>`, the `.<n>` suffix is assigned by a full-width digest of each payload, so the same pair gets the same two IDs in either diff order; repeated copies of one expression keep encounter-order suffixes (#8838). A single changed expression whose `<fp8>` equals that of a different earlier expression at the same owner (a 32-bit collision with no sibling in the run to disambiguate it) still keeps the shared ID; that remainder of #8838 is a known violation of the material-input identity requirement, not a waiver of it.
+For Rust, Python and TypeScript findings, the `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display. For Rust expressions, formatting whitespace is collapsed outside literal contents, except that an actual line-comment terminator remains one LF; literal whitespace is part of the value. CRLF, trailing comment whitespace and following indentation normalize to that same boundary. Comment text otherwise remains part of the source identity. Older IDs that collapsed literal whitespace or a significant line-comment boundary become stale and must be reviewed rather than automatically retargeted (#8832). The existing fail-closed compatibility procedure applies: an unmatched selector remains unapplied with a visible warning; review the current finding before recording its current ID. An ambiguous old ID is never an alias for either new value. The fingerprint format and output schema are unchanged. When distinct expressions at one owner share an `<fp8>`, the `.<n>` suffix is assigned by a full-width digest of each payload, so the same pair gets the same two IDs in either diff order; repeated copies of one expression keep encounter-order suffixes (#8838). A single changed expression whose `<fp8>` equals that of a different earlier expression at the same owner (a 32-bit collision with no sibling in the run to disambiguate it) still keeps the shared ID; that remainder of #8838 is a known violation of the material-input identity requirement, not a waiver of it.
+
+Perl packet findings use a separate native identity contract:
+`probe:perl:<sha256>[.<n>]` frames normalized file, a unique named owner's kind,
+package and name, behavior hint, opaque changed-text digest, and observable
+state/value. The named owner must have a known kind, nonblank package/name and
+a file reference matching the change. Preserving those facts across a line
+move preserves the base ID; the display line is not a hash input. Identical
+payload copies receive source-order ordinals, so changing the set or order of indistinguishable copies
+can reassign them. Missing/ambiguous owner facts, mismatched file references or
+blank digests use an explicitly location-bound `probe:perl-location:<sha256>`
+fallback. Full SHA-256 does not remove an upstream producer digest's
+collision/trust limits. The old Perl ID
+based on owner declaration line becomes stale: native suppressions still match
+exact finding IDs, and an unmatched old selector remains unapplied with a
+visible warning. Review each intended replacement; ambiguous selectors are
+never automatically aliased. Canonical Perl gap identity is unchanged. See
+[SPEC-0064](specs/RIPR-SPEC-0064-perl-fact-packet-contract.md#ripr-derived-identities).
+Unowned top-level Perl findings keep their existing line-based `perl-unowned`
+IDs and do not gain line-move stability.
 
 A finding contains:
 
@@ -3694,6 +3713,18 @@ repo-scoped classified seam SARIF surface. Both use SARIF 2.1.0:
 ```
 
 Rule IDs are stable public integration strings.
+
+Finding SARIF fingerprint strings contain rule, finding ID, probe ID and raw
+normalized file, with the display line omitted. Both full and partial
+`riprFingerprintV1` fields agree. Supported native identities therefore follow
+pure line moves while physical locations update. Changes to the normalized
+file segment or rule ID remain distinct; this does not establish that every
+native filename has a unique normalized segment. Removing the line changes old
+finding fingerprints once, even at an unchanged location. Baseline policy compares opaque strings without aliases,
+so review and refresh old baselines rather than silently treating them as
+equivalent. Repo seam fingerprints retain their prior trailing line: their
+native IDs also include normalized byte offsets, so seam line moves are not
+stable. No universal collision freedom or live viewer migration is established.
 
 Finding and repo-seam runs declare `columnKind: "unicodeCodePoints"`, matching
 the producers' 1-based Unicode scalar-value columns. A non-BMP character counts
