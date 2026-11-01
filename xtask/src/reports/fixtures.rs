@@ -1806,8 +1806,42 @@ fn normalize_seam_count(body: &str) -> Option<String> {
     Some(format!("{SEAMS_UNTIED_OPENING}<reason>"))
 }
 
+/// Opening of the `PreviewPacketNotComplete` sentence (#12086). It embeds the
+/// language and a reason, so it is not a fixed-wording arm; only the test
+/// location inside the reason moves with unrelated edits.
+const PREVIEW_PACKET_REFUSAL_OPENING: &str = "ripr has no complete repair packet for this ";
+
+/// Where a TypeScript blocker reason cites a test: `the test at `path:line``.
+const PREVIEW_TEST_LOCATION_OPENING: &str = "the test at `";
+
+/// Mask the backticked `path:line` a `PreviewPacketNotComplete` reason cites
+/// (#12086). The language, the blocker wording and the rest of the sentence
+/// stay compared, so rewording any of them is drift while adding a line above
+/// the cited test is not. A reason with no cited location (for example the
+/// moved-assertion-selection blocker, which names a test, not a location) is
+/// compared verbatim.
+fn normalize_preview_packet_location(body: &str) -> Option<String> {
+    if !body.starts_with(PREVIEW_PACKET_REFUSAL_OPENING) {
+        return None;
+    }
+    let start = body.find(PREVIEW_TEST_LOCATION_OPENING)? + PREVIEW_TEST_LOCATION_OPENING.len();
+    let len = body[start..].find('`')?;
+    // An empty span cites nothing; leave it verbatim so it reads as drift.
+    if len == 0 {
+        return None;
+    }
+    Some(format!(
+        "{}<location>{}",
+        &body[..start],
+        &body[start + len..]
+    ))
+}
+
 fn mask_refusal_body(body: &str) -> String {
     if let Some(masked) = normalize_seam_count(body) {
+        return masked;
+    }
+    if let Some(masked) = normalize_preview_packet_location(body) {
         return masked;
     }
     for rule in REPAIR_REFUSAL_RULES {
@@ -3734,6 +3768,59 @@ mod tests {
                 mask_repair_refusal_reason(&wrap(&format!("{opening} two")))
             );
         }
+        // The preview-packet arm masks only the cited test location (#12086).
+        let preview = |language: &str, cite: &str, tail: &str| {
+            wrap(&format!(
+                "ripr has no complete repair packet for this {language} finding (ripr cannot tell whether the test at `{cite}` covers this change: {tail}); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`"
+            ))
+        };
+        let base = preview(
+            "TypeScript",
+            "tests/a.test.ts:8",
+            "its `.toBe(...)` compares against a variable",
+        );
+        // A moved location is not drift.
+        assert_eq!(
+            mask_repair_refusal_reason(&base),
+            mask_repair_refusal_reason(&preview(
+                "TypeScript",
+                "tests/b.test.ts:12",
+                "its `.toBe(...)` compares against a variable"
+            ))
+        );
+        // A changed language, matcher or reason wording is drift.
+        for changed in [
+            preview(
+                "JavaScript",
+                "tests/a.test.ts:8",
+                "its `.toBe(...)` compares against a variable",
+            ),
+            preview(
+                "TypeScript",
+                "tests/a.test.ts:8",
+                "its `.toEqual(...)` compares against a variable",
+            ),
+            preview(
+                "TypeScript",
+                "tests/a.test.ts:8",
+                "its `.toBe(...)` compares against a computed value",
+            ),
+        ] {
+            assert_ne!(
+                mask_repair_refusal_reason(&base),
+                mask_repair_refusal_reason(&changed)
+            );
+        }
+        // A reason with no cited location is compared verbatim.
+        let no_cite = |name: &str| {
+            wrap(&format!(
+                "ripr has no complete repair packet for this TypeScript finding (related test `{name}` asserts a different kind of behavior); add or strengthen the test by hand"
+            ))
+        };
+        assert_ne!(
+            mask_repair_refusal_reason(&no_cite("one")),
+            mask_repair_refusal_reason(&no_cite("two"))
+        );
         // Negative: a variant change is drift even though both are refusals.
         assert_ne!(
             mask_repair_refusal_reason(&wrap(fixed[0])),
