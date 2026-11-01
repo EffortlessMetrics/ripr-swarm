@@ -432,6 +432,43 @@ fn body_local_shadow_is_not_owner_activation() -> Result<(), String> {
     Ok(())
 }
 
+/// Control 6b: the same shadow written on one physical line with the use
+/// (after `;` or `{`) is just as much a shadow, so a bare call stays unrelated
+/// to the owner at the relation level (#11521), while a same-line declaration
+/// in a sibling block that closed before the use leaves the call related.
+#[test]
+fn same_line_body_local_shadow_is_not_owner_activation() -> Result<(), String> {
+    for (name, body) in [
+        (
+            "after semicolon",
+            "const a = 1; const applyDiscount = (total: number) => total; expect(applyDiscount(100)).toBe(100);",
+        ),
+        (
+            "function in block",
+            "{ function applyDiscount(total: number) { return total; } expect(applyDiscount(100)).toBe(100); }",
+        ),
+    ] {
+        let source = one_test(name, IMPORT_DISCOUNT, body);
+        let evaluated = evaluate(&DISCOUNT, &source, true)?;
+        assert!(
+            evaluated.rows.is_empty(),
+            "{name}: a same-line shadowed bare call is not related, got {:?}",
+            evaluated.rows
+        );
+    }
+    let sibling = one_test(
+        "sibling block",
+        IMPORT_DISCOUNT,
+        "{ function applyDiscount(total: number) { return total; } } expect(applyDiscount(100)).toBe(90);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &sibling, true)?;
+    assert!(
+        !evaluated.rows.is_empty(),
+        "positive control: a closed sibling-block declaration must not shadow"
+    );
+    Ok(())
+}
+
 /// Control 7: genuine owner calls through a namespace import or an import
 /// alias keep their real answer. The aggregate witness reads only the owner
 /// name, so an alias call at the boundary is present but not witnessed, and

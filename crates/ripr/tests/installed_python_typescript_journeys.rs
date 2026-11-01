@@ -927,6 +927,205 @@ fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Resul
     decoy_untouched(&decoy)
 }
 
+/// Splits a POSIX shell command into words. Supports exactly what `ripr`
+/// prints: whitespace-separated words, single-quoted spans, and the `\'`
+/// escape used between spans to embed a single quote (`'a'\''b'` is `a'b`).
+/// Any other backslash, or an unterminated quote, is an error.
+#[cfg(all(feature = "lang-python", unix))]
+fn shell_words(command: &str) -> Result<Vec<String>, String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut started = false;
+    let mut quoted = false;
+    let mut chars = command.chars();
+    while let Some(ch) = chars.next() {
+        match (quoted, ch) {
+            (true, '\'') => quoted = false,
+            (true, other) => current.push(other),
+            (false, '\'') => {
+                quoted = true;
+                started = true;
+            }
+            (false, '\\') => match chars.next() {
+                Some('\'') => {
+                    current.push('\'');
+                    started = true;
+                }
+                other => {
+                    return Err(format!("unsupported escape `\\{other:?}` in: {command}"));
+                }
+            },
+            (false, ch) if ch.is_whitespace() => {
+                if started {
+                    words.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            (false, other) => {
+                current.push(other);
+                started = true;
+            }
+        }
+    }
+    if quoted {
+        return Err(format!("unterminated single quote in: {command}"));
+    }
+    if started {
+        words.push(current);
+    }
+    Ok(words)
+}
+
+/// #4518: the Python `first-pr` receipt route. The `Receipt path:` line equals
+/// the printed receipt command's `--out`; the `Receipt status` line names all
+/// three values; and the exact printed command, run from the selected root,
+/// records `not_run` at that path while `passed` and `failed` stay separate
+/// records of the supplied verify outcome that carry no static closure. An
+/// unknown status is refused and writes nothing.
+#[cfg(all(feature = "lang-python", unix))]
+#[test]
+fn python_first_pr_receipt_path_matches_out_and_statuses_stay_separate() -> Result<(), String> {
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "pyfp", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, packet) = ripr(
+        &decoy,
+        &[
+            "first-pr",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD~1",
+            "--run-chain",
+        ],
+    )?;
+    expect_exit(ok, true, "first-pr --run-chain")?;
+    need(&packet, "State: top gap", "first-pr selects the Python gap")?;
+
+    let receipt_line = packet
+        .lines()
+        .find_map(|line| line.strip_prefix("Receipt after verify: `"))
+        .and_then(|line| line.strip_suffix('`'))
+        .ok_or_else(|| format!("first-pr printed no receipt command:\n{packet}"))?;
+    let path_line = packet
+        .lines()
+        .find_map(|line| line.strip_prefix("Receipt path: `"))
+        .and_then(|line| line.strip_suffix('`'))
+        .ok_or_else(|| format!("first-pr printed no receipt path:\n{packet}"))?;
+    let status_line = packet
+        .lines()
+        .find_map(|line| line.strip_prefix("Receipt status: "))
+        .ok_or_else(|| format!("first-pr printed no receipt status step:\n{packet}"))?;
+
+    // The printed command is `(cd -P -- <root> && ripr receipt write ...)`.
+    let inner = receipt_line
+        .strip_prefix('(')
+        .and_then(|line| line.strip_suffix(')'))
+        .ok_or_else(|| format!("receipt command is not a subshell: {receipt_line}"))?;
+    let words = shell_words(inner)?;
+    let word_after = |flag: &str| -> Result<String, String> {
+        let at = words
+            .iter()
+            .position(|word| word == flag)
+            .ok_or_else(|| format!("receipt command has no {flag}: {receipt_line}"))?;
+        words
+            .get(at + 1)
+            .cloned()
+            .ok_or_else(|| format!("receipt command {flag} has no value: {receipt_line}"))
+    };
+    let out = word_after("--out")?;
+    let gap = word_after("--gap")?;
+    let verify_command = word_after("--verify-command")?;
+    if word_after("--status")? != "not_run" {
+        return Err(format!("printed receipt is not `not_run`: {receipt_line}"));
+    }
+    if gap != "gap:python:pricing/core.py:bulk_discount_rate:predicate_boundary:predicate:units>=20"
+    {
+        return Err(format!("receipt command names another gap: {gap}"));
+    }
+    if !verify_command.starts_with("python -m pytest ") {
+        return Err(format!(
+            "verify is not module-form pytest: {verify_command}"
+        ));
+    }
+    if path_line != out {
+        return Err(format!(
+            "Receipt path `{path_line}` differs from the command --out `{out}`"
+        ));
+    }
+    for status in ["not_run", "passed", "failed"] {
+        need(
+            status_line,
+            &format!("--status {status}"),
+            "receipt status step names every value",
+        )?;
+    }
+
+    // Run the exact printed command from the selected root (its `cd`).
+    let write = |status: &str, out: &str| -> Result<std::process::Output, String> {
+        ripr_output(
+            &root,
+            &[
+                "receipt",
+                "write",
+                "--gap",
+                &gap,
+                "--verify-command",
+                &verify_command,
+                "--status",
+                status,
+                "--out",
+                out,
+            ],
+        )
+    };
+    let read = |relative: &str| -> Result<serde_json::Value, String> {
+        let text = std::fs::read_to_string(root.join(relative))
+            .map_err(|error| format!("receipt not written at `{relative}`: {error}"))?;
+        serde_json::from_str(&text).map_err(|error| format!("receipt json: {error}"))
+    };
+    if root.join(&out).exists() {
+        return Err("the receipt existed before the command ran".to_string());
+    }
+    let written = write("not_run", &out)?;
+    expect_exit(written.status.success(), true, "printed receipt command")?;
+    let printed = read(&out)?;
+    if printed["verify_status"] != "not_run" || printed["canonical_gap_id"] != gap.as_str() {
+        return Err(format!("printed receipt records another state: {printed}"));
+    }
+
+    for status in ["passed", "failed"] {
+        let target = format!("{out}.{status}");
+        let written = write(status, &target)?;
+        expect_exit(written.status.success(), true, status)?;
+        let receipt = read(&target)?;
+        if receipt["verify_status"] != status {
+            return Err(format!("`--status {status}` recorded: {receipt}"));
+        }
+        // Verify status is the only outcome axis: no closure or movement.
+        for key in ["bound_gap", "closed", "movement", "outcome"] {
+            if receipt.get(key).is_some() {
+                return Err(format!("{status} receipt carries static field `{key}`"));
+            }
+        }
+    }
+    if read(&out)?["verify_status"] != "not_run" {
+        return Err("a later receipt rewrote the not_run record".to_string());
+    }
+
+    // An unknown status is refused with its reason and writes nothing.
+    let refused_out = format!("{out}.bogus");
+    let refused = write("bogus", &refused_out)?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(refused.status.success(), false, "unknown receipt status")?;
+    need(&refused_err, "invalid --status", "unknown status is named")?;
+    need(&refused_err, "bogus", "unknown status value is named")?;
+    if root.join(&refused_out).exists() {
+        return Err("a receipt was written for an unknown status".to_string());
+    }
+    decoy_untouched(&decoy)
+}
+
 /// #10432: the refused-variant control for the Python gap-bound start. With
 /// the fixture's tests removed, no Python test reaches the changed predicate,
 /// so the finding is static-limited (`no_static_path`): `ripr check` offers no

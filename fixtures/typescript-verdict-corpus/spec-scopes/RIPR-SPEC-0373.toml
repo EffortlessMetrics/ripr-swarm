@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0373"
+scope = "out"
+reason = "Disclosure of Kani verification-only edits is a Rust-only contract; not a typescript verdict example"

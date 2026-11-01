@@ -69,8 +69,10 @@ fn resolving_one_file_parses_only_files_that_can_declare_its_modules() {
     let parsed = scope_parses() - before;
     assert!(imported.definitions.contains("macro_rules! t "));
     // cases.rs (own scope), lib.rs (the declarer and its attributed check).
-    // None of the filler files can spell an attributed `mod cases`.
-    assert_eq!(parsed, 3, "parsed {parsed} scopes");
+    // macros.rs was already parsed by the generator scan in `new` and its
+    // scope is shared. None of the filler files can spell an attributed
+    // `mod cases`.
+    assert_eq!(parsed, 2, "parsed {parsed} scopes");
     // A second ask for the same file re-parses nothing.
     let again = scope_parses();
     let _ = visibility.imported_macros(Path::new("src/cases.rs"));

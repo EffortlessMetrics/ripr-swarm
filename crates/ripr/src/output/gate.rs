@@ -1930,3 +1930,6 @@ fn display_path(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod gate_kani;

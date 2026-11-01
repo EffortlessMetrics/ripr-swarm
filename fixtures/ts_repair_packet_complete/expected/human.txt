@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `npx --no-install jest tests/discount.test.ts`, then rerun `ripr check`
+  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing check `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `npx --no-install jest tests/discount.test.ts`, then rerun `ripr check`
   File: src/discount.ts:2
   Language: typescript
   Language status: preview
@@ -24,9 +24,9 @@ Start here:
     `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`)
     assertion or a `toThrow` form with an exact payload (string, object, or class reference)
   Related test: tests/discount.test.ts:3 applyDiscount applies discount when amount meets threshold (assertion too weak to tell the old behavior from the new)
-  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
-    discriminator `amount == threshold`; the repair packet is complete (advisory: `ripr context --at
-    <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
+    check `amount == threshold`; the repair packet is complete (advisory: `ripr context --at
+    <finding-id>` prints it; `ripr repair` covers Rust files only)
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -45,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_complete/input --diff <cwd>/fixtures/ts_repair_packet_complete/diff.patch --mode fast probe:src_discount.ts:typescript_preview:2396aec1
   ripr context --root <cwd>/fixtures/ts_repair_packet_complete/input --diff <cwd>/fixtures/ts_repair_packet_complete/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:2396aec1
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full
