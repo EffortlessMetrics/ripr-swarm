@@ -8,9 +8,23 @@ pub(crate) fn summarize_findings(changed_rust_files: usize, findings: &[Finding]
         ..Summary::default()
     };
 
+    let mut classes_by_expression: std::collections::BTreeMap<
+        _,
+        Vec<&crate::domain::ExposureClass>,
+    > = std::collections::BTreeMap::new();
     for finding in findings {
         summary.increment_exposure_class(&finding.class);
+        let classes = classes_by_expression
+            .entry(finding.expression_key())
+            .or_default();
+        if !classes.contains(&&finding.class) {
+            classes.push(&finding.class);
+        }
     }
+    summary.conflicting_expressions = classes_by_expression
+        .values()
+        .filter(|classes| classes.len() > 1)
+        .count();
 
     summary
 }
@@ -135,5 +149,30 @@ mod tests {
         assert_eq!(summary.infection_unknown, 0);
         assert_eq!(summary.propagation_unknown, 0);
         assert_eq!(summary.static_unknown, 0);
+    }
+
+    // #11554: raw counts stay per probe; the conflicting-expression count says
+    // how many expressions got more than one class from different probes.
+    #[test]
+    fn conflicting_expressions_count_expressions_with_more_than_one_class() {
+        let same_class = [
+            finding(ExposureClass::WeaklyExposed),
+            finding(ExposureClass::WeaklyExposed),
+        ];
+        assert_eq!(
+            summarize_findings(1, &same_class).conflicting_expressions,
+            0
+        );
+
+        let mixed = [
+            finding(ExposureClass::InfectionUnknown),
+            finding(ExposureClass::WeaklyExposed),
+            finding(ExposureClass::WeaklyExposed),
+        ];
+        let summary = summarize_findings(1, &mixed);
+        assert_eq!(summary.conflicting_expressions, 1);
+        assert_eq!(summary.findings, 3);
+        assert_eq!(summary.weakly_exposed, 2);
+        assert_eq!(summary.infection_unknown, 1);
     }
 }

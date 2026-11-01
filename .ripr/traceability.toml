@@ -300,7 +300,8 @@ tests = [
   "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_on_the_signature_line_finds_the_body_brace_past_signature_braces",
   "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_on_the_signature_line_keeps_branch_text_with_non_ascii_and_comments",
   "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_on_the_signature_line_fails_closed_for_a_unit_owner",
-  "crates/ripr/tests/repair_layout_parity.rs::one_line_and_rustfmt_layouts_have_identical_repair_readiness_and_facts"
+  "crates/ripr/tests/repair_layout_parity.rs::one_line_and_rustfmt_layouts_have_identical_repair_readiness_and_facts",
+  "crates/ripr/src/analysis/summary.rs::tests::conflicting_expressions_count_expressions_with_more_than_one_class"
 ]
 fixtures = [
   "crates/ripr/tests/cli_smoke/sample_output.rs",

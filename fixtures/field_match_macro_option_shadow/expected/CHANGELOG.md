@@ -269,3 +269,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — field_match_macro_option_shadow (21)
+
+Reason:
+RIPR-SPEC-0001: additive summary.conflicting_expressions member (#11554)
+
+Command:
+`cargo xtask goldens bless field_match_macro_option_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
