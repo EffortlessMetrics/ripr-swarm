@@ -13650,6 +13650,47 @@ fn given_boundary_owner_call_when_input_operand_is_closure_local_then_activation
     Ok(())
 }
 
+/// #12060: a test related to a match arm's owner only by file cannot raise
+/// the arm's discrimination through an assertion that pins another indexed
+/// function (`assert_eq!(reduce(..), Reduction::Over(..))`), while the same
+/// assertion in a test that calls the owner still counts.
+#[test]
+fn proximity_test_pinning_another_function_cannot_grade_a_match_arm_up() -> Result<(), String> {
+    let discriminate_for = |extra_test: &str| -> Result<StageState, String> {
+        let prod = format!(
+            "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+             pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+             pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    #[test]\n    fn consume_runs() {{ let _ = consume(1); }}\n    {extra_test}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let arm = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::MatchArm && s.expression().contains("Over"))
+            .ok_or_else(|| "Over arm seam present".to_string())?;
+        Ok(evidence_for_seam(arm, &index).discriminate.state)
+    };
+    let other_function = discriminate_for(
+        "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }",
+    )?;
+    let owner_call =
+        discriminate_for("#[test] fn consume_over() { assert_eq!(consume(3), true); }")?;
+    assert_ne!(
+        other_function, owner_call,
+        "an assertion on another function must not grade the arm like one on the owner"
+    );
+    assert!(
+        matches!(
+            other_function,
+            StageState::Weak | StageState::No | StageState::Unknown
+        ),
+        "{other_function:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
     let owner = FunctionSummary {
