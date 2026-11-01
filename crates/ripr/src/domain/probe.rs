@@ -114,6 +114,12 @@ pub enum StopReason {
     /// line in a function. Classification stays `static_unknown`, never
     /// `exposed` (#11547).
     CompileTimeInvariant,
+    /// The changed code states an unsafe contract the compiler does not
+    /// check: an `unsafe fn` (callers now carry a safety obligation) or an
+    /// unchecked assumption (`unreachable_unchecked`, `assert_unchecked`).
+    /// A safe-code test cannot discharge it. Classification stays
+    /// `static_unknown`, never `exposed` (#11549).
+    UnsafeObligation,
 }
 
 impl StopReason {
@@ -135,6 +141,7 @@ impl StopReason {
             StopReason::GapEvidenceUnresolved => "gap_evidence_unresolved",
             StopReason::HelperIdentityUnresolved => "helper_identity_unresolved",
             StopReason::CompileTimeInvariant => "compile_time_invariant",
+            StopReason::UnsafeObligation => "unsafe_obligation",
         }
     }
 
@@ -199,6 +206,10 @@ impl StopReason {
             StopReason::CompileTimeInvariant => {
                 "the changed line is a compile-time assertion, so a violating edit fails to \
                  build instead of failing a test"
+            }
+            StopReason::UnsafeObligation => {
+                "the change adds or alters an unsafe contract (an unsafe function or an \
+                 unchecked assumption) that safe test code cannot discharge"
             }
         }
     }
@@ -1080,6 +1091,7 @@ mod tests {
             StopReason::GapEvidenceUnresolved,
             StopReason::HelperIdentityUnresolved,
             StopReason::CompileTimeInvariant,
+            StopReason::UnsafeObligation,
         ] {
             let gloss = reason.describe();
             assert!(!gloss.contains("  "), "{}: {gloss}", reason.as_str());

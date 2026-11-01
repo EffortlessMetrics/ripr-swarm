@@ -1511,6 +1511,24 @@ fn enclosed_by_nested_fn_like(node: &ra_ap_syntax::SyntaxNode, body: &ast::Block
         })
 }
 
+/// Label of an `unsafe` block that contains an unchecked-assumption call.
+pub(crate) const UNCHECKED_ASSUMPTION_LABEL: &str = "unsafe block (unchecked assumption)";
+
+/// Whether the block calls `unreachable_unchecked` or `assert_unchecked` by
+/// path (bare, `hint::`, `std::hint::`, `core::hint::`). Parsed calls only: a
+/// string, comment or identifier that merely contains the name does not match.
+fn block_calls_unchecked_assumption(block: &ast::BlockExpr) -> bool {
+    block
+        .syntax()
+        .descendants()
+        .filter_map(ast::CallExpr::cast)
+        .filter_map(|call| match call.expr()? {
+            ast::Expr::PathExpr(path) => path.path()?.segment()?.name_ref(),
+            _ => None,
+        })
+        .any(|name| matches!(name.text(), "unreachable_unchecked" | "assert_unchecked"))
+}
+
 fn push_unsafe_boundary_probe_shapes(
     shapes: &mut Vec<ProbeShapeFact>,
     function: &ast::Fn,
@@ -1545,17 +1563,21 @@ fn push_unsafe_boundary_probe_shapes(
         let Some(unsafe_token) = block.unsafe_token() else {
             continue;
         };
+        // #11549: a block that states an unchecked assumption to the compiler
+        // (`unreachable_unchecked()`, `assert_unchecked(..)`) makes the
+        // surrounding code's soundness depend on it; name that in the label.
+        let label = if block_calls_unchecked_assumption(&block) {
+            UNCHECKED_ASSUMPTION_LABEL
+        } else {
+            "unsafe block"
+        };
         push_probe_shape_with_text(
             shapes,
             line_index,
             ProbeShapeKind::UnsafeBoundary,
             unsafe_token.text_range().start(),
             block.syntax().text_range().end(),
-            link_shape_text(
-                source,
-                unsafe_token.text_range().start(),
-                "unsafe block".to_string(),
-            ),
+            link_shape_text(source, unsafe_token.text_range().start(), label.to_string()),
             None,
         );
     }
