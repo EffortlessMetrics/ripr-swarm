@@ -173,8 +173,7 @@ fn an_isinstance_guard_is_read_for_builtin_classes() -> Result<(), String> {
 fn a_shadowed_isinstance_is_not_read_as_the_builtin() -> Result<(), String> {
     // The owner's own `isinstance` parameter is what runs, so the builtin
     // reading of `isinstance(3, str)` must not demote the arm.
-    let shadowed =
-        "def label(x, isinstance):\n    if isinstance(x, str):\n        return 'text'\n";
+    let shadowed = "def label(x, isinstance):\n    if isinstance(x, str):\n        return 'text'\n";
     assert_eq!(
         classify(shadowed, OLD_NIL, &test_of("label(3, check)", "'text'"))?,
         ExposureClass::Exposed
