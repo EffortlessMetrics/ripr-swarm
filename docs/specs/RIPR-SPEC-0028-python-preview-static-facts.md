@@ -1580,6 +1580,23 @@ a non-strong oracle (`assert not pick(0, 3)`), and an owner doctest the
 reader does not see. The change is only `exposed` to `weakly_exposed`, the
 conservative direction.
 
+### Compound and `self.<attr>` operands (#11890)
+
+The same closed allow-list also reads a compound `and`/`or` condition when the
+joining operators match and exactly one operand differs between the old and the
+new condition, both differing operands being single-operand tests of the same
+name (`self.port and self.port != 80` to `self.port is not None and
+self.port != 80`). The tested name may be `self.<attr>` instead of a bare
+parameter when the owner's class `__init__` assigns `self.<attr> = <param>`
+exactly once, nothing else in the class writes `self.<attr>`, and every strong
+related call builds the receiver inline (`Addr("h", 8080).authority()`) with a
+scalar literal for that constructor parameter, an omitted default included.
+Anything else keeps the existing verdict: two differing operands, an unknown
+constructor keyword, a missing required constructor argument, a receiver built
+elsewhere, a later write to the attribute, a falsy constructor argument that
+separates the two tests (`Addr("h", 0)`), and every other shape the #9186 rule
+already refused. `setattr` and `__dict__` writes are not read (a known limit).
+
 ## Metrics
 
 In addition to the cross-language metrics in RIPR-SPEC-0026, the Python
