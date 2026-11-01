@@ -2090,7 +2090,7 @@ fn agent_section(page: &mut Page, agent: &Value) -> Result<(), String> {
             "ripr commands to fix",
             "Tool steps to fix",
             "False weak findings after the fix",
-            "Gaps `--format agent` names before the fix",
+            "Gap or open lines `--format agent` names before the fix",
             "First `check` bytes: human / agent / JSON",
         ],
         &rows,

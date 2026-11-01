@@ -107,7 +107,7 @@ jobs:
       # Full history, like the Linux test lanes (ci, routed-rust, rust-gates):
       # tests that resolve a default base against this checkout (pr-evidence,
       # worktree check) otherwise refuse on a shallow clone (#10344).
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
@@ -329,7 +329,7 @@ jobs:
 
       - name: Upload advisory logs
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ripr-windows-advisory
           path: |
@@ -404,7 +404,7 @@ jobs:
     steps:
       # Bind native subset/consumer proof to the immutable PR head; the required
       # Rust lane separately owns its integration checkout.
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -412,7 +412,7 @@ jobs:
       # The storage tests below ship in this run's workflow definition (the merge ref on a
       # pull_request), so they read the consumer from that same ref and not from the PR head;
       # otherwise a branch behind main pairs new tests with an old consumer (#9521).
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.sha }}
           path: target/workflow-ref
@@ -962,7 +962,7 @@ jobs:
       # plain mocha on Node, not the VS Code test host. Same advisory contract
       # as the other members: the mocha outcome becomes a verdict, a missing
       # log/status or a run that executed zero tests fails the job.
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           cache: npm
@@ -1552,7 +1552,7 @@ jobs:
 
       - name: Upload subset evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ripr-windows-advisory-subset
           path: |
@@ -1591,7 +1591,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       # No toolchain or cache action here: `rust-toolchain.toml` pins 1.95 and
       # the workflow-pin tests count those actions per workflow.

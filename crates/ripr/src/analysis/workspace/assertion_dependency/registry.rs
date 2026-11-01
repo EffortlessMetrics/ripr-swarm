@@ -32,28 +32,53 @@ pub(crate) fn eligible_proptest_root(root: &Path) -> bool {
     }
     // Cheap refusal keeps unaudited/default-newer proptest users off the
     // full metadata path. A lockfile only selects a candidate for proof.
-    let Some(lock) = root
-        .ancestors()
-        .map(|directory| directory.join("Cargo.lock"))
-        .find(|path| path.is_file())
-        .and_then(|path| read_optional(&path).flatten())
-        .and_then(|bytes| parse(&bytes))
-    else {
+    let Some(packages) = locked_packages(root, "proptest") else {
         return false;
     };
-    let Some(packages) = lock.get("package").and_then(toml::Value::as_array) else {
-        return false;
-    };
-    let packages = packages
-        .iter()
-        .filter(|package| package.get("name").and_then(toml::Value::as_str) == Some("proptest"))
-        .collect::<Vec<_>>();
     let [package] = packages.as_slice() else {
         return false;
     };
     package.get("version").and_then(toml::Value::as_str) == Some("1.11.0")
         && package.get("source").and_then(toml::Value::as_str) == Some(SOURCE)
         && package.get("checksum").and_then(toml::Value::as_str) == Some(PROPTEST_CHECKSUM)
+}
+
+/// The `[[package]]` entries named `name` in the nearest `Cargo.lock` at or
+/// above `root`. `None` is no readable lockfile; an empty list is a lockfile
+/// that does not lock the crate. This is the one lockfile reader of the audited
+/// registry profiles.
+fn locked_packages(root: &Path, name: &str) -> Option<Vec<toml::Value>> {
+    let lock = root
+        .ancestors()
+        .map(|directory| directory.join("Cargo.lock"))
+        .find(|path| path.is_file())
+        .and_then(|path| read_optional(&path).flatten())
+        .and_then(|bytes| parse(&bytes))?;
+    let packages = lock.get("package")?.as_array()?;
+    Some(
+        packages
+            .iter()
+            .filter(|package| package.get("name").and_then(toml::Value::as_str) == Some(name))
+            .cloned()
+            .collect(),
+    )
+}
+
+/// RIPR-SPEC-0369: whether the lockfile locks `name` exactly once, from the
+/// crates.io registry, at one of the `audited` versions. An unlocked, repeated,
+/// path, git, other-registry or unaudited-version package is not audited.
+pub(crate) fn locked_at_audited_version(root: &Path, name: &str, audited: &[&str]) -> bool {
+    let Some(packages) = locked_packages(root, name) else {
+        return false;
+    };
+    let [package] = packages.as_slice() else {
+        return false;
+    };
+    package.get("source").and_then(toml::Value::as_str) == Some(SOURCE)
+        && package
+            .get("version")
+            .and_then(toml::Value::as_str)
+            .is_some_and(|version| audited.contains(&version))
 }
 
 /// The function macro, Just strategy and assertion failure path audited in
