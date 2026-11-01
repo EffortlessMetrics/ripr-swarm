@@ -41,7 +41,7 @@ impl ConsumedInputHashes {
         })?;
         let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
         let value = serde_json::from_slice(&bytes)
-            .map_err(|err| format!("parse {} failed: {err}; regenerate the input with the command that wrote it, then rerun", display_path(display)))?;
+            .map_err(|err| format!("parse {} failed: {err}; fix the JSON, or regenerate the input if a command wrote it (never regenerate a reviewed baseline), then rerun", display_path(display)))?;
         Ok((value, digest))
     }
 
