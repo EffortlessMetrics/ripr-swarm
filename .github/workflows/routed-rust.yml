@@ -132,7 +132,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.check.outputs.docs_only }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
       - name: Check whether every changed file is docs/spec/markdown
@@ -211,7 +211,7 @@ jobs:
       queue_entry: ${{ steps.entry.outputs.queue_entry }}
       request: ${{ steps.entry.outputs.request }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Select trusted admission source
         id: trusted
         shell: bash
@@ -235,7 +235,7 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Check out trusted admission bundle
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ steps.trusted.outputs.sha }}
           path: .admission-trusted
@@ -468,7 +468,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
@@ -516,7 +516,7 @@ jobs:
           fi
       - name: Upload docs-gate reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ripr-docs-gate
           path: target/ripr/reports/
@@ -551,6 +551,7 @@ jobs:
           # This does not authenticate the caller or establish G's composition.
           current_eligibility() {
             local pr frame cursor=null more page=0
+            why=admission_binding
             [ "$REPOSITORY" = EffortlessMetrics/ripr-swarm ] || return 1
             [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || return 1
             [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || return 1
@@ -607,7 +608,9 @@ jobs:
                   .repository.full_name == $repo and .id != $id and .run_number >= $number)] | length) == 0
               ' <<<"$all" >/dev/null
             }
+            why=pull_request_state
             read_pr || return
+            why=review_decision_and_threads
             while :; do
               page=$((page + 1)); [ "$page" -le 100 ] || return 1
               frame=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid reviewDecision mergeQueueEntry{id} reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor") || return
@@ -623,9 +626,15 @@ jobs:
               [ "$more" = true ] || break
               cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(type == "string" and length > 0)' <<<"$frame") || return
             done
+            why=pull_request_state_after_threads
             read_pr || return
+            why=same_head_succession
             read_succession
           }
+          # Name the refused stage in the job log. The step already fails closed;
+          # without this the log shows only an exit code (#8858).
+          why=before_check
+          trap 'rc=$?; [ "$rc" -eq 0 ] || echo "::error::eligibility recheck refused at stage $why (exit $rc) for PR #$PR_NUMBER head $EXPECTED_HEAD"' EXIT
           current_eligibility
       - name: Summarize routed result
         if: always()

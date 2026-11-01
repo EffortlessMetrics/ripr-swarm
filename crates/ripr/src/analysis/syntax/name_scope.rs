@@ -19,7 +19,7 @@ use ra_ap_syntax::{
     AstNode, SyntaxNode,
     ast::{self, HasGenericArgs, HasGenericParams, HasModuleItem, HasName},
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The scopes around one function, innermost first: the function body (and
 /// any enclosing function bodies), then each enclosing inline module, then
@@ -29,12 +29,31 @@ pub(crate) struct NameScopes {
     pub(crate) scopes: Vec<NameScope>,
 }
 
+/// One local pattern binding site: its earliest file-absolute line, and the
+/// last file-absolute line it shadows when bounded (`None` shadows to the
+/// end of the enclosing function). For a closure parameter with an ascribed
+/// `fn`-pointer type, that type's parameter count (`None` otherwise): only a
+/// declared arity can prove a shadowed call is not the owner, so the veto
+/// exemption reads this and fails closed without it (#10046).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LocalBindingSite {
+    pub(crate) line: usize,
+    pub(crate) end_line: Option<usize>,
+    pub(crate) closure_fn_arity: Option<usize>,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct NameScope {
     /// Inline module names from the file root down to this scope.
     pub(crate) modules: Vec<String>,
     /// A function body rather than a module.
     pub(crate) fn_body: bool,
+    /// Local pattern binding sites by name. A closure parameter shadows only
+    /// calls inside its own closure body, so a shadowed call in one closure
+    /// never vetoes the outer real calls; every other binding shadows to the
+    /// end of the enclosing function, conservatively covering nested blocks
+    /// as the old earliest-line map always has.
+    pub(crate) local_bindings: BTreeMap<String, Vec<LocalBindingSite>>,
     /// `use` and `extern crate` leaves in this scope, by the name each binds.
     pub(crate) imports: Vec<UseImport>,
     /// Path prefixes of glob imports (`use a::b::*` records `[a, b]`);
@@ -212,6 +231,33 @@ pub(super) fn name_scopes_in_tree(
                 defines: function_type_param_names(&enclosing_fn),
                 ..NameScope::default()
             };
+            for pattern in enclosing_fn
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+            {
+                if let Some(name) = pattern.name() {
+                    let line = line_index.line(pattern.syntax().text_range().start());
+                    // A closure parameter shadows only its own closure body;
+                    // every other binding shadows to the end of the function.
+                    let end_line =
+                        closure_param_body_end(&pattern, line_index).filter(|end| *end >= line);
+                    let closure_fn_arity = end_line
+                        .is_some()
+                        .then(|| closure_param_fn_arity(&pattern))
+                        .flatten();
+                    let site = LocalBindingSite {
+                        line,
+                        end_line,
+                        closure_fn_arity,
+                    };
+                    scope
+                        .local_bindings
+                        .entry(name.text().trim_start_matches("r#").to_string())
+                        .or_default()
+                        .push(site);
+                }
+            }
             if let Some(body) = enclosing_fn.body() {
                 let top_level = body.stmt_list().map(|list| list.syntax().clone());
                 let inner = (ancestor != *function.syntax()).then(|| function.syntax());
@@ -257,6 +303,58 @@ pub(super) fn name_scopes_in_tree(
         // associated fn's scope continues at its enclosing module.
     }
     Some(NameScopes { scopes })
+}
+
+/// End line of the closure body when `pattern` is a parameter of a closure
+/// expression, else `None`. Only a closure parameter's shadow is bounded,
+/// so a shadowed call in one closure never vetoes the outer real calls.
+fn closure_param_body_end(pattern: &ast::IdentPat, line_index: &LineIndex) -> Option<usize> {
+    let param = pattern.syntax().ancestors().find_map(ast::Param::cast)?;
+    // The pattern must be the parameter's own binding, not a name inside
+    // its type ascription.
+    if !param.pat().is_some_and(|pat| {
+        pat.syntax()
+            .text_range()
+            .contains_range(pattern.syntax().text_range())
+    }) {
+        return None;
+    }
+    let list = param
+        .syntax()
+        .parent()
+        .filter(|parent| ast::ParamList::can_cast(parent.kind()))?;
+    let closure = ast::ClosureExpr::cast(list.parent()?)?;
+    let body = closure.body()?;
+    Some(line_index.line(body.syntax().text_range().end()))
+}
+
+/// Declared `fn`-pointer arity of `pattern`'s type ascription when `pattern`
+/// is a closure parameter (`|thr: fn(i32) -> bool|` declares one), else
+/// `None`. Only a plain `fn`-pointer ascription counts; any other shape
+/// (no ascription, a non-function type, an `unsafe`/`extern`/`async` pointer)
+/// fails closed, so the veto exemption never reads an arity it cannot see.
+fn closure_param_fn_arity(pattern: &ast::IdentPat) -> Option<usize> {
+    let param = pattern.syntax().ancestors().find_map(ast::Param::cast)?;
+    // The pattern must be the parameter's own binding, not a name inside
+    // its type ascription.
+    if !param.pat().is_some_and(|pat| {
+        pat.syntax()
+            .text_range()
+            .contains_range(pattern.syntax().text_range())
+    }) {
+        return None;
+    }
+    let ast::Type::FnPtrType(pointer) = param.ty()? else {
+        return None;
+    };
+    if pointer.unsafe_token().is_some()
+        || pointer.abi().is_some()
+        || pointer.async_token().is_some()
+        || pointer.const_token().is_some()
+    {
+        return None;
+    }
+    Some(pointer.param_list()?.params().count())
 }
 
 /// Direct file bindings, using the same collector as function scopes.

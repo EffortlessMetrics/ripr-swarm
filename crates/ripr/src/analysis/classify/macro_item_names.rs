@@ -165,6 +165,20 @@ impl MacroSites {
 
 /// Whether the file's macro invocations may define an item named `name`.
 pub(in crate::analysis) fn macro_may_define_item_named(source: &str, name: &str) -> bool {
+    // #9217: every parsed "may define" route needs a `!` and the queried name
+    // in the text. Return the exact answer without parsing when those are
+    // already absent. An unparsable file that holds `macro_rules!` stays
+    // undecided, so a missing name does not skip when `macro_rules!` is present.
+    if !source.contains('!') {
+        return false;
+    }
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    if name.is_empty() {
+        return false;
+    }
+    if !contains_as_whole_word(source, name) && !source.contains("macro_rules!") {
+        return false;
+    }
     MacroSites::scan(source).may_define(name)
 }
 
@@ -544,5 +558,49 @@ mod tests {
         ] {
             assert!(!macro_may_define_item_named(source, "name"), "{source}");
         }
+    }
+
+    fn take_scans() -> usize {
+        super::SCAN_COUNT.with(|count| count.replace(0))
+    }
+
+    // #9217: skip the parse when the exact answer is already known.
+    #[test]
+    fn a_source_without_bang_never_scans() {
+        take_scans();
+        // Name is present so a name-only prefilter would still scan.
+        assert!(!macro_may_define_item_named(
+            "fn entry(x: u8) -> u8 { x }\nfn t() { entry(1); }\n",
+            "entry"
+        ));
+        assert_eq!(take_scans(), 0);
+    }
+
+    #[test]
+    fn an_absent_name_without_macro_rules_never_scans() {
+        take_scans();
+        // The source has `!`, so a bang-only prefilter would still scan.
+        assert!(!macro_may_define_item_named("emit!(other);\n", "entry"));
+        assert!(!macro_may_define_item_named("emit!(other);\n", "r#entry"));
+        assert_eq!(take_scans(), 0);
+    }
+
+    #[test]
+    fn a_present_name_still_scans_and_may_define() {
+        take_scans();
+        assert!(macro_may_define_item_named("emit!(entry);\n", "entry"));
+        assert_eq!(take_scans(), 1);
+        assert!(macro_may_define_item_named("emit!(entry);\n", "r#entry"));
+        assert_eq!(take_scans(), 1);
+    }
+
+    #[test]
+    fn an_unparsed_macro_rules_file_still_scans_when_the_name_is_absent() {
+        take_scans();
+        // Parse errors keep the undecided `macro_rules!` answer even when the
+        // queried name never appears.
+        let source = "fn { macro_rules! fake { () => {} }\n";
+        assert!(macro_may_define_item_named(source, "entry"));
+        assert!(take_scans() >= 1);
     }
 }

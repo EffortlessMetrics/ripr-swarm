@@ -5147,10 +5147,13 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
 
 /// An identifier-independent event from [`walk_body_lexical`].
 pub(super) enum BodyWalkEvent<'a> {
-    /// A `const|let|var|function` declaration starting a statement (a line
-    /// start, or the first token after `{`, `}`, `;` or a multi-line comment).
-    /// A declaration whose line ends in a top-level comma carries the
-    /// continued declarators on the following lines.
+    /// A `const|let|var|function` declaration at a statement position: the
+    /// start of the body or the first token after a `{`, `}` or `;` (or a
+    /// line start, or a multi-line comment). `line` runs from the keyword to
+    /// the end of its physical line, continued over following lines while the
+    /// line ends in a top-level comma, so it may span several statements
+    /// (`const a = 1; const f = 2;`); a consumer reads each declarator up to
+    /// the first top-level `;`.
     DeclarationLine {
         line: &'a str,
         /// Byte offset of `line` within the walked body.
@@ -5164,7 +5167,8 @@ pub(super) enum BodyWalkEvent<'a> {
 
 /// The conservative lexer shared by the per-identifier scan and the
 /// per-body shadow index (#10925): one definition of comments, strings,
-/// templates, brace scopes and line-start declarations, with the identifier
+/// templates, brace scopes and statement-position declarations (after `{`, `}`
+/// or `;`, not only at a line start), with the identifier
 /// left to the visitor. `DeclarationLine` fires before `CodePosition` for the
 /// same offset. Returns the scope table (see [`BodyLexicalScan::scopes`]).
 pub(super) fn walk_body_lexical<'a>(
@@ -5184,7 +5188,14 @@ pub(super) fn walk_body_lexical<'a>(
     let mut escaped = false;
     let mut pending_dollar = false;
     let mut block_comment_has_newline = false;
+    let mut comment_opened_at_statement_start = false;
+    let mut skip_comment_close_slash = false;
     for (idx, ch) in body_text.char_indices() {
+        if skip_comment_close_slash {
+            // The `/` of a closing `*/` is part of the comment, not code.
+            skip_comment_close_slash = false;
+            continue;
+        }
         if escaped {
             escaped = false;
             continue;
@@ -5217,13 +5228,20 @@ pub(super) fn walk_body_lexical<'a>(
             BodyScanState::Code => match ch {
                 c if c.is_whitespace() => {}
                 '/' if body_text[idx + 1..].starts_with('/') => state = BodyScanState::LineComment,
-                '/' if body_text[idx + 1..].starts_with('*') => state = BodyScanState::BlockComment,
+                '/' if body_text[idx + 1..].starts_with('*') => {
+                    state = BodyScanState::BlockComment;
+                    comment_opened_at_statement_start = at_declaration_start;
+                    block_comment_has_newline = false;
+                }
                 '\'' => state = BodyScanState::SingleQuoted,
                 '"' => state = BodyScanState::DoubleQuoted,
                 '`' => state = BodyScanState::Template,
                 '{' => {
                     scopes.push((idx, usize::MAX));
                     open_scopes.push(scopes.len() - 1);
+                    // A `{` opens a statement position: a declaration that
+                    // follows on the SAME line (`test('x', () => { function f()
+                    // {...} ...`) binds exactly like one on its own line.
                     at_declaration_start = true;
                 }
                 '}' => {
@@ -5235,9 +5253,14 @@ pub(super) fn walk_body_lexical<'a>(
                     } else if let Some(frame) = open_scopes.pop() {
                         scopes[frame].1 = idx;
                     }
+                    // A `}` ends a statement/block, so a same-line declaration
+                    // after it is a statement start too.
                     at_declaration_start = true;
                 }
-                ';' => at_declaration_start = true,
+                ';' => {
+                    visit(BodyWalkEvent::CodePosition { idx });
+                    at_declaration_start = true;
+                }
                 _ => {
                     if at_declaration_start
                         && ["const ", "let ", "var ", "function "]
@@ -5261,9 +5284,10 @@ pub(super) fn walk_body_lexical<'a>(
                     // Preserve a preceding statement boundary and recognize
                     // a declaration following a multiline comment (ASI).
                     state = BodyScanState::Code;
-                    escaped = true; // Consume the closing slash too.
-                    at_declaration_start |= block_comment_has_newline;
-                    block_comment_has_newline = false;
+                    skip_comment_close_slash = true;
+                    // A same-line comment is transparent: it keeps the
+                    // statement position it opened at (`; /* n */ const f`).
+                    at_declaration_start = block_comment_has_newline || comment_opened_at_statement_start;
                 }
             }
             BodyScanState::SingleQuoted => {
@@ -5420,6 +5444,7 @@ fn split_top_level_declarators(after: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;
+    let mut end = after.len();
     for (offset, c) in masked.char_indices() {
         match c {
             '(' | '[' | '{' => depth += 1,
@@ -5428,10 +5453,16 @@ fn split_top_level_declarators(after: &str) -> Vec<&str> {
                 parts.push(after[start..offset].trim());
                 start = offset + 1;
             }
+            // The declaration statement ends at a top-level `;`; a later
+            // comma expression (`; void 0, f(100)`) is not another declarator.
+            ';' if depth == 0 => {
+                end = offset;
+                break;
+            }
             _ => {}
         }
     }
-    parts.push(after[start..].trim());
+    parts.push(after[start..end].trim());
     parts.into_iter().filter(|part| !part.is_empty()).collect()
 }
 
@@ -5605,6 +5636,51 @@ mod spread_call_boundary_tests {
             let actual = contains_call_name(text, "steps");
             if actual != expected {
                 return Err(format!("{text}: expected call={expected}, got {actual}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod same_line_shadow_tests {
+    use super::local_identifier_declared_in_test_body;
+
+    #[test]
+    fn same_line_declarations_shadow_like_multiline_ones() -> Result<(), String> {
+        let shadows = [
+            "() => { function f(n) { return false; } expect(f(100)).toBe(false); }",
+            "() => { let f = (n) => false; expect(f(100)).toBe(false); }",
+            "() => { const f = function(n) { return false; }; expect(f(100)).toBe(false); }",
+            "() => { const a = 1; const f = () => false; expect(f(100)).toBe(false); }",
+            "() => {\n  function f(n) {\n return false; }\n  expect(f(100)).toBe(false);\n}",
+            // A same-line block comment keeps the statement position.
+            "() => { const a = 1; /* note */ const f = () => false; expect(f(100)).toBe(false); }",
+            "() => { /* a\n b */ /* c */ const f = () => false; expect(f(100)).toBe(false); }",
+        ];
+        for body in shadows {
+            if !local_identifier_declared_in_test_body(body, "f") {
+                return Err(format!("expected a shadow of f in: {body}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn same_line_declaration_in_another_block_or_name_does_not_shadow() -> Result<(), String> {
+        let clear = [
+            // Declared in a sibling block that closed before the use.
+            "() => { { function f() { return 1; } } expect(f(100)).toBe(true); }",
+            // A different name sharing a prefix.
+            "() => { function fx(n) { return false; } expect(f(100)).toBe(true); }",
+            // A comma expression after the statement is not a declarator.
+            "() => { const a = 1; void 0, f(100); expect(f(100)).toBe(90); }",
+            // The name only appears as a member and in a string.
+            "() => { const o = { f: 1 }; expect(f(100)).toBe(true); const s = 'function f()'; }",
+        ];
+        for body in clear {
+            if local_identifier_declared_in_test_body(body, "f") {
+                return Err(format!("unexpected shadow of f in: {body}"));
             }
         }
         Ok(())

@@ -141,9 +141,15 @@ impl ValueEnvFacts {
         Arc::ptr_eq(&self.module_constants, &other.module_constants)
     }
 
-    pub(crate) fn build(test: &TestSummary, file_scan: &FileValueScan) -> Self {
+    pub(crate) fn build(test: &TestSummary, file_scan: &FileValueScan, index: &RustIndex) -> Self {
         let body_clean = strip_comments_and_strings(&test.body);
-        let let_bindings = extract_let_bindings(&body_clean);
+        let mut let_bindings = extract_let_bindings(&body_clean);
+        if let Some((name, value)) = index.proptest_singleton_value(test) {
+            // The closed property profile preserves the typed String binding
+            // and admits no write/rebinding. Do not teach ordinary lexical
+            // scans that a same-spelled String::new is necessarily standard.
+            let_bindings.insert(name.to_string(), value.to_string());
+        }
         let (rstest_cases, case_param_names) = extract_rstest_cases(test);
         let test_param_names = extract_fn_param_names(&body_clean);
         let table_bindings = extract_table_bindings(&body_clean);

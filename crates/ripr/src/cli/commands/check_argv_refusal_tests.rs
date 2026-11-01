@@ -93,7 +93,8 @@ fn output_dir_refuses_every_conflicting_interface_before_touching_disk() -> Resu
         };
         let want = "--output-dir requires a named --diff file and cannot be combined with \
                     --format/--json, --worktree/--committed, --candidate-tree/--candidate-base, \
-                    --gap-ledger, --write-artifact or --suppression-policy";
+                    --gap-ledger, --write-artifact or --suppression-policy; pass a named `--diff <file>` \
+                    and drop the other flags";
         if error != want {
             return Err(format!(
                 "{extra:?} refusal must name the conflict, got {error}"
@@ -459,7 +460,7 @@ fn check_timeout_environment_is_a_fallback_and_fails_closed() -> Result<(), Stri
     assert_eq!(
         error,
         format!(
-            "RIPR_CHECK_TIMEOUT is too large for the platform deadline; got {} seconds",
+            "RIPR_CHECK_TIMEOUT is too large for the platform deadline; got {} seconds; pass a smaller number of seconds",
             u64::MAX
         )
     );
@@ -470,7 +471,7 @@ fn check_timeout_environment_is_a_fallback_and_fails_closed() -> Result<(), Stri
                 "x"
             )))
         ),
-        Err("RIPR_CHECK_TIMEOUT must be valid UTF-8".to_string())
+        Err("RIPR_CHECK_TIMEOUT must be valid UTF-8; set it to a whole number of seconds, or unset it".to_string())
     );
     Ok(())
 }
@@ -494,7 +495,7 @@ fn timeout_flags_name_their_own_source_when_refused() -> Result<(), String> {
         .ok_or("an overflowing --git-timeout must fail closed")?;
     assert_eq!(
         error,
-        "--git-timeout is too large for the platform deadline; got 18446744073709551615 seconds"
+        "--git-timeout is too large for the platform deadline; got 18446744073709551615 seconds; pass a smaller number of seconds"
     );
     Ok(())
 }
