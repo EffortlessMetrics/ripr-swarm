@@ -721,6 +721,21 @@ fn refused_eligibility_names_the_stage_that_refused() -> Result<(), String> {
             && report.contains("re-add merge-ready"),
         "{report}"
     );
+    // A queued commit cannot be re-qualified by a label, so the merge-group
+    // recovery text must not send the operator there.
+    let (success, report) = run_result(
+        &source,
+        "merge_group",
+        "queue",
+        "success",
+        "admitted",
+        &[("GITHUB_RUN_ATTEMPT", "2")],
+    )?;
+    assert!(!success, "a merge-group re-run must still refuse");
+    assert!(
+        report.contains("Re-queue the pull request") && !report.contains("re-add merge-ready"),
+        "{report}"
+    );
     let (success, report) = run_result(
         &source,
         "pull_request",

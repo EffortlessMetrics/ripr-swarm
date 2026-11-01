@@ -42,7 +42,8 @@ fn run_route_env(
     // Only the token-rejection warning may reach the job log; error text never does.
     assert!(
         stdout.is_empty()
-            || stdout.starts_with("::warning title=Runner inventory token rejected::"),
+            || (stdout.lines().count() == 1
+                && stdout.starts_with("::warning title=Runner inventory request refused::")),
         "unexpected log output: {stdout}"
     );
     Ok((output, summary, called, attempts))
@@ -327,7 +328,7 @@ fn rejected_inventory_token_is_a_warning_not_a_failure() -> TestResult {
         // Routing is unchanged: the hosted leg is still selected.
         assert!(output.contains("router_target=github\nrouter_reason=runner_api_failed\n"));
         assert_eq!(
-            stdout.contains("::warning title=Runner inventory token rejected::"),
+            stdout.contains("::warning title=Runner inventory request refused::"),
             warned,
             "{http}: {stdout}"
         );
