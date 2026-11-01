@@ -46,11 +46,11 @@ pub(super) fn render(
         .into_iter()
         .chain(triage.omitted.iter().copied())
         .collect();
-    let gaps = if triage.state == triage::HumanTriageState::TopGap {
-        gap_findings(&triage)
-    } else {
-        Vec::new()
-    };
+    // Test-side gaps are independent of which finding triage selected.
+    // A selected static-limited finding must not hide omitted weakly_exposed
+    // or reachable_unrevealed work, or `stop=` would tell an agent to quit
+    // while a test-side gap is still open (#11825).
+    let gaps = gap_findings(&triage);
     let mut out = header_line(output, &considered, gaps.len());
     let next = next_line(&triage, output, &gaps, drill_in, provenance);
     if output.findings.is_empty() && !output.no_scope_provided {
@@ -59,7 +59,7 @@ pub(super) fn render(
         );
         return out;
     }
-    if gaps.is_empty() {
+    if should_emit_stop(&gaps) {
         out.push_str(&terminal_line(&triage, output));
         push_limits(&mut out, &considered, &[]);
         if let Some(next) = next {
@@ -113,6 +113,13 @@ fn is_test_side_gap(finding: &Finding) -> bool {
         )
         && !triage::is_static_limited(finding)
         && !triage::is_preview_limited(finding)
+}
+
+/// `stop=` is the terminal "nothing more is fixable from the test side"
+/// flag. It is true only when no test-side gap remains; a selected
+/// static-limited finding is not enough to set it.
+fn should_emit_stop(gaps: &[&Finding]) -> bool {
+    gaps.is_empty()
 }
 
 fn header_line(output: &CheckOutput, considered: &[&Finding], gaps: usize) -> String {
