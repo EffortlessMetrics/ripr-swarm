@@ -5544,6 +5544,96 @@ fn a_withheld_crate_roots_private_glob_is_routed_by_root() {
 }
 
 #[test]
+fn a_withheld_first_glob_cannot_certify_field_macro_safety() {
+    let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
+    let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
+    let mut withheld = WithheldMacroBindings::default();
+    assert!(withheld.absorb(
+        Path::new("loose.rs"),
+        "use other::*;\n#[macro_use] extern crate exporter;\n",
+        &BTreeSet::new(),
+        &Default::default(),
+    ));
+    assert!(matches!(
+        withheld.sites.get("assert_eq").map(|(_, site)| &site.kind),
+        Some(MacroBindingKind::ForeignGlob(_))
+    ));
+    let syntax = OwnerPinSyntax::default().with_withheld(withheld);
+    assert!(
+        syntax
+            .field_blocking_macro_site(index.tests().at(0), 3, "assert_eq", &index)
+            .is_some()
+    );
+}
+
+#[test]
+fn unchanged_index_reuse_refreshes_a_warmed_field_macro_blocker() -> Result<(), String> {
+    use crate::analysis::facts::{
+        build_analysis_index_from_loaded_files, index_build_probe,
+        reuse_cached_index_with_loaded_files,
+    };
+    let manifest = "[package]\nname='consumer'\nversion='0.0.0'\nedition='2024'\n[dev-dependencies]\nother={path='target/other'}\n";
+    let no_dependency = "[package]\nname='consumer'\nversion='0.0.0'\nedition='2024'\n";
+    let exporter = "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n";
+    let production = "pub fn value() -> u32 { 8 }\n";
+    let test_source = "#[macro_use] extern crate other;\n#[test]\nfn pins() { assert_eq!(consumer::value(), 8); }\n";
+    let root = crate::analysis::facts::drop_in::temp_workspace(
+        "field-macro-reuse",
+        &[
+            ("Cargo.toml", manifest),
+            ("src/lib.rs", production),
+            ("tests/pin.rs", test_source),
+            (
+                "target/other/Cargo.toml",
+                "[package]\nname='other'\nversion='0.0.0'\n",
+            ),
+            ("target/other/src/lib.rs", ""),
+        ],
+    )?;
+    let files = vec![
+        (PathBuf::from("src/lib.rs"), production.as_bytes().to_vec()),
+        (
+            PathBuf::from("tests/pin.rs"),
+            test_source.as_bytes().to_vec(),
+        ),
+    ];
+    let mut cached = build_analysis_index_from_loaded_files(&root, &files, &[])?;
+    let blocked = |index: &RustIndex| {
+        assert_eq!(index.tests().len(), 1, "the query must reach a real test");
+        index
+            .call_identity_memos
+            .receiver_pin_syntax
+            .field_blocking_macro_site(index.tests().at(0), 3, "assert_eq", index)
+            .is_some_and(|(_, site)| matches!(site.kind, MacroBindingKind::MacroUseExport { .. }))
+    };
+    assert!(!blocked(&cached.index));
+    assert_eq!(cached.index.call_identity_memos.receiver_scan_passes(), 1);
+    for (source, selected_manifest, expected) in [
+        (exporter, manifest, true),
+        (exporter, no_dependency, false),
+        (exporter, manifest, true),
+        ("", manifest, false),
+    ] {
+        std::fs::write(root.join("target/other/src/lib.rs"), source)
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("Cargo.toml"), selected_manifest)
+            .map_err(|error| error.to_string())?;
+        // Do not clone: CallIdentityMemos::clone already clears its memos.
+        // The unchanged-files return itself must revoke the warmed scan.
+        let (reused, builds) = index_build_probe::observe(|| {
+            reuse_cached_index_with_loaded_files(cached, &root, &files, &[])
+        });
+        cached = reused?;
+        assert_eq!(builds, 0);
+        assert_eq!(blocked(&cached.index), expected);
+        assert_eq!(cached.index.call_identity_memos.receiver_scan_passes(), 1);
+        assert_eq!(cached.index.files().len(), files.len());
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
 fn a_crate_local_binding_in_another_target_does_not_reach_the_test() {
     let tests = "use demo::weight;\n#[test]\nfn weighs() { assert_eq!(weight(4), 12); }\n";
     // humantime's `benches/datetime_format.rs`: a bench is its own crate.
@@ -6666,7 +6756,10 @@ fn a_macro_binding_refusal_points_at_its_site() {
     assert_eq!(site.line, 3);
     assert_eq!(
         site.kind,
-        MacroBindingKind::MacroUse("extern crate other;".to_string())
+        MacroBindingKind::ExternMacroUse {
+            item: "extern crate other;".to_string(),
+            krate: "other".to_string(),
+        }
     );
     assert_eq!(
         refusal.as_ref().map(AssertionRefusal::describe).as_deref(),
@@ -8527,7 +8620,10 @@ fn the_workspace_site_is_the_first_rebinding_in_path_order_else_the_first_site()
         only_may_rebind,
         Some((
             PathBuf::from("src/a.rs"),
-            MacroBindingKind::MacroUse("extern crate other;".to_string())
+            MacroBindingKind::ExternMacroUse {
+                item: "extern crate other;".to_string(),
+                krate: "other".to_string(),
+            }
         ))
     );
 }
@@ -8589,7 +8685,10 @@ fn a_definition_covering_the_test_outranks_a_may_rebind_site_elsewhere() {
         site_kind(&only_macro_use),
         Some((
             PathBuf::from("src/other.rs"),
-            MacroBindingKind::MacroUse("extern crate other;".to_string())
+            MacroBindingKind::ExternMacroUse {
+                item: "extern crate other;".to_string(),
+                krate: "other".to_string(),
+            }
         ))
     );
     assert!(only_macro_use.is_some_and(|refusal| refusal.is_analyzer_limit()));
