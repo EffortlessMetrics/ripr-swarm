@@ -683,6 +683,63 @@ fn pilot_outcome_route_leaves_a_seam_limited_repo_exposure_file_for_a_full_basel
 }
 
 #[test]
+fn pilot_snapshot_commands_lift_the_inventory_cap_after_a_seam_limit() -> Result<(), String> {
+    // #12150: the suggested `check` snapshots run under the default 10,000
+    // seam inventory cap (or any configured limit), so on a repository above
+    // it both files would be cut and `ripr outcome` would refuse them. A
+    // seam-limited pilot run, whether the limit was the default or an
+    // explicit setting, lifts the cap for both snapshot commands.
+    let entries = [classified_in_owner(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        "a::clone",
+        10,
+    )];
+    let lift = format!("{}=0 ", crate::analysis::REPO_EXPOSURE_SEAM_LIMIT_ENV);
+    for (source, analyzed, total) in [
+        (crate::analysis::SeamLimitSource::Default, 2_000, 10_001),
+        (crate::analysis::SeamLimitSource::Configured, 500, 700),
+    ] {
+        let limit = crate::analysis::SeamLimitInfo {
+            analyzed,
+            total,
+            source,
+        };
+        let artifacts = pilot_artifacts();
+        let mut context = pilot_context(&artifacts);
+        context.seam_limit = Some(&limit);
+        let json: serde_json::Value =
+            serde_json::from_str(&render_pilot_summary_json(&entries, context))
+                .map_err(|err| err.to_string())?;
+        let next = &json["next"];
+        for key in ["before_snapshot_command", "after_snapshot_command"] {
+            let command = next[key].as_str().unwrap_or_default();
+            assert!(command.starts_with(&lift), "{key}: {next}");
+            assert!(command.contains(" check --root "), "{key}: {next}");
+        }
+        let md = render_pilot_summary_md(&entries, context);
+        assert!(md.contains(&format!("\n{lift}ripr check ")), "{md}");
+        assert!(
+            md.contains("$env:RIPR_REPO_EXPOSURE_SEAM_LIMIT = '0'; try {"),
+            "the PowerShell form scopes the same variable: {md}"
+        );
+    }
+
+    // Discriminating negatives: an uncut run keeps the plain command, and a
+    // byte bound alone cannot cut the inventory, so it does not lift the cap.
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+    let json: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    let after = json["next"]["after_snapshot_command"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(!after.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"), "{after}");
+    Ok(())
+}
+
+#[test]
 fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     // #6602: a seam limit dropped classified seams before ranking, so a
     // function may have more seams than the kept slice shows.
