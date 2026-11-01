@@ -3099,21 +3099,32 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 mod tests {
 
     #[test]
-    fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() {
+    fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() -> Result<(), String>
+    {
         let shared = std::path::Path::new("/w/target/debug/ripr");
         // `std::path::absolute` rewrites a rooted, driveless path against the
-        // process drive on Windows, so compare the trailing components rather
-        // than the whole path (docs/LEARNINGS.md, #7937).
-        let isolated =
-            super::isolated_default_target_dir(shared).unwrap_or_else(std::path::PathBuf::from);
-        assert!(isolated.is_absolute(), "{isolated:?}");
-        assert!(
-            isolated.ends_with(std::path::Path::new("target/fixture-variants/default")),
-            "{isolated:?}"
+        // process drive on Windows. Derive the expectation from the same
+        // resolution instead of spelling a host path (docs/LEARNINGS.md,
+        // #7937), so the whole path stays pinned on every platform.
+        let absolute_shared = std::path::absolute(shared).map_err(|err| err.to_string())?;
+        let debug_dir = absolute_shared
+            .parent()
+            .ok_or("absolute shared path has no debug dir")?;
+        let target_root = debug_dir
+            .parent()
+            .ok_or("absolute shared path has no target root")?;
+        let isolated = super::isolated_default_target_dir(shared)?;
+        assert_eq!(
+            isolated,
+            target_root.join("fixture-variants").join("default")
         );
-        assert!(!isolated.starts_with("/w/target/debug"), "{isolated:?}");
+        assert!(
+            !isolated.starts_with(debug_dir),
+            "isolated target nested inside the shared debug dir: {isolated:?}"
+        );
         let missing = super::isolated_default_target_dir(std::path::Path::new("ripr"));
         assert_eq!(missing, Err("missing shared target root".to_string()));
+        Ok(())
     }
 
     #[test]
