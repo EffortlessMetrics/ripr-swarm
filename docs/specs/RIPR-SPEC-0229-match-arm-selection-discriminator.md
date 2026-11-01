@@ -366,7 +366,9 @@ Implemented:
 - integer, char, bool, and cooked or raw string literals, compared by value.
   A char-literal pattern (`'C' | 'S' =>`) reads since #7981; before it the
   arm-head reader masked char literals as comments and no char arm ever
-  established;
+  established. The standard escapes (`\n`, `\r`, `\t`, `\0`, `\\`, `\'`,
+  `\"`, ASCII `\xNN`, `\u{...}` of one to six hex digits) decode to their
+  scalar value (#7990); any other escape stays unknown;
 - literal arguments a check helper lends to an owner call (decision 5,
   #7981), for credit only;
 - `param / N` and `param % N` integer scrutinees and value-equal literal

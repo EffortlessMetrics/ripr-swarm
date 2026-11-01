@@ -616,7 +616,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// arm removed when the owner call's input selects that arm (#12110).
 /// `1.132`: a field write through a by-value receiver is no longer confirmed by
 /// a read of the caller's unmoved binding (#12061).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.132";
+/// `1.133`: a proximity-only or assertion-affinity test whose assertion pins
+/// another function no longer lends a match-arm seam its propagation, activation
+/// or discrimination credit (#12060).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.133";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -792,7 +795,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.132";
 /// `0.133`: same imported-variant receiver as full `1.127` (#8782).
 /// `0.135`: same identical-arms propagation rule as full `1.129` (#12053).
 /// `0.136`: same by-value receiver field-write rule as full `1.132` (#12061).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.136";
+/// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.137";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -970,7 +974,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.136";
 /// `0.133`: same imported-variant receiver as full `1.127` (#8782).
 /// `0.135`: same identical-arms propagation rule as full `1.129` (#12053).
 /// `0.136`: same by-value receiver field-write rule as full `1.132` (#12061).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.136";
+/// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.137";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5568,7 +5573,8 @@ mod tests {
         // removed is credited when its input selects that arm (#12110).
         // 1.131 -> 1.132: by-value receiver field writes are not confirmed by
         // the caller's unmoved binding (#12061).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.132");
+        // 1.132 -> 1.133: proximity assertions pinning another function (#12060).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.133");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5684,8 +5690,9 @@ mod tests {
         // 0.133 -> 0.134: same imported-variant receiver as full 1.127 (#8782).
         // 0.134 -> 0.135: same identical-arms propagation rule as full 1.129.
         // 0.135 -> 0.136: same by-value receiver field-write rule as full 1.132.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.136");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.136");
+        // 0.136 -> 0.137: same proximity rule as full 1.133 (#12060).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.137");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.137");
     }
 
     #[test]
