@@ -27874,14 +27874,15 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
         }
         recoveries.push((label, String::from_utf8_lossy(&missing.stderr).into_owned()));
     }
-    // `explain` hints spell the documented `--format json` (#11844); the
-    // `context` hint still prints the `--json` alias.
+    // The unmatched-selector `explain` hint spells the documented
+    // `--format json` (#11844); the selector-less `explain` and `context`
+    // hints are built by `missing_selector_error` and still print `--json`.
     let explain_listing = expected_listing.replace(" --json", " --format json");
     for (label, stderr) in recoveries {
-        let wanted = if label.ends_with("context") {
-            &expected_listing
-        } else {
+        let wanted = if label == "unmatched explain" {
             &explain_listing
+        } else {
+            &expected_listing
         };
         if !stderr.contains(&format!("`{wanted}`")) {
             return Err(format!(
