@@ -803,11 +803,11 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
     }
     let summary = summary.join(", ");
     if truncated_paths.is_empty() {
-        // #11396: the human headline ("Nothing to check") and its Note carry the
-        // verdict; this line only names what was skipped, so the two do not
-        // explain the same empty result twice.
+        // #11396: the stderr note is the only disclosure JSON and explicit-scope
+        // runs get, so it keeps the non-claim in plain words; the human headline
+        // adds the verdict for the default scope.
         return Some(format!(
-            "ripr: diff contained {non_source_count} non-source file(s) ({summary}). Nothing was analyzed."
+            "ripr: diff contained {non_source_count} non-source file(s) ({summary}). Nothing was analyzed, so this says nothing about whether changed behavior is tested."
         ));
     }
     let listed = truncated_paths

@@ -345,9 +345,9 @@ enabled adapter with a matching non-success `language_runs` entry carries
    `analysis::language::route` to that adapter.
 7. Diff contains only non-source files (`.md`, `.toml`, extensionless), zero
    probes (#2304) → a one-line stderr disclosure names the changed-file count
-   and observed extensions and states that nothing was analyzed;
-   the verdict (not a statement about changed behavior) is carried by the
-   stdout "Nothing to check" headline, not repeated here. It is not a Finding, not a
+   and observed extensions and states that nothing was analyzed, so it says
+   nothing about whether changed behavior is tested (the same line serves JSON
+   and explicit-scope runs, which get no headline). It is not a Finding, not a
    `preview_languages` block, changes no JSON schema or golden, and the exit
    code stays 0. Any source-routed file, or an empty diff, suppresses it.
 

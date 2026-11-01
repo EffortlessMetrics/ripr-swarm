@@ -17,6 +17,10 @@ fn clean_tree_and_docs_only_changes_headline_what_was_not_examined()
     let docs = run_ripr(&["check", "--root", &root_arg, "--quiet"]);
     let docs_out = String::from_utf8_lossy(&docs.stdout).into_owned();
     let docs_err = String::from_utf8_lossy(&docs.stderr).into_owned();
+    let json = run_ripr(&["check", "--root", &root_arg, "--quiet", "--json"]);
+    let json_err = String::from_utf8_lossy(&json.stderr).into_owned();
+    let json_status = json.status.code();
+    let docs_status = docs.status.code();
     let _ = std::fs::remove_dir_all(&root);
 
     for (label, out) in [("clean tree", &clean_out), ("docs only", &docs_out)] {
@@ -30,14 +34,22 @@ fn clean_tree_and_docs_only_changes_headline_what_was_not_examined()
             "{label} must not name a fixed language list: {out}"
         );
     }
-    // The stderr note names what was skipped; the verdict is the headline's.
-    assert!(
-        docs_err.contains("non-source file(s)") && docs_err.contains("Nothing was analyzed."),
-        "{docs_err}"
-    );
-    assert!(
-        !docs_err.contains("not a statement about changed behavior") && !docs_err.contains("Perl"),
-        "the docs-only case must not explain the empty result twice: {docs_err}"
-    );
+    // The stderr note names what was skipped and keeps the non-claim for every
+    // format; the headline adds the verdict for the default scope.
+    assert_eq!(docs_status, Some(0), "{docs_err}");
+    assert_eq!(json_status, Some(0), "{json_err}");
+    for (label, err) in [("human", &docs_err), ("json", &json_err)] {
+        assert!(
+            err.contains("1 non-source file(s) (.txt)"),
+            "{label} must name the count and extension: {err}"
+        );
+        assert!(
+            err.contains(
+                "Nothing was analyzed, so this says nothing about whether changed behavior is tested."
+            ),
+            "{label} must keep the non-claim: {err}"
+        );
+        assert!(!err.contains("Perl"), "{label}: {err}");
+    }
     Ok(())
 }
