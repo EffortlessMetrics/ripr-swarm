@@ -999,6 +999,8 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
 // check-run JSON, so the classification (not just the pinned text) is proved.
 const VSCODE_HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const VSCODE_REQUEST_AT: &str = "2026-11-01T11:02:00Z";
+const VSCODE_SELECTION: &str =
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb full-ci=false vscode=false";
 
 fn check_json(id: u64, app: &str, status: &str, conclusion: &str, suite: u64, run: u64) -> String {
     let conclusion = if conclusion.is_empty() {
@@ -1070,6 +1072,7 @@ esac
         ("BASH_ENV", bash_env.as_str()),
         ("REPOSITORY", "o/r"),
         ("REQUEST_AT", VSCODE_REQUEST_AT),
+        ("REQUEST_SELECTION", VSCODE_SELECTION),
         ("EXPECTED_HEAD", VSCODE_HEAD),
     ];
     let output = fixture.run(&vscode_step_shell()?, &env, Some(&stub.join("bin")))?;
@@ -1085,8 +1088,19 @@ esac
 fn extension_e2e_step_classifies_check_runs_by_the_requests_own_suite() -> TestResult {
     let ga = "github-actions";
     // Surface and vscode rows for one request: run 100, suite 100, titled with this request.
-    let title = |at: &str| format!("CI merge-ready request {VSCODE_HEAD} {at}");
+    let title = |at: &str| format!("CI merge-ready request {VSCODE_HEAD} {at} {VSCODE_SELECTION}");
     let own_title = title(VSCODE_REQUEST_AT);
+    // Same head and second, but another event's selection inputs (base, labels).
+    let other_base = format!(
+        "CI merge-ready request {VSCODE_HEAD} {VSCODE_REQUEST_AT} cccccccccccccccccccccccccccccccccccccccc full-ci=false vscode=false"
+    );
+    let other_flag = format!(
+        "CI merge-ready request {VSCODE_HEAD} {VSCODE_REQUEST_AT} {}",
+        VSCODE_SELECTION.replace("vscode=false", "vscode=true")
+    );
+    let other_base_only = [(100, other_base.as_str())];
+    let other_flag_only = [(100, other_flag.as_str())];
+    let other_flag_then_own = [(100, other_flag.as_str()), (200, own_title.as_str())];
     let earlier_title = title("2026-11-01T11:01:58Z");
     let mine = [(100, own_title.as_str())];
     let earlier_only = [(100, earlier_title.as_str())];
@@ -1259,6 +1273,45 @@ fn extension_e2e_step_classifies_check_runs_by_the_requests_own_suite() -> TestR
             },
             false,
             "vscode surface absent",
+        ),
+        (
+            "same head and second but another base: its suite may have selected differently, so it is not read (#12236)",
+            VscodeCase {
+                runs: &other_base_only,
+                surface: surface_ok(),
+                vscode: vec![check_json(11, ga, "completed", "skipped", 100, 100)],
+                api_failures: 0,
+            },
+            false,
+            "vscode surface absent",
+        ),
+        (
+            "same head and second but another label set: an earlier skipped suite is not this request's selection (#12236)",
+            VscodeCase {
+                runs: &other_flag_only,
+                surface: surface_ok(),
+                vscode: vec![check_json(11, ga, "completed", "skipped", 100, 100)],
+                api_failures: 0,
+            },
+            false,
+            "vscode surface absent",
+        ),
+        (
+            "an other-selection run does not mask the request's own run, which is read and fails",
+            VscodeCase {
+                runs: &other_flag_then_own,
+                surface: vec![
+                    check_json(10, ga, "completed", "success", 100, 100),
+                    check_json(12, ga, "completed", "success", 200, 200),
+                ],
+                vscode: vec![
+                    check_json(11, ga, "completed", "skipped", 100, 100),
+                    check_json(13, ga, "completed", "failure", 200, 200),
+                ],
+                api_failures: 0,
+            },
+            false,
+            "concluded 'failure'",
         ),
         (
             "a run with an ordinary title (manual dispatch, other event) does not count",

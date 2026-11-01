@@ -1,2 +1,2 @@
 <!-- section: Internal / CI -->
-- The routed Result now binds the extension e2e verdict to the `ci.yml` run that names its own request (`CI merge-ready request <head> <request time>`) instead of a creation-time window, so two `merge-ready` requests seconds apart can no longer read each other's suite; two runs with an identical title fail closed (#12236).
+- The routed Result now binds the extension e2e verdict to the `ci.yml` run that names its own request (`CI merge-ready request <head> <request time> <base> full-ci=<bool> vscode=<bool>`, every input of its selection) instead of a creation-time window, so two `merge-ready` requests seconds apart can no longer read each other's suite; two runs with an identical title fail closed (#12236).

@@ -1038,7 +1038,7 @@ fn merge_ready_run_names_its_request_for_the_results_vscode_binding() {
     // the ci.yml run whose title is exactly this string.
     assert!(
         WORKFLOW.contains(
-            "format('CI merge-ready request {0} {1}', github.event.pull_request.head.sha, github.event.pull_request.updated_at)"
+            "format('CI merge-ready request {0} {1} {2} full-ci={3} vscode={4}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.event.pull_request.base.sha, contains(github.event.pull_request.labels.*.name, 'full-ci'), contains(github.event.pull_request.labels.*.name, 'vscode'))"
         ),
         "ci.yml must title a merge-ready run with the head and the request time"
     );

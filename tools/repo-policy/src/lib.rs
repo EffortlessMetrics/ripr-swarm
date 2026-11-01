@@ -1374,6 +1374,10 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "[ \"$candidate_title\" = \"$request_title\" ]",
         ),
         (
+            "include every extension-selection input (base and labels) in the request title the surface is bound to (#12236)",
+            "$REQUEST_AT $REQUEST_SELECTION",
+        ),
+        (
             "refuse distinct ci.yml runs that carry the identical request title instead of choosing between their suites (#12236)",
             "more than one ci.yml run",
         ),

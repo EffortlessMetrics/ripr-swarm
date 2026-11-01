@@ -646,6 +646,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
           REQUEST_AT: ${{ github.event.pull_request.updated_at }}
+          REQUEST_SELECTION: ${{ format('{0} full-ci={1} vscode={2}', github.event.pull_request.base.sha, contains(github.event.pull_request.labels.*.name, 'full-ci'), contains(github.event.pull_request.labels.*.name, 'vscode')) }}
         run: |
           set -euo pipefail
           # #12122: ci.yml owns selection of the `vscode` extension e2e. Its
@@ -654,16 +655,17 @@ jobs:
           # skipped `vscode` check means "not selected" only when the request's
           # own surface succeeded and the skip is in its suite.
           # The surface must belong to the ci.yml run for this label event (#12236):
-          # that run titles itself `CI merge-ready request <head> <request time>`
-          # from the event payload and this run reads the same two values, so an
-          # earlier request's suite is not read. Distinct runs with one title (two
-          # events in one second) are refused. Every surface check for the head is
-          # considered, so a matching run cannot fall out of a window.
-          # Residual (#12252): no per-event id is shared by the two workflows. If
-          # an earlier same-second request's run passed while this request's run
-          # was still invisible and then failed nondeterministically, that pass is
-          # read. If the earlier run failed or was cancelled the Result fails,
-          # which is safe; a deterministic failure stays red.
+          # that run titles itself `CI merge-ready request <head> <request time>
+          # <base> full-ci=<bool> vscode=<bool>`, every input of its vscode
+          # selection, from the event payload; this run reads the same values, so
+          # an earlier request's suite, which may have selected differently, is
+          # not read. Distinct runs with one title (same inputs, one second) are
+          # refused. Every surface check for the head is considered.
+          # Residual (#12252): no per-event id is shared by the two workflows, so
+          # an identical-title earlier run passing while this request's run was
+          # invisible and then failed nondeterministically is read; its selection
+          # inputs are identical. An earlier failed or cancelled run fails the
+          # Result (safe); a deterministic failure stays red.
           # No surface yet: wait, then fail closed. In the suite the newest
           # executed check decides, so a passing re-run clears an infrastructure
           # failure and a running one is awaited. Reads retry so one API error
@@ -678,7 +680,7 @@ jobs:
             return 1
           }
           [ -n "$REQUEST_AT" ] || { echo "::error::this run has no request time to bind the vscode surface to"; exit 1; }
-          request_title="CI merge-ready request $EXPECTED_HEAD $REQUEST_AT"
+          request_title="CI merge-ready request $EXPECTED_HEAD $REQUEST_AT $REQUEST_SELECTION"
           declare -A run_title=()
           deadline=$((SECONDS + 1200))
           while :; do
