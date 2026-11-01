@@ -65,11 +65,12 @@ pub(super) fn collect_owners_from_statements(
             Stmt::FunctionDef(function) => {
                 push_function_owner(stmt, owner_context, out);
                 if let Some(parent) = function_context {
-                    let called = body_calls_nested_def(source, statements, &function.name);
+                    let reading = body_calls_nested_def(source, statements, &function.name);
                     if let Some(owner) = out.last_mut() {
                         owner.qualified_name = format!("{parent}.{}", function.name);
                         owner.owner_kind = Some(OwnerKind::Function);
-                        owner.nested_called_by_parent = called;
+                        owner.nested_called_by_parent = reading.called;
+                        owner.nested_result_discarded = reading.result_discarded;
                     }
                 }
                 let parent_qualified = out
@@ -90,11 +91,12 @@ pub(super) fn collect_owners_from_statements(
             Stmt::AsyncFunctionDef(function) => {
                 push_function_owner(stmt, owner_context, out);
                 if let Some(parent) = function_context {
-                    let called = body_calls_nested_def(source, statements, &function.name);
+                    let reading = body_calls_nested_def(source, statements, &function.name);
                     if let Some(owner) = out.last_mut() {
                         owner.qualified_name = format!("{parent}.{}", function.name);
                         owner.owner_kind = Some(OwnerKind::Function);
-                        owner.nested_called_by_parent = called;
+                        owner.nested_called_by_parent = reading.called;
+                        owner.nested_result_discarded = reading.result_discarded;
                     }
                 }
                 let parent_qualified = out
@@ -215,11 +217,11 @@ struct PythonOwnerContext<'a> {
 /// walrus, `for`, `as`, `import`) or defines it more than once is fail-closed:
 /// the call may reach a different binding. Returning or passing the def
 /// without calling it is not a call.
-fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool {
+fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> NestedCallReading {
     let mut scan = DeferredRanges::default();
     collect_deferred_ranges(statements, name, &mut scan);
     if scan.definitions > 1 {
-        return false;
+        return NestedCallReading::default();
     }
     super::module_constants::visit_exprs_in_statements(statements, &mut |expr| {
         if let Expr::Lambda(lambda) = expr {
@@ -258,7 +260,7 @@ fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool 
         .collect::<Vec<_>>()
         .join("\n");
     let ident = |ch: char| ch == '_' || ch.is_alphanumeric();
-    let mut calls = false;
+    let mut calls = 0usize;
     let mut rebinds = false;
     for (idx, _) in executed.match_indices(name) {
         let end = idx + name.len();
@@ -270,7 +272,7 @@ fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool 
         let after = executed[end..].trim_start_matches([' ', '\t']);
         let before = executed[..idx].trim_end_matches([' ', '\t']);
         if after.starts_with('(') && super::related_tests::is_bare_call_site(&executed, idx) {
-            calls = true;
+            calls += 1;
         } else if (after.starts_with('=') && !after.starts_with("=="))
             || after.starts_with(":=")
             || matches!(
@@ -281,7 +283,58 @@ fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool 
             rebinds = true;
         }
     }
-    calls && !rebinds
+    let called = calls > 0 && !rebinds;
+    // The result is discarded only when every call is a statement of its own
+    // (`inner()` on a line by itself, #12182). A call whose value may be
+    // returned, bound, passed or asserted leaves the result path open, so the
+    // fact stays false and today's reading is kept.
+    let result_discarded = called && calls == discarded_statement_calls(statements, name);
+    NestedCallReading {
+        called,
+        result_discarded,
+    }
+}
+
+/// What the enclosing body does with a nested def (#12141, #12182).
+#[derive(Default)]
+struct NestedCallReading {
+    /// The statements that run with the enclosing body call the nested def.
+    called: bool,
+    /// Every such call is an expression statement, so the nested function's
+    /// result reaches nothing the enclosing function returns or exposes.
+    result_discarded: bool,
+}
+
+/// Statements of the form `name(...)` or `await name(...)` in the statements
+/// that run with the body: through compound blocks, never into a nested def
+/// or class.
+fn discarded_statement_calls(statements: &[Stmt], name: &str) -> usize {
+    let is_call_of_name = |expr: &Expr| -> bool {
+        let call = match expr {
+            Expr::Await(awaited) => awaited.value.as_ref(),
+            other => other,
+        };
+        matches!(
+            call,
+            Expr::Call(call) if matches!(
+                call.func.as_ref(),
+                Expr::Name(func) if func.id.as_str() == name
+            )
+        )
+    };
+    let mut count = 0;
+    for stmt in statements {
+        match stmt {
+            Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_) => {}
+            Stmt::Expr(expr) if is_call_of_name(&expr.value) => count += 1,
+            _ => {
+                for block in super::admission::nested_blocks(stmt) {
+                    count += discarded_statement_calls(block, name);
+                }
+            }
+        }
+    }
+    count
 }
 
 /// Byte ranges found while reading an enclosing body for a nested-def call.
@@ -552,6 +605,7 @@ fn owner_from_function(
         version_conditional: false,
         cli_subcommand: None,
         nested_called_by_parent: false,
+        nested_result_discarded: false,
     }
 }
 
@@ -657,6 +711,7 @@ fn owner_from_class(
         version_conditional: false,
         cli_subcommand: None,
         nested_called_by_parent: false,
+        nested_result_discarded: false,
     }
 }
 
@@ -697,6 +752,7 @@ pub(super) fn module_owner(
         version_conditional: false,
         cli_subcommand: None,
         nested_called_by_parent: false,
+        nested_result_discarded: false,
     }
 }
 

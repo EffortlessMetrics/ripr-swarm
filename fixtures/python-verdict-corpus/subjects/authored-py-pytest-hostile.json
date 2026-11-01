@@ -46,6 +46,10 @@
       "sha256": "38d18c203717e33e64e38e82f162ac08f7e80c4cdad38e1860d06d68ca479d78"
     },
     {
+      "path": "hostile/nested_discard.py",
+      "sha256": "25aae6272ac9de3aba18623426169cabec2621edfad6aeb1e68bc54985af4fce"
+    },
+    {
       "path": "hostile/settings.py",
       "sha256": "265f37697a8e3618f4480de05f63a2d793b951ea685e2369626f245c99ba2c5d"
     },
@@ -116,6 +120,10 @@
     {
       "path": "tests/test_nested.py",
       "sha256": "4ef3125b7759eade5a73eeb561152d1ee5edd9edcc6a8b849a4e4efb23b2fd09"
+    },
+    {
+      "path": "tests/test_nested_discard.py",
+      "sha256": "8f30597bf5ac426f935538c2f821ee6cb7ec8d00b9f68309037ec3b97fc8c212"
     },
     {
       "path": "tests/test_settings.py",

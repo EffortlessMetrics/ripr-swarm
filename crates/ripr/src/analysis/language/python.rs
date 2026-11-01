@@ -396,6 +396,7 @@ mod effect_alignment;
 mod effect_order_tests;
 mod hypothesis;
 mod module_constants;
+mod nested_result;
 mod no_behavior;
 mod oracles;
 mod owner_exact;
@@ -652,6 +653,12 @@ struct PythonOwner {
     /// when this holds (`related_tests.rs`, #12141). `false` for every other
     /// owner, which keeps parent-call reach fail-closed.
     nested_called_by_parent: bool,
+    /// For a nested function owner: whether every call the enclosing body
+    /// makes is an expression statement of its own, so the nested function's
+    /// result never reaches what the enclosing function returns (`classify.rs`,
+    /// #12182). `false` for every other owner and for any call whose value may
+    /// flow on, which keeps today's reading.
+    nested_result_discarded: bool,
 }
 
 /// One declared parameter of a Python function owner.
