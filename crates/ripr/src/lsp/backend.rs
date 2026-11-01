@@ -13481,16 +13481,46 @@ fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
 /// so a writer that rewrites a file in place with the same length and restores
 /// its old mtime would still match the key. Unix keys include ctime, which
 /// cannot be restored.
+#[cfg(not(test))]
 const DISK_EQUALITY_RACY_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
+/// Tests use a short window so they can move past it with a brief sleep.
+#[cfg(test)]
+const DISK_EQUALITY_RACY_WINDOW: std::time::Duration = std::time::Duration::from_millis(150);
 
+fn disk_instant_is_racy(instant: std::time::SystemTime) -> bool {
+    std::time::SystemTime::now()
+        .duration_since(instant)
+        .map(|age| age < DISK_EQUALITY_RACY_WINDOW)
+        .unwrap_or(true)
+}
+
+/// Whether either the data timestamp or, on Unix, the inode change timestamp
+/// is within the racy window. The change time matters because the Unix stat
+/// key relies on it, and it can be as coarse as mtime on older kernels.
 fn disk_mtime_is_racy(meta: &fs::Metadata) -> bool {
-    match meta.modified() {
-        Ok(modified) => std::time::SystemTime::now()
-            .duration_since(modified)
-            .map(|age| age < DISK_EQUALITY_RACY_WINDOW)
-            .unwrap_or(true),
-        Err(_) => true,
+    let Ok(modified) = meta.modified() else {
+        return true;
+    };
+    disk_instant_is_racy(modified) || disk_change_time_is_racy(meta)
+}
+
+#[cfg(unix)]
+fn disk_change_time_is_racy(meta: &fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (
+        u64::try_from(meta.ctime()),
+        u32::try_from(meta.ctime_nsec()),
+    ) {
+        (Ok(secs), Ok(nanos)) => {
+            disk_instant_is_racy(std::time::UNIX_EPOCH + std::time::Duration::new(secs, nanos))
+        }
+        _ => true,
     }
+}
+
+#[cfg(not(unix))]
+fn disk_change_time_is_racy(_meta: &fs::Metadata) -> bool {
+    false
 }
 
 type DiskEqualityDigestCache = Mutex<BTreeMap<PathBuf, (DiskContentStatKey, Option<String>)>>;
@@ -13582,6 +13612,11 @@ mod disk_bytes_equal_text_tests {
         ))
     }
 
+    /// Lets the change time (which no writer can set) age out of the racy window.
+    fn past_racy_window() {
+        std::thread::sleep(super::DISK_EQUALITY_RACY_WINDOW * 2);
+    }
+
     /// Moves the mtime well outside the racy window so the digest is cacheable.
     fn backdate(path: &std::path::Path) -> Result<(), String> {
         set_mtime(
@@ -13634,6 +13669,7 @@ mod disk_bytes_equal_text_tests {
         let path = temp_disk_path("read-once");
         std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
         backdate(&path)?;
+        past_racy_window();
         assert!(!disk_bytes_equal_text(&path, "abd"));
         assert!(!disk_bytes_equal_text(&path, "abe"));
         assert!(!disk_bytes_equal_text(&path, "abx"));
@@ -13691,6 +13727,7 @@ mod disk_bytes_equal_text_tests {
         let old = std::time::SystemTime::now() - std::time::Duration::from_mins(1);
         std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
         set_mtime(&path, old)?;
+        past_racy_window();
         let first = disk_bytes_equal_text(&path, "abc");
         std::fs::write(&path, "abd").map_err(|err| format!("rewrite failed: {err}"))?;
         set_mtime(&path, old)?;
