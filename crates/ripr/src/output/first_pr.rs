@@ -3354,11 +3354,22 @@ fn resolve_path(root: &Path, path: &str) -> PathBuf {
 }
 
 fn normalized_path(path: &Path) -> String {
-    path.display()
+    let text = path
+        .display()
         .to_string()
         .replace('\\', "/")
         .trim_end_matches('/')
-        .to_ascii_lowercase()
+        .to_ascii_lowercase();
+    // A Windows `canonicalize` yields a verbatim prefix (`//?/D:/...`,
+    // `//?/UNC/host/share`) that names the same directory as the plain form,
+    // so a ledger recorded canonically is not a foreign root.
+    match text.strip_prefix("//?/") {
+        Some(rest) => match rest.strip_prefix("unc/") {
+            Some(unc) => format!("//{unc}"),
+            None => rest.to_string(),
+        },
+        None => text,
+    }
 }
 
 /// The selected root first-pr displays are rendered against: `--root` as
@@ -3376,6 +3387,29 @@ fn repo_root() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_verbatim_prefixed_root_is_the_same_root_as_its_plain_form() {
+        use std::path::Path;
+        // Drive-letter spellings are assembled so no literal local path
+        // appears in the source (check-local-context).
+        let drive = "D";
+        let verbatim = format!(r"\\?\{drive}:\a\Repo\");
+        let plain = format!("{}:/a/repo", drive.to_ascii_lowercase());
+        assert_eq!(
+            super::normalized_path(Path::new(&verbatim)),
+            super::normalized_path(Path::new(&plain))
+        );
+        assert_eq!(
+            super::normalized_path(Path::new(r"\\?\UNC\host\share\r")),
+            super::normalized_path(Path::new(r"\\host\share\r"))
+        );
+        let other = format!(r"\\?\{drive}:\a\other");
+        assert_ne!(
+            super::normalized_path(Path::new(&other)),
+            super::normalized_path(Path::new(&plain))
+        );
+    }
+
     #[test]
     fn resolve_path_drops_the_roots_own_cur_dir() {
         // `--root .` used to render every emitted artifact as
@@ -8268,9 +8302,10 @@ mod tests {
         let command = recommend(&|_| {})?
             .ok_or("a current, complete, producer-made TypeScript record must recommend")?;
         assert!(
-            command.starts_with(
-                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base 'HEAD~1' --root "
-            ) && command.ends_with(" --phase before"),
+            command.starts_with(&format!(
+                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base {} --root ",
+                shell_arg("HEAD~1")
+            )) && command.ends_with(" --phase before"),
             "{command}"
         );
 

@@ -94,7 +94,7 @@ TypeScript repair packet (advisory)
   authority: preview_advisory_only
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)
+  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == threshold`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only)
 Drill in:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_complete/input --diff <cwd>/fixtures/ts_repair_packet_complete/diff.patch --mode fast probe:src_discount.ts:typescript_preview:2396aec1
   ripr context --root <cwd>/fixtures/ts_repair_packet_complete/input --diff <cwd>/fixtures/ts_repair_packet_complete/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:2396aec1
