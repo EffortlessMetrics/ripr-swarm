@@ -1124,6 +1124,13 @@ count. `summary.changed_rust_files` stays Rust-adapter-only (#2103):
 preview-language files never inflate it, so it is `0` for a Python-only diff
 by design; read `changed_files_by_language` for other languages.
 
+`summary.conflicting_expressions` (additive, no `schema_version` bump, #11554)
+counts changed expressions, keyed by file, line and expression text, that
+carry findings of more than one exposure class. It is emitted only when it is
+greater than `0`, and the per-class counts above still count every finding.
+Selecting one of those findings by location stays ambiguous by design; this
+member is the signal that the same expression was classified two ways.
+
 `language_completeness` (additive, no `schema_version` bump, #11272) is the
 per-language projection of the shared completeness view that the editor, MCP
 and SARIF surfaces already read. It is emitted on every `check --json` run
