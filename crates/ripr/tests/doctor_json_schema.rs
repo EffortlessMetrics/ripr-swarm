@@ -507,6 +507,28 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
         Value::String("generally_supported".to_string());
     assert_rejected("unlisted language tier", &unknown_language_tier, &schema)?;
 
+    // #2961: `availability_state` is a closed vocabulary (the resolver's nine
+    // states, or null when the config could not be loaded). An unlisted
+    // spelling and a missing key must both be refused.
+    let mut unlisted_availability_state = base.clone();
+    unlisted_availability_state["detected_languages"][0]["availability_state"] =
+        Value::String("probably_available".to_string());
+    assert_rejected(
+        "unlisted availability state",
+        &unlisted_availability_state,
+        &schema,
+    )?;
+
+    let mut missing_availability_state = base.clone();
+    if let Some(object) = missing_availability_state["detected_languages"][0].as_object_mut() {
+        object.remove("availability_state");
+    }
+    assert_rejected(
+        "missing availability state",
+        &missing_availability_state,
+        &schema,
+    )?;
+
     let mut unknown_exporter_state = base.clone();
     unknown_exporter_state["perl_preview"]["exporter"]["state"] =
         Value::String("probably_works".to_string());
