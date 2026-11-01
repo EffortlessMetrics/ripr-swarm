@@ -662,9 +662,15 @@ jobs:
           # never read, however close in time the requests are; distinct runs
           # with one title (two events in the same second) are refused, not
           # guessed between. Every surface check for the head is considered, so a
-          # matching run cannot fall out of a window. An earlier request's run with
-          # the same title (same second) cannot have a green surface: ci.yml's merge-ready
-          # concurrency group cancels the earlier run when the later request arrives.
+          # matching run cannot fall out of a window. Residual (#12236): GitHub
+          # exposes no per-event id shared by the two workflows, so an earlier
+          # request's run with the same title (two events in one second) whose
+          # surface completed while the current request's run was still invisible
+          # cannot be told from the current one. ci.yml's merge-ready concurrency
+          # group normally cancels the earlier run, which fails the Result, but
+          # GitHub does not guarantee that ordering; the verdict read is then the
+          # same head's, and differs only if that earlier run failed for
+          # infrastructure reasons.
           # No such check
           # yet means ci.yml has not got that far: wait, then fail closed. In the suite,
           # the newest executed check (highest id) decides, so a passing re-run
