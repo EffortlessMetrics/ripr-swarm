@@ -1353,6 +1353,22 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "bind the succession read to this run's own attempt",
             ".id == $id and .run_attempt == $attempt and .head_sha == $head",
         ),
+        (
+            "grant the Result's check-run read the token needs for the extension e2e verdict (#12122)",
+            "permissions:\n  actions: read\n  checks: read\n  contents: read\n",
+        ),
+        (
+            "read the extension e2e check for the admitted head before summarizing (#12122)",
+            "      - name: Read the extension e2e check for the admitted head\n        id: vscode\n",
+        ),
+        (
+            "decide the extension e2e verdict by the newest executed check of this request (#12122)",
+            "[.[] | select(.conclusion != \"skipped\")] | last // {}",
+        ),
+        (
+            "fail the Result when the selected extension e2e did not succeed (#12122)",
+            "[ \"$VSCODE_CHECK_RESULT\" != success ]",
+        ),
     ] {
         if !workflow.contains(snippet) {
             violations.push(format!(
