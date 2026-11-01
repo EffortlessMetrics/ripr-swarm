@@ -1658,3 +1658,56 @@ fn method_arm_on_a_type_declared_twice_is_not_a_start() -> Result<(), String> {
         "src/lib.rs:9",
     )
 }
+
+// #12076: end-to-end pin that `ripr repair` does not claim grip on the
+// identical-inline-arms predicate subject (#12053 / #12073 unit coverage).
+
+const EXISTING_TESTS_ALREADY_CHECK: &str = "existing tests already check it";
+
+fn identical_arms_lib(threshold: &str, else_arm: &str) -> String {
+    format!(
+        "pub fn pick(x: i32) -> i32 {{\n    let r;\n    if x {threshold} {{ r = 1; }} else {{ r = {else_arm}; }}\n    r + 0\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn pins_the_boundary_row() {{\n        assert_eq!(pick(5), 1);\n    }}\n}}\n"
+    )
+}
+
+fn repair_after_identical_arms_change(old: &str, new: &str) -> Result<(bool, String), String> {
+    let repo = Repo::create(old, new, "// inline tests in src/lib.rs\n")?;
+    repo.repair_text(&["--base", "HEAD~1"])
+}
+
+#[test]
+fn identical_inline_arms_repair_does_not_claim_existing_tests_already_check() -> Result<(), String>
+{
+    let old = identical_arms_lib("> 5", "1");
+    let mut new = identical_arms_lib("> 5", "1");
+    assert_eq!(new.matches("x > 5").count(), 1);
+    new = new.replacen("x > 5", "x >= 5", 1);
+    assert_eq!(new.matches("x > 5").count(), 0);
+    assert_eq!(new.matches("x >= 5").count(), 1);
+    let (ok, repair) = repair_after_identical_arms_change(&old, &new)?;
+    assert!(!ok, "repair must refuse without starting:\n{repair}");
+    assert!(
+        !repair.contains(EXISTING_TESTS_ALREADY_CHECK),
+        "identical arms must not read as gripped:\n{repair}"
+    );
+    assert!(
+        repair.contains("repair route not ready"),
+        "expected the honest missing-evidence refusal:\n{repair}"
+    );
+    Ok(())
+}
+
+#[test]
+fn differing_inline_arms_repair_still_claims_existing_tests_already_check() -> Result<(), String> {
+    let old = identical_arms_lib("> 5", "1");
+    let mut new = identical_arms_lib("> 5", "1");
+    new = new.replacen("x > 5", "x >= 5", 1);
+    new = new.replacen("else { r = 1; }", "else { r = 2; }", 1);
+    let (ok, repair) = repair_after_identical_arms_change(&old, &new)?;
+    assert!(!ok, "repair must still refuse:\n{repair}");
+    assert!(
+        repair.contains(EXISTING_TESTS_ALREADY_CHECK),
+        "differing arms must still read as gripped on current evidence:\n{repair}"
+    );
+    Ok(())
+}
