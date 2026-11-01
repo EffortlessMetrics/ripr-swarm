@@ -79,6 +79,7 @@ Current how-to docs:
 - [Agent workflows](AGENT_WORKFLOWS.md)
 - [LSP-first repair/receipt workflow for agents](LSP_AGENT_REPAIR_WORKFLOW.md)
 - [LSP transport bounds](LSP_TRANSPORT_BOUNDS.md)
+- [Agent quickstart](AGENT_QUICKSTART.md)
 - [LLM operator guide](LLM_OPERATOR_GUIDE.md)
 - [Recommendation calibration](RECOMMENDATION_CALIBRATION.md)
 - [Calibrated gate policy](CALIBRATED_GATE_POLICY.md)
@@ -125,6 +126,9 @@ Current how-to docs:
 - [Release](RELEASE.md)
 - [0.11.0 roadmap](releases/0.11.0-roadmap.md) - ranked path to the 0.11 hard
   cut, linked to its issues (tracking issue #9271)
+- [0.11.0 Windows packaged dispatch checklist](releases/0.11.0-windows-packaged-dispatch.md) -
+  read-only inputs and expected shape of the candidate Windows packaged run
+  (#9274)
 - [Live-history release transaction runbook](RELEASE_TRANSACTION.md) - exact
   two-repository release lifecycle, J/K transport, receipts, and stop rules
 - [Source-promotion preflight](SOURCE_PROMOTION_PREFLIGHT.md)

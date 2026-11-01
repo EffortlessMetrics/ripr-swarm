@@ -1925,7 +1925,23 @@ pub(crate) fn chain_entry_pin_admits(
             && is_direct_call_site(&call.text, entry_name)
             && !test_call_is_shadowed(index, test, entry_name, call.line)
     });
-    if !calls_entry {
+    // #9638: an integration test may name the entry through its own library
+    // (`pkg::entry(..)`, `pkg::module::entry(..)`) with no `use`. The path is
+    // the relation's own-crate spelling, established by the same authority that
+    // relates the test to the chain, so the pin adds no second resolver.
+    let qualified_entry = test.calls.iter().find_map(|call| {
+        (call.name == entry_name && !test_call_is_shadowed(index, test, entry_name, call.line))
+            .then(|| {
+                super::related_tests::own_crate_qualified_entry_path(
+                    index,
+                    test,
+                    &entry.caller,
+                    call.line,
+                )
+            })
+            .flatten()
+    });
+    if !calls_entry && qualified_entry.is_none() {
         return false;
     }
     // Exactly one entry call in the assertion, and it is a whole operand
@@ -1951,7 +1967,12 @@ pub(crate) fn chain_entry_pin_admits(
     let Some(operands) = super::reveal::equality_operands(&assertion.text) else {
         return false;
     };
-    let is_entry_operand = |operand: &str| operand_is_exact_call(operand, entry_name);
+    let is_entry_operand = |operand: &str| {
+        (calls_entry && operand_is_exact_call(operand, entry_name))
+            || qualified_entry
+                .as_deref()
+                .is_some_and(|path| operand_is_exact_call(operand, path))
+    };
     let expected = match (
         is_entry_operand(&operands[0]),
         is_entry_operand(&operands[1]),
@@ -2632,7 +2653,8 @@ fn hops_carry_owner_string_data(owner_name: &str, hops: &[HelperHop], index: &Ru
     };
     !hops.is_empty()
         && std_data_return(owner)
-        && !owner_builds_with_macro()
+        && (!owner_builds_with_macro()
+            || super::propagation_witness::concat_literal_tail(owner, index).is_some())
         && hops.iter().enumerate().all(|(step, hop)| {
             let callee = match step.checked_sub(1) {
                 None => *owner,
@@ -3155,6 +3177,11 @@ const TRANSPARENT_STD_MACROS: &[&str] = &[
     "matches",
     "concat",
     "stringify",
+    "cfg",
+    "column",
+    "file",
+    "line",
+    "module_path",
 ];
 
 /// Whether any indexed file binds a [`TRANSPARENT_STD_MACROS`] name to
@@ -5127,6 +5154,53 @@ mod tests {
         assert_eq!(macro_path_before("x; :: m"), (vec!["m"], true));
         assert_eq!(macro_path_before("let s = a"), (vec!["a"], false));
         assert_eq!(macro_path_before("(a) "), (Vec::<&str>::new(), false));
+    }
+
+    // #10357 item 3: literal/bool std macros (`cfg!`, `line!`, …) expand with
+    // no `return`, but were missing from the transparent allowlist.
+    #[test]
+    fn transparent_std_macros_include_cfg_and_line_literals() -> Result<(), String> {
+        use crate::analysis::facts::OwnedRustIndex;
+        for body in [
+            "let _d = cfg!(debug_assertions); if is_bulk(qty) { 5 } else { 0 }",
+            "let _here = line!(); if is_bulk(qty) { 5 } else { 0 }",
+            "file!(); column!(); module_path!(); if is_bulk(qty) { 5 } else { 0 }",
+        ] {
+            assert!(
+                !caller_invokes_opaque_macro(body, false),
+                "expected transparent: {body}"
+            );
+        }
+        for body in [
+            "env!(\"X\"); if is_bulk(qty) { 5 } else { 0 }",
+            "core::cfg!(debug_assertions); if is_bulk(qty) { 5 } else { 0 }",
+            "std::line!(); if is_bulk(qty) { 5 } else { 0 }",
+        ] {
+            assert!(
+                caller_invokes_opaque_macro(body, false),
+                "expected opaque: {body}"
+            );
+        }
+        let path = PathBuf::from("src/lib.rs");
+        let source = "macro_rules! cfg { () => { true }; }\npub fn w(qty: u32) -> u32 { cfg!(); if qty > 1 { 5 } else { 0 } }\n";
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let index = RustIndex::from_owned(OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        if !transparent_macro_name_rebound("cfg!();", &index) {
+            return Err(
+                "stop condition: rebinding scan must detect local macro_rules! cfg (#10357)"
+                    .to_string(),
+            );
+        }
+        assert!(
+            caller_invokes_opaque_macro("cfg!(); if is_bulk(qty) { 5 } else { 0 }", true),
+            "rebound cfg must stay opaque"
+        );
+        Ok(())
     }
 
     // #6694 / #6672: an exact oracle on the wrapper's result stands for the

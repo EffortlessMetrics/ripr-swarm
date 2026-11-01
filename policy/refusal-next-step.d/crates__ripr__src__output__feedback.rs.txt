@@ -1,0 +1,5 @@
+crates/ripr/src/output/feedback.rs|feedback receipt field `{field}` must be a string or null current historical mismatched unknown feedback refer
+crates/ripr/src/output/feedback.rs|feedback receipt kind must be usefulness_feedback_receipt
+crates/ripr/src/output/feedback.rs|feedback receipt missing string field `{field}` feedback receipt field `{field}` must be a string or null curr
+crates/ripr/src/output/feedback.rs|feedback receipt schema_version must be {FEEDBACK_SCHEMA_VERSION}
+crates/ripr/src/output/feedback.rs|unknown feedback reference_state {other:?}

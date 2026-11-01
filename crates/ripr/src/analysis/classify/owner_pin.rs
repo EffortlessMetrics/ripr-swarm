@@ -45,11 +45,15 @@ mod call_term_fold;
 pub(super) mod closure_adaptor;
 mod expected_binding;
 mod fallible_check;
+mod fixture_receiver;
 mod helper_arguments;
 pub(super) mod result_map;
 pub(super) mod returned_closure;
+mod shared_macro_scan;
 pub(super) mod short_circuit;
 pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
+use shared_macro_scan::ScanPart;
+pub(in crate::analysis) use shared_macro_scan::SharedMacroScans;
 
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::call_identity::{CallTarget, ConstantTable, OwnerCallIdentity};
@@ -77,9 +81,9 @@ use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equali
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, ItemNesting, MacroBindingCandidates,
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, RootShadow,
-    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, drop_in_assertion_leaf,
-    empty_macro_binding_ambiguities, err_return_guard_key, generated_test_pins,
-    local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
+    TRUSTED_MACRO_NAMES, attribute_settles_test_outcome, cfg_if_module_name,
+    drop_in_assertion_leaf, empty_macro_binding_ambiguities, err_return_guard_key,
+    generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
     owner_pin_matches_assertions, parse_clean_source_file, pattern_pins, qualified_matches_paths,
     returns_leave_the_function, source_binds_value_name, source_declares_value_name,
     source_imported_claims_macros, trusted_macro_binding_site_sets, trusted_macro_binding_sites,
@@ -308,8 +312,17 @@ const STD_ROOTED_ASSERT_EQ: [&str; 24] = [
     "::core::debug_assert",
 ];
 
+#[cfg(test)]
+thread_local! {
+    static PROJECTED_WORKSPACE_FILE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PROJECTED_WORKSPACE_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static STD_ROOTED_FILE_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 impl StdRootedCalls {
     fn of(source: &str) -> Self {
+        #[cfg(test)]
+        STD_ROOTED_FILE_PARSES.with(|count| count.set(count.get() + 1));
         let Some(file) = parse_clean_source_file(source) else {
             return Self::default();
         };
@@ -412,6 +425,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// probe, test and assertion, and each input below scans the workspace,
     /// so every answer is kept for the run under the key it depends on.
     path_memo: SyncMemo<PathCallMemo>,
+    /// Pure workspace-source checks for projected collection equality,
+    /// keyed by the retained source identities of the indexed files.
+    projected_collection_workspace: SyncMemo<ProjectedCollectionWorkspaceMemo>,
     /// #7097: bare-call binding verdicts per [`BareCallKey`].
     bare_call_memo: SyncMemo<BTreeMap<BareCallKey, bool>>,
     /// #7097: out-of-line module children per (parent file, `mod` name):
@@ -453,8 +469,7 @@ struct PathCallMemo {
     /// Per (owner file, owner start line, owner name, path prefix, test
     /// file, test line): the verdict.
     verdicts: BTreeMap<(PathBuf, usize, String, String, PathBuf, usize), bool>,
-    /// Per (file, fn name, start line): the inline modules enclosing that
-    /// item, or `None` when ripr cannot place it.
+    /// Per (file, name, line): the pure item-nesting facts (#6974).
     nesting: BTreeMap<(PathBuf, String, usize), Option<ItemNesting>>,
     /// Per (owner crate root, owner name): whether the crate may hold an
     /// item of the name ripr cannot see.
@@ -464,6 +479,63 @@ struct PathCallMemo {
     /// Per (test crate root, path root): whether the test's crate may bind
     /// the root itself.
     test_crate_binds: BTreeMap<(PathBuf, String), bool>,
+}
+
+/// Only pure workspace-source verdicts belong here. The retained strong
+/// references prevent address reuse from making a different source look equal.
+#[derive(Clone, Debug, Default)]
+struct ProjectedCollectionWorkspaceMemo {
+    sources: Vec<(PathBuf, std::sync::Arc<str>)>,
+    verdicts: BTreeMap<ProjectedCollectionWorkspaceKey, bool>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ProjectedCollectionWorkspaceKey {
+    StandardRoots,
+    Constructor(PathBuf, String),
+}
+
+impl ProjectedCollectionWorkspaceMemo {
+    fn refresh(&mut self, index: &RustIndex) {
+        let files = index.files();
+        if self.sources.len() != files.len()
+            || !self
+                .sources
+                .iter()
+                .zip(files.iter())
+                .all(|((path, source), (file, facts))| {
+                    path == file && std::sync::Arc::ptr_eq(source, &facts.source)
+                })
+        {
+            self.sources = files
+                .iter()
+                .map(|(path, facts)| (path.clone(), facts.source.clone()))
+                .collect();
+            self.verdicts.clear();
+        }
+    }
+
+    fn verdict(
+        memo: &SyncMemo<Self>,
+        index: &RustIndex,
+        key: ProjectedCollectionWorkspaceKey,
+        scan: impl FnOnce() -> bool,
+    ) -> bool {
+        {
+            let mut memo = memo.borrow_mut();
+            memo.refresh(index);
+            if let Some(verdict) = memo.verdicts.get(&key) {
+                return *verdict;
+            }
+        }
+        // A resolver may itself consult syntax. Never hold a memo lock while
+        // computing a miss, including a refused/invalid-source verdict.
+        let verdict = scan();
+        let mut memo = memo.borrow_mut();
+        memo.refresh(index);
+        memo.verdicts.insert(key, verdict);
+        verdict
+    }
 }
 
 /// The macro bindings of files a narrowed diff index withheld (#5320).
@@ -715,7 +787,7 @@ impl OwnerPinSyntax {
         }
     }
 
-    /// #6974: [`item_nesting`], kept per (file, name, line).
+    /// #6974: reuse compact nesting facts only for the same retained source.
     fn item_nesting(
         &self,
         index: &RustIndex,
@@ -961,25 +1033,18 @@ impl OwnerPinSyntax {
                         .is_none()
             }
             // Field construction: only a real shadow (a definition or import
-            // of the assertion name) or an opaque in-scope expansion that
-            // mentions it refuses credit. A site that only may rebind it
-            // (`#[macro_use] extern crate`, a glob import) does not, matching
-            // the operand-whitespace contracts on main; the return family
-            // keeps refusing on those sites.
+            // of the assertion name) or an opaque in-scope expansion that mentions
+            // it refuses credit. A `#[macro_use] extern crate` or a foreign glob
+            // alone remains admitted for the operand-whitespace field contracts;
+            // the return family keeps refusing on these ambiguous sites.
             Some(AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name))) => {
                 family == ProbeFamily::FieldConstruction
                     && self
                         .macro_binding_site(test, assertion.line, &name, index)
-                        .is_some_and(|(_, site)| {
-                            !rebinds(&site)
-                                && !matches!(
-                                    site.kind,
-                                    MacroBindingKind::MacroArgument(_)
-                                        | MacroBindingKind::MacroBody(_)
-                                        | MacroBindingKind::BodyBindsAny { .. }
-                                        | MacroBindingKind::ArgumentAttribute { .. }
-                                )
-                        })
+                        .is_some()
+                    && self
+                        .field_blocking_macro_site(test, assertion.line, &name, index)
+                        .is_none()
             }
             Some(_) => false,
         }
@@ -1016,7 +1081,12 @@ impl OwnerPinSyntax {
         ));
         Some(match refusal {
             AssertionRefusal::Syntax(AssertionContextRefusal::MacroBinding(name)) => {
-                let site = self.macro_binding_site(test, assertion.line, &name, index);
+                let site = if probe.family == ProbeFamily::FieldConstruction {
+                    self.field_blocking_macro_site(test, assertion.line, &name, index)
+                        .or_else(|| self.macro_binding_site(test, assertion.line, &name, index))
+                } else {
+                    self.macro_binding_site(test, assertion.line, &name, index)
+                };
                 AssertionRefusal::MacroBinding { name, site }
             }
             refusal => refusal,
@@ -1034,7 +1104,7 @@ impl OwnerPinSyntax {
     ) -> Option<(PathBuf, MacroBindingSite)> {
         let resolved_modules = self.resolved_module_declarations(index);
         let resolved = |path: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, path, line, declaration)
         };
         let test_roots = self.target_roots(index).roots(&test.file, index);
         // #8255: the single ambiguity pass retained the earliest
@@ -1072,6 +1142,56 @@ impl OwnerPinSyntax {
         } else {
             workspace.or(local)
         }
+    }
+
+    // Unlike disclosure's single selected site, admission must consider every
+    // relevant blocking kind. Withheld scans retain only one site and can stop
+    // early, so any reaching withheld ambiguity cannot establish absence.
+    fn field_blocking_macro_site(
+        &self,
+        test: &TestSummary,
+        assertion_line: usize,
+        name: &str,
+        index: &RustIndex,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
+        let roots = self.target_roots(index).roots(&test.file, index);
+        let resolved_modules = self.resolved_module_declarations(index);
+        let resolved = |path: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(path.to_path_buf(), line, declaration.to_string()))
+        };
+        self.workspace_macro_site_in_mode(name, roots.as_ref(), Some(&test.file), index, true)
+            .or_else(|| self.withheld.sites.get(name).cloned())
+            .or_else(|| {
+                self.withheld
+                    .root_sites
+                    .iter()
+                    .find_map(|((site_name, root), site)| {
+                        (site_name == name && roots.as_ref().is_none_or(|r| r.contains(root)))
+                            .then(|| site.clone())
+                    })
+            })
+            .or_else(|| {
+                let facts = index.files().get(&test.file)?;
+                self.test_file_macro_sites
+                    .borrow_mut()
+                    .entry((name.to_string(), test.file.clone()))
+                    .or_insert_with(|| {
+                        macro_binding_sites(
+                            name,
+                            &test.file,
+                            &facts.source,
+                            facts.macro_candidates.as_deref(),
+                            index,
+                            self.target_roots(index),
+                            &resolved,
+                        )
+                    })
+                    .iter()
+                    .find(|(_, site)| {
+                        site_covers_assertion(site, test, assertion_line) && field_site_blocks(site)
+                    })
+                    .map(|(_, site)| (test.file.clone(), site.clone()))
+            })
     }
 
     fn execution_context(
@@ -1285,7 +1405,7 @@ impl OwnerPinSyntax {
     fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
         ambiguous
@@ -1350,6 +1470,17 @@ impl OwnerPinSyntax {
         test_file: Option<&Path>,
         index: &RustIndex,
     ) -> Option<(PathBuf, MacroBindingSite)> {
+        self.workspace_macro_site_in_mode(name, test_roots, test_file, index, false)
+    }
+
+    fn workspace_macro_site_in_mode(
+        &self,
+        name: &str,
+        test_roots: Option<&BTreeSet<PathBuf>>,
+        test_file: Option<&Path>,
+        index: &RustIndex,
+        field_only: bool,
+    ) -> Option<(PathBuf, MacroBindingSite)> {
         if !assertion_context_macros().contains(&name) {
             return None;
         }
@@ -1362,14 +1493,17 @@ impl OwnerPinSyntax {
         let retained = scan.as_ref()?;
         let mut rebinding: Option<&OrderedMacroSite> = None;
         let mut may_rebind: Option<&OrderedMacroSite> = None;
+        let mut field_blocking: Option<&OrderedMacroSite> = None;
         if let Some(rank) = retained.global.get(name) {
             merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+            keep_earliest_site(&mut field_blocking, rank.field_blocking.as_ref());
         }
         for (root, names) in &retained.by_root {
             if test_roots.is_none_or(|roots| roots.contains(root))
                 && let Some(rank) = names.get(name)
             {
                 merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+                keep_earliest_site(&mut field_blocking, rank.field_blocking.as_ref());
             }
         }
         for (file, binding) in &retained.by_module {
@@ -1377,11 +1511,15 @@ impl OwnerPinSyntax {
                 && let Some(rank) = binding.sites.get(name)
             {
                 merge_macro_site_rank(&mut rebinding, &mut may_rebind, rank);
+                keep_earliest_site(&mut field_blocking, rank.field_blocking.as_ref());
             }
         }
-        rebinding
-            .or(may_rebind)
-            .map(|site| (site.path.clone(), site.site.clone()))
+        let selected = if field_only {
+            field_blocking
+        } else {
+            rebinding.or(may_rebind)
+        };
+        selected.map(|site| (site.path.clone(), site.site.clone()))
     }
 
     /// #8255: finish the retained-site scan the ambiguity pass skipped. It
@@ -1409,10 +1547,15 @@ impl OwnerPinSyntax {
         }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
-        let (_, rest) = partition_macro_scan_files(index);
-        let sites = scan_macro_sites(&rest, index, self.target_roots(index), &module_resolved);
+        // #11509: the index-owned scan, shared with every other instance.
+        let sites = index.call_identity_memos.macro_site_scans.scan(
+            ScanPart::Rest,
+            index,
+            self.target_roots(index),
+            &module_resolved,
+        );
         // Resolved before the map borrow: target roots never re-enter the
         // site scan, and the mutable borrow must not outlive its purpose.
         let roots = self.target_roots(index);
@@ -1423,7 +1566,7 @@ impl OwnerPinSyntax {
         if retained.complete {
             return;
         }
-        retain_macro_sites(sites.retained, retained, roots, index);
+        retain_macro_sites(&sites.retained, retained, roots, index);
         retained.complete = true;
         #[cfg(test)]
         {
@@ -1537,7 +1680,7 @@ impl OwnerPinSyntax {
         }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
-            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+            module_declaration_resolved(resolved_modules, index, file, line, declaration)
         };
         let ambiguous = self.trusted_macro_ambiguities(index);
         let Some(facts) = index
@@ -2166,6 +2309,7 @@ fn module_ancestry(
 struct MacroSiteRank {
     rebinding: Option<OrderedMacroSite>,
     may_rebind: Option<OrderedMacroSite>,
+    field_blocking: Option<OrderedMacroSite>,
 }
 
 /// Producer position, rather than line number, preserves same-line order
@@ -2184,6 +2328,18 @@ impl OrderedMacroSite {
 }
 impl MacroSiteRank {
     fn absorb(&mut self, path: &Path, position: usize, site: &MacroBindingSite) {
+        if field_site_blocks(site)
+            && self
+                .field_blocking
+                .as_ref()
+                .is_none_or(|kept| (path, position) < (kept.path.as_path(), kept.position))
+        {
+            self.field_blocking = Some(OrderedMacroSite {
+                path: path.to_path_buf(),
+                position,
+                site: site.clone(),
+            });
+        }
         let slot = if rebinds(site) {
             &mut self.rebinding
         } else {
@@ -2613,6 +2769,11 @@ impl AssertionRefusal {
         }
     }
 
+    /// Whether the refusal is an enclosing `cfg` gate on the test (#9643).
+    pub(in crate::analysis) fn is_gated_item(&self) -> bool {
+        matches!(self, Self::Syntax(AssertionContextRefusal::GatedItem(_)))
+    }
+
     /// One reader-facing clause: what blocked crediting the assertion.
     pub(in crate::analysis) fn describe(&self) -> String {
         let at = |path: &Path, line: usize| {
@@ -2868,6 +3029,59 @@ fn workspace_macro_binding_site_for(
     first
 }
 
+fn field_site_blocks(site: &MacroBindingSite) -> bool {
+    rebinds(site)
+        || matches!(
+            site.kind,
+            MacroBindingKind::MacroArgument(_)
+                | MacroBindingKind::MacroBody(_)
+                | MacroBindingKind::BodyBindsAny { .. }
+                | MacroBindingKind::ArgumentAttribute { .. }
+        )
+}
+
+/// Whether the module declaration `declaration` on `line` of `file` resolves
+/// to an indexed file. A parsed `mod NAME;` is answered by the module edges;
+/// a [`cfg_if_module_declaration`] key (#5993), which exists only as tokens in
+/// a `cfg_if!`, by the default layout: the one `NAME.rs` or `NAME/mod.rs`
+/// beside a crate-root-named or `mod.rs` declaring file. Other declaring
+/// files nest their children one directory deeper, which this does not model.
+fn module_declaration_resolved(
+    resolved: &BTreeSet<(PathBuf, usize, String)>,
+    index: &RustIndex,
+    file: &Path,
+    line: usize,
+    declaration: &str,
+) -> bool {
+    let Some(name) = cfg_if_module_name(declaration) else {
+        return resolved.contains(&(file.to_path_buf(), line, declaration.to_string()));
+    };
+    if !cfg_if_layout_file(file) {
+        return false;
+    }
+    let directory = file.parent().unwrap_or(Path::new(""));
+    let files = index.files();
+    let flat = files.get(&directory.join(format!("{name}.rs"))).is_some();
+    let nested = files.get(&directory.join(name).join("mod.rs")).is_some();
+    // Both layouts present is a rustc error (E0761), never one module.
+    flat != nested
+}
+
+/// Whether `file` places its child modules in its own directory: `mod.rs`,
+/// or a `lib.rs`/`main.rs` that is an actual crate root (`src/lib.rs`,
+/// `src/main.rs`, `src/bin/NAME/main.rs`). A `lib.rs` or `main.rs` declared by
+/// `mod lib;` nests children under `lib/`, so file name alone is not enough.
+fn cfg_if_layout_file(file: &Path) -> bool {
+    let parts: Vec<&str> = file
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect();
+    matches!(
+        parts.as_slice(),
+        [.., "mod.rs"] | [.., "src", "lib.rs" | "main.rs"] | [.., "src", "bin", _, "main.rs"]
+    )
+}
+
 /// A definition or `use` of the name: a real rebinding, not one that only
 /// may rebind it.
 fn rebinds(site: &MacroBindingSite) -> bool {
@@ -2995,9 +3209,9 @@ fn trusted_macro_sites_in(
     // every test, no later file (scoped sites included) changes an answer,
     // so the rest are skipped. A refusal that needs a site completes the
     // retained scan once instead (#8255).
-    let (likely, rest) = partition_macro_scan_files(index);
+    let shared = &index.call_identity_memos.macro_site_scans;
     absorb_macro_sites(
-        scan_macro_sites(&likely, index, roots, module_resolved),
+        &shared.scan(ScanPart::Likely, index, roots, module_resolved),
         &mut global,
         &mut scoped,
         &mut by_root,
@@ -3007,7 +3221,7 @@ fn trusted_macro_sites_in(
     );
     if global.len() < assertion_context_macros().len() {
         absorb_macro_sites(
-            scan_macro_sites(&rest, index, roots, module_resolved),
+            &shared.scan(ScanPart::Rest, index, roots, module_resolved),
             &mut global,
             &mut scoped,
             &mut by_root,
@@ -3112,7 +3326,7 @@ fn scan_macro_sites(
 
 /// Both initial absorption and deferred completion exclude every scoped site.
 fn retain_macro_sites(
-    sites: Vec<(PathBuf, String, usize, MacroBindingSite)>,
+    sites: &[(PathBuf, String, usize, MacroBindingSite)],
     retained: &mut WorkspaceMacroSiteIndex,
     roots: &TargetRoots,
     index: &RustIndex,
@@ -3121,17 +3335,17 @@ fn retain_macro_sites(
         if site.scope.is_some() {
             continue;
         }
-        if module_confined(&site, &path, roots, index) {
+        if module_confined(site, path, roots, index) {
             let binding = retained.by_module.entry(path.clone()).or_default();
-            binding.roots = roots.roots(&path, index);
+            binding.roots = roots.roots(path, index);
             binding
                 .sites
-                .entry(name)
+                .entry(name.clone())
                 .or_default()
-                .absorb(&path, position, &site);
+                .absorb(path, *position, site);
             continue;
         }
-        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
+        if let Some(contexts) = roots.binding_roots(path, site, index) {
             for root in contexts {
                 retained
                     .by_root
@@ -3139,14 +3353,14 @@ fn retain_macro_sites(
                     .or_default()
                     .entry(name.clone())
                     .or_default()
-                    .absorb(&path, position, &site);
+                    .absorb(path, *position, site);
             }
         } else {
             retained
                 .global
-                .entry(name)
+                .entry(name.clone())
                 .or_default()
-                .absorb(&path, position, &site);
+                .absorb(path, *position, site);
         }
     }
 }
@@ -3227,7 +3441,7 @@ pub(in crate::analysis) fn nested_parallelism_allowed() -> bool {
     reason = "one ordered fold over four run-scoped ambiguity outputs and the retention index"
 )]
 fn absorb_macro_sites(
-    sites: ScannedMacroSites,
+    sites: &ScannedMacroSites,
     global: &mut BTreeSet<String>,
     scoped: &mut ScopedMacroBindings,
     by_root: &mut CrateMacroBindings,
@@ -3235,24 +3449,27 @@ fn absorb_macro_sites(
     roots: &TargetRoots,
     index: &RustIndex,
 ) {
-    retain_macro_sites(sites.retained, retained, roots, index);
-    for (path, name, site) in sites.ambiguities {
+    retain_macro_sites(&sites.retained, retained, roots, index);
+    for (path, name, site) in &sites.ambiguities {
         if site.scope.is_some() {
-            scoped.entry(path).or_default().push((name, site));
+            scoped
+                .entry(path.clone())
+                .or_default()
+                .push((name.clone(), site.clone()));
             continue;
         }
-        if module_confined(&site, &path, roots, index) {
+        if module_confined(site, path, roots, index) {
             let binding = retained.by_module.entry(path.clone()).or_default();
-            binding.roots = roots.roots(&path, index);
-            binding.names.insert(name);
+            binding.roots = roots.roots(path, index);
+            binding.names.insert(name.clone());
             continue;
         }
-        if let Some(contexts) = roots.binding_roots(&path, &site, index) {
+        if let Some(contexts) = roots.binding_roots(path, site, index) {
             for root in contexts {
                 by_root.entry(root).or_default().insert(name.clone());
             }
         } else {
-            global.insert(name);
+            global.insert(name.clone());
         }
     }
 }
@@ -3398,6 +3615,8 @@ enum ReturnPathGate {
     /// one pure `&&` or `||` chain over its parameters. The pinned call
     /// must evaluate every operand on some run.
     ShortCircuit(short_circuit::ShortCircuitTail),
+    /// #9766: literal helper data reaches a receiver-field tuple projection.
+    FixtureReceiver(fixture_receiver::FixtureReceiver),
     /// RIPR-SPEC-0225: field `field` of the `type_name { .. }` literal the
     /// owner returns (inside `wrapper(..)` when the owner returns
     /// `Result`/`Option`). The pinned value must be a literal of that type,
@@ -3749,6 +3968,15 @@ impl OwnerReturnPin {
                         .map(|tail| ReturnPathGate::Adaptor {
                             position: tail.position,
                             requires_ok: tail.collects_result(),
+                        })
+                        .or_else(|| {
+                            fixture_receiver::FixtureReceiver::establish(
+                                owner,
+                                &probe.expression,
+                                probe.before.as_deref(),
+                                index,
+                            )
+                            .map(ReturnPathGate::FixtureReceiver)
                         })
                         // RIPR-SPEC-0265 rule 5: a returned closure applied in the
                         // pinned expression.
@@ -4260,6 +4488,13 @@ impl OwnerReturnPin {
         })
     }
 
+    /// A credited pin with this gate reads nonempty literal receiver data
+    /// through the whole returned sum. Reveal must credit the pin before
+    /// the classifier may use this owner-side flow fact.
+    pub(in crate::analysis) fn reads_literal_fixture_receiver(&self) -> bool {
+        matches!(self.path, ReturnPathGate::FixtureReceiver(_))
+    }
+
     /// The test-side gates: whether `assertion` in `test` pins the owner's
     /// return value through a call that names the owner.
     /// [`owner_call_shape`], reading an `async` owner's result through one
@@ -4292,7 +4527,11 @@ impl OwnerReturnPin {
                     .then(|| owner_call_shape(future, name))
                     .flatten()
             }
-            (false, _) => owner_call_shape(operand, name),
+            (false, _) => owner_call_shape(operand, name).or_else(|| {
+                matches!(self.path, ReturnPathGate::FixtureReceiver(_))
+                    .then(|| fixture_receiver::FixtureReceiver::inline_call(operand, name))
+                    .flatten()
+            }),
         }
     }
 
@@ -4976,6 +5215,15 @@ impl OwnerReturnPin {
                 {
                     return false;
                 }
+                if let ReturnPathGate::FixtureReceiver(fixture) = path
+                    && !call_text.is_some_and(|text| {
+                        fixture
+                            .admits(test, assertion, text, expected, index, syntax)
+                            .is_some()
+                    })
+                {
+                    return false;
+                }
                 // RIPR-SPEC-0265 rule 5: the application must tell the
                 // closure's operators apart.
                 if let ReturnPathGate::ReturnedClosure { arity, arithmetic } = path
@@ -5174,33 +5422,47 @@ impl OwnerReturnPin {
                 },
                 CallShape::Method(_) | CallShape::Constructed(_),
             ) => {
-                let receiver_type = match call {
-                    CallShape::Method(receiver) => {
-                        if bound_by_macro(&masked_body, receiver) {
-                            return false;
-                        }
-                        test_receiver_type(
-                            test,
-                            receiver,
-                            test_source,
-                            index,
-                            imports_foreign,
-                            owner_scope,
-                            syntax,
-                        )
-                    }
-                    // An inline constructor types the receiver the same way
-                    // a `let receiver = Type::constructor(..);` binding does.
-                    CallShape::Constructed(receiver) => binding_type(
-                        &format!("= {receiver}"),
+                let receiver_type = if let ReturnPathGate::FixtureReceiver(fixture) = &self.path {
+                    // The gate above read the actual helper value, not merely
+                    // its return type. Existing type/shadow/import authority
+                    // still binds the record to this owner.
+                    named_or_slice(
+                        &fixture.type_name,
                         test,
                         test_source,
                         index,
                         imports_foreign,
                         owner_scope,
-                        syntax,
-                    ),
-                    CallShape::Bare | CallShape::Path(_) | CallShape::Associated(_) => None,
+                    )
+                } else {
+                    match call {
+                        CallShape::Method(receiver) => {
+                            if bound_by_macro(&masked_body, receiver) {
+                                return false;
+                            }
+                            test_receiver_type(
+                                test,
+                                receiver,
+                                test_source,
+                                index,
+                                imports_foreign,
+                                owner_scope,
+                                syntax,
+                            )
+                        }
+                        // An inline constructor types the receiver the same way
+                        // a `let receiver = Type::constructor(..);` binding does.
+                        CallShape::Constructed(receiver) => binding_type(
+                            &format!("= {receiver}"),
+                            test,
+                            test_source,
+                            index,
+                            imports_foreign,
+                            owner_scope,
+                            syntax,
+                        ),
+                        CallShape::Bare | CallShape::Path(_) | CallShape::Associated(_) => None,
+                    }
                 };
                 let Some(receiver_type) = receiver_type else {
                     return false;
@@ -6015,7 +6277,10 @@ impl ReturnPathGate {
 
     fn admits(&self, expected: &str) -> bool {
         match self {
-            Self::Any | Self::ReturnedClosure { .. } | Self::ShortCircuit(_) => true,
+            Self::Any
+            | Self::ReturnedClosure { .. }
+            | Self::ShortCircuit(_)
+            | Self::FixtureReceiver(_) => true,
             Self::Adaptor { requires_ok, .. } => {
                 !requires_ok || constructor_call_span(expected.trim(), "Ok").is_some()
             }
@@ -8163,20 +8428,12 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
         || !index
             .drop_in_manifests
             .unbound_standard_root(&test.file, "core")
-        || index.files().values().any(|facts| {
-            let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
-            let modules = declared_module_names(&masked);
-            let imports = file_use_statements(&masked);
-            STD_ROOTS.iter().any(|root| {
-                modules.contains(root)
-                    || declares_type(&masked, root)
-                    || binds_extern_crate(&masked, root)
-                    || file_renames_to(&masked, root)
-                    || imports
-                        .iter()
-                        .any(|item| use_statement_binds_name(item, root))
-            })
-        })
+        || ProjectedCollectionWorkspaceMemo::verdict(
+            &syntax.projected_collection_workspace,
+            index,
+            ProjectedCollectionWorkspaceKey::StandardRoots,
+            || projected_standard_roots_shadowed(index),
+        )
     {
         return false;
     }
@@ -8195,74 +8452,12 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     // tuple constructor. A competing local, function, constant or static
     // keeps this deliberately bounded binding unestablished.
     let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
-    if index.files().iter().any(|(file, facts)| {
-        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
-        if file_aliases_type(&masked, constructor)
-            || file_renames_to(&masked, constructor)
-            || !fn_definition_offsets(&masked, constructor).is_empty()
-            || file_use_statements(&masked).iter().any(|import| {
-                ["test", "cfg"]
-                    .iter()
-                    .any(|name| use_statement_binds_name(import, name))
-            })
-            || flattened_use_paths(&masked).iter().any(|import| {
-                let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
-                if !segments
-                    .last()
-                    .is_some_and(|name| *name == constructor || *name == "*")
-                {
-                    return false;
-                }
-                // A constructor reached through another module may be a
-                // callable re-export whose defining bytes were not indexed.
-                // Only direct local namespace imports establish this bounded
-                // same-file construction; a missing companion cannot clear it.
-                !matches!(segments.as_slice(), ["crate" | "self" | "super", _])
-            })
-        {
-            return true;
-        }
-        let Some(parsed) = parse_clean_source_file(&facts.source) else {
-            return true;
-        };
-        parsed.tree().syntax().descendants().any(|node| {
-            // Attribute/derive expansion can also manufacture a binding.
-            // This bounded construction admits only the ordinary test
-            // harness attributes; expansion is not type-identity evidence.
-            ast::Attr::cast(node.clone()).is_some_and(|attr| {
-                let text = attr.syntax().text().to_string();
-                collapse_whitespace(&text) != "#[test]"
-                    && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
-            }) ||
-            // Arbitrary expansion can introduce a constructor binding that
-            // the parsed item index never saw. The two observation macros
-            // still require their carried canonical binding authority.
-            ast::MacroCall::cast(node.clone()).is_some_and(|call| {
-                call.path().is_none_or(|path| {
-                    let path = collapse_whitespace(&path.syntax().text().to_string());
-                    !matches!(
-                        path.as_str(),
-                        "assert_eq" | "vec" | "std::vec" | "::std::vec"
-                    ) && !STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
-                })
-            }) || (file != &test.file
-                && ast::Adt::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string())))
-                || ast::Fn::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::Const::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::Static::cast(node.clone())
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-                || ast::IdentPat::cast(node)
-                    .and_then(|item| item.name())
-                    .is_some_and(|name| names_constructor(name.text().to_string()))
-        })
-    }) {
+    if ProjectedCollectionWorkspaceMemo::verdict(
+        &syntax.projected_collection_workspace,
+        index,
+        ProjectedCollectionWorkspaceKey::Constructor(test.file.clone(), constructor.to_owned()),
+        || projected_constructor_shadowed(constructor, &test.file, index),
+    ) {
         return false;
     }
     let definitions: Vec<_> = parse
@@ -8349,6 +8544,101 @@ pub(in crate::analysis::classify) fn projected_collection_has_value_equality(
     standard_vec(&selected.ty)
         .zip(standard_vec(receiver_type))
         .is_some_and(|(field, receiver)| field == receiver)
+}
+
+fn projected_standard_roots_shadowed(index: &RustIndex) -> bool {
+    index.files().values().any(|facts| {
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_VISITS.with(|count| count.set(count.get() + 1));
+        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+        let modules = declared_module_names(&masked);
+        let imports = file_use_statements(&masked);
+        STD_ROOTS.iter().any(|root| {
+            modules.contains(root)
+                || declares_type(&masked, root)
+                || binds_extern_crate(&masked, root)
+                || file_renames_to(&masked, root)
+                || imports
+                    .iter()
+                    .any(|item| use_statement_binds_name(item, root))
+        })
+    })
+}
+
+fn projected_constructor_shadowed(constructor: &str, test_file: &Path, index: &RustIndex) -> bool {
+    let names_constructor = |name: String| name.strip_prefix("r#").unwrap_or(&name) == constructor;
+    index.files().iter().any(|(file, facts)| {
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_VISITS.with(|count| count.set(count.get() + 1));
+        let masked = mask_comments_and_strings(&facts.source).replace("r#", "");
+        if file_aliases_type(&masked, constructor)
+            || file_renames_to(&masked, constructor)
+            || !fn_definition_offsets(&masked, constructor).is_empty()
+            || file_use_statements(&masked).iter().any(|import| {
+                ["test", "cfg"]
+                    .iter()
+                    .any(|name| use_statement_binds_name(import, name))
+            })
+            || flattened_use_paths(&masked).iter().any(|import| {
+                let segments: Vec<_> = import.path.trim_start_matches("::").split("::").collect();
+                if !segments
+                    .last()
+                    .is_some_and(|name| *name == constructor || *name == "*")
+                {
+                    return false;
+                }
+                // A constructor reached through another module may be a
+                // callable re-export whose defining bytes were not indexed.
+                // Only direct local namespace imports establish this bounded
+                // same-file construction; a missing companion cannot clear it.
+                !matches!(segments.as_slice(), ["crate" | "self" | "super", _])
+            })
+        {
+            return true;
+        }
+        #[cfg(test)]
+        PROJECTED_WORKSPACE_FILE_PARSES.with(|count| count.set(count.get() + 1));
+        let Some(parsed) = parse_clean_source_file(&facts.source) else {
+            return true;
+        };
+        parsed.tree().syntax().descendants().any(|node| {
+            // Attribute/derive expansion can also manufacture a binding.
+            // This bounded construction admits only the ordinary test
+            // harness attributes; expansion is not type-identity evidence.
+            ast::Attr::cast(node.clone()).is_some_and(|attr| {
+                let text = attr.syntax().text().to_string();
+                collapse_whitespace(&text) != "#[test]"
+                    && !crate::analysis::facts::cfg_predicates::attribute_is_plain_test_gate(&text)
+            }) ||
+            // Arbitrary expansion can introduce a constructor binding that
+            // the parsed item index never saw. The two observation macros
+            // still require their carried canonical binding authority.
+            ast::MacroCall::cast(node.clone()).is_some_and(|call| {
+                call.path().is_none_or(|path| {
+                    let path = collapse_whitespace(&path.syntax().text().to_string());
+                    !matches!(
+                        path.as_str(),
+                        "assert_eq" | "vec" | "std::vec" | "::std::vec"
+                    ) && !STD_ROOTED_ASSERT_EQ.contains(&path.as_str())
+                })
+            }) || (file != test_file
+                && ast::Adt::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string())))
+                || ast::Fn::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Const::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::Static::cast(node.clone())
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+                || ast::IdentPat::cast(node)
+                    .and_then(|item| item.name())
+                    .is_some_and(|name| names_constructor(name.text().to_string()))
+        })
+    })
 }
 
 /// RIPR-SPEC-0225 rule 4: whether a field type compares by value: a

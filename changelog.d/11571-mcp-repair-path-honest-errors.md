@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- MCP `ripr_prepare_repair` for a refused item and `ripr_refresh` after a failed attempt now return `isError: true` (they were `isError: false`); a refusal carries a machine-readable `next` step, `ripr_refresh` states `fresh_for_working_tree` and a `verify` route (`source: "worktree"`) for re-checking after editing tests, and `ripr_get_gap` bounds `observed_values` to 12 ranked entries with disclosed totals (#11571).

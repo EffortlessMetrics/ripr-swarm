@@ -2,9 +2,11 @@
 //! the input like the literal would, and every way that constant can differ at
 //! the call keeps the finding `weakly_exposed`.
 
+use super::module_constants::apply_foreign_module_attribute_writes;
 use super::owners_tests::{extract_owners, extract_tests};
+use super::source_facts::extract_source_facts;
 use super::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const OWNER_NEW: &str =
     "def tier(score):\n    if score >= 50:\n        return \"gold\"\n    return \"basic\"\n";
@@ -12,8 +14,27 @@ const OLD_LINE: &str = "    if score > 50:";
 const NEW_LINE: &str = "    if score >= 50:";
 
 fn class_of(test_source: &str) -> Result<ExposureClass, String> {
+    class_of_with_conftest(test_source, None)
+}
+
+/// Classify with optional `tests/conftest.py` writes applied the way the
+/// workspace pass joins them onto the test (#11424).
+fn class_of_with_conftest(
+    test_source: &str,
+    conftest: Option<&str>,
+) -> Result<ExposureClass, String> {
     let owners = extract_owners(Path::new("src/pricing.py"), OWNER_NEW);
-    let tests = extract_tests(Path::new("tests/test_pricing.py"), test_source);
+    let mut tests = extract_tests(Path::new("tests/test_pricing.py"), test_source);
+    if let Some(conftest) = conftest {
+        let facts = extract_source_facts(Path::new("tests/conftest.py"), conftest);
+        apply_foreign_module_attribute_writes(
+            &mut tests,
+            &[(
+                PathBuf::from("tests/conftest.py"),
+                facts.module_attribute_writes,
+            )],
+        );
+    }
     classify_change_with_old(
         Path::new("src/pricing.py"),
         2,
@@ -147,5 +168,46 @@ fn every_other_way_the_constant_can_differ_never_reads_exposed() -> Result<(), S
 fn a_parameter_of_the_test_is_not_the_module_constant() -> Result<(), String> {
     let source = "from src.pricing import tier\n\nTH = 50\n\n\ndef test_gold():\n    assert tier(80) == \"gold\"\n\n\ndef test_edge(TH):\n    assert tier(TH) == \"basic\"\n";
     assert_eq!(class_of(source)?, ExposureClass::WeaklyExposed);
+    Ok(())
+}
+
+#[test]
+fn a_conftest_that_rebinds_the_constant_never_reads_exposed() -> Result<(), String> {
+    let test = module("TH = 50", CALL);
+    for conftest in [
+        "import tests.test_pricing as module\n\nmodule.TH = 49\n",
+        "from tests import test_pricing\n\ntest_pricing.TH = 49\n",
+        "import tests.test_pricing as module\n\nsetattr(module, \"TH\", 49)\n",
+        "import tests.test_pricing as module\n\ndef rebind(monkeypatch):\n    monkeypatch.setattr(module, \"TH\", 49)\n",
+        "def rebind(monkeypatch):\n    monkeypatch.setattr(\"tests.test_pricing.TH\", 49)\n",
+    ] {
+        assert_ne!(
+            class_of_with_conftest(&test, Some(conftest))?,
+            ExposureClass::Exposed,
+            "{conftest:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_unrelated_conftest_keeps_the_constant_credit() -> Result<(), String> {
+    let test = module("TH = 50", CALL);
+    assert_eq!(
+        class_of(&test)?,
+        ExposureClass::Exposed,
+        "no conftest is the baseline credit"
+    );
+    for conftest in [
+        "import other\n\nother.LIMIT = 1\n",
+        "import tests.test_other as other\n\nother.TH = 49\n",
+        "import tests.test_pricing as module\n\nmodule.OTHER = 1\n",
+    ] {
+        assert_eq!(
+            class_of_with_conftest(&test, Some(conftest))?,
+            ExposureClass::Exposed,
+            "{conftest:?}"
+        );
+    }
     Ok(())
 }

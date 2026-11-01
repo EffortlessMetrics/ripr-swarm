@@ -2878,7 +2878,9 @@ fn github_workflow_check(binary: &Path) -> ReleaseReadinessCheck {
 const CI_SUMMARY_FIRST_RUN_NEEDLES: &[&str] = &[
     "#### First-run status",
     "missing_start_here",
-    "target/ripr/reports/start-here.md",
+    // The summary names the packet by its artifact, not a repo path (#11322).
+    "`start-here.md` in the `ripr-reports` artifact",
+    "Safe next action: run `ripr first-pr",
 ];
 
 /// Runs the installed binary's `reports ci-summary` against an empty root
@@ -5568,7 +5570,14 @@ mod tests {
             "good",
             "[ \"$1 $2\" = 'reports ci-summary' ] || exit 9\n\
              printf '#### First-run status\\n- Status: `missing_start_here`\\n\
-             Open `target/ripr/reports/start-here.md` first.\\n'",
+             - Open `start-here.md` in the `ripr-reports` artifact first.\\n\
+             - Safe next action: run `ripr first-pr --root .`.\\n'",
+        )?;
+        // First-run block present but the packet is no longer named.
+        let unnamed = stand_in(
+            "unnamed",
+            "printf '#### First-run status\\n- Status: `missing_start_here`\\n\
+             - Safe next action: run `ripr first-pr --root .`.\\n'",
         )?;
         let silent = stand_in("silent", "echo '## RIPR advisory summary'")?;
         let failing = stand_in("failing", "echo boom >&2; exit 3")?;
@@ -5587,6 +5596,7 @@ mod tests {
 
         let good_missing = ci_summary_first_run_missing(&good);
         let silent_missing = ci_summary_first_run_missing(&silent);
+        let unnamed_missing = ci_summary_first_run_missing(&unnamed);
         let failing_missing = ci_summary_first_run_missing(&failing);
         let packet_missing = ci_packet_steps_missing(&packet);
         let short_packet_missing = ci_packet_steps_missing(&short_packet);
@@ -5615,7 +5625,12 @@ mod tests {
                 "complete summary reported missing: {good_missing:?}"
             ));
         }
-        if silent_missing.len() != 3
+        if unnamed_missing.len() != 1 || !unnamed_missing[0].contains("start-here.md") {
+            return Err(format!(
+                "summary that no longer names start-here: {unnamed_missing:?}"
+            ));
+        }
+        if silent_missing.len() != super::CI_SUMMARY_FIRST_RUN_NEEDLES.len()
             || !silent_missing
                 .iter()
                 .any(|item| item.contains("#### First-run status"))

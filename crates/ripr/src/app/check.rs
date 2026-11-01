@@ -50,6 +50,11 @@ pub fn check_workspace_with_config(
 /// instead of re-reading rendered text. Also returns the run's crate-private
 /// mixed-language completeness view (#6475), the same sidecar the LSP
 /// refresh receives; the public entry points are unchanged.
+///
+/// It also returns the raw Rust byte commitments the producer recorded while
+/// loading each source (HEAD content for a dirty tracked file under the
+/// committed-history overlay), so the MCP refresh can compare them with what
+/// the live-file seam inventory later reads (#7357).
 pub(crate) fn check_workspace_with_config_typed(
     input: CheckInput,
     config: &RiprConfig,
@@ -57,12 +62,13 @@ pub(crate) fn check_workspace_with_config_typed(
     (
         CheckOutput,
         Option<crate::analysis::language_outcome::LanguageCompletenessView>,
+        crate::analysis::consumed_source::ConsumedRustSources,
     ),
     CoreError,
 > {
-    let (output, _, _, view) =
+    let (output, _, consumed_sources, view) =
         check_with_progress_and_origins(input, config, AnalysisProgressScope::Diff, None)?;
-    Ok((output, view))
+    Ok((output, view, consumed_sources))
 }
 
 /// [`check_workspace_worktree_with_config`] keeping the failure typed and
@@ -474,6 +480,7 @@ fn check_with_progress_and_origins_run(
     }
 
     if let Some(outcome) = analysis.analysis_outcome.as_mut() {
+        outcome.language_view = analysis.language_view.clone();
         outcome.check_findings_inputs = Some(crate::analysis_outcome::CheckFindingsInputs {
             config_identity: crate::config::check_artifact_config_identity_hash(config),
             include_unchanged_tests: input.include_unchanged_tests,
@@ -925,6 +932,9 @@ fn invoke_perl_lsp_producer(
 
     let cache_dir = perl_facts_cache_dir(perl_config, &input.root);
 
+    // `[perl].cache_dir` is only lexically repository-relative; a committed
+    // directory link inside it would still redirect staging and the packet.
+    crate::atomic_file::ensure_path_within_root(&input.root, &cache_dir, "Perl facts cache")?;
     std::fs::create_dir_all(&cache_dir)
         .map_err(|e| format!("failed to create Perl facts cache dir: {e}"))?;
 
@@ -1844,6 +1854,56 @@ mod tests {
                 "missing producer must surface a clear message: {reason}"
             );
         }
+        Ok(())
+    }
+
+    /// #11477 item 2: `[perl].cache_dir` passes lexical validation but can name
+    /// a committed directory link; the producer must refuse before creating
+    /// anything through it, and not refuse a real in-root directory.
+    #[cfg(unix)]
+    #[test]
+    fn invoke_perl_lsp_producer_refuses_symlinked_cache_dir() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!("ripr-perl-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ws = base.join("ws");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(ws.join("realcache")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside, ws.join("linkcache")).map_err(|e| e.to_string())?;
+        let config_for = |dir: &str| crate::config::PerlConfig {
+            cache_dir: Some(PathBuf::from(dir)),
+            ..crate::config::PerlConfig::default()
+        };
+        let mut input = sample_diff_input();
+        input.root = ws.clone();
+        input.base = Some("origin/main".to_string());
+        input.perl_facts_path = None;
+        let refused = invoke_perl_lsp_producer(
+            &config_for("linkcache/sub"),
+            &input,
+            AnalysisProgressScope::Diff,
+        );
+        let nothing_created = std::fs::read_dir(&outside)
+            .map_err(|e| e.to_string())?
+            .next()
+            .is_none();
+        let control = invoke_perl_lsp_producer(
+            &config_for("realcache"),
+            &input,
+            AnalysisProgressScope::Diff,
+        );
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(
+            refused.is_err_and(|e| e.contains("resolves outside the workspace")),
+            "linked cache_dir must be refused"
+        );
+        assert!(nothing_created, "nothing may be created through the link");
+        assert!(
+            control
+                .err()
+                .is_none_or(|e| !e.contains("resolves outside the workspace")),
+            "a real in-root cache_dir must not be refused by the containment guard"
+        );
         Ok(())
     }
 

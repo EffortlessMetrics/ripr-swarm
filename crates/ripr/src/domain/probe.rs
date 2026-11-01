@@ -90,9 +90,9 @@ pub enum StopReason {
     InfectionEvidenceUnknown,
     PropagationEvidenceUnknown,
     StaticProbeUnknown,
-    /// A bounded transitive-reach walk found a candidate path (test -> ... ->
-    /// owner) that ripr cannot fully resolve (lexical-only, name-match only).
-    /// Classification stays `no_static_path`. See RIPR-SPEC-0114.
+    /// Reach through internal calls is unresolved. A bounded walk may retain
+    /// a candidate path (RIPR-SPEC-0114), but an unmodeled private-member
+    /// boundary establishes no path either way (RIPR-SPEC-0243).
     TransitiveReachUnresolved,
     /// A Rust reach walk found a candidate test entry path that stops at a
     /// same-repo macro invocation whose definition lexically names the changed
@@ -176,8 +176,7 @@ impl StopReason {
                 "ripr could not model this change well enough to classify it"
             }
             StopReason::TransitiveReachUnresolved => {
-                "a candidate test path exists but passes through calls ripr only matched by \
-                 name"
+                "ripr could not establish whether a test reaches this change through internal calls"
             }
             StopReason::MacroReachUnresolved => {
                 "a candidate test path stops at a same-repo macro ripr does not expand"
@@ -488,8 +487,9 @@ pub struct RelatedTest {
     /// Why this test does not catch the changed behavior, when ripr can say.
     /// `None` for a test whose oracle supports the finding's class, and for
     /// findings from producers that do not record it. Explanation only: no
-    /// decision helper reads this field; row eligibility is [`Self::role`]
-    /// (#5563).
+    /// decision helper reads this field except the refused-assertion exception
+    /// of the opaque assertion-macro limit (`AssertionNotCredited`, RIPR-SPEC-0120,
+    /// #9644); row eligibility is [`Self::role`] (#5563).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<RelatedTestMiss>,
     /// Whether this row belonged to the legacy decision set or was retained

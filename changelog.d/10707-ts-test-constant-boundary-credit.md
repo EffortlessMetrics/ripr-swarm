@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- TypeScript: a boundary test that passes the value through a name is now credited when the name is provably one immutable integer binding, either a `const` in the test callback or a top-level `const` in the test file (`const edge = 50; expect(tier(edge)).toBe("basic")`), so `ripr check` no longer keeps asking for a discriminator the test already has. A `let`/`var`, reassigned, shadowed, mutated, computed or unresolved-import name stays uncredited (#10707, #10706).

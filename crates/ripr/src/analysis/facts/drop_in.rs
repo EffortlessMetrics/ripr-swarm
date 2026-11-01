@@ -51,6 +51,7 @@ type LiteralJsonMemo = Option<(
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DropInManifests {
     root: Option<PathBuf>,
+    json_root_eligibility: Arc<crate::analysis::workspace::JsonRootEligibilityMemo>,
     json: Arc<Mutex<LiteralJsonMemo>>,
     verdicts: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
     standard_roots: Arc<Mutex<BTreeMap<(PathBuf, String), bool>>>,
@@ -60,6 +61,7 @@ impl DropInManifests {
     pub(crate) fn new(root: &Path) -> Self {
         Self {
             root: Some(root.to_path_buf()),
+            json_root_eligibility: Arc::default(),
             json: Arc::default(),
             verdicts: Arc::default(),
             standard_roots: Arc::default(),
@@ -72,7 +74,7 @@ impl DropInManifests {
         let Some(root) = &self.root else {
             return false;
         };
-        if !crate::analysis::workspace::eligible_json_root(root) {
+        if !self.json_root_eligibility.eligible(root) {
             return false;
         }
         let directory = root.join(file).parent().map(Path::to_path_buf);

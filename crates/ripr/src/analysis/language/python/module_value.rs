@@ -1024,6 +1024,7 @@ pub(super) fn import_path_configured<'a>(
             "pytest.ini",
             ".pytest.ini",
             "pytest.toml",
+            ".pytest.toml",
             "pyproject.toml",
             "setup.cfg",
             "tox.ini",

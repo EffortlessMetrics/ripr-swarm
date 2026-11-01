@@ -89,6 +89,7 @@ pub(super) fn cache(args: &[String]) -> Result<(), String> {
 pub(super) use config_command::config;
 
 fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {
+    crate::atomic_file::ensure_relative_output_contained(path)?;
     output::file_write::write(path, rendered.as_bytes()).map_err(|err| {
         format!(
             "write output {} failed: {err}",
@@ -162,6 +163,8 @@ use init::parse_init_options;
 
 // The generated `ripr init --ci github` workflow template lives beside the
 // init command; its tests here pin rendered placeholders against it.
+#[path = "commands/init_agents.rs"]
+mod init_agents;
 #[path = "commands/init_workflow.rs"]
 mod init_workflow;
 #[cfg(test)]
@@ -225,6 +228,8 @@ pub(super) fn evidence_health(args: &[String]) -> Result<(), String> {
             options.root.display()
         ));
     }
+    // Analysis below writes the seam cache under `target/ripr/cache`.
+    crate::atomic_file::ensure_default_output_contained(&options.root)?;
 
     let config = load_for_root(&options.root)?;
     let (classified, _) =
@@ -275,7 +280,7 @@ pub(super) fn zero(args: &[String]) -> Result<(), String> {
 
 pub(super) fn policy(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_policy_help();
+        help::print_group_help("policy", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
@@ -327,7 +332,7 @@ pub(super) fn pr_ledger(args: &[String]) -> Result<(), String> {
 
 pub(super) fn pr_comments(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_pr_comments_help();
+        help::print_group_help("pr-comments", args);
         return Ok(());
     }
     // `plan` is implied when the command runs bare: `ripr pr-comments`
@@ -521,7 +526,7 @@ pub(super) fn first_action(args: &[String]) -> Result<(), String> {
 
 pub(super) fn reports(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        help::print_reports_help();
+        help::print_group_help("reports", args);
         return Ok(());
     }
     let Some((subcommand, rest)) = args.split_first() else {
@@ -3323,7 +3328,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // looked like a hang. The same stderr-only stage lines `ripr check`
     // projects disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = (!quiet).then(|| {
+    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             crate::cli::progress::ProgressPolicy::STANDARD,
@@ -6360,8 +6365,12 @@ language = "rust"
         );
         assert_eq!(
             parse_pr_comments_plan_options(&args(&["--mode", "post"])),
+            Err("unknown pr-comments plan mode \"post\". Accepted: off, plan, inline.".to_string())
+        );
+        assert_eq!(
+            parse_pr_comments_plan_options(&args(&["--mode", "inlin"])),
             Err(
-                "unknown pr-comments plan mode \"post\"; expected `off`, `plan`, or `inline`"
+                "unknown pr-comments plan mode \"inlin\". Did you mean `inline`? Accepted: off, plan, inline."
                     .to_string()
             )
         );
@@ -7918,6 +7927,7 @@ language = "rust"
                 force: true,
                 ci: Some(InitCi::Github),
                 mcp: false,
+                agents: Vec::new(),
             })
         );
     }
@@ -8330,6 +8340,36 @@ language = "rust"
     }
 
     #[test]
+    fn generated_workflow_label_events_neither_cancel_pushes_nor_run_in_advisory_mode()
+    -> Result<(), String> {
+        let workflow = generated_github_actions_workflow();
+        // A label gets its own concurrency group, so it cannot cancel a push run (#11753).
+        assert!(workflow.contains(
+            "-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}\n  cancel-in-progress: true"
+        ));
+        // The job skips label events unless a waiver-reading gate mode is set.
+        let condition = workflow
+            .lines()
+            .find(|line| {
+                line.trim_start()
+                    .starts_with("if: ${{ (github.event.action != 'labeled'")
+            })
+            .ok_or("missing label-event job condition")?;
+        assert!(
+            condition.contains("github.event.action != 'unlabeled'"),
+            "{condition}"
+        );
+        assert!(
+            condition
+                .contains("vars.RIPR_GATE_MODE != '' && vars.RIPR_GATE_MODE != 'visible-only'"),
+            "{condition}"
+        );
+        // Push, open and reopen runs stay unconditional: the `on:` types are unchanged.
+        assert!(workflow.contains("types: [opened, synchronize, reopened, labeled, unlabeled]"));
+        Ok(())
+    }
+
+    #[test]
     fn init_generated_github_workflow_uploads_reports_and_makes_sarif_optional()
     -> Result<(), String> {
         let workflow = generated_github_actions_workflow();
@@ -8524,8 +8564,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 181,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, and #11145 added the failed-SARIF-upload explanation"
+            line_count <= 214,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));

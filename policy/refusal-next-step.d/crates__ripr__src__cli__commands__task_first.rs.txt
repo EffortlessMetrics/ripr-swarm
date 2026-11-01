@@ -1,0 +1,4 @@
+crates/ripr/src/cli/commands/task_first.rs|continue --attempt requires a non-empty ID
+crates/ripr/src/cli/commands/task_first.rs|repair requires a non-empty --base
+crates/ripr/src/cli/commands/task_first.rs|repair requires a non-empty item
+crates/ripr/src/cli/commands/task_first.rs|status --attempt requires a non-empty ID

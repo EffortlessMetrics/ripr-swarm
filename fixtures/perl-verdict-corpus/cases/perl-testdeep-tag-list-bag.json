@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testdeep-tag-list-bag.json",
-    "sha256": "4eb26defc41c67eee8f1159941223a7211f8693f529dd14d1d9cec25947ad141",
+    "sha256": "0d005c05fe124160647b3377e1035bb6c3f635dae65fa8684ee97caecbdbffea",
     "provenance": "producer"
   }
 }

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A FIFO (or other non-regular file) named `package.json` or `tsconfig.json` no longer makes `ripr check` wait on it forever. The TypeScript import-resolution config scan, the gap-reach `package.json` and `tsconfig` readers, and the implicit-root `package.json` probe now read through the regular-file, size-capped path the other TypeScript config readers already use; an unreadable config is treated as hiding imports, as before (#11579).

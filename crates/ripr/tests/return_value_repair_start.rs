@@ -59,11 +59,22 @@ impl Repo {
     }
 
     fn ripr(&self, args: &[&str]) -> Result<Output, String> {
-        Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .current_dir(&self.0)
-            .args(args)
-            .output()
-            .map_err(|e| e.to_string())
+        // On Windows a sibling test that rebuilds the binary can leave it
+        // briefly missing, which surfaces as NotFound at launch; retry only that.
+        let mut attempt = 0;
+        loop {
+            let launched = Command::new(env!("CARGO_BIN_EXE_ripr"))
+                .current_dir(&self.0)
+                .args(args)
+                .output();
+            match launched {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && attempt < 20 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                other => return other.map_err(|e| e.to_string()),
+            }
+        }
     }
 
     fn check_text(&self) -> Result<String, String> {
@@ -191,8 +202,14 @@ fn assert_plain_reason(case: &str, old_src: &str, new_src: &str, test: &str) -> 
         repair.contains(plain),
         "{case}: repair must state the plain reason:\n{repair}"
     );
+    // Both callers change an async owner, which `ripr agent stub` refuses:
+    // the route is a hand-written test, and the refusal is named instead of
+    // a stub command that would refuse (#11111 burn-down).
     assert!(
-        repair.contains("--kind return_value") && repair.contains("write the test by hand"),
+        repair.contains("write the test by hand")
+            && repair
+                .contains("ripr cannot write a fill-in skeleton here because the owner is async")
+            && !repair.contains("--kind return_value"),
         "{case}: repair must name the working route:\n{repair}"
     );
     assert!(

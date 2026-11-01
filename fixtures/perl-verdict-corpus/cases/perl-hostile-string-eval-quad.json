@@ -49,7 +49,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-hostile-string-eval-quad.json",
-    "sha256": "5c3f614e8e325f860a18247f14c506a8bfc65fac9c6f72b963c51cd54d666187",
+    "sha256": "2ea48b44a51ac12840b8decb481544e65c4744e728eba69ba7c682f845c6fd90",
     "provenance": "producer"
   }
 }

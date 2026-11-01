@@ -1,3 +1,4 @@
+mod absorbing_tail;
 mod activation;
 mod argument_fold;
 mod arm_selection;
@@ -50,11 +51,12 @@ mod transitive_reach;
 mod value_transfer;
 mod variant_field_pattern;
 
+pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
-    chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
-    local_boundary, macro_names_rebound, pushed_collection_compared_whole, pushed_literal_path,
-    signature_parameters, sort_value_facts,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_read_confirms,
+    call_parameter_names, chain_row_transfer_stop, comparison_operands, computed_input_parameters,
+    literal_operand_value, local_boundary, macro_names_rebound, pushed_collection_compared_whole,
+    pushed_literal_path, signature_parameters, sort_value_facts,
 };
 pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
@@ -95,7 +97,8 @@ pub(in crate::analysis) use gap_admission::{
     CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,
     REFUSALS_ARE_ANALYZER_LIMITS, is_ignored, should_panic_tests_deciding_changed_panic,
     withhold_call_budget_gap, withhold_debug_assertion_gap, withhold_log_capture_gap,
-    withhold_mixed_refusal_gap, withhold_should_panic_gap, withhold_unsupported_gap,
+    withhold_mixed_refusal_gap, withhold_should_panic_gap, withhold_truncated_discovery_gap,
+    withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{FieldProjectionReceipt, field_projection_receipt};
 pub(in crate::analysis) use helper_transfer::{
@@ -108,7 +111,7 @@ pub(in crate::analysis) use helper_transfer::{
 };
 pub(in crate::analysis) use hop_polling::{PolledHops, related_through_polled_hops};
 pub(in crate::analysis) use implicit_call::{
-    withhold_destructor_credit, withhold_implicit_call_gap,
+    pre_cap_syntax_only, withhold_destructor_credit, withhold_implicit_call_gap,
 };
 pub(in crate::analysis) use indirect_owner::{
     related_tests_reach_owner_indirectly, withhold_indirect_owner_gap,
@@ -137,8 +140,9 @@ pub(in crate::analysis) use pinned_shape::{
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    current_path_witness_with, direct_collection_mutation_receiver, field_assignment_target,
-    owner_may_exit_before_line, retain_returned_ledger, returned_ledger_witness,
+    assigned_field_path, concat_literal_tail, concat_tail_witness, current_path_witness_with,
+    direct_collection_mutation_receiver, field_assignment_target, owner_may_exit_before_line,
+    retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use propagation_witness::{
     constant_tail_witness, fallible_literal_witness, format_tail_witness, result_map_witness,
@@ -161,7 +165,6 @@ pub(in crate::analysis) use related_tests::{
     resolves_method_in_prefix, test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::is_inline_expect_snapshot;
-pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::unconditional_owner_insert_field;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
 pub(in crate::analysis) use reveal::{
@@ -171,6 +174,7 @@ pub(in crate::analysis) use reveal::{
     NO_REACHABLE_TEST_DISCRIMINATE_SUMMARY, NO_REACHABLE_TEST_OBSERVE_SUMMARY,
 };
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
+pub(in crate::analysis) use reveal::{only_proximity_oracles, reveal_outcome};
 pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.
@@ -184,8 +188,10 @@ pub(in crate::analysis) use text::{
 // witnessing test (file:line) and the entry public-API symbol.
 pub(in crate::analysis) use transitive_reach::{
     InheritedGraphCounter, MAX_TRANSITIVE_DEPTH, MacroReachWitness, RUST_MACRO_REACH_MESSAGE,
-    RUST_TRANSITIVE_REACH_MESSAGE, TransitiveReachIndex, TransitiveWitness, calls_after_definition,
-    macro_reach_limit_kind, macro_reach_limitation_detail_lines, macro_reach_witness_pointer,
+    RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE, RUST_TRANSITIVE_REACH_MESSAGE, TraitDispatchAmbiguity,
+    TransitiveReachIndex, TransitiveWitness, calls_after_definition, macro_reach_limit_kind,
+    macro_reach_limitation_detail_lines, macro_reach_witness_pointer,
+    trait_dispatch_ambiguity_detail_lines, trait_dispatch_ambiguity_pointer,
     transitive_reach_limit_kind, transitive_reach_limitation_detail_lines,
     transitive_reach_witness_pointer,
 };

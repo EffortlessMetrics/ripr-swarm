@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Python: an operator swap (`+`, `-`, `*`) in a one-`return` module function that calls an imported workspace function is credited when a straight-line `assert owner(<literals>) == <integer>` fixes the call's result through the old operator and the new operator gives another value, instead of abstaining on `missing_import_graph`. Literal arguments and an integer expected value only; any workspace type that defines its own `+`, `-` or `*` keeps the abstention. `py-shapes-relative-import-quote` now reads `credited` (#9619).

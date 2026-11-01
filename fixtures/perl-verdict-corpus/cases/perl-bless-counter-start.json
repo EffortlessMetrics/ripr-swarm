@@ -51,7 +51,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-bless-counter-start.json",
-    "sha256": "632e3f9f6f837fd0a23491555a234914c209079757e6e9fd393aa8ebe2eb1b74",
+    "sha256": "82c1c93eaa0e208bf91852e887361af28d37395c812c834ce746916310c02b7d",
     "provenance": "producer"
   }
 }

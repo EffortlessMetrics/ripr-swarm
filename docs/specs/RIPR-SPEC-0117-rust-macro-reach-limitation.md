@@ -167,6 +167,19 @@ owner; the separate mixed weak-direct rule below can still name an independent
 unresolved macro path. The subprocess-binary and property-macro limits stay
 `no_static_path`-only.
 
+#### `infection_unknown` with an owner-named test (#11481)
+
+The same trigger also admits an `infection_unknown` finding with `weak` reach
+whose related tests are all proximity-only or `owner_named_test` (a test
+related only by naming the owner; it never has to call it). Only the
+`infection_unknown` class admits `owner_named_test`: a `weakly_exposed`
+finding related solely by `owner_named_test`, and any set that also holds a
+non-proximity relation (`import_path_affinity`, `fixture_owner_affinity`, a
+direct or helper owner call), stays unlimited. The `weakly_exposed` asymmetry is
+deliberate for this change; extending the admission to it is a follow-up. The
+witness walk is name-only, so a same-named function in another module can name
+the limit; the finding stays advisory.
+
 ### Weak direct test beside a macro witness (#7542)
 
 A weak direct oracle must not erase a possible test path behind a macro. The
@@ -697,6 +710,7 @@ open under #6643 and its supporting issues.
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_macro_names_the_macro_limit`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_weak_direct_test_preserves_the_unresolved_macro_witness`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_without_a_witness_keeps_the_gap`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::the_owner_named_admission_is_limited_to_infection_unknown_all_owner_named`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_helper_names_the_transitive_limit`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::repetition_shadowing_scope_and_order_refuse`

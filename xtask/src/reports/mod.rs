@@ -49,6 +49,7 @@ mod release_ledger;
 mod release_negative;
 #[cfg(all(test, unix))]
 pub(crate) use release_negative::capture_with_owned_root_for_test;
+mod path_inventory;
 mod release_scope;
 pub(crate) mod release_server;
 mod repair_card_usability;
@@ -115,20 +116,20 @@ pub(crate) use dogfood::dogfood;
 pub(crate) use dx_scoreboard::dx_scoreboard;
 pub(crate) use eval_sweep::eval_sweep;
 pub(crate) use first_pr::first_pr;
+#[cfg(test)]
+pub(crate) use fixtures::{
+    FIXTURE_BINARY_ISOLATE_ENV, GoldenDriftEntry, GoldenDriftProvenance, GoldenDriftSemantics,
+    first_line_difference, fixture_cache_dir, fixture_contract_violations,
+    golden_assistant_loop_health_contract_violations_at, golden_drift_semantics, golden_drift_type,
+    goldens_check_failure_message, json_string_values_for_key, next_pending_heading,
+    normalize_golden_text, parse_reason, ripr_perl_fixture_binary, run_fixture,
+    run_fixture_outputs, validate_bless_reason, variant_test,
+};
 pub(crate) use fixtures::{
     FixtureCheckFormat, PrecommitGoldens, fixture_dirs, fixtures, fixtures_with_args, golden_drift,
     golden_staleness_trigger, goldens, goldens_check, goldens_check_for_precommit,
     is_manifest_only_fixture_dir, normalize_fixture_human_output, normalize_fixture_json_output,
     ripr_fixture_binary, run_fixture_check, yes_no,
-};
-#[cfg(test)]
-pub(crate) use fixtures::{
-    GoldenDriftEntry, GoldenDriftProvenance, GoldenDriftSemantics, first_line_difference,
-    fixture_cache_dir, fixture_contract_violations,
-    golden_assistant_loop_health_contract_violations_at, golden_drift_semantics, golden_drift_type,
-    goldens_check_failure_message, json_string_values_for_key, next_pending_heading,
-    normalize_golden_text, parse_reason, ripr_perl_fixture_binary, run_fixture,
-    run_fixture_outputs, validate_bless_reason,
 };
 pub(crate) use index::{reports, reports_index};
 pub(crate) use issue_intake::issue_intake;

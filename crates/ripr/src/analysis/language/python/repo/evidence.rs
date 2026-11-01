@@ -296,6 +296,10 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
     let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
     let mut read_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut module_attribute_writes: Vec<(
+        PathBuf,
+        Vec<super::super::module_constants::PythonModuleAttributeWrite>,
+    )> = Vec::new();
 
     // Evidence sources first, so production items can relate against the
     // full test pool. Owners are intentionally NOT harvested from
@@ -327,6 +331,8 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                         test_count: facts.tests.len(),
                         behavior_item_count: 0,
                     });
+                    module_attribute_writes
+                        .push((relative.clone(), facts.module_attribute_writes.clone()));
                     all_tests.extend(facts.tests);
                 }
                 Err(reason) => {
@@ -366,6 +372,10 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     super::super::fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
         root.join(path).exists()
     });
+    super::super::module_constants::apply_foreign_module_attribute_writes(
+        &mut all_tests,
+        &module_attribute_writes,
+    );
 
     // Production subjects: owners + behavior items, related against the
     // evidence pool built above. The public Finding projection is built in

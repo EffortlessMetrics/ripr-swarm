@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- Generic LSP clients that advertise `window.showDocument` can now jump from a finding to its related test: the "open best related test" code action runs the new server-executed `ripr.showRelatedTest` command, which answers with `window/showDocument`. Clients without `showDocument` are not offered the action, a stale snapshot is refused, and the action never edits source or runs a test (#11281).

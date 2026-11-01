@@ -11,11 +11,11 @@
 # workflow, so their run blocks carry the same visible budget (#3841).
 
 .github/actions/ci-scratch-lease/action.yml|86|Shared self-hosted scratch ownership authority (#3841): acquire/release a kernel flock lease per job, self-check it at reclaim and release, and reclaim only terminal trees this repository owns while holding that lease. It must run before the Rust toolchain exists and on the toolchain-free scheduled GC lane, so it cannot be an xtask command; the executed behavior harness lives in tools/repo-policy/src/ci_scratch/tests.rs.
-.github/actions/ripr-check/action.yml|7|Adoption composite action installs ripr when missing and runs one ripr check command (#2626).
+.github/actions/ripr-check/action.yml|33|Adoption composite action installs a checksum-verified prebuilt ripr (same route as the generated workflow, #5236) and derives the PR base for one ripr check command (#2626, #11540).
 .github/actions/pr-candidate-admission/action.yml|281|Candidate and hard-cut admission (#2022, #4987, #5391): bounded read-only GitHub snapshots feed two self-tested pure Python decisions; the wrapper validates status/exit agreement, reads the release packet from the exact live base commit, and fails if the base moves before product allocation.
 
 .github/workflows/badge-endpoints.yml|1|Badge endpoint refresh delegates generation to cargo xtask and opens a PR.
-.github/workflows/ci.yml|38|#4987: bounded event-head Rust surface detection; remaining CI blocks call direct Cargo or npm commands. Locked proptest fixture preparation fits this existing per-block limit (#10839).
+.github/workflows/ci.yml|39|#4987: exact-subject callable guard/result and bounded legacy event-head Rust detection; unchanged feature/release payloads. Locked proptest fixture preparation fits this existing per-block limit (#10839).
 .github/workflows/coverage.yml|1|Coverage workflow keeps each run block to one coverage command. Locked proptest fixture preparation fits this existing per-block limit (#10839).
 .github/workflows/droid-security-scan.yml|20|Droid scheduled security scan writes local Factory BYOK settings, then uses reusable actions.
 .github/workflows/droid.yml|20|Droid tag-response workflow writes local Factory BYOK settings, then uses reusable actions.
@@ -30,7 +30,7 @@
 .github/workflows/npm-launcher.yml|1|Script-free npm launcher workflow delegates behavior and package-content proof to two single-command npm invocations.
 .github/workflows/pilot-ranking.yml|4|Pilot ranking answer key lane: one-command build, fetch and score steps, then one folded cargo xtask dx-scoreboard gate command.
 .github/workflows/pr-staleness-watchdog.yml|160|Scheduled watchdog finds open PR heads with no Ripr Rust Small Result check run on the head (#4937), reports them in its audit table, and tells conflicting merge-ready PRs once with a comment and status (#10136), and retires its stale failure when the request is withdrawn; pure gh api orchestration, never dispatches, not product logic.
-.github/workflows/printed-command-paste.yml|1|Printed-command paste lane keeps each run block to one shell command; the harness and its verdict live in the printed_command_paste test.
+.github/workflows/printed-command-paste.yml|22|#4987: exact-subject Bash identity guard before unchanged printed_command_paste product payload; read-only Git checks, no admission or check-write authority.
 .github/workflows/public-proof.yml|9|Public proof drift lane: one cargo xtask public-proof --check command, then a failure-only step that copies its output into the job summary.
 .github/workflows/publish-extension.yml|20|Release workflow includes marketplace packaging and publishing orchestration.
 .github/workflows/python-wheel-qualification.yml|194|Read-only #4490 package rehearsal retains exact native and PEP 440 identities, wheel metadata/RECORD and two executable-integrity negative controls, plus isolated pip/uv Python preview journeys; static adapter and workflow-shape policy remains in Rust xtask and the workflow has no publication authority.
@@ -55,3 +55,5 @@
 .github/workflows/python-wheelhouse-qualification.yml|50|On-demand local-wheelhouse pip/uv qualification writes isolation facts and a fail-closed aggregate; credential-free, artifact-only, no publication.
 .github/workflows/zed-extension.yml|1|Zed extension workflow keeps each run block to one Cargo command.
 .github/workflows/contabo-qualification.yml|0|#4988/#7164 reviewed dispatch-only standard reusable consumer rehearsal; no shell, hosted fallback, or protected-context claim.
+.github/workflows/fuzz.yml|1|Scheduled and manual panic/hang fuzzing (#11439): one cargo test command runs the fuzz_panic_freedom and fuzz_protocol_frames proptest suites with a raised PROPTEST_CASES; on failure a one-line collect step copies leftover case workspaces from the temp directory and the artifact step uploads them. Not a required check.
+.github/workflows/windows-subset-qualification.yml|437|Extracted #4987 native Windows subset retains the existing inline producer/oracles and bounded source precheck; no new write authority.

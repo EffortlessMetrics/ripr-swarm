@@ -47,15 +47,27 @@ fn is_word(c: char) -> bool {
 
 /// `None` when the text has no ordering comparison. Otherwise the numeric
 /// literal operands that are a whole side of an ordering operator (`<`, `>`,
-/// `<=`, `>=`, `<=>`, `lt`, `gt`, `le`, `ge`, `cmp`), normalized. It errs
-/// toward finding a comparison (a `<` inside a literal counts): a false
-/// positive only withholds `exposed`. A literal next to an arithmetic or
-/// concatenation operator (`$n + 1 > 10`, `$x > 10 + $y`) is only part of an
-/// operand and is dropped, so a literal elsewhere in the expression never
-/// credits a test.
+/// `<=`, `>=`, `<=>`, `lt`, `gt`, `le`, `ge`, `cmp`), normalized. A `<` or `>`
+/// only inside a quoted span is not a comparison: the read withholds rather
+/// than treating the change as comparison-free. A false positive only
+/// withholds `exposed`. A literal next to an arithmetic or concatenation
+/// operator (`$n + 1 > 10`, `$x > 10 + $y`) is only part of an operand and is
+/// dropped, so a literal elsewhere in the expression never credits a test.
 fn ordering_thresholds(text: &str) -> Option<Vec<String>> {
+    let (raw_count, thresholds) = scan_ordering(text);
+    // A `>` or `<` only inside a quoted span is not the changed comparison.
+    // Masking it away must not become `NotAComparison` (that would let sink
+    // alignment credit the row). Differing counts withhold instead.
+    let masked: String = mask_strings_and_comments(text).into_iter().collect();
+    let (masked_count, _) = scan_ordering(&masked);
+    if raw_count != masked_count {
+        return (raw_count > 0 || masked_count > 0).then_some(Vec::new());
+    }
+    (raw_count > 0).then_some(thresholds)
+}
+
+fn scan_ordering(text: &str) -> (usize, Vec<String>) {
     let chars: Vec<char> = text.chars().collect();
-    let mut found = false;
     let mut comparisons = 0usize;
     let mut thresholds = Vec::new();
     let mut i = 0;
@@ -103,10 +115,15 @@ fn ordering_thresholds(text: &str) -> Option<Vec<String>> {
             i += 1;
             continue;
         };
-        found = true;
         comparisons += 1;
-        thresholds.extend(operand_before(&chars, start));
-        thresholds.extend(operand_after(&chars, end));
+        // Only the immediate operand is a call (`length($s) < 5`), not a
+        // sibling `foo(1) && $x > 5`.
+        if !right_operand_is_call(&chars, end) {
+            thresholds.extend(operand_before(&chars, start));
+        }
+        if !left_operand_is_call(&chars, start) {
+            thresholds.extend(operand_after(&chars, end));
+        }
         i = end;
     }
     // Which comparison the change sits on is not known from this text, so a
@@ -115,7 +132,74 @@ fn ordering_thresholds(text: &str) -> Option<Vec<String>> {
     if comparisons > 1 {
         thresholds.clear();
     }
-    found.then_some(thresholds)
+    (comparisons, thresholds)
+}
+
+/// The operand immediately left of an operator is a bare `name(...)` call,
+/// not a grouping `($x)` or a sigil/arrow spelling.
+fn left_operand_is_call(chars: &[char], operator_start: usize) -> bool {
+    let mut end = operator_start;
+    while end > 0 && chars[end - 1].is_whitespace() {
+        end -= 1;
+    }
+    if end == 0 || !matches!(chars[end - 1], ')' | ']' | '}') {
+        return false;
+    }
+    let close = chars[end - 1];
+    let open = if close == ')' {
+        '('
+    } else if close == ']' {
+        '['
+    } else {
+        '{'
+    };
+    let mut depth = 1usize;
+    let mut i = end - 1;
+    while i > 0 && depth > 0 {
+        i -= 1;
+        if chars[i] == close {
+            depth += 1;
+        } else if chars[i] == open {
+            depth -= 1;
+        }
+    }
+    if depth != 0 {
+        return false;
+    }
+    let mut name_end = i;
+    while name_end > 0 && chars[name_end - 1].is_whitespace() {
+        name_end -= 1;
+    }
+    if name_end == 0 || !is_word(chars[name_end - 1]) {
+        return false;
+    }
+    let mut name_start = name_end;
+    while name_start > 0 && is_word(chars[name_start - 1]) {
+        name_start -= 1;
+    }
+    let named =
+        name_start > 0 && matches!(chars[name_start - 1], '$' | '@' | '%' | '&' | '>' | '{');
+    !named
+}
+
+/// The operand immediately right of an operator opens as a bare `name(`.
+fn right_operand_is_call(chars: &[char], operator_end: usize) -> bool {
+    let mut i = operator_end;
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    if i >= chars.len() || !is_word(chars[i]) {
+        return false;
+    }
+    let start = i;
+    while i < chars.len() && is_word(chars[i]) {
+        i += 1;
+    }
+    let named = start > 0 && matches!(chars[start - 1], '$' | '@' | '%' | '&' | '>' | '{');
+    while i < chars.len() && chars[i].is_whitespace() {
+        i += 1;
+    }
+    !named && chars.get(i) == Some(&'(')
 }
 
 fn operand_before(chars: &[char], operator_start: usize) -> Option<String> {
@@ -189,10 +273,13 @@ fn operand_after(chars: &[char], operator_end: usize) -> Option<String> {
     let bitwise = chars
         .get(trail)
         .is_some_and(|c| matches!(c, '|' | '&') && chars.get(trail + 1) != Some(c));
-    if chars.get(trail).is_some_and(|c| is_arithmetic(*c))
-        || bitwise
-        || (chars.get(trail) == Some(&'x') && !chars.get(trail + 1).is_some_and(|c| is_word(*c)))
-    {
+    // `$x > 5 x 3` and `$x > 5 x3`: `x` is repetition (`x3` lexes as `x 3`).
+    // A following word that is not a digit (`xor`) is a different token.
+    let x_repeat = chars.get(trail) == Some(&'x')
+        && chars
+            .get(trail + 1)
+            .is_none_or(|c| !is_word(*c) || c.is_ascii_digit());
+    if chars.get(trail).is_some_and(|c| is_arithmetic(*c)) || bitwise || x_repeat {
         return None;
     }
     numeric_literal(&token, negative)
@@ -242,29 +329,102 @@ fn owner_call_literal_args(expression: &str, owner_id: &str) -> Vec<String> {
     while i + needle.len() <= chars.len() {
         let before_ok =
             i == 0 || !(is_word(chars[i - 1]) || matches!(chars[i - 1], '$' | '@' | '%'));
-        if before_ok
-            && chars[i..i + needle.len()] == needle[..]
-            && qualifier_matches(&chars, i, package)
-        {
+        if before_ok && chars[i..i + needle.len()] == needle[..] {
             let mut open = i + needle.len();
             while open < chars.len() && chars[open].is_whitespace() {
                 open += 1;
             }
             if chars.get(open) == Some(&'(') {
+                // Count every `name(` outside masked spans, including a method
+                // on a variable. Literals still come only from a qualifier that
+                // names the owner: counting never grants a call this read
+                // cannot pin.
                 calls += 1;
-                literals.extend(top_level_literal_args(&chars, open + 1));
+                if qualifier_matches(&chars, i, package) {
+                    literals.extend(top_level_literal_args(&chars, open + 1));
+                }
             }
             i += needle.len();
         } else {
             i += 1;
         }
     }
-    // `is(tier_label(2000), tier_label(5))`: with the owner called twice, the
+    // `"@{[ name(2000) ]}"` is masked as a string, so the inner call is
+    // invisible above; count it from the original text when it sits in a
+    // masked span.
+    calls += masked_interpolated_array_calls(expression, &chars, &needle);
+    // `is(tier_label(2000), tier_label(5))`: with the sub spelled twice, the
     // read cannot tell the asserted call from the expected-side one.
     if calls > 1 {
         return Vec::new();
     }
+    // Argument position is not known: two numeric literals in one call cannot
+    // establish which one sits on the threshold.
+    if literals.len() > 1 {
+        return Vec::new();
+    }
     literals
+}
+
+/// `name(` calls inside `@{[ ... ]}` interpolations that quoting already
+/// masked. Unquoted interpolations are already counted in the masked scan.
+fn masked_interpolated_array_calls(original: &str, masked: &[char], needle: &[char]) -> usize {
+    let chars: Vec<char> = original.chars().collect();
+    if chars.len() != masked.len() {
+        return 0;
+    }
+    let mut calls = 0usize;
+    let mut i = 0;
+    while i + 2 < chars.len() {
+        if chars[i] == '@' && chars[i + 1] == '{' {
+            let mut open = i + 2;
+            while open < chars.len() && chars[open].is_whitespace() {
+                open += 1;
+            }
+            if chars.get(open) == Some(&'[') && masked.get(i).is_some_and(|c| *c == 'x') {
+                let inner_start = open + 1;
+                let mut depth = 1usize;
+                let mut j = inner_start;
+                while j < chars.len() && depth > 0 {
+                    if chars[j] == '[' {
+                        depth += 1;
+                    } else if chars[j] == ']' {
+                        depth -= 1;
+                    }
+                    j += 1;
+                }
+                if depth == 0 {
+                    calls += count_name_paren_calls(&chars[inner_start..j - 1], needle);
+                    i = j;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    calls
+}
+
+fn count_name_paren_calls(chars: &[char], needle: &[char]) -> usize {
+    let mut calls = 0usize;
+    let mut i = 0;
+    while i + needle.len() <= chars.len() {
+        let before_ok =
+            i == 0 || !(is_word(chars[i - 1]) || matches!(chars[i - 1], '$' | '@' | '%'));
+        if before_ok && chars[i..i + needle.len()] == needle[..] {
+            let mut open = i + needle.len();
+            while open < chars.len() && chars[open].is_whitespace() {
+                open += 1;
+            }
+            if chars.get(open) == Some(&'(') {
+                calls += 1;
+            }
+            i += needle.len();
+        } else {
+            i += 1;
+        }
+    }
+    calls
 }
 
 /// Whether the expression holds anything this read does not parse: any `/`
@@ -316,6 +476,7 @@ fn has_regex_or_heredoc(text: &str) -> bool {
                     "q" | "qq" | "qw" | "qx" | "qr" | "m" | "s" | "tr" | "y"
                 )
             {
+                let had_whitespace = i < chars.len() && chars[i].is_whitespace();
                 let mut open = i;
                 while open < chars.len() && chars[open].is_whitespace() {
                     open += 1;
@@ -325,6 +486,14 @@ fn has_regex_or_heredoc(text: &str) -> bool {
                 };
                 let fat_comma = delimiter == '=' && chars.get(open + 1) == Some(&'>');
                 let hash_key = delimiter == '}' && start > 0 && chars[start - 1] == '{';
+                // `q x ... x`: a word-character delimiter is not masked, so
+                // the expression is unparsed rather than read as a call.
+                if had_whitespace
+                    && is_word(delimiter)
+                    && matches!(word.as_str(), "q" | "qq" | "qw")
+                {
+                    return true;
+                }
                 if !is_word(delimiter) && !fat_comma && !hash_key {
                     return true;
                 }
@@ -808,6 +977,105 @@ mod tests {
                 "{observable}"
             );
         }
+    }
+
+    #[test]
+    fn method_receiver_and_interpolated_duplicate_calls_withhold() {
+        // Item 1 (#11394): the duplicate guard counted only qualifier-matching
+        // owner calls, so a method on a variable plus a bare call still read
+        // OnThreshold, as did a call inside `"@{[ ... ]}"`.
+        assert_eq!(
+            input("$x > 5", "is($o->tier_label(2000), tier_label(5))"),
+            BoundaryInput::Unestablished
+        );
+        assert_eq!(
+            input("$x > 5", r#"is("@{[ tier_label(2000) ]}", tier_label(5))"#),
+            BoundaryInput::Unestablished
+        );
+        // A differently named method is not a second `tier_label(`.
+        assert_eq!(
+            input("$x > 5", "is($o->other_label(2000), tier_label(5))"),
+            BoundaryInput::OnThreshold
+        );
+    }
+
+    #[test]
+    fn repetition_x_glued_to_digits_withholds() {
+        // Item 2 (#11394): `5 x3` lexes as `x 3`, but the after-operand scan
+        // only rejected `x` when the next character was not a word.
+        assert_eq!(
+            input("$x > 5 x3", "is(tier_label(5), 1)"),
+            BoundaryInput::Unestablished
+        );
+    }
+
+    #[test]
+    fn quote_like_word_character_delimiter_withholds() {
+        // Item 3 (#11394): `q`/`qq`/`qw` plus whitespace plus a word-character
+        // delimiter is neither masked nor already in the unparsed denylist.
+        assert_eq!(
+            input("$x > 5", "is(q x tier_label(5) x, 1)"),
+            BoundaryInput::Unestablished
+        );
+        assert_eq!(
+            input("$x > 5", "is(qq x tier_label(5) x, 1)"),
+            BoundaryInput::Unestablished
+        );
+        assert_eq!(
+            input("$x > 5", "is(qw x tier_label(5) x, 1)"),
+            BoundaryInput::Unestablished
+        );
+    }
+
+    #[test]
+    fn extra_literal_argument_or_call_side_withholds() {
+        // Item 4 (#11394): argument position is not known, so a second numeric
+        // literal in the owner call, or a call on the compared side, cannot
+        // establish the threshold.
+        assert_eq!(
+            input("$p >= 100", "is(tier_label(5, 100), 1)"),
+            BoundaryInput::Unestablished
+        );
+        assert_eq!(
+            input("length($s) < 5", "is(tier_label(5), 1)"),
+            BoundaryInput::Unestablished
+        );
+        assert_eq!(
+            input("5 < length($s)", "is(tier_label(5), 1)"),
+            BoundaryInput::Unestablished
+        );
+        // A call in a sibling conjunct is not the compared operand.
+        assert_eq!(
+            input("foo(1) && $x > 5", "is(tier_label(5), 1)"),
+            BoundaryInput::OnThreshold
+        );
+        assert_eq!(
+            input("$x > 5 && foo(1)", "is(tier_label(5), 1)"),
+            BoundaryInput::OnThreshold
+        );
+        assert_eq!(
+            input("($x) >= 100", "is(tier_label(100), 1)"),
+            BoundaryInput::OnThreshold
+        );
+        assert_eq!(
+            input("$amount < 25", "is(tier_label(undef, 25), 5, 'mid')"),
+            BoundaryInput::OnThreshold
+        );
+    }
+
+    #[test]
+    fn comparison_inside_observable_string_withholds() {
+        // Item 5 (#11394): a `>` inside a quoted observable is not a changed
+        // ordering comparison. Clearing it must stay Unestablished (not
+        // NotAComparison), so sink alignment cannot take the row.
+        assert_eq!(
+            input("$x == 3 ? 'a > 5' : 0", "is(tier_label(5), 1)"),
+            BoundaryInput::Unestablished
+        );
+        assert_eq!(
+            input("'gold' if 1000 <= $points", "is(tier_label(1000), 'gold')"),
+            BoundaryInput::OnThreshold
+        );
     }
 
     #[test]

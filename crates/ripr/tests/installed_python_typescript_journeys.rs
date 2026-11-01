@@ -737,6 +737,196 @@ fn python_flat_layout_journey_runs_the_gap_bound_loop_from_the_printed_start() -
     decoy_untouched(&decoy)
 }
 
+/// #4518: receipt consumption for the Python gap-bound journey. After the
+/// printed start, a test-only edit and `continue`, the bound verify document
+/// issues a receipt at exactly the `--out` target; a missing, forged or edited
+/// verify document is refused and leaves no receipt behind. The receipt
+/// records no project test run, so static closure stays separate from
+/// project verification.
+#[cfg(feature = "lang-python")]
+#[test]
+fn python_receipt_route_consumes_the_bound_verify_and_refuses_forgery() -> Result<(), String> {
+    let (_guard, root, decoy) =
+        materialize("blind_journey_installed_python", "head", "pyrc", None)?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, check) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "check")?;
+    let (gap, base) = gap_start_tokens(&check)
+        .ok_or_else(|| format!("check printed no gap-bound start:\n{check}"))?;
+    let (ok, before) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", &base, "--root", &root_arg, "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "agent repair --phase before")?;
+    let test_file = root.join("tests").join("test_pricing.py");
+    let mut tests =
+        std::fs::read_to_string(&test_file).map_err(|error| format!("read test file: {error}"))?;
+    tests.push_str(
+        "\n\ndef test_exact_boundary_gets_discount():\n    assert bulk_discount_rate(20) == 0.15\n",
+    );
+    std::fs::write(&test_file, tests).map_err(|error| format!("write test file: {error}"))?;
+    fixture_git_ok(&root, &["add", "tests/test_pricing.py"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "boundary test"])?;
+    let continue_command = before
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Next, after the test edit: "))
+        .ok_or_else(|| format!("before printed no continue command:\n{before}"))?;
+    let attempt = continue_command
+        .split_whitespace()
+        .skip_while(|token| *token != "--attempt")
+        .nth(1)
+        .ok_or_else(|| format!("continue command names no attempt: {continue_command}"))?
+        .to_string();
+    let (ok, after) = ripr(
+        &decoy,
+        &["continue", "--root", &root_arg, "--attempt", &attempt],
+    )?;
+    expect_exit(ok, true, "continue")?;
+    need(&after, "closed: weakly_exposed -> exposed", "closure")?;
+
+    let workflow = root.join("target/ripr/workflow");
+    let verify_path = workflow.join("agent-verify.json");
+    let verify_text =
+        std::fs::read_to_string(&verify_path).map_err(|error| format!("read verify: {error}"))?;
+    let verify: serde_json::Value =
+        serde_json::from_str(&verify_text).map_err(|error| format!("verify json: {error}"))?;
+    let receipt_for = |verify_path: &Path, label: &str| -> Result<std::process::Output, String> {
+        let out = workflow.join(format!("{label}.receipt.json"));
+        ripr_output(
+            &decoy,
+            &[
+                "agent",
+                "receipt",
+                "--root",
+                &root_arg,
+                "--verify-json",
+                &verify_path.to_string_lossy(),
+                "--seam-id",
+                &gap,
+                "--attempt",
+                &attempt,
+                "--json",
+                "--out",
+                &out.to_string_lossy(),
+            ],
+        )
+    };
+
+    // Positive: the bound verify issues a receipt at the `--out` target,
+    // closure is carried, and no project test run is recorded.
+    let issued = receipt_for(&verify_path, "control")?;
+    let (_, issued_err) = text_of(&issued);
+    expect_exit(
+        issued.status.success(),
+        true,
+        &format!("receipt: {issued_err}"),
+    )?;
+    let control = std::fs::read_to_string(workflow.join("control.receipt.json"))
+        .map_err(|error| format!("receipt not written at the --out target: {error}"))?;
+    let receipt: serde_json::Value =
+        serde_json::from_str(&control).map_err(|error| format!("receipt json: {error}"))?;
+    if receipt["bound_gap"]["closed"].as_bool() != Some(true) {
+        return Err(format!("receipt carries no closure:\n{control}"));
+    }
+    if receipt["verification"]["status"].as_str() != Some("verification_not_run")
+        || receipt["verification"]["commands_run"]
+            .as_array()
+            .is_none_or(|commands| !commands.is_empty())
+    {
+        return Err(format!("receipt claims a project test run:\n{control}"));
+    }
+
+    // Negative 1: a missing verify document is refused, no receipt written.
+    let missing = receipt_for(&workflow.join("absent-verify.json"), "missing")?;
+    let (_, missing_err) = text_of(&missing);
+    expect_exit(
+        missing.status.success(),
+        false,
+        "receipt over a missing verify",
+    )?;
+    need(
+        &missing_err,
+        "absent-verify.json",
+        "missing verify file is named",
+    )?;
+    if workflow.join("missing.receipt.json").exists() {
+        return Err("a receipt was written over a missing verify".to_string());
+    }
+
+    // Negative 2: a forged closure naming a gap that never closed.
+    if verify["bound_gap"]["gap_id"].as_str() != Some(gap.as_str()) {
+        return Err(format!(
+            "verify is not bound to the started gap:\n{verify_text}"
+        ));
+    }
+    let mut forged = verify.clone();
+    forged["bound_gap"]["gap_id"] = serde_json::json!("gap:python:pricing/core.py:x:deadbeef");
+    let forged_path = workflow.join("forged-verify.json");
+    std::fs::write(
+        &forged_path,
+        serde_json::to_string_pretty(&forged).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write forged verify: {error}"))?;
+    let refused = receipt_for(&forged_path, "forged")?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(refused.status.success(), false, "receipt over a forged gap")?;
+    need(
+        &refused_err,
+        "gap binding refused",
+        "forged closure refused",
+    )?;
+
+    // Negative 3: the real gap with an edited classification. The edit is a
+    // textual replacement on the original bytes so reformatting alone cannot
+    // explain a refusal; a re-serialized but unedited document is a control.
+    let original_class = verify["bound_gap"]["before_classification"]
+        .as_str()
+        .ok_or_else(|| format!("verify has no bound before_classification:\n{verify_text}"))?;
+    if original_class == "exposed" {
+        return Err("the edit would not change before_classification".to_string());
+    }
+    let reserialized_path = workflow.join("reserialized-verify.json");
+    std::fs::write(
+        &reserialized_path,
+        serde_json::to_string_pretty(&verify).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write reserialized verify: {error}"))?;
+    let reserialized = receipt_for(&reserialized_path, "reserialized")?;
+    let (_, reserialized_err) = text_of(&reserialized);
+    expect_exit(
+        reserialized.status.success(),
+        true,
+        &format!("receipt over an unedited re-serialized verify: {reserialized_err}"),
+    )?;
+    let from = format!("\"before_classification\": \"{original_class}\"");
+    if verify_text.matches(&from).count() != 1 {
+        return Err(format!("expected one `{from}` in the verify document"));
+    }
+    let edited_path = workflow.join("edited-verify.json");
+    std::fs::write(
+        &edited_path,
+        verify_text.replacen(&from, "\"before_classification\": \"exposed\"", 1),
+    )
+    .map_err(|error| format!("write edited verify: {error}"))?;
+    let refused = receipt_for(&edited_path, "edited")?;
+    let (_, refused_err) = text_of(&refused);
+    expect_exit(
+        refused.status.success(),
+        false,
+        "receipt over an edited closure",
+    )?;
+    need(&refused_err, "not_canonical", "edited closure refused")?;
+    for label in ["forged", "edited"] {
+        if workflow.join(format!("{label}.receipt.json")).exists() {
+            return Err(format!("a receipt was written over the {label} verify"));
+        }
+    }
+    decoy_untouched(&decoy)
+}
+
 /// #10432: the refused-variant control for the Python gap-bound start. With
 /// the fixture's tests removed, no Python test reaches the changed predicate,
 /// so the finding is static-limited (`no_static_path`): `ripr check` offers no
@@ -873,13 +1063,40 @@ fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), 
     // Control first: the unmodified fixture is complete and offers the start.
     let (ok, control) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
     expect_exit(ok, true, "check of the complete fixture")?;
-    if gap_start_tokens(&control).is_none() {
-        return Err(format!(
-            "control: a complete analysis lost its start:\n{control}"
-        ));
-    }
+    let (gap, _) = gap_start_tokens(&control)
+        .ok_or_else(|| format!("control: a complete analysis lost its start:\n{control}"))?;
     if control.contains("analysis incomplete") {
         return Err(format!("control: the fixture is not complete:\n{control}"));
+    }
+
+    // Exercise admission as well as the printed route in a separate root.
+    let (_positive_guard, positive_root, positive_decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsi-positive",
+        Some(toml),
+    )?;
+    let positive_root_arg = positive_root.to_string_lossy().into_owned();
+    let (ok, start) = ripr(
+        &positive_decoy,
+        &[
+            "agent",
+            "repair",
+            "--gap-id",
+            &gap,
+            "--base",
+            "HEAD~1",
+            "--root",
+            &positive_root_arg,
+            "--phase",
+            "before",
+        ],
+    )?;
+    expect_exit(ok, true, "manual start of complete analysis")?;
+    if attempt_manifests(&positive_root)? != 1 {
+        return Err(format!(
+            "complete control did not publish an attempt:\n{start}"
+        ));
     }
 
     // Scule-shaped: the finding's own tests stay evaluable (its packet is
@@ -939,6 +1156,38 @@ fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), 
         ],
     )?;
     expect_exit(findings.status.success(), true, "check-findings-json")?;
+    let parsed: serde_json::Value = serde_json::from_slice(&findings.stdout)
+        .map_err(|error| format!("parse findings: {error}"))?;
+    if parsed["analysis_outcome"]["analysis_complete"] != false
+        || parsed["findings"].as_array().is_none_or(Vec::is_empty)
+    {
+        return Err(format!(
+            "fixture did not produce mixed incomplete findings: {parsed}"
+        ));
+    }
+    let (started, manual) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD~2", "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    expect_exit(started, false, "manual start of incomplete analysis")?;
+    need(&manual, "incomplete", "manual refusal names incompleteness")?;
+    need(
+        &manual,
+        &format!(
+            "ripr check --root {} --base {}",
+            printed_shell_arg(&root_arg),
+            printed_shell_arg("HEAD~2")
+        ),
+        "manual refusal preserves selected root and base from the decoy directory",
+    )?;
+    if attempt_manifests(&root)? != 0 || root.join("target/ripr/workflow").exists() {
+        return Err(format!(
+            "incomplete start left an attempt or workflow artifact:\n{manual}"
+        ));
+    }
     let artifact = root.join("incomplete-findings.json");
     std::fs::write(&artifact, &findings.stdout).map_err(|error| format!("write: {error}"))?;
     let artifact_arg = artifact.to_string_lossy().into_owned();
@@ -973,6 +1222,91 @@ fn typescript_incomplete_analysis_withholds_the_gap_bound_start() -> Result<(), 
         return Err(format!("verify still says regenerate:\n{refusal}"));
     }
     decoy_untouched(&decoy)
+}
+
+/// A ready finding must not admit a manual start when a different changed
+/// file's context is unavailable to analysis.
+#[cfg(all(feature = "lang-typescript", unix))]
+#[test]
+fn typescript_manual_gap_start_refuses_unavailable_changed_file() -> Result<(), String> {
+    let (_guard, root, decoy) = materialize(
+        "blind_journey_installed_typescript",
+        "head",
+        "tsi-missing",
+        Some("[languages]\nenabled = [\"typescript\"]\n"),
+    )?;
+    let root_arg = root.to_string_lossy().into_owned();
+    let (ok, control) = ripr(&decoy, &["check", "--root", &root_arg, "--base", "HEAD~1"])?;
+    expect_exit(ok, true, "complete control")?;
+    let (gap, _) =
+        gap_start_tokens(&control).ok_or_else(|| format!("missing control gap: {control}"))?;
+
+    let source = root.join("src/unavailable.ts");
+    std::fs::write(
+        &source,
+        "export function unavailable(x: number) { return x + 1; }\n",
+    )
+    .map_err(|error| format!("write changed source: {error}"))?;
+    fixture_git_ok(&root, &["add", "src/unavailable.ts"])?;
+    fixture_git_ok(&root, &["commit", "-q", "-m", "add unrelated source"])?;
+    let held = root.join("target/held-unavailable.ts");
+    std::fs::create_dir_all(root.join("target")).map_err(|error| error.to_string())?;
+    std::fs::rename(&source, &held).map_err(|error| error.to_string())?;
+    std::os::unix::fs::symlink(&held, &source).map_err(|error| error.to_string())?;
+
+    let report = ripr_output(
+        &decoy,
+        &[
+            "check",
+            "--root",
+            &root_arg,
+            "--base",
+            "HEAD~2",
+            "--mode",
+            "draft",
+            "--format",
+            "check-findings-json",
+        ],
+    )?;
+    expect_exit(report.status.success(), true, "mixed check")?;
+    let json: serde_json::Value =
+        serde_json::from_slice(&report.stdout).map_err(|error| error.to_string())?;
+    if json["analysis_outcome"]["analysis_complete"] != false
+        || !json["findings"].as_array().is_some_and(|findings| {
+            findings
+                .iter()
+                .any(|finding| finding["canonical_gap_id"] == gap)
+        })
+        || !json["analysis_outcome"]["outcome"]["limitations"]
+            .as_array()
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item["kind"] == "language_scope_unsupported"
+                        && item["bounded_detail"].as_str().is_some_and(|detail| {
+                            detail.contains("typescript_workspace_links_skipped")
+                        })
+                })
+            })
+    {
+        return Err(format!(
+            "fixture did not produce a finding and unavailable context: {json}"
+        ));
+    }
+    let (started, result) = ripr(
+        &decoy,
+        &[
+            "agent", "repair", "--gap-id", &gap, "--base", "HEAD~2", "--root", &root_arg,
+            "--phase", "before",
+        ],
+    )?;
+    expect_exit(started, false, "manual start with unavailable context")?;
+    need(&result, "incomplete", "manual refusal names incompleteness")?;
+    if attempt_manifests(&root)? != 0 || root.join("target/ripr/workflow").exists() {
+        return Err(format!(
+            "refusal left an attempt or workflow artifact: {result}"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(feature = "lang-typescript")]
@@ -1334,7 +1668,7 @@ fn typescript_literal_threshold_packet_is_complete_and_controls_fail_closed() ->
     )?;
     need(
         &repair,
-        "may make that receipt stale",
+        "do not make the receipt stale",
         "currentness limitation",
     )?;
     if repair.contains("--seam-id") {
@@ -2219,7 +2553,7 @@ fn gap_before_stdout_discloses_test_runner_cache_limit_in_both_modes() -> Result
         )?;
         need(
             &guidance,
-            "may make that receipt stale",
+            "do not make the receipt stale",
             "stdout currentness limitation",
         )?;
     }
@@ -2378,7 +2712,6 @@ impl GapAttempt {
     }
 }
 
-#[cfg(feature = "lang-typescript")]
 fn text_of(output: &std::process::Output) -> (String, String) {
     (
         String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -3717,38 +4050,57 @@ fn gap_bound_after_phase_still_refuses_ignored_vitest_module_cache() -> Result<(
     Ok(())
 }
 
-/// The alternative ordering avoids a terminal refusal but does not keep the
-/// receipt current after a test runner changes the observed cache.
+/// The documented ordering (run the focused test after `continue`) keeps the
+/// receipt current: Vitest cache files written after the verdict cannot change
+/// the static evidence it describes (#11534). Any other ignored path under
+/// `node_modules` still stales the attempt.
 #[cfg(feature = "lang-typescript")]
 #[test]
-fn gap_bound_status_reports_cache_drift_after_receipt() -> Result<(), String> {
+fn gap_bound_status_stays_current_after_vitest_cache_written_post_receipt() -> Result<(), String> {
     let attempt = GapAttempt::start("ts-status-vitest-cache")?;
     std::fs::write(attempt.root.join(".git/info/exclude"), "node_modules/\n")
         .map_err(|error| format!("exclude cache: {error}"))?;
     attempt.commit_closing_test()?;
     let after = attempt.after(false)?;
     expect_exit(after.status.success(), true, "after before cache write")?;
-    let cache = attempt.root.join("node_modules/.vitest-cache");
-    std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
-    std::fs::write(cache.join("transformed"), "transformed test code")
-        .map_err(|error| format!("cache file: {error}"))?;
-    let output = ripr_output(
-        &attempt.decoy,
-        &["agent", "status", "--root", &attempt.root_arg, "--json"],
-    )?;
-    expect_exit(output.status.success(), true, "status after cache write")?;
-    let (stdout, _) = text_of(&output);
-    let status: serde_json::Value =
-        serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
-    let attempts = status["repair_attempts"]
-        .as_array()
-        .ok_or("missing attempts")?;
-    let recorded = attempts
-        .iter()
-        .find(|entry| entry["attempt_id"] == attempt.attempt_id)
-        .ok_or("missing recorded attempt")?;
-    if recorded["head_current"] != false {
-        return Err(format!("cache drift did not stale the attempt: {stdout}"));
+    let status_current = || -> Result<Option<bool>, String> {
+        let output = ripr_output(
+            &attempt.decoy,
+            &["agent", "status", "--root", &attempt.root_arg, "--json"],
+        )?;
+        expect_exit(output.status.success(), true, "status")?;
+        let (stdout, _) = text_of(&output);
+        let status: serde_json::Value =
+            serde_json::from_str(&stdout).map_err(|error| error.to_string())?;
+        status["repair_attempts"]
+            .as_array()
+            .ok_or("missing attempts")?
+            .iter()
+            .find(|entry| entry["attempt_id"] == attempt.attempt_id)
+            .ok_or("missing recorded attempt")?["head_current"]
+            .as_bool()
+            .map_or(Ok(None), |value| Ok(Some(value)))
+    };
+    for (dir, file) in [
+        ("node_modules/.vitest-cache", "transformed"),
+        ("node_modules/.vite/vitest/abc", "results.json"),
+        ("packages/app/node_modules/.vitest-cache", "transformed"),
+    ] {
+        let cache = attempt.root.join(dir);
+        std::fs::create_dir_all(&cache).map_err(|error| format!("cache directory: {error}"))?;
+        std::fs::write(cache.join(file), "cache")
+            .map_err(|error| format!("cache file: {error}"))?;
+    }
+    if status_current()? != Some(true) {
+        return Err("Vitest cache written after the receipt staled the attempt".to_string());
+    }
+    // Control: a non-cache ignored path still moves the bound delta.
+    let other = attempt.root.join("node_modules/pkg");
+    std::fs::create_dir_all(&other).map_err(|error| format!("control directory: {error}"))?;
+    std::fs::write(other.join("index.js"), "module.exports = 1")
+        .map_err(|error| format!("control file: {error}"))?;
+    if status_current()? != Some(false) {
+        return Err("a non-cache node_modules write did not stale the attempt".to_string());
     }
     Ok(())
 }

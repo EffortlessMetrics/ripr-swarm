@@ -631,9 +631,12 @@
       "claim_id": "final-audit",
       "owner_issue": 3807,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "Reduced release-diff and join-risk audit is not yet terminal.",
-      "next": "Bind the reduced audit to the proposed cut and terminalize it; main movement invalidates it. Owner: the two audit threads."
+      "resolution": "final_candidate_execution_only",
+      "candidate_effect": "The reduced release-diff and join-risk audit runs on the frozen product cut M and the source parent; its packet is consumed unchanged by #2766, #2768, #1609 and #2769.",
+      "execution_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/3807"
+      ],
+      "non_claim": "The release does not claim a completed adversarial audit of the cut until the reduced audit is bound to the frozen M and its packet digest is accepted; the full eight-review seam audit stays 0.11.x work."
     },
     {
       "claim_id": "schema-convergence",
@@ -709,9 +712,18 @@
       "claim_id": "hard-cut-admission",
       "owner_issue": 5391,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "Admission is advisory; the denominator is not yet mechanically stopped from moving.",
-      "next": "Activate the admission packet through the controller's packet-only procedure after selection is terminal. Owner: Hard-cut admission thread."
+      "resolution": "final_candidate_execution_only",
+      "candidate_effect": "The packet-only post-selection freeze machinery is on main (#8622, #8789, #9282, #9391) and was rehearsed on hosted PRs (#9325, #9326); activation on the exact product cut is execution after selection is terminal.",
+      "implementation_refs": [
+        "pr:8622",
+        "pr:8789",
+        "pr:9282",
+        "pr:9391"
+      ],
+      "execution_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/5391"
+      ],
+      "non_claim": "The release does not claim the denominator is mechanically frozen until the activation packet lands on the exact product cut and the live watch receipt is retained."
     },
     {
       "claim_id": "distribution-rehearsal-archive",
@@ -730,9 +742,15 @@
       "claim_id": "distribution-rehearsal-wheel",
       "owner_issue": 9274,
       "materiality": "release_required",
-      "resolution": "pending",
-      "candidate_effect": "Wheelhouse (never run) and wheel rehearsal has not run.",
-      "next": "Run the wheelhouse and wheel rehearsal; stage the Windows packaged run for the candidate ref. Owner: Wheel and Windows packaged rehearsal thread."
+      "resolution": "final_candidate_execution_only",
+      "candidate_effect": "Python wheelhouse qualification (never run before) and read-only wheel qualification both passed on main 9f5ee1cc (0.11.0); the same workflows run against the frozen candidate under #2769.",
+      "execution_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/41199282855",
+        "https://github.com/EffortlessMetrics/ripr-swarm/actions/runs/41199285392",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/9274",
+        "https://github.com/EffortlessMetrics/ripr-swarm/issues/2769"
+      ],
+      "non_claim": "The release does not claim the wheel or wheelhouse for the final candidate until the same workflows run against the frozen candidate ref; wheel-versus-archive binary identity (#4624) and the Windows packaged run are separate rows."
     },
     {
       "claim_id": "candidate-harness",

@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Python: a call-shaped mention inside a top-level single-line f-string that uses Python 3.12 same-quote nesting in a replacement field (`f"{ "helper(1)" }"`, `f"{y["helper(1)"]}"`) or a newline inside a field is no longer read as a call, so it cannot credit a test with reaching the owner or asserting on it; the rest of the text after such a string is hidden (a miss, never an invented call). Ordinary f-strings and different-quote nesting are unchanged (#9230).

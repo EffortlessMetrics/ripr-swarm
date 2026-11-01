@@ -162,14 +162,14 @@ impl RepairAttemptStoreRef {
             .unwrap_or_else(RepairAttemptStoreIdentity::default_repository);
         if expected.schema_version != REPAIR_ATTEMPT_STORE_SCHEMA_VERSION {
             return Err(format!(
-                "repair attempt store schema must be {REPAIR_ATTEMPT_STORE_SCHEMA_VERSION}, got {}",
+                "repair attempt store schema must be {REPAIR_ATTEMPT_STORE_SCHEMA_VERSION}, got {}; use a store created by this ripr version, or start a new one with `ripr agent repair --store <path>`",
                 expected.schema_version
             ));
         }
         let actual = self.identity();
         if expected.location_class != actual.location_class || expected.locator != actual.locator {
             return Err(format!(
-                "repair attempt belongs to store `{}` ({:?}), not `{}` ({:?}); an attempt ID from one store cannot resolve through another",
+                "repair attempt belongs to store `{}` ({:?}), not `{}` ({:?}); an attempt ID from one store cannot resolve through another; pass the matching `--store`, or omit it to use the default store",
                 expected.locator, expected.location_class, actual.locator, actual.location_class
             ));
         }
@@ -248,7 +248,7 @@ pub(crate) fn resolve_repair_attempt_store(
         .any(|component| matches!(component, Component::ParentDir))
     {
         return Err(format!(
-            "repair attempt store {} is not contained in repository root {}; traversal components are refused",
+            "repair attempt store {} is not contained in repository root {}; traversal components are refused; pass a `--store` path inside the repository",
             display_path(&requested),
             display_path(&canonical_root)
         ));
@@ -261,7 +261,7 @@ pub(crate) fn resolve_repair_attempt_store(
     let cleaned = lexically_clean(&joined);
     if path_escapes_root(&canonical_root, &cleaned) {
         return Err(format!(
-            "repair attempt store {} is not contained in repository root {}",
+            "repair attempt store {} is not contained in repository root {}; pass a `--store` path inside the repository",
             display_path(&requested),
             display_path(&canonical_root)
         ));
@@ -278,7 +278,7 @@ pub(crate) fn resolve_repair_attempt_store(
     if exists {
         if !cleaned.is_dir() {
             return Err(format!(
-                "repair attempt store {} is not a directory",
+                "repair attempt store {} is not a directory; pass a directory path as `--store`, or remove the file in the way",
                 display_path(&cleaned)
             ));
         }
@@ -308,7 +308,7 @@ pub(crate) fn resolve_repair_attempt_store(
 
     match (locator, access) {
         (RepairAttemptStoreLocator::Explicit(_), RepairAttemptStoreAccess::Open) => Err(format!(
-            "explicit repair attempt store `{}` is missing or unreadable under {}; it does not fall back to the default store `{}`",
+            "explicit repair attempt store `{}` is missing or unreadable under {}; it does not fall back to the default store `{}`; create the store directory, or drop `--store` to use the default",
             relative,
             display_path(&canonical_root),
             REPAIR_ATTEMPT_DIRECTORY
@@ -385,11 +385,11 @@ fn store_ref(
 fn validate_explicit_locator(path: &Path) -> Result<(), String> {
     let raw = path.as_os_str();
     if raw.is_empty() {
-        return Err("repair attempt --store requires a non-empty path".to_string());
+        return Err("repair attempt --store requires a non-empty path; pass a directory such as `--store target/ripr/repair-attempts`".to_string());
     }
     let text = path.to_string_lossy();
     if text.trim().is_empty() {
-        return Err("repair attempt --store requires a non-empty path".to_string());
+        return Err("repair attempt --store requires a non-empty path; pass a directory such as `--store target/ripr/repair-attempts`".to_string());
     }
     if is_unsupported_unc(&text) {
         return Err(format!(
@@ -482,7 +482,7 @@ fn components_match(left: Component<'_>, right: Component<'_>) -> bool {
 fn relative_locator(root: &Path, path: &Path) -> Result<String, String> {
     let relative = path.strip_prefix(root).map_err(|_prefix| {
         format!(
-            "repair attempt store {} is not contained in repository root {}",
+            "repair attempt store {} is not contained in repository root {}; pass a `--store` path inside the repository",
             display_path(path),
             display_path(root)
         )
@@ -499,7 +499,7 @@ fn relative_locator(root: &Path, path: &Path) -> Result<String, String> {
             Component::CurDir => {}
             Component::ParentDir | Component::Prefix(_) | Component::RootDir => {
                 return Err(format!(
-                    "repair attempt store {} is not a portable repository-relative locator",
+                    "repair attempt store {} is not a portable repository-relative locator; pass `--store` a relative path with forward slashes",
                     display_path(path)
                 ));
             }

@@ -126,6 +126,21 @@ the concrete input or value. Preview findings, an empty value, a value
 longer than 80 characters (counted as characters) and a value containing a
 backtick or newline leave the message unchanged. This changes wording only; class, severity and actionability are untouched.
 
+### Overlapping probe families (#11453)
+
+One changed expression can carry several probes of different families, for
+example `predicate` and `return_value` on `return a >= b;`. Findings that carry
+a canonical gap group by that gap. Gap-less findings publish one diagnostic
+together only when they share file, line, column, owner and expression and are
+equal in every field except identity and the probe-family seeding (`id`,
+`probe.id`, `probe.family`, `probe.delta`, `probe.expected_sinks`,
+`probe.required_oracles`): class, RIPR stages, confidence, evidence, missing
+facts, related tests, next step, static-limit and currentness state included.
+Any differing site or repair signal keeps findings separate; every probe stays
+listed in `data.raw_findings` with `group_reason` `same_site_and_repair_signal`.
+The grouping owner is `canonical_group_members`, shared by publication, counts
+and withheld disclosure; actionability is unchanged.
+
 ### Limited / stale run policy
 
 When `snapshot_run_status` returns anything other than `"full"`
@@ -193,6 +208,7 @@ and status surfaces, and it cannot authorize full-run gap diagnostics.
 - `limited_run_downgrades_finding_warnings` — snapshot with static_limit finding → run_status="limited" → finding WARNING downgrades to INFORMATION.
 - `stale_run_suppresses_gap_record_diagnostics` — StaleArtifact rejection → run_status="stale" → gap records suppressed (is_full_run=false).
 - `generic_next_step_names_the_missing_check_when_the_witness_has_one` — generic next step + witness missing value → message ends with ``Missing check: `value`.``; a step that already quotes the value, no or whitespace-only value, a value over 80 characters or containing a backtick or newline, or a preview finding is unchanged; padding is trimmed and multibyte values count by character.
+- `gapless_family_overlap_publishes_one_diagnostic_with_every_probe_listed` / `gapless_overlap_keeps_findings_apart_when_any_repair_signal_differs` — overlapping gap-less probe families collapse to one diagnostic in either input order with all probes in `raw_findings`; any differing class, next step, evidence, line, column, expression, owner or a canonical gap keeps them separate.
 - `typed_incomplete_outcome_never_projects_as_full` — incomplete producer outcome → run_status="limited_incomplete_input" → full-run repair diagnostics suppressed.
 
 ## Implementation Mapping

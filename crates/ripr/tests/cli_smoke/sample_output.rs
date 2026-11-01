@@ -1,4 +1,4 @@
-//! Owned input and retained output oracles for the six #7825 smoke cases.
+//! Owned sample input and retained output oracles for sample-only smoke cases.
 //! Inputs are embedded at compile time; runtime lookup never visits the checkout.
 use super::{
     assert_success, ignore_remove_dir_all, probe_command, run_git, run_owned_stdin_probe,
@@ -90,17 +90,34 @@ impl Fixture {
         Ok(path)
     }
 
+    pub(super) fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
+    pub(super) fn diff(&self) -> PathBuf {
+        self.root.join("sample.diff")
+    }
+
     pub(super) fn run(&self, extra: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
+        let root = self.root.display().to_string();
+        let diff = self.diff().display().to_string();
+        let mut args = vec!["check", "--root", &root, "--diff", &diff];
+        args.extend_from_slice(extra);
+        self.execute(&args, &[])
+    }
+
+    /// Keep check, explain and context on the same explicit sample identity.
+    /// Artifact reuse deliberately supplies --from rather than a fresh --diff.
+    pub(super) fn execute(
+        &self,
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> Result<Output, Box<dyn std::error::Error>> {
         let started = Instant::now();
         let mut command = probe_command(env!("CARGO_BIN_EXE_ripr"));
         command
             .current_dir(&self.cwd)
-            .arg("check")
-            .arg("--root")
-            .arg(&self.root)
-            .arg("--diff")
-            .arg(self.root.join("sample.diff"))
-            .args(extra)
+            .args(args)
             .env("RIPR_CACHE_DIR", self.scratch.join("state/cache"))
             .env("TMPDIR", self.scratch.join("state/tmp"))
             .env("TMP", self.scratch.join("state/tmp"))
@@ -111,6 +128,9 @@ impl Fixture {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for (name, value) in env {
+            command.env(name, value);
+        }
         // Reuse the harness's owned, drained, deadline-bounded process route.
         let output = run_owned_stdin_probe(command, &[], Duration::from_secs(30))?;
         if std::env::var_os("RIPR_SAMPLE_OUTPUT_TIMINGS").is_some() {
@@ -489,5 +509,32 @@ fn parallel_fixture_state_and_cleanup_are_independent() -> TestResult {
     let removed = two.scratch.clone();
     drop(two);
     assert!(!removed.exists());
+    Ok(())
+}
+
+/// The smaller fixture must retain real owner/test evidence and refuse CWD
+/// fallback. Removing the test input is a wrong-fixture control, not a new
+/// expected result for any migrated contract.
+#[test]
+fn isolated_sample_scope_retains_test_context_and_rejects_decoy_fallback() -> TestResult {
+    let fixture = Fixture::new()?;
+    contract(fixture.run(&["--json"])?)?;
+    let decoy = fixture.execute(
+        &[
+            "check",
+            "--diff",
+            &fixture.diff().display().to_string(),
+            "--json",
+        ],
+        &[],
+    )?;
+    assert!(
+        !decoy.status.success(),
+        "missing explicit root must reach invalid decoy config"
+    );
+    assert!(String::from_utf8_lossy(&decoy.stderr).contains("ripr.toml"));
+    std::fs::remove_file(fixture.root.join(SAMPLE).join("tests/pricing.rs"))?;
+    let missing_context = fixture.run(&["--json"])?;
+    rejects(|| contract(missing_context));
     Ok(())
 }

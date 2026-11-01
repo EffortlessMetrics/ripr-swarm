@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- `ripr mcp --stdio` adds the read-only `ripr_get_top_limitation` tool and the `ripr://gap/{canonical_id}/limitation` resource: the earliest committed producer limitation for one canonical item (`kind`, `stage`, `reason`, `recovery`, `retryable`, `restart` identity and the prohibited stronger claim), reusing the shared static-limit and repair-readiness vocabulary. An item with no limiting fact returns the explicit `no_limitation_established` kind instead of `null` (#1898).

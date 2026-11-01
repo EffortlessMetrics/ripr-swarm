@@ -194,6 +194,24 @@ jobs:
           cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
           cargo fetch --locked --manifest-path crates/ripr/tests/fixtures/proptest_singleton/input/Cargo.toml
 
+      - name: User-text goldens judged by the merge-base matcher
+        # The PR's goldens are judged once more by the matcher the merge-base
+        # compiled, so a PR that weakens the user-text matcher cannot qualify its
+        # own change (#11385). A merge-base that predates `--tree` cannot do this
+        # yet and is skipped with a notice; any other failure fails the job.
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        run: |
+          set -euo pipefail
+          base_sha="$(git rev-parse HEAD^1)"
+          base_tree="$RUNNER_TEMP/user-text-base"
+          git worktree add --detach "$base_tree" "$base_sha"
+          if ! grep -q -- '"--tree"' "$base_tree/xtask/src/policy/user_text.rs"; then
+            echo "::notice::merge-base $base_sha cannot judge another tree yet; matcher pin only"
+            exit 0
+          fi
+          cd "$base_tree"
+          cargo xtask check-user-text --tree "$GITHUB_WORKSPACE"
+
       - name: Repository policy preflight
         id: precommit
         env:
@@ -364,6 +382,48 @@ jobs:
             target/ripr/reports/blind-journey-execute.md
           if-no-files-found: warn
           retention-days: 5
+
+      # #11594 step 1: measure archive build time and size on the hosted gates
+      # job after the other gates, without changing shards or required checks.
+      - name: Measure nextest archive
+        id: nextest-archive
+        if: inputs.test-shards == 4
+        run: |
+          set -euo pipefail
+          mkdir -p target/nextest/ci
+          archive=target/nextest/ci/tests.tar.zst
+          log=target/nextest/ci/archive.log
+          rm -f "$archive"
+          start=$(date +%s)
+          cargo nextest archive --workspace --profile ci --archive-file "$archive" 2>&1 | tee "$log"
+          end=$(date +%s)
+          elapsed=$((end - start))
+          bytes=$(wc -c < "$archive")
+          bytes=${bytes// /}
+          compiling=$(grep -c 'Compiling ' "$log" || true)
+          if [ ! -f "$archive" ] || [ "$bytes" -eq 0 ]; then
+            echo "::error::nextest archive produced no file"
+            exit 1
+          fi
+          {
+            echo "### Nextest archive measurement (#11594 step 1)"
+            echo ""
+            echo "- archive_file: \`$archive\`"
+            echo "- wall_seconds: $elapsed"
+            echo "- archive_bytes: $bytes"
+            echo "- compiling_lines: $compiling"
+            echo "- checkout_sha: \`$(git rev-parse HEAD)\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          printf 'wall_seconds=%s\narchive_bytes=%s\ncompiling_lines=%s\n' "$elapsed" "$bytes" "$compiling" >> "$GITHUB_OUTPUT"
+
+      - name: Upload nextest archive (measurement)
+        if: inputs.test-shards == 4
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}-nextest-archive-${{ github.run_attempt }}
+          path: target/nextest/ci/tests.tar.zst
+          if-no-files-found: error
+          retention-days: 1
 
       # Nextest does not execute Rust doctests; Cargo/rustdoc owns them (#3825).
       - name: Required Rust doctests

@@ -1,0 +1,5 @@
+crates/ripr/src/output/typescript_false_actionable.rs|expected corpus object with cases array
+crates/ripr/src/output/typescript_false_actionable.rs|expected kind typescript_preview_false_actionable_audit_corpus
+crates/ripr/src/output/typescript_false_actionable.rs|expected schema_version 0.1
+crates/ripr/src/output/typescript_false_actionable.rs|invalid JSON: {err}
+crates/ripr/src/output/typescript_false_actionable.rs|serialize TypeScript false-actionable audit JSON failed: {err}

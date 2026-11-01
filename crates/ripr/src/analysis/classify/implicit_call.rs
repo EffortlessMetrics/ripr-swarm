@@ -28,8 +28,8 @@
 
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
-    expr_ending_at_has_type, impl_self_type_name, let_binding_certain_type_head,
-    let_binding_mentions_type, owner_trait_name, stringified_ranges,
+    expr_ending_at_has_type, impl_self_type_name, inherent_receiver_call_resolves,
+    let_binding_certain_type_head, let_binding_mentions_type, owner_trait_name, stringified_ranges,
 };
 use super::reveal::contains_as_whole_word;
 use crate::analysis::facts::TestFact;
@@ -107,6 +107,7 @@ const OWNED_ELSEWHERE_TRAITS: [&str; 14] = [
 pub(in crate::analysis) fn withhold_implicit_call_gap(
     finding: &mut Finding,
     index: &RustIndex,
+    pre_cap_syntax_only: Option<bool>,
 ) -> bool {
     if finding.static_limit_kind.is_some()
         || !matches!(
@@ -141,7 +142,8 @@ pub(in crate::analysis) fn withhold_implicit_call_gap(
     if finding.ripr.reach.state != StageState::Weak
         && !(matches!(kind, ImplicitCall::Syntax(_))
             && only_discrimination_unconfirmed(finding)
-            && reached_only_through_syntax(finding, owner, index))
+            && pre_cap_syntax_only
+                .unwrap_or_else(|| reached_only_through_syntax(finding, owner, index, None)))
     {
         return false;
     }
@@ -243,6 +245,38 @@ fn only_discrimination_unconfirmed(finding: &Finding) -> bool {
         && matches!(ripr.propagate.state, StageState::Yes | StageState::Weak)
 }
 
+/// Compute the syntax-only decision while the admitted pre-cap rows are in scope.
+/// Retaining this compact result avoids carrying an unbounded row set for every
+/// probe while diff classification waits for its serial limit pass.
+pub(in crate::analysis) fn pre_cap_syntax_only(
+    finding: &Finding,
+    index: &RustIndex,
+    direct_rows: &[crate::domain::RelatedTest],
+) -> Option<bool> {
+    if finding.static_limit_kind.is_some()
+        || !matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+    {
+        return None;
+    }
+    let owner_id = finding.probe.owner.as_ref()?;
+    let line = finding.probe.location.line;
+    let owner = index.functions().iter().find(|function| {
+        function.id == *owner_id && function.start_line <= line && line <= function.end_line
+    })?;
+    if !matches!(ImplicitCall::of_owner(owner), Some(ImplicitCall::Syntax(_))) {
+        return None;
+    }
+    Some(reached_only_through_syntax(
+        finding,
+        owner,
+        index,
+        Some(direct_rows),
+    ))
+}
+
 /// Whether every test related to the owner by a direct call reaches it only
 /// through syntax: none of them calls `.name(` on the owner's method, so the relation
 /// came from an operator, loop or scope exit the language runs. A finding with
@@ -252,9 +286,10 @@ fn reached_only_through_syntax(
     finding: &Finding,
     owner: &FunctionSummary,
     index: &RustIndex,
+    direct_rows: Option<&[crate::domain::RelatedTest]>,
 ) -> bool {
-    let mut direct = finding
-        .related_tests
+    let mut direct = direct_rows
+        .unwrap_or(&finding.related_tests)
         .iter()
         .filter(|related| related.relation_reason == Some(RelationReason::DirectOwnerCall))
         .peekable();
@@ -262,33 +297,66 @@ fn reached_only_through_syntax(
         return false;
     }
     let path_owner = type_path_owner(owner, index);
-    // The related rows are capped for display. When some were cut, a test that
-    // names the owner may be among them, and which tests survive depends on
-    // test names, so the cut finding is never judged syntax-only on the rows
-    // that happen to remain (#10551): it stays withheld, whatever the order.
-    if finding
+    let capped = finding
         .related_tests_matched_total
-        .is_some_and(|total| finding.related_tests.len() < total)
-    {
+        .is_some_and(|total| finding.related_tests.len() < total);
+    // Fallback callers without pre-cap evidence must still fail closed.
+    if direct_rows.is_none() && capped {
         return true;
     }
+    // Large capped relation sets must not scan the full test index once per
+    // row. Preserve `find`'s first-match behavior for duplicate identities.
+    // Small sets retain the cheap linear path without building a map.
+    let lookup = (capped && direct_rows.is_some_and(|rows| rows.len() > 8)).then(|| {
+        let mut lookup = std::collections::HashMap::new();
+        for test in index.tests().iter() {
+            lookup
+                .entry((test.name.as_str(), test.file.as_path(), test.start_line))
+                .or_insert(test);
+        }
+        lookup
+    });
     direct.all(|related| {
-        index
-            .tests()
-            .iter()
-            .find(|test| {
+        let test = if let Some(lookup) = &lookup {
+            lookup
+                .get(&(related.name.as_str(), related.file.as_path(), related.line))
+                .copied()
+        } else {
+            index.tests().iter().find(|test| {
                 test.name == related.name
                     && test.file == related.file
                     && test.start_line == related.line
             })
-            .is_some_and(|test| {
-                let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
-                !calls_method_named(&code, &owner.name)
-                    && !path_owner.as_ref().is_some_and(|path| {
-                        type_path_scope_is_clear(test, owner, index, path)
-                            && calls_by_type_path(&code, &owner.name, path)
-                    })
-            })
+        };
+        test.is_none_or(|test| {
+            if is_ignored(test) {
+                return true;
+            }
+            let code = crate::analysis::extract::mask_comments_and_strings(&test.body);
+            let scope_is_clear =
+                |path: &TypePathOwner| type_path_scope_is_clear(test, owner, index, path);
+            // Previously a capped finding was withheld outright. Do not
+            // lift that safety on a same-named call of another receiver.
+            // Preserve the existing uncapped reading.
+            let names_method = calls_method_named(&code, &owner.name)
+                && (!capped
+                    || path_owner.as_ref().is_some_and(|path| {
+                        path.sole_method
+                            && path.trait_unique
+                            && scope_is_clear(path)
+                            && inherent_receiver_call_resolves(
+                                test,
+                                &owner.name,
+                                &path.self_type,
+                                Some(index),
+                                Some(owner),
+                            )
+                    }));
+            !names_method
+                && !path_owner.as_ref().is_some_and(|path| {
+                    scope_is_clear(path) && calls_by_type_path(&code, &owner.name, path)
+                })
+        })
     })
 }
 
@@ -1207,6 +1275,22 @@ struct TypePathOwner {
     /// No other impl of the same trait for this type defines the method
     /// (`Add<f64>` beside `Add<Money>`), so `<Type as Trait>::name` names one.
     trait_unique: bool,
+    /// The owner's trait generic arguments as the impl header spells them,
+    /// whitespace removed (`Money` for `impl Add<Money> for Money`); `None`
+    /// when the header names the trait bare.
+    trait_args: Option<String>,
+}
+
+/// The generic arguments of the trait in an impl owner's symbol id, whitespace
+/// removed (`impl Add<Money> for Money::add` → `Money`). `None` for a bare
+/// trait, an inherent impl or a free function.
+fn owner_trait_args(owner_id: &str) -> Option<String> {
+    let impl_rest = owner_id.split("::impl ").nth(1)?;
+    let impl_body = impl_rest.rsplit_once("::")?.0;
+    let (trait_ty, _) = impl_body.rsplit_once(" for ")?;
+    let (_, args) = trait_ty.split_once('<')?;
+    let args = args.trim_end().strip_suffix('>')?;
+    Some(args.chars().filter(|ch| !ch.is_whitespace()).collect())
 }
 
 fn type_path_owner(owner: &FunctionSummary, index: &RustIndex) -> Option<TypePathOwner> {
@@ -1240,6 +1324,7 @@ fn type_path_owner(owner: &FunctionSummary, index: &RustIndex) -> Option<TypePat
         trait_name,
         sole_method: same_name == 1,
         trait_unique: same_trait == 1,
+        trait_args: owner_trait_args(&owner.id.0),
     })
 }
 
@@ -1311,7 +1396,9 @@ fn calls_by_type_path(code: &str, name: &str, owner: &TypePathOwner) -> bool {
             || qualifier.strip_suffix('>').is_some_and(|inner| {
                 // The `<` must open the qualified path itself, not a generic
                 // argument list (`Wrapper<Money as X>::add` is not this call).
-                let Some((head, inner)) = inner.rsplit_once('<') else {
+                // Match it by depth so the trait's own arguments
+                // (`<Money as Add<Money>>`) do not end the scan early.
+                let Some((head, inner)) = split_at_opening_angle(inner) else {
                     return false;
                 };
                 !head.ends_with(word)
@@ -1326,10 +1413,50 @@ fn calls_by_type_path(code: &str, name: &str, owner: &TypePathOwner) -> bool {
                             .strip_prefix("std::ops::")
                             .or_else(|| trait_path.strip_prefix("core::ops::"))
                             .unwrap_or(trait_path);
-                        ty.trim() == self_type && trait_path == owner.trait_name
+                        ty.trim() == self_type && trait_path_names_owner(trait_path, owner)
                     })
             })
     })
+}
+
+/// Split `text` (the qualifier without its final `>`) at the `<` that opens the
+/// angle group the final `>` closes, balancing nested `<..>`.
+fn split_at_opening_angle(text: &str) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    for (at, ch) in text.char_indices().rev() {
+        match ch {
+            '>' => depth += 1,
+            '<' if depth == 0 => return Some((&text[..at], &text[at + 1..])),
+            '<' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether a qualified call's trait (`Add`, `Add<Money>`) is the owner's. Bare
+/// names match as before. A call that spells generic arguments must spell the
+/// same ones as the impl header; a bare header's omitted right-hand side is
+/// the self type (`impl Add for Money` is `Add<Money>`).
+fn trait_path_names_owner(trait_path: &str, owner: &TypePathOwner) -> bool {
+    let Some((name, args)) = trait_path.split_once('<') else {
+        return trait_path == owner.trait_name;
+    };
+    let Some(args) = args.trim_end().strip_suffix('>') else {
+        return false;
+    };
+    let args: String = args.chars().filter(|ch| !ch.is_whitespace()).collect();
+    name.trim() == owner.trait_name
+        && !args.is_empty()
+        && match owner.trait_args.as_deref() {
+            Some(declared) => declared == args,
+            // An omitted right-hand side reads as the self type. This holds
+            // for every trait, not only operators; for a non-operator trait
+            // with a different default it relies on `trait_unique` (checked by
+            // the caller) and on the call compiling. `rebinds_type_name` is
+            // not applied to the argument types.
+            None => args == owner.self_type,
+        }
 }
 
 #[cfg(test)]
@@ -1491,6 +1618,7 @@ mod tests {
             trait_name: "Add".into(),
             sole_method,
             trait_unique: true,
+            trait_args: None,
         };
         assert!(calls_by_type_path(
             "Money::add(a, b)",
@@ -1581,6 +1709,34 @@ mod tests {
             "<Money as core::ops::Add>::add(a, b)",
             "add",
             &path_owner(true)
+        ));
+        // Spelled trait arguments must be the impl header's (#10625).
+        assert!(calls_by_type_path(
+            "<Money as Add<Money>>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "<Money as Add<i64>>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        assert!(!calls_by_type_path(
+            "Wrapper<<Money as Add<Money>>::Output>::add(a, b)",
+            "add",
+            &path_owner(true)
+        ));
+        let mut declared = path_owner(true);
+        declared.trait_args = Some("i64".into());
+        assert!(calls_by_type_path(
+            "<Money as core::ops::Add< i64 >>::add(a, 1)",
+            "add",
+            &declared
+        ));
+        assert!(!calls_by_type_path(
+            "<Money as Add<Money>>::add(a, b)",
+            "add",
+            &declared
         ));
         assert!(calls_by_type_path(
             "let _ = stringify!(x); Money::add(1, 2)",

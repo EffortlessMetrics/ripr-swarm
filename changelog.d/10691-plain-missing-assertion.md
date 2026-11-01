@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Default human text names the classifier's fixed "nothing strong notices this" entry as `No strong assertion was detected` and prints the catch-all change type as `unclear` in Hidden lists; JSON `missing`, `--format human-full` and the stable tokens are unchanged. 153 default `human.txt` goldens were re-blessed one by one and the user-text ceilings lowered (#10691, #11619).

@@ -233,6 +233,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckChangelogFragments(args) => {
             super::policy::check_changelog_fragments_with_args(&args)
         }
+        XtaskCommand::FoldChangelog(args) => super::policy::fold_changelog(&args),
         XtaskCommand::CheckReadmeState => super::check_readme_state(),
         XtaskCommand::MarkdownLinks => super::markdown_links(),
         XtaskCommand::CheckPrShape(args) => super::check_pr_shape_with_args(&args),

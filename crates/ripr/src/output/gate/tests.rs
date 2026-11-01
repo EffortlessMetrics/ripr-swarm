@@ -2477,7 +2477,15 @@ fn gate_mode_parse_covers_all_values_and_unknowns() {
     );
     assert_eq!(
         GateMode::parse("hard"),
-        Err("unknown gate mode `hard`; expected `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`".to_string())
+        Err("unknown gate mode \"hard\". Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.".to_string())
+    );
+    assert_eq!(
+        GateMode::parse("baseline-chek"),
+        Err("unknown gate mode \"baseline-chek\". Did you mean `baseline-check`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.".to_string())
+    );
+    assert_eq!(
+        GateMode::parse("visible-onlyy"),
+        Err("unknown gate mode \"visible-onlyy\". Did you mean `visible-only`? Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.".to_string())
     );
 }
 

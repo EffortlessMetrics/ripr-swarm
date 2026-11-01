@@ -975,6 +975,13 @@ impl EffectStateCarrier {
                 // A macro name, a path root, or a struct field label.
                 continue;
             }
+            if is_screaming_case(name)
+                && (punct(tokens, index + 1, '.') || punct(tokens, index + 1, '['))
+            {
+                // A static/const root read (`*LOG.lock()`, `TABLE[0]`) may
+                // observe state the callee wrote through a missed hand-off (#7070).
+                return true;
+            }
             if KEYWORDS.contains(&name)
                 || name.starts_with(|c: char| c.is_uppercase() || c.is_ascii_digit())
                 || punct(tokens, index + 1, '(')
@@ -1027,6 +1034,15 @@ impl EffectStateCarrier {
         }
         false
     }
+}
+
+/// All-uppercase ASCII identifier with at least one letter (`LOG`, `TABLE`).
+fn is_screaming_case(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().any(|ch| ch.is_ascii_alphabetic())
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 /// `callee` for an expression that is exactly `self.callee(args)`.

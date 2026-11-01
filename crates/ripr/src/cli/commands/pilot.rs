@@ -291,8 +291,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // Apply the pilot artifact seam budget.  The inventory may already have
     // been capped by the repo-exposure seam limit; we then further cap the
     // classified slice for the two pilot artifacts so they stay under a
-    // manageable size.  `limit_info` carries whichever cap fired (pilot
-    // budget wins when both fire; inventory limit is the outer bound).
+    // manageable size. Preserve both cuts when each independently fires;
+    // the inventory limit is the outer bound.
     let mut classified = report.classified;
     let corpus_key = report.corpus_key;
     let analyzed_production_files = report.analyzed_production_files;
@@ -421,14 +421,14 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         }),
         (budget, inventory) => budget.clone().or_else(|| inventory.clone()),
     };
-    let limit_info = pilot_budget_info.or(inventory_limit_info);
-    let repo_exposure_limit = limit_info.as_ref().map(|info| {
-        if pilot_budget_truncated {
-            RepoExposureLimit::PilotBudget(info)
-        } else {
-            RepoExposureLimit::Inventory(info)
+    let repo_exposure_limit = match (&pilot_budget_info, &inventory_limit_info, &summary_limit) {
+        (Some(_), Some(inventory), Some(summary)) => {
+            Some(RepoExposureLimit::Both(summary, inventory))
         }
-    });
+        (Some(budget), None, _) => Some(RepoExposureLimit::PilotBudget(budget)),
+        (None, Some(inventory), _) => Some(RepoExposureLimit::Inventory(inventory)),
+        _ => None,
+    };
     let (causal_projection, causal_projection_warning) =
         crate::app::causal_projection::CausalDeltaArtifact::load_optional(&input.root);
     if let Some(warning) = causal_projection_warning {
@@ -736,7 +736,7 @@ fn elapsed_ms(started: Instant) -> u64 {
 /// sink is terminal-once, so a timed-out attempt (or its #2424 retry)
 /// needs a fresh one from `pilot_progress_sink`.
 fn pilot_progress_sink(quiet: bool) -> Option<Arc<CliProgressSink>> {
-    if quiet {
+    if crate::cli::progress::progress_silenced(quiet) {
         return None;
     }
     Some(Arc::new(CliProgressSink::for_stderr(
@@ -965,9 +965,7 @@ const DEFAULT_PILOT_OUT_DIR: &str = "target/ripr/pilot";
 /// complete" with no recommendation and write `target/ripr/` into the folder.
 /// Returns the refusal message, or `None` when the root has something to inspect.
 fn pilot_root_without_workspace(root: &Path) -> Option<String> {
-    let has_inspectable_content =
-        root.join("Cargo.toml").is_file() || analysis::workspace_has_inspectable_source(root);
-    (!has_inspectable_content).then(|| {
+    analysis::root_has_no_inspectable_workspace(root).then(|| {
         format!(
             "pilot root {} has no Cargo.toml and no source files to inspect; pass --root <dir> for the directory that contains your workspace (nothing was written)",
             root.display()

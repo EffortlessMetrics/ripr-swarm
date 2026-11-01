@@ -179,6 +179,9 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
     let mut estimate = NestingEstimate::default();
     let mut depth = 0usize;
     let mut unary_run = 0usize;
+    // Right-associative nesting (`a = b = c`, `for x in for y in ..`): one
+    // parser level per link, reset at statement and bracket boundaries.
+    let mut right_run = 0usize;
     // Per-depth counters, indexed by bracket depth.
     let mut else_if: Vec<usize> = vec![0];
     let mut operators: Vec<usize> = vec![0];
@@ -215,9 +218,26 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             continue;
         }
         if byte == b'\'' {
+            let start = index;
             index = skip_char_or_lifetime(text, index);
-            after_operand = true;
-            unary_run = 0;
+            // A char literal is an operand. A lifetime or label (`break 'a`,
+            // `&'a T`) is neither an operand nor a run breaker, so it must
+            // not reset a prefix-keyword run (`break 'a break 'a ..`).
+            let char_literal =
+                index.saturating_sub(start) >= 3 && bytes.get(index - 1) == Some(&b'\'');
+            if char_literal {
+                after_operand = true;
+                unary_run = 0;
+            } else {
+                // `skip_char_or_lifetime` stops after the quote; consume the
+                // name so it is not scanned as an operand word.
+                while bytes
+                    .get(index)
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b >= 0x80)
+                {
+                    index += 1;
+                }
+            }
             previous_word_was_else = false;
             continue;
         }
@@ -251,6 +271,15 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 estimate.else_if_chain = estimate.else_if_chain.max(*chain);
             }
             previous_word_was_else = word == "else";
+            if word == "as" {
+                bump_operator_run(&mut operators, depth, &mut open_operators, &mut estimate);
+            }
+            if word == "in" {
+                right_run = right_run.saturating_add(1);
+                estimate.depth = estimate
+                    .depth
+                    .max(depth.saturating_add(unary_run).saturating_add(right_run));
+            }
             if is_recursive_prefix_keyword(word) {
                 // `return return ..`, `if if ..` and the like recurse once per
                 // keyword in the parser exactly like a prefix operator run, but
@@ -267,7 +296,14 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
         previous_word_was_else = false;
         match byte {
             b'(' | b'[' | b'{' => {
+                if after_operand && byte != b'{' && follows_closer(bytes, index) {
+                    // Postfix call or index on a closed group: `f()()..`,
+                    // `x[0][0]..` nest left. A flat run of siblings such as
+                    // the token tree of `m!(foo() foo() ..)` does not.
+                    bump_operator_run(&mut operators, depth, &mut open_operators, &mut estimate);
+                }
                 depth = depth.saturating_add(1);
+                right_run = 0;
                 else_if.push(0);
                 operators.push(0);
                 after_operand = false;
@@ -275,6 +311,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             }
             b')' | b']' | b'}' => {
                 depth = depth.saturating_sub(1);
+                right_run = 0;
                 else_if.truncate(depth + 1);
                 let closed: usize = operators.drain(depth + 1..).sum();
                 if let Some(run) = operators.get_mut(depth) {
@@ -299,6 +336,7 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
                 }
                 after_operand = false;
                 unary_run = 0;
+                right_run = 0;
             }
             b'!' | b'-' | b'*' | b'&' if !after_operand => {
                 unary_run = unary_run.saturating_add(1);
@@ -306,12 +344,25 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
             }
             // Postfix `.` and `?` count too: a long method or field chain is
             // a left-nested tree just like a binary-operator run.
+            b':' if bytes.get(index + 1) == Some(&b':')
+                || index.checked_sub(1).and_then(|i| bytes.get(i)) == Some(&b':') =>
+            {
+                // Each `::` path segment nests the path expression once.
+                bump_operator_run(&mut operators, depth, &mut open_operators, &mut estimate);
+                after_operand = false;
+            }
             b'.' | b'?' | b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'|' | b'&' | b'<' | b'>'
-            | b'=' => {
+            | b'=' | b'@' => {
                 if let Some(run) = operators.get_mut(depth) {
                     *run = run.saturating_add(1);
                     open_operators = open_operators.saturating_add(1);
                     estimate.operator_run = estimate.operator_run.max(open_operators);
+                }
+                if byte == b'=' && is_plain_assignment(bytes, index) {
+                    right_run = right_run.saturating_add(1);
+                    estimate.depth = estimate
+                        .depth
+                        .max(depth.saturating_add(unary_run).saturating_add(right_run));
                 }
                 after_operand = byte == b'?';
             }
@@ -324,9 +375,50 @@ pub(crate) fn estimate_rust_nesting(text: &str) -> NestingEstimate {
     estimate
 }
 
+/// True when the last significant byte before `index` closes a group, so a
+/// following `(` or `[` is a postfix call or index on that group's value.
+fn follows_closer(bytes: &[u8], index: usize) -> bool {
+    bytes
+        .get(..index)
+        .and_then(|head| head.iter().rev().find(|b| !b.is_ascii_whitespace()))
+        .is_some_and(|b| matches!(b, b')' | b']'))
+}
+
 /// Words after which a `-`, `*`, `&` or `!` is a prefix operator.
 fn is_expression_keyword(word: &str) -> bool {
     is_recursive_prefix_keyword(word) || matches!(word, "in" | "else" | "let" | "mut" | "move")
+}
+
+/// Count one more link of a left-nested chain (`::`, `as`, postfix call or
+/// index) in the operator run at `depth`, exactly like a binary operator.
+fn bump_operator_run(
+    operators: &mut [usize],
+    depth: usize,
+    open_operators: &mut usize,
+    estimate: &mut NestingEstimate,
+) {
+    if let Some(run) = operators.get_mut(depth) {
+        *run = run.saturating_add(1);
+        *open_operators = open_operators.saturating_add(1);
+        estimate.operator_run = estimate.operator_run.max(*open_operators);
+    }
+}
+
+/// A bare `=` (assignment or `let` initializer), not part of `==`, `<=`, `=>`,
+/// `+=` and the like. Assignment is right-associative, so a chain nests once
+/// per link.
+fn is_plain_assignment(bytes: &[u8], index: usize) -> bool {
+    let before = index.checked_sub(1).and_then(|i| bytes.get(i)).copied();
+    let after = bytes.get(index + 1).copied();
+    let joins = |b: Option<u8>| {
+        b.is_some_and(|b| {
+            matches!(
+                b,
+                b'=' | b'<' | b'>' | b'!' | b'+' | b'-' | b'*' | b'/' | b'%' | b'^' | b'&' | b'|'
+            )
+        })
+    };
+    !joins(before) && !matches!(after, Some(b'=' | b'>'))
 }
 
 /// Keywords whose operand is parsed by recursing into the expression parser,
@@ -334,7 +426,7 @@ fn is_expression_keyword(word: &str) -> bool {
 fn is_recursive_prefix_keyword(word: &str) -> bool {
     matches!(
         word,
-        "return" | "break" | "yield" | "become" | "if" | "match" | "while"
+        "return" | "break" | "yield" | "become" | "if" | "match" | "while" | "box"
     )
 }
 
@@ -408,6 +500,50 @@ pub(crate) fn block_comment_only_lines(text: &str) -> std::collections::BTreeSet
             }
             _ => {
                 index += text[index..].chars().next().map_or(1, char::len_utf8);
+            }
+        }
+    }
+    lines
+}
+
+/// 1-based lines of `text` that lie strictly inside a multi-line string
+/// literal, plus a closing line that holds only the literal's end delimiter
+/// (and an optional `;` or `,`). The line where the literal opens is not
+/// listed so a changed literal still seeds one probe on its declaration.
+pub(crate) fn string_literal_continuation_lines(text: &str) -> std::collections::BTreeSet<usize> {
+    use crate::analysis::extract::string_literal_spans;
+
+    let mut lines = std::collections::BTreeSet::new();
+    if !text.contains('"') {
+        return lines;
+    }
+    let mut line_starts = vec![0usize];
+    line_starts.extend(text.match_indices('\n').map(|(offset, _)| offset + 1));
+    let line_of = |offset: usize| line_starts.partition_point(|start| *start <= offset);
+    let line_end = |line: usize| line_starts.get(line).copied().unwrap_or(text.len());
+    for (open, close, raw) in string_literal_spans(text) {
+        let first = line_of(open);
+        let last = line_of(close);
+        if first >= last {
+            continue;
+        }
+        let literal_end = if raw {
+            let mut end = close + 1;
+            while text.as_bytes().get(end) == Some(&b'#') {
+                end += 1;
+            }
+            end
+        } else {
+            close + 1
+        };
+        for line in (first + 1)..=last {
+            if line < last {
+                lines.insert(line);
+                continue;
+            }
+            let tail = text[literal_end..line_end(last)].trim();
+            if tail.is_empty() || tail == ";" || tail == "," {
+                lines.insert(line);
             }
         }
     }
@@ -699,6 +835,87 @@ mod tests {
         }
     }
 
+    /// #11410: right-associative `=` and `in` links nest the parser once each.
+    #[test]
+    fn right_nested_assignment_and_for_in_runs_are_refused() {
+        let lets = format!("fn f() {{ if {}x {{}} }}\n", "let _ = ".repeat(3_000));
+        let fors = format!("fn f() {{ {}y {{}} }}\n", "for x in ".repeat(3_000));
+        let assigns = format!("fn f() {{ {}1; }}\n", "a = ".repeat(3_000));
+        for source in [lets, fors, assigns] {
+            assert!(
+                rust_nesting_refusal(&source)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{}",
+                &source[..40]
+            );
+        }
+        let ordinary = "fn f(v: Vec<u8>) { let mut a = 1; let b = a == 2; a += 1; for x in v { let _y = x <= 3; } let c = |x| x => y; }\n";
+        assert_eq!(rust_nesting_refusal(ordinary), None);
+    }
+
+    /// #11661: left-nested `::`, `as`, call and index chains and `box`
+    /// patterns must hit the budget too (release builds abort near 100k).
+    #[test]
+    fn path_cast_call_index_and_box_chains_are_refused() {
+        let cases = [
+            format!("fn f() {{ let _v = a{}; }}\n", "::b".repeat(5_000)),
+            format!("fn f() {{ let _v = x{}; }}\n", " as u8".repeat(5_000)),
+            format!("fn f() {{ let _v = x{}; }}\n", "[0]".repeat(5_000)),
+            format!("fn f() {{ let _v = f{}; }}\n", "()".repeat(5_000)),
+            format!("fn f() {{ let {}x = 1; }}\n", "box ".repeat(3_000)),
+        ];
+        for source in cases {
+            assert!(
+                rust_nesting_refusal(&source)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{}",
+                &source[..40]
+            );
+        }
+        let ordinary = "use std::collections::BTreeMap;\nfn f(v: Vec<Vec<u8>>, m: BTreeMap<u8, u8>) -> u8 { let a = v[0][1] as u8; let b = std::cmp::max(a, m.get(&1).copied().unwrap_or(0)); g(b)(a) }\n";
+        assert_eq!(rust_nesting_refusal(ordinary), None);
+    }
+
+    /// #11572: left-nested `@` binding chains and `break 'a` label runs, and
+    /// the flat sibling-call controls that must stay accepted.
+    #[test]
+    fn binding_and_label_chains_are_refused_and_flat_runs_are_not() {
+        let refused = [
+            (
+                "binding",
+                format!("fn f() {{ let {}z = 1; }}\n", "y @ ".repeat(5_000)),
+            ),
+            (
+                "label",
+                format!("fn f() {{ let _v = {}x; }}\n", "break 'a ".repeat(5_000)),
+            ),
+        ];
+        for (name, source) in refused {
+            assert!(
+                rust_nesting_refusal(&source)
+                    .is_some_and(|reason| reason.contains("rust_nesting_budget")),
+                "{name}"
+            );
+        }
+        let flat = [
+            (
+                "flat macro calls",
+                format!("fn f() {{ m!({}); }}\n", "foo() ".repeat(5_000)),
+            ),
+            (
+                "flat macro indexes",
+                format!("fn f() {{ m!({}); }}\n", "a[0] ".repeat(5_000)),
+            ),
+            (
+                "flat lifetimes",
+                format!("fn f<{}>() {{}}\n", "'a, ".repeat(5_000)),
+            ),
+        ];
+        for (name, source) in flat {
+            assert_eq!(rust_nesting_refusal(&source), None, "{name}");
+        }
+    }
+
     #[test]
     fn ordinary_keyword_use_stays_within_the_nesting_budget() {
         let source = "fn f(a: bool, b: Option<u8>) -> u8 {\n    if a { return 1; }\n    while a { break; }\n    match b { Some(x) if x > 1 => return x, _ => {} }\n    else_ok(if a { 1 } else if !a { 2 } else { 3 })\n}\n";
@@ -720,6 +937,39 @@ mod tests {
             "/*! crate\n For example:\n*/\n/** doc /* nested */ still\ncomment */\nfn g() {}\n";
         let lines = block_comment_only_lines(source);
         assert_eq!(lines.into_iter().collect::<Vec<_>>(), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn string_literal_continuation_lines_masks_interior_and_closing_only_lines() {
+        let source = "pub fn value() -> u32 { 1 }\npub const TEMPLATE: &str = \"\\\npub mod generated {\n    pub use crate::value;\n}\n\";\n";
+        let lines = string_literal_continuation_lines(source);
+        assert_eq!(lines.iter().copied().collect::<Vec<_>>(), vec![3, 4, 5, 6]);
+        assert!(!lines.contains(&2), "{lines:?}");
+    }
+
+    #[test]
+    fn string_literal_continuation_lines_covers_raw_and_backslash_continued_strings() {
+        let plain = "let s = \"a\\\nb\";\n";
+        assert_eq!(
+            string_literal_continuation_lines(plain)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        let raw = "let s = r#\"line1\nline2\"#;\n";
+        assert_eq!(
+            string_literal_continuation_lines(raw)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn string_literal_continuation_lines_leaves_code_after_a_closing_quote_on_the_same_line() {
+        let source = "let s = \"a\nb\"; let live = 1;\n";
+        let lines = string_literal_continuation_lines(source);
+        assert!(lines.is_empty(), "{lines:?}");
     }
 
     #[test]

@@ -3,10 +3,13 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import {
+  CloseAction,
+  ErrorAction,
   InitializeParams,
   LanguageClient,
   LanguageClientOptions,
   ServerOptions,
+  State,
   Trace
 } from 'vscode-languageclient/node';
 import { explicitSetting, getConfig, RiprConfig } from './config';
@@ -132,6 +135,13 @@ const OPEN_SETTINGS_ACTION = 'Open Settings';
 const COPY_DIAGNOSTIC_ACTION = 'Copy Diagnostic';
 const COPY_INSTALL_COMMAND_ACTION = 'Copy Install Command';
 const RETRY_ACTION = 'Retry';
+/** Action on the mid-session crash message; runs `ripr.restartServer`. */
+export const SERVER_CRASH_RESTART_ACTION = 'Restart Server';
+/** Automatic `CloseAction.Restart` budget inside `SERVER_CRASH_RESTART_WINDOW_MS`. */
+export const SERVER_CRASH_RESTART_LIMIT = 4;
+const SERVER_CRASH_RESTART_WINDOW_MS = 3 * 60 * 1000;
+const SERVER_CRASH_MESSAGE =
+  'The ripr server stopped unexpectedly and will not restart on its own. Restart the server to continue analysis.';
 
 /**
  * Popup actions for a missing-server error. Copy Install Command is only
@@ -390,6 +400,8 @@ interface RiprLanguageClient {
   setTrace(trace: Trace): void;
   start(): Promise<void>;
   stop(): Promise<void>;
+  readonly state?: State;
+  onDidChangeState?(listener: (event: { oldState: State; newState: State }) => void): vscode.Disposable;
 }
 
 export type RiprClientLifecycleWait = (
@@ -482,10 +494,24 @@ const defaultRuntime: RiprClientRuntime = {
   showErrorMessage: (message, ...items) => vscode.window.showErrorMessage(message, ...items)
 };
 
+/** Thrown when `startOnce` rejects after painting `serverFailed`; surfaced once from `start()`. (#5315) */
+export class RiprServerStartFailedError extends Error {
+  readonly userMessage: string;
+
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'RiprServerStartFailedError';
+    this.userMessage = `ripr server failed to start: ${reason}`;
+  }
+}
+
 export class RiprClientController {
   private client: RiprLanguageClient | undefined;
   private server: ResolvedServer | undefined;
   private readonly notificationDisposables = new Map<RiprLanguageClient, vscode.Disposable[]>();
+  private crashRestartAtMs: number[] = [];
+  private lastCrashCloseAction: CloseAction | undefined;
+  private stoppingClient = false;
   private receivedTypedAnalysisStatus = false;
   private typedAnalysisStatusState: RiprAnalysisStatusPayload['state'] | undefined;
   private readonly dirtyRiprDocuments = new Set<string>();
@@ -539,6 +565,8 @@ export class RiprClientController {
    * review feedback.)
    */
   private startingPromise: Promise<void> | undefined;
+  /** In-flight start-failure toast; coalesced while `start()` awaits `startOnce`. (#5315) */
+  private startFailureNotification: Promise<void> | undefined;
   /**
    * Monotonic generation counter bumped by every stop(). startOnce() captures
    * the generation at entry and checks it again before assigning this.client.
@@ -568,6 +596,33 @@ export class RiprClientController {
     return this.pendingServerMessage;
   }
 
+  /** Resolves once the in-flight start-failure toast finishes or was never shown. (#5315) */
+  settleStartFailureNotification(): Promise<void> {
+    return this.startFailureNotification ?? Promise.resolve();
+  }
+
+  private notifyStartFailureOnce(message: string): void {
+    if (this.startFailureNotification) {
+      return;
+    }
+    this.output.appendLine(message);
+    this.startFailureNotification = Promise.resolve(
+      this.runtime.showWarningMessage(message, SHOW_OUTPUT_ACTION)
+    )
+      .then((choice) => {
+        if (choice === SHOW_OUTPUT_ACTION) {
+          this.showOutput();
+        }
+      })
+      .catch((error: unknown) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        this.output.appendLine(`ripr start-failure notification failed: ${detail}`);
+      })
+      .finally(() => {
+        this.startFailureNotification = undefined;
+      });
+  }
+
   async start(): Promise<void> {
     // Fast path: server is already up.
     if (this.client) {
@@ -582,7 +637,7 @@ export class RiprClientController {
       return this.startingPromise;
     }
     const generation = this.startGeneration;
-    const promise = this.startOnce(generation);
+    const promise = this.runStartOnceWithFailureNotification(generation);
     this.startingPromise = promise;
     try {
       await promise;
@@ -590,6 +645,17 @@ export class RiprClientController {
       if (this.startingPromise === promise) {
         this.startingPromise = undefined;
       }
+    }
+  }
+
+  private async runStartOnceWithFailureNotification(startGeneration: number): Promise<void> {
+    try {
+      await this.startOnce(startGeneration);
+    } catch (error) {
+      if (error instanceof RiprServerStartFailedError) {
+        this.notifyStartFailureOnce(error.userMessage);
+      }
+      throw error;
     }
   }
 
@@ -747,6 +813,15 @@ export class RiprClientController {
         fileEvents: this.runtime.createFileSystemWatcher(
           new vscode.RelativePattern(this.workspaceRoot, '**/{Cargo.toml,ripr.toml}')
         )
+      },
+      errorHandler: {
+        error: (_error, _message, count) => {
+          if (count !== undefined && count <= 3) {
+            return { action: ErrorAction.Continue };
+          }
+          return { action: ErrorAction.Shutdown };
+        },
+        closed: () => this.handleLanguageClientClosed()
       }
     };
 
@@ -768,9 +843,13 @@ export class RiprClientController {
     );
     this.client = client;
     client.setTrace(traceFromConfig(config.traceServer));
+    const stateListener = client.onDidChangeState
+      ? client.onDidChangeState((event) => this.handleClientStateChange(client, event))
+      : undefined;
     this.notificationDisposables.set(client, [
       client.onNotification('ripr/analysisStatus', (params) => this.handleAnalysisStatus(params)),
-      client.onNotification('window/logMessage', (params) => this.handleServerLog(params))
+      client.onNotification('window/logMessage', (params) => this.handleServerLog(params)),
+      ...(stateListener ? [stateListener] : [])
     ]);
     try {
       await client.start();
@@ -791,7 +870,6 @@ export class RiprClientController {
           detail: `Server: ${server.source} (${server.detail})\n${reason}`,
           nextStep: 'Run ripr: Show Output to see the server error, fix it, then run ripr: Restart Server.'
         });
-        this.warnWithOutput(`ripr server failed to start: ${reason}`);
       }
       // A rejected start must not strand a half-initialized client: clear the
       // reference and detach listeners so a later start() re-initializes
@@ -809,6 +887,10 @@ export class RiprClientController {
         this.client = undefined;
       }
       this.disposeNotifications(client);
+      if (startGeneration === this.startGeneration) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new RiprServerStartFailedError(reason);
+      }
       throw error;
     }
     // If stop() ran during `await this.client.start()`, the generation no
@@ -894,13 +976,23 @@ export class RiprClientController {
    * workspace folder" without any UI to do so. The warning names the action;
    * accepting it runs the same flow as the palette command.
    */
+  private workspaceRootOfferPending = false;
+
   private async offerWorkspaceRootSelection(): Promise<void> {
-    const selection = await this.runtime.showWarningMessage(
-      'ripr cannot tell which workspace folder to analyze. Select one workspace folder to start the ripr server.',
-      SELECT_WORKSPACE_ROOT_ACTION
-    );
-    if (selection === SELECT_WORKSPACE_ROOT_ACTION) {
-      await this.selectWorkspaceRoot();
+    if (this.workspaceRootOfferPending) {
+      return;
+    }
+    this.workspaceRootOfferPending = true;
+    try {
+      const selection = await this.runtime.showWarningMessage(
+        'ripr cannot tell which workspace folder to analyze. Select one workspace folder to start the ripr server.',
+        SELECT_WORKSPACE_ROOT_ACTION
+      );
+      if (selection === SELECT_WORKSPACE_ROOT_ACTION) {
+        await this.selectWorkspaceRoot();
+      }
+    } finally {
+      this.workspaceRootOfferPending = false;
     }
   }
 
@@ -1042,14 +1134,101 @@ export class RiprClientController {
   }
 
   /**
-   * Whether the language client is currently bound and (nominally) running.
+   * Whether the language client is currently bound and actively running.
    * Used by listeners (e.g. onDidChangeWorkspaceFolders) to decide whether a
    * transition should trigger a fresh start, or whether the server is already
-   * up and a restart would just churn. This is a cheap nominal check; it does
-   * not probe the language-client's actual lifecycle state.
+   * up and a restart would just churn. When the client exposes lifecycle
+   * `state`, Stopped is not running; fakes without `state` keep the previous
+   * bound-client check.
    */
   isRunning(): boolean {
-    return this.client !== undefined;
+    return this.clientIsActivelyRunning(this.client);
+  }
+
+  private clientIsActivelyRunning(client: RiprLanguageClient | undefined): boolean {
+    if (client === undefined) {
+      return false;
+    }
+    if (client.state === undefined) {
+      return true;
+    }
+    return client.state === State.Running || client.state === State.Starting;
+  }
+
+  private handleLanguageClientClosed(): { action: CloseAction; handled?: boolean } {
+    if (this.stoppingClient || this.client === undefined) {
+      return { action: CloseAction.DoNotRestart, handled: true };
+    }
+    const now = Date.now();
+    this.crashRestartAtMs = this.crashRestartAtMs.filter(
+      (stamp) => now - stamp <= SERVER_CRASH_RESTART_WINDOW_MS
+    );
+    if (this.crashRestartAtMs.length < SERVER_CRASH_RESTART_LIMIT) {
+      this.crashRestartAtMs.push(now);
+      this.lastCrashCloseAction = CloseAction.Restart;
+      this.output.appendLine('ripr server stopped unexpectedly; restarting it.');
+      return { action: CloseAction.Restart };
+    }
+    this.crashRestartAtMs = [];
+    this.lastCrashCloseAction = CloseAction.DoNotRestart;
+    this.output.appendLine(
+      'ripr server stopped unexpectedly too many times and will not restart on its own.'
+    );
+    this.markServerStoppedUnexpectedly();
+    this.offerCrashRestart();
+    return { action: CloseAction.DoNotRestart, handled: true };
+  }
+
+  private handleClientStateChange(
+    client: RiprLanguageClient,
+    event: { oldState: State; newState: State }
+  ): void {
+    if (this.client !== client || this.stoppingClient) {
+      return;
+    }
+    if (event.newState === State.Running) {
+      this.lastCrashCloseAction = undefined;
+      return;
+    }
+    if (event.newState === State.StartFailed) {
+      this.lastCrashCloseAction = undefined;
+      this.markServerStoppedUnexpectedly();
+      return;
+    }
+    if (event.newState !== State.Stopped) {
+      return;
+    }
+    if (this.lastCrashCloseAction === CloseAction.Restart) {
+      return;
+    }
+    this.markServerStoppedUnexpectedly();
+  }
+
+  private markServerStoppedUnexpectedly(): void {
+    const server = this.server;
+    this.updateStatus({
+      kind: 'serverFailed',
+      summary: 'The ripr server stopped unexpectedly.',
+      detail: server
+        ? `Server: ${server.source} (${server.detail})`
+        : 'The language server process is no longer running.',
+      nextStep: 'Run ripr: Restart Server to start analysis again.'
+    });
+  }
+
+  private offerCrashRestart(): void {
+    void Promise.resolve(
+      this.runtime.showErrorMessage(SERVER_CRASH_MESSAGE, SERVER_CRASH_RESTART_ACTION)
+    )
+      .then(async (choice) => {
+        if (choice === SERVER_CRASH_RESTART_ACTION) {
+          await this.restartThroughLifecycle();
+        }
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        this.output.appendLine(`ripr crash-restart message failed: ${message}`);
+      });
   }
 
   private disposeNotifications(client: RiprLanguageClient): void {
@@ -1099,10 +1278,17 @@ export class RiprClientController {
     if (this.client !== client) {
       return { kind: this.client ? 'replaced' : startupFailed ? 'startupFailed' : 'cancelled' };
     }
-    if (client) {
-      await client.stop();
-      this.client = undefined;
-      this.disposeNotifications(client);
+    this.stoppingClient = true;
+    this.crashRestartAtMs = [];
+    this.lastCrashCloseAction = undefined;
+    try {
+      if (client) {
+        await client.stop();
+        this.client = undefined;
+        this.disposeNotifications(client);
+      }
+    } finally {
+      this.stoppingClient = false;
     }
     this.server = undefined;
     this.receivedTypedAnalysisStatus = false;
@@ -2142,8 +2328,9 @@ export class RiprClientController {
         this.output.appendLine(`ripr collectWorkspaceStatus failed: ${message}`);
       }
     }
+    // One surface: the output channel already has the status summary. A toast
+    // would duplicate the same line (#5319).
     this.output.show();
-    this.runtime.showInformationMessage(statusSummary(this.status, this.firstUsefulAction));
   }
 
   // ---------------------------------------------------------------------------
@@ -2443,7 +2630,13 @@ export class RiprClientController {
     const status = typeof packet['status'] === 'string' ? packet['status'] : undefined;
     if (status === 'not_actionable_or_incomplete' || packet['kind'] !== 'repair_packet') {
       const reason = typeof packet['reason'] === 'string' ? packet['reason'] : undefined;
-      this.runtime.showInformationMessage(reason ?? 'No complete repair packet available.');
+      // #4427: the server says whether a refresh is in flight (retry shortly)
+      // or ended without a result (recover); surface its guidance.
+      const recovery = typeof packet['recovery'] === 'string' ? packet['recovery'] : undefined;
+      // Show only the hint when present; the raw reason token is not user text.
+      this.runtime.showInformationMessage(
+        recovery ?? reason ?? 'No complete repair packet available.',
+      );
       return;
     }
     try {

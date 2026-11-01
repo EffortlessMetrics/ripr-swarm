@@ -1,0 +1,7 @@
+crates/ripr/src/cli/commands_agent_support.rs|agent brief --diff {} must stay under root {}
+crates/ripr/src/cli/commands_agent_support.rs|agent brief --files {} must stay under root {}
+crates/ripr/src/cli/commands_agent_support.rs|agent receipt --verify-json {} must stay under root {}
+crates/ripr/src/cli/commands_agent_support.rs|agent receipt {role} {} must stay under root {}
+crates/ripr/src/cli/commands_agent_support.rs|agent verify {flag} {} must stay under root {}
+crates/ripr/src/cli/commands_agent_support.rs|read {} failed: {err} read {} failed: {err} system clock before unix epoch: {err}
+crates/ripr/src/cli/commands_agent_support.rs|read {} failed: {err} system clock before unix epoch: {err}

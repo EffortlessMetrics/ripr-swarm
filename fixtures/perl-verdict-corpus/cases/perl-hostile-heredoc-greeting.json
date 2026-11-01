@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-hostile-heredoc-greeting.json",
-    "sha256": "6edf4a1adc99f892a7b9b5c30afd91add666ede8753cbefea46bae309ba40f3e",
+    "sha256": "f7745a018313ca6e0c715ac9a8ff1363d5f023b6e5c1f05e845ffb6f79462773",
     "provenance": "producer"
   }
 }

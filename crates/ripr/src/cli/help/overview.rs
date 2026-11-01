@@ -47,6 +47,7 @@ What are you trying to do?
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
+  Wire up your agent    ripr init --agents all   (docs/AGENT_QUICKSTART.md)
 
 More:
   ripr help <command>    Options for one command.
@@ -93,11 +94,12 @@ Task map:
   Repair a diff gap     follow the start from ripr check, when offered
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Adopt advisory CI     ripr init --ci github
+  Wire up your agent    ripr init --agents claude|codex|cursor|all
 
 Setup:
   ripr doctor
   ripr capabilities [--language NAME] [--json | --markdown]
-  ripr init [--root PATH] [--ci github] [--dry-run] [--force]
+  ripr init [--root PATH] [--ci github] [--mcp] [--agents TARGET] [--dry-run] [--force]
   ripr config validate [--root PATH]
   ripr cache status [--root PATH] [--json]
   ripr cache export [--root PATH] --out NEW_DIRECTORY
@@ -112,7 +114,7 @@ Analysis:
   ripr rerun --changed-test PATH[::TEST_NODE] [--root PATH] [--json] [--out PATH]
   ripr rerun --gap CANONICAL_GAP_ID --gap-ledger PATH [--root PATH] [--json] [--out PATH]
   ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH]
-  ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|json] [--out PATH]
+  ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|markdown|text|json] [--out PATH]
 
 Repair:
   ripr repair [<item>] [--root PATH] [--base REF]
@@ -140,8 +142,8 @@ Editor & Agent:
   ripr plus (--repo-exposure-summary target/ripr/reports/repo-exposure-summary.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json) [--check]
 
 PR & Review:
-  ripr outcome --before PATH --after PATH [--format md|json] [--out PATH]
-  ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check]
+  ripr outcome --before PATH --after PATH [--format md|markdown|text|json] [--out PATH]
+  ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check|--run-chain]
   ripr start-here [same options as first-pr]   [compatibility]
   ripr first-action [--root .] (--pr-guidance target/ripr/review/comments.json|--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json|--ledger target/ripr/reports/pr-evidence-ledger.json) [--out target/ripr/reports/first-useful-action.json]
   ripr review-comments --root . --base SHA --head SHA [--out target/ripr/review/comments.json]

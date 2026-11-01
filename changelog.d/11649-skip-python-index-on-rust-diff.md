@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- A diff that touches no Python file no longer indexes the Python workspace. In a Rust repository that ships Python tooling (servo, 200,000 files under `tests/wpt`) this was most of the warm check: servo's pinned Rust change goes from 3.6 s to 2.2 s warm and 6.3 s to 2.4 s with an empty cache, with byte-identical `--json` output. Python findings were already produced only for changed Python files, so none change; a Rust-only diff no longer reports Python file-read counts for files it cannot affect (#11649).

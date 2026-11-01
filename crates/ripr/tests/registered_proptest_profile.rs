@@ -17,10 +17,20 @@ const DIFF: &str = include_str!("fixtures/proptest_singleton/diff.patch");
 const ORDINARY: &str = "#[test]\nfn exact_boundary() {\n    assert_eq!(lib_proptest::discounted_total(100i32, 100), 90);\n}\n";
 const PROBE_ROOT: &str = "RIPR_PROPTEST_PROFILE_PROBE_ROOT";
 const PROBE_REPO: &str = "RIPR_PROPTEST_PROFILE_REPO";
+const PROBE_HUMAN: &str = "RIPR_PROPTEST_PROFILE_HUMAN";
+
+#[path = "registered_proptest_profile/provider_diagnostics.rs"]
+mod provider_diagnostics;
 const REPORT: &str = "RIPR_PROPERTY_REPORT=";
 const REPORT_END: &str = "RIPR_PROPERTY_REPORT_END";
 
-struct Fixture(PathBuf);
+#[derive(Default)]
+struct ProbeEnvironment {
+    cargo_home: Option<PathBuf>,
+    human: bool,
+}
+
+struct Fixture(PathBuf, ProbeEnvironment);
 impl Fixture {
     fn new() -> Result<Self, String> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -32,7 +42,7 @@ impl Fixture {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir(&root).map_err(|error| error.to_string())?;
-        let fixture = Self(root);
+        let fixture = Self(root, ProbeEnvironment::default());
         std::fs::create_dir(fixture.0.join("src")).map_err(|error| error.to_string())?;
         std::fs::create_dir(fixture.0.join("tests")).map_err(|error| error.to_string())?;
         fixture.write("src/lib.rs", SOURCE)?;
@@ -104,6 +114,14 @@ fn run(
     }
     if probe {
         command.env(PROBE_ROOT, &fixture.0);
+        if let Some(home) = &fixture.1.cargo_home {
+            command.env("CARGO_HOME", home);
+        }
+        if fixture.1.human {
+            command.env(PROBE_HUMAN, "1");
+        } else {
+            command.env_remove(PROBE_HUMAN);
+        }
         if let Some(cache) = repository_cache {
             command
                 .env(PROBE_REPO, "1")
@@ -165,6 +183,8 @@ fn property_profile_probe_child() -> Result<(), String> {
         "--format".to_string(),
         if repository {
             "repo-exposure-json"
+        } else if std::env::var_os(PROBE_HUMAN).is_some() {
+            "human-full"
         } else {
             "json"
         }

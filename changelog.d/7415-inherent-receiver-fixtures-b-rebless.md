@@ -1,2 +1,0 @@
-<!-- section: Internal / CI -->
-- Re-blessed the `inherent_receiver_*` golden fixtures of the second #7415 slice against current main: `local_wrapper` and `module_type_shadow` move `weakly_exposed` -> `reachable_unrevealed` (#9342/#9169), `async_operand`, `dormant_body` and `operand_item_shadow` move the same way because the #7415 decoy demotion to `weak_token_substring` never credits an oracle, and `async_operand_helper` stays `weakly_exposed` and changes next-step wording only (#10886/#10887); no class change adds credit and none adds an exposed class (#7415).

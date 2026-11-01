@@ -15,6 +15,9 @@ use std::path::Path;
 
 pub(crate) const GAP_LIST_SCHEMA_VERSION: &str = "ripr-mcp-gap-list-v4";
 pub(crate) const GAP_SCHEMA_VERSION: &str = "ripr-mcp-gap-v1";
+pub(crate) const LIMITATION_SCHEMA_VERSION: &str = "ripr-mcp-gap-limitation-v1";
+/// Typed kind of a limitation document that names no limiting producer fact.
+pub(crate) const LIMITATION_NONE_ESTABLISHED: &str = "no_limitation_established";
 
 /// `ripr_get_gap` / `ripr://gap/{canonical_id}` never authorizes an
 /// edit by itself: the readiness block reports the producer repair-readiness
@@ -221,13 +224,13 @@ impl RepairReadiness {
     pub(crate) fn reason(&self) -> &'static str {
         match self.ineligibility {
             Some("not_candidate_actionable") => {
-                "the producer did not establish the changed source as candidate-current, so no repair target is actionable (#3281)"
+                "the producer did not establish the changed source as candidate-current, so no repair target is actionable"
             }
             Some("missing_discriminator") => {
                 "the producer did not establish a discriminator for the changed behavior (no normalized discriminator, or a producer-named missing discriminator on a finding that is not weakly exposed)"
             }
             Some("discriminator_not_populated_for_language") => {
-                "the producer named no missing discriminator but has not populated a normalized discriminator for this language's findings yet, so the discriminator gate cannot be established from available producer facts; repair stays unavailable until the language producer populates canonical gaps (#5268)"
+                "the producer named no missing discriminator but has not populated a normalized discriminator for this language's findings yet, so the discriminator gate cannot be established from available producer facts; repair stays unavailable until the language producer populates canonical gaps"
             }
             Some("static_limitation") => {
                 "the producer withheld this finding's canonical gap behind a typed static limitation on the finding itself; the limitation, not the language, explains why no normalized discriminator is established"
@@ -298,6 +301,14 @@ pub(crate) struct GapItem {
     /// Producer-fact repair readiness projected at commit time; the evidence
     /// core embeds it so the snapshot identity binds readiness changes too.
     pub(crate) repair_readiness: RepairReadiness,
+    /// The producer's own typed static limitation on the finding, captured at
+    /// projection time so the limitation read re-uses the one vocabulary
+    /// (`describe`/`next_step`) instead of re-deriving it.
+    static_limit: Option<crate::domain::StaticLimitKind>,
+    /// The producer limit's reason as the CLI and LSP surfaces word it for this
+    /// finding's probe family (`describe_for_family`), so the MCP reason cannot
+    /// drift from them (#11821).
+    static_limit_reason: Option<String>,
 }
 
 impl GapItem {
@@ -362,11 +373,110 @@ impl GapItem {
             candidate_actionable: finding.is_candidate_actionable(),
             evidence_sha256,
             repair_readiness,
+            static_limit: finding.static_limit_kind,
+            static_limit_reason: finding
+                .static_limit_kind
+                .map(|kind| kind.describe_for_family(&finding.probe.family).into_owned()),
         })
     }
 
     pub(crate) fn class(&self) -> &str {
         &self.class
+    }
+
+    /// The earliest producer fact that prevents a safe repair route for this
+    /// item, read from facts committed with the snapshot: no analysis reruns
+    /// and no limitation is invented here. Order is upstream first:
+    ///
+    /// 1. the producer's own typed static limitation on the finding
+    ///    (`producer_static_limit`), which outranks every readiness gate
+    ///    because it owns why no discriminator or fix site is establishable;
+    /// 2. the first failing repair-readiness gate, attributed to the shared
+    ///    seam validator (`seam_admission`) or to the finding-level gates
+    ///    (`repair_readiness`);
+    /// 3. otherwise `no_limitation_established`, an explicit typed answer
+    ///    (never `null`) that claims no runtime or sufficiency result.
+    pub(crate) fn limitation_document(&self, snapshot_id: &str) -> Value {
+        let links = json!({
+            "snapshot": format!("ripr://snapshot/{snapshot_id}"),
+            "gap": format!("ripr://gap/{}", self.canonical_id),
+            "limitation": format!("ripr://gap/{}/limitation", self.canonical_id),
+        });
+        let restart = json!({
+            "snapshot_id": snapshot_id,
+            "canonical_id": self.canonical_id,
+            "route": "ripr_refresh",
+        });
+        let guidance = finding_guidance(self);
+        let advisory_next_step = guidance
+            .get("recommended_next_step")
+            .and_then(Value::as_str);
+        let refresh_recovery =
+            "call ripr_refresh and re-read this limitation against the new snapshot";
+        let limitation = if let Some(kind) = self.static_limit {
+            let kind_token = serde_json::to_value(kind)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| "static_limitation".to_string());
+            json!({
+                "kind": kind_token,
+                "stage": "producer_static_limit",
+                "reason": self
+                    .static_limit_reason
+                    .clone()
+                    .unwrap_or_else(|| kind.describe().to_string()),
+                "recovery": kind.next_step(),
+                "retryable": false,
+                "prohibited_claim": "any exposure verdict or repair route stronger than the producer's typed static limitation: no `exposed` grip, no repair-ready item, and no runtime outcome is claimed",
+                "restart": restart,
+            })
+        } else if let Some(code) = self.repair_readiness.ineligibility {
+            let seam_owned = self.repair_readiness.seam_detail.is_some();
+            // Only a saved-worktree snapshot is retryable without a source
+            // change: re-refreshing on committed input re-evaluates it.
+            let retryable = code == crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE;
+            let recovery = if retryable {
+                "call ripr_refresh with the default committed source (omit `source: \"worktree\"`), then re-read this limitation".to_string()
+            } else if let Some(step) = advisory_next_step {
+                format!("{step}; then {refresh_recovery}")
+            } else {
+                format!(
+                    "read the item's evidence with ripr_get_gap, make the test change it implies, then {refresh_recovery}"
+                )
+            };
+            json!({
+                "kind": code,
+                "stage": if seam_owned { "seam_admission" } else { "repair_readiness" },
+                "reason": self.repair_readiness.detail(),
+                "recovery": recovery,
+                "retryable": retryable,
+                "prohibited_claim": "repair readiness: this item is not repair-ready, so no repair transaction or authored edit is established from it",
+                "restart": restart,
+            })
+        } else {
+            json!({
+                "kind": LIMITATION_NONE_ESTABLISHED,
+                "stage": "none",
+                "reason": "no producer limitation is committed for this item: its static limitation is unset and every repair-readiness gate is established",
+                "recovery": "none required; read ripr_get_repair_card for the repair route",
+                "retryable": false,
+                "prohibited_claim": "runtime or sufficiency outcome: an absent static limitation is not a mutation result, a passing test, or proof that a repair is correct",
+                "restart": restart,
+            })
+        };
+        json!({
+            "schema_version": LIMITATION_SCHEMA_VERSION,
+            "snapshot_id": snapshot_id,
+            "canonical_id": self.canonical_id,
+            "class": self.class,
+            "limitation": limitation,
+            "links": links,
+            "claim_boundary": "The earliest committed producer limitation for one canonical item. Static analysis only: this document does not edit source, execute tests or mutation, or authorize a repair transaction.",
+            "limitations": [
+                "reads facts committed with the completed snapshot; it never reruns analysis",
+                "a missing or limited fact is reported as a typed limitation and never becomes a stronger route",
+            ],
+        })
     }
 
     pub(crate) fn language(&self) -> Option<&str> {
@@ -403,7 +513,7 @@ impl GapItem {
                         "snapshot": format!("ripr://snapshot/{snapshot_id}"),
                         "gap": format!("ripr://gap/{}", self.canonical_id),
                         "repair_attempt": Value::Null,
-                        "repair_attempt_note": "ripr://repair-attempt/{attempt_id} binds once ripr_prepare_repair creates the session transaction for this item (#3090)",
+                        "repair_attempt_note": "ripr://repair-attempt/{attempt_id} binds once ripr_prepare_repair creates the session transaction for this item",
                     }),
                 );
                 object
@@ -417,6 +527,59 @@ impl GapItem {
     }
 }
 
+/// Most `observed_values` entries one gap document carries.
+pub(crate) const MAX_OBSERVED_VALUES: usize = 12;
+/// A value fact counts as near a related test when its line falls within this
+/// many lines after the test's start line.
+const RELATED_TEST_VALUE_WINDOW: usize = 40;
+
+/// The activation block with `observed_values` bounded. The producer lists
+/// every literal it saw across the test surface, which for a heavily tested
+/// file is ~10 KB of values from unrelated tests (agent-experience MCP audit
+/// finding 3). Entries on or just after a related test's line come first,
+/// the rest follow in producer order, the list is capped, and the omission is
+/// disclosed with a total and an omitted count; no entry is rewritten and
+/// `missing_discriminators` is untouched.
+fn bounded_activation(
+    activation: &crate::domain::ActivationEvidence,
+    related_tests: &[crate::domain::RelatedTest],
+) -> Result<Value, String> {
+    let mut value = serde_json::to_value(activation)
+        .map_err(|error| format!("serialize activation evidence: {error}"))?;
+    let total = activation.observed_values.len();
+    let near_related = |line: usize| {
+        related_tests
+            .iter()
+            .any(|test| line >= test.line && line - test.line <= RELATED_TEST_VALUE_WINDOW)
+    };
+    let mut ranked: Vec<&crate::domain::ValueFact> = activation
+        .observed_values
+        .iter()
+        .filter(|fact| near_related(fact.line))
+        .collect();
+    ranked.extend(
+        activation
+            .observed_values
+            .iter()
+            .filter(|fact| !near_related(fact.line)),
+    );
+    ranked.truncate(MAX_OBSERVED_VALUES);
+    let kept = ranked.len();
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "observed_values".to_string(),
+            serde_json::to_value(&ranked)
+                .map_err(|error| format!("serialize observed values: {error}"))?,
+        );
+        object.insert("observed_values_total".to_string(), json!(total));
+        object.insert(
+            "observed_values_omitted".to_string(),
+            json!(total.saturating_sub(kept)),
+        );
+    }
+    Ok(value)
+}
+
 /// Producer-owned evidence fields, projected once per finding. Fields the
 /// producer does not populate stay typed `null`/`absent` states in the
 /// serialized finding values rather than being back-filled here.
@@ -426,8 +589,7 @@ fn gap_evidence_core(
     root: &Path,
     readiness: &RepairReadiness,
 ) -> Result<Value, String> {
-    let activation = serde_json::to_value(&finding.activation)
-        .map_err(|error| format!("serialize activation evidence: {error}"))?;
+    let activation = bounded_activation(&finding.activation, &finding.related_tests)?;
     let related_tests = finding
         .related_tests
         .iter()
@@ -595,6 +757,21 @@ pub(crate) fn gap_resource_id(uri: &str) -> Option<&str> {
         // that id does not exist, so the route misses rather than
         // normalizing a second slash away. Gap ids embed workspace-relative
         // paths, so only the trailing position is rejected.
+        .filter(|id| !id.is_empty() && !id.ends_with('/'))
+}
+
+/// Suffix of the `ripr://gap/{canonical_id}/limitation` resource route.
+const LIMITATION_RESOURCE_SUFFIX: &str = "/limitation";
+
+/// Extract the canonical item id from a `ripr://gap/{id}/limitation` URI.
+/// Canonical ids embed workspace-relative paths, so the id is the whole text
+/// between the `ripr://gap/` prefix and the `/limitation` suffix. The caller
+/// must still prefer the plain gap route when the full suffix is itself an
+/// existing item id.
+pub(crate) fn limitation_resource_id(uri: &str) -> Option<&str> {
+    uri.strip_prefix("ripr://gap/")
+        .map(trim_one_trailing_slash)
+        .and_then(|rest| rest.strip_suffix(LIMITATION_RESOURCE_SUFFIX))
         .filter(|id| !id.is_empty() && !id.ends_with('/'))
 }
 
@@ -789,6 +966,54 @@ mod tests {
 
     fn finding() -> Result<Finding, String> {
         test_finding()
+    }
+
+    fn value_fact(line: usize) -> crate::domain::ValueFact {
+        crate::domain::ValueFact {
+            line,
+            text: format!("assert_eq!(f({line}), {line})"),
+            value: line.to_string(),
+            context: crate::domain::ValueContext::AssertionArgument,
+        }
+    }
+
+    /// Audit finding 3: `observed_values` is the producer's dump of literals
+    /// across the test surface. The projection ranks entries at or just after
+    /// a related test first, caps the list, and discloses what it dropped;
+    /// `missing_discriminators` is untouched.
+    #[test]
+    fn observed_values_are_ranked_toward_related_tests_capped_and_disclosed() -> Result<(), String>
+    {
+        let mut finding = finding()?;
+        // The fixture's one related test starts at line 40. Unrelated values
+        // come first in producer order; the two related ones come last.
+        let mut lines: Vec<usize> = (200..240).collect();
+        lines.extend([41, 44]);
+        finding.activation.observed_values = lines.iter().copied().map(value_fact).collect();
+        let activation = bounded_activation(&finding.activation, &finding.related_tests)?;
+        let kept = activation["observed_values"]
+            .as_array()
+            .ok_or("observed_values lost")?;
+        if kept.len() != MAX_OBSERVED_VALUES
+            || kept[0]["line"] != 41
+            || kept[1]["line"] != 44
+            || activation["observed_values_total"] != 42
+            || activation["observed_values_omitted"] != 42 - MAX_OBSERVED_VALUES
+        {
+            return Err(format!(
+                "observed values not bounded and ranked: {activation}"
+            ));
+        }
+        // Negative: a short list is unchanged and discloses zero omitted.
+        finding.activation.observed_values = vec![value_fact(7)];
+        let short = bounded_activation(&finding.activation, &finding.related_tests)?;
+        if short["observed_values"].as_array().map(Vec::len) != Some(1)
+            || short["observed_values_omitted"] != 0
+            || short["missing_discriminators"] != serde_json::json!([])
+        {
+            return Err(format!("short list must pass through whole: {short}"));
+        }
+        Ok(())
     }
 
     #[cfg(feature = "lang-rust")]
@@ -1499,6 +1724,7 @@ mod tests {
                 &crate::config::RiprConfig::default(),
             ),
             &crate::mcp::repair_admission::InventoryCompleteness::Complete,
+            Path::new("."),
         );
         match evaluated.verdict("probe:uncovered") {
             Some(SeamVerdict::Refused { code, .. })
@@ -1521,8 +1747,13 @@ mod tests {
         let policy = crate::app::agent_brief::AgentBriefPolicy::from_config(&config);
         let findings = [finding()?];
         let id = findings[0].id.as_str();
-        let complete =
-            SeamAdmission::evaluate(&findings, &[], policy, &InventoryCompleteness::Complete);
+        let complete = SeamAdmission::evaluate(
+            &findings,
+            &[],
+            policy,
+            &InventoryCompleteness::Complete,
+            Path::new("."),
+        );
         match complete.verdict(id) {
             Some(SeamVerdict::Refused { code, .. }) if code != SEAM_INVENTORY_TRUNCATED => {}
             other => return Err(format!("complete inventory must not truncate: {other:?}")),
@@ -1534,7 +1765,8 @@ mod tests {
             },
             InventoryCompleteness::Unverified("inventory failed".to_string()),
         ] {
-            let evaluated = SeamAdmission::evaluate(&findings, &[], policy, &completeness);
+            let evaluated =
+                SeamAdmission::evaluate(&findings, &[], policy, &completeness, Path::new("."));
             match evaluated.verdict(id) {
                 Some(SeamVerdict::Refused { code, detail }) if code == SEAM_INVENTORY_TRUNCATED => {
                     if matches!(completeness, InventoryCompleteness::Truncated { .. })
@@ -1745,6 +1977,150 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    fn limitation_field<'a>(document: &'a Value, name: &str) -> Result<&'a str, String> {
+        document
+            .pointer(&format!("/limitation/{name}"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("limitation document lacks {name}: {document}"))
+    }
+
+    /// #1898: the producer's own typed static limitation is the earliest
+    /// fact and outranks every readiness gate, reusing the shared
+    /// `describe`/`next_step` vocabulary instead of a renderer-local string.
+    #[test]
+    fn limitation_names_the_producer_static_limit_ahead_of_readiness_gates() -> Result<(), String> {
+        let mut limited = finding()?;
+        limited.canonical_gap = None;
+        limited.language = Some(crate::domain::LanguageId::Python);
+        limited.static_limit_kind = Some(crate::domain::StaticLimitKind::UnsupportedSyntax);
+        let item = GapItem::from_finding(&limited, Path::new("."))?;
+        let document = item.limitation_document("snapshot:sha256:abc");
+        assert_eq!(limitation_field(&document, "kind")?, "unsupported_syntax");
+        assert_eq!(
+            limitation_field(&document, "stage")?,
+            "producer_static_limit"
+        );
+        assert_eq!(
+            limitation_field(&document, "reason")?,
+            crate::domain::StaticLimitKind::UnsupportedSyntax.describe()
+        );
+        assert_eq!(
+            limitation_field(&document, "recovery")?,
+            crate::domain::StaticLimitKind::UnsupportedSyntax.next_step()
+        );
+        assert_eq!(
+            document.pointer("/limitation/retryable"),
+            Some(&Value::Bool(false))
+        );
+        assert!(limitation_field(&document, "prohibited_claim")?.contains("stronger"));
+        assert_eq!(
+            document.pointer("/limitation/restart/snapshot_id"),
+            Some(&Value::from("snapshot:sha256:abc"))
+        );
+        // Discriminating negative: the same finding without the static limit
+        // does not report a producer static limit, so the kind is driven by
+        // the finding's own typed fact and not by the readiness refusal.
+        let mut unlimited = limited.clone();
+        unlimited.static_limit_kind = None;
+        let other = GapItem::from_finding(&unlimited, Path::new("."))?;
+        let other = other.limitation_document("snapshot:sha256:abc");
+        assert_ne!(limitation_field(&other, "stage")?, "producer_static_limit");
+        Ok(())
+    }
+
+    /// #1898: with no producer static limit the first failing readiness gate
+    /// is the limitation; the shared seam validator's refusal outranks the
+    /// finding gates and is attributed to `seam_admission`; a saved-worktree
+    /// withhold is the one retryable-without-edit limitation.
+    #[test]
+    fn limitation_reports_the_first_failing_readiness_gate_with_its_owner() -> Result<(), String> {
+        let mut no_gap = finding()?;
+        no_gap.canonical_gap = None;
+        let item = GapItem::from_finding(&no_gap, Path::new("."))?;
+        let document = item.limitation_document("snapshot:sha256:abc");
+        assert_eq!(
+            limitation_field(&document, "kind")?,
+            "discriminator_not_populated_for_language"
+        );
+        assert_eq!(limitation_field(&document, "stage")?, "repair_readiness");
+
+        let mut ready = GapItem::from_finding(&finding()?, Path::new("."))?;
+        ready.repair_readiness = ready_readiness().with_seam_verdict(Some(&SeamVerdict::Refused {
+            code: crate::mcp::repair_admission::SEAM_ALREADY_GRIPPED,
+            detail: "the seam is already gripped".to_string(),
+        }));
+        let document = ready.limitation_document("snapshot:sha256:abc");
+        assert_eq!(limitation_field(&document, "kind")?, "seam_already_gripped");
+        assert_eq!(limitation_field(&document, "stage")?, "seam_admission");
+        assert_eq!(
+            limitation_field(&document, "reason")?,
+            "the seam is already gripped"
+        );
+        assert_eq!(
+            document.pointer("/limitation/retryable"),
+            Some(&Value::Bool(false))
+        );
+
+        let mut worktree = GapItem::from_finding(&finding()?, Path::new("."))?;
+        worktree.repair_readiness =
+            ready_readiness().with_seam_verdict(Some(&SeamVerdict::Refused {
+                code: crate::mcp::repair_admission::SEAM_WORKTREE_SOURCE,
+                detail: "worktree snapshot".to_string(),
+            }));
+        let document = worktree.limitation_document("snapshot:sha256:abc");
+        assert_eq!(
+            document.pointer("/limitation/retryable"),
+            Some(&Value::Bool(true))
+        );
+        assert!(limitation_field(&document, "recovery")?.contains("committed source"));
+        Ok(())
+    }
+
+    /// #1898: an item with no limiting fact answers with an explicit typed
+    /// `no_limitation_established`, never `null`, and claims no runtime result.
+    #[test]
+    fn limitation_for_a_ready_item_is_explicit_and_claims_no_runtime_result() -> Result<(), String>
+    {
+        let mut item = GapItem::from_finding(&finding()?, Path::new("."))?;
+        item.repair_readiness = ready_readiness();
+        item.static_limit = None;
+        let document = item.limitation_document("snapshot:sha256:abc");
+        assert_eq!(
+            limitation_field(&document, "kind")?,
+            LIMITATION_NONE_ESTABLISHED
+        );
+        assert_eq!(limitation_field(&document, "stage")?, "none");
+        assert!(limitation_field(&document, "prohibited_claim")?.contains("runtime"));
+        assert_eq!(
+            document.get("schema_version"),
+            Some(&Value::from(LIMITATION_SCHEMA_VERSION))
+        );
+        // Deterministic: repeated reads of unchanged facts are identical.
+        assert_eq!(document, item.limitation_document("snapshot:sha256:abc"));
+        Ok(())
+    }
+
+    #[test]
+    fn limitation_resource_route_reads_the_whole_nested_id() {
+        assert_eq!(
+            limitation_resource_id("ripr://gap/gap:a/b.rs:1/limitation"),
+            Some("gap:a/b.rs:1")
+        );
+        assert_eq!(
+            limitation_resource_id("ripr://gap/gap:x/limitation/"),
+            Some("gap:x")
+        );
+        for other in [
+            "ripr://gap/gap:x",
+            "ripr://gap//limitation",
+            "ripr://gap/limitation",
+            "ripr://snapshot/x/limitation",
+            "ripr://gap/x/limitation//",
+        ] {
+            assert_eq!(limitation_resource_id(other), None, "{other}");
+        }
     }
 
     /// #5268 residual: once the Rust producer populates canonical gaps, a

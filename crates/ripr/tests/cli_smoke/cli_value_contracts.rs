@@ -96,7 +96,7 @@ fn doctor_profile_help_agrees_with_accepted_values() {
     }
     assert_usage_error(
         run_ripr(&["doctor", "--profile", "foo"]),
-        "unknown doctor profile `foo`; expected `analysis` or `source-build`",
+        "unknown doctor profile \"foo\". Accepted: analysis, source-build.",
     );
     assert_usage_error(
         run_ripr(&["doctor", "--profile"]),

@@ -6,6 +6,7 @@
 //! consumes native selection and complete qualification acceptance, never
 //! changes either caller checkout, and never creates the source join.
 
+use super::path_inventory::{PathInventory, path_inventory};
 use super::release::candidate_harness::{AdmittedHandoff, HandoffInput, HandoffReceipt};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -16,6 +17,9 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SCHEMA: &str = "ripr.source_promotion_preflight.v2";
+const CHANGED_SOURCE: &str = "git diff --name-only -z MERGE_BASE..SOURCE_PARENT";
+const CHANGED_PARENT: &str = "git diff --name-only -z MERGE_BASE..SWARM_PARENT";
+const SWARM_ONLY: &str = "git diff --name-only -z MERGE_BASE..SWARM_PARENT, minus paths in git diff --name-only -z MERGE_BASE..SOURCE_PARENT";
 const REPORT_JSON: &str = "source-promotion-preflight.json";
 const REPORT_MD: &str = "source-promotion-preflight.md";
 const DEFAULT_OUT: &str = "target/ripr/source-promotion";
@@ -58,6 +62,16 @@ pub(crate) struct CommitRange {
     pub(crate) first_parent_ordered_sha256: String,
     all_reachable_ordered_recipe: String,
     first_parent_ordered_recipe: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct PathInventories {
+    /// Paths changed on the source parent since the merge base.
+    source_changed: PathInventory,
+    /// Paths changed on the swarm parent since the merge base.
+    swarm_changed: PathInventory,
+    /// Swarm-changed paths the source side did not change.
+    swarm_only: PathInventory,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -105,6 +119,7 @@ struct GeometryReceipt {
     swarm_repository: RepositoryIdentity,
     source_range: CommitRange,
     swarm_range: CommitRange,
+    path_inventories: PathInventories,
     source_survivor_candidates: Vec<String>,
     swarm_only_paths: Vec<String>,
     swarm_authority_resolution_candidates: Vec<String>,
@@ -360,6 +375,11 @@ fn build_receipt(options: &Options) -> Result<GeometryReceipt, String> {
         .cloned()
         .collect::<Vec<_>>();
     swarm_authority_resolution_candidates.sort();
+    let path_inventories = PathInventories {
+        source_changed: path_inventory(&source_paths, CHANGED_SOURCE),
+        swarm_changed: path_inventory(&swarm_paths, CHANGED_PARENT),
+        swarm_only: path_inventory(&swarm_only_paths, SWARM_ONLY),
+    };
     Ok(GeometryReceipt {
         schema: SCHEMA.to_string(),
         mode: if merge_base == options.source_parent {
@@ -382,6 +402,7 @@ fn build_receipt(options: &Options) -> Result<GeometryReceipt, String> {
         swarm_repository: swarm.identity,
         source_range,
         swarm_range,
+        path_inventories,
         source_survivor_candidates: source_paths,
         swarm_only_paths,
         swarm_authority_resolution_candidates,
@@ -1131,6 +1152,20 @@ fn render_markdown(receipt: &GeometryReceipt) -> String {
     let reviewed_tree = &receipt.dry_merge.reviewed_resolved_tree;
     let reviewed_tree_verified = receipt.dry_merge.reviewed_resolved_tree_verified;
     let conflicts = list(&receipt.dry_merge.conflicts);
+    let inventories = &receipt.path_inventories;
+    let inventory_row = |label: &str, inventory: &PathInventory| {
+        format!(
+            "| {label} | {} | {} |\n",
+            inventory.path_record_count, inventory.path_record_sha256
+        )
+    };
+    let inventory_rows = [
+        inventory_row("source changed", &inventories.source_changed),
+        inventory_row("swarm changed", &inventories.swarm_changed),
+        inventory_row("swarm only", &inventories.swarm_only),
+    ]
+    .concat();
+    let path_recipe = &inventories.source_changed.path_record_recipe;
     let source_survivors = list(&receipt.source_survivor_candidates);
     let swarm_only = list(&receipt.swarm_only_paths);
     let authority_candidates = list(&receipt.swarm_authority_resolution_candidates);
@@ -1152,7 +1187,7 @@ fn render_markdown(receipt: &GeometryReceipt) -> String {
     let invalidation_rules = list(&receipt.invalidation_rules);
     let next_commands = list(&receipt.next_commands);
     format!(
-        "# Source-promotion preflight\n\n- Schema: {schema}\n- Mode: {mode}\n- SOURCE_PARENT: {source_parent}\n- SWARM_PARENT: {swarm_parent}\n- SWARM_REF: {swarm_ref}\n- SWARM_REF_SHA: {swarm_ref_sha}\n- MERGE_BASE: {merge_base}\n\n## Repository identity\n\n- source: {source_remote} (expected {source_expected_remote}; common dirs distinct={source_common_dir_verified})\n- swarm: {swarm_remote} (expected {swarm_expected_remote}; common dirs distinct={swarm_common_dir_verified})\n\n## Ancestry\n\n| range | all reachable | first parent | all digest | ordered first-parent digest |\n| --- | ---: | ---: | --- | --- |\n| source | {source_all_count} | {source_first_count} | {source_all_digest} | {source_first_digest} |\n| swarm | {swarm_all_count} | {swarm_first_count} | {swarm_all_digest} | {swarm_first_digest} |\n\nAll-reachable digest recipe: {all_recipe}\nFirst-parent digest recipe: {first_recipe}\n\n## Dry merge\n\nStatus: **{dry_status}**\nPreview tree (automatic, non-final): {preview_tree:?}\nReviewed resolved tree: {reviewed_tree:?}\nReviewed resolved tree verified in supplied repository object store: {reviewed_tree_verified}\n\nConflicts:\n{conflicts}\n\n## Source survivors\n\n{source_survivors}\n## Swarm-only paths\n\n{swarm_only}\n## Swarm authority-resolution candidates (non-dispositive)\n\n{authority_candidates}\n## Version state\n\n- requested: {requested_version}\n- source: workspace={source_workspace:?}, crate={source_crate:?}, extension={source_extension:?}, cargo-lock-ripr={source_cargo_lock:?}, npm-lock-root={source_npm_lock:?}, changelog-mentions={source_changelog:?}, unfolded-fragments={source_fragments:?}\n- swarm: workspace={swarm_workspace:?}, crate={swarm_crate:?}, extension={swarm_extension:?}, cargo-lock-ripr={swarm_cargo_lock:?}, npm-lock-root={swarm_npm_lock:?}, changelog-mentions={swarm_changelog:?}, unfolded-fragments={swarm_fragments:?}\n\n## Invalidation rules\n\n{invalidation_rules}\n## Next commands\n\n{next_commands}",
+        "# Source-promotion preflight\n\n- Schema: {schema}\n- Mode: {mode}\n- SOURCE_PARENT: {source_parent}\n- SWARM_PARENT: {swarm_parent}\n- SWARM_REF: {swarm_ref}\n- SWARM_REF_SHA: {swarm_ref_sha}\n- MERGE_BASE: {merge_base}\n\n## Repository identity\n\n- source: {source_remote} (expected {source_expected_remote}; common dirs distinct={source_common_dir_verified})\n- swarm: {swarm_remote} (expected {swarm_expected_remote}; common dirs distinct={swarm_common_dir_verified})\n\n## Ancestry\n\n| range | all reachable | first parent | all digest | ordered first-parent digest |\n| --- | ---: | ---: | --- | --- |\n| source | {source_all_count} | {source_first_count} | {source_all_digest} | {source_first_digest} |\n| swarm | {swarm_all_count} | {swarm_first_count} | {swarm_all_digest} | {swarm_first_digest} |\n\nAll-reachable digest recipe: {all_recipe}\nFirst-parent digest recipe: {first_recipe}\n\n## Dry merge\n\nStatus: **{dry_status}**\nPreview tree (automatic, non-final): {preview_tree:?}\nReviewed resolved tree: {reviewed_tree:?}\nReviewed resolved tree verified in supplied repository object store: {reviewed_tree_verified}\n\nConflicts:\n{conflicts}\n\n## Path inventories\n\n| inventory | path records | digest |\n| --- | ---: | --- |\n{inventory_rows}\nPath digest recipe: {path_recipe}\n\n## Source survivors\n\n{source_survivors}\n## Swarm-only paths\n\n{swarm_only}\n## Swarm authority-resolution candidates (non-dispositive)\n\n{authority_candidates}\n## Version state\n\n- requested: {requested_version}\n- source: workspace={source_workspace:?}, crate={source_crate:?}, extension={source_extension:?}, cargo-lock-ripr={source_cargo_lock:?}, npm-lock-root={source_npm_lock:?}, changelog-mentions={source_changelog:?}, unfolded-fragments={source_fragments:?}\n- swarm: workspace={swarm_workspace:?}, crate={swarm_crate:?}, extension={swarm_extension:?}, cargo-lock-ripr={swarm_cargo_lock:?}, npm-lock-root={swarm_npm_lock:?}, changelog-mentions={swarm_changelog:?}, unfolded-fragments={swarm_fragments:?}\n\n## Invalidation rules\n\n{invalidation_rules}\n## Next commands\n\n{next_commands}",
     )
 }
 
@@ -1343,6 +1378,77 @@ mod tests {
             return Err(format!(
                 "exotic changed-path inventory mismatch: got {paths:?}, want {expected:?}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn path_inventory_digest_is_unambiguous_for_embedded_newlines() {
+        // LF-joined digests collide on these two inventories; NUL-terminated
+        // records must not.
+        let joined = path_inventory(&["a\nb".to_string(), "c".to_string()], "test");
+        let split = path_inventory(&["a".to_string(), "b\nc".to_string()], "test");
+        assert_eq!(joined.path_record_count, split.path_record_count);
+        assert_ne!(joined.path_record_sha256, split.path_record_sha256);
+        assert_eq!(
+            digest_lines(&["a\nb".to_string(), "c".to_string()]),
+            digest_lines(&["a".to_string(), "b\nc".to_string()]),
+            "control: the LF recipe is the ambiguous one"
+        );
+    }
+
+    #[test]
+    fn path_inventory_omission_changes_count_and_digest() {
+        let full = path_inventory(&["a".to_string(), "b".to_string()], "test");
+        let short = path_inventory(&["a".to_string()], "test");
+        assert_ne!(full.path_record_count, short.path_record_count);
+        assert_ne!(full.path_record_sha256, short.path_record_sha256);
+        let empty = path_inventory(&[], "test");
+        assert_eq!(empty.path_record_count, 0);
+        assert_ne!(empty.path_record_sha256, short.path_record_sha256);
+    }
+
+    #[test]
+    fn path_inventory_binds_newline_name_from_real_git() -> Result<(), String> {
+        // End to end: a tracked name with an embedded newline reaches the
+        // retained count and digest through `changed_paths`, not a text parse.
+        let repo = temp_repo("ripr-source-promotion-inventory")?;
+        fixture_git(&repo, &["init"])?;
+        fixture_git(
+            &repo,
+            &["config", "user.email", "ripr-promotion@example.invalid"],
+        )?;
+        fixture_git(&repo, &["config", "user.name", "RIPR Promotion Test"])?;
+        write_repo_file(&repo, "base.txt", "base\n")?;
+        fixture_git(&repo, &["add", "."])?;
+        fixture_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
+        let paths = if cfg!(windows) {
+            // Windows git refuses a newline in a tracked path (index and
+            // checkout both reject it), so the end-to-end read from real git
+            // runs on Unix hosts; here the inventory contract is checked on
+            // the same record list.
+            fs::remove_dir_all(&repo)
+                .map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+            vec!["a\nb".to_string(), "c".to_string()]
+        } else {
+            write_repo_file(&repo, "a\nb", "one\n")?;
+            write_repo_file(&repo, "c", "two\n")?;
+            fixture_git(&repo, &["add", "-A"])?;
+            fixture_git(&repo, &["commit", "--no-gpg-sign", "-m", "newline"])?;
+            let paths = changed_paths(&repo, "HEAD~1", "HEAD");
+            fs::remove_dir_all(&repo)
+                .map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+            paths?
+        };
+        if paths != vec!["a\nb".to_string(), "c".to_string()] {
+            return Err(format!("newline name was split or rewritten: {paths:?}"));
+        }
+        let inventory = path_inventory(&paths, "test");
+        let split = path_inventory(&["a".to_string(), "b\nc".to_string()], "test");
+        if inventory.path_record_count != 2
+            || inventory.path_record_sha256 == split.path_record_sha256
+        {
+            return Err("inventory digest did not bind the exact records".to_string());
         }
         Ok(())
     }

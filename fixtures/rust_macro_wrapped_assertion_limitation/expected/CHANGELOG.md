@@ -589,3 +589,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_macro_wrapped_assertion_limitation (32)
+
+Reason:
+RIPR-SPEC-0120 (#9644): the unresolved custom-macro next step now always names inspecting the macro's definition and running the existing test instead of "Add a meaningful assertion"
+
+Command:
+`cargo xtask goldens bless rust_macro_wrapped_assertion_limitation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

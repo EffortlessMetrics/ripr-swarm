@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- The default `ripr check` render's `Hidden:` list now tells the three unknown classes apart (`unknown: infection unclear`, `unknown: propagation unclear`, `unknown: static analysis limited`) instead of one bare `unknown`, and a `Hidden classes:` block glosses each class named by a listed row once in plain words. The shared plain label, JSON and `--format human-full` are unchanged (#9373 items 2 and 3, #8165).

@@ -3579,6 +3579,179 @@ fn parse_warning(line: &str) -> Result<(String, String, String, String), String>
     ))
 }
 
+/// Text between `open` and the next `close` in `haystack`.
+fn between<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let rest = haystack.split_once(open)?.1;
+    rest.split_once(close).map(|(inside, _)| inside)
+}
+
+/// #5874: the executable twin of the unix bash replay below. It needs no
+/// shell, so it runs on Windows and Linux alike: it reads the generated
+/// Install-step and summary-step shell and evaluates only what the failure
+/// explanation depends on (the target `case`, the `why` and error templates,
+/// the cargo fallback pin, and the summary `printf`) with the same variable
+/// values the runner would supply. Corrupting the message in the template
+/// fails here on every host.
+#[test]
+fn generated_install_failure_explanation_is_consistent_on_every_host() -> Result<(), Box<dyn Error>>
+{
+    let base = std::env::temp_dir().join(format!(
+        "ripr-portable-failed-install-{}-{}",
+        std::process::id(),
+        SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+    ));
+    fs::create_dir_all(&base)?;
+    let init = run_ripr_init(&base)?;
+    assert!(
+        init.status.success(),
+        "ripr init failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let workflow = fs::read_to_string(base.join(".github/workflows/ripr.yml"))?;
+    let install = workflow_step_block(&workflow, "Install ripr").ok_or("no `Install ripr` step")?;
+    let summary_step = workflow_step_block(&workflow, "Add RIPR advisory summary")
+        .ok_or("no `Add RIPR advisory summary` step")?;
+
+    // Both install routes pin one version: the generated pin.
+    let version = between(&install, "version=", "\n")
+        .map(str::trim)
+        .filter(|v| !v.is_empty() && !v.contains(' '))
+        .ok_or("install step names no version pin")?
+        .to_string();
+    let cargo_pin = between(&install, "cargo install ripr --version ", " ")
+        .ok_or("install step names no cargo fallback pin")?;
+    assert_eq!(
+        cargo_pin, version,
+        "prebuilt and cargo routes must pin the same version"
+    );
+
+    // #6245: Windows-X64 now maps to the contract's MSVC zip; Windows-ARM64 is
+    // an explicit unsupported error. The no-prebuilt route is exercised with a
+    // runner shape that is genuinely unmapped (Linux-ARM): no `case` arm other
+    // than the catch-all (which sets an empty target) may match it.
+    let arms = install
+        .lines()
+        .filter_map(|line| line.trim().split_once(") target="))
+        .collect::<Vec<_>>();
+    assert!(!arms.is_empty(), "no target arms in {install}");
+    let arm_for = |label: &str| {
+        arms.iter()
+            .find(|(pattern, _)| *pattern == label)
+            .map(|(_, rest)| rest.trim_end_matches(" ;;"))
+    };
+    assert_eq!(
+        arm_for("Windows-X64"),
+        Some("x86_64-pc-windows-msvc"),
+        "Windows-X64 must map to the contract's MSVC target"
+    );
+    assert!(
+        install.contains("Windows-ARM64) echo \"::error::Unsupported runner Windows-ARM64: ripr $version publishes no prebuilt Windows ARM64 build"),
+        "Windows-ARM64 must be an explicit unsupported error: {install}"
+    );
+    assert_eq!(arm_for("Linux-ARM"), None, "Linux-ARM must stay unmapped");
+    let target = arm_for("*").ok_or("no catch-all target arm")?;
+    assert!(
+        target.trim_start().starts_with("\"\""),
+        "the catch-all must keep the empty Cargo-fallback target ({target})"
+    );
+
+    // The no-prebuilt reason, the no-cargo error and the cargo notice, with
+    // the runner's variable values.
+    let render = |template: &str, why: &str| {
+        template
+            .replace("$RUNNER_OS", "Linux")
+            .replace("$RUNNER_ARCH", "ARM")
+            .replace("$version", &version)
+            .replace("$why", why)
+    };
+    let why_template =
+        between(&install, "why=\"", "\"").ok_or("no `why` reason in install step")?;
+    let why = render(why_template, "");
+    assert_eq!(why, format!("no prebuilt ripr {version} for Linux-ARM"));
+    let error_template = between(
+        &install,
+        "echo \"::error::Cannot install ripr:",
+        "\"; exit 1",
+    )
+    .ok_or("no no-cargo error line in install step")?;
+    assert_eq!(
+        render(error_template, &why),
+        format!(
+            " no prebuilt ripr {version} for Linux-ARM, and this runner has no cargo to build it. Install Rust on the runner (https://rustup.rs) or add a Rust toolchain step before Install ripr."
+        )
+    );
+    // The error path exits nonzero before any cargo invocation.
+    let (before_error, _) = install
+        .split_once("::error::Cannot install ripr:")
+        .ok_or("no error line")?;
+    let guard = before_error
+        .rsplit_once("command -v cargo")
+        .ok_or("no cargo guard before the error line")?
+        .1;
+    assert!(!guard.contains("cargo install"), "{install}");
+    // The guard is the negation: the error path runs only when cargo is absent.
+    assert!(
+        before_error.contains("if ! command -v cargo >/dev/null 2>&1; then"),
+        "{install}"
+    );
+    let notice_template = between(&install, "echo \"::notice::", "\"")
+        .ok_or("no cargo-fallback notice in install step")?;
+    assert_eq!(
+        render(notice_template, &why),
+        format!("no prebuilt ripr {version} for Linux-ARM; building it with cargo install")
+    );
+    assert!(
+        install.contains(&format!("cargo install ripr --version {version} --locked")),
+        "{install}"
+    );
+
+    // The summary step after the failed install.
+    let format = between(&summary_step, "printf '", "' \"${RIPR_INSTALL_OUTCOME")
+        .ok_or("no summary printf in the summary step")?;
+    let rendered = format.replace("%s", "failure").replace("\\n", "\n");
+    assert!(
+        rendered.starts_with("## RIPR advisory summary\n"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("the pinned ripr is not installed (Install ripr step: failure), so this run produced no RIPR reports."),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("Next: open the Install ripr step log."),
+        "{rendered}"
+    );
+    assert!(
+        summary_step.contains(
+            "::error::the pinned ripr is not installed (Install ripr step: ${RIPR_INSTALL_OUTCOME:-not run})"
+        ),
+        "{summary_step}"
+    );
+    assert!(
+        summary_step.contains("RIPR_INSTALL_OUTCOME: ${{ steps.install.outcome }}"),
+        "{summary_step}"
+    );
+    // The explanation runs only when the install did not succeed, fails the
+    // step, and does so before the normal summary command.
+    let guard_at = summary_step
+        .find("if [ \"${RIPR_INSTALL_OUTCOME:-}\" != success ]; then")
+        .ok_or("no install-outcome guard in the summary step")?;
+    let printf_at = summary_step
+        .find("printf '## RIPR advisory summary")
+        .ok_or("no summary printf")?;
+    let exit_at = summary_step
+        .find("see that step's log.\"; exit 1")
+        .ok_or("summary error line does not exit 1")?;
+    let ci_summary_at = summary_step
+        .find("ripr reports ci-summary")
+        .ok_or("no ci-summary command")?;
+    assert!(
+        guard_at < printf_at && printf_at < exit_at && exit_at < ci_summary_at,
+        "{summary_step}"
+    );
+    Ok(())
+}
+
 /// One spawn site for the built-binary `ripr init` invocations below
 /// (process-policy bound).
 /// #5236 review: without a prebuilt binary the install falls back to
@@ -3635,11 +3808,11 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
     std::os::unix::fs::symlink(&bash, bin.join("bash"))?;
     let summary = base.join("step-summary.md");
     fs::write(&summary, "")?;
-    let runner = |os: &str, path: &std::path::Path| {
+    let runner = |os: &str, arch: &str, path: &std::path::Path| {
         vec![
             ("PATH".to_string(), path.display().to_string()),
             ("RUNNER_OS".to_string(), os.to_string()),
-            ("RUNNER_ARCH".to_string(), "X64".to_string()),
+            ("RUNNER_ARCH".to_string(), arch.to_string()),
             ("RUNNER_TEMP".to_string(), base.display().to_string()),
             (
                 "GITHUB_PATH".to_string(),
@@ -3676,18 +3849,18 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
         "prebuilt and cargo routes must pin the same version"
     );
 
-    // No prebuilt archive for this runner and no cargo: fail and say both.
-    let windows = replay::bash(&root, &install, &runner("Windows", &bin))?;
-    let windows_out = String::from_utf8_lossy(&windows.stdout);
-    assert_eq!(windows.status.code(), Some(1), "{windows_out}");
+    // No prebuilt archive for this runner shape (#6245: Windows-X64 is mapped now) and no cargo: fail and say both.
+    let unmapped = replay::bash(&root, &install, &runner("Linux", "ARM", &bin))?;
+    let unmapped_out = String::from_utf8_lossy(&unmapped.stdout);
+    assert_eq!(unmapped.status.code(), Some(1), "{unmapped_out}");
     assert!(
-        windows_out.contains(&format!(
-            "::error::Cannot install ripr: no prebuilt ripr {version} for Windows-X64, and this runner has no cargo to build it. Install Rust on the runner (https://rustup.rs) or add a Rust toolchain step before Install ripr."
+        unmapped_out.contains(&format!(
+            "::error::Cannot install ripr: no prebuilt ripr {version} for Linux-ARM, and this runner has no cargo to build it. Install Rust on the runner (https://rustup.rs) or add a Rust toolchain step before Install ripr."
         )),
-        "{windows_out}"
+        "{unmapped_out}"
     );
     // A failed download names the URL instead of the platform.
-    let linux = replay::bash(&root, &install, &runner("Linux", &bin))?;
+    let linux = replay::bash(&root, &install, &runner("Linux", "X64", &bin))?;
     let linux_out = String::from_utf8_lossy(&linux.stdout);
     assert_eq!(linux.status.code(), Some(1), "{linux_out}");
     assert!(
@@ -3712,12 +3885,12 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
         fs::write(&path, format!("#!/bin/sh\n{body}\n"))?;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755))?;
     }
-    let built = replay::bash(&root, &install, &runner("Windows", &with_cargo))?;
+    let built = replay::bash(&root, &install, &runner("Linux", "ARM", &with_cargo))?;
     let built_out = String::from_utf8_lossy(&built.stdout);
     assert!(built.status.success(), "{built_out}");
     assert!(
         built_out.contains(&format!(
-            "::notice::no prebuilt ripr {version} for Windows-X64; building it with cargo install"
+            "::notice::no prebuilt ripr {version} for Linux-ARM; building it with cargo install"
         )),
         "{built_out}"
     );
@@ -3727,7 +3900,7 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
     );
 
     // The summary step after the failed install.
-    let after = replay::bash(&root, &summary_step, &runner("Linux", &bin))?;
+    let after = replay::bash(&root, &summary_step, &runner("Linux", "X64", &bin))?;
     let after_out = String::from_utf8_lossy(&after.stdout);
     assert_eq!(after.status.code(), Some(1), "{after_out}");
     let rendered = fs::read_to_string(&summary)?;
@@ -3752,7 +3925,7 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
     // Alternate: an older ripr already on the runner's PATH does not stand
     // in for the failed pinned install.
     fs::write(&summary, "")?;
-    let stale = replay::bash(&root, &summary_step, &runner("Linux", &with_cargo))?;
+    let stale = replay::bash(&root, &summary_step, &runner("Linux", "X64", &with_cargo))?;
     let stale_out = String::from_utf8_lossy(&stale.stdout);
     assert_eq!(stale.status.code(), Some(1), "{stale_out}");
     let rendered = fs::read_to_string(&summary)?;
@@ -3762,6 +3935,727 @@ fn generated_workflow_explains_a_failed_install() -> Result<(), Box<dyn Error>> 
     );
     assert!(!rendered.contains(&format!("ripr {version}")), "{rendered}");
 
+    fs::remove_dir_all(base)?;
+    Ok(())
+}
+
+/// #6245: replay support for the prebuilt-archive routes of the generated
+/// `Install ripr` step. Everything here is unix-only (`bash`, `unzip`, symlinks
+/// and `sha256sum` are the replay's tools), so it is gated rather than dead
+/// code on Windows builds.
+#[cfg(unix)]
+mod archive_replay {
+    use std::error::Error;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Output, Stdio};
+
+    pub(super) type TestResult<T> = Result<T, Box<dyn Error>>;
+
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for byte in data {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        !crc
+    }
+
+    /// One zip entry: stored (uncompressed), with unix mode bits so a symlink
+    /// entry (`0o120777`) can be built. A hand-rolled writer keeps the replay
+    /// free of a `zip` tool and can name entries (`..`, absolute, duplicate)
+    /// that archivers refuse to create.
+    pub(super) struct Entry<'a> {
+        pub(super) name: &'a str,
+        pub(super) data: &'a [u8],
+        pub(super) mode: u32,
+    }
+
+    pub(super) fn file<'a>(name: &'a str, data: &'a [u8]) -> Entry<'a> {
+        Entry {
+            name,
+            data,
+            mode: 0o100_755,
+        }
+    }
+
+    fn u16le(out: &mut Vec<u8>, value: usize) -> TestResult<()> {
+        out.extend_from_slice(&u16::try_from(value)?.to_le_bytes());
+        Ok(())
+    }
+
+    fn u32le(out: &mut Vec<u8>, value: u32) {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+
+    pub(super) fn zip_bytes(entries: &[Entry<'_>]) -> TestResult<Vec<u8>> {
+        let mut out = Vec::new();
+        let mut central = Vec::new();
+        for entry in entries {
+            let offset = u32::try_from(out.len())?;
+            let crc = crc32(entry.data);
+            let size = u32::try_from(entry.data.len())?;
+            u32le(&mut out, 0x0403_4b50);
+            u16le(&mut out, 20)?;
+            out.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0x21, 0]);
+            u32le(&mut out, crc);
+            u32le(&mut out, size);
+            u32le(&mut out, size);
+            u16le(&mut out, entry.name.len())?;
+            u16le(&mut out, 0)?;
+            out.extend_from_slice(entry.name.as_bytes());
+            out.extend_from_slice(entry.data);
+
+            u32le(&mut central, 0x0201_4b50);
+            u16le(&mut central, 0x0314)?;
+            u16le(&mut central, 20)?;
+            central.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0x21, 0]);
+            u32le(&mut central, crc);
+            u32le(&mut central, size);
+            u32le(&mut central, size);
+            u16le(&mut central, entry.name.len())?;
+            central.extend_from_slice(&[0; 8]);
+            u32le(&mut central, entry.mode << 16);
+            u32le(&mut central, offset);
+            central.extend_from_slice(entry.name.as_bytes());
+        }
+        let central_offset = u32::try_from(out.len())?;
+        let central_size = u32::try_from(central.len())?;
+        out.extend_from_slice(&central);
+        u32le(&mut out, 0x0605_4b50);
+        out.extend_from_slice(&[0; 4]);
+        u16le(&mut out, entries.len())?;
+        u16le(&mut out, entries.len())?;
+        u32le(&mut out, central_size);
+        u32le(&mut out, central_offset);
+        u16le(&mut out, 0)?;
+        Ok(out)
+    }
+
+    pub(super) fn sha256_hex(path: &Path) -> TestResult<String> {
+        let output = Command::new("sha256sum").arg(path).output()?;
+        let text = String::from_utf8(output.stdout)?;
+        Ok(text
+            .split_whitespace()
+            .next()
+            .ok_or("sha256sum printed nothing")?
+            .to_string())
+    }
+
+    fn script(path: &Path, body: &str) -> TestResult<()> {
+        fs::write(path, format!("#!/bin/sh\n{body}\n"))?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+        Ok(())
+    }
+
+    /// One install-step run on a fresh fake runner: a `curl` that serves only
+    /// the files placed in `served`, a `cargo` that records being called, an
+    /// ambient `ripr`/`ripr.exe` on PATH that announces itself if it is ever
+    /// run, and (for zip) a `System32/tar.exe` that stands in for bsdtar.
+    pub(super) struct Case {
+        pub(super) dir: PathBuf,
+        pub(super) served: PathBuf,
+        pub(super) temp: PathBuf,
+        pub(super) curl_log: PathBuf,
+        pub(super) cargo_log: PathBuf,
+        pub(super) github_path: PathBuf,
+        shims: PathBuf,
+        ambient: PathBuf,
+        systemroot: PathBuf,
+    }
+
+    impl Case {
+        pub(super) fn new(label: &str, version: &str) -> TestResult<Case> {
+            let dir = super::replay::unique_temp_dir(label)?;
+            let served = dir.join("served");
+            // Spaces and non-ASCII in the job-local directory (falsifier 6).
+            let temp = dir.join("runner temp \u{fc}n\u{ef}c\u{f6}d\u{e9}");
+            let shims = dir.join("shims");
+            let ambient = dir.join("ambient");
+            let systemroot = dir.join("winroot");
+            for path in [
+                &served,
+                &temp,
+                &shims,
+                &ambient,
+                &systemroot.join("System32"),
+            ] {
+                fs::create_dir_all(path)?;
+            }
+            let case = Case {
+                curl_log: dir.join("curl.log"),
+                cargo_log: dir.join("cargo.log"),
+                github_path: dir.join("github-path"),
+                dir,
+                served,
+                temp,
+                shims,
+                ambient,
+                systemroot,
+            };
+            script(
+                &case.shims.join("curl"),
+                &format!(
+                    "for a in \"$@\"; do case \"$a\" in http*) url=\"$a\";; esac; done\n\
+                     echo \"$url\" >> '{}'\n\
+                     f='{}'/\"$(basename \"$url\")\"\n\
+                     [ -f \"$f\" ] || exit 22\n\
+                     cp \"$f\" \"$(basename \"$url\")\"",
+                    case.curl_log.display(),
+                    case.served.display()
+                ),
+            )?;
+            script(
+                &case.shims.join("cargo"),
+                &format!("echo \"$@\" >> '{}'", case.cargo_log.display()),
+            )?;
+            for name in ["ripr", "ripr.exe"] {
+                script(
+                    &case.ambient.join(name),
+                    &format!("echo 'ripr {version} AMBIENT-RIPR-WAS-RUN'"),
+                )?;
+            }
+            // Test double for Windows' bsdtar: lists and extracts through
+            // `unzip`. It does not reproduce bsdtar's own path sanitizing.
+            script(
+                &case.systemroot.join("System32/tar.exe"),
+                "case \"$1\" in\n\
+                 -tf) exec unzip -Z1 \"$2\" ;;\n\
+                 -xf) exec unzip -q \"$2\" -d \"$4\" ;;\n\
+                 *) echo \"unexpected tar.exe args: $*\" >&2; exit 64 ;;\n\
+                 esac",
+            )?;
+            fs::write(case.github_path.as_path(), "")?;
+            fs::write(case.dir.join("github-env"), "")?;
+            Ok(case)
+        }
+
+        pub(super) fn serve(&self, name: &str, bytes: &[u8]) -> TestResult<PathBuf> {
+            let path = self.served.join(name);
+            fs::write(&path, bytes)?;
+            Ok(path)
+        }
+
+        /// Serve `asset` and its `.sha256` file naming the asset's real digest.
+        pub(super) fn serve_verified(&self, asset: &str, bytes: &[u8]) -> TestResult<String> {
+            let path = self.serve(asset, bytes)?;
+            let digest = sha256_hex(&path)?;
+            self.serve(&format!("{asset}.sha256"), format!("{digest}\n").as_bytes())?;
+            Ok(digest)
+        }
+
+        pub(super) fn run(&self, install: &str, os: &str, arch: &str) -> TestResult<Output> {
+            let inherited = std::env::var("PATH").unwrap_or_default();
+            let path = format!(
+                "{}:{}:{inherited}",
+                self.shims.display(),
+                self.ambient.display()
+            );
+            let env = [
+                ("PATH", path),
+                ("RUNNER_OS", os.to_string()),
+                ("RUNNER_ARCH", arch.to_string()),
+                ("RUNNER_TEMP", self.temp.display().to_string()),
+                ("GITHUB_PATH", self.github_path.display().to_string()),
+                (
+                    "GITHUB_ENV",
+                    self.dir.join("github-env").display().to_string(),
+                ),
+                ("SYSTEMROOT", self.systemroot.display().to_string()),
+            ];
+            let mut command = Command::new("bash");
+            command
+                .args(["--noprofile", "--norc", "-eo", "pipefail", "-c", install])
+                .current_dir(&self.dir)
+                .env_clear()
+                .stdin(Stdio::null());
+            for (key, value) in env {
+                command.env(key, value);
+            }
+            Ok(command.output()?)
+        }
+
+        pub(super) fn cargo_calls(&self) -> String {
+            fs::read_to_string(&self.cargo_log).unwrap_or_default()
+        }
+
+        pub(super) fn curl_calls(&self) -> String {
+            fs::read_to_string(&self.curl_log).unwrap_or_default()
+        }
+
+        pub(super) fn extracted(&self) -> Vec<String> {
+            fs::read_dir(self.temp.join("ripr-bin"))
+                .map(|dir| {
+                    dir.filter_map(|entry| entry.ok())
+                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+    }
+
+    /// The `Install ripr` run script and the version it pins, from a freshly
+    /// generated workflow.
+    pub(super) fn generated_install(label: &str) -> TestResult<(String, String, PathBuf)> {
+        let base = super::replay::unique_temp_dir(label)?;
+        let init = super::run_ripr_init(&base)?;
+        assert!(
+            init.status.success(),
+            "ripr init failed: {}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        let workflow = fs::read_to_string(base.join(".github/workflows/ripr.yml"))?;
+        let install = super::replay::parse_steps(&workflow)
+            .into_iter()
+            .find(|step| step.name == "Install ripr")
+            .and_then(|step| step.run)
+            .ok_or("no `Install ripr` run step")?;
+        let version = install
+            .split("version=")
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next())
+            .ok_or("install step names no version pin")?
+            .to_string();
+        Ok((install, version, base))
+    }
+
+    pub(super) fn tools_present() -> bool {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        ["bash", "unzip", "sha256sum", "tar"]
+            .iter()
+            .all(|tool| std::env::split_paths(&path).any(|dir| dir.join(tool).is_file()))
+    }
+}
+
+/// #6245 falsifiers 1-6 and 8 on the Windows x64 ZIP route, replayed through
+/// the generated `Install ripr` script under the workflow's
+/// `bash --noprofile --norc -eo pipefail`. Linux stands in for the runner:
+/// `curl` serves fixtures, and `System32/tar.exe` is an `unzip`-backed double
+/// for bsdtar (see the test's PR notes for what that does not prove).
+#[cfg(unix)]
+#[test]
+fn generated_install_windows_zip_route_replays_securely() -> Result<(), Box<dyn Error>> {
+    use archive_replay::{Case, Entry, file, zip_bytes};
+    if !archive_replay::tools_present() {
+        if std::env::var_os("GITHUB_ACTIONS").is_some() {
+            return Err("bash, unzip or sha256sum missing under GitHub Actions".into());
+        }
+        eprintln!("SKIPPED generated_install_windows_zip_route_replays_securely: tools missing");
+        return Ok(());
+    }
+    let (install, version, base) = archive_replay::generated_install("windows-zip")?;
+    let asset = format!("ripr-server-v{version}-x86_64-pc-windows-msvc.zip");
+    let release = format!("https://github.com/EffortlessMetrics/ripr/releases/download/v{version}");
+    let good_exe = format!("#!/bin/sh\necho \"ripr {version} via $0\"");
+    let payload = |exe: &[u8]| -> Result<Vec<u8>, Box<dyn Error>> {
+        zip_bytes(&[
+            file("LICENSE-APACHE", b"a"),
+            file("LICENSE-MIT", b"m"),
+            file("README-server.txt", b"r"),
+            file("ripr.exe", exe),
+        ])
+    };
+
+    // Production-shaped success: exact asset and checksum requested, digest
+    // verified before extraction, absolute ripr.exe run from a job-local
+    // directory whose name has spaces and non-ASCII (falsifier 6), the
+    // ambient ripr never used, and Cargo never consulted.
+    let ok = Case::new("zip-ok", &version)?;
+    let digest = ok.serve_verified(&asset, &payload(good_exe.as_bytes())?)?;
+    let run = ok.run(&install, "Windows", "X64")?;
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "{out}\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let exe_path = ok.temp.join("ripr-bin/ripr.exe");
+    assert!(
+        out.contains(&format!("via {}", exe_path.display())),
+        "{out}"
+    );
+    assert!(!out.contains("AMBIENT-RIPR-WAS-RUN"), "{out}");
+    assert!(
+        out.contains(&format!(
+            "::notice title=ripr install::version {version}, target x86_64-pc-windows-msvc, archive {asset}, sha256 {digest}, executable {}",
+            exe_path.display()
+        )),
+        "{out}"
+    );
+    assert_eq!(
+        ok.curl_calls(),
+        format!("{release}/{asset}\n{release}/{asset}.sha256\n")
+    );
+    assert!(
+        ok.cargo_calls().is_empty(),
+        "cargo ran on the archive route"
+    );
+    assert!(fs::read_to_string(&ok.github_path)?.contains("ripr-bin"));
+
+    // Falsifier 1: a corrupt checksum fails before extraction, with no Cargo
+    // or PATH fallback.
+    let corrupt = Case::new("zip-corrupt", &version)?;
+    corrupt.serve(&asset, &payload(good_exe.as_bytes())?)?;
+    corrupt.serve(
+        &format!("{asset}.sha256"),
+        format!("{}\n", "0".repeat(64)).as_bytes(),
+    )?;
+    let run = corrupt.run(&install, "Windows", "X64")?;
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("does not match its published SHA-256"),
+        "{out}"
+    );
+    assert!(corrupt.extracted().is_empty(), "extracted before verifying");
+    assert!(
+        corrupt.cargo_calls().is_empty() && !out.contains("AMBIENT"),
+        "{out}"
+    );
+    // ... an empty checksum file is not a pass ...
+    let empty = Case::new("zip-empty-sum", &version)?;
+    empty.serve(&asset, &payload(good_exe.as_bytes())?)?;
+    empty.serve(&format!("{asset}.sha256"), b"")?;
+    let run = empty.run(&install, "Windows", "X64")?;
+    assert_eq!(run.status.code(), Some(1));
+    assert!(empty.extracted().is_empty() && empty.cargo_calls().is_empty());
+    // ... and a missing checksum asset fails rather than installing unverified.
+    let missing = Case::new("zip-missing-sum", &version)?;
+    missing.serve(&asset, &payload(good_exe.as_bytes())?)?;
+    let run = missing.run(&install, "Windows", "X64")?;
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status.code(), Some(1), "{out}");
+    assert!(out.contains("refusing to install it unverified"), "{out}");
+    assert!(missing.extracted().is_empty() && missing.cargo_calls().is_empty());
+
+    // Falsifier 2: wrong, missing or nested executable fails the zip route.
+    let shapes: Vec<(&str, Vec<u8>, &str)> = vec![
+        (
+            "missing",
+            zip_bytes(&[file("LICENSE-MIT", b"m")])?,
+            "does not contain ripr.exe at its root",
+        ),
+        (
+            "wrong-name",
+            zip_bytes(&[file("ripr", good_exe.as_bytes())])?,
+            "does not contain ripr.exe at its root",
+        ),
+        (
+            "nested",
+            zip_bytes(&[file("ripr-server/ripr.exe", good_exe.as_bytes())])?,
+            "outside a flat archive root",
+        ),
+        (
+            // Falsifier 5: traversal, absolute, drive-letter, backslash and
+            // duplicate entries and a symlink entry are all refused.
+            "traversal",
+            zip_bytes(&[
+                file("../evil.exe", b"x"),
+                file("ripr.exe", good_exe.as_bytes()),
+            ])?,
+            "outside a flat archive root",
+        ),
+        (
+            "absolute",
+            zip_bytes(&[
+                file("/tmp/ripr-evil", b"x"),
+                file("ripr.exe", good_exe.as_bytes()),
+            ])?,
+            "outside a flat archive root",
+        ),
+        (
+            "drive-letter",
+            zip_bytes(&[
+                file("C:evil.exe", b"x"),
+                file("ripr.exe", good_exe.as_bytes()),
+            ])?,
+            "outside a flat archive root",
+        ),
+        (
+            "backslash",
+            zip_bytes(&[
+                file("..\\evil.exe", b"x"),
+                file("ripr.exe", good_exe.as_bytes()),
+            ])?,
+            "outside a flat archive root",
+        ),
+        (
+            "duplicate",
+            zip_bytes(&[
+                file("ripr.exe", good_exe.as_bytes()),
+                file("ripr.exe", b"#!/bin/sh\necho evil"),
+            ])?,
+            "duplicate entry",
+        ),
+        (
+            "not-a-zip",
+            b"this is not a zip archive".to_vec(),
+            "is not a readable zip archive",
+        ),
+    ];
+    for (label, bytes, message) in shapes {
+        let case = Case::new(&format!("zip-{label}"), &version)?;
+        case.serve_verified(&asset, &bytes)?;
+        let run = case.run(&install, "Windows", "X64")?;
+        let out = String::from_utf8_lossy(&run.stdout);
+        assert_eq!(run.status.code(), Some(1), "{label}: {out}");
+        assert!(out.contains(message), "{label}: {out}");
+        assert!(
+            case.extracted().is_empty(),
+            "{label}: extracted {:?}",
+            case.extracted()
+        );
+        assert!(case.cargo_calls().is_empty(), "{label}: fell back to cargo");
+        assert!(!out.contains("AMBIENT"), "{label}: {out}");
+        assert!(
+            !case.dir.join("evil.exe").exists(),
+            "{label}: escaped the archive root"
+        );
+    }
+    // A very large flat listing whose first-sorted entry is a traversal name
+    // must still be refused before extraction: a `printf | grep -q` pipeline
+    // under `pipefail` could lose that match to SIGPIPE and read "clean".
+    let names: Vec<String> = (0..60_000)
+        .map(|n| format!("filler-entry-{n:06}.txt"))
+        .collect();
+    let mut entries: Vec<Entry<'_>> =
+        vec![file("../x", b"x"), file("ripr.exe", good_exe.as_bytes())];
+    entries.extend(names.iter().map(|name| file(name, b"")));
+    let large = Case::new("zip-large-listing", &version)?;
+    large.serve_verified(&asset, &zip_bytes(&entries)?)?;
+    let run = large.run(&install, "Windows", "X64")?;
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status.code(), Some(1), "{out}");
+    assert!(out.contains("outside a flat archive root"), "{out}");
+    assert!(large.extracted().is_empty() && large.cargo_calls().is_empty());
+    // ... and a large clean listing still finds ripr.exe and installs.
+    let clean = Case::new("zip-large-clean", &version)?;
+    let mut entries: Vec<Entry<'_>> = vec![file("ripr.exe", good_exe.as_bytes())];
+    entries.extend(names.iter().map(|name| file(name, b"")));
+    clean.serve_verified(&asset, &zip_bytes(&entries)?)?;
+    let run = clean.run(&install, "Windows", "X64")?;
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&run.stdout)
+    );
+
+    // The reported version must equal the pin, not merely start with it.
+    for reported in [
+        format!("{version}0"),
+        format!("{version}-rc.1"),
+        format!("{version}.9"),
+    ] {
+        let case = Case::new("zip-version-prefix", &version)?;
+        case.serve_verified(
+            &asset,
+            &payload(format!("#!/bin/sh\necho 'ripr {reported} (abc)'").as_bytes())?,
+        )?;
+        let run = case.run(&install, "Windows", "X64")?;
+        let out = String::from_utf8_lossy(&run.stdout);
+        assert_eq!(run.status.code(), Some(1), "{reported}: {out}");
+        assert!(
+            out.contains(&format!("not ripr {version}")),
+            "{reported}: {out}"
+        );
+    }
+
+    // A symlink entry named ripr.exe passes the listing but is not a regular
+    // file once extracted.
+    let link = Case::new("zip-symlink", &version)?;
+    link.serve_verified(
+        &asset,
+        &zip_bytes(&[Entry {
+            name: "ripr.exe",
+            data: b"/bin/sh",
+            mode: 0o120_777,
+        }])?,
+    )?;
+    let run = link.run(&install, "Windows", "X64")?;
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("did not extract a regular file named ripr.exe"),
+        "{out}"
+    );
+    assert!(link.cargo_calls().is_empty());
+
+    // Falsifier 3: a checksum published for another target's archive does not
+    // vouch for this one, and a payload that reports another version is
+    // refused.
+    let wrong_sum = Case::new("zip-wrong-target-sum", &version)?;
+    wrong_sum.serve(&asset, &payload(good_exe.as_bytes())?)?;
+    let other = wrong_sum.serve(
+        &format!("ripr-server-v{version}-aarch64-unknown-linux-gnu.tar.gz"),
+        b"another target's archive",
+    )?;
+    wrong_sum.serve(
+        &format!("{asset}.sha256"),
+        format!("{}\n", archive_replay::sha256_hex(&other)?).as_bytes(),
+    )?;
+    let run = wrong_sum.run(&install, "Windows", "X64")?;
+    assert_eq!(run.status.code(), Some(1));
+    assert!(wrong_sum.extracted().is_empty() && wrong_sum.cargo_calls().is_empty());
+    let wrong_version = Case::new("zip-wrong-version", &version)?;
+    wrong_version.serve_verified(&asset, &payload(b"#!/bin/sh\necho 'ripr 0.0.1 (other)'")?)?;
+    let run = wrong_version.run(&install, "Windows", "X64")?;
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status.code(), Some(1), "{out}");
+    assert!(out.contains(&format!("not ripr {version}")), "{out}");
+    assert!(wrong_version.cargo_calls().is_empty());
+
+    // Falsifier 4: an ambient ripr/ripr.exe on PATH never stands in for a
+    // broken extracted candidate.
+    let broken = Case::new("zip-broken-exe", &version)?;
+    broken.serve_verified(&asset, &payload(b"#!/bin/sh\nexit 3")?)?;
+    let run = broken.run(&install, "Windows", "X64")?;
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status.code(), Some(3), "{out}");
+    assert!(!out.contains("AMBIENT"), "{out}");
+    assert!(broken.cargo_calls().is_empty());
+
+    // Alternate: no published archive at all is the one case that still
+    // reaches the documented Cargo fallback (the asset is simply unavailable).
+    let absent = Case::new("zip-absent", &version)?;
+    let run = absent.run(&install, "Windows", "X64")?;
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        out.contains(&format!(
+            "::notice::downloading {release}/{asset} failed; building it with cargo install"
+        )),
+        "{out}"
+    );
+    assert_eq!(
+        absent.cargo_calls().trim(),
+        format!("install ripr --version {version} --locked")
+    );
+
+    // Falsifier 8: Windows ARM64 is an explicit unsupported route, not x64
+    // success and not a Cargo build.
+    let arm = Case::new("zip-arm64", &version)?;
+    arm.serve_verified(&asset, &payload(good_exe.as_bytes())?)?;
+    let run = arm.run(&install, "Windows", "ARM64")?;
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("::error::Unsupported runner Windows-ARM64:"),
+        "{out}"
+    );
+    assert!(
+        arm.curl_calls().is_empty() && arm.cargo_calls().is_empty() && arm.extracted().is_empty()
+    );
+
+    fs::remove_dir_all(base)?;
+    Ok(())
+}
+
+/// #6245 falsifier 9 and the tar.gz side of falsifier 1/2: the Linux and macOS
+/// routes still request exactly their contract archive, verify before
+/// extraction, run the extracted binary by absolute path, and never fall back
+/// to Cargo after an integrity or archive rejection.
+#[cfg(unix)]
+#[test]
+fn generated_install_unix_routes_keep_their_target_mapping_and_fail_closed()
+-> Result<(), Box<dyn Error>> {
+    use archive_replay::Case;
+    if !archive_replay::tools_present() {
+        if std::env::var_os("GITHUB_ACTIONS").is_some() {
+            return Err("bash, unzip or sha256sum missing under GitHub Actions".into());
+        }
+        eprintln!("SKIPPED generated_install_unix_routes_keep_their_target_mapping: tools missing");
+        return Ok(());
+    }
+    let (install, version, base) = archive_replay::generated_install("unix-mapping")?;
+    let release = format!("https://github.com/EffortlessMetrics/ripr/releases/download/v{version}");
+    let routes = [
+        ("Linux", "X64", "x86_64-unknown-linux-gnu"),
+        ("Linux", "ARM64", "aarch64-unknown-linux-gnu"),
+        ("macOS", "X64", "x86_64-apple-darwin"),
+        ("macOS", "ARM64", "aarch64-apple-darwin"),
+    ];
+    for (os, arch, target) in routes {
+        let asset = format!("ripr-server-v{version}-{target}.tar.gz");
+        // Nothing published: the exact contract asset is requested, then the
+        // documented Cargo fallback runs.
+        let absent = Case::new("unix-absent", &version)?;
+        let run = absent.run(&install, os, arch)?;
+        let out = String::from_utf8_lossy(&run.stdout);
+        assert_eq!(
+            absent.curl_calls(),
+            format!("{release}/{asset}\n"),
+            "{os}-{arch}: {out}"
+        );
+        assert_eq!(
+            absent.cargo_calls().trim(),
+            format!("install ripr --version {version} --locked"),
+            "{os}-{arch}: {out}"
+        );
+
+        // Published and verified: extracted and run by absolute path.
+        let ok = Case::new("unix-ok", &version)?;
+        let staging = ok.dir.join("staging");
+        fs::create_dir_all(&staging)?;
+        fs::write(
+            staging.join("ripr"),
+            format!("#!/bin/sh\necho \"ripr {version} via $0\"\n"),
+        )?;
+        let mut perms = fs::metadata(staging.join("ripr"))?.permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        fs::set_permissions(staging.join("ripr"), perms)?;
+        let packed = ok.served.join(&asset);
+        let tar = Command::new("tar")
+            .args(["-czf"])
+            .arg(&packed)
+            .arg("-C")
+            .arg(&staging)
+            .arg("ripr")
+            .status()?;
+        assert!(tar.success());
+        let digest = archive_replay::sha256_hex(&packed)?;
+        ok.serve(&format!("{asset}.sha256"), format!("{digest}\n").as_bytes())?;
+        let run = ok.run(&install, os, arch)?;
+        let out = String::from_utf8_lossy(&run.stdout);
+        assert_eq!(run.status.code(), Some(0), "{os}-{arch}: {out}");
+        assert!(
+            out.contains(&format!("via {}", ok.temp.join("ripr-bin/ripr").display())),
+            "{os}-{arch}: {out}"
+        );
+        assert!(
+            !out.contains("AMBIENT") && ok.cargo_calls().is_empty(),
+            "{os}-{arch}: {out}"
+        );
+        assert_eq!(
+            ok.curl_calls(),
+            format!("{release}/{asset}\n{release}/{asset}.sha256\n")
+        );
+
+        // Corrupt checksum and a malformed archive both stop the step.
+        let bad = Case::new("unix-corrupt", &version)?;
+        bad.serve(&asset, &fs::read(&packed)?)?;
+        bad.serve(
+            &format!("{asset}.sha256"),
+            format!("{}\n", "f".repeat(64)).as_bytes(),
+        )?;
+        let run = bad.run(&install, os, arch)?;
+        assert_eq!(run.status.code(), Some(1), "{os}-{arch}");
+        assert!(bad.extracted().is_empty() && bad.cargo_calls().is_empty());
+        let garbage = Case::new("unix-garbage", &version)?;
+        garbage.serve_verified(&asset, b"not a gzip stream")?;
+        let run = garbage.run(&install, os, arch)?;
+        let out = String::from_utf8_lossy(&run.stdout);
+        assert_eq!(run.status.code(), Some(1), "{os}-{arch}: {out}");
+        assert!(out.contains("could not be extracted"), "{os}-{arch}: {out}");
+        assert!(garbage.cargo_calls().is_empty() && !out.contains("AMBIENT"));
+    }
     fs::remove_dir_all(base)?;
     Ok(())
 }

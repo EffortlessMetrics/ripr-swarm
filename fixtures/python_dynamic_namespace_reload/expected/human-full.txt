@@ -38,7 +38,7 @@ Static exposure
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `discounted_total`
-  - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
+  - infection weak: Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary
   - propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink
   - observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
@@ -47,7 +47,7 @@ Evidence
   - source function argument value amount = 20000 at line 9
 
 Weakness
-  - A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. No strong related test call places amount equal to DISCOUNT_THRESHOLD; observed amount values: 20000; observed DISCOUNT_THRESHOLD values: unresolved
+  - A strong Python oracle reaches `discounted_total`, but static evidence does not place a related test input at the changed predicate boundary. Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary of `amount >= DISCOUNT_THRESHOLD`
 
 Repair placement
   suggested file: tests/test_pricing.py

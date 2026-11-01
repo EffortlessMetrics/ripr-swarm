@@ -128,12 +128,14 @@ all-platform acceptance, or public channel availability.
 
 ## Observed state
 
+The CI row was checked against source on 2026-10-31; the other rows keep their original observation dates and were not re-read then.
+
 | Channel | Public today | 0.11 state | Gap |
 | --- | --- | --- | --- |
 | `cargo install ripr` | crates.io serves 0.10.0 | Publishes with the release | Compiles from source (needs Rust 1.95; minutes, not seconds). |
 | GitHub Release server archives | 0.10.0 has all five targets plus `.sha256` | Rehearsed by `release-server-binaries.yml`; 0.11.0 assets do not exist yet | Release operator publishes from `EffortlessMetrics/ripr`. |
 | `cargo binstall ripr` | Falls back to a source build (0.10.0 carries no binstall metadata) | Metadata added in this change; works once 0.11.0 assets exist | Verify with a real `cargo binstall ripr` after the release. |
-| CI (`ripr init --ci github`) | Compiles ripr each run | Downloads the release archive and verifies its checksum (#5236) | Merge #5236. |
+| CI (`ripr init --ci github`) | Compiles ripr each run | Downloads the release archive and verifies its checksum; falls back to `cargo install` when no archive exists for the runner (`init_workflow.rs`) | Landed in source. A repo that generated its workflow with an older ripr must regenerate it; the download only succeeds once the matching release archives exist. |
 | PyPI `ripr-rs` | Only `0.11.0a1`, Linux x86-64 wheel | Wheel qualification exists | Single platform; no macOS, Windows or ARM wheel is public. |
 | npm `@effortlessmetrics/ripr` | `0.11.0-alpha.2` on `next`, Linux x86-64 only, README says so | Multi-platform launcher is checked in, not published | Platform payload packages (`ripr-darwin-arm64` and the others) do not exist on npm. |
 | VS Code Marketplace / Open VSX | Marketplace lists 0.10.0 (read back in a browser 2026-10-04; Open VSX not checked) | `publish-extension.yml` is source-owned | The listing's two continuation links omit `/blob/main/` and render "Not Found" (`github.com/EffortlessMetrics/ripr/docs/EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md` and `.../EDITOR_FIRST_PR_BRIDGE_WORKFLOW.md`); its description still says 0.8.x. A source docs merge does not change a published listing; the next authorized extension publication does. Installed-snippet and continuation work is owned by #4629. |

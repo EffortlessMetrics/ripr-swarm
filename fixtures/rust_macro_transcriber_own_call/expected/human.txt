@@ -8,23 +8,19 @@ Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
 Start here:
-  State: ripr cannot tell from reading the code whether tests would notice this
-  Safe next action: look at the reason below before adding a test
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
   File: ./src/lib.rs:2
-  Static exposure: unknown (severity: warning, confidence 0.66)
-  Why unknown: the change reaches something a test can check, but ripr could not tell which inputs would trigger it
-  Gap ID (for scripts): gap:rust:src/lib.rs:bulk:predicate_boundary:predicate:n==100
+  Static exposure: weak (severity: warning, confidence 0.66)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Gap ID (for scripts): gap:rust:src/lib.rs:bulk:return_value:return_value:n>=100
   Changed behavior: n >= 100
-  Missing check (1 of 3): No detected boundary input for the changed predicate
-  Related test: src/lib.rs:15 small_orders_are_not_bulk (no established call path to the changed code; linked by name only)
-  Next step: Open the related test, check whether it reaches the changed code, and inspect other
-    existing tests. Trace their inputs through the local or computed operand (including default and
-    empty cases) to see which side of the changed condition they exercise, then name an input that
-    would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or
-    strengthen a test only if this inspection finds a gap. Compare the original and changed
-    implementations with a focused run using the project's configured test runner (`cargo test` for
-    ordinary Cargo tests). Static classification may remain unknown
-  Evidence: reach weak · infection unknown · propagation yes · observation yes · discriminator unknown
+  Missing check: No strong assertion was detected
+  Related test: src/lib.rs:15 small_orders_are_not_bulk (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: The indexed related tests do not establish a call to the changed owner. Inspect
+    existing tests, doctests and examples before changing assertions; they may already constrain the
+    changed behavior. Add or strengthen a test only if that inspection finds a gap
+  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
@@ -36,20 +32,20 @@ Start here:
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach weak: No test is seen calling bulk; tests share only its file or a name token: small_orders_are_not_bulk
-    - infection unknown: Related tests pass no literal ripr can compare with the changed boundary [100] (inputs are strings, computed values or fixtures); activation/infection is…
+    - infection yes: Reachable tests can plausibly activate this changed behavior
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast probe:src_lib.rs:predicate:7ce86f3b
-  ripr context --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast --at probe:src_lib.rs:predicate:7ce86f3b
-  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
+  ripr explain --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast probe:src_lib.rs:return_value:6b389299
+  ripr context --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --diff <cwd>/fixtures/rust_macro_transcriber_own_call/diff.patch --mode fast --at probe:src_lib.rs:return_value:6b389299
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that checks the changed return value; a test input that reaches the changed code; follow the Next step above, then rerun `ripr check`
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --at src/lib.rs:2 --kind predicate
+  ripr agent stub --root <cwd>/fixtures/rust_macro_transcriber_own_call/input --at src/lib.rs:2 --kind return_value
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:2 (weak); kind: return_value; reason: No strong discriminator was detected
+    - ./src/lib.rs:2 (unknown: infection unclear); kind: predicate; reason: A test directly invokes a Rust macro whose definition mentions this change, but ripr cannot expand the macro to confirm the path. This is a named limitation, not a coverage claim.
   Hidden classes:
-    weak = tests reach it but check it only loosely
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

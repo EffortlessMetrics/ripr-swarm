@@ -3,17 +3,61 @@
 //! Cargo's executable and ordinary registry-cache integrity are instrument
 //! assumptions. This does not certify arbitrary CLI configuration or a compiler.
 mod registry;
+use registry::eligible_json_manifest_bytes;
 #[cfg(test)]
 use registry::json_manifest_digests;
 pub(crate) use registry::{
     LiteralJsonIdentity, eligible_json_root, eligible_proptest_root, verified_json_identity,
-    verified_proptest_identity,
+    verified_proptest_identity, verified_proptest_identity_result,
 };
+
+/// One previously parsed manifest, scoped to a drop-in authority. Every query
+/// still reads the current bounded bytes; only the pure parse is reusable.
+#[derive(Debug, Default)]
+pub(crate) struct JsonRootEligibilityMemo {
+    previous: Mutex<Option<(Vec<u8>, bool)>>,
+}
+
+impl JsonRootEligibilityMemo {
+    pub(crate) fn eligible(&self, root: &Path) -> bool {
+        // Read before locking or consulting the memo. Absence and read errors
+        // cannot reuse a previously eligible manifest.
+        let Some(bytes) = read_optional(&root.join("Cargo.toml")).flatten() else {
+            return false;
+        };
+        let Ok(mut previous) = self.previous.lock() else {
+            return Self::counted_parse(&bytes);
+        };
+        if let Some((old, verdict)) = previous.as_ref()
+            && old == &bytes
+        {
+            return *verdict;
+        }
+        let verdict = Self::counted_parse(&bytes);
+        *previous = Some((bytes, verdict));
+        verdict
+    }
+
+    fn counted_parse(bytes: &[u8]) -> bool {
+        #[cfg(test)]
+        JSON_ROOT_ELIGIBILITY_PARSES.with(|count| count.set(count.get() + 1));
+        eligible_json_manifest_bytes(bytes)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static JSON_ROOT_ELIGIBILITY_PARSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod json_eligibility_tests;
 
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 const SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
@@ -393,7 +437,9 @@ fn resolved_library(metadata: &serde_json::Value, root: &Path) -> Option<(PathBu
 /// In particular, exit 101 does not identify a missing package or toolchain.
 /// No raw stderr, environment value or filesystem path is retained here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MetadataProbeFailure {
+pub(crate) enum MetadataProbeFailure {
+    /// Cargo succeeded, but its capture was not a JSON document.
+    InvalidJson,
     ToolchainPathPin,
     CaptureCreate(std::io::ErrorKind),
     Launch(std::io::ErrorKind),
@@ -408,6 +454,9 @@ enum MetadataProbeFailure {
 impl std::fmt::Display for MetadataProbeFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidJson => formatter.write_str(
+                "Offline Cargo metadata succeeded but did not return valid JSON",
+            ),
             Self::ToolchainPathPin => formatter.write_str(
                 "Offline Cargo metadata was not started: a repository-local toolchain path was refused",
             ),

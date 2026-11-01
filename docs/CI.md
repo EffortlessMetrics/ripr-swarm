@@ -93,6 +93,11 @@ number, whatever the newer run's own outcome; the read uses the existing
 non-atomic read, not proof that the hosted race is closed or of which check
 GitHub selects for protection.
 
+The admission job also refuses a `merge-ready` pull-request request whose PR has
+unresolved review threads, naming each thread, so the author learns in seconds
+instead of after the roughly hour-long run. It is an early courtesy only: a read
+failure is a warning, and the late recheck above remains the authority.
+
 This is a late eligibility check, not queue-cutover acceptance. The tree match
 binds the queued commit to the head GitHub reports live at admission; it does not
 establish that this is the head a reviewer judged ready, and its premise (GitHub's
@@ -497,7 +502,7 @@ and single-platform CI was the root cause enabling both.
   reported spawn status 127, or an expected test is missing, duplicated or
   ignored in the log: a status file alone cannot tell these four tests from a
   renamed filter that matched nothing (#10621).
-- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507): four `cargo nextest run --workspace --profile ci --partition count:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build.
+- **`Rust Test Shards`** (`rust-test-shards.yml`, called by `routed-rust.yml`) is the GitHub-hosted route's required test phase (#10507): four `cargo nextest run --workspace --profile ci --partition count:N/4` jobs that start only after the hosted `rust-gates.yml` job (called with `test-shards: 4`) passed every other gate, plus `rust-test-shards-verify`, which runs `cargo xtask verify-test-shards` and fails unless every shard has status 0, a current run context (repository, checkout, run, attempt, profile, partition, exit) and a complete JUnit report whose testcases are exactly its partition list, and the partition lists are a disjoint cover of the workspace list. The verifier parses XML before retaining complete suite elements and anchors each receipt’s four ordered input blobs to `Cargo.lock`, `.config/nextest.toml`, `.github/workflows/rust-gates.yml` and `.github/workflows/rust-test-shards.yml` at the expected checkout commit; malformed or unsupported namespaced XML, unresolved inputs, shared incorrect hashes, duplicate or reserved run-context keys (`shards` and `verified_attempts` are reserved for the combined receipt) and noncanonical artifact attempt suffixes fail closed. It then retains the combined `junit.xml` and `run-context.txt` under the unsharded artifact name. `Ripr Rust Small Result` fails unless it passed; the self-hosted routes keep the single-command step. The shards restore their own `ripr-swarm-rust-shards` cache, written by shard 1 on `main` pushes, so the first run after a cold cache pays the full test build. Shard 1 also uploads the `xtask` binary its warm build produced (debug sections stripped), and the verify job runs that binary instead of installing a toolchain and compiling xtask again, which took about 2.4 minutes after the last shard finished.
 - **`Linux Nextest Shards`** (`linux-nextest-shards.yml`, manual `workflow_dispatch` only) runs the required Rust test step as four `cargo nextest --partition count:N/4` jobs on hosted 4-core runners and reports each shard's build and run seconds and JUnit test count and checks the four partitions are a disjoint cover of the workspace test list, so the wall-clock of a sharded step can be measured (#10341; the hosted required route now shards, see `Rust Test Shards`). It is advisory, not wired to pull requests, and does not replace `Ripr Rust Small Result`.
 - **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). The four tests that need a real directory deny ACL are excluded from those bash partitions and run in a `shell: pwsh` step of shard 1 (20-minute step timeout, own `acl.log` and `acl.status`), because Git for Windows bash enables backup and restore privileges that bypass the deny. It is advisory and does not replace the nightly lane.
 - **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
@@ -958,6 +963,7 @@ only the proof unique to it, the non-default `lang-perl` feature:
 ```bash
 cargo check -p ripr --features lang-perl
 cargo test -p ripr --features lang-perl --lib analysis::language::perl
+cargo test -p xtask --features perl-identity reports::sarif::identity_tests
 ```
 
 On pushes to `main` or `master` and on pull requests labeled `release-check`
@@ -1461,8 +1467,11 @@ a later release does not change CI behavior until you regenerate. It
 downloads that release's prebuilt binary from the `EffortlessMetrics/ripr`
 GitHub Release and checks it against the release's published SHA-256, which
 takes seconds instead of the minutes `cargo install` spends compiling. A
-checksum mismatch fails the step. On a runner with no prebuilt archive
-(Windows), or when the download fails, it falls back to
+checksum mismatch, a missing checksum, or a malformed archive fails the step
+instead of falling back. Windows x64 installs the release's `zip` (extracted
+with the `tar.exe` that Windows ships, then `ripr.exe` is run by absolute path);
+Windows ARM64 is reported as unsupported. On a runner with no prebuilt archive
+(for example Linux ARM32), or when the download fails, it falls back to
 `cargo install ripr --version <that version> --locked`, which needs a Rust
 toolchain on the runner; on a runner without `cargo` the step fails and says
 to install Rust or add a toolchain step. A development build newer than the
@@ -1534,8 +1543,8 @@ collapsed block; when any `RIPR_GATE_MODE` value is set they are not folded.
 The fold stays open ("needs attention") when a folded report is unreadable,
 has an unexpected shape, omits an expected count, or states a warning,
 unknown, blocker, config-error, stale or ownerless-suppression count that is
-not `0`. It folds with the "no warnings or unknowns" label only when every
-the readiness, operations, history, promotion and suppression-health report
+not `0`. It folds with the "no warnings or unknowns" label only when the
+readiness, operations, history, promotion and suppression-health report
 categories each parsed with all expected counts at `0` (preview-promotion and
 waiver-aging reports are conditional and keep it open only when present and not
 clean); it stays open ("some policy reports not found") when a required
@@ -1565,6 +1574,29 @@ contract and review workflow. See
 first-screen summary that composes PR guidance, first useful action, assistant
 proof, assistant-loop health, ledger, baseline, gate, calibration,
 coverage/grip, and receipt artifacts.
+
+### Composite Action (`ripr-check`)
+
+For a one-step advisory check without the generated workflow, use the
+composite Action in `.github/actions/ripr-check`:
+
+```yaml
+- uses: actions/checkout@v6
+  with:
+    fetch-depth: 0
+- uses: <owner>/<repo>/.github/actions/ripr-check@<ref>
+```
+
+Inputs: `version` (default: the latest published release; installs that
+release's prebuilt archive after checking its published SHA-256, and falls
+back to `cargo install ripr --version <version> --locked` where no archive
+exists), `mode` (`draft`, `deep`, `ready`), `format` (`human`, `json`, `sarif`)
+and `base`. An empty `base` uses the pull request base branch on
+`pull_request` events (fetching just that branch when the checkout lacks it)
+and ripr's own default-branch detection elsewhere. A checkout without
+`fetch-depth: 0` can still lack history; `ripr check` then names the repair.
+The Action prints the report to the job log. For the summary comment, inline
+comments, SARIF upload and artifacts, use the generated workflow above.
 
 ### PR Test Guidance Annotations
 
@@ -1775,8 +1807,11 @@ Permissions and job settings:
   scanning.
 - `labeled` and `unlabeled` re-run the gate when a waiver label such as
   `ripr-waive` is added or removed, since the gate reads labels from the event.
-  Any label change re-runs the job, and the concurrency group cancels the
-  superseded run.
+  The job runs for them only when `RIPR_GATE_MODE` is set to a mode other than
+  `visible-only`; in advisory (unset) and `visible-only` mode an unrelated label
+  does nothing. `labeled` and `unlabeled` each use their own concurrency group,
+  so a label never cancels an analysis in flight for a push or the other label
+  event.
 - Every run step is bash (`$'\t'` in the publish loop), so `defaults.run.shell`
   pins bash; the steps still parse if the job moves to `windows-latest`, whose
   default shell is PowerShell.
@@ -1808,9 +1843,11 @@ Steps:
   checkout, so the cleanup never discards it.
 - **Install ripr** pins the version whose commands the steps use; an unpinned
   install takes the newest release, whose CLI may not match. It downloads that
-  release's prebuilt binary and checks it against the published SHA-256, falls
-  back to `cargo install` where there is no prebuilt binary, and fails with the
-  fix when the runner has no cargo. The summary step reads this step's outcome
+  release's prebuilt binary (a zip on Windows x64) and checks it against the
+  published SHA-256 before extracting it, falls back to `cargo install` only
+  where there is no prebuilt binary, and fails with the fix when the runner has
+  no cargo. An integrity or archive rejection never falls back, and Windows
+  ARM64 is an explicit unsupported error. The summary step reads this step's outcome
   by its id.
 - **actions/cache** restores ripr's analysis cache. Entries are keyed on file
   contents, configuration, and the ripr version, so an entry that no longer
@@ -2654,6 +2691,15 @@ unconditional `capability_producers` step after `fixtures` (the `ripr` build is
 already warm), and the `routed-rust.yml` docs-gate runs it when a docs-only PR
 changes `docs/specs/**` or `docs/status/SUPPORT_TIERS.md` (a renamed spec is the
 one docs-only way to break a `proof_refs` entry).
+
+## Changelog Fold
+
+`cargo xtask fold-changelog [--dry-run | --write] [--limit <N>]
+[--keep-fragments]` (#5114) folds `changelog.d/` fragments into the first
+matching `### <Section>` under `## Unreleased` at the release cut, in file-name
+order, and deletes them with `--write`. The default is a dry run. It reuses the
+`check-changelog-fragments` validator, refuses malformed fragments by file name
+and is not part of `precommit`. `changelog.d/README.md` has the batch procedure.
 
 ## Capability Registry Docs Block
 

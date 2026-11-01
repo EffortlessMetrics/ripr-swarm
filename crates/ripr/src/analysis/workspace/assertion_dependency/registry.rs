@@ -1,6 +1,8 @@
 //! Resolved registry-edge receipts for audited external semantics.
 
-use super::{SOURCE, digest, metadata_probe, parse, read_optional, snapshot};
+use super::{
+    MetadataProbeFailure, SOURCE, digest, metadata_probe_result, parse, read_optional, snapshot,
+};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -58,24 +60,38 @@ pub(crate) fn eligible_proptest_root(root: &Path) -> bool {
 /// proptest 1.11.0. Cargo/cache integrity has the same instrument assumptions
 /// as the other registry receipts; a matching spelling is never authority.
 pub(crate) fn verified_proptest_identity(root: &Path) -> Option<RegistryIdentity> {
-    eligible_proptest_root(root).then_some(())?;
-    proptest_configuration_allowed(root).then_some(())?;
-    let mut identity = verified_registry_identity(root, "proptest", "1.11.0", PROPTEST_CHECKSUM)?;
-    let configurations = proptest_target_configurations(root, &identity.metadata)?;
-    if !proptest_configuration_allowed(root)
-        || snapshot(root).as_ref() != Some(&identity.input_snapshot)
-        || proptest_target_configurations(root, &identity.metadata).as_ref()
-            != Some(&configurations)
-    {
-        return None;
+    verified_proptest_identity_result(root).ok().flatten()
+}
+
+/// `Ok(None)` is a refused admission premise, not a failed metadata command.
+/// `Err` retains only the operational failure observed during this verification.
+/// No error grants provider, target, execution or assertion authority.
+pub(crate) fn verified_proptest_identity_result(
+    root: &Path,
+) -> Result<Option<RegistryIdentity>, MetadataProbeFailure> {
+    if !eligible_proptest_root(root) || !proptest_configuration_allowed(root) {
+        return Ok(None);
     }
-    // The classified cache consults this receipt before file admission. Its
-    // identity must therefore cover the same target-directory configuration
-    // premises, including nested configs not seen by Cargo from the root.
-    identity.validation_digest =
-        digest(&serde_json::to_vec(&(&identity.validation_digest, &configurations)).ok()?);
-    identity.proptest_target_configs = configurations;
-    Some(identity)
+    let Some(mut identity) =
+        verified_registry_identity_result(root, "proptest", "1.11.0", PROPTEST_CHECKSUM)?
+    else {
+        return Ok(None);
+    };
+    Ok((|| {
+        let configurations = proptest_target_configurations(root, &identity.metadata)?;
+        if !proptest_configuration_allowed(root)
+            || snapshot(root).as_ref() != Some(&identity.input_snapshot)
+            || proptest_target_configurations(root, &identity.metadata).as_ref()
+                != Some(&configurations)
+        {
+            return None;
+        }
+        // Preserve the existing target/configuration receipt exactly.
+        identity.validation_digest =
+            digest(&serde_json::to_vec(&(&identity.validation_digest, &configurations)).ok()?);
+        identity.proptest_target_configs = configurations;
+        Some(identity)
+    })())
 }
 
 fn proptest_target_configurations(
@@ -472,22 +488,30 @@ pub(crate) fn eligible_json_root(root: &Path) -> bool {
     eligible_root(root, "serde_json")
 }
 
+/// Pure manifest parse behind [`eligible_json_root`]; callers own the read.
+pub(super) fn eligible_json_manifest_bytes(bytes: &[u8]) -> bool {
+    eligible_manifest_bytes(bytes, "serde_json")
+}
+
 fn eligible_root(root: &Path, crate_name: &str) -> bool {
     read_optional(&root.join("Cargo.toml"))
         .flatten()
-        .and_then(|b| parse(&b))
-        .is_some_and(|manifest| {
-            ["dependencies", "dev-dependencies", "workspace"]
-                .iter()
-                .any(|key| {
-                    let table = if *key == "workspace" {
-                        manifest.get(key).and_then(|w| w.get("dependencies"))
-                    } else {
-                        manifest.get(key)
-                    };
-                    table.and_then(|t| t.get(crate_name)).is_some()
-                })
-        })
+        .is_some_and(|b| eligible_manifest_bytes(&b, crate_name))
+}
+
+fn eligible_manifest_bytes(bytes: &[u8], crate_name: &str) -> bool {
+    parse(bytes).is_some_and(|manifest| {
+        ["dependencies", "dev-dependencies", "workspace"]
+            .iter()
+            .any(|key| {
+                let table = if *key == "workspace" {
+                    manifest.get(key).and_then(|w| w.get("dependencies"))
+                } else {
+                    manifest.get(key)
+                };
+                table.and_then(|t| t.get(crate_name)).is_some()
+            })
+    })
 }
 
 pub(super) fn json_manifest_digests(
@@ -517,75 +541,108 @@ fn verified_registry_identity(
     version: &str,
     checksum: &str,
 ) -> Option<RegistryIdentity> {
-    if !eligible_root(root, crate_name) {
-        return None;
-    }
-    let root = root.canonicalize().ok()?;
-    let before = snapshot(&root)?;
-    let bytes = metadata_probe(&root)?;
-    let metadata: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let workspace = Path::new(metadata.get("workspace_root")?.as_str()?)
-        .canonicalize()
-        .ok()?;
-    if !root.starts_with(&workspace) {
-        return None;
-    }
-    let lock = parse(&read_optional(&workspace.join("Cargo.lock"))??)?;
-    let packages = lock.get("package")?.as_array()?;
-    let found: Vec<_> = packages
-        .iter()
-        .filter(|p| p.get("name").and_then(toml::Value::as_str) == Some(crate_name))
-        .collect();
-    let [package] = found.as_slice() else {
-        return None;
-    };
-    if package.get("version")?.as_str()? != version
-        || package.get("source")?.as_str()? != SOURCE
-        || package.get("checksum")?.as_str()? != checksum
-    {
-        return None;
-    }
-    let packages = metadata.get("packages")?.as_array()?;
-    let found: Vec<_> = packages
-        .iter()
-        .filter(|p| p.get("name").and_then(serde_json::Value::as_str) == Some(crate_name))
-        .collect();
-    let [package] = found.as_slice() else {
-        return None;
-    };
-    if package.get("version")?.as_str()? != version || package.get("source")?.as_str()? != SOURCE {
-        return None;
-    }
-    let package_id = package.get("id")?.as_str()?.to_string();
-    let manifest_digests = json_manifest_digests(&metadata, &root)?;
-    // Discovery metadata supplies the member path set. Bracket a confirming
-    // probe with those manifests: old metadata must not acquire a receipt for
-    // member bytes first observed after Cargo resolved a different dependency.
-    let confirmed_bytes = metadata_probe(&root)?;
-    if bytes != confirmed_bytes || manifest_digests != json_manifest_digests(&metadata, &root)? {
-        return None;
-    }
-    let after = snapshot(&root)?;
-    if before != after {
-        return None;
-    }
-    Some(RegistryIdentity {
-        crate_name,
-        input_snapshot: after.clone(),
-        metadata,
-        package_id,
-        manifest_digests: manifest_digests.clone(),
-        proptest_target_configs: BTreeMap::new(),
-        validation_digest: digest(
-            &serde_json::to_vec(&(
-                after,
-                manifest_digests,
-                digest(&bytes),
-                crate_name,
-                version,
-                checksum,
-            ))
-            .ok()?,
-        ),
-    })
+    verified_registry_identity_result(root, crate_name, version, checksum)
+        .ok()
+        .flatten()
 }
+
+fn decode_registry_metadata(bytes: &[u8]) -> Result<serde_json::Value, MetadataProbeFailure> {
+    serde_json::from_slice(bytes).map_err(|_error| MetadataProbeFailure::InvalidJson)
+}
+
+fn verified_registry_identity_result(
+    root: &Path,
+    crate_name: &'static str,
+    version: &str,
+    checksum: &str,
+) -> Result<Option<RegistryIdentity>, MetadataProbeFailure> {
+    if !eligible_root(root, crate_name) {
+        return Ok(None);
+    }
+    let Ok(root) = root.canonicalize() else {
+        return Ok(None);
+    };
+    let Some(before) = snapshot(&root) else {
+        return Ok(None);
+    };
+    let bytes = metadata_probe_result(&root)?;
+    let metadata = decode_registry_metadata(&bytes)?;
+    // All existing identity checks still refuse admission. A refused provider
+    // must not be redescribed as a missing dependency or failed Cargo process.
+    let Some((package_id, manifest_digests)) = (|| {
+        let workspace = Path::new(metadata.get("workspace_root")?.as_str()?)
+            .canonicalize()
+            .ok()?;
+        if !root.starts_with(&workspace) {
+            return None;
+        }
+        let lock = parse(&read_optional(&workspace.join("Cargo.lock"))??)?;
+        let packages = lock.get("package")?.as_array()?;
+        let found: Vec<_> = packages
+            .iter()
+            .filter(|p| p.get("name").and_then(toml::Value::as_str) == Some(crate_name))
+            .collect();
+        let [package] = found.as_slice() else {
+            return None;
+        };
+        if package.get("version")?.as_str()? != version
+            || package.get("source")?.as_str()? != SOURCE
+            || package.get("checksum")?.as_str()? != checksum
+        {
+            return None;
+        }
+        let packages = metadata.get("packages")?.as_array()?;
+        let found: Vec<_> = packages
+            .iter()
+            .filter(|p| p.get("name").and_then(serde_json::Value::as_str) == Some(crate_name))
+            .collect();
+        let [package] = found.as_slice() else {
+            return None;
+        };
+        if package.get("version")?.as_str()? != version
+            || package.get("source")?.as_str()? != SOURCE
+        {
+            return None;
+        }
+        let package_id = package.get("id")?.as_str()?.to_string();
+        let manifest_digests = json_manifest_digests(&metadata, &root)?;
+        Some((package_id, manifest_digests))
+    })() else {
+        return Ok(None);
+    };
+    // Preserve the existing confirming probe. This is not an added diagnostic
+    // retry: either original probe may supply the observed operational failure.
+    let confirmed_bytes = metadata_probe_result(&root)?;
+    Ok((|| {
+        if bytes != confirmed_bytes || manifest_digests != json_manifest_digests(&metadata, &root)?
+        {
+            return None;
+        }
+        let after = snapshot(&root)?;
+        if before != after {
+            return None;
+        }
+        Some(RegistryIdentity {
+            crate_name,
+            input_snapshot: after.clone(),
+            metadata,
+            package_id,
+            manifest_digests: manifest_digests.clone(),
+            proptest_target_configs: BTreeMap::new(),
+            validation_digest: digest(
+                &serde_json::to_vec(&(
+                    after,
+                    manifest_digests,
+                    digest(&bytes),
+                    crate_name,
+                    version,
+                    checksum,
+                ))
+                .ok()?,
+            ),
+        })
+    })())
+}
+
+#[cfg(test)]
+mod metadata_diagnostic_tests;
