@@ -171,7 +171,7 @@ pub(crate) fn match_object_const_argument(
 
 /// How many times `word` occurs in `text` as a whole identifier word,
 /// strings and comments included (an extra mention only withholds).
-fn whole_word_count(text: &str, word: &str) -> usize {
+pub(crate) fn whole_word_count(text: &str, word: &str) -> usize {
     let part =
         |ch: Option<char>| ch.is_some_and(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric());
     text.match_indices(word)
