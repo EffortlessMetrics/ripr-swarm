@@ -610,7 +610,7 @@ fn render_pilot_summary_md_with_target(
             let mut steps = Vec::new();
             if let Some(before) = &commands.before_snapshot {
                 out.push_str(
-                    "`repo-exposure.json` was byte-bounded, so it is not a comparable baseline. Capture a full baseline before editing, then compare:\n\n```bash\n",
+                    "`repo-exposure.json` was cut (byte-bounded or seam-limited), so it is not a comparable baseline. Capture a full baseline before editing, then compare:\n\n```bash\n",
                 );
                 out.push_str(before);
                 out.push_str("\n```\n\n");
@@ -1030,7 +1030,7 @@ fn render_pilot_terminal_with_target(
     }
     if let Some(before) = &commands.before_snapshot {
         out.push_str(
-            "  repo-exposure.json is byte-bounded; capture a full baseline before editing:\n",
+            "  repo-exposure.json was cut (byte-bounded or seam-limited); capture a full baseline before editing:\n",
         );
         out.push_str(&format!("  {before}\n"));
     }

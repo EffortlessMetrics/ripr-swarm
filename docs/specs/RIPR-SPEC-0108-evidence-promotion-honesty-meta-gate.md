@@ -144,7 +144,7 @@ match (`evidence_promotion_human_oracle_line_accepts_absent_oracle_wording`,
      suite. A projection carries only the fields judged by its contract and makes
      no captured-output or execution claim. Independent invariant controls must
      reject false-credit and empty-report re-blessing.
-     A case that pins a repo seam (`expected_repo_seam_grip`) also names the
+     A case that pins a repo seam (`expected_repo_seam_grip` or `expected_repo_seam_related_test`) also names the
      Cargo `report_subject` the report was captured from. The gate regenerates
      that subject with the current binary (`ripr check --mode draft --format
      repo-exposure-json`) and fails when the committed report differs in the

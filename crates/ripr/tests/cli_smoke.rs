@@ -70,6 +70,8 @@ mod init_followups;
 #[cfg(feature = "lang-typescript")]
 #[path = "cli_smoke/javascript_awaited_roots.rs"]
 mod javascript_awaited_roots;
+#[path = "cli_smoke/leftover_hints.rs"]
+mod leftover_hints;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/legend_first_run.rs"]
 mod legend_first_run;
