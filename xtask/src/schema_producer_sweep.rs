@@ -349,14 +349,19 @@ pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// The sweep's own source and the validators whose behaviour decides its verdict.
+const SWEEP_SOURCES: &[&str] = &[
+    "xtask/src/schema_producer_sweep.rs",
+    "xtask/src/verification_contracts.rs",
+    "xtask/src/exact_schema_json.rs",
+];
+
 /// The changed path that makes `precommit` run the sweep (#12219): a schema, a
-/// committed JSON document (producer goldens and corpora), or the sweep's own
-/// binding table. Anything else cannot move a sweep verdict.
+/// committed JSON document (producer goldens and corpora), or the sweep source
+/// and validators. Anything else cannot move a sweep verdict.
 pub(crate) fn sweep_trigger(changed: &[String]) -> Option<&str> {
     changed.iter().map(String::as_str).find(|path| {
-        path.starts_with("schemas/")
-            || path.ends_with(".json")
-            || *path == "xtask/src/schema_producer_sweep.rs"
+        path.starts_with("schemas/") || path.ends_with(".json") || SWEEP_SOURCES.contains(path)
     })
 }
 
@@ -364,6 +369,11 @@ pub(crate) fn sweep_trigger(changed: &[String]) -> Option<&str> {
 /// move its verdict. Hosted gates run it on the exact commit; this closes the
 /// gap that let a golden gain a member its schema lacked (#12209 -> #12219).
 pub(crate) fn precommit_schema_sweep(changed: &[String]) -> Result<(), String> {
+    // `git diff` never lists a new untracked file, yet the worktree snapshot
+    // includes it: a fresh invalid golden must trigger the sweep too.
+    let mut changed = changed.to_vec();
+    changed.extend(untracked_paths(&crate::repo_root()?)?);
+    let changed = changed.as_slice();
     let Some(trigger) = sweep_trigger(changed) else {
         println!(
             "schema-producer-sweep: skipped, no schema or JSON document changed vs origin/main"
@@ -374,6 +384,16 @@ pub(crate) fn precommit_schema_sweep(changed: &[String]) -> Result<(), String> {
         "schema-producer-sweep: running on the working tree because `{trigger}` changed vs origin/main"
     );
     schema_producer_sweep(&["--worktree".to_string()])
+}
+
+/// New, non-ignored, untracked paths (NUL-delimited, so exotic names survive).
+fn untracked_paths(root: &Path) -> Result<Vec<String>, String> {
+    let out = git(root, &["ls-files", "-z", "--others", "--exclude-standard"])?;
+    Ok(String::from_utf8_lossy(&out)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 struct Options {
@@ -1779,6 +1799,23 @@ mod tests {
     }
 
     #[test]
+    fn an_untracked_json_file_is_in_the_trigger_inventory() -> Result<(), String> {
+        let root = example_root();
+        commit(&root)?;
+        write(&root.join("fixtures/new/expected/check.json"), "{}");
+        write(&root.join("target/ignored.json"), "{}");
+        let untracked = untracked_paths(&root);
+        let _ = fs::remove_dir_all(&root);
+        let untracked = untracked?;
+        if sweep_trigger(&untracked) != Some("fixtures/new/expected/check.json") {
+            return Err(format!(
+                "untracked golden missed the trigger: {untracked:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn worktree_flag_parses_and_refuses_commit_bound_modes() -> Result<(), String> {
         let ok = parse_args(&["--worktree".to_string()])?;
         if !ok.worktree {
@@ -1802,6 +1839,8 @@ mod tests {
         assert!(hit("schemas/ripr/check.schema.json"));
         assert!(hit("fixtures/x/expected/check.json"));
         assert!(hit("xtask/src/schema_producer_sweep.rs"));
+        assert!(hit("xtask/src/verification_contracts.rs"));
+        assert!(hit("xtask/src/exact_schema_json.rs"));
         assert!(!hit("crates/ripr/src/lib.rs"));
         assert!(!hit("docs/README.md"));
     }

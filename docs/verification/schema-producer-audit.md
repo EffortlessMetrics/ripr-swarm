@@ -103,7 +103,10 @@ cargo xtask schema-producer-sweep [--rev REV | --worktree] \
 Every schema and document it validates is read from one commit (`--rev`,
 default `HEAD`) through `git archive`, never from the working tree, so
 uncommitted edits and untracked files such as live artifacts cannot change the
-result. It uses the same validator as the registered contracts and writes
+result. Release qualification always uses this commit-bound mode. `--worktree`
+is the local `precommit` mode only: it snapshots HEAD plus uncommitted and
+untracked non-ignored files through a private index, and cannot combine with
+`--rev` or `--live-replay`. It uses the same validator as the registered contracts and writes
 `target/ripr/reports/schema-producer-sweep.json`: per schema row, the schema
 digest, discovered and validated producer counts, edge fixtures, excluded
 stimulus, live artifacts, every subject's byte digest, the commit, and a `rows_sha256` digest over all
