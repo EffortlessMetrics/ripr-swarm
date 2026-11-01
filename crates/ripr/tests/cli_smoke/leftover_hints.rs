@@ -9,7 +9,7 @@ fn agent_card_and_packet_without_an_id_say_where_to_get_one()
         assert_eq!(output.status.code(), Some(2), "{output:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("Get a seam id from `ripr pilot --root"),
+            stderr.contains("Get an id from `ripr pilot --root"),
             "{args:?} must say where an id comes from: {stderr}"
         );
     }
