@@ -1292,6 +1292,23 @@ fn extension_e2e_step_classifies_check_runs_by_the_requests_own_suite() -> TestR
             "runs/200",
         ),
         (
+            "interleaved creation: the newest in-window surface wins even when the earlier one is nearer (#12191 review)",
+            VscodeCase {
+                runs: &[(100, "2026-11-01T11:02:01Z"), (200, "2026-11-01T11:02:05Z")],
+                surface: vec![
+                    check_json(10, ga, "completed", "success", 100, 100),
+                    check_json(20, ga, "completed", "success", 200, 200),
+                ],
+                vscode: vec![
+                    check_json(11, ga, "completed", "success", 100, 100),
+                    check_json(21, ga, "completed", "failure", 200, 200),
+                ],
+                api_failures: 0,
+            },
+            false,
+            "runs/200",
+        ),
+        (
             "transient API failures are retried",
             VscodeCase {
                 runs: &mine,
