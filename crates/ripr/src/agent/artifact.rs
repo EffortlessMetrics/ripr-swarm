@@ -526,11 +526,11 @@ pub(crate) fn validate_repo_exposure_artifact(
 ) -> Result<ValidatedArtifact, String> {
     let subject = format!("agent verify {label} artifact");
     let document: RepoExposureDocument = serde_json::from_str(raw).map_err(|err| {
-        if is_byte_bounded_repo_exposure(raw) {
-            return byte_bounded_repo_exposure_refusal(&subject);
-        }
         if let Ok(document) = serde_json::from_str::<Value>(raw) {
             let cut = crate::output::repo_exposure::seam_limit_cut_controls(&document);
+            if crate::output::repo_exposure::is_byte_bounded_repo_exposure(&document) {
+                return byte_bounded_repo_exposure_refusal(&subject, &cut);
+            }
             if !cut.is_empty() {
                 return seam_limited_repo_exposure_refusal(&subject, &cut);
             }
@@ -548,17 +548,17 @@ pub(crate) fn validate_repo_exposure_artifact(
         run_status,
         limitations,
     } = document;
-    if crate::output::repo_exposure::byte_bounded_from_parts(
-        run_status.as_deref(),
-        limitations.as_ref(),
-    ) {
-        return Err(byte_bounded_repo_exposure_refusal(&subject));
-    }
     // #12150: a seam-capped file is a prefix of the inventory; same class.
     let cut = crate::output::repo_exposure::seam_limit_cut_controls_from_parts(
         run_status.as_deref(),
         limitations.as_ref(),
     );
+    if crate::output::repo_exposure::byte_bounded_from_parts(
+        run_status.as_deref(),
+        limitations.as_ref(),
+    ) {
+        return Err(byte_bounded_repo_exposure_refusal(&subject, &cut));
+    }
     if !cut.is_empty() {
         return Err(seam_limited_repo_exposure_refusal(&subject, &cut));
     }
@@ -1138,15 +1138,6 @@ fn validate_artifact_commitment(
     Ok(expected_root)
 }
 
-/// A pilot `repo-exposure.json` whose `seams[]` the byte budget cut (#12108)
-/// lists only some of the seams, so a seam absent from it cannot be read as
-/// fixed or absent. Classify it after canonical parsing refused it.
-fn is_byte_bounded_repo_exposure(raw: &str) -> bool {
-    serde_json::from_str::<Value>(raw).is_ok_and(|document| {
-        crate::output::repo_exposure::is_byte_bounded_repo_exposure(&document)
-    })
-}
-
 fn seam_limited_repo_exposure_refusal(subject: &str, controls: &[&str]) -> String {
     format!(
         "{subject} is a seam-limited repo-exposure file (its seams[] is a prefix of the inventory cut by {}, so a seam missing from it cannot be compared; {})",
@@ -1155,7 +1146,19 @@ fn seam_limited_repo_exposure_refusal(subject: &str, controls: &[&str]) -> Strin
     )
 }
 
-fn byte_bounded_repo_exposure_refusal(subject: &str) -> String {
+/// A pilot `repo-exposure.json` whose `seams[]` the byte budget cut (#12108)
+/// lists only some of the seams. `seam_cut` is the same document's seam-limit
+/// controls: when a seam limit also cut it (#12226), the one refusal lists
+/// every control, so the repair does not surface a second refusal.
+fn byte_bounded_repo_exposure_refusal(subject: &str, seam_cut: &[&'static str]) -> String {
+    if !seam_cut.is_empty() {
+        let controls = crate::output::repo_exposure::byte_and_seam_cut_controls(seam_cut);
+        return format!(
+            "{subject} is a byte-bounded and seam-limited repo-exposure file (`ripr pilot` cut its seams[] by {}, so a seam missing from it cannot be compared; {})",
+            controls.join(" and "),
+            crate::output::repo_exposure::seam_limit_cut_repair(&controls)
+        );
+    }
     format!(
         "{subject} is a byte-bounded repo-exposure file (`ripr pilot` cut its seams[] to RIPR_PILOT_REPO_EXPOSURE_BYTES, so a seam missing from it cannot be compared; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0, or produce the snapshot with `ripr check --format repo-exposure-json`, then compare)"
     )
@@ -2126,6 +2129,51 @@ mod tests {
     struct CheckFindingsDocumentForTest {
         analysis_outcome: Option<CheckFindingsOutcome>,
         findings: Vec<CheckFindingsFinding>,
+    }
+
+    /// #12226: a file the writer cut by bytes AND by the pilot seam budget is
+    /// refused once, naming both controls; single-cut files keep one control.
+    #[test]
+    fn both_cuts_repo_exposure_refusal_names_every_control() -> Result<(), String> {
+        let root = std::path::Path::new(".");
+        let both = crate::output::repo_exposure::tests::both_cuts_document_from_writer()?;
+        let refusal = validate_repo_exposure_artifact(root, &both, "before")
+            .err()
+            .ok_or("a both-cuts file must not validate")?;
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        // Negative: byte-only names no seam control; seam-only names no byte control.
+        let byte_only = serde_json::json!({
+            "schema_version": "0.5", "scope": "repo",
+            "run_status": "limited_repo_exposure_bytes", "seams": []
+        })
+        .to_string();
+        let refusal = validate_repo_exposure_artifact(root, &byte_only, "before")
+            .err()
+            .ok_or("a byte-only file must not validate")?;
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("RIPR_PILOT_SEAM_BUDGET"), "{refusal}");
+        let seam_only = serde_json::json!({
+            "schema_version": "0.5", "scope": "repo",
+            "run_status": "seam_limit_applied",
+            "limitations": [{"category": "pilot_seam_budget_applied"}], "seams": []
+        })
+        .to_string();
+        let refusal = validate_repo_exposure_artifact(root, &seam_only, "before")
+            .err()
+            .ok_or("a seam-only file must not validate")?;
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        assert!(
+            !refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES"),
+            "{refusal}"
+        );
+        Ok(())
     }
 
     #[test]

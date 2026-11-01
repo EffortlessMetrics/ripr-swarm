@@ -24,6 +24,8 @@ mod python_packet_eligibility;
 mod python_repo_mode_repair_failclosed;
 mod rendering_contracts;
 #[cfg(feature = "lang-typescript")]
+mod typescript_clause_single_token_packets;
+#[cfg(feature = "lang-typescript")]
 mod typescript_family_selection_packets;
 #[cfg(feature = "lang-typescript")]
 mod typescript_literal_container_packets;
