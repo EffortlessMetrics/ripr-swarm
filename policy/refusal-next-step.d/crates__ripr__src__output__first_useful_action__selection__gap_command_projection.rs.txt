@@ -1,1 +1,0 @@
-crates/ripr/src/output/first_useful_action/selection/gap_command_projection.rs|selected gap record {gap_id} is invalid: {error}

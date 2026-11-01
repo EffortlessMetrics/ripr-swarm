@@ -12,7 +12,7 @@ vocabulary; the next section separates current wiring from target behavior.
 | `full-ci` | Runs the currently wired broad advisory, editor, MSRV, and release-surface proof. Maps forecast to release band; suppresses budget warnings. |
 | `release-check` | Runs the release-surface proof without opting into every `full-ci` lane: package list, publish dry-run, and release-readiness. |
 | `ci-budget-ack` | Acknowledges an over-budget forecast at the `large` band. Budget-neutral; does not run additional lanes. |
-| `vscode` | Target label for forcing the VS Code extension lane on PRs that do not touch `editors/vscode/` but need it. |
+| `vscode` | Runs the VS Code extension e2e lane under `merge-ready` on PRs that do not touch `editors/vscode/` but need it. Editor path changes select the lane without the label (#12122). |
 | `coverage` | Runs the advisory coverage lane for the labeled pull request. `full-ci` also selects `coverage`. |
 | `clippy-future` | Runs future or candidate Clippy lint lanes in advisory mode. |
 | `ripr-waive` | Target label for acknowledging a `ripr` soft-gate finding for this PR. Requires a written reason in the PR body. |
@@ -47,7 +47,9 @@ Current behavior:
   integration, `coverage`, Test Analytics, and future-Clippy advisory proof.
 - `coverage` activates the advisory coverage workflow.
 - `clippy-future` activates the future-Clippy advisory workflow.
-- `vscode`, `ci-budget-ack`, and `ripr-waive` remain documented policy
+- `vscode` activates the VS Code extension e2e; a PR that changes
+  `editors/vscode/**` or `ci.yml` runs it without the label (#12122).
+- `ci-budget-ack` and `ripr-waive` remain documented policy
   vocabulary that is not yet wired to every target planner behavior; see
   [`current-state.md`](current-state.md).
 

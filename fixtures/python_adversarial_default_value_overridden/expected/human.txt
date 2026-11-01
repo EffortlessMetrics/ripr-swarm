@@ -29,7 +29,7 @@ Start here:
   Suggested test: test_render_explicit_verbose_false
   Test node: tests/test_render.py::test_render_explicit_verbose_false
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_adversarial_default_value_overridden/input && python -m pytest tests/test_render.py::test_render_explicit_verbose_false) (high)
-  Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `call `render` without `verbose``
+  Next step — Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `call `render` without `verbose``
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -48,7 +48,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_default_value_overridden/input --diff <cwd>/fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast probe:src_render.py:python_preview:bc1138cb
   ripr context --root <cwd>/fixtures/python_adversarial_default_value_overridden/input --diff <cwd>/fixtures/python_adversarial_default_value_overridden/diff.patch --mode fast --at probe:src_render.py:python_preview:bc1138cb
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/render.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/render.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

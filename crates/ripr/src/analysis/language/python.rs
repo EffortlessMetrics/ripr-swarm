@@ -79,6 +79,7 @@ mod boundary;
 mod call_chain;
 mod caplog_text;
 mod classify;
+mod coarse_projection;
 mod conditional_defs;
 mod conditional_expression;
 mod dataclass_default;
@@ -88,6 +89,7 @@ mod doctest_eval;
 mod doctest_tests;
 mod dunder_truthiness;
 mod guard_activation;
+mod guard_atoms;
 mod guard_credit;
 mod helper_inline;
 mod imported_call_operator;
@@ -812,7 +814,7 @@ fn python_recommended_next_step(
                 }
             };
             Some(format!(
-                "Python preview: {action} for missing discriminator `{missing}`."
+                "Python preview: {action} for the missing check `{missing}`."
             ))
         }
     }
@@ -1867,6 +1869,9 @@ mod unreachable_assertion_tests;
 
 #[cfg(test)]
 mod arm_activation_tests;
+
+#[cfg(test)]
+mod guard_atoms_tests;
 
 #[cfg(test)]
 mod conditional_expression_tests;
