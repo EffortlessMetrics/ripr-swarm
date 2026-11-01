@@ -1,0 +1,1 @@
+crates/ripr/tests/init_agents_block_smoke.rs|Command::new|2|cli-tests|#11575: runs git (fixture repository setup and commits) and the built ripr binary (`init --agents`, every backtick-wrapped command parsed from the generated block, and repair/continue) against an isolated temp workspace. No shell, network, or user-repository mutation.
