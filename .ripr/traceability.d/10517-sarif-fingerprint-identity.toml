@@ -1,0 +1,27 @@
+[[extend]]
+id = "RIPR-SPEC-0008"
+tests = [
+  "crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_moves_locations_but_retains_file_and_rule_boundaries",
+  "crates/ripr/src/output/sarif.rs::tests::sarif_seam_identity_is_line_independent_but_file_and_rule_bound",
+  # cfg(unix): does not run on Windows hosts (see RIPR-SPEC-0008).
+  "crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_keeps_distinct_native_unix_filenames",
+  # xtask `perl-identity` feature only (Perl lane).
+  "xtask/src/reports/sarif_identity_tests.rs::sarif_identity_preserves_perl_changes_and_supported_line_shifts",
+  "xtask/src/reports/sarif_identity_tests.rs::sarif_identity_keeps_native_suppression_exact_and_legacy_selector_stale",
+  "xtask/src/reports/sarif_identity_tests.rs::sarif_identity_legacy_finding_baselines_require_explicit_transition",
+  "xtask/src/reports/sarif_identity_tests.rs::sarif_identity_native_paths_survive_policy_baselines_and_line_moves",
+]
+fixtures = ["fixtures/perl_packet_contract_migration/sarif_identity"]
+code = ["xtask/src/reports/sarif.rs"]
+
+[[extend]]
+id = "RIPR-SPEC-0064"
+tests = [
+  "crates/ripr/src/analysis/language/perl/identity_tests.rs::perl_identity_uses_named_owner_and_change_payload_without_coordinates",
+  "crates/ripr/src/analysis/language/perl/identity_tests.rs::perl_identity_distinguishes_material_payload_and_observable_states",
+  "crates/ripr/src/analysis/language/perl/identity_tests.rs::perl_identity_duplicate_payload_ordinals_follow_source_order_not_packet_order",
+  "crates/ripr/src/analysis/language/perl/identity_tests.rs::perl_identity_falls_back_for_missing_or_ambiguous_owner_facts",
+  "crates/ripr/src/analysis/language/perl/identity_tests.rs::perl_identity_keeps_files_and_framed_owner_fields_distinct",
+  "crates/ripr/src/analysis/language/perl/fact_index_projection_tests.rs::historical_id_view_preserves_material_projection_fields",
+]
+code = ["crates/ripr/src/analysis/language/perl/identity.rs"]
