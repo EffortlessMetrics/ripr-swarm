@@ -997,8 +997,38 @@ fn stage_line(name: &str, stage: &StageEvidence) -> String {
     format!(
         "* {name} {}: {}",
         stage.state.as_str(),
-        plain_observation_wording(&stage.summary)
+        plain_hover_summary(&plain_observation_wording(&stage.summary))
     )
+}
+
+/// Hover-only glossary pass over a producer stage summary (#12213). The
+/// summary strings are shared with JSON, SARIF and the CLI Evidence line (which
+/// the glossary exempts), so they are not rewritten at the source; the editor
+/// hover shows "check" where the producer wrote "discriminator". Whole words
+/// only, so identifiers like `missing_discriminators` are never touched.
+fn plain_hover_summary(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    let flush = |word: &mut String, out: &mut String| {
+        match word.as_str() {
+            "discriminator" => out.push_str("check"),
+            "Discriminator" => out.push_str("Check"),
+            "discriminators" => out.push_str("checks"),
+            "Discriminators" => out.push_str("Checks"),
+            _ => out.push_str(word),
+        }
+        word.clear();
+    };
+    for c in text.chars() {
+        if c.is_alphanumeric() || c == '_' {
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
 }
 
 /// The producer's `discriminate` stage grades the strongest related oracle.

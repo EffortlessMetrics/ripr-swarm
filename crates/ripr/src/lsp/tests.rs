@@ -18205,11 +18205,11 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
         for (cited_identity, expected_reason) in [
             (
                 serde_json::json!({"snapshot_id": "snapshot:older"}),
-                "the cited seam evidence belongs to an older snapshot",
+                "the cited spot evidence belongs to an older snapshot",
             ),
             (
                 serde_json::Value::Null,
-                "the cited seam action has no evidence identity",
+                "the cited spot action has no evidence identity",
             ),
         ] {
             let stale = backend
@@ -18246,7 +18246,7 @@ fn seam_evidence_is_identity_bound_and_deferred_refresh_returns_typed_stale_resu
         assert_eq!(stale_without_identity["status"], "stale");
         assert_eq!(
             stale_without_identity["invalidation_reason"],
-            "the cited seam action has no evidence identity"
+            "the cited spot action has no evidence identity"
         );
 
         let mut deferred = sample_workspace_diagnostics(
@@ -18415,7 +18415,7 @@ fn execute_command_collect_evidence_context_returns_typed_stale_for_unknown_seam
         assert_eq!(packet["seam_id"], "unknown-seam");
         assert_eq!(
             packet["invalidation_reason"],
-            "the cited seam is absent from the current full-seam evidence"
+            "the cited spot is absent from the current full spot evidence"
         );
         assert_eq!(packet["recovery_command"], REFRESH_COMMAND);
         // #5274: the emitted recovery command must execute through the
@@ -29079,6 +29079,56 @@ fn finding_hover_markdown_for(finding: &Finding) -> Result<String, String> {
         HoverContents::Markup(markup) => Ok(markup.value),
         _ => Err("expected markup hover".to_string()),
     }
+}
+
+/// Plain-language guard for editor text (#12213): the words the default
+/// `ripr check` screen retired ("seam", "discriminator") must not come
+/// back in LSP status prose. Tokens are split on anything that is not a
+/// letter, digit or underscore, so machine identifiers such as
+/// `seam_diagnostics_not_enabled` or `seam_diagnostics = true` (config
+/// keys users must type verbatim) are not prose and are not flagged.
+pub(crate) fn jargon_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| {
+            matches!(
+                word.to_ascii_lowercase().as_str(),
+                "seam" | "seams" | "discriminator" | "discriminators"
+            )
+        })
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+#[test]
+fn hover_and_lens_prose_uses_plain_words() -> Result<(), String> {
+    // #12213: editor hover and code lens must not bring back the words the
+    // default `ripr check` screen retired. The hover's stage rows keep the
+    // exempt stage vocabulary (`* discriminator yes/no/weak ...`), the same
+    // exemption the CLI's Evidence line has, so rows that open with the stage
+    // name are skipped; everything else is scanned.
+    let finding = fix_route_rust_finding();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    let lens = super::lens::related_test_lens_title(&finding, None);
+    let mut scanned = 0;
+    for line in markdown.lines().chain(std::iter::once(lens.as_str())) {
+        if line
+            .trim_start_matches(['*', '-', ' '])
+            .starts_with("discriminator ")
+        {
+            continue;
+        }
+        let hits = jargon_words(line);
+        if !hits.is_empty() {
+            return Err(format!("jargon {hits:?} in editor text: {line}"));
+        }
+        scanned += 1;
+    }
+    if scanned < 5 {
+        return Err(format!(
+            "guard scanned too little text ({scanned} lines):\n{markdown}"
+        ));
+    }
+    Ok(())
 }
 
 #[test]
