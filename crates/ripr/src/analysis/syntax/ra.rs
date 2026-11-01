@@ -45,7 +45,8 @@ use crate::analysis::rust_index::{
     classify_assertion_with, err_return_guard_oracles, extract_call_facts,
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_return_facts, guarded_result_match_scan_with_shadow_authority,
-    is_unwrap_err_bound_error_assertion, unwrap_err_bound_variables,
+    is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
+    unwrap_err_bound_variables,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2518,7 +2519,8 @@ fn extract_parser_oracles(
             classification.kind,
             OracleKind::ExactValue | OracleKind::WholeObjectEquality
         ) && classification.strength == OracleStrength::Strong
-            && is_unwrap_err_bound_error_assertion(&assertion_text, &bound_error_vars)
+            && (is_unwrap_err_bound_error_assertion(&assertion_text, &bound_error_vars)
+                || is_inline_unwrap_err_error_assertion(&assertion_text))
         {
             classification.kind = OracleKind::ExactErrorVariant;
             classification.strength = OracleStrength::Strong;

@@ -9,9 +9,9 @@ use super::classify::{classify_assertion, classify_assertion_with};
 use super::pattern_admission::LazyDecls;
 use super::patterns::{
     ExpectErrForm, contains_macro_invocation, contains_named_enum_variant, has_argument_tokens,
-    is_custom_assertion_helper, is_mock_expectation_line, is_side_effect_observer_assertion,
-    is_snapshot_assertion, is_unwrap_err_bound_error_assertion, next_expect_err_open,
-    without_expect_err,
+    is_custom_assertion_helper, is_inline_unwrap_err_error_assertion, is_mock_expectation_line,
+    is_side_effect_observer_assertion, is_snapshot_assertion, is_unwrap_err_bound_error_assertion,
+    next_expect_err_open, without_expect_err,
 };
 use crate::analysis::extract::ShadowAuthority;
 use crate::analysis::extract::text::extract_identifier_tokens;
@@ -117,7 +117,8 @@ pub(crate) fn extract_assertions_in(
                 classification.kind,
                 OracleKind::ExactValue | OracleKind::WholeObjectEquality
             ) && classification.strength == OracleStrength::Strong
-                && is_unwrap_err_bound_error_assertion(&trimmed, &bound_error_vars)
+                && (is_unwrap_err_bound_error_assertion(&trimmed, &bound_error_vars)
+                    || is_inline_unwrap_err_error_assertion(&trimmed))
             {
                 classification.kind = OracleKind::ExactErrorVariant;
                 classification.strength = OracleStrength::Strong;
@@ -2972,11 +2973,11 @@ fn adapters_keep_ok(mut rest: &str) -> bool {
     }
 }
 
-fn ends_with_unwrap_err(expr: &str) -> bool {
+pub(super) fn ends_with_unwrap_err(expr: &str) -> bool {
     expr.trim_end().ends_with(".unwrap_err()")
 }
 
-fn ends_with_expect_err(expr: &str) -> bool {
+pub(super) fn ends_with_expect_err(expr: &str) -> bool {
     // `.expect_err(<message>)` or `Result::expect_err(<call>, <msg>)` whose
     // argument group closes `expr`. An empty group (`expect_err()`,
     // `expect_err( )`, `expect_err ()`) is a mock's expectation for a

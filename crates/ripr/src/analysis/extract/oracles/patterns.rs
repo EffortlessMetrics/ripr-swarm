@@ -165,6 +165,35 @@ pub(crate) fn is_unwrap_err_bound_error_assertion(
         .any(|var| line_references_variable(line, var))
 }
 
+/// Inline spelling of the bound-variable pin (#12266): an equality assertion
+/// whose one operand is the `<call>.unwrap_err()` / `.expect_err(..)` result
+/// itself and whose other operand names a specific error (variant, error
+/// constructor or fixed payload). `assert_eq!(f(1).unwrap_err(), E::V)` pins
+/// the same value as `let e = f(1).unwrap_err(); assert_eq!(e, E::V)`. An
+/// opaque expected value, a negative assertion or an unwrapped `Ok` read does
+/// not qualify.
+pub(crate) fn is_inline_unwrap_err_error_assertion(line: &str) -> bool {
+    let oracle_text = assertion_oracle_text(line);
+    let line = oracle_text.as_deref().unwrap_or(line);
+    if contains_macro_invocation(line, "assert_ne!")
+        || contains_macro_invocation(line, "debug_assert_ne!")
+    {
+        return false;
+    }
+    let Some(args) = equality_assertion_arguments(line) else {
+        return false;
+    };
+    let (Some(left), Some(right)) = (args.first(), args.get(1)) else {
+        return false;
+    };
+    let is_error_read = |operand: &str| {
+        super::scan::ends_with_unwrap_err(operand) || super::scan::ends_with_expect_err(operand)
+    };
+    let (left, right) = (comparable_expression(left), comparable_expression(right));
+    (is_error_read(&left) && expression_pins_specific_error(&right))
+        || (is_error_read(&right) && expression_pins_specific_error(&left))
+}
+
 fn is_bound_error_equality_assertion(
     line: &str,
     bound_error_vars: &std::collections::BTreeSet<String>,
@@ -2269,6 +2298,42 @@ mod spec_0106_tests {
             return Err("negative enum-variant assertions must not be promoted".to_string());
         }
         Ok(())
+    }
+
+    // #12266: the inline `<call>.unwrap_err()` operand pins the same value as
+    // the bound variable.
+    #[test]
+    fn inline_unwrap_err_equality_with_a_named_variant_is_recognized() {
+        for line in [
+            r#"assert_eq!(Vec::from_hex("1").unwrap_err(), FromHexError::OddLength);"#,
+            "assert_eq!(FromHexError::OddLength, Vec::from_hex(\"1\").unwrap_err());",
+            "assert_eq!(\n    parse(\"x\").unwrap_err(),\n    ParseError::Empty\n);",
+            r#"assert_eq!(parse("x").expect_err("must fail"), ParseError::Empty);"#,
+        ] {
+            assert!(
+                is_inline_unwrap_err_error_assertion(line),
+                "inline error read against a named variant must be recognized: {line}"
+            );
+        }
+    }
+
+    // #12266 negative controls: nothing here names a specific error, reads the
+    // error side, or asserts equality.
+    #[test]
+    fn inline_unwrap_err_requires_an_equality_with_a_specific_error() {
+        for line in [
+            "assert_eq!(parse(\"x\").unwrap_err(), expected_error);",
+            "assert_ne!(parse(\"x\").unwrap_err(), ParseError::Empty);",
+            "assert_eq!(parse(\"x\").unwrap(), ParseError::Empty);",
+            "assert_eq!(parse(\"x\"), ParseError::Empty);",
+            "assert!(parse(\"x\").unwrap_err().is_empty());",
+            "assert_eq!(parse(\"x\").unwrap_err().kind(), ParseError::Empty);",
+        ] {
+            assert!(
+                !is_inline_unwrap_err_error_assertion(line),
+                "must not be promoted to an exact error variant: {line}"
+            );
+        }
     }
 
     // Control 3 (GENERIC): generic assertion without variant token → no upgrade.
