@@ -1569,6 +1569,60 @@ fn input_hint(seam: &RepoSeam, binding: &str) -> String {
     }
 }
 
+/// #11551: an advisory description of the proof a person (or a Kani, property
+/// or contract harness) would write for a changed relational boundary. It is
+/// derived from the written predicate only and symbolic: the witness inputs
+/// are relations over the operands, never values ripr claims to have verified.
+/// Nothing here feeds classification, `task`, or the edit cage.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProofObligation {
+    pub(crate) kind: &'static str,
+    pub(crate) function: String,
+    pub(crate) changed_predicate: String,
+    pub(crate) witness_inputs: Vec<String>,
+    pub(crate) property_skeleton: String,
+    pub(crate) limits: Vec<&'static str>,
+}
+
+/// Boundary obligation for a Rust `PredicateBoundary` seam whose whole
+/// expression is one `<`, `<=`, `>` or `>=` comparison. Everything else
+/// (compound conditions, equality, other seam kinds, non-Rust files) is `None`
+/// and the packet simply omits the member.
+pub(crate) fn proof_obligation_for(seam: &RepoSeam) -> Option<ProofObligation> {
+    if seam.kind() != SeamKind::PredicateBoundary
+        || seam.file().extension().and_then(|ext| ext.to_str()) != Some("rs")
+    {
+        return None;
+    }
+    let comparison = single_comparison(seam.expression())?;
+    if !matches!(comparison.op.as_str(), "<" | "<=" | ">" | ">=") {
+        return None;
+    }
+    let lhs = one_line(comparison.lhs.trim());
+    let rhs = one_line(comparison.rhs.trim());
+    let owner = seam.owner().to_string();
+    Some(ProofObligation {
+        kind: "boundary",
+        function: owner.clone(),
+        changed_predicate: one_line(seam.expression()),
+        witness_inputs: vec![
+            format!("{lhs} just below {rhs}"),
+            format!("{lhs} == {rhs}"),
+            format!("{lhs} just above {rhs}"),
+        ],
+        property_skeleton: format!(
+            "#[kani::proof] fn check_{name}_boundary() {{ /* bind {lhs} and {rhs} with kani::any(), \
+             kani::assume({lhs} == {rhs}), call {owner}, assert the exact result the spec requires */ }}",
+            name = owner.rsplit("::").next().unwrap_or(&owner),
+        ),
+        limits: vec![
+            "advisory: derived from the written predicate only; it does not change the class or whether a repair is offered",
+            "witness inputs are relations over the operands, not verified values",
+            "the old predicate is not compared; pick the exact expected result from the specification",
+        ],
+    })
+}
+
 /// The input condition that tells a relational boundary from its neighbor.
 /// `a > b` and `a >= b` (or `<`, `<=`) differ only where the operands are
 /// equal, so a test that picks inputs satisfying the changed comparison
