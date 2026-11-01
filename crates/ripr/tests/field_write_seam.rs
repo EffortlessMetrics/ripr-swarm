@@ -244,6 +244,62 @@ fn builder_tail_self_is_not_a_later_write() -> Result<(), String> {
     )
 }
 
+/// #11398: the hand-written step for a field write names the receiver, not a
+/// wrapper or `Err` variant that a struct-literal field would need.
+#[test]
+fn builder_field_write_names_the_receiver_not_a_wrapper() -> Result<(), String> {
+    let repo = Repo::create(
+        BUILDER_OLD,
+        BUILDER_NEW,
+        "use fw::Req;\n\n#[test]\nfn sets_url() {\n    let r = Req::new().timeout(5);\n    assert_eq!(r.url, 0);\n}\n",
+    )?;
+    let check = repo.check_text()?;
+    assert!(
+        check.contains("sets a field of `self` inside a method")
+            && check.contains("the value you called it on")
+            && !check.contains("match the wrapper"),
+        "check must name the field write, not a wrapper:\n{check}"
+    );
+    Ok(())
+}
+
+/// #11398 review: `retries(mut self, ..)` writes a moved copy. For a `Copy`
+/// type the test's `o` keeps its old field, so `assert_eq!(o.retries, 3)`
+/// never sees the write and must not read as a check of it.
+#[test]
+fn copy_builder_read_of_the_unmoved_binding_is_not_a_check() -> Result<(), String> {
+    let old = "#[derive(Clone, Copy)]\npub struct Opts {\n    pub retries: u32,\n}\n\nimpl Opts {\n    pub fn retries(mut self, n: u32) -> Self {\n        self.retries = n;\n        self\n    }\n}\n";
+    let repo = Repo::create(
+        old,
+        &old.replace("self.retries = n;", "self.retries = n * 2;"),
+        "use fw::Opts;\n\n#[test]\nfn keeps() {\n    let o = Opts { retries: 3 };\n    o.retries(5);\n    assert_eq!(o.retries, 3);\n}\n",
+    )?;
+    let check = repo.check_text()?;
+    assert!(
+        !check.contains("Static exposure: exposed") && !printed_repair_start(&check),
+        "a read of the unmoved binding must not credit the write:\n{check}"
+    );
+    Ok(())
+}
+
+/// The borrowed-receiver twin of the case above: the same exact read of a
+/// `&mut self` write IS the check, so the rule is the receiver, not the read.
+#[test]
+fn borrowed_receiver_read_of_the_written_field_is_still_a_check() -> Result<(), String> {
+    let old = "#[derive(Clone, Copy)]\npub struct Opts {\n    pub retries: u32,\n}\n\nimpl Opts {\n    pub fn set_retries(&mut self, n: u32) {\n        self.retries = n;\n    }\n}\n";
+    let repo = Repo::create(
+        old,
+        &old.replace("self.retries = n;", "self.retries = n * 2;"),
+        "use fw::Opts;\n\n#[test]\nfn sets() {\n    let mut o = Opts { retries: 3 };\n    o.set_retries(5);\n    assert_eq!(o.retries, 10);\n}\n",
+    )?;
+    let check = repo.check_text()?;
+    assert!(
+        check.contains("Static exposure: exposed"),
+        "a borrowed receiver's exact read must stay a check:\n{check}"
+    );
+    Ok(())
+}
+
 /// A private field cannot be read by a test, so its write has no seam: the
 /// pilot ranking put bytesize's private `format` setters first as a weak gap
 /// whose tests observe the field through `Display` (#11398).

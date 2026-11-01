@@ -1546,6 +1546,11 @@ fn seam_next_step_for(entry: &ClassifiedSeam) -> String {
             "Assert the exact error variant via `matches!` or `assert_matches!`.".to_string()
         }
         SeamKind::ReturnValue => "Add an exact-value assertion on the returned value.".to_string(),
+        // #11398: a field write in a method changes the value the method
+        // was called on; there is no returned struct to compare.
+        SeamKind::FieldConstruction if crate::analysis::is_field_write_seam(&entry.seam) => {
+            "Call the method, then assert the exact value of the changed field on the value it was called on.".to_string()
+        }
         SeamKind::FieldConstruction => {
             "Assert on the specific field or use whole-object equality.".to_string()
         }

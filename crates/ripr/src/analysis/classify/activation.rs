@@ -4241,6 +4241,12 @@ pub(in crate::analysis) fn assigned_field_of(
 /// default-like expected value (`0`, `false`) cannot tell a deleted write
 /// from a kept one. This is the one read rule for a field write: the diff
 /// probe and the repository seam both ask it, so check and repair agree.
+///
+/// Only an owner that borrows its receiver (`&mut self`) writes the binding
+/// the test reads afterwards. A by-value receiver (`self`, `mut self`, a
+/// builder's `fn retries(mut self, n) -> Self`) writes a moved copy: for a
+/// `Copy` type the test's binding keeps its old field value, so a read of it
+/// never sees the write and confirms nothing.
 pub(in crate::analysis) fn assigned_field_read_confirms(
     owner: &FunctionSummary,
     path: &str,
@@ -4248,8 +4254,45 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
     assertion: &OracleFact,
     index: &crate::analysis::rust_index::RustIndex,
 ) -> bool {
-    !super::propagation_witness::assertion_expects_default_like(&assertion.text)
+    owner_borrows_receiver(&owner.body)
+        && !super::propagation_witness::assertion_expects_default_like(&assertion.text)
         && pushed_collection_compared_whole(owner, path, test, assertion, index)
+}
+
+/// Whether the method whose source starts `body` takes its receiver by
+/// reference: `&self`, `&mut self`, `&'a mut self`, `self: &Self` or
+/// `self: &mut Self`. Anything else, including a signature that cannot be
+/// read, is not a borrow (fail closed).
+fn owner_borrows_receiver(body: &str) -> bool {
+    // Attributes (`#[inline(always)]`) may precede the item: read the
+    // parameter list after the `fn` keyword.
+    let Some(open) = body
+        .find("fn ")
+        .and_then(|at| body[at..].find('(').map(|open| at + open))
+    else {
+        return false;
+    };
+    let params = &body[open + 1..];
+    let first = params
+        .find([',', ')'])
+        .map_or(params, |end| &params[..end])
+        .trim();
+    if let Some(typed) = first.strip_prefix("self") {
+        let typed = typed.trim_start();
+        return typed
+            .strip_prefix(':')
+            .is_some_and(|ty| ty.trim_start().starts_with('&'));
+    }
+    first.starts_with('&') && {
+        let after = first.trim_start_matches('&').trim_start();
+        let after = after.strip_prefix('\'').map_or(after, |lifetime| {
+            lifetime
+                .trim_start_matches(|c: char| c.is_alphanumeric() || c == '_')
+                .trim_start()
+        });
+        let after = after.strip_prefix("mut ").map_or(after, str::trim_start);
+        after == "self"
+    }
 }
 
 /// #7131: the field collection path (`lines` for `self.lines.push(Line {
@@ -7547,6 +7590,33 @@ mod method_hop_rows;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_a_borrowed_receiver_writes_the_binding_the_test_reads() {
+        // #11398 review: a by-value receiver writes a moved copy.
+        for body in [
+            "fn bump(&mut self) {",
+            "pub fn bump(&self) -> u32 {",
+            "fn bump(&'a mut self, n: u32) {",
+            "fn bump( & mut self ) {",
+            "fn bump(self: &mut Self, n: u32) {",
+            "fn bump(self: &Self) {",
+            "#[inline(always)]\nfn bump(&mut self) {",
+        ] {
+            assert!(super::owner_borrows_receiver(body), "{body}");
+        }
+        for body in [
+            "fn retries(mut self, n: u32) -> Self {",
+            "fn retries(self, n: u32) -> Self {",
+            "fn retries(self: Self) -> Self {",
+            "fn retries(self: Box<Self>) -> Self {",
+            "fn new(n: u32) -> Self {",
+            "fn wrap(selfish: &mut Opts) {",
+            "no signature",
+        ] {
+            assert!(!super::owner_borrows_receiver(body), "{body}");
+        }
+    }
+
     #[test]
     fn builder_pattern_matches_exactly_the_former_string_predicate() {
         fn legacy(line: &str) -> bool {

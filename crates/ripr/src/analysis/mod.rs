@@ -550,6 +550,14 @@ use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 
+/// #11398: whether `seam` is a field write in a method (`self.count += 1`)
+/// rather than a field of a struct literal. Surfaces that word guidance for
+/// field seams read this so they do not describe a returned struct.
+pub(crate) fn is_field_write_seam(seam: &seams::RepoSeam) -> bool {
+    seam.kind() == seams::SeamKind::FieldConstruction
+        && classify::field_assignment_target(seam.expression()).is_some()
+}
+
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
 /// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.

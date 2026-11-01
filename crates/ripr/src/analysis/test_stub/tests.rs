@@ -1239,6 +1239,56 @@ fn field_of_the_returned_struct_literal_asserts_the_whole_return_value() -> Resu
     Ok(())
 }
 
+const BUILDER: &str = "pub struct Req { pub url: String, pub timeout: u32 }
+impl Req {
+    pub fn timeout(mut self, t: u32) -> Self {
+        self.timeout = t * 2;
+        self
+    }
+    pub fn rebuilt(&self) -> Req {
+        Req { url: String::new(), timeout: self.timeout * 2 }
+    }
+}
+";
+
+#[test]
+fn field_write_in_a_method_names_the_receiver_not_a_struct_literal() -> Result<(), String> {
+    // #11398: `self.timeout = t * 2` builds no returned literal; the refusal
+    // says the field is set on `self`, not "a struct literal the owner does
+    // not return".
+    let field = |needle: &str| RequiredDiscriminator::FieldValue {
+        field: needle.to_string(),
+    };
+    let write = seam_at(
+        "src/lib.rs",
+        BUILDER,
+        "self.timeout = t * 2",
+        SeamKind::FieldConstruction,
+        field("self.timeout = t * 2"),
+    )?;
+    assert_eq!(
+        rust_test_stub(&write, None, BUILDER),
+        Err(TestStubRefusal::FieldWrittenInMethod)
+    );
+    assert!(
+        TestStubRefusal::FieldWrittenInMethod
+            .reason()
+            .contains("sets a field of `self` inside a method")
+    );
+    // A returned struct-literal field in the same impl still gets its stub:
+    // the new refusal is keyed on the assignment shape only.
+    let literal = seam_at(
+        "src/lib.rs",
+        BUILDER,
+        "timeout: self.timeout * 2",
+        SeamKind::FieldConstruction,
+        field("timeout: self.timeout * 2"),
+    )?;
+    let stub = rust_test_stub(&literal, None, BUILDER).map_err(|r| r.reason().to_string())?;
+    assert!(stub.text.contains("subject.rebuilt()"), "{}", stub.text);
+    Ok(())
+}
+
 #[test]
 fn feature_gated_test_modules_are_never_chosen() -> Result<(), String> {
     // Review of #5477: `cargo test` does not build a feature-gated module, so

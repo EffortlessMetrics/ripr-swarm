@@ -17400,6 +17400,11 @@ tests = [
   "crates/ripr/tests/field_write_seam.rs::builder_tail_self_is_not_a_later_write",
   "crates/ripr/tests/field_write_seam.rs::should_panic_test_does_not_check_the_written_field",
   "crates/ripr/tests/field_write_seam.rs::ignored_test_does_not_check_the_written_field",
+  "crates/ripr/tests/field_write_seam.rs::builder_field_write_names_the_receiver_not_a_wrapper",
+  "crates/ripr/tests/field_write_seam.rs::copy_builder_read_of_the_unmoved_binding_is_not_a_check",
+  "crates/ripr/tests/field_write_seam.rs::borrowed_receiver_read_of_the_written_field_is_still_a_check",
+  "crates/ripr/src/analysis/test_stub/tests.rs::field_write_in_a_method_names_the_receiver_not_a_struct_literal",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::only_a_borrowed_receiver_writes_the_binding_the_test_reads",
 ]
 fixtures = [
   "fixtures/rust_map_overwrite_count",
@@ -17416,6 +17421,8 @@ code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/analysis/test_stub.rs",
+  "crates/ripr/src/output/human/triage.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0228-rust-field-write-observation.md",

@@ -2575,7 +2575,11 @@ fn push_packet_json(
 
     out.push_str(&format!(
         "      \"missing_oracle_shape\": \"{}\",\n",
-        json_escape(&missing_oracle_shape_for(seam.kind(), seam.expected_sink()))
+        json_escape(&missing_oracle_shape_for(
+            seam.kind(),
+            seam.expected_sink(),
+            crate::analysis::is_field_write_seam(seam),
+        ))
     ));
 
     let assertion_shape_json = if is_safe_for_repair_packet(entry) {
@@ -3526,8 +3530,13 @@ pub(crate) fn missing_discriminator_records_for(entry: &ClassifiedSeam) -> Vec<M
 /// seam's kind and expected sink. The returned string is human-facing
 /// guidance — the suggested-assertion list carries the literal
 /// templates.
-fn missing_oracle_shape_for(kind: SeamKind, sink: ExpectedSink) -> String {
+fn missing_oracle_shape_for(kind: SeamKind, sink: ExpectedSink, field_write: bool) -> String {
     match kind {
+        // #11398: a field write in a method is read back from the value the
+        // method was called on, not from a returned struct.
+        SeamKind::FieldConstruction if field_write => {
+            "exact assertion on the changed field of the value the method was called on".to_string()
+        }
         SeamKind::PredicateBoundary => {
             "exact returned value assertion at the equality boundary".to_string()
         }
