@@ -1636,9 +1636,13 @@ pub(crate) fn proof_obligation_for(seam: &RepoSeam) -> Option<ProofObligation> {
     if [lhs, rhs, predicate].iter().any(|text| text.contains('\n')) {
         return None;
     }
-    // The skeleton interpolates operands into a `/* … */` comment; a `*/` (for
-    // example inside a string literal operand) would end it early.
-    if [lhs, rhs, predicate].iter().any(|text| text.contains("*/")) {
+    // The skeleton interpolates operands into a `/* … */` comment. A `*/` (for
+    // example inside a string literal operand) ends it early, and a `/*` opens
+    // a nested comment (block comments nest) that the closer never balances.
+    if [lhs, rhs, predicate]
+        .iter()
+        .any(|text| text.contains("*/") || text.contains("/*"))
+    {
         return None;
     }
     let owner = seam.owner().to_string();
