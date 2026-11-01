@@ -16755,7 +16755,9 @@ Field contract:
   inventory order. A seam that does not fit the remaining budget is skipped
   (#12151), so later seams of the same group are still kept, and one skipped
   while a later seam of its group was kept is counted in
-  `seams_skipped_over_budget`; once
+  `seams_skipped_over_budget`, which counts holes only (rejected seams
+  followed by a later fitting seam), so final rejections are visible as
+  `seams_total - seams_rendered`; once
   a group has skipped a seam, no later group is started. The kept seams are
   written in inventory order (`selection_order` names the priority, not the
   `seams[]` order). A cut adds a `limitations[]`
