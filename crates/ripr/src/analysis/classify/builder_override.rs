@@ -449,14 +449,26 @@ pub(super) fn setter_names(field: &str) -> [String; 3] {
     ]
 }
 
+/// Whether `name` is one of `field`'s setter-shaped names: `field`,
+/// `with_field`, or `set_field`.
+///
+/// Allocation-free counterpart to [`setter_names`], which builds three owned
+/// `String`s for the same set. The two agree exactly: `strip_prefix` yields
+/// `Some(field)` only for the name `prefix + field`, so each arm reconstructs
+/// exactly one member of `{field, "with_" + field, "set_" + field}`.
+fn is_setter_name(name: &str, field: &str) -> bool {
+    name == field
+        || name.strip_prefix("with_") == Some(field)
+        || name.strip_prefix("set_") == Some(field)
+}
+
 /// A setter-shaped call writing `field` with an argument (`.field(5)`,
 /// `.with_field(5)`, `.set_field(5)`) whose method the owner verified. A
 /// zero-argument `.field()` reads.
 fn is_setter(call: &ast::MethodCallExpr, owner: OwnerCall<'_>, field: &str) -> bool {
     let named = call.name_ref().is_some_and(|name| {
         let name = name.text();
-        setter_names(field).iter().any(|setter| setter == name)
-            && owner.setters.iter().any(|setter| setter == name)
+        is_setter_name(name, field) && owner.setters.iter().any(|setter| setter == name)
     });
     named
         && call
@@ -2700,6 +2712,49 @@ mod tests {
             ),
             attempts()
         );
+    }
+
+    /// The allocation-free setter-name predicate must accept exactly the
+    /// names `setter_names` builds. The self-referential cases matter: a
+    /// field named `set_x` makes `set_set_x` a legitimate setter name, and a
+    /// field named `with_x` makes `with_with_x` one.
+    #[test]
+    fn setter_name_predicate_matches_the_allocating_set() {
+        let fields = [
+            "attempts", "timeout", "", "set_x", "with_x", "x", "setter", "with", "set",
+        ];
+        let mut names: Vec<String> = vec![
+            String::new(),
+            "attempts".into(),
+            "with_attempts".into(),
+            "set_attempts".into(),
+            "with_with_attempts".into(),
+            "set_set_attempts".into(),
+            "attempts_extra".into(),
+            "with_attempts_extra".into(),
+            "withattempts".into(),
+            "attemptswith".into(),
+            "With_attempts".into(),
+            "SET_ATTEMPTS".into(),
+            "setter".into(),
+        ];
+        for field in &fields {
+            for setter in setter_names(field) {
+                names.push(setter);
+            }
+            names.push(format!("with_{field}"));
+            names.push(format!("set_{field}"));
+        }
+        for field in &fields {
+            for name in &names {
+                let expected = setter_names(field).iter().any(|setter| setter == name);
+                assert_eq!(
+                    is_setter_name(name, field),
+                    expected,
+                    "field={field:?} name={name:?}"
+                );
+            }
+        }
     }
 
     #[test]
