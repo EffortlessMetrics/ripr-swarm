@@ -24,9 +24,9 @@ Start here:
     (`"audit"`); all strong assertions observe the owner return value, not this call effect;
     propagation unknown
   Related test: tests/receipt.test.ts:4 unchanged return is not the audit event (the preview adapter could not confirm that this assertion observes the changed behavior)
-  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
-    discriminator `log contains "audit"`; no actionable repair packet is emitted until verify,
-    receipt, and edit-boundary fields are available
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
+    check `log contains "audit"`; no actionable repair packet is emitted until verify, receipt, and
+    edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

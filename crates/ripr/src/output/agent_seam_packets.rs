@@ -2355,6 +2355,18 @@ pub(crate) fn task_for(entry: &ClassifiedSeam) -> &'static str {
     }
 }
 
+fn proof_obligation_json(obligation: &crate::analysis::test_stub::ProofObligation) -> String {
+    json!({
+        "kind": obligation.kind,
+        "function": obligation.function,
+        "changed_predicate": obligation.changed_predicate,
+        "witness_inputs": obligation.witness_inputs,
+        "property_skeleton": obligation.property_skeleton,
+        "limits": obligation.limits,
+    })
+    .to_string()
+}
+
 fn push_packet_json(
     out: &mut String,
     entry: &ClassifiedSeam,
@@ -2411,6 +2423,15 @@ fn push_packet_json(
         json_escape(recommended.reason.as_str())
     ));
     out.push_str("},\n");
+
+    // #11551: advisory proof obligation. Computed after `task_for` and the
+    // recommended test, and read by neither: it cannot change actionability.
+    if let Some(obligation) = crate::analysis::test_stub::proof_obligation_for(seam) {
+        out.push_str(&format!(
+            "      \"proof_obligation\": {},\n",
+            proof_obligation_json(&obligation)
+        ));
+    }
 
     // The edit cage this packet's repair will enforce, stated where the work
     // is planned (#4330). `edit_cage_policy_from_packet` consumes the
@@ -2575,7 +2596,11 @@ fn push_packet_json(
 
     out.push_str(&format!(
         "      \"missing_oracle_shape\": \"{}\",\n",
-        json_escape(&missing_oracle_shape_for(seam.kind(), seam.expected_sink()))
+        json_escape(&missing_oracle_shape_for(
+            seam.kind(),
+            seam.expected_sink(),
+            crate::analysis::field_write_read(seam),
+        ))
     ));
 
     let assertion_shape_json = if is_safe_for_repair_packet(entry) {
@@ -3526,8 +3551,27 @@ pub(crate) fn missing_discriminator_records_for(entry: &ClassifiedSeam) -> Vec<M
 /// seam's kind and expected sink. The returned string is human-facing
 /// guidance — the suggested-assertion list carries the literal
 /// templates.
-fn missing_oracle_shape_for(kind: SeamKind, sink: ExpectedSink) -> String {
+fn missing_oracle_shape_for(
+    kind: SeamKind,
+    sink: ExpectedSink,
+    field_write: Option<crate::analysis::FieldWriteRead>,
+) -> String {
     match kind {
+        // #11398: a field write in a method is read back from the value the
+        // method was called on, not from a returned struct.
+        SeamKind::FieldConstruction if field_write.is_some() => {
+            use crate::analysis::FieldWriteRead;
+            match field_write {
+                Some(FieldWriteRead::CallResult) => {
+                    "exact assertion on the changed field of the value the call returns".to_string()
+                }
+                Some(FieldWriteRead::Unspecified) => {
+                    "exact assertion on the changed field after the call".to_string()
+                }
+                _ => "exact assertion on the changed field of the value the method was called on"
+                    .to_string(),
+            }
+        }
         SeamKind::PredicateBoundary => {
             "exact returned value assertion at the equality boundary".to_string()
         }
@@ -4693,6 +4737,41 @@ mod tests {
                 return Err(format!("missing v2 field {needle:?} in: {json}"));
             }
         }
+        Ok(())
+    }
+
+    // #11551: the proof obligation is an additive advisory member; the
+    // actionability fields beside it are produced without reading it.
+    #[test]
+    fn packet_carries_advisory_proof_obligation_for_a_relational_boundary() -> Result<(), String> {
+        let entry = weakly_gripped_classified();
+        let json = render_agent_seam_packets_json(std::slice::from_ref(&entry), None);
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| format!("packet is JSON: {error}"))?;
+        let packet = &value["packets"][0];
+        let obligation = &packet["proof_obligation"];
+        assert_eq!(obligation["kind"], "boundary", "{json}");
+        assert_eq!(obligation["function"], packet["owner"], "{json}");
+        assert_eq!(
+            obligation["changed_predicate"],
+            packet["changed_expression"]
+        );
+        assert_eq!(
+            obligation["witness_inputs"].as_array().map(Vec::len),
+            Some(3),
+            "{json}"
+        );
+        assert!(
+            obligation["limits"]
+                .as_array()
+                .is_some_and(|l| !l.is_empty())
+        );
+        assert_eq!(packet["task"], task_for(&entry), "{json}");
+        assert_eq!(
+            packet["headline_eligible"],
+            entry.class.is_headline_eligible(),
+            "{json}"
+        );
         Ok(())
     }
 
@@ -8408,5 +8487,48 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// #12061: the packet's missing-oracle shape follows the receiver mode the
+    /// seam records, through the same `field_write_read` the hover and the
+    /// human step read.
+    #[test]
+    fn field_write_oracle_shape_follows_the_receiver_mode() {
+        let shape = |borrows: Option<bool>| {
+            let seam = RepoSeam::new(
+                "src/req.rs",
+                "req::Req::timeout",
+                SeamKind::FieldConstruction,
+                10,
+                11,
+                "self.timeout = t * 2",
+                RequiredDiscriminator::FieldValue {
+                    field: "self.timeout = t * 2".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+            .with_owner_borrows_receiver(borrows);
+            missing_oracle_shape_for(
+                seam.kind(),
+                seam.expected_sink(),
+                crate::analysis::field_write_read(&seam),
+            )
+        };
+        assert!(shape(Some(true)).contains("the value the method was called on"));
+        let by_value = shape(Some(false));
+        assert!(
+            by_value.contains("the value the call returns") && !by_value.contains("called on"),
+            "{by_value}"
+        );
+        let unrecorded = shape(None);
+        assert!(
+            !unrecorded.contains("called on") && !unrecorded.contains("call returns"),
+            "{unrecorded}"
+        );
+        // A struct-literal field keeps its own wording.
+        assert!(
+            missing_oracle_shape_for(SeamKind::FieldConstruction, ExpectedSink::ReturnValue, None)
+                != by_value
+        );
     }
 }

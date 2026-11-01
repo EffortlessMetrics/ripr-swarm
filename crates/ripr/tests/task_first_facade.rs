@@ -285,6 +285,11 @@ fn assert_refusal_code(output: &Output, code: &str, disposition: &str, label: &s
         vec![expected.as_str()],
         "{label}: expected exactly the code line `{expected}`\nstderr:\n{stderr}"
     );
+    // #12193: the machine line follows the prose; stderr never opens with it.
+    assert!(
+        !stderr.starts_with("ripr: refusal code="),
+        "{label}: the first stderr line must be plain words, not the code line\nstderr:\n{stderr}"
+    );
 }
 
 fn attempt_id_from_before_stderr(stderr: &str) -> Result<String, String> {

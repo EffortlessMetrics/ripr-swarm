@@ -53,7 +53,7 @@ pub(crate) fn typescript_actionability_for(
 ) -> TypeScriptActionability {
     if private_member_unknown {
         return TypeScriptActionability {
-            gap_state: "advisory",
+            gap_state: EvidenceState::Unknown.as_str(),
             category: "private_member_reach_unknown",
             why_not_actionable: "reach into the private member through public callers is not established; no related-test path or missing assertion is inferred".to_string(),
             repair_route: "establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test".to_string(),
@@ -243,4 +243,58 @@ pub(crate) fn typescript_raw_evidence_ref(
         parts.push(format!("owner={}", owner.name));
     }
     format!("raw_evidence_ref: {}", parts.join(";"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn private_member_unknown_maps_to_non_actionable_unknown_state() {
+        let actionability = typescript_actionability_for(
+            &ExposureClass::StaticUnknown,
+            None,
+            false,
+            &[],
+            "related test",
+            true,
+        );
+        assert_eq!(actionability.category, "private_member_reach_unknown");
+        assert_eq!(
+            EvidenceState::parse(actionability.gap_state),
+            Some(EvidenceState::Unknown)
+        );
+        assert!(!EvidenceState::Unknown.is_actionable());
+    }
+
+    #[test]
+    fn every_returnable_gap_state_is_an_evidence_state_word() {
+        let limit = TypeScriptStaticLimit {
+            kind: StaticLimitKind::DynamicDispatch,
+            evidence: Vec::new(),
+            missing: String::new(),
+            repair_route: "Repair route: resolve the dispatch.".to_string(),
+        };
+        for class in ExposureClass::ALL {
+            for static_limit in [None, Some(&limit)] {
+                for owner_call in [false, true] {
+                    for private_member in [false, true] {
+                        let actionability = typescript_actionability_for(
+                            &class,
+                            static_limit,
+                            owner_call,
+                            &[],
+                            "related test",
+                            private_member,
+                        );
+                        assert!(
+                            EvidenceState::parse(actionability.gap_state).is_some(),
+                            "gap_state `{}` for {class:?} is outside EvidenceState",
+                            actionability.gap_state
+                        );
+                    }
+                }
+            }
+        }
+    }
 }

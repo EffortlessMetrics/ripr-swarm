@@ -386,7 +386,7 @@ fn deleted_line_colliding_with_a_candidate_finding_numbers_after_it() -> Result<
         ("cand-high", "28141", "16976"),
     ] {
         let source = format!(
-            "CAP = 100\n\n\ndef capped_total(items):\n    total = min(total, {kept})\n    return total\n"
+            "CAP = 100\n\n\ndef capped_total(items):\n    total = min(total, {kept})\n    return total\n\n\nTAIL = 1\n"
         );
         let removed = format!("    total = min(total, {deleted})");
         let findings = analyze(label, &source, &[5], vec![line(7, 7, &removed)])?;

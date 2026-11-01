@@ -349,10 +349,10 @@ pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
 }
 
 /// A façade decision (exit 3) carrying its typed reason code: the code line
-/// goes to stderr beside the unchanged prose (#11597).
+/// follows the unchanged prose, so the first line stays plain words (#11597,
+/// #12193).
 fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
-    eprintln!("{}", code.stderr_line());
-    CommandError::Decision(message)
+    CommandError::Decision(code.message_with_stderr_line(&message))
 }
 
 fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandError> {

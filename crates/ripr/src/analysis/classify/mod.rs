@@ -56,10 +56,12 @@ pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_read_confirms,
     call_parameter_names, chain_row_transfer_stop, comparison_operands, computed_input_parameters,
-    literal_operand_value, local_boundary, macro_names_rebound, pushed_collection_compared_whole,
-    pushed_literal_path, signature_parameters, sort_value_facts,
+    literal_operand_value, local_boundary, macro_names_rebound, owner_receiver_borrow,
+    pushed_collection_compared_whole, pushed_literal_path, signature_parameters, sort_value_facts,
 };
-pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
+pub(in crate::analysis) use arm_selection::{
+    ArmSelector, error_path_arm_probe, unresolved_parameter_field_selector,
+};
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
     wrapper_return_boundary_pinned,

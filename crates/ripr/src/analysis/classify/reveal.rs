@@ -368,6 +368,10 @@ pub(in crate::analysis) struct RevealOutcome {
     /// #9766: a credited assertion passed the fixture-receiver owner gate
     /// itself (see `ReturnOracleAdmission::fixture_receiver_pin`).
     pub(in crate::analysis) fixture_receiver_credited: bool,
+    /// #12110: a credited assertion pinned the variant the change removed on
+    /// an owner call selecting the changed arm, so the new variant's missing
+    /// exact assertion no longer stands for this probe.
+    pub(in crate::analysis) removed_variant_pin_credited: bool,
 }
 
 /// Summaries of the `no` observe/discriminate stages when no related test
@@ -411,6 +415,7 @@ pub(in crate::analysis) fn reveal_outcome(
             direct_rows: Vec::new(),
             owner_pin_credited: false,
             fixture_receiver_credited: false,
+            removed_variant_pin_credited: false,
         };
     }
 
@@ -482,6 +487,7 @@ pub(in crate::analysis) fn reveal_outcome(
         direct_rows,
         owner_pin_credited: analysis.owner_pin_credited,
         fixture_receiver_credited: analysis.fixture_receiver_credited,
+        removed_variant_pin_credited: analysis.removed_variant_pin_credited,
     }
 }
 
@@ -510,6 +516,8 @@ struct RevealAssertionAnalysis {
     matched_any: bool,
     /// #6692: some credited assertion pinned the owner's return value.
     owner_pin_credited: bool,
+    /// #12110: some credited assertion pinned the removed variant.
+    removed_variant_pin_credited: bool,
     /// #9766: some credited assertion passed the fixture-receiver gate itself.
     fixture_receiver_credited: bool,
     refused_context: bool,
@@ -2225,6 +2233,15 @@ fn analyze_related_assertions(
     } else {
         Vec::new()
     };
+    // #12110: the error variant an `error_path` change replaced, when the
+    // paired old text names a different one.
+    let removed_variant = matches!(probe.family, ProbeFamily::ErrorPath)
+        .then(|| {
+            let removed = probe.before.as_deref().and_then(error_path_variant_path)?;
+            let removed = removed.rsplit("::").next()?;
+            (error_construction_variant.as_deref() != Some(removed)).then(|| removed.to_string())
+        })
+        .flatten();
     let match_context = RevealMatchContext {
         probe_tokens: &probe_tokens,
         effect_literals: &effect_literals,
@@ -2250,6 +2267,10 @@ fn analyze_related_assertions(
         owner_shadowed: false,
         sibling_excluded: false,
         owner_pin_required,
+        removed_variant_arm: removed_variant
+            .as_deref()
+            .zip(arm_selector.filter(|_| matches!(probe.family, ProbeFamily::ErrorPath))),
+        removed_variant_selected: false,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
@@ -2308,6 +2329,7 @@ fn analyze_related_assertions(
     let mut strongest_observation_confirmed = false;
     let mut matched_any = false;
     let mut owner_pin_credited = false;
+    let mut removed_variant_pin_credited = false;
     let mut fixture_receiver_credited = false;
     let mut refused_context = false;
     // For families that need token confirmation: start pessimistic and clear
@@ -2589,6 +2611,26 @@ fn analyze_related_assertions(
                 arm_lent_selected: unfiltered_arm_selector
                     .is_some_and(|selector| selector.lent_selects(test, assertion)),
                 sibling_excluded,
+                removed_variant_selected: match_context.removed_variant_arm.is_some_and(
+                    |(variant, selector)| {
+                        // The variant must sit in the compared operands, not in
+                        // a diagnostic message argument.
+                        let operands =
+                            crate::analysis::extract::assertion_oracle_text(&assertion.text);
+                        matches!(assertion.kind, OracleKind::ExactErrorVariant)
+                            && !match_context.owner_shadowed
+                            && operands
+                                .as_deref()
+                                .is_some_and(|text| contains_as_whole_word(text, variant))
+                            && selector.mentioned_by(test)
+                            && selector.observed_inputs(test).is_some()
+                            && !selector.binds_owner_result(test)
+                            && !import_defeats_owner
+                            && !cross_package_defeats_owner
+                            && (selector.assertion_selects(&assertion.text)
+                                || selector.pattern_pin_selects(test, assertion))
+                    },
+                ),
                 ..match_context
             };
             let (matched, mut has_token_match) = assertion_matches_probe_detail_with_literals(
@@ -2792,6 +2834,8 @@ fn analyze_related_assertions(
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
             // cleanup in `ClassifiedProbeEvidence::gather` reads this.
+            removed_variant_pin_credited |=
+                matched && credits_oracle && assertion_context.removed_variant_selected;
             owner_pin_credited |= matched
                 && credits_oracle
                 && !self_computed
@@ -2985,6 +3029,7 @@ fn analyze_related_assertions(
         strongest_observation_confirmed,
         matched_any,
         owner_pin_credited,
+        removed_variant_pin_credited,
         fixture_receiver_credited,
         refused_context,
         observation_unverified,
@@ -3281,6 +3326,15 @@ struct RevealMatchContext<'a> {
     /// through the owner-return pin, a whole-value equality tied to the
     /// owner call (RIPR-SPEC-0197 "Early error-variant pins").
     owner_pin_required: bool,
+    /// #12110: for an `error_path` probe on a whole match arm whose change
+    /// replaced one error variant with another, the removed variant's bare
+    /// name and the selector for the changed arm. A test that pins the
+    /// removed variant on an owner call whose input selects this arm fails
+    /// once the arm yields the new variant, so it discriminates the change.
+    removed_variant_arm: Option<(&'a str, &'a ArmSelector)>,
+    /// #12110: the current assertion is an exact pin of the removed variant
+    /// on an owner call whose input selects the changed arm.
+    removed_variant_selected: bool,
 }
 
 /// The field a `field_construction` expression assigns: the identifier
@@ -4223,6 +4277,8 @@ fn assertion_matches_probe_detail_with_literals(
         owner_shadowed,
         sibling_excluded,
         owner_pin_required,
+        removed_variant_arm: _,
+        removed_variant_selected,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -4453,7 +4509,12 @@ fn assertion_matches_probe_detail_with_literals(
     if matches!(assertion.kind, OracleKind::ExactErrorVariant)
         && let Some(variant) = error_construction_variant
     {
-        let variant_matches = contains_as_whole_word(&assertion.text, variant);
+        // #12110: the pin of the variant the change removed, on an owner
+        // call selecting the changed arm, fails once the arm yields the new
+        // variant. It confirms only where a payload-free change needs no
+        // owner-return pin (`required_pin_observed`).
+        let variant_matches =
+            contains_as_whole_word(&assertion.text, variant) || removed_variant_selected;
         let variant_confirms = variant_matches && required_pin_observed;
         if matches!(family, ProbeFamily::ErrorPath) {
             return (variant_matches, variant_confirms);
@@ -4525,6 +4586,8 @@ fn assertion_matches_probe_detail(
             owner_shadowed: false,
             sibling_excluded: false,
             owner_pin_required: false,
+            removed_variant_arm: None,
+            removed_variant_selected: false,
         },
         assertion,
         assertion_count,
@@ -5226,10 +5289,36 @@ fn retain_owner_calling_rows(
     ranked: &[RelatedTest],
     owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
 ) {
-    let signalled = |test: &RelatedTest| {
+    retain_signalled_rows(window, ranked, &|test: &RelatedTest| {
         test.relation_reason == Some(RelationReason::WeakTokenSubstring)
             && owner_calls.contains(&(test.file.clone(), test.line, test.name.clone()))
-    };
+    });
+}
+
+/// #12098: an owner-named row whose oracle is too weak to tell the old value
+/// from the new (`weak` or `smoke`) is the row `triage::weak_assertion_row`
+/// reads. It ties the file/module-proximity rows on confidence, so when the
+/// render cap cut rows, name order alone could leave it behind eight proximity
+/// rows that never name the owner. Lift it by the same rules as
+/// [`retain_owner_calling_rows`]: it replaces trailing location-only rows one
+/// for one, never takes row 0, and changes neither the window length nor the
+/// total. No row is rescored or re-tiered. A strong-oracle owner-named row and
+/// a proximity row are not lifted.
+fn retain_owner_named_weak_rows(window: &mut Vec<RelatedTest>, ranked: &[RelatedTest]) {
+    retain_signalled_rows(window, ranked, &|test: &RelatedTest| {
+        test.relation_reason == Some(RelationReason::OwnerNamedTest)
+            && matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
+            )
+    });
+}
+
+fn retain_signalled_rows(
+    window: &mut Vec<RelatedTest>,
+    ranked: &[RelatedTest],
+    signalled: &dyn Fn(&RelatedTest) -> bool,
+) {
     // A signalled test already in the window but behind location-only rows
     // moves up to just ahead of the first of them (its first row only; no row
     // is added or evicted).
@@ -5375,6 +5464,7 @@ fn finalize_related_tests_with_direct_rows(
         if !owner_calls.is_empty() {
             retain_owner_calling_rows(&mut oracle_rows, &ranked, owner_calls);
         }
+        retain_owner_named_weak_rows(&mut oracle_rows, &ranked);
     }
     let free = RELATED_TESTS_RENDER_CAP.saturating_sub(oracle_rows.len());
     oracle_rows.extend(unmatched.into_iter().take(free));
@@ -9019,6 +9109,8 @@ mod tests {
                 owner_shadowed: false,
                 sibling_excluded: false,
                 owner_pin_required: false,
+                removed_variant_arm: None,
+                removed_variant_selected: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,

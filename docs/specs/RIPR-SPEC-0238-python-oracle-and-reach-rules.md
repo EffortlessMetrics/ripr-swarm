@@ -619,6 +619,21 @@ This order is the existing behavior and is normative:
      non-literal `return_value`, another mock name in the body, or an
      edit to the patched call's arguments keeps the limit. The substituted
      calls are not read as unresolved imports (`time.time()`).
+   - `mocked_module` also applies when code the test does not spell runs
+     around it and substitutes: an autouse fixture in the test's module,
+     its class or a `conftest.py` up the directory chain; a fixture the
+     test names as a parameter or a `usefixtures` mark names (test, class or
+     `pytestmark`), and every fixture those request; a `setUp` or
+     `setup_method` hook or a patch decorator of the test's class, a
+     module setup hook, a `pytest_*` hook, or top-level code of the test's
+     module or a chain conftest. Substitution means the body forms above
+     plus a builtin `setattr(` call, `patch.dict(`, `sys.modules`,
+     `reload(`, `__dict__` or an assignment to an attribute of an imported
+     name. The read is a closed allow-list: it cannot prove a substitution's
+     target unrelated to the owner, so any such form keeps the limit, while
+     a fixture that uses none of them (data, `setenv`, `chdir`, `tmp_path`)
+     and a patching fixture the test cannot reach keep their credit. A
+     helper a fixture calls that itself substitutes is not followed.
 
 ### Sink alignment
 
@@ -1084,6 +1099,30 @@ mutant calibrates the rule; ripr reports only the static shape.
     `importorskip` of a missing module and an empty tuple table, which
     abstain, and `xfail(False, reason=...)` and
     `unittest.skipUnless(True, ...)`, which stay active and credited).
+    A test pytest never collects is controlled the same way
+    (`pytest.collection(...)`, #11527): a class or module that binds `__test__`
+    to anything not provably the literal `True` (an absent binding stays
+    collected and credited; an existing binding that cannot be resolved, such
+    as a computed, destructured, `match`-arm or conditional one, withholds
+    credit because collection is uncertain), a `conftest.py` `collect_ignore` or
+    `collect_ignore_glob` entry that covers the file, and the pytest options
+    `python_files`, `python_classes` (pytest-style classes),
+    `python_functions` (pytest-style tests), `testpaths`, `norecursedirs`
+    and `--ignore` / `--ignore-glob` in `addopts`, read from `pytest.ini`,
+    `.pytest.ini`, `tox.ini`, `setup.cfg`, `pyproject.toml`
+    `pytest.toml` and `.pytest.toml` on the test file's directory chain. The read is
+    parse-everything-or-refuse: a collection form the adapter cannot
+    evaluate (a computed `collect_ignore`, a collection hook, a character
+    class, an unparsable or unreadable file, `-o`, `-c` or `--rootdir` in
+    `addopts`) withholds credit for its scope. Not modelled, so credit is
+    unchanged: the default `norecursedirs`, `-k`, `-m` and `--deselect`,
+    `pytest_collection_modifyitems`, and command-line arguments. Known
+    limits: `testpaths` is assumed to govern collection (an invocation that
+    passes explicit paths bypasses it); a function-level `__test__` is not
+    read; and a base class imported from another module is not resolved, so
+    its `__test__` binding is unseen. A space-separated value of a known
+    value-taking option (`--junitxml`, `--html`, `--log-file`,
+    `--basetemp`, ...) is not treated as a positional path.
 25. **A property check pins no value.** A single `==` in an `assert`
     statement is a weak relational check, as a tautology is (rule 1), when
     one side is a call and the other side is either a call that appears in
@@ -1299,6 +1338,19 @@ mutant calibrates the rule; ripr reports only the static shape.
     not follow that mentions the owner counts as a direct read: the demotion
     needs proof that every owner call is coarse, so an unknown shape never
     invents one.
+
+31. **A nested def is reached through its enclosing call only when the enclosing
+    body calls it.** A def nested in a function is its own owner
+    (`outer.inner`). A test that calls only `outer` is related to a changed
+    `outer.inner` (by call, by name token or by import of `outer`) only when
+    the statements that run with `outer` call `inner` by name, spaced calls
+    included. The nested defs and classes inside `outer` are not part of those
+    statements, so a call from the nested body itself or from an unused sibling
+    def is not an edge. A body that rebinds the name (assignment, walrus,
+    `for`, `as`, `import`) and a def that is only returned or passed are
+    fail-closed: they give no reach. A direct test call of the nested name is
+    unchanged. Whether the assertion observes the nested function's result,
+    not only its call, is a separate problem (#12182).
 
 ### Verdict ladder
 

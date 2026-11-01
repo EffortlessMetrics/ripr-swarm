@@ -1239,6 +1239,81 @@ fn field_of_the_returned_struct_literal_asserts_the_whole_return_value() -> Resu
     Ok(())
 }
 
+const BUILDER: &str = "pub struct Req { pub url: String, pub timeout: u32 }
+impl Req {
+    pub fn timeout(mut self, t: u32) -> Self {
+        self.timeout = t * 2;
+        self
+    }
+    pub fn rebuilt(&self) -> Req {
+        Req { url: String::new(), timeout: self.timeout * 2 }
+    }
+}
+";
+
+#[test]
+fn field_write_in_a_method_names_the_receiver_not_a_struct_literal() -> Result<(), String> {
+    // #11398: `self.timeout = t * 2` builds no returned literal; the refusal
+    // says the field is set on `self`, not "a struct literal the owner does
+    // not return".
+    let field = |needle: &str| RequiredDiscriminator::FieldValue {
+        field: needle.to_string(),
+    };
+    let write = seam_at(
+        "src/lib.rs",
+        BUILDER,
+        "self.timeout = t * 2",
+        SeamKind::FieldConstruction,
+        field("self.timeout = t * 2"),
+    )?;
+    // #12061: `mut self` writes a moved copy, so the refusal is the by-value
+    // one; only a borrowed receiver keeps the in-place wording.
+    assert_eq!(
+        rust_test_stub(&write, None, BUILDER),
+        Err(TestStubRefusal::FieldWrittenByValue)
+    );
+    assert!(
+        TestStubRefusal::FieldWrittenByValue
+            .reason()
+            .contains("by-value `self`")
+    );
+    let borrowed_source = "pub struct Req { pub timeout: u32 }
+impl Req {
+    pub fn set_timeout(&mut self, t: u32) {
+        self.timeout = t * 2;
+    }
+}
+";
+    let borrowed = seam_at(
+        "src/lib.rs",
+        borrowed_source,
+        "self.timeout = t * 2",
+        SeamKind::FieldConstruction,
+        field("self.timeout = t * 2"),
+    )?;
+    assert_eq!(
+        rust_test_stub(&borrowed, None, borrowed_source),
+        Err(TestStubRefusal::FieldWrittenInMethod)
+    );
+    assert!(
+        TestStubRefusal::FieldWrittenInMethod
+            .reason()
+            .contains("sets a field of `self` inside a method")
+    );
+    // A returned struct-literal field in the same impl still gets its stub:
+    // the new refusal is keyed on the assignment shape only.
+    let literal = seam_at(
+        "src/lib.rs",
+        BUILDER,
+        "timeout: self.timeout * 2",
+        SeamKind::FieldConstruction,
+        field("timeout: self.timeout * 2"),
+    )?;
+    let stub = rust_test_stub(&literal, None, BUILDER).map_err(|r| r.reason().to_string())?;
+    assert!(stub.text.contains("subject.rebuilt()"), "{}", stub.text);
+    Ok(())
+}
+
 #[test]
 fn feature_gated_test_modules_are_never_chosen() -> Result<(), String> {
     // Review of #5477: `cargo test` does not build a feature-gated module, so
@@ -1716,6 +1791,77 @@ fn other_impl_trait_parameters_stay_refused() -> Result<(), String> {
             Err(TestStubRefusal::ParameterUnsupported),
             "{param}"
         );
+    }
+    Ok(())
+}
+
+// #11551: the proof obligation is advisory, symbolic and derived from one
+// written relational comparison; anything else yields no obligation.
+#[test]
+fn proof_obligation_describes_a_single_relational_boundary_and_nothing_else() -> Result<(), String>
+{
+    let seam = seam_at(
+        "src/lib.rs",
+        PRICE,
+        "amount >= threshold",
+        SeamKind::PredicateBoundary,
+        boundary("amount == threshold"),
+    )?;
+    let obligation = proof_obligation_for(&seam).ok_or("relational boundary has an obligation")?;
+    assert_eq!(obligation.kind, "boundary");
+    assert_eq!(obligation.function, "owner");
+    assert_eq!(obligation.changed_predicate, "amount >= threshold");
+    assert_eq!(
+        obligation.witness_inputs,
+        vec![
+            "amount just below threshold".to_string(),
+            "amount == threshold".to_string(),
+            "amount just above threshold".to_string(),
+        ]
+    );
+    assert!(obligation.property_skeleton.contains("kani::proof"));
+    assert!(!obligation.limits.is_empty());
+
+    let spaced = seam_at(
+        "src/lib.rs",
+        "pub fn f(s: &str) -> bool { s < \"a  b\" }\n",
+        "s < \"a  b\"",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    let literal = proof_obligation_for(&spaced).ok_or("string comparison has an obligation")?;
+    assert_eq!(literal.changed_predicate, "s < \"a  b\"");
+    assert_eq!(literal.witness_inputs[1], "s == \"a  b\"");
+
+    let compound = "pub fn f(a: u32, b: u32) -> bool { a > 1 && b < 2 }\n";
+    for (needle, source, kind, file) in [
+        (
+            "a > 1 && b < 2",
+            compound,
+            SeamKind::PredicateBoundary,
+            "src/lib.rs",
+        ),
+        (
+            "a == b",
+            "pub fn f(a: u32, b: u32) -> bool { a == b }\n",
+            SeamKind::PredicateBoundary,
+            "src/lib.rs",
+        ),
+        (
+            "a > b",
+            "pub fn f(a: u32, b: u32) -> bool { a > b }\n",
+            SeamKind::ReturnValue,
+            "src/lib.rs",
+        ),
+        (
+            "a > b",
+            "pub fn f(a: u32, b: u32) -> bool { a > b }\n",
+            SeamKind::PredicateBoundary,
+            "src/index.ts",
+        ),
+    ] {
+        let seam = seam_at(file, source, needle, kind, boundary(""))?;
+        assert_eq!(proof_obligation_for(&seam), None, "{needle} {file}");
     }
     Ok(())
 }

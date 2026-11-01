@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Python: swapping `self.port and ...` for `self.port is not None and ...` inside a compound condition no longer reads `exposed` when every strong test builds the receiver with constructor literals that both forms treat alike (`Addr("h")`, `Addr("h", 8080)`); it is `weakly_exposed` naming the falsy value (`self.port = 0`) no test uses. A falsy constructor argument, a later write to the attribute, two differing operands or an unreadable constructor keep their verdict (#11890, #11931).

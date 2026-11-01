@@ -15,7 +15,8 @@ use crate::cli::CommandError;
 use crate::cli::agent::{
     AgentBriefOptions, AgentBriefWorkingSet, AgentCommand, AgentPacketOptions, AgentReceiptOptions,
     AgentRepairOptions, AgentRepairPhase, AgentReviewSummaryOptions, AgentStartOptions,
-    AgentStatusOptions, AgentVerifyExecuteOptions, AgentVerifyOptions, parse_agent_args,
+    AgentStatusOptions, AgentVerifyExecuteOptions, AgentVerifyOptions, SEAM_ID_SOURCE_HINT,
+    parse_agent_args,
 };
 use crate::cli::commands_agent_support::{
     agent_identity_path, build_agent_receipt_provenance, read_agent_verify_snapshot,
@@ -811,7 +812,7 @@ fn render_agent_packet_with_context(
     }
 
     let seam_id = options.seam_id.as_deref().ok_or_else(|| {
-        CoreError::from("agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`")
+        CoreError::from(format!("agent packet requires --seam-id or --gap-ledger with --gap-id; pass `--seam-id <id>`, or pass both `--gap-ledger <path>` and `--gap-id <id>`. {SEAM_ID_SOURCE_HINT}"))
     })?;
     let config =
         load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
@@ -1475,11 +1476,12 @@ fn run_agent_repair_with_identity_ctx(
             Err(render_error) => eprintln!("ripr: {render_error}"),
         }
     }
-    if result.is_err()
-        && let Some(code) = refusal.code
-    {
-        eprintln!("{}", code.stderr_line());
-    }
+    // #12193: the machine line follows the prose the caller prints, so the
+    // first stderr line stays the plain-words reason.
+    let result = match (result, refusal.code) {
+        (Err(error), Some(code)) => Err(code.message_with_stderr_line(&error)),
+        (other, _) => other,
+    };
     let start_refused = refusal.start_refused;
     let result = if refusal.typed {
         result.map_err(CommandError::Decision)
@@ -2097,6 +2099,12 @@ fn render_repair_after_refusal_json(
         "attempt_id": attempt_id,
         "error": error.trim(),
         "narration": narration,
+        // The next step the error and its recovery narration state in prose.
+        "remedy": crate::domain::RefusalRemedy::from_prose(&format!(
+            "{}\n{}",
+            error.trim(),
+            narration.join("\n")
+        )),
     });
     serde_json::to_string_pretty(&document)
         .map(|rendered| format!("{rendered}\n"))
@@ -4277,6 +4285,25 @@ mod refusal_tests;
 mod tests {
     use super::gap_bound_rejected_attempt_message as rejected;
     use crate::edit_cage::EditCageVerdictStatus as Status;
+
+    /// The not-found hint for a gap-shaped id mentions `ripr check` only to
+    /// say what a gap id is; the instructed step is `ripr repair <gap-id>`.
+    #[test]
+    fn gap_shaped_seam_id_remedy_is_repair_not_the_explanatory_check() {
+        let hint = super::unknown_seam_id_hint(std::path::Path::new("."), "gap:x");
+        let remedy = crate::domain::RefusalRemedy::from_prose(&hint);
+        assert!(
+            remedy
+                .command
+                .as_deref()
+                .is_some_and(|c| c.starts_with("ripr repair <gap-id> --root")),
+            "{remedy:?} from {hint}"
+        );
+        assert!(
+            !remedy.alternatives.iter().any(|c| c == "ripr check"),
+            "explanatory mention leaked: {remedy:?}"
+        );
+    }
 
     /// A violated verdict may claim an out-of-surface edit; an incomparable
     /// one never observed an edit and must not claim it.

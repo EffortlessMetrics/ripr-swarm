@@ -156,6 +156,144 @@ fn is_control_name(name: &str) -> bool {
     )
 }
 
+/// How a class or module body binds the `__test__` collection switch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TestSwitch {
+    /// No binding: pytest collects by its usual name rules.
+    Unset,
+    /// Bound to the literal `True`, which keeps (or restores) collection.
+    Enabled,
+    /// Bound to `False`, or to anything not provably `True` (a name, a call,
+    /// an augmented or deleted binding, a binding under a branch): pytest
+    /// may skip the scope, so credit stays withheld.
+    Disabled,
+}
+
+fn is_test_switch(target: &Expr) -> bool {
+    matches!(target, Expr::Name(name) if name.id.as_str() == "__test__")
+}
+
+/// Whether `target` binds `__test__` directly or inside a tuple, list or
+/// starred destructuring target.
+fn target_binds_test_switch(target: &Expr) -> bool {
+    match target {
+        Expr::Tuple(tuple) => tuple.elts.iter().any(target_binds_test_switch),
+        Expr::List(list) => list.elts.iter().any(target_binds_test_switch),
+        Expr::Starred(starred) => target_binds_test_switch(starred.value.as_ref()),
+        other => is_test_switch(other),
+    }
+}
+
+fn is_literal_true(value: &Expr) -> bool {
+    matches!(
+        value,
+        Expr::Constant(constant) if matches!(constant.value, ast::Constant::Bool(true))
+    )
+}
+
+/// The `__test__` binding of a class or module `body`. A top-level binding
+/// follows normal rebinding order; any `__test__` binding nested under a
+/// compound statement is not evaluated, so it counts as `Disabled`.
+pub(super) fn test_switch(body: &[Stmt]) -> TestSwitch {
+    let mut switch = TestSwitch::Unset;
+    for stmt in body {
+        match stmt {
+            Stmt::Assign(assign) if assign.targets.iter().any(target_binds_test_switch) => {
+                // A destructured binding (`(__test__, x) = (False, 1)`) is not
+                // evaluated, so it counts as Disabled even for a `True` value.
+                switch = if assign.targets.iter().any(is_test_switch)
+                    && is_literal_true(assign.value.as_ref())
+                {
+                    TestSwitch::Enabled
+                } else {
+                    TestSwitch::Disabled
+                };
+            }
+            // A bare annotation (`__test__: bool`) creates no attribute.
+            Stmt::AnnAssign(assign)
+                if is_test_switch(assign.target.as_ref()) && assign.value.is_some() =>
+            {
+                switch = if assign.value.as_deref().is_some_and(is_literal_true) {
+                    TestSwitch::Enabled
+                } else {
+                    TestSwitch::Disabled
+                };
+            }
+            Stmt::AugAssign(assign) if is_test_switch(assign.target.as_ref()) => {
+                switch = TestSwitch::Disabled;
+            }
+            Stmt::Delete(delete) if delete.targets.iter().any(is_test_switch) => {
+                switch = TestSwitch::Disabled;
+            }
+            Stmt::If(_)
+            | Stmt::Try(_)
+            | Stmt::TryStar(_)
+            | Stmt::With(_)
+            | Stmt::For(_)
+            | Stmt::While(_)
+            | Stmt::Match(_)
+                if nested_binds_test_switch(stmt) =>
+            {
+                switch = TestSwitch::Disabled;
+            }
+            _ => {}
+        }
+    }
+    switch
+}
+
+fn nested_binds_test_switch(stmt: &Stmt) -> bool {
+    let mut blocks: Vec<&[Stmt]> = Vec::new();
+    match stmt {
+        Stmt::If(node) => blocks.extend([node.body.as_slice(), node.orelse.as_slice()]),
+        Stmt::Try(node) => {
+            blocks.extend([
+                node.body.as_slice(),
+                node.orelse.as_slice(),
+                node.finalbody.as_slice(),
+            ]);
+            for handler in &node.handlers {
+                let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                blocks.push(handler.body.as_slice());
+            }
+        }
+        Stmt::TryStar(node) => {
+            blocks.extend([
+                node.body.as_slice(),
+                node.orelse.as_slice(),
+                node.finalbody.as_slice(),
+            ]);
+            for handler in &node.handlers {
+                let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                blocks.push(handler.body.as_slice());
+            }
+        }
+        Stmt::With(node) => blocks.push(node.body.as_slice()),
+        Stmt::For(node) => blocks.extend([node.body.as_slice(), node.orelse.as_slice()]),
+        Stmt::While(node) => blocks.extend([node.body.as_slice(), node.orelse.as_slice()]),
+        Stmt::Match(node) => blocks.extend(node.cases.iter().map(|case| case.body.as_slice())),
+        _ => {}
+    }
+    blocks
+        .into_iter()
+        .any(|block| test_switch(block) != TestSwitch::Unset)
+}
+
+/// The control pytest's own `__test__ = False` opt-out applies to a class or
+/// a module: it is never collected, so no test below it runs.
+pub(super) fn test_switch_control(site: DeclarationSite) -> PythonActivationControl {
+    collection_control("pytest.collection(__test__ = False)", site)
+}
+
+/// A control for a test pytest's collection rules do not select (project
+/// configuration, `conftest.py` ignores, `__test__`).
+pub(super) fn collection_control(name: &str, site: DeclarationSite) -> PythonActivationControl {
+    PythonActivationControl {
+        name: name.to_string(),
+        site,
+    }
+}
+
 /// A parametrize decorator over an empty literal table collects the test as
 /// skipped, so its body never runs (#9691).
 pub(super) fn empty_parametrize_control(decorators: &[Expr]) -> Option<PythonActivationControl> {
@@ -318,10 +456,13 @@ pub(super) fn apply_module_controls(
     imports: &[PythonImport],
     tests: &mut [PythonTest],
 ) {
-    let controls: Vec<PythonActivationControl> = statements
+    let mut controls: Vec<PythonActivationControl> = statements
         .iter()
         .flat_map(|stmt| module_statement_controls(stmt, imports))
         .collect();
+    if test_switch(statements) == TestSwitch::Disabled {
+        controls.push(test_switch_control(DeclarationSite::Module));
+    }
     if controls.is_empty() {
         return;
     }

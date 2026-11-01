@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-awaited-resolves-control",
+  "subject_id": "authored-ts-jest-floating-promise",
+  "diff": "cases/jest-awaited-resolves-control.diff",
+  "anchor": {
+    "file": "src/cap.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "boundary_comparison",
+  "test_shape": "jest_resolves_tobe_awaited",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci",
+    "toolchain": "node 22.23.4; jest 30.5.2 with ts-jest 29.4.14 (the subject's pinned versions); edit applied by hand and `npx jest --ci` run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return n > 50;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/cap.test.ts > the cap flag is raised at fifty",
+        "equivalence_review": "not equivalent: atCap(50) is true, not false"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Positive control for jest-floating-resolves-unawaited: the same assertion shape with `await` stays credited. The edit makes atCap(50) false and the awaited `.resolves.toBe(true)` fails its test.",
+  "labeling_observation": {
+    "ripr_commit": "a561a277",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

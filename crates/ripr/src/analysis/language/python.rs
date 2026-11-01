@@ -19,9 +19,7 @@
 //! related-test oracles produce `weakly_exposed`; missing related tests produce
 //! `no_static_path`.
 
-use super::super::{
-    AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
-};
+use super::super::{AnalysisOptions, diff::ChangedFile, fingerprint_probe_id};
 use super::read_limit_disclosure::bounded_read_limit_limitations;
 use super::{
     LanguageAdapter, LanguageDiffResult, LanguageId, LanguageRepoResult, PreviewFactCacheStats,
@@ -67,6 +65,292 @@ use std::{
     ops::RangeInclusive,
     path::{Path, PathBuf},
 };
+
+/// Mark unavailable lexical context. This exact text is not an established stable
+/// equivalence; consumers still need to refuse identity-based reuse for v1u.
+fn normalize_python_expression(expression: &str) -> String {
+    format!("\0python-uncertain-v1\0{expression}")
+}
+
+/// Lex a whole file once so fragment boundaries are not mistaken for string
+/// boundaries. None means the caller lacks trustworthy source context.
+struct PythonIdentityContext<'a> {
+    source: &'a str,
+    lines: Vec<(usize, usize)>,
+    literals: Vec<(usize, usize, bool)>,
+    comment_ends: Vec<usize>,
+}
+
+impl<'a> PythonIdentityContext<'a> {
+    fn new(source: &'a str) -> Option<Self> {
+        use rustpython_parser::{Mode, Tok, lexer::lex};
+        let mut literals = Vec::new();
+        for token in lex(source, Mode::Module) {
+            if let (Tok::String { .. }, range) = token.ok()? {
+                let (start, end) = (usize::from(range.start()), usize::from(range.end()));
+                literals.push((
+                    start,
+                    end,
+                    source.get(start..end)?.chars().any(char::is_whitespace),
+                ));
+            }
+        }
+        // The installed lexer skips comments. Walk bytes outside its verified
+        // string token spans, consuming each comment through its physical line
+        // ending. Quotes or # characters inside comments cannot open a string.
+        let bytes = source.as_bytes();
+        let (mut pos, mut literal_index) = (0, 0);
+        let mut comment_ends = Vec::new();
+        while pos < bytes.len() {
+            while literals
+                .get(literal_index)
+                .is_some_and(|(_, end, _)| *end <= pos)
+            {
+                literal_index += 1;
+            }
+            if let Some((start, end, _)) = literals.get(literal_index)
+                && *start <= pos
+                && pos < *end
+            {
+                pos = *end;
+                continue;
+            }
+            if bytes[pos] == b'#' {
+                while pos < bytes.len() && !matches!(bytes[pos], b'\r' | b'\n') {
+                    pos += 1;
+                }
+                if pos < bytes.len() {
+                    comment_ends.push(pos);
+                }
+            } else {
+                pos += 1;
+            }
+        }
+        let mut lines = Vec::new();
+        let mut start = 0;
+        for segment in source.split_inclusive('\n') {
+            let line = segment.strip_suffix('\n').unwrap_or(segment);
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            lines.push((start, start + line.len()));
+            start += segment.len();
+        }
+        Some(Self {
+            source,
+            lines,
+            literals,
+            comment_ends,
+        })
+    }
+
+    fn normalize_line(&self, line: usize, expected: &str) -> Option<String> {
+        let &(start, end) = self.lines.get(line.checked_sub(1)?)?;
+        if self.source.get(start..end)? != expected {
+            return None;
+        }
+        self.normalize(line, expected)
+    }
+
+    fn normalize(&self, line: usize, expected: &str) -> Option<String> {
+        let &(line_start, line_end) = self.lines.get(line.checked_sub(1)?)?;
+        let source_line = self.source.get(line_start..line_end)?;
+        // Diff lines include their indentation; repo facts contain the exact
+        // (possibly multiline) AST source span without leading indentation.
+        if source_line == expected {
+            return self.normalize_span(line_start, expected);
+        }
+        let first = expected.split('\n').next()?;
+        let first = first.strip_suffix('\r').unwrap_or(first);
+        if first.is_empty() {
+            return None;
+        }
+        // The same statement text may repeat on one physical line
+        // (`return x; return x`). That is ambiguous only when the occurrences
+        // normalize differently; identical readings are one identity.
+        let mut result: Option<String> = None;
+        for (offset, _) in source_line.match_indices(first) {
+            let Some(candidate) = self.normalize_span(line_start + offset, expected) else {
+                continue;
+            };
+            match &result {
+                Some(previous) if *previous != candidate => return None,
+                _ => result = Some(candidate),
+            }
+        }
+        result
+    }
+
+    fn normalize_span(&self, start: usize, expected: &str) -> Option<String> {
+        let end = start.checked_add(expected.len())?;
+        let text = self.source.get(start..end)?;
+        if text != expected {
+            return None;
+        }
+        let mut result = String::with_capacity(text.len());
+        let mut pending_space = false;
+        let mut versioned = false;
+        let mut after_comment = false;
+        let mut skip_lf_at = None;
+        let mut comment_index = self.comment_ends.partition_point(|end| *end < start);
+        let mut index = self
+            .literals
+            .partition_point(|(_, close, _)| *close <= start);
+        for (relative, ch) in text.char_indices() {
+            let offset = start + relative;
+            if skip_lf_at == Some(offset) && ch == '\n' {
+                skip_lf_at = None;
+                continue;
+            }
+            if self.comment_ends.get(comment_index) == Some(&offset) {
+                pending_space = false;
+                result.push('\n');
+                versioned = true;
+                after_comment = true;
+                if ch == '\r' && self.source.as_bytes().get(offset + 1) == Some(&b'\n') {
+                    skip_lf_at = Some(offset + 1);
+                }
+                comment_index += 1;
+                continue;
+            }
+            while self
+                .literals
+                .get(index)
+                .is_some_and(|(_, close, _)| *close <= offset)
+            {
+                index += 1;
+            }
+            let inside = self
+                .literals
+                .get(index)
+                .is_some_and(|(open, close, _)| *open <= offset && offset < *close);
+            if inside {
+                versioned |= self.literals[index].2;
+            }
+            if ch.is_whitespace() && !inside {
+                if !after_comment {
+                    pending_space |= !result.is_empty();
+                }
+            } else {
+                after_comment = false;
+                if pending_space {
+                    result.push(' ');
+                    pending_space = false;
+                }
+                result.push(ch);
+            }
+        }
+        if versioned {
+            Some(format!("\0python-literal-v1\0{result}"))
+        } else {
+            Some(result)
+        }
+    }
+}
+
+/// Rebind a just-classified probe using source-verified lexical boundaries.
+/// The caller rebinds its value-origin receipt after any subsequent ordinal.
+fn reidentify_python_finding(finding: &mut Finding, normalized: &str) {
+    // The Python path can contain colons on Unix. Split the fixed prefix
+    // from the left and family/fingerprint from the right.
+    let Some((prefix, remainder)) = finding.probe.id.0.split_once(':') else {
+        return;
+    };
+    let Some((path_and_family, _fingerprint)) = remainder.rsplit_once(':') else {
+        return;
+    };
+    let Some((path, family)) = path_and_family.rsplit_once(':') else {
+        return;
+    };
+    let mut id = fingerprint_probe_id(
+        prefix,
+        path,
+        family,
+        finding
+            .probe
+            .owner
+            .as_ref()
+            .map_or("", |owner| owner.0.as_str()),
+        normalized,
+        1,
+    );
+    let marker = if normalized.starts_with("\0python-literal-v1\0") {
+        Some("v1-")
+    } else if normalized.starts_with("\0python-uncertain-v1\0") {
+        Some("v1u-")
+    } else {
+        None
+    };
+    if let (Some(marker), Some(separator)) = (marker, id.0.rfind(':')) {
+        id.0.insert_str(separator + 1, marker);
+    }
+    finding.id = id.0.clone();
+    finding.probe.id = id;
+}
+
+#[cfg(test)]
+mod python_identity_review_controls {
+    use super::PythonIdentityContext;
+
+    #[test]
+    fn comment_boundaries_respect_literals_and_crlf() -> Result<(), String> {
+        let expr = |source: &str| -> Result<String, String> {
+            let context = PythonIdentityContext::new(source).ok_or("source did not lex")?;
+            let expected = source
+                .strip_prefix("def label(x):\n    ")
+                .ok_or("fixture prefix missing")?
+                .trim_end();
+            context
+                .normalize(2, expected)
+                .ok_or_else(|| "source span mismatch".to_string())
+        };
+        let active = "def label(x):\n    return (\"a b\" # note\n      + x\n    )\n";
+        let formatted = "def label(x):\n    return  (\"a b\" # note\r\n       + x\n    )\n";
+        let commented = "def label(x):\n    return (\"a b\" # note + x\n    )\n";
+        let quoted_hash = "def label(x):\n    return (\"a # b\"\n      + x\n    )\n";
+        let quoted_hash_format = "def label(x):\n    return  (\"a # b\"\n       + x\n    )\n";
+        assert_eq!(expr(active)?, expr(formatted)?);
+        assert_ne!(expr(active)?, expr(commented)?);
+        assert_eq!(expr(quoted_hash)?, expr(quoted_hash_format)?);
+        Ok(())
+    }
+
+    #[test]
+    fn a_statement_repeated_on_one_line_normalizes_when_readings_agree() -> Result<(), String> {
+        let source = "def f(x):\n    return x; return x\n";
+        let context = PythonIdentityContext::new(source).ok_or("source did not lex")?;
+        assert_eq!(
+            context.normalize(2, "return x"),
+            Some("return x".to_string())
+        );
+        let quoted = "def f(x):\n    y = 'a  b'; z = 'a  b'; y = 'a  b'\n";
+        let context = PythonIdentityContext::new(quoted).ok_or("source did not lex")?;
+        assert!(context.normalize(2, "y = 'a  b'").is_some());
+        // One reading is code and the other sits inside a literal: ambiguous.
+        let mixed = "def f(x):\n    return x; s = 'return x'\n";
+        let context = PythonIdentityContext::new(mixed).ok_or("source did not lex")?;
+        assert!(context.normalize(2, "return x").is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn multiline_literal_space_is_data_and_outer_formatting_is_not() -> Result<(), String> {
+        let a = "def label():\n    return  \"\"\"foo \nbar\"\"\"\n";
+        let b = "def label():\n    return    \"\"\"foo \nbar\"\"\"\n";
+        let c = "def label():\n    return  \"\"\"foo  \nbar\"\"\"\n";
+        let normalize = |source: &str| -> Result<String, String> {
+            let line = source
+                .lines()
+                .nth(1)
+                .ok_or("fixture opening line missing")?;
+            PythonIdentityContext::new(source)
+                .ok_or("fixture source did not lex")?
+                .normalize(2, line)
+                .ok_or_else(|| "fixture line did not match source context".to_string())
+        };
+        assert_eq!(normalize(a)?, normalize(b)?);
+        assert_ne!(normalize(a)?, normalize(c)?);
+        Ok(())
+    }
+}
 
 /// Workspace files whose facts are extracted per parallel batch before the
 /// batch is folded, bounding how many unfolded fact sets are alive at once.
@@ -192,6 +476,8 @@ use source_facts::{
 };
 mod source_utils;
 use source_utils::{is_test_file, normalized_path};
+mod collection_config;
+mod fixture_substitution;
 mod fixtures;
 mod forwarding_decorator;
 mod helper_assertions;
@@ -360,6 +646,12 @@ struct PythonOwner {
     /// subcommand, and the name a test passes to the group to reach it
     /// (`cli_subcommand.rs`, #9226). `None` unless the file proves it.
     cli_subcommand: Option<cli_subcommand::CliSubcommand>,
+    /// For a nested function owner (`outer.inner`): whether the enclosing
+    /// function's own body, outside the nested def, calls it by name. A test
+    /// that only calls the enclosing function reaches the nested body only
+    /// when this holds (`related_tests.rs`, #12141). `false` for every other
+    /// owner, which keeps parent-call reach fail-closed.
+    nested_called_by_parent: bool,
 }
 
 /// One declared parameter of a Python function owner.
@@ -966,6 +1258,22 @@ fn parse_budget_limitation(
     ))
 }
 
+fn identity_context_limitation(relative: &Path) -> Result<AnalysisLimitation, String> {
+    let portable = normalized_path(relative);
+    let limitation = AnalysisLimitation::new(
+        AnalysisLimitationKind::ProducerFailure,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(AnalysisRecoveryKind::InspectFailure,
+            "Restore matching, lexable Python source for the diff and re-run the analysis.")?,
+    ).with_affected_items(1)?.with_detail(format!(
+        "{portable}: Python source identity context was unavailable or did not match the diff; findings for this file were withheld."
+    ))?;
+    Ok(limitation
+        .clone()
+        .with_path(&portable)
+        .unwrap_or(limitation))
+}
+
 /// One typed `producer_failure` per changed Python file the facts producer
 /// could not parse (#6824). The repo-mode evidence producer already types
 /// this failure (`source_facts_parse_error`, #3554 PR B), but the PR-local
@@ -1148,6 +1456,8 @@ impl PythonAdapter {
         let mut fixture_defs_by_file: BTreeMap<PathBuf, Vec<PythonFixtureDef>> = BTreeMap::new();
         let mut fixture_side_by_file: BTreeMap<PathBuf, fixtures::FixtureSideEffects> =
             BTreeMap::new();
+        let mut substitution_by_file: BTreeMap<PathBuf, fixture_substitution::SubstitutionScope> =
+            BTreeMap::new();
         // Conftests that install implicit setup around tests (#6657).
         let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
         let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
@@ -1165,6 +1475,7 @@ impl PythonAdapter {
             Vec<module_constants::PythonModuleAttributeWrite>,
         )> = Vec::new();
         let mut limitations = Vec::new();
+        let mut parse_failure_paths = BTreeSet::new();
         // The diff-scoped limitation set describes the changed scope (the
         // read-failure disclosure model below); parse-failure promotions
         // bind to the same admitted changed paths.
@@ -1219,6 +1530,7 @@ impl PythonAdapter {
                     .any(|changed| changed == &normalized_path(relative))
                     && let Some(limitation) = source_fact_parse_error_limitation(relative, &facts)?
                 {
+                    parse_failure_paths.insert(normalized_path(relative));
                     limitations.push(limitation);
                 }
                 if let Some(star) = &facts.star_facts {
@@ -1236,6 +1548,9 @@ impl PythonAdapter {
                 import_ranges_by_file.insert(relative.clone(), facts.import_line_ranges.clone());
                 if !facts.fixtures.is_empty() {
                     fixture_defs_by_file.insert(relative.clone(), facts.fixtures.clone());
+                }
+                if facts.substitution_scope != fixture_substitution::SubstitutionScope::default() {
+                    substitution_by_file.insert(relative.clone(), facts.substitution_scope.clone());
                 }
                 let side = fixtures::side_effects_of(&facts);
                 if side != fixtures::FixtureSideEffects::default() {
@@ -1271,6 +1586,11 @@ impl PythonAdapter {
         let unreadable_conftest = |conftest: &Path| {
             !workspace_read.sources.contains_key(conftest) && options.root.join(conftest).is_file()
         };
+        fixture_substitution::apply_fixture_substitution(
+            &mut all_tests,
+            &substitution_by_file,
+            unreadable_conftest,
+        );
         fixtures::mark_isolated_fixture_defs(
             &mut all_tests,
             &fixture_defs_by_file,
@@ -1300,6 +1620,7 @@ impl PythonAdapter {
             &mut all_tests,
             &module_attribute_writes,
         );
+        collection_config::apply_collection_config(&mut all_tests, &options.root);
         reexports::apply_package_reexports(
             &mut all_owners,
             |file| workspace_read.sources.get(file).map(String::as_str),
@@ -1593,6 +1914,10 @@ impl PythonAdapter {
             }
             changed_count += 1;
             let file_start = findings.len();
+            let identity_context = workspace_read
+                .sources
+                .get(&changed.path)
+                .and_then(|source| PythonIdentityContext::new(source));
             if is_test_file(&changed.path) {
                 continue;
             }
@@ -1609,6 +1934,38 @@ impl PythonAdapter {
                 .sources
                 .get(&changed.path)
                 .and_then(|source| reconstruct_old_source(source, changed));
+            // Never mint an ID from a fragment without source-verified string
+            // boundaries. Paired deletions do not become deleted findings.
+            let paired_old: BTreeSet<usize> = changed
+                .aligned_counterparts()
+                .values()
+                .map(|line| line.line)
+                .collect();
+            let old_identity = old_source.as_deref().and_then(PythonIdentityContext::new);
+            let valid_new = identity_context.as_ref().is_some_and(|context| {
+                changed
+                    .added_lines
+                    .iter()
+                    .all(|line| context.normalize_line(line.line, &line.text).is_some())
+            });
+            let valid_old = changed
+                .removed_lines
+                .iter()
+                .filter(|line| !paired_old.contains(&line.line))
+                .all(|line| {
+                    old_identity.as_ref().is_some_and(|context| {
+                        context.normalize_line(line.line, &line.text).is_some()
+                    })
+                });
+            if !valid_new || !valid_old {
+                // Missing/read-failed files already have their own disclosure.
+                if workspace_read.sources.contains_key(&changed.path)
+                    && !parse_failure_paths.contains(&normalized_path(&changed.path))
+                {
+                    limitations.push(identity_context_limitation(&changed.path)?);
+                }
+                continue;
+            }
             let (old_docstring_ranges, old_import_ranges) = old_source
                 .as_deref()
                 .map(|source| {
@@ -1747,7 +2104,7 @@ impl PythonAdapter {
                         ([added_line], [removed_line]) if added_line.line == removed_line.line
                     ),
                 };
-                if let Some(finding) = classify_change_with_value_origins(
+                if let Some(mut finding) = classify_change_with_value_origins(
                     &changed.path,
                     added.line,
                     &added.text,
@@ -1762,10 +2119,22 @@ impl PythonAdapter {
                     &mut value_origins,
                     Some(&mut related_memo),
                 ) {
+                    let original = finding.probe.clone();
+                    if let Some(normalized) = identity_context
+                        .as_ref()
+                        .and_then(|context| context.normalize_line(added.line, &added.text))
+                    {
+                        reidentify_python_finding(&mut finding, &normalized);
+                        value_origins.rebind_probe(&original, &finding.probe);
+                    }
                     findings.push(finding);
                 }
             }
-            classify::number_colliding_candidates(&mut findings[file_start..], &mut value_origins);
+            classify::number_colliding_candidates(
+                &mut findings[file_start..],
+                &mut value_origins,
+                identity_context.as_ref(),
+            );
             // A deleted behavior line no added line pairs with is kept as
             // base-side evidence on its owner, as the Rust adapter keeps it
             // (#7587, RIPR-SPEC-0156).
@@ -1887,6 +2256,9 @@ mod derived_expectation_tests;
 mod known_equality_helpers_tests;
 
 #[cfg(test)]
+mod collection_config_tests;
+
+#[cfg(test)]
 mod conftest_admission_tests;
 
 #[cfg(test)]
@@ -1897,6 +2269,9 @@ mod deleted_lines_tests;
 
 #[cfg(test)]
 mod fixtures_tests;
+
+#[cfg(test)]
+mod fixture_substitution_tests;
 
 #[cfg(test)]
 mod import_writer_tests;

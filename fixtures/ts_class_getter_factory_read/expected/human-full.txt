@@ -83,7 +83,7 @@ TypeScript repair packet (advisory)
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `getter == undefined`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+  TypeScript preview advisory: add or strengthen a focused assertion for the missing check `getter == undefined`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
   ripr explain --root <cwd>/fixtures/ts_class_getter_factory_read/input --diff <cwd>/fixtures/ts_class_getter_factory_read/diff.patch --mode fast probe:src_cache.ts:typescript_preview:c77a33fa
   ripr context --root <cwd>/fixtures/ts_class_getter_factory_read/input --diff <cwd>/fixtures/ts_class_getter_factory_read/diff.patch --mode fast --at probe:src_cache.ts:typescript_preview:c77a33fa

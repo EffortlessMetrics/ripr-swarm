@@ -21,6 +21,7 @@ on:
 
 permissions:
   actions: read
+  checks: read
   contents: read
 
 concurrency:
@@ -532,7 +533,7 @@ jobs:
     needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Recheck initially admitted eligibility
         id: eligibility
@@ -637,6 +638,83 @@ jobs:
           why=before_check
           trap 'rc=$?; [ "$rc" -eq 0 ] || echo "::error::eligibility recheck refused at stage $why (exit $rc) for PR #$PR_NUMBER head $EXPECTED_HEAD"; [ "$rc" -eq 0 ] || [ "$why" != admission_binding ] || [ "$GITHUB_RUN_ATTEMPT" -le 1 ] || { [ "$EVENT_NAME" = merge_group ] && echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Re-queue the pull request to qualify a new merge group (#8858)." || echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Remove and re-add merge-ready to start a fresh run (#8858)."; }' EXIT
           current_eligibility
+      - name: Read the extension e2e check for the admitted head
+        id: vscode
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
+        run: |
+          set -euo pipefail
+          # #12122: ci.yml owns selection of the `vscode` extension e2e. Its
+          # `vscode surface` job ends non-skipped only for a merge-ready request,
+          # and every `vscode` check of that workflow run lives in the same
+          # check suite. A skipped `vscode` check therefore means "not selected"
+          # only when the request's own `vscode surface` succeeded and the skip
+          # is in its suite: a skipped check from an earlier nonrequest event is
+          # in another suite and can never stand in for it. The surface check
+          # must also belong to the ci.yml run for this same label event: created
+          # within 30s of this run's creation on either side, newest wins (both
+          # runs are created at the event time, not the runner queue), so an
+          # earlier request's suite is not read. No such check yet means
+          # ci.yml has not got that far: wait, then fail closed. In the suite,
+          # the newest executed check (highest id) decides, so a passing re-run
+          # clears an earlier infrastructure failure; a running one is awaited.
+          # Reads retry because one transient API error must not cost a 45
+          # minute re-run.
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::admitted head is not a full SHA"; exit 1; }
+          api() {
+            local attempt
+            for attempt in 1 2 3 4; do
+              gh api "$@" && return 0
+              [ "$attempt" -eq 4 ] || sleep $((attempt * 5))
+            done
+            return 1
+          }
+          run_created=$(api "repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at) || { echo "::error::could not read this run's creation time"; exit 1; }
+          run_epoch=$(date -u -d "$run_created" +%s) || { echo "::error::could not parse this run's creation time $run_created"; exit 1; }
+          deadline=$((SECONDS + 1200))
+          while :; do
+            surface_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode%20surface&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode surface check runs for $EXPECTED_HEAD"; exit 1; }
+            vscode_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode check runs for $EXPECTED_HEAD"; exit 1; }
+            surface='{}'
+            while IFS= read -r candidate; do
+              [ -n "$candidate" ] || continue
+              candidate_run=$(jq -r '(.html_url // "") | try (capture("/runs/(?<r>[0-9]+)/") | .r) catch empty' <<<"$candidate")
+              [ -n "$candidate_run" ] || continue
+              candidate_created=$(api "repos/$REPOSITORY/actions/runs/$candidate_run" --jq .created_at) || { echo "::error::could not read the creation time of run $candidate_run"; exit 1; }
+              candidate_epoch=$(date -u -d "$candidate_created" +%s) || { echo "::error::could not parse creation time $candidate_created of run $candidate_run"; exit 1; }
+              delta=$((candidate_epoch - run_epoch)); [ "$delta" -ge 0 ] || delta=$((-delta))
+              if [ "$delta" -le 30 ]; then surface=$candidate; break; fi
+            done < <(jq -s -c '[.[] | select(.app.slug == "github-actions" and .conclusion != "skipped")] | sort_by(.id) | reverse | .[0:5][]' <<<"$surface_raw")
+            state=$(jq -r '.status // "none"' <<<"$surface")
+            if [ "$state" = completed ]; then
+              surface_conclusion=$(jq -r '.conclusion // ""' <<<"$surface")
+              [ "$surface_conclusion" = success ] || { echo "::error::vscode surface concluded '$surface_conclusion' for $EXPECTED_HEAD: $(jq -r '.html_url // ""' <<<"$surface")"; exit 1; }
+              suite=$(jq -r '.check_suite.id // ""' <<<"$surface")
+              mine=$(jq -s -c --arg suite "$suite" '[.[] | select(.app.slug == "github-actions" and ((.check_suite.id | tostring) == $suite))] | sort_by(.id)' <<<"$vscode_raw") || { echo "::error::could not classify vscode check runs"; exit 1; }
+              total=$(jq 'length' <<<"$mine")
+              newest=$(jq -c '[.[] | select(.conclusion != "skipped")] | last // {}' <<<"$mine")
+              state=$(jq -r '.status // "none"' <<<"$newest")
+              conclusion=$(jq -r '.conclusion // ""' <<<"$newest")
+              url=$(jq -r '.html_url // ""' <<<"$newest")
+              case "$state" in
+                none)
+                  if [ "$total" -gt 0 ]; then echo "The vscode check was skipped in this request's run for $EXPECTED_HEAD: the extension e2e was not selected."; exit 0; fi
+                  state="not yet created" ;;
+                completed)
+                  if [ "$conclusion" = success ]; then echo "vscode check succeeded for $EXPECTED_HEAD: $url"; exit 0; fi
+                  echo "::error::vscode extension e2e concluded '$conclusion' for $EXPECTED_HEAD: $url"; exit 1 ;;
+              esac
+            else
+              [ "$state" != none ] || state="absent"
+              state="vscode surface $state"
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then echo "::error::vscode extension e2e is $state after the wait for $EXPECTED_HEAD"; exit 1; fi
+            echo "vscode check is $state for $EXPECTED_HEAD; waiting"
+            sleep 30
+          done
       - name: Summarize routed result
         if: always()
         env:
@@ -684,6 +762,7 @@ jobs:
           DOCS_GATE_RESULT: ${{ needs.docs-gate.result }}
           WORKFLOW_REF: ${{ github.ref }}
           ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
+          VSCODE_CHECK_RESULT: ${{ steps.vscode.outcome }}
         run: |
           status=pass message="selected implementation job succeeded"
           if [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"
@@ -694,6 +773,7 @@ jobs:
           elif [ "$ADMISSION_RESULT" != "success" ]; then status=fail; message="candidate admission result was $ADMISSION_RESULT: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then status=fail; message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$ELIGIBILITY_RESULT" != success ]; then status=fail; message="live eligibility no longer established for the initially admitted head/request"
+          elif [ "$EVENT_NAME" = pull_request ] && [ "$VSCODE_CHECK_RESULT" != success ]; then status=fail; message="the selected VS Code extension e2e did not succeed for the admitted head (see the vscode check step)"
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"
