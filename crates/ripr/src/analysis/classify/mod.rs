@@ -59,7 +59,9 @@ pub(in crate::analysis) use activation::{
     literal_operand_value, local_boundary, macro_names_rebound, pushed_collection_compared_whole,
     pushed_literal_path, signature_parameters, sort_value_facts,
 };
-pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
+pub(in crate::analysis) use arm_selection::{
+    ArmSelector, error_path_arm_probe, unresolved_parameter_field_selector,
+};
 pub(in crate::analysis) use boundary_pairing::{
     WrapperEntryPairing, has_same_test_boundary_oracle_pairing, same_test_pairing_missing_summary,
     wrapper_return_boundary_pinned,

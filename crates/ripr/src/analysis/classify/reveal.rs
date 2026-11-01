@@ -2225,6 +2225,15 @@ fn analyze_related_assertions(
     } else {
         Vec::new()
     };
+    // #12110: the error variant an `error_path` change replaced, when the
+    // paired old text names a different one.
+    let removed_variant = matches!(probe.family, ProbeFamily::ErrorPath)
+        .then(|| {
+            let removed = probe.before.as_deref().and_then(error_path_variant_path)?;
+            let removed = removed.rsplit("::").next()?.to_string();
+            (error_construction_variant.as_deref() != Some(removed.as_str())).then_some(removed)
+        })
+        .flatten();
     let match_context = RevealMatchContext {
         probe_tokens: &probe_tokens,
         effect_literals: &effect_literals,
@@ -2250,6 +2259,10 @@ fn analyze_related_assertions(
         owner_shadowed: false,
         sibling_excluded: false,
         owner_pin_required,
+        removed_variant_arm: removed_variant
+            .as_deref()
+            .zip(arm_selector.filter(|_| matches!(probe.family, ProbeFamily::ErrorPath))),
+        removed_variant_selected: false,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
     // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
@@ -2589,6 +2602,19 @@ fn analyze_related_assertions(
                 arm_lent_selected: unfiltered_arm_selector
                     .is_some_and(|selector| selector.lent_selects(test, assertion)),
                 sibling_excluded,
+                removed_variant_selected: match_context.removed_variant_arm.is_some_and(
+                    |(variant, selector)| {
+                        matches!(assertion.kind, OracleKind::ExactErrorVariant)
+                            && contains_as_whole_word(&assertion.text, variant)
+                            && selector.mentioned_by(test)
+                            && selector.observed_inputs(test).is_some()
+                            && !selector.binds_owner_result(test)
+                            && !import_defeats_owner
+                            && !cross_package_defeats_owner
+                            && (selector.assertion_selects(&assertion.text)
+                                || selector.pattern_pin_selects(test, assertion))
+                    },
+                ),
                 ..match_context
             };
             let (matched, mut has_token_match) = assertion_matches_probe_detail_with_literals(
@@ -3281,6 +3307,15 @@ struct RevealMatchContext<'a> {
     /// through the owner-return pin, a whole-value equality tied to the
     /// owner call (RIPR-SPEC-0197 "Early error-variant pins").
     owner_pin_required: bool,
+    /// #12110: for an `error_path` probe on a whole match arm whose change
+    /// replaced one error variant with another, the removed variant's bare
+    /// name and the selector for the changed arm. A test that pins the
+    /// removed variant on an owner call whose input selects this arm fails
+    /// once the arm yields the new variant, so it discriminates the change.
+    removed_variant_arm: Option<(&'a str, &'a ArmSelector)>,
+    /// #12110: the current assertion is an exact pin of the removed variant
+    /// on an owner call whose input selects the changed arm.
+    removed_variant_selected: bool,
 }
 
 /// The field a `field_construction` expression assigns: the identifier
@@ -4220,6 +4255,8 @@ fn assertion_matches_probe_detail_with_literals(
         owner_shadowed,
         sibling_excluded,
         owner_pin_required,
+        removed_variant_arm: _,
+        removed_variant_selected,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
     // exact-variant matching. A genuine error oracle cannot borrow its changed
@@ -4450,7 +4487,12 @@ fn assertion_matches_probe_detail_with_literals(
     if matches!(assertion.kind, OracleKind::ExactErrorVariant)
         && let Some(variant) = error_construction_variant
     {
-        let variant_matches = contains_as_whole_word(&assertion.text, variant);
+        // #12110: the pin of the variant the change removed, on an owner
+        // call selecting the changed arm, fails once the arm yields the new
+        // variant. It confirms only where a payload-free change needs no
+        // owner-return pin (`required_pin_observed`).
+        let variant_matches =
+            contains_as_whole_word(&assertion.text, variant) || removed_variant_selected;
         let variant_confirms = variant_matches && required_pin_observed;
         if matches!(family, ProbeFamily::ErrorPath) {
             return (variant_matches, variant_confirms);
@@ -4522,6 +4564,8 @@ fn assertion_matches_probe_detail(
             owner_shadowed: false,
             sibling_excluded: false,
             owner_pin_required: false,
+            removed_variant_arm: None,
+            removed_variant_selected: false,
         },
         assertion,
         assertion_count,
@@ -9016,6 +9060,8 @@ mod tests {
                 owner_shadowed: false,
                 sibling_excluded: false,
                 owner_pin_required: false,
+                removed_variant_arm: None,
+                removed_variant_selected: false,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
                 &context,

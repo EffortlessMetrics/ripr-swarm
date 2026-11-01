@@ -36,7 +36,7 @@ use super::reveal::{
 };
 use crate::analysis::extract::{mask_comments_and_strings, mask_with_char_literals};
 use crate::analysis::syntax::HelperLoan;
-use crate::domain::Probe;
+use crate::domain::{Probe, ProbeFamily};
 
 /// Name an unsupported selector without extending `ArmSelector`'s proof rules.
 /// Only an unambiguous direct arm/header of a statement-free tail match qualifies.
@@ -357,6 +357,37 @@ pub(in crate::analysis) struct ObservedArmInputs {
     /// The input text of every direct owner call, in source order.
     pub(in crate::analysis) inputs: Vec<String>,
     pub(in crate::analysis) selection: ArmSelection,
+}
+
+/// #12110: the `MatchArm` view of an `error_path` probe whose changed line
+/// is a whole match arm (`_ => Err(E::New),`), so the arm selector can say
+/// which owner-call input reaches it. The old text is the same line with the
+/// removed error expression restored, so the arm's pattern reads as
+/// unchanged. `None` when the owner's line is not one readable arm holding
+/// the changed expression, or the probe has no paired old text.
+pub(in crate::analysis) fn error_path_arm_probe(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> Option<Probe> {
+    let before = probe.before.as_deref()?.trim();
+    let expression = probe.expression.trim();
+    if before.is_empty() || expression.is_empty() {
+        return None;
+    }
+    let line = owner
+        .body
+        .lines()
+        .nth(probe.location.line.checked_sub(owner.start_line)?)?
+        .trim();
+    arm_pattern_text(line)?;
+    if line.matches(expression).count() != 1 {
+        return None;
+    }
+    let mut arm = probe.clone();
+    arm.family = ProbeFamily::MatchArm;
+    arm.expression = line.to_string();
+    arm.before = Some(line.replacen(expression, before, 1));
+    Some(arm)
 }
 
 impl ArmSelector {
@@ -3209,6 +3240,27 @@ mod tests {
             nested_fn_names: Vec::new(),
             let_bindings: Vec::new(),
         }
+    }
+
+    #[test]
+    fn error_path_arm_probe_restores_the_removed_expression_on_one_arm_line() {
+        let body = "fn parse(raw: &str) -> Result<u32, E> {\n    match raw {\n        \"k\" => Ok(1),\n        _ => Err(E::Blank),\n    }\n}";
+        let owner = self::owner(body, "parse");
+        let mut probe = arm_probe("Err(E::Blank)", 4);
+        probe.family = ProbeFamily::ErrorPath;
+        probe.before = Some("Err(E::Unknown)".to_string());
+        let arm = error_path_arm_probe(&probe, &owner).expect("one readable arm line");
+        assert_eq!(arm.family, ProbeFamily::MatchArm);
+        assert_eq!(arm.expression, "_ => Err(E::Blank),");
+        assert_eq!(arm.before.as_deref(), Some("_ => Err(E::Unknown),"));
+
+        // Not an arm line: nothing to select.
+        let mut statement = probe.clone();
+        statement.location = SourceLocation::new("src/lib.rs", 2, 1);
+        assert!(error_path_arm_probe(&statement, &owner).is_none());
+        // No paired old text: the removed variant is unknown.
+        probe.before = None;
+        assert!(error_path_arm_probe(&probe, &owner).is_none());
     }
 
     #[test]
