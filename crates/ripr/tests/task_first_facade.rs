@@ -271,6 +271,27 @@ fn assert_exit(output: &Output, expected: i32, label: &str) {
     );
 }
 
+/// #11597: a refusal prints exactly one typed `refusal code=` stderr line,
+/// beside its unchanged prose, and no other code line.
+fn assert_refusal_code(output: &Output, code: &str, disposition: &str, label: &str) {
+    let stderr = stderr_text(output);
+    let expected = format!("ripr: refusal code={code} disposition={disposition}");
+    let lines: Vec<&str> = stderr
+        .lines()
+        .filter(|line| line.contains("refusal code="))
+        .collect();
+    assert_eq!(
+        lines,
+        vec![expected.as_str()],
+        "{label}: expected exactly the code line `{expected}`\nstderr:\n{stderr}"
+    );
+    // #12193: the machine line follows the prose; stderr never opens with it.
+    assert!(
+        !stderr.starts_with("ripr: refusal code="),
+        "{label}: the first stderr line must be plain words, not the code line\nstderr:\n{stderr}"
+    );
+}
+
 fn attempt_id_from_before_stderr(stderr: &str) -> Result<String, String> {
     stderr
         .lines()
@@ -295,6 +316,12 @@ fn repair_without_actionable_item_creates_no_attempt() -> Result<(), String> {
     let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
     // A deliberate named outcome, not a failure: exit 3, stdout empty.
     assert_exit(&repair, 3, "repair with no actionable item");
+    assert_refusal_code(
+        &repair,
+        "no_eligible_seam",
+        "not_started",
+        "no_eligible_seam",
+    );
     let stdout = stdout_text(&repair);
     assert!(
         stdout.is_empty(),
@@ -709,6 +736,12 @@ fn repair_explicit_ineligible_seam_refuses_without_attempt_or_lock() -> Result<(
     git_commit(root, "grip the boundary")?;
     let repair = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
     assert_exit(&repair, 3, "repair with an explicit ineligible seam");
+    assert_refusal_code(
+        &repair,
+        "seam_not_repair_eligible",
+        "not_started",
+        "seam_not_repair_eligible",
+    );
     assert!(
         stdout_text(&repair).is_empty(),
         "ineligibility refusal must leave stdout empty:\n{}",
@@ -1529,6 +1562,12 @@ fn repair_accepts_the_producer_gap_id_check_prints() -> Result<(), String> {
         ],
     )?;
     assert_exit(&wrong, 3, "repair with a producer gap naming no seam");
+    assert_refusal_code(
+        &wrong,
+        "item_names_no_seam",
+        "not_started",
+        "item_names_no_seam",
+    );
     assert!(
         attempt_ids(root).is_empty(),
         "an unmatched producer gap must create no attempt"
@@ -1570,6 +1609,12 @@ fn repair_refuses_a_producer_gap_id_that_names_several_seams() -> Result<(), Str
         ],
     )?;
     assert_exit(&repair, 3, "repair with an ambiguous producer gap ID");
+    assert_refusal_code(
+        &repair,
+        "item_names_several_seams",
+        "needs_selection",
+        "item_names_several_seams",
+    );
     let stderr = String::from_utf8_lossy(&repair.stderr);
     assert!(
         stderr.contains("names 2 seams; select one explicitly"),
@@ -2356,6 +2401,12 @@ fn repair_choice_commands_pair_powershell_form_for_apostrophe_root() -> Result<(
     );
     let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
     assert_exit(&repair, 3, "repair with two actionable items");
+    assert_refusal_code(
+        &repair,
+        "several_eligible_seams",
+        "needs_selection",
+        "selection",
+    );
     assert!(
         stdout_text(&repair).is_empty(),
         "selection must leave stdout empty"
@@ -2410,6 +2461,12 @@ fn repair_two_items_requires_explicit_selection() -> Result<(), String> {
     let root_arg = root.to_string_lossy().into_owned();
     let repair = run_ripr(root, &["repair", "--root", &root_arg])?;
     assert_exit(&repair, 3, "repair with two actionable items");
+    assert_refusal_code(
+        &repair,
+        "several_eligible_seams",
+        "needs_selection",
+        "selection",
+    );
     assert!(
         stdout_text(&repair).is_empty(),
         "selection must leave stdout empty"
@@ -2708,6 +2765,7 @@ fn continue_no_movement_uses_retained_target_and_recovers_after_edit() -> Result
         &["continue", "--root", &root_arg, "--attempt", &attempt_id],
     )?;
     assert_exit(&refused, 3, "continue before focused edit");
+    assert_refusal_code(&refused, "awaiting_edit", "retryable", "awaiting_edit");
     assert!(
         refused.stdout.is_empty(),
         "facade refusal stdout must stay empty"
@@ -2856,6 +2914,12 @@ fn continue_two_attempts_requires_explicit_selection() -> Result<(), String> {
     assert_eq!(ids.len(), 2, "two current attempts must exist");
     let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
     assert_exit(&continued, 3, "continue with two current attempts");
+    assert_refusal_code(
+        &continued,
+        "ambiguous_attempts",
+        "needs_selection",
+        "ambiguity",
+    );
     assert!(
         stdout_text(&continued).is_empty(),
         "selection must leave stdout empty"
@@ -2933,6 +2997,12 @@ fn continue_selection_retry_pairs_powershell_form_for_apostrophe_root() -> Resul
     assert_ne!(ids[0], ids[1], "the two attempts must be distinct");
     let continued = run_ripr(root, &["continue", "--root", &root_arg])?;
     assert_exit(&continued, 3, "continue with two current attempts");
+    assert_refusal_code(
+        &continued,
+        "ambiguous_attempts",
+        "needs_selection",
+        "ambiguity",
+    );
     assert!(
         stdout_text(&continued).is_empty(),
         "selection must leave stdout empty"
@@ -3375,14 +3445,42 @@ fn continue_on_a_terminal_attempt_is_already_complete() -> Result<(), String> {
         vec![attempt_id.clone()],
         "no further attempt may be created"
     );
-    // Without an ID, a lone terminal attempt is honestly no current
-    // attempt — terminality never masquerades as resumability.
-    let unselected = run_ripr(root, &["continue", "--root", &root_arg])?;
-    assert_exit(&unselected, 3, "continue with no current attempt");
-    assert!(
-        stderr_text(&unselected).contains("no current attempt"),
-        "must report no current attempt:\n{}",
-        stderr_text(&unselected)
+    // Without an ID, a repeated continue after a confirmed-complete attempt
+    // reports that attempt's already-complete status and exits 0 (#11597):
+    // the newest attempt is the confirmed one and nothing else is pending.
+    for _ in 0..2 {
+        let unselected = run_ripr(root, &["continue", "--root", &root_arg])?;
+        assert_exit(
+            &unselected,
+            0,
+            "continue after a confirmed-complete attempt",
+        );
+        assert_eq!(
+            stdout_text(&unselected),
+            stdout_text(&status),
+            "implicit already-complete output must equal the attempt status"
+        );
+        assert!(
+            stderr_text(&unselected).contains("already complete")
+                && stderr_text(&unselected).contains(&attempt_id),
+            "must say explicitly which attempt is complete:\n{}",
+            stderr_text(&unselected)
+        );
+        assert!(
+            !stderr_text(&unselected).contains("refusal code="),
+            "a completed attempt is not a refusal:\n{}",
+            stderr_text(&unselected)
+        );
+    }
+    assert_eq!(
+        manifest_bytes(root, &attempt_id)?,
+        sealed,
+        "terminal evidence must be byte-identical after implicit continue"
+    );
+    assert_eq!(
+        attempt_ids(root),
+        vec![attempt_id.clone()],
+        "no further attempt may be created"
     );
     Ok(())
 }
@@ -3732,11 +3830,14 @@ fn help_surfaces_stay_task_first() -> Result<(), String> {
             row["exit"]["kind"], "decision_or_refusal",
             "{id} must advertise its decision exits"
         );
-        assert_eq!(row["json_support"], true, "{id} accepts --json (#11584)");
+        assert_eq!(
+            row["accepts_json_flag"], "--json",
+            "{id} accepts --json (#11584)"
+        );
     }
     let status = find("cmd:status")?;
     assert_eq!(status["exit"]["kind"], "completed_or_failed");
-    assert_eq!(status["json_support"], true);
+    assert_eq!(status["accepts_json_flag"], "--json");
     for id in ["cmd:agent.repair", "cmd:agent.status"] {
         let row = find(id)?;
         assert_eq!(row["class"], "advanced", "{id} must be advanced");
@@ -3870,6 +3971,12 @@ fn continue_on_unsuccessful_terminal_attempts_refuses_without_completion() -> Re
             &repeated,
             3,
             &format!("continue on a {state} attempt must refuse"),
+        );
+        assert_refusal_code(
+            &repeated,
+            "attempt_ended_without_receipt",
+            "terminal",
+            &format!("{state} attempt"),
         );
         let stderr = stderr_text(&repeated);
         assert!(
@@ -4020,6 +4127,28 @@ fn continue_on_unconfirmed_ready_to_finish_refuses_without_completion() -> Resul
         &refused,
         3,
         "continue on a receipt-less finished attempt must refuse",
+    );
+    assert_refusal_code(
+        &refused,
+        "attempt_completion_unconfirmed",
+        "terminal",
+        "unconfirmed finish",
+    );
+    // Discriminating negative: the receipt-less attempt is the newest, but
+    // an unconfirmed finish is never reported already complete, with or
+    // without naming the attempt (#11597).
+    let implicit = run_ripr(root, &["continue", "--root", &root_arg])?;
+    assert_exit(&implicit, 3, "bare continue after an unconfirmed finish");
+    assert_refusal_code(
+        &implicit,
+        "no_current_attempt",
+        "not_started",
+        "bare continue after an unconfirmed finish",
+    );
+    assert!(
+        !stderr_text(&implicit).contains("already complete"),
+        "an unconfirmed finish is never already complete:\n{}",
+        stderr_text(&implicit)
     );
     let stderr = stderr_text(&refused);
     assert!(
@@ -4260,6 +4389,7 @@ fn status_and_continue_do_not_offer_a_start_the_repair_gate_refuses() -> Result<
     withheld("continue --attempt", &stderr_text(&cont));
     let bare = run_ripr(root, &["continue", "--root", &root_arg])?;
     assert_exit(&bare, 3, "bare continue with nothing to continue");
+    assert_refusal_code(&bare, "no_current_attempt", "not_started", "bare continue");
     let bare_text = stderr_text(&bare);
     assert!(
         !bare_text.contains("start with `ripr repair --root")
@@ -4422,6 +4552,20 @@ fn attempt_refused_by_stray_file(
     assert!(
         !after.status.success(),
         "precondition: the stray file must violate the edit cage"
+    );
+    // #11597: a cage violation is exit 2, terminal, and typed apart from a
+    // retryable missing edit.
+    assert_exit(&after, 2, "edit-cage violation");
+    assert_refusal_code(
+        &after,
+        "edit_cage_violation",
+        "terminal",
+        "edit-cage violation",
+    );
+    assert!(
+        stderr_text(&after).contains("is terminal"),
+        "the recovery must say the attempt is terminal:\n{}",
+        stderr_text(&after)
     );
     Ok((attempt_id, root_arg))
 }
@@ -4622,6 +4766,7 @@ fn bare_continue_still_offers_ripr_repair_for_an_admitted_picked_seam() -> Resul
     let root_arg = root.to_string_lossy().into_owned();
     let bare = run_ripr(root, &["continue", "--root", &root_arg])?;
     assert_exit(&bare, 3, "bare continue with nothing to continue");
+    assert_refusal_code(&bare, "no_current_attempt", "not_started", "bare continue");
     let text = stderr_text(&bare);
     assert!(
         text.contains("start with `ripr repair --root"),
@@ -5577,5 +5722,207 @@ fn continue_json_prints_one_document_for_the_advanced_attempt() -> Result<(), St
         .map_err(|error| format!("a declined continue must write the refusal document: {error}"))?;
     assert_eq!(refusal["status"], "refused");
     assert_eq!(refusal["error"]["code"], "continue_declined");
+    Ok(())
+}
+
+/// #11598: `--quiet` (and `RIPR_QUIET`) on `repair` / `continue` drop the
+/// phase narration and `wrote <path>` lines but never the results (attempt
+/// id, next command) or refusal prose; `status` accepts the flag.
+#[test]
+fn quiet_drops_narration_and_keeps_results_and_refusals() -> Result<(), String> {
+    let loud = Fixture::boundary("facade-quiet-loud")?;
+    let quiet = Fixture::boundary("facade-quiet-quiet")?;
+    let loud_arg = loud.root.to_string_lossy().into_owned();
+    let quiet_arg = quiet.root.to_string_lossy().into_owned();
+
+    let loud_start = run_ripr_env(
+        &loud.root,
+        &["repair", FIXTURE_SEAM, "--root", &loud_arg],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&loud_start, 0, "loud repair start");
+    let loud_err = stderr_text(&loud_start);
+    assert!(
+        loud_err.contains("ripr: wrote ")
+            && loud_err.contains("ripr: agent repair --phase before for seam"),
+        "control: the loud start narrates and reports written files:\n{loud_err}"
+    );
+
+    let quiet_start = run_ripr_env(
+        &quiet.root,
+        &["repair", FIXTURE_SEAM, "--root", &quiet_arg, "--quiet"],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&quiet_start, 0, "quiet repair start");
+    let quiet_err = stderr_text(&quiet_start);
+    for dropped in ["ripr: wrote ", "agent repair --phase before for seam"] {
+        assert!(
+            !quiet_err.contains(dropped),
+            "--quiet must drop `{dropped}`:\n{quiet_err}"
+        );
+    }
+    for kept in [
+        "is waiting for your test",
+        "attempt next command: ripr continue",
+    ] {
+        assert!(
+            quiet_err.contains(kept),
+            "--quiet must keep the result line `{kept}`:\n{quiet_err}"
+        );
+    }
+    assert!(
+        !stdout_text(&quiet_start).is_empty(),
+        "--quiet leaves the stdout card in place"
+    );
+    assert_eq!(attempt_ids(&quiet.root).len(), 1, "one attempt started");
+
+    // A refused continue: refusal prose is identical in kind, only the
+    // phase narration is gone.
+    let loud_refusal = run_ripr_env(
+        &loud.root,
+        &["continue", "--root", &loud_arg],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&loud_refusal, 3, "loud continue before the edit");
+    assert!(
+        stderr_text(&loud_refusal).contains("consuming attempt manifest"),
+        "control: loud continue narrates:\n{}",
+        stderr_text(&loud_refusal)
+    );
+    // Oracle: the quiet refusal stderr equals the loud one once only the
+    // suppressed phase narration is removed (roots and attempt ids differ per
+    // workspace, so both are normalized).
+    let loud_normalized = normalize_refusal_stderr(&stderr_text(&loud_refusal), &loud_arg, true);
+    // Each variant refuses at the same ordinal as the loud control (the first
+    // refusal of a fresh attempt): the retry-budget line only prints from the
+    // second refusal of one attempt, so reusing one attempt would differ for a
+    // reason unrelated to quiet mode.
+    let env_quiet = Fixture::boundary("facade-quiet-env")?;
+    let env_arg = env_quiet.root.to_string_lossy().into_owned();
+    let env_start = run_ripr_env(
+        &env_quiet.root,
+        &["repair", FIXTURE_SEAM, "--root", &env_arg, "--quiet"],
+        &[("RIPR_QUIET", "0")],
+    )?;
+    assert_exit(&env_start, 0, "env-quiet fixture repair start");
+    for (label, root_arg, output) in [
+        (
+            "--quiet",
+            quiet_arg.as_str(),
+            run_ripr_env(
+                &quiet.root,
+                &["continue", "--root", &quiet_arg, "--quiet"],
+                &[("RIPR_QUIET", "0")],
+            )?,
+        ),
+        (
+            "RIPR_QUIET=1",
+            env_arg.as_str(),
+            run_ripr_env(
+                &env_quiet.root,
+                &["continue", "--root", &env_arg],
+                &[("RIPR_QUIET", "1")],
+            )?,
+        ),
+    ] {
+        assert_exit(&output, 3, &format!("{label} continue before the edit"));
+        let stderr = stderr_text(&output);
+        for dropped in [
+            "consuming attempt manifest",
+            "agent repair --phase after for attempt",
+        ] {
+            assert!(
+                !stderr.contains(dropped),
+                "{label} must drop `{dropped}`:\n{stderr}"
+            );
+        }
+        for kept in ["still awaits the focused test edit", "to recover:"] {
+            assert!(
+                stderr.contains(kept),
+                "{label} must keep refusal prose `{kept}`:\n{stderr}"
+            );
+        }
+        assert_refusal_stderr_has_prefix(&stderr);
+        assert_eq!(
+            normalize_refusal_stderr(&stderr, root_arg, false),
+            loud_normalized,
+            "{label} must differ from loud only by the dropped narration:\n{stderr}"
+        );
+    }
+
+    let status = run_ripr(&quiet.root, &["status", "--root", &quiet_arg, "--quiet"])?;
+    assert_exit(&status, 0, "status accepts --quiet");
+    let plain = run_ripr(&quiet.root, &["status", "--root", &quiet_arg])?;
+    assert_eq!(
+        stdout_text(&status),
+        stdout_text(&plain),
+        "status --quiet changes nothing"
+    );
+    Ok(())
+}
+
+/// Replaces the workspace root and attempt ids with placeholders and, for the
+/// loud control only, drops the phase narration `--quiet` suppresses.
+fn normalize_refusal_stderr(stderr: &str, root_arg: &str, drop_narration: bool) -> Vec<String> {
+    stderr
+        .lines()
+        .filter(|line| {
+            !(drop_narration
+                && (line.starts_with("ripr: consuming attempt manifest")
+                    || line.starts_with("ripr: agent repair --phase after for attempt")))
+        })
+        .map(|line| {
+            // `ripr` prints the root with forward slashes, so on Windows the
+            // native spelling alone never matches (#9272).
+            let line = line
+                .replace(root_arg, "<root>")
+                .replace(&root_arg.replace('\\', "/"), "<root>");
+            line.split_inclusive(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+                .map(|word| {
+                    let bare =
+                        word.trim_end_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '-'));
+                    if bare.starts_with("repair-attempt-") {
+                        format!("<attempt>{}", &word[bare.len()..])
+                    } else if bare.len() == 7 && bare.bytes().all(|b| b.is_ascii_hexdigit()) {
+                        // The fixture repos commit at different times, so the
+                        // short HEAD hash differs between workspaces.
+                        format!("<head>{}", &word[bare.len()..])
+                    } else {
+                        word.to_string()
+                    }
+                })
+                .collect::<String>()
+        })
+        .collect()
+}
+
+fn assert_refusal_stderr_has_prefix(stderr: &str) {
+    assert!(
+        stderr.lines().any(|line| line.starts_with("ripr: ")),
+        "refusal prose keeps the `ripr:` prefix:\n{stderr}"
+    );
+}
+
+/// #11600: `ripr status --attempt <bad>` is the façade the caller typed, so its
+/// failure names `status`, never the `agent status` spelling of the shared body.
+#[test]
+fn status_attempt_with_a_malformed_id_names_status_not_agent_status() -> Result<(), String> {
+    let root = unique_temp_workspace("status-bad-attempt");
+    std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+    init_repo(&root)?;
+    let output = run_ripr(&root, &["status", "--attempt", "not-a-repair-attempt-id"])?;
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a malformed id could not complete"
+    );
+    assert!(output.stdout.is_empty(), "stdout stays empty on exit 2");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("status --attempt: repair attempt ID must start with"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("agent status"), "{stderr}");
     Ok(())
 }

@@ -394,3 +394,25 @@ lists the input-facts, budget, refusal, output and CLI controls for this amendme
 - `crates/ripr/src/cli/commands/check_budget.rs` (deadline stamp, worker capture registration)
 - `crates/ripr/src/cli/commands/check.rs` (`stash_timeout_refusal`, human recovery prose)
 - `crates/ripr/src/output/limited_check.rs::render_check_failure_json` (generation 0.3 and `input_context`)
+
+## Amendment (#11790, #11584): structured remedy
+
+Every refusal in the envelope also carries its next step as data. Each
+`run_limitations[0]` entry of a refusal envelope (generations `0.2` and `0.3`)
+gains an optional `remedy` object, additive and without a schema-version bump:
+`kind` (`command`, `mcp_tool`, `flags` or an explicit `none`), the stated
+`command`, `alternatives`, `tool`, `flags`, `fill_in` placeholders and
+`retry_stated` (what the message says, not a promise an unchanged retry succeeds), `env`, `conditional` (the only stated step is a fallback) and `prose_has_more` (the command omits flags or environment prerequisites the prose states). The prose in `message` is the source of truth: the owner
+(`RefusalRemedy::from_prose`, derived once in `CoreError::refusal_notice`)
+copies only a backticked `ripr ...` command, an MCP tool name or a flag the
+message states, and yields `none` otherwise. The renderer serializes it and
+never re-derives it. The frozen scope-guard documents are unchanged.
+`schemas/ripr/check.schema.json` and
+`schemas/ripr/check-timeout-refusal.schema.json` admit the field; the field is
+described in [OUTPUT_SCHEMA](../OUTPUT_SCHEMA.md#structured-refusal-remedy-remedy-additive-11790-11584).
+
+Controls: `domain::refusal_remedy` unit and source-corpus tests (every
+message-shaped literal yields a grounded remedy or an explicit `none`, and a
+stated command is never dropped), `output::limited_check` envelope tests
+(positive and negative), and `tests/refusal_next_step.rs`
+(`json_refusals_carry_a_grounded_structured_remedy`, the built binary).

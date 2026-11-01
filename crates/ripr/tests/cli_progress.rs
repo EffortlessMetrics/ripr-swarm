@@ -4,8 +4,20 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+/// The binary with progress forced on, so the tests below that observe the
+/// stream keep their meaning now that a machine format on a piped stderr is
+/// silent by default (#11598). Tests of that default use [`ripr_default`].
 fn ripr() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
+    let mut command = ripr_default();
+    command.env("RIPR_PROGRESS", "1");
+    command
+}
+
+/// The binary exactly as a script runs it: no progress switches set.
+fn ripr_default() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.env_remove("RIPR_PROGRESS").env_remove("RIPR_QUIET");
+    command
 }
 
 fn workspace_root() -> PathBuf {
@@ -1173,5 +1185,118 @@ fn verbose_pilot_names_the_cold_inventory_phases_and_then_the_cache_load() -> Re
         "a warm run does not recompute: {warm_stages:?}"
     );
     ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+fn run_check_as(
+    mut command: Command,
+    fixture: &DiffFixture,
+    extra: &[&str],
+) -> Result<Output, String> {
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let mut args = vec!["check", "--root", root.as_str(), "--diff", diff.as_str()];
+    args.extend_from_slice(extra);
+    command
+        .args(&args)
+        .output()
+        .map_err(|error| format!("run ripr {args:?}: {error}"))
+}
+
+/// #11598: a machine format with a stderr that is a pipe (as it is here) is
+/// silent by default, byte-identical on stdout to the run that forces the
+/// stream with `RIPR_PROGRESS`, and `--quiet` / `RIPR_QUIET` still win.
+#[test]
+fn machine_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let default = run_check_as(ripr_default(), &fixture, &["--format", "json"])?;
+    assert!(default.status.success(), "{}", stderr_text(&default));
+    let default_err = stderr_text(&default);
+    assert!(
+        !default_err.contains("ripr progress:"),
+        "json on a non-terminal stderr must be silent by default: {default_err}"
+    );
+    let forced = run_check_as(ripr(), &fixture, &["--format", "json"])?;
+    assert!(
+        stderr_text(&forced).contains("ripr progress: completed [diff]"),
+        "RIPR_PROGRESS=1 must restore the stream (control): {}",
+        stderr_text(&forced)
+    );
+    assert_eq!(
+        default.stdout, forced.stdout,
+        "the default must change stderr only"
+    );
+    // `RIPR_QUIET` wins over `RIPR_PROGRESS`.
+    let mut both = ripr();
+    both.env("RIPR_QUIET", "1");
+    let quiet_wins = run_check_as(both, &fixture, &["--format", "json"])?;
+    assert!(
+        !stderr_text(&quiet_wins).contains("ripr progress:"),
+        "RIPR_QUIET must beat RIPR_PROGRESS: {}",
+        stderr_text(&quiet_wins)
+    );
+    Ok(())
+}
+
+/// #11598 negative: the default flips only for machine formats. A human
+/// format on the same piped stderr keeps its progress.
+#[test]
+fn human_format_on_a_pipe_keeps_progress_by_default() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let human = run_check_as(ripr_default(), &fixture, &[])?;
+    assert!(human.status.success(), "{}", stderr_text(&human));
+    assert!(
+        stderr_text(&human).contains("ripr progress: completed [diff]"),
+        "the human format keeps progress on a pipe: {}",
+        stderr_text(&human)
+    );
+    Ok(())
+}
+
+/// #11598: `ripr context` is JSON only, so its piped stderr is silent by
+/// default too, and `RIPR_PROGRESS=1` brings the stream back.
+#[test]
+fn context_on_a_pipe_is_silent_by_default() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let check = run_check_as(ripr_default(), &fixture, &["--format", "json"])?;
+    let parsed: serde_json::Value = serde_json::from_slice(&check.stdout)
+        .map_err(|error| format!("stdout is not JSON: {error}"))?;
+    let finding_id = parsed["findings"]
+        .as_array()
+        .and_then(|findings| findings.first())
+        .and_then(|finding| finding["id"].as_str())
+        .ok_or_else(|| format!("diff fixture must report a finding id: {parsed}"))?
+        .to_string();
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let args = [
+        "context",
+        "--root",
+        root.as_str(),
+        "--diff",
+        diff.as_str(),
+        "--at",
+        finding_id.as_str(),
+    ];
+    let default = ripr_default()
+        .args(args)
+        .output()
+        .map_err(|error| format!("run ripr context: {error}"))?;
+    assert!(default.status.success(), "{}", stderr_text(&default));
+    assert!(
+        !stderr_text(&default).contains("ripr progress:"),
+        "context on a pipe is silent by default: {}",
+        stderr_text(&default)
+    );
+    let forced = ripr()
+        .args(args)
+        .output()
+        .map_err(|error| format!("run ripr context: {error}"))?;
+    assert!(
+        stderr_text(&forced).contains("ripr progress: loading_input [diff]"),
+        "RIPR_PROGRESS=1 restores context progress (control): {}",
+        stderr_text(&forced)
+    );
+    assert_eq!(default.stdout, forced.stdout);
     Ok(())
 }

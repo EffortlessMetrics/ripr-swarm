@@ -21,6 +21,7 @@ on:
 
 permissions:
   actions: read
+  checks: read
   contents: read
 
 concurrency:
@@ -48,6 +49,8 @@ jobs:
       run_id: ${{ steps.route.outputs.run_id }}
       runner_query: ${{ steps.route.outputs.runner_query }}
       runner_query_exit_code: ${{ steps.route.outputs.runner_query_exit_code }}
+      runner_query_attempts: ${{ steps.route.outputs.runner_query_attempts }}
+      runner_query_http: ${{ steps.route.outputs.runner_query_http }}
       runner_total: ${{ steps.route.outputs.runner_total }}
       cx43_online: ${{ steps.route.outputs.cx43_online }}
       cx43_idle_ready: ${{ steps.route.outputs.cx43_idle_ready }}
@@ -69,6 +72,25 @@ jobs:
           target=github reason=runner_api_failed runner_query=not_attempted runner_query_exit_code=not_attempted runner_total=not_available
           cx43_online=not_available cx43_idle_ready=not_available cpx42_online=not_available cpx42_idle_ready=not_available cx53_online=not_available cx53_idle_ready=not_available
           count() { printf '%s' "$runners" | jq -s "$1"; }
+          # #8858: the inventory call is a single shared-API read that fails transiently
+          # under load. Retry it a bounded number of times before recording a failure.
+          # Only a digit-only HTTP status is kept from stderr, never the raw text.
+          runner_query_attempts=0 runner_query_http=none
+          query_runners() {
+            local attempt=1 delay="${RUNNER_QUERY_RETRY_DELAY:-5}" rc status
+            # A malformed delay must not make `sleep` fail and change retry behavior.
+            [[ "$delay" =~ ^[0-9]{1,2}$ ]] || delay=1
+            while :; do
+              runner_query_attempts=$attempt
+              runners="$(gh api --paginate 'orgs/EffortlessMetrics/actions/runners?per_page=100' 2>/tmp/runners.err)" && return 0
+              rc=$?
+              status="$(grep -Eo 'HTTP [0-9]{3}' /tmp/runners.err 2>/dev/null | tail -n 1 | cut -d' ' -f2 || true)"
+              runner_query_http="${status:-none}"
+              [ "$attempt" -lt 3 ] || return "$rc"
+              sleep "$delay"
+              attempt=$((attempt + 1)) delay=$((delay * 2))
+            done
+          }
           idle() { printf '%s' "$runners" | jq -s -e --arg model "$1" --arg cap "$2" '[.[].runners[]? | select(.status == "online" and (.busy | not) and ([.labels[].name | ascii_downcase] | index("em-ci") and index($model) and index($cap)))] | length > 0' >/dev/null; }
           if [ "$EVENT_NAME" = "merge_group" ]; then
             # A queued PR is built from the base repository's queue branch, so a
@@ -78,7 +100,7 @@ jobs:
           fi
           if { [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; } && [ "$HEAD_REPO" != "$REPOSITORY" ]; then
             reason=fork_or_untrusted_pr runner_query=skipped_untrusted_pr
-          elif runners="$(gh api --paginate 'orgs/EffortlessMetrics/actions/runners?per_page=100' 2>/tmp/runners.err)"; then
+          elif query_runners; then
             runner_query_exit_code=0 runner_query=ok
             runner_total="$(count '[.[].runners[]?] | length')"
             cx43_online="$(count '[.[].runners[]? | select(.status == "online" and ([.labels[].name | ascii_downcase] | index("em-ci") and index("cx43")))] | length')"
@@ -97,10 +119,11 @@ jobs:
             runner_query_exit_code=$?
             runner_query=failed reason=runner_api_failed
           fi
-          { echo "router_target=$target"; echo "router_reason=$reason"; repo=$REPOSITORY workflow=routed-rust run_id=$RUN_ID; for name in repo workflow run_id runner_query runner_query_exit_code runner_total cx43_online cx43_idle_ready cpx42_online cpx42_idle_ready cx53_online cx53_idle_ready; do echo "$name=${!name}"; done; } >> "$GITHUB_OUTPUT"
+          { echo "router_target=$target"; echo "router_reason=$reason"; repo=$REPOSITORY workflow=routed-rust run_id=$RUN_ID; for name in repo workflow run_id runner_query runner_query_exit_code runner_query_attempts runner_query_http runner_total cx43_online cx43_idle_ready cpx42_online cpx42_idle_ready cx53_online cx53_idle_ready; do echo "$name=${!name}"; done; } >> "$GITHUB_OUTPUT"
           { echo "### Ripr Rust Small Router"; echo ""; echo "- repo: \`$REPOSITORY\`"; echo "- workflow: \`routed-rust\`"; echo "- run: \`$RUN_ID\`"; echo "- target: \`$target\`"; echo "- reason: \`$reason\`"; for row in "runner query:$runner_query" "runner command exit code:$runner_query_exit_code" "visible runners:$runner_total" "cx43 online:$cx43_online" "cx43 idle ready:$cx43_idle_ready" "cpx42 online:$cpx42_online" "cpx42 idle ready:$cpx42_idle_ready" "cx53 online:$cx53_online" "cx53 idle ready:$cx53_idle_ready"; do echo "- ${row%%:*}: \`${row#*:}\`"; done; } >> "$GITHUB_STEP_SUMMARY"
           if [ "$runner_query" = "failed" ]; then
-            { echo '- inventory operation: `gh api --paginate orgs/EffortlessMetrics/actions/runners?per_page=100`'; echo "- HTTP status and underlying cause are unknown; command exit code is not an HTTP status. Raw stderr is withheld."; } >> "$GITHUB_STEP_SUMMARY"
+            { echo '- inventory operation: `gh api --paginate orgs/EffortlessMetrics/actions/runners?per_page=100`'; echo "- attempts: \`$runner_query_attempts\` of 3"; echo "- last HTTP status reported by gh: \`$runner_query_http\` (\`none\` means gh printed none); command exit code is not an HTTP status, the underlying cause is not claimed and raw stderr is withheld."; } >> "$GITHUB_STEP_SUMMARY"
+            case "$runner_query_http" in 401|403) echo "::warning title=Runner inventory request refused::The runner inventory query was refused with HTTP $runner_query_http (an expired or under-scoped EM_RUNNER_READ_TOKEN, or API rate limiting; the cause is not established); routing fell back to the GitHub-hosted leg. The PR is not red for this: check the token expiry and organization self-hosted-runners read scope (#8858)." ;; esac
           fi
 
   detect-docs-only:
@@ -111,7 +134,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.check.outputs.docs_only }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
       - name: Check whether every changed file is docs/spec/markdown
@@ -190,7 +213,7 @@ jobs:
       queue_entry: ${{ steps.entry.outputs.queue_entry }}
       request: ${{ steps.entry.outputs.request }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Select trusted admission source
         id: trusted
         shell: bash
@@ -214,7 +237,7 @@ jobs:
           fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Check out trusted admission bundle
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ steps.trusted.outputs.sha }}
           path: .admission-trusted
@@ -447,7 +470,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
@@ -495,7 +518,7 @@ jobs:
           fi
       - name: Upload docs-gate reports
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ripr-docs-gate
           path: target/ripr/reports/
@@ -510,7 +533,7 @@ jobs:
     needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Recheck initially admitted eligibility
         id: eligibility
@@ -530,6 +553,7 @@ jobs:
           # This does not authenticate the caller or establish G's composition.
           current_eligibility() {
             local pr frame cursor=null more page=0
+            why=admission_binding
             [ "$REPOSITORY" = EffortlessMetrics/ripr-swarm ] || return 1
             [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || return 1
             [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || return 1
@@ -586,7 +610,9 @@ jobs:
                   .repository.full_name == $repo and .id != $id and .run_number >= $number)] | length) == 0
               ' <<<"$all" >/dev/null
             }
+            why=pull_request_state
             read_pr || return
+            why=review_decision_and_threads
             while :; do
               page=$((page + 1)); [ "$page" -le 100 ] || return 1
               frame=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid reviewDecision mergeQueueEntry{id} reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor") || return
@@ -602,10 +628,90 @@ jobs:
               [ "$more" = true ] || break
               cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(type == "string" and length > 0)' <<<"$frame") || return
             done
+            why=pull_request_state_after_threads
             read_pr || return
+            why=same_head_succession
             read_succession
           }
+          # Name the refused stage in the job log. The step already fails closed;
+          # without this the log shows only an exit code (#8858).
+          why=before_check
+          trap 'rc=$?; [ "$rc" -eq 0 ] || echo "::error::eligibility recheck refused at stage $why (exit $rc) for PR #$PR_NUMBER head $EXPECTED_HEAD"; [ "$rc" -eq 0 ] || [ "$why" != admission_binding ] || [ "$GITHUB_RUN_ATTEMPT" -le 1 ] || { [ "$EVENT_NAME" = merge_group ] && echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Re-queue the pull request to qualify a new merge group (#8858)." || echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Remove and re-add merge-ready to start a fresh run (#8858)."; }' EXIT
           current_eligibility
+      - name: Read the extension e2e check for the admitted head
+        id: vscode
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
+        run: |
+          set -euo pipefail
+          # #12122: ci.yml owns selection of the `vscode` extension e2e. Its
+          # `vscode surface` job ends non-skipped only for a merge-ready request,
+          # and every `vscode` check of that workflow run lives in the same
+          # check suite. A skipped `vscode` check therefore means "not selected"
+          # only when the request's own `vscode surface` succeeded and the skip
+          # is in its suite: a skipped check from an earlier nonrequest event is
+          # in another suite and can never stand in for it. The surface check
+          # must also belong to a ci.yml run created within 90s of this run's
+          # creation or later (run creation is the event time, not the runner
+          # queue), so an older request's suite is not read. No such check yet means
+          # ci.yml has not got that far: wait, then fail closed. In the suite,
+          # the newest executed check (highest id) decides, so a passing re-run
+          # clears an earlier infrastructure failure; a running one is awaited.
+          # Reads retry because one transient API error must not cost a 45
+          # minute re-run.
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::admitted head is not a full SHA"; exit 1; }
+          api() {
+            local attempt
+            for attempt in 1 2 3 4; do
+              gh api "$@" && return 0
+              [ "$attempt" -eq 4 ] || sleep $((attempt * 5))
+            done
+            return 1
+          }
+          run_created=$(api "repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at) || { echo "::error::could not read this run's creation time"; exit 1; }
+          since=$(date -u -d "$run_created - 90 seconds" +%Y-%m-%dT%H:%M:%SZ) || { echo "::error::could not compute the request window from $run_created"; exit 1; }
+          deadline=$((SECONDS + 1200))
+          while :; do
+            surface_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode%20surface&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode surface check runs for $EXPECTED_HEAD"; exit 1; }
+            vscode_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode check runs for $EXPECTED_HEAD"; exit 1; }
+            surface='{}'
+            while IFS= read -r candidate; do
+              [ -n "$candidate" ] || continue
+              candidate_run=$(jq -r '(.html_url // "") | try (capture("/runs/(?<r>[0-9]+)/") | .r) catch empty' <<<"$candidate")
+              [ -n "$candidate_run" ] || continue
+              candidate_created=$(api "repos/$REPOSITORY/actions/runs/$candidate_run" --jq .created_at) || { echo "::error::could not read the creation time of run $candidate_run"; exit 1; }
+              if [[ ! "$candidate_created" < "$since" ]]; then surface=$candidate; break; fi
+            done < <(jq -s -c '[.[] | select(.app.slug == "github-actions" and .conclusion != "skipped")] | sort_by(.id) | reverse | .[0:5][]' <<<"$surface_raw")
+            state=$(jq -r '.status // "none"' <<<"$surface")
+            if [ "$state" = completed ]; then
+              surface_conclusion=$(jq -r '.conclusion // ""' <<<"$surface")
+              [ "$surface_conclusion" = success ] || { echo "::error::vscode surface concluded '$surface_conclusion' for $EXPECTED_HEAD: $(jq -r '.html_url // ""' <<<"$surface")"; exit 1; }
+              suite=$(jq -r '.check_suite.id // ""' <<<"$surface")
+              mine=$(jq -s -c --arg suite "$suite" '[.[] | select(.app.slug == "github-actions" and ((.check_suite.id | tostring) == $suite))] | sort_by(.id)' <<<"$vscode_raw") || { echo "::error::could not classify vscode check runs"; exit 1; }
+              total=$(jq 'length' <<<"$mine")
+              newest=$(jq -c '[.[] | select(.conclusion != "skipped")] | last // {}' <<<"$mine")
+              state=$(jq -r '.status // "none"' <<<"$newest")
+              conclusion=$(jq -r '.conclusion // ""' <<<"$newest")
+              url=$(jq -r '.html_url // ""' <<<"$newest")
+              case "$state" in
+                none)
+                  if [ "$total" -gt 0 ]; then echo "The vscode check was skipped in this request's run for $EXPECTED_HEAD: the extension e2e was not selected."; exit 0; fi
+                  state="not yet created" ;;
+                completed)
+                  if [ "$conclusion" = success ]; then echo "vscode check succeeded for $EXPECTED_HEAD: $url"; exit 0; fi
+                  echo "::error::vscode extension e2e concluded '$conclusion' for $EXPECTED_HEAD: $url"; exit 1 ;;
+              esac
+            else
+              [ "$state" != none ] || state="absent"
+              state="vscode surface $state"
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then echo "::error::vscode extension e2e is $state after the wait for $EXPECTED_HEAD"; exit 1; fi
+            echo "vscode check is $state for $EXPECTED_HEAD; waiting"
+            sleep 30
+          done
       - name: Summarize routed result
         if: always()
         env:
@@ -637,6 +743,8 @@ jobs:
           CX53_SCRATCH_MESSAGE: ${{ needs.rust-cx53.outputs.scratch_message }}
           RUNNER_QUERY: ${{ needs.route.outputs.runner_query }}
           RUNNER_QUERY_EXIT_CODE: ${{ needs.route.outputs.runner_query_exit_code }}
+          RUNNER_QUERY_ATTEMPTS: ${{ needs.route.outputs.runner_query_attempts }}
+          RUNNER_QUERY_HTTP: ${{ needs.route.outputs.runner_query_http }}
           RUNNER_TOTAL: ${{ needs.route.outputs.runner_total }}
           CX43_ONLINE: ${{ needs.route.outputs.cx43_online }}
           CX43_IDLE_READY: ${{ needs.route.outputs.cx43_idle_ready }}
@@ -651,6 +759,7 @@ jobs:
           DOCS_GATE_RESULT: ${{ needs.docs-gate.result }}
           WORKFLOW_REF: ${{ github.ref }}
           ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
+          VSCODE_CHECK_RESULT: ${{ steps.vscode.outcome }}
         run: |
           status=pass message="selected implementation job succeeded"
           if [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"
@@ -661,6 +770,7 @@ jobs:
           elif [ "$ADMISSION_RESULT" != "success" ]; then status=fail; message="candidate admission result was $ADMISSION_RESULT: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then status=fail; message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$ELIGIBILITY_RESULT" != success ]; then status=fail; message="live eligibility no longer established for the initially admitted head/request"
+          elif [ "$EVENT_NAME" = pull_request ] && [ "$VSCODE_CHECK_RESULT" != success ]; then status=fail; message="the selected VS Code extension e2e did not succeed for the admitted head (see the vscode check step)"
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"
@@ -715,7 +825,7 @@ jobs:
           fi
           echo "### Ripr Rust Small Result" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
+          for row in "admission result:$ADMISSION_RESULT" "admission status:$ADMISSION_STATUS" "admission reason:$ADMISSION_REASON" "admission detail:$ADMISSION_DETAIL" "admission cut status:$ADMISSION_CUT_STATUS" "admission cut reason:$ADMISSION_CUT_REASON" "admission cut detail:$ADMISSION_CUT_DETAIL" "admission claim:$ADMISSION_CLAIM" "admission delta:$ADMISSION_ACCEPTANCE_DELTA" "competing PRs:$ADMISSION_COMPETING_PRS" "changed files:$ADMISSION_CHANGED_FILES" "changed lines:$ADMISSION_CHANGED_LINES" "target:$TARGET" "reason:$REASON" "docs_detect:$DOCS_DETECT_RESULT" "docs_only:$DOCS_ONLY" "docs_gate:$DOCS_GATE_RESULT" "status:$status" "message:$message" "route:$ROUTE_RESULT" "cx43:$CX43_RESULT" "cpx42:$CPX42_RESULT" "cx53:$CX53_RESULT" "github:$GITHUB_RESULT" "github tests:$GITHUB_TESTS_RESULT" "cx43 scratch:$CX43_SCRATCH_STATUS" "cpx42 scratch:$CPX42_SCRATCH_STATUS" "cx53 scratch:$CX53_SCRATCH_STATUS" "cx43 scratch message:$CX43_SCRATCH_MESSAGE" "cpx42 scratch message:$CPX42_SCRATCH_MESSAGE" "cx53 scratch message:$CX53_SCRATCH_MESSAGE" "runner query:$RUNNER_QUERY" "runner command exit code:$RUNNER_QUERY_EXIT_CODE" "runner query attempts:$RUNNER_QUERY_ATTEMPTS" "runner query last HTTP status:$RUNNER_QUERY_HTTP" "visible runners:$RUNNER_TOTAL" "cx43 online:$CX43_ONLINE" "cx43 idle ready:$CX43_IDLE_READY" "cpx42 online:$CPX42_ONLINE" "cpx42 idle ready:$CPX42_IDLE_READY" "cx53 online:$CX53_ONLINE" "cx53 idle ready:$CX53_IDLE_READY"; do
             echo "- ${row%%:*}: \`${row#*:}\`" >> "$GITHUB_STEP_SUMMARY"
           done
           [ "$status" = "pass" ]

@@ -520,14 +520,14 @@ pub(super) fn validated_pulled_options(values: &[Value]) -> Result<Option<Value>
         ));
     }
     let Some(item) = values.first() else {
-        return Err("workspace/configuration returned no items".to_string());
+        return Err("workspace/configuration returned no items; send one item for the `ripr` section (or null)".to_string());
     };
     if item.is_null() {
         return Ok(None);
     }
     let Some(object) = item.as_object() else {
         return Err(format!(
-            "workspace/configuration item for the `ripr` section must be an object or null, got {item}"
+            "workspace/configuration item for the `ripr` section must be an object or null, got {item}; send an object of ripr settings or null"
         ));
     };
     for (key, value) in object {
@@ -550,7 +550,7 @@ fn validate_pulled_value(key: &str, value: &Value) -> Result<(), String> {
         .is_some_and(|text| text.len() > MAX_PULLED_VALUE_BYTES)
     {
         return Err(format!(
-            "workspace/configuration value for `{key}` exceeds the {MAX_PULLED_VALUE_BYTES}-byte pulled-value bound"
+            "workspace/configuration value for `{key}` exceeds the {MAX_PULLED_VALUE_BYTES}-byte pulled-value bound; use a shorter value in the editor settings"
         ));
     }
     if key == "refreshDeadlineMs"
@@ -564,7 +564,7 @@ fn validate_pulled_value(key: &str, value: &Value) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "workspace/configuration value for `{key}` has an invalid type or literal: {value}"
+        "workspace/configuration value for `{key}` has an invalid type or literal: {value}; fix the value in the editor settings"
     ))
 }
 

@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -33,7 +33,7 @@
+ }
+ 
+ fn glob_shadow_inner(x: i64) -> i64 {
+-    x + x
++    x * 3
+ }
+ 
+ pub fn macro_shadow(x: i64) -> i64 {

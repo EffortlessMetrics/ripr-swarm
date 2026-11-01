@@ -84,6 +84,35 @@ bind:
   overflow, while float literals keep the f64 path because Python rounds
   them at parse time too (#7874).
 
+## Understood guard forms
+
+Beyond `left <op> right` comparisons, `guard_atoms.rs` reads a closed
+allow-list of guard forms against the same literal call rows. Each conjunct of
+an `and` chain (split outside quotes and brackets) may be:
+
+- `NAME is None` / `NAME is not None`;
+- the truthiness of a bare `NAME` (`None`, `False`, `0`, `0.0`, `''` and an
+  empty list, tuple, set or dict display are falsy; any other literal and a
+  non-empty display are truthy), including a flag that a test omits and so
+  takes its literal default;
+- `not` over any one of the forms here (`not flag`, `not x is None`);
+- `NAME in <literal display>` / `NAME not in <literal display>`, where the
+  display is a list, set or multi-element tuple of scalar literals;
+- `isinstance(NAME, C)` where `C` is `int`, `float`, `str`, `bool` or a tuple
+  of them and none of those builtins is rebound (`isinstance(True, int)`
+  holds);
+- a `for TARGET in NAME:` header, read as `len(NAME) > 0` over a literal
+  display or string, so a loop body never runs for `total([])`.
+
+A row is excluded exactly as for a comparison: the conjunct is provably false.
+Everything else keeps the existing verdict, documented as the known limit: a
+guard outside this list (`callable(x)`, `x.attr`, a call, a computed operand),
+`or`, a name the owner rebinds before the guard, a container the owner may have
+changed before the guard (any earlier mention other than a pure condition
+test), a non-literal or unbound argument, and an `except` arm. Whether a test
+raises is not a literal input, so `except ValueError: return -1` is not
+demoted. Plain comparisons and the credit-side reader (#9833) are unchanged.
+
 ## Unreached `match` arms and `.get` defaults (#9429)
 
 The same all-rows-excluded rule covers two more branch shapes, in
@@ -154,10 +183,17 @@ assertion cannot lend retention to a later masked read. Resolved assertion
 helpers keep the exact helper-call span; argument evaluation does not establish
 that a field captured before the owner call observes its changed value. This
 ordering rule governs the effect-channel credit. The separate owner-result
-identity branch is not a propagation proof: a helper comparison that mentions
-the owner can still be credited there even when its result is implicit `None`.
-That inherited limitation is retained rather than refusing genuine comparisons
-whose owner returns the changed field.
+identity branches (owner name, method on a bound receiver, alias, protocol
+entry, module call) do not credit a `self` field or module-object field write when
+the owner's text holds no `return` and no `yield` as code, because the call
+then hands back only the implicit `None` (or a coroutine or generator) and its
+result carries no trace of the write (#10178). Only the effect branch, which
+reads the field after the completed call, and the changed-token branch, which
+reads the written field itself, may credit such a write. Dunder
+owners keep their protocol reading. The fact is textual and fails closed toward
+the prior reading: a bare or nested `return` leaves the result branches in
+force, and a returned changed field keeps its genuine comparison credit.
+The result branches are not a general propagation proof.
 
 ## Required Evidence
 
@@ -195,6 +231,11 @@ guard predicate (a pure-expression change).
    the row.
 5. `if flag == 1:` with `quote(True)` stays `exposed` (`True == 1` in
    Python).
+6. `def label(x): if x is None: return 'nil'` with the only strong test
+   asserting `label(3) == '3'` reads `weakly_exposed`: `x is None` is an
+   understood guard form and `3` fails it.
+7. The same owner with a test asserting `label(None) == 'nil'` stays
+   `exposed`: the guard is provably taken.
 
 ## Call-Row Excerpt
 
@@ -232,7 +273,13 @@ text is display only and never feeds a decision:
   wildcard and literal arms, the controls that reach them, the fail-open
   patterns, and the `.get` default with its table-mutation fail-opens.
 
+- `analysis::language::python::guard_atoms_tests` covers each understood guard
+  form, its positive control, and the fail-open shapes.
+
 ## Implementation Mapping
+
+- `crates/ripr/src/analysis/language/python/guard_atoms.rs` owns the
+  understood non-comparison guard forms the exclusion reader evaluates.
 
 - `crates/ripr/src/analysis/language/python/arm_activation.rs` owns the
   `match` arm and `.get` default exclusion, chained after the guard rule in

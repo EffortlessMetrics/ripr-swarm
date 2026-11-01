@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- `cargo xtask check-changelog-fragments` now fails a fragment or Unreleased entry that opens with a backticked `cargo xtask` command, `.github/` workflow, `policy/` file, `AGENTS.md`, `CLAUDE.md` or maintainer doc outside `Internal / CI`, and any entry whose text repeats another fragment or Unreleased entry word for word, so the cut-day fold needs no manual reclassification (#11815).

@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- Added Kani bounded-model-checking harnesses (`#[cfg(kani)]`, never compiled in normal builds) for the actionability flip: the canonical next-action selector runs a command only when the route is admitted, the mode is not manual, the effect is named, heads are bound and equal, configs do not diverge, no limitation is declared and the check and card agree; the repair-card route gate and budget validation; and the repair-guidance reason/recovery tables that keep staleness exclusive. Run with `cargo kani -p ripr --harness <name>`. (#11823)

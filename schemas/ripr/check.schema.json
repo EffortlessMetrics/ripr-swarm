@@ -56,6 +56,35 @@
       "type": "array",
       "items": { "$ref": "#/$defs/run_limitation" }
     },
+    "language_completeness": {
+      "description": "Per-language projection of the shared completeness view (language_completeness.v1, #11272). Rows mirror the sealed language aggregate; it never strengthens a child.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "mode", "completeness", "total_findings", "languages"],
+      "properties": {
+        "schema_version": { "const": "language_completeness.v1" },
+        "mode": { "enum": ["diff", "repo"] },
+        "completeness": { "enum": ["complete", "incomplete"] },
+        "total_findings": { "type": "integer", "minimum": 0 },
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["language", "status", "findings", "limitations", "disclosure"],
+            "properties": {
+              "language": { "type": "string" },
+              "status": {
+                "enum": ["complete", "complete_zero", "partial", "unavailable", "invalid", "failed", "unsupported", "not_selected", "no_current_scope"]
+              },
+              "findings": { "type": "integer", "minimum": 0 },
+              "limitations": { "type": "array", "items": { "type": "string" } },
+              "disclosure": { "enum": ["silent", "language_run", "typed_limitation", "advisory_only"] }
+            }
+          }
+        }
+      }
+    },
     "scope_disclosures": {
       "type": "array",
       "items": { "type": "object" }
@@ -608,7 +637,36 @@
         "basis": { "type": "string", "minLength": 1 },
         "downstream_consumable": { "const": false },
         "message": { "type": "string", "minLength": 1 },
-        "repair_route": { "type": "string", "minLength": 1 }
+        "repair_route": { "type": "string", "minLength": 1 },
+        "remedy": { "$ref": "#/$defs/refusal_remedy" }
+      }
+    },
+    "refusal_remedy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "command",
+        "alternatives",
+        "tool",
+        "flags",
+        "fill_in",
+        "retry_stated",
+        "env",
+        "conditional",
+        "prose_has_more"
+      ],
+      "properties": {
+        "kind": { "enum": ["command", "mcp_tool", "flags", "none"] },
+        "command": { "type": ["string", "null"], "minLength": 1 },
+        "alternatives": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "tool": { "type": ["string", "null"], "minLength": 1 },
+        "flags": { "type": "array", "items": { "type": "string", "pattern": "^--[a-z]" } },
+        "fill_in": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "retry_stated": { "type": ["boolean", "null"] },
+        "env": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "conditional": { "type": "boolean" },
+        "prose_has_more": { "type": "boolean" }
       }
     },
     "finding_alignment": {

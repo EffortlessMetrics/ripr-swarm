@@ -263,11 +263,11 @@ pub(super) fn write_stdout_chunked(text: &str) -> Result<(), String> {
     for chunk in text.as_bytes().chunks(CHUNK) {
         handle
             .write_all(chunk)
-            .map_err(|err| format!("write to stdout failed: {err}"))?;
+            .map_err(|err| format!("write to stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))?;
     }
     handle
         .flush()
-        .map_err(|err| format!("flush stdout failed: {err}"))
+        .map_err(|err| format!("flush stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))
 }
 
 /// Typed refusal for a [`load_for_root`] failure (#6834, shared #7331).
