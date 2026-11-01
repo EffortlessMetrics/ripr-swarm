@@ -176,6 +176,9 @@ fn external_pins_need_a_nightly_plan_and_cannot_mix_with_direct_arguments() {
     assert!(mixed.is_err_and(|error| error.contains("do not combine")));
     let bad = parse_args(&args("--external-pins a/b"));
     assert!(bad.is_err());
+    // Both lists write `warm-ab-<id>.*`, so a shared id would overwrite evidence.
+    let shared = parse_args(&args("--pins tokio=a58975de --external-pins tokio"));
+    assert!(shared.is_err_and(|error| error.contains("both --pins and --external-pins")));
 }
 
 #[cfg(unix)]

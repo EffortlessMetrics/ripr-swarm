@@ -53,6 +53,16 @@ impl Plan {
             }
             None => Vec::new(),
         };
+        // Both lists write `warm-ab-<id>.{json,md}`, so a shared id would
+        // silently replace one pin's evidence with the other's.
+        if let Some(shared) = external_ids
+            .iter()
+            .find(|id| pins.iter().any(|(pin, _)| pin == *id))
+        {
+            return Err(format!(
+                "pin id `{shared}` is used by both --pins and --external-pins"
+            ));
+        }
         Ok(Self {
             pins,
             external_ids,
