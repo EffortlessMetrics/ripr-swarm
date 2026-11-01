@@ -1,0 +1,24 @@
+{
+  "id": "rust_fixture_receiver_coincident_data",
+  "language": "rust",
+  "tier": "pure",
+  "source_fixture": "fixtures/fixture_receiver_coincident_data",
+  "vector": "coincident_literal_fixture_data_or_unread_old_reduction_supplies_no_exact_pin",
+  "probe_family": "return_value",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 3
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "static_unknown"
+    }
+  ]
+}

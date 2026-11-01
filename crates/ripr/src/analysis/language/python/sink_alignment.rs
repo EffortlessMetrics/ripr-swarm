@@ -1213,7 +1213,22 @@ pub(super) fn classify_sink_alignment_prepared(
     };
     // A mock assertion credits only through the effect branch, where it pins
     // the arguments of the very call the changed line makes.
+    // A field write by an owner that returns only the implicit `None` is not
+    // observable through the call's result: an assertion that merely names the
+    // owner call (`check(rec.last, rec.note("error"))`) compares `None` and the
+    // field it read, in whatever order. Only the effect branch, which reads the
+    // field after the completed call, may credit (#10178). Dunder owners keep
+    // their protocol reading (`__enter__` hands back its own result).
+    let result_cannot_observe_write = matches!(
+        effect,
+        Some(ChangedEffect::SelfField { .. } | ChangedEffect::ModuleField { .. })
+    ) && owner.term_facts.returns_no_value()
+        && !(owner.name.starts_with("__") && owner.name.ends_with("__"));
     let gates_ok = |unit: &AlignmentUnit<'_>| !unit.effect_only && gates_ok(unit);
+    // The branches that read the call's result (name, method, alias, protocol
+    // entry, module call). The changed-token branch reads the written field
+    // itself and keeps `gates_ok` alone.
+    let result_gates_ok = |unit: &AlignmentUnit<'_>| !result_cannot_observe_write && gates_ok(unit);
     // What each related test can read of the changed effect, with its owner
     // identity, is a per-test fact: built once, then checked per assertion.
     let effect_reads = per_related_test(|unit: &AlignmentUnit<'_>| {
@@ -1243,7 +1258,7 @@ pub(super) fn classify_sink_alignment_prepared(
         ("direct", "strong_oracle_observes_owner_name", &|unit| {
             observes_imported_owner(unit, &identity_tokens)
                 && (method_owner_identity(unit) || free_fn_module_identity(unit))
-                && gates_ok(unit)
+                && result_gates_ok(unit)
         }),
         (
             "direct",
@@ -1254,7 +1269,7 @@ pub(super) fn classify_sink_alignment_prepared(
                     .is_some_and(|token| observes(unit, std::slice::from_ref(token)))
                     && binds_method_receiver(unit)
                     && !asserts_foreign_receiver(unit)
-                    && gates_ok(unit)
+                    && result_gates_ok(unit)
             },
         ),
         ("alias", "strong_oracle_observes_import_alias", &|unit| {
@@ -1263,17 +1278,21 @@ pub(super) fn classify_sink_alignment_prepared(
             // the owner (#8247). Without source facts the pooled set stands.
             let own_aliases = unit.test.map(owner_aliases_in);
             observes_imported_owner(unit, own_aliases.as_deref().unwrap_or(&alias_tokens))
-                && gates_ok(unit)
+                && result_gates_ok(unit)
         }),
         (
             "direct",
             "strong_oracle_observes_owner_protocol_entry",
-            &|unit| protocol_entry_observed(unit) && method_owner_identity(unit) && gates_ok(unit),
+            &|unit| {
+                protocol_entry_observed(unit)
+                    && method_owner_identity(unit)
+                    && result_gates_ok(unit)
+            },
         ),
         (
             "direct",
             "strong_oracle_observes_owner_call_through_module",
-            &|unit| module_call_observed(unit) && gates_ok(unit),
+            &|unit| module_call_observed(unit) && result_gates_ok(unit),
         ),
         // Gate the changed-sink-token path with the same free-function module
         // identity as the direct/alias paths: a same-named free function from a

@@ -822,6 +822,50 @@ fn a_same_module_binding_cannot_shadow_a_qualified_impl_type() -> Result<(), Str
 }
 
 #[test]
+fn a_qualified_call_spelling_trait_arguments_must_match_the_impl_header() -> Result<(), String> {
+    // `<Money as Add<Money>>::add(..)` names the one `Add` impl for `Money`
+    // (the omitted right-hand side of the header is `Money`), so it credits
+    // like `<Money as Add>::add(..)`.
+    let spelled = Case {
+        label: "spelled_trait_args",
+        old_line: "        Self(self.0 + other.0)",
+        new_line: "        Self(other.0 + self.0)",
+        extra_items: "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = <Money as Add<Money>>::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }",
+        ..ADD
+    };
+    assert_eq!(classes(&spelled)?, [ExposureClass::WeaklyExposed]);
+    // An explicit `impl Add<Money> for Money` header takes the declared-arguments
+    // branch; the fixture must parse as intended before the credit claim.
+    let explicit = Case {
+        label: "spelled_trait_args_explicit_header",
+        trait_name: "Add<Money>",
+        ..spelled
+    };
+    assert!(source(&explicit).contains("impl Add<Money> for Money {"));
+    assert!(direct_tests(&explicit)?.contains(&"named_call".to_string()));
+    assert_eq!(classes(&explicit)?, [ExposureClass::WeaklyExposed]);
+    // Negative that exercises the argument check itself: the only `Add` impl
+    // is `Add<Money>` (so the trait is unique) and the call spells `Add<i64>`.
+    let mismatched = Case {
+        label: "spelled_trait_args_mismatch",
+        extra_items: "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = <Money as Add<i64>>::add(Money(1), 1); assert_eq!(sum.0, 2); } }",
+        ..spelled
+    };
+    assert_eq!(classes(&mismatched)?, [ExposureClass::StaticUnknown]);
+    // Negative guarded by `trait_unique` rather than the argument check: a
+    // second `Add<i64>` impl exists, so the owner's trait is ambiguous. The
+    // argument-mismatch rejection is covered by the mismatch case above and
+    // the `type_path_calls` unit test.
+    let other_impl = Case {
+        label: "spelled_trait_args_other_impl",
+        extra_items: "impl Add<i64> for Money { type Output = Money; fn add(self, other: i64) -> Money { Money(self.0 + other) } }\n#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = <Money as Add<i64>>::add(Money(1), 1); assert_eq!(sum.0, 2); } }",
+        ..spelled
+    };
+    assert_eq!(classes(&other_impl)?, [ExposureClass::StaticUnknown]);
+    Ok(())
+}
+
+#[test]
 fn an_unresolved_macro_invocation_in_the_test_scope_withholds_the_credit() -> Result<(), String> {
     // A sibling-defined macro invoked in the test's enclosing module expands
     // to a foreign `Money` import; the invocation never names `Money`. The
