@@ -271,6 +271,25 @@ esac
 }
 
 #[test]
+fn unbound_proof_cannot_be_reported_as_a_passing_result() -> Result<(), String> {
+    for event in ["pull_request", "merge_group"] {
+        for outcome in ["failure", "skipped", ""] {
+            let (success, report) = run_result(
+                &workflow()?,
+                event,
+                "refs/heads/main",
+                "success",
+                "admitted",
+                &[("PROOF_BINDING_RESULT", outcome)],
+            )?;
+            assert!(!success, "{event} with {outcome:?} must fail: {report}");
+            assert!(report.contains("routed child and shard proof binding was"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn branch_dispatch_cannot_qualify_even_when_every_child_succeeds() -> Result<(), String> {
     for reference in ["refs/heads/fix/5394", "refs/tags/v0.11.0", "", "main"] {
         let (success, report) = run_result(
@@ -487,7 +506,7 @@ fn event_identity_is_wired_from_github_not_candidate_inputs() -> Result<(), Stri
 }
 
 #[test]
-fn hosted_result_requires_the_sharded_tests_and_self_hosted_does_not() -> Result<(), String> {
+fn hosted_result_requires_one_unsharded_gate_and_self_hosted_does_not() -> Result<(), String> {
     let result = |overrides: &[(&str, &str)]| {
         run_result(
             &workflow()?,
@@ -498,15 +517,15 @@ fn hosted_result_requires_the_sharded_tests_and_self_hosted_does_not() -> Result
             overrides,
         )
     };
-    // Hosted route: green gates job alone is not a green result (#10507).
+    // Hosted route runs the complete nextest command in the gates job.
     assert!(result(&[("TARGET", "github")])?.0);
-    for tests in ["failure", "cancelled", "skipped", ""] {
-        let (success, report) = result(&[("TARGET", "github"), ("GITHUB_TESTS_RESULT", tests)])?;
+    for gate in ["failure", "cancelled", "skipped", ""] {
+        let (success, report) = result(&[("TARGET", "github"), ("GITHUB_RESULT", gate)])?;
         assert!(
             !success,
-            "hosted tests `{tests}` must fail the result: {report}"
+            "hosted gate `{gate}` must fail the result: {report}"
         );
-        assert!(report.contains("sharded tests result"), "{report}");
+        assert!(report.contains("GitHub-hosted job result"), "{report}");
     }
     // Self-hosted route ran its own nextest step; the skipped hosted shards do not matter.
     assert!(
@@ -514,23 +533,21 @@ fn hosted_result_requires_the_sharded_tests_and_self_hosted_does_not() -> Result
             ("TARGET", "cx43"),
             ("CX43_RESULT", "success"),
             ("GITHUB_RESULT", "skipped"),
-            ("GITHUB_TESTS_RESULT", "skipped"),
         ])?
         .0
     );
-    // A tempfailed self-hosted job falls back to the hosted route, shards included.
-    for (tests, expected) in [("success", true), ("failure", false), ("skipped", false)] {
+    // A tempfailed self-hosted job falls back to the unsharded hosted gate.
+    for (gate, expected) in [("success", true), ("failure", false), ("skipped", false)] {
         assert_eq!(
             result(&[
                 ("TARGET", "cx43"),
                 ("CX43_RESULT", "failure"),
                 ("CX43_SCRATCH_STATUS", "tempfail"),
-                ("GITHUB_RESULT", "success"),
-                ("GITHUB_TESTS_RESULT", tests),
+                ("GITHUB_RESULT", gate),
             ])?
             .0,
             expected,
-            "fallback with sharded tests `{tests}`"
+            "fallback with hosted gate `{gate}`"
         );
     }
     Ok(())

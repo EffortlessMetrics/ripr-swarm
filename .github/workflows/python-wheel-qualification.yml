@@ -37,6 +37,7 @@ on:
         default: ""
         type: string
   pull_request:
+    types: [labeled]
     paths:
       - ".github/workflows/python-wheel-qualification.yml"
       - "Cargo.lock"
@@ -51,6 +52,8 @@ on:
       - "rust-toolchain.toml"
       - "xtask/**"
       - "tools/repo-policy/**"
+  merge_group:
+    types: [checks_requested]
 
 # This workflow builds and consumes local artifacts only. It cannot publish,
 # mint an OIDC token, create a release, mutate a tag, or write repository data.
@@ -58,7 +61,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: python-wheel-qualification-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha }}
+  # Unselected PR labels must never cancel an in-flight qualification.
+  group: python-wheel-qualification-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha }}-${{ github.event_name == 'pull_request' && (github.event.pull_request.draft || github.event.action != 'labeled' || github.event.label.name != 'merge-ready') && github.run_id || 'intent' }}
   cancel-in-progress: true
 
 env:
@@ -72,7 +76,7 @@ env:
 
 jobs:
   applicability:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) }}
     name: workflow policy and wheel applicability
     runs-on: ubuntu-22.04
     timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 3 || 10 }}
@@ -170,7 +174,7 @@ jobs:
   # Both producers remain mandatory; consumption waits for both to succeed.
   source-contract:
     needs: applicability
-    if: ${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (!contains(toJSON(inputs), '"subject_sha"') || needs.applicability.result == 'success') && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
+    if: ${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && (!contains(toJSON(inputs), '"subject_sha"') || needs.applicability.result == 'success') && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
     name: Python package source contract
     timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 8 || 20 }}
     runs-on: ubuntu-22.04
@@ -200,7 +204,7 @@ jobs:
   build-wheel:
     needs: applicability
     # Only an explicit successful skip proof can avoid qualification.
-    if: ${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (!contains(toJSON(inputs), '"subject_sha"') || needs.applicability.result == 'success') && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
+    if: ${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && (!contains(toJSON(inputs), '"subject_sha"') || needs.applicability.result == 'success') && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
     name: build and inspect Linux x64 wheel
     timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 12 || 20 }}
     runs-on: ubuntu-22.04

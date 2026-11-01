@@ -5,7 +5,7 @@ name: ub-review
 # review plus a CI gate result. See docs/QUICKSTART.md and docs/ADOPTION_MODES.md.
 on:
   pull_request:
-    types: [opened, reopened, synchronize]
+    types: [labeled]
 
 permissions:
   contents: read
@@ -13,12 +13,13 @@ permissions:
   checks: write
 
 concurrency:
-  group: ub-review-${{ github.event.pull_request.number || github.ref }}
+  # Unselected labels get unique groups and cannot cancel the active review.
+  group: ub-review-${{ github.event.pull_request.number || github.ref }}-${{ !github.event.pull_request.draft && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'intent' || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   ub-review:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -63,6 +64,10 @@ jobs:
           # knobs. advisory = comment only; gate = recommended CI gate;
           # strict = + reporter verdict can block.
           review-mode: advisory
+          # The label is an explicit operator request. The pinned action maps
+          # labeled events to a non-posting catch-all unless its supported
+          # manual pass is selected; GitHub event metadata remains unchanged.
+          run-pass: manual
           provider-policy: minimax-only
           minimax-api-key: ${{ secrets.MINIMAX_API_KEY }}
           github-token: ${{ github.token }}

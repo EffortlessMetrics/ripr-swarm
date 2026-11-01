@@ -27,7 +27,7 @@ const REQUIRED_CONTEXT: &str = "Ripr Rust Small Result";
 /// The only name expression that can post the required context: main/manual
 /// runs and an explicit merge-ready request. Every other label event posts a
 /// different name; a skipped job would report success for a static name.
-const EXPECTED_RESULT_NAME: &str = "${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
+const EXPECTED_RESULT_NAME: &str = "${{ (github.repository == 'EffortlessMetrics/ripr-swarm' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.label.name == 'merge-ready'))) && 'Ripr Rust Small Result' || 'Swarm Route Nonrequest' }}";
 const WATCHDOG: &str = ".github/workflows/pr-staleness-watchdog.yml";
 /// Executable (non-comment) fragments that would let the watchdog start or
 /// authorize a workflow run.
@@ -143,20 +143,35 @@ fn required_pr_context_is_withheld_until_merge_ready() -> Result<(), String> {
     assert_eq!(terminal_context(&source), Some(EXPECTED_RESULT_NAME));
     assert!(EXPECTED_RESULT_NAME.contains(REQUIRED_CONTEXT));
     assert!(!source.contains("Ripr Rust Small Ignored Label Event"));
-    assert!(!source.contains("github.event.pull_request.draft"));
+    for job in ["route", "detect-docs-only", "admission"] {
+        let guard = "github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.label.name == 'merge-ready')";
+        let start = source
+            .find(&format!("  {job}:\n"))
+            .ok_or_else(|| format!("missing {job}"))?;
+        let rest = &source[start..];
+        let block = rest.lines().skip(1).take_while(|line| {
+            !(line.starts_with("  ") && !line.starts_with("   ") && line.ends_with(':'))
+        });
+        assert!(
+            block.into_iter().any(|line| line.contains(guard)),
+            "{job} must exclude draft labels"
+        );
+    }
     Ok(())
 }
 
 #[test]
 fn contract_rejects_draft_or_mutation_triggers() -> Result<(), String> {
     let source = workflow_source()?;
-    let changed = source.replace("types: [labeled]", "types: [labeled, synchronize]");
-    assert_ne!(changed, source, "trigger mutation must engage");
-    assert_ne!(
-        event_declarations(&changed)?,
-        EXPECTED_EVENT_DECLARATIONS,
-        "synchronize must violate the protected event law",
-    );
+    for event in ["synchronize", "ready_for_review", "converted_to_draft"] {
+        let changed = source.replace("types: [labeled]", &format!("types: [labeled, {event}]"));
+        assert_ne!(changed, source, "trigger mutation must engage");
+        assert_ne!(
+            event_declarations(&changed)?,
+            EXPECTED_EVENT_DECLARATIONS,
+            "{event} must violate the protected event law"
+        );
+    }
     Ok(())
 }
 
@@ -189,7 +204,10 @@ fn contract_rejects_a_noncanonical_terminal_context() -> Result<(), String> {
         Some(EXPECTED_RESULT_NAME),
         "a static result name must violate the required-context contract",
     );
-    let widened = source.replace("label.name == 'merge-ready') &&", "label.name != '') &&");
+    let widened = source.replace(
+        "label.name == 'merge-ready'))) &&",
+        "label.name != ''))) &&",
+    );
     assert_ne!(widened, source, "request-label mutation must engage");
     assert_ne!(terminal_context(&widened), Some(EXPECTED_RESULT_NAME));
     Ok(())
@@ -322,6 +340,8 @@ fn contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
 // or a claim that a hosted lifecycle has been observed.
 const UB_WORKFLOW: &str = ".github/workflows/ub-review.yml";
 const REVIEW_EVENTS: &[&str] = &["opened", "reopened", "synchronize"];
+const UB_INTENT_GUARD: &str = "    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'\n";
+const UB_UNSELECTED_GROUP: &str = "!github.event.pull_request.draft && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'intent' || github.run_id";
 
 fn parsed_types(source: &str) -> Result<Vec<String>, String> {
     repo_policy::routed_rust_pull_request_types(source)
@@ -350,15 +370,22 @@ fn publication_events(config: &str) -> Result<Vec<String>, String> {
 fn advisory_contract(ub: &str, config: &str) -> Result<(), String> {
     let mut ub_events = parsed_types(ub)?;
     ub_events.sort();
-    if ub_events != REVIEW_EVENTS {
-        return Err(format!("UB early review events changed: {ub_events:?}"));
+    if ub_events != ["labeled"] {
+        return Err(format!("UB explicit-intent events changed: {ub_events:?}"));
+    }
+    for required in [
+        UB_INTENT_GUARD,
+        UB_UNSELECTED_GROUP,
+        "          run-pass: manual\n",
+    ] {
+        if !ub.contains(required) {
+            return Err(format!("UB explicit-intent guard missing {required}"));
+        }
     }
     let mut posts = publication_events(config)?;
     posts.sort();
     if posts != REVIEW_EVENTS {
-        return Err(format!(
-            "UB must publish all early review passes: {posts:?}"
-        ));
+        return Err(format!("UB legacy publication policy changed: {posts:?}"));
     }
     Ok(())
 }
@@ -384,17 +411,13 @@ fn ready_after_active_completed_or_unavailable_advisory_has_no_new_admission() -
 }
 
 #[test]
-fn new_head_synchronize_and_reopened_keep_review_and_publication() -> Result<(), String> {
-    let posts = publication_events(&repo_file(".ub-review.toml")?)?;
+fn new_heads_wait_for_a_fresh_explicit_review_request() -> Result<(), String> {
     let events = parsed_types(&repo_file(UB_WORKFLOW)?)?;
-    for action in REVIEW_EVENTS {
+    assert_eq!(events, ["labeled"]);
+    for event in ["opened", "reopened", "synchronize", "ready_for_review"] {
         assert!(
-            events.iter().any(|event| event == action),
-            "UB: {action} still computes review"
-        );
-        assert!(
-            posts.iter().any(|event| event == action),
-            "UB {action} still permits publication through the pinned action"
+            !events.iter().any(|actual| actual == event),
+            "{event} must not start Cargo work"
         );
     }
     Ok(())
@@ -405,9 +428,9 @@ fn advisory_guards_and_concurrency_remain_exact() -> Result<(), String> {
     let ub = repo_file(UB_WORKFLOW)?;
     // Pin executable guard fields, not coincidental words in comments.
     assert!(
-        ub.contains("    if: github.event.pull_request.head.repo.full_name == github.repository\n")
+        ub.contains("    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'\n")
     );
-    assert!(ub.contains("  group: ub-review-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"));
+    assert!(ub.contains("  group: ub-review-${{ github.event.pull_request.number || github.ref }}-${{ !github.event.pull_request.draft && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && 'intent' || github.run_id }}\n  cancel-in-progress: true\n"));
     assert!(ub.contains("          review-mode: advisory\n"));
     assert!(ub.contains("          config: .ub-review.toml\n"));
     assert!(ub.contains("          posting: review\n"));
@@ -428,6 +451,110 @@ fn contract_rejects_ready_reentry_and_missing_repair_publication() -> Result<(),
     let changed = config.replace("\"synchronize\", ", "");
     assert_ne!(changed, config, "publication mutation engages");
     assert!(advisory_contract(&ub, &changed).is_err());
+    for (from, to) in [
+        ("!github.event.pull_request.draft", "true"),
+        ("github.event.label.name == 'merge-ready'", "true"),
+        (UB_UNSELECTED_GROUP, "'intent'"),
+        ("          run-pass: manual\n", ""),
+    ] {
+        let weakened = ub.replace(from, to);
+        assert_ne!(weakened, ub);
+        assert!(advisory_contract(&weakened, &config).is_err());
+    }
+    Ok(())
+}
+
+const WHEEL_WORKFLOW: &str = ".github/workflows/python-wheel-qualification.yml";
+const WHEEL_INTENT_GUARD: &str = "(github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))";
+const WHEEL_UNSELECTED_GROUP: &str = "github.event_name == 'pull_request' && (github.event.pull_request.draft || github.event.action != 'labeled' || github.event.label.name != 'merge-ready') && github.run_id || 'intent'";
+
+fn wheel_quiet_intent_contract(source: &str) -> Result<(), String> {
+    if parsed_types(source)? != ["labeled"] {
+        return Err("wheel PR events must be labeled only".into());
+    }
+    if !source.contains("  merge_group:\n    types: [checks_requested]\n") {
+        return Err("wheel merge-group qualification missing".into());
+    }
+    if !source.contains(WHEEL_UNSELECTED_GROUP) {
+        return Err("unselected wheel events can cancel active qualification".into());
+    }
+    for job in ["applicability", "source-contract", "build-wheel"] {
+        let marker = format!("\n  {job}:\n");
+        let body = source
+            .split_once(&marker)
+            .ok_or_else(|| format!("missing {job}"))?
+            .1;
+        let condition = body
+            .lines()
+            .take_while(|line| !(line.starts_with("  ") && !line.starts_with("    ")))
+            .find_map(|line| line.strip_prefix("    if: "))
+            .ok_or_else(|| format!("missing {job} condition"))?;
+        if !condition.contains(WHEEL_INTENT_GUARD) {
+            return Err(format!("{job} can run without explicit intent"));
+        }
+        if job != "applicability" && (!condition.contains("needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false'") || !condition.contains("always() && !cancelled()")) {
+            return Err(format!("{job} lost fail-closed qualification fallback"));
+        }
+    }
+    let consume = source
+        .split_once("\n  consume:\n")
+        .ok_or("missing wheel consumer")?
+        .1;
+    if !consume
+        .lines()
+        .take_while(|line| !(line.starts_with("  ") && !line.starts_with("    ")))
+        .any(|line| {
+            line.contains(
+        "needs.build-wheel.result == 'success' && needs.source-contract.result == 'success'",
+    )
+        })
+    {
+        return Err("wheel consumer lost producer requirements".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn wheel_only_builds_after_explicit_pr_intent_or_for_merge_group() -> Result<(), String> {
+    let wheel = repo_file(WHEEL_WORKFLOW)?;
+    wheel_quiet_intent_contract(&wheel)?;
+    for (from, to) in [
+        ("types: [labeled]", "types: [opened, labeled]"),
+        ("    types: [checks_requested]", "    types: [destroyed]"),
+        (WHEEL_INTENT_GUARD, "true"),
+        (WHEEL_UNSELECTED_GROUP, "'intent'"),
+        ("!github.event.pull_request.draft", "true"),
+        ("github.event.label.name == 'merge-ready'", "true"),
+        (
+            "needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false'",
+            "true",
+        ),
+        (
+            "needs.build-wheel.result == 'success' && needs.source-contract.result == 'success'",
+            "true",
+        ),
+    ] {
+        let weakened = wheel.replacen(from, to, 1);
+        assert_ne!(weakened, wheel, "wheel negative control must change source");
+        assert!(
+            wheel_quiet_intent_contract(&weakened).is_err(),
+            "wheel guard accepted mutation: {from}"
+        );
+    }
+    for job in ["source-contract", "build-wheel"] {
+        let marker = format!("\n  {job}:\n");
+        let start = wheel.find(&marker).ok_or("missing target job")?;
+        let offset = wheel[start..]
+            .find(WHEEL_INTENT_GUARD)
+            .ok_or("missing target guard")?
+            + start;
+        let mut weakened = wheel.clone();
+        weakened.replace_range(offset..offset + WHEEL_INTENT_GUARD.len(), "true");
+        assert!(
+            wheel_quiet_intent_contract(&weakened).is_err(),
+            "{job} ran without intent"
+        );
+    }
     Ok(())
 }
 
