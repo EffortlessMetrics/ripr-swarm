@@ -244,6 +244,11 @@ arguments (`!x`, `a != b`) do not change this grade.
   non-matches.
 - Pure fixture golden for
   `fixtures/rust_macro_wrapped_assertion_limitation/`.
+- Pure fixture golden for
+  `fixtures/rust_tolerance_assertion_macro_limitation/`: a tolerance macro spelled
+  like `approx::assert_relative_eq!` keeps the same named limitation with a
+  numeric next step (#6645). The macro's spelling selects only that wording; it
+  never classifies the macro, grades an oracle or earns credit.
 - Honesty corpus case expecting
   `rust_macro_wrapped_assertion_unresolved`, limitation detail,
   non-promotion, no verify command, no receipt command, and no repair packet.
@@ -265,6 +270,8 @@ arguments (`!x`, `a != b`) do not change this grade.
 - `crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
 - `crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_macro_wrapped_assertion_static_limit_kind`
 - `fixtures/rust_macro_wrapped_assertion_limitation/expected/check.json`
+- `fixtures/rust_tolerance_assertion_macro_limitation/expected/check.json`
+- `crates/ripr/src/analysis/language/rust/oracles.rs::tests::a_tolerance_macro_gets_a_numeric_next_step_and_nothing_else_changes`
 - `fixtures/evidence-promotion-honesty-corpus/corpus.json` case
   `rust_macro_wrapped_assertion_named_limitation`
 - `crates/ripr/tests/local_macro_assertion_expansion.rs`
@@ -282,6 +289,7 @@ arguments (`!x`, `a != b`) do not change this grade.
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |
 | Static limit docs | `docs/STATIC_LIMITS.md` |
 | Pure fixture golden | `fixtures/rust_macro_wrapped_assertion_limitation/` |
+| Pure fixture golden (tolerance macro wording) | `fixtures/rust_tolerance_assertion_macro_limitation/` |
 | Honesty corpus | `fixtures/evidence-promotion-honesty-corpus/corpus.json` |
 
 ## CI Proof
@@ -290,6 +298,8 @@ arguments (`!x`, `a != b`) do not change this grade.
 - `cargo test -p ripr static_limit_kind`
 - `cargo test -p ripr validation_accepts_rust_macro_wrapped_assertion_static_limit_kind`
 - `cargo xtask fixtures rust_macro_wrapped_assertion_limitation`
+- `cargo xtask fixtures rust_tolerance_assertion_macro_limitation`
+- `cargo test -p ripr a_tolerance_macro_gets`
 - `cargo xtask check-evidence-promotion-honesty`
 - `cargo xtask goldens check`
 - `cargo xtask check-output-contracts`
