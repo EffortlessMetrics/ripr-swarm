@@ -1312,6 +1312,30 @@ fn body_calls_owner_refuses_nested_function_the_enclosing_body_never_calls() -> 
         !body_calls_owner("    assert outer() == 2\n", nested),
         "a test calling an enclosing function that never calls the nested def does not reach it"
     );
+    let owners = extract_owners(
+        std::path::Path::new("hostile/nested_sibling.py"),
+        "def outer():\n    def inner():\n        return 3\n    def unused():\n        return inner()\n    return 2\n",
+    );
+    let nested = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "outer.inner")
+        .ok_or_else(|| "nested owner missing".to_string())?;
+    assert!(
+        !body_calls_owner("    assert outer() == 2\n", nested),
+        "a call from an unused sibling def is not an edge from the enclosing function"
+    );
+    let owners = extract_owners(
+        std::path::Path::new("hostile/nested_rebound.py"),
+        "def outer():\n    def inner():\n        return 3\n    inner = lambda: 2\n    return inner()\n",
+    );
+    let nested = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "outer.inner")
+        .ok_or_else(|| "nested owner missing".to_string())?;
+    assert!(
+        !body_calls_owner("    assert outer() == 2\n", nested),
+        "a rebound nested name may call a different binding, so it gives no reach"
+    );
     Ok(())
 }
 

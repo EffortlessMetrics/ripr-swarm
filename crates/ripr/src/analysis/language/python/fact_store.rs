@@ -42,7 +42,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// `12`: each assertion records the outer callee of an independent nested
 /// call equality for per-finding exact reading (#9814). `11` entries lack it.
 /// `13`: each file records pytest collection-config facts for uncollected tests (#11527). `12` entries lack them.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "13";
+/// `14`: a nested function owner records whether its enclosing body calls it
+/// (`nested_called_by_parent`, #12141). `13` entries lack the fact.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "14";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the

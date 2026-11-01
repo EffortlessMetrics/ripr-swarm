@@ -242,9 +242,13 @@ fn nested_owner_records_whether_the_enclosing_body_calls_it() -> Result<(), Stri
         Path::new("src/nested.py"),
         concat!(
             "def calls(n):\n    def inner(m):\n        return m\n    return inner(n)\n\n",
+            "def spaced(n):\n    def inner1(m):\n        return m\n    return inner1 (n)\n\n",
             "def defines_only(n):\n    def inner2(m):\n        return m\n    return n\n\n",
             "def recursion_only(n):\n    def inner3(m):\n        return inner3(m - 1) if m else m\n    return n\n\n",
-            "def returns_callable(n):\n    def inner4(m):\n        return m\n    return inner4\n",
+            "def returns_callable(n):\n    def inner4(m):\n        return m\n    return inner4\n\n",
+            "def unused_sibling(n):\n    def inner5(m):\n        return m\n    def unused():\n        return inner5(n)\n    return n\n\n",
+            "def rebound(n):\n    def inner6(m):\n        return m\n    inner6 = lambda m: 2\n    return inner6(n)\n\n",
+            "def used_sibling(n):\n    def inner7(m):\n        return m\n    def helper():\n        return inner7(n)\n    return helper()\n",
         ),
     );
     let flag = |qualified: &str| -> Result<bool, String> {
@@ -259,6 +263,10 @@ fn nested_owner_records_whether_the_enclosing_body_calls_it() -> Result<(), Stri
         "an enclosing body that calls the nested def reaches it"
     );
     assert!(
+        flag("spaced.inner1")?,
+        "a call spelled with a space before the parenthesis is still a call"
+    );
+    assert!(
         !flag("defines_only.inner2")?,
         "an enclosing body that only defines the nested def gives no path"
     );
@@ -269,6 +277,18 @@ fn nested_owner_records_whether_the_enclosing_body_calls_it() -> Result<(), Stri
     assert!(
         !flag("returns_callable.inner4")?,
         "returning the nested def without calling it stays fail-closed"
+    );
+    assert!(
+        !flag("unused_sibling.inner5")?,
+        "a call from a sibling def the enclosing body never calls is not an edge"
+    );
+    assert!(
+        !flag("rebound.inner6")?,
+        "a rebound name may call a different binding, so it stays fail-closed"
+    );
+    assert!(
+        !flag("used_sibling.inner7")?,
+        "a call that only a sibling def makes stays fail-closed even when that sibling runs"
     );
     assert!(
         !flag("calls")?,

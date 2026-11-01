@@ -65,7 +65,7 @@ pub(super) fn collect_owners_from_statements(
             Stmt::FunctionDef(function) => {
                 push_function_owner(stmt, owner_context, out);
                 if let Some(parent) = function_context {
-                    let called = nested_called_by_parent(source, out, parent);
+                    let called = body_calls_nested_def(source, statements, &function.name);
                     if let Some(owner) = out.last_mut() {
                         owner.qualified_name = format!("{parent}.{}", function.name);
                         owner.owner_kind = Some(OwnerKind::Function);
@@ -90,7 +90,7 @@ pub(super) fn collect_owners_from_statements(
             Stmt::AsyncFunctionDef(function) => {
                 push_function_owner(stmt, owner_context, out);
                 if let Some(parent) = function_context {
-                    let called = nested_called_by_parent(source, out, parent);
+                    let called = body_calls_nested_def(source, statements, &function.name);
                     if let Some(owner) = out.last_mut() {
                         owner.qualified_name = format!("{parent}.{}", function.name);
                         owner.owner_kind = Some(OwnerKind::Function);
@@ -203,37 +203,51 @@ struct PythonOwnerContext<'a> {
     module_constants: &'a [PythonModuleConstant],
 }
 
-/// Whether the enclosing function's body, outside the nested def just pushed
-/// as `out.last()`, calls that nested function by name (#12141). A test that
-/// calls only the enclosing function reaches the nested body only through such
-/// a call; a parent that merely defines it, or whose call sits inside the
-/// nested body itself, gives no path. Fail-closed: an unfound parent, an
-/// unreadable range or a non-call mention (returning or passing `inner`) is
-/// `false`.
-fn nested_called_by_parent(source: &str, out: &[PythonOwner], parent_qualified: &str) -> bool {
-    let Some((nested, earlier)) = out.split_last() else {
-        return false;
-    };
-    let Some(parent) = earlier
+/// Whether the statements that run when the enclosing function runs call the
+/// nested def `name` by name (#12141). `statements` is the enclosing body: the
+/// nested defs and classes in it are excluded, so a call from an unused
+/// sibling def, from the nested body itself or from a class body is not an
+/// edge from the enclosing function. A spaced call (`inner (n)`) counts. A
+/// body that rebinds the name (assignment, walrus, `for`, `as`, `import`)
+/// is fail-closed: the call may reach a different binding. Returning or
+/// passing the def without calling it is not a call.
+fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool {
+    let executed = statements
         .iter()
-        .rev()
-        .find(|owner| owner.qualified_name == parent_qualified && owner.file == nested.file)
-    else {
-        return false;
-    };
-    let outside_nested = source
-        .lines()
-        .enumerate()
-        .filter(|(index, _)| {
-            let line = index + 1;
-            line >= parent.start_line
-                && line <= parent.end_line
-                && !(line >= nested.start_line && line <= nested.end_line)
+        .filter(|stmt| {
+            !matches!(
+                stmt,
+                Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_)
+            )
         })
-        .map(|(_, text)| text)
+        .map(|stmt| text_for_range(source, stmt.range()))
         .collect::<Vec<_>>()
         .join("\n");
-    super::related_tests::contains_call_name(&outside_nested, &nested.name)
+    let ident = |ch: char| ch == '_' || ch.is_alphanumeric();
+    let mut calls = false;
+    let mut rebinds = false;
+    for (idx, _) in executed.match_indices(name) {
+        let end = idx + name.len();
+        let bounded = super::static_limits::python_callee_start_has_boundary(&executed, idx)
+            && executed[end..].chars().next().is_none_or(|ch| !ident(ch));
+        if !bounded {
+            continue;
+        }
+        let after = executed[end..].trim_start_matches([' ', '\t']);
+        let before = executed[..idx].trim_end_matches([' ', '\t']);
+        if after.starts_with('(') && super::related_tests::is_bare_call_site(&executed, idx) {
+            calls = true;
+        } else if (after.starts_with('=') && !after.starts_with("=="))
+            || after.starts_with(":=")
+            || matches!(
+                before.rsplit(char::is_whitespace).next(),
+                Some("as" | "for" | "import")
+            )
+        {
+            rebinds = true;
+        }
+    }
+    calls && !rebinds
 }
 
 fn owner_from_function(
