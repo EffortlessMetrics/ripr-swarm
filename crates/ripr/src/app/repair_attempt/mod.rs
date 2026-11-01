@@ -811,6 +811,8 @@ fn retained_missing_gap_projections(
         .pointer("/provenance/repo_root")
         .and_then(serde_json::Value::as_str)
         .ok_or("retained receipt has no root; rerun `ripr agent receipt` for this attempt")?;
+    // Three separate refusals, so a mismatch names the half of the binding
+    // that failed instead of the whole conjunction.
     if !recorded_workflow_path_matches(
         root,
         recorded_root,
@@ -1247,18 +1249,27 @@ fn validate_retained_gap_after(
         recorded_root,
         field(&verify, "/inputs/after"),
         GAP_WORKFLOW_PROJECTIONS[3],
-    )? || !recorded_workflow_path_matches(
+    )? {
+        return Err(
+            "retained gap snapshot path or root recorded in the verify inputs is not bound to the receipt; re-run the verify phase for this attempt to retain a fresh gap snapshot"
+                .to_string(),
+        );
+    }
+    if !recorded_workflow_path_matches(
         root,
         recorded_root,
         field(receipt, "/provenance/after_artifact/path"),
         GAP_WORKFLOW_PROJECTIONS[3],
-    )? || field(receipt, "/provenance/after_artifact/sha256")
-        != Some(sha256_bytes(after_bytes).as_str())
-    {
+    )? {
         return Err(
-            "retained gap snapshot path, root or raw digest is not bound to the receipt; rerun `ripr agent receipt` for this attempt, or start a new attempt with `ripr agent repair`"
+            "retained gap snapshot path or root recorded for the receipt's after artifact is not bound to the receipt; re-run the verify phase for this attempt to retain a fresh gap snapshot"
                 .to_string(),
         );
+    }
+    if field(receipt, "/provenance/after_artifact/sha256")
+        != Some(sha256_bytes(after_bytes).as_str())
+    {
+        return Err("retained gap snapshot raw digest is not bound to the receipt; re-run the verify phase for this attempt to retain a fresh gap snapshot".to_string());
     }
     let raw = std::str::from_utf8(after_bytes)
         .map_err(|error| format!("retained gap snapshot is not UTF-8: {error}; restore the retained snapshot, or start a new attempt with `ripr agent repair`"))?;
@@ -1334,7 +1345,11 @@ fn recorded_workflow_path_matches(
             Ok(path) => path,
             Err(_) => return Ok(false),
         };
-        if canonical != root {
+        // `canonicalize` yields a verbatim-prefix path on Windows, which
+        // never equals a plain drive-letter root. Compare canonical forms on
+        // both sides so only a genuinely different directory is refused.
+        let canonical_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        if canonical != canonical_root {
             return Ok(false);
         }
     }

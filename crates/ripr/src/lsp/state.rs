@@ -926,6 +926,13 @@ pub(super) struct AnalysisSnapshot {
     /// select) is read from here, not re-derived from limitation text.
     /// `None` when the producer returned no view (no analysis ran).
     pub(super) language_view: Option<LanguageCompletenessView>,
+    /// Numeric editor-row origins captured by the same Rust analysis pass that
+    /// produced `findings` (#10609). Code-lens placement, the lens-view
+    /// identity and unpublished line-hover lookup select their row from this
+    /// map, never from a later disk read or from diagnostic visibility. A
+    /// finding without a record (non-Rust, or a producer without origins)
+    /// takes the conservative analyzer-row fallback.
+    pub(super) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
 }
 
 /// Changed-file coverage for languages the run did not analyze because the
@@ -1210,8 +1217,10 @@ impl AnalysisSnapshot {
     pub(super) fn prepare_diagnostic_uri_index(&mut self) {
         let uris = self.diagnostics_by_uri.keys().cloned().collect::<Vec<_>>();
         let mut by_relative = BTreeMap::new();
+        let root = self.root.clone();
+        let mut projector = super::uri::RelativeKeyProjector::new(&root);
         for (position, uri) in uris.iter().enumerate() {
-            if let Some(relative) = file_uri_relative_to_root(&self.root, uri) {
+            if let Some(relative) = projector.relative(uri) {
                 by_relative
                     .entry(relative)
                     .and_modify(|stored| *stored = None)
@@ -1730,10 +1739,11 @@ fn document_position_byte_offset(
     let line = text.get(line_start..line_end)?;
 
     let relative = if *encoding == PositionEncodingKind::UTF8 {
-        if target_units > line.len() || !line.is_char_boundary(target_units) {
+        let clamped = target_units.min(line.len());
+        if !line.is_char_boundary(clamped) {
             return None;
         }
-        target_units
+        clamped
     } else if *encoding == PositionEncodingKind::UTF32 {
         encoded_units_to_byte_offset(line, target_units, |character| {
             let _ = character;
@@ -1765,7 +1775,8 @@ fn encoded_units_to_byte_offset(
             return None;
         }
     }
-    (units == target_units).then_some(line.len())
+    // LSP 3.17: a character offset past the line end is treated as the line end.
+    (target_units >= units).then_some(line.len())
 }
 
 /// Bounds on one `didChange` notification (#11508).
@@ -2113,13 +2124,18 @@ impl DocumentStore {
     ) -> (BTreeMap<Uri, Option<String>>, Vec<Uri>) {
         let mut digests = BTreeMap::new();
         let mut entered = Vec::new();
+        // One projector per refresh: the root and each directory are
+        // canonicalized once, not once per open document (#11763).
+        let mut projector = super::uri::RelativeKeyProjector::new(root);
         for (uri, state) in &self.documents {
             let analyzed = if state
                 .path
                 .extension()
                 .is_some_and(|extension| extension == "rs")
             {
-                file_uri_relative_to_root(root, uri).and_then(|relative| consumed.digest(&relative))
+                projector
+                    .relative(uri)
+                    .and_then(|relative| consumed.digest(&relative))
             } else {
                 read_saved_digest(uri).or_else(|| state.saved_digest.clone())
             };
@@ -2766,25 +2782,8 @@ mod tests {
         assert_eq!(edit("ab\rcd", 1, 1)?, "ab\rcXd");
         assert_eq!(edit("ab\r", 1, 0)?, "ab\rX");
         assert_eq!(edit("ab\r", 0, 2)?, "abX\r");
-        // A CR is not addressable as a character of its line.
-        let mut buffer = "ab\r".to_string();
-        let beyond = Position {
-            line: 0,
-            character: 3,
-        };
-        let refused = apply_document_content_changes(
-            &mut buffer,
-            vec![TextDocumentContentChangeEvent {
-                range: Some(tower_lsp_server::ls_types::Range {
-                    start: beyond,
-                    end: beyond,
-                }),
-                range_length: None,
-                text: "X".to_string(),
-            }],
-            &PositionEncodingKind::UTF16,
-        );
-        assert!(refused.is_err());
+        // An offset past the line end clamps to the line end (LSP 3.17).
+        assert_eq!(edit("ab\r", 0, 3)?, "abX\r");
         // Lines past the final terminator do not exist.
         assert_eq!(
             edit("ab\r", 2, 0),
@@ -3628,6 +3627,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -3665,6 +3665,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if snapshot.is_consistent() {
@@ -3712,6 +3713,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -3767,6 +3769,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 
@@ -4432,5 +4435,119 @@ mod tests {
             WorkspaceRootResolution::Unavailable("no folders".to_string()),
         );
         assert_eq!(unavailable.detail.as_deref(), Some("no folders"));
+    }
+
+    /// Overlong LSP character offsets clamp to the line end for every negotiated
+    /// encoding (#7316). Mid-character and absent-line positions stay refused.
+    #[test]
+    fn overlong_incremental_character_offsets_clamp_to_line_end() -> Result<(), String> {
+        let line = "abc";
+        let past_end = 99u32;
+
+        for encoding in [
+            PositionEncodingKind::UTF8,
+            PositionEncodingKind::UTF16,
+            PositionEncodingKind::UTF32,
+        ] {
+            let end_units = if encoding == PositionEncodingKind::UTF8 {
+                line.len() as u32
+            } else if encoding == PositionEncodingKind::UTF16 {
+                line.chars().map(|c| c.len_utf16()).sum::<usize>() as u32
+            } else {
+                line.chars().count() as u32
+            };
+
+            let apply_range = |start: u32, end: u32, insert: &str| -> Result<String, String> {
+                let mut buffer = line.to_string();
+                apply_document_content_changes(
+                    &mut buffer,
+                    vec![TextDocumentContentChangeEvent {
+                        range: Some(tower_lsp_server::ls_types::Range {
+                            start: Position {
+                                line: 0,
+                                character: start,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: end,
+                            },
+                        }),
+                        range_length: None,
+                        text: insert.to_string(),
+                    }],
+                    &encoding,
+                )
+                .map_err(|()| format!("refused for {encoding:?} range {start}..{end}"))?;
+                Ok(buffer)
+            };
+
+            // Overlong start only: insert at line end.
+            assert_eq!(
+                apply_range(past_end, end_units, "X")?,
+                "abcX",
+                "overlong start, {encoding:?}"
+            );
+            // Overlong end only: replace suffix from true start to clamped end.
+            assert_eq!(
+                apply_range(1, past_end, "X")?,
+                "aX",
+                "overlong end, {encoding:?}"
+            );
+            // Both overlong: zero-width insert at line end.
+            assert_eq!(
+                apply_range(past_end, past_end, "X")?,
+                "abcX",
+                "both overlong, {encoding:?}"
+            );
+        }
+
+        // Absent line is still refused.
+        let mut buffer = line.to_string();
+        let absent = apply_document_content_changes(
+            &mut buffer,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 9,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 9,
+                        character: 0,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(absent.is_err());
+        assert_eq!(buffer, line);
+
+        // Mid-surrogate (UTF-16 code unit inside emoji) is still refused.
+        let mut emoji = "a🎉b".to_string();
+        let original = emoji.clone();
+        let mid = apply_document_content_changes(
+            &mut emoji,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 0,
+                        character: 2,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 3,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(mid.is_err());
+        assert_eq!(emoji, original);
+
+        Ok(())
     }
 }

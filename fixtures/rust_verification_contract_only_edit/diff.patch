@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0000000..1111111 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,4 +1,4 @@
+-#[requires(x > 0)]
++#[requires(x > 1)]
+ pub fn bump(x: i32) -> i32 {
+     x + 1
+ }

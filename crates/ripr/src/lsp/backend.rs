@@ -47,8 +47,8 @@ use super::state::{
     content_digest, format_duration,
 };
 use super::uri::{
-    CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uri_is_within_root,
-    file_uris_match, path_from_file_uri, path_is_within_root, read_artifact_capped,
+    CappedArtifactRead, absolute_join, display_path, file_uri_for_path, file_uris_match,
+    path_from_file_uri, path_is_within_root, read_artifact_capped,
 };
 use super::{
     COLLECT_CONTEXT_COMMAND, COLLECT_EVIDENCE_CONTEXT_COMMAND, COLLECT_RECEIPT_STATUS_COMMAND,
@@ -83,7 +83,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 /// Debounce window for interactive refresh triggers (did_open, did_save,
@@ -1111,10 +1111,10 @@ impl Backend {
         let Ok(documents) = self.quarantine.documents.lock() else {
             return Default::default();
         };
-        documents
-            .documents
-            .keys()
-            .filter_map(|uri| super::uri::file_uri_relative_to_root(root, uri))
+        // One batch per refresh: the root and each directory are canonicalized
+        // once, not once per open document (#11763).
+        super::uri::file_uris_relative_to_root(root, documents.documents.keys())
+            .into_iter()
             .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
             .collect()
     }
@@ -5449,7 +5449,8 @@ mod bounded_failure_message_tests {
             .path()
             .join("a long folder name with spaces ".repeat(6))
             .join("another long folder name");
-        std::fs::create_dir_all(&deep).map_err(|error| format!("create root failed: {error}"))?;
+        // The refusal only formats the path, so the long root is never created:
+        // on Windows it would pass MAX_PATH and fail with "path not found".
         // The production builder of the non-Git refusal; a non-Git temp root
         // is not constructible here because unit-test temp roots sit inside
         // the checkout's own work tree.
@@ -5637,9 +5638,12 @@ fn workspace_diagnostics_are_root_contained(
 ) -> bool {
     let snapshot_root_matches = super::uri::path_is_within_root(root, &diagnostics.snapshot.root)
         && super::uri::path_is_within_root(&diagnostics.snapshot.root, root);
+    // One projector for the whole check: the root and each directory are
+    // resolved once, not once per diagnostic URI (#11763).
+    let mut projector = super::uri::RelativeKeyProjector::new(root);
     snapshot_root_matches
         && diagnostics.batches.iter().all(|batch| {
-            file_uri_is_within_root(root, &batch.uri)
+            projector.is_within_root(&batch.uri)
                 && batch.diagnostics.iter().all(|diagnostic| {
                     diagnostic
                         .related_information
@@ -5647,7 +5651,7 @@ fn workspace_diagnostics_are_root_contained(
                         .is_none_or(|related| {
                             related
                                 .iter()
-                                .all(|item| file_uri_is_within_root(root, &item.location.uri))
+                                .all(|item| projector.is_within_root(&item.location.uri))
                         })
                 })
         })
@@ -9466,6 +9470,7 @@ mod top_limitation_selection_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
@@ -11411,6 +11416,7 @@ mod delivery_selection_parity_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
         WorkspaceDiagnostics { snapshot, batches }
     }
@@ -12568,6 +12574,7 @@ mod list_actionable_items_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
@@ -13408,27 +13415,121 @@ mod pull_disclosure_dedup_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         })
     }
+}
+
+/// Stat identity for on-disk bytes used by [`disk_bytes_equal_text`]. When it
+/// is unchanged, the bounded read and digest are reused.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DiskContentStatKey {
+    len: u64,
+    modified: Option<(u64, u32)>,
+    ino: u64,
+}
+
+fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
+    let ino = {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            meta.ino()
+        }
+        #[cfg(not(unix))]
+        {
+            0
+        }
+    };
+    let modified = meta.modified().ok().map(|instant| {
+        let duration = instant
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        (duration.as_secs(), duration.subsec_nanos())
+    });
+    DiskContentStatKey {
+        len: meta.len(),
+        modified,
+        ino,
+    }
+}
+
+type DiskEqualityDigestCache = Mutex<BTreeMap<PathBuf, (DiskContentStatKey, Option<String>)>>;
+
+static DISK_EQUALITY_DIGEST_CACHE: LazyLock<DiskEqualityDigestCache> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+#[cfg(test)]
+thread_local! {
+    static DISK_EQUALITY_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_disk_equality_read_cache_for_tests() {
+    if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
+        cache.clear();
+    }
+    DISK_EQUALITY_READS.with(|reads| reads.set(0));
+}
+
+fn cached_disk_content_digest(path: &Path, stat_key: &DiskContentStatKey) -> Option<String> {
+    if let Ok(cache) = DISK_EQUALITY_DIGEST_CACHE.lock()
+        && let Some((cached_key, digest)) = cache.get(path)
+        && cached_key == stat_key
+    {
+        return digest.clone();
+    }
+
+    #[cfg(test)]
+    DISK_EQUALITY_READS.with(|reads| reads.set(reads.get() + 1));
+
+    let digest = super::state::read_saved_bytes(path).map(|disk| content_digest(&disk));
+    if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
+        cache.insert(path.to_path_buf(), (stat_key.clone(), digest.clone()));
+    }
+    digest
 }
 
 /// Whether the regular file at the client-named `path` holds exactly `text`.
 /// A cheap length check precedes the read. The path may be a device or FIFO
 /// (`/dev/zero` reports length 0), so the read goes through the bounded
-/// regular-file reader, never an unbounded `fs::read`.
+/// regular-file reader, never an unbounded `fs::read`. Unchanged on-disk
+/// content is digested once per `(len, mtime, ino)` stat key.
 fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
-    if std::fs::metadata(path).map(|meta| meta.len()).ok() != u64::try_from(text.len()).ok() {
+    let Ok(text_len) = u64::try_from(text.len()) else {
+        return false;
+    };
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    if meta.len() != text_len {
         return false;
     }
-    super::state::read_saved_bytes(path).is_some_and(|disk| disk == text.as_bytes())
+    let stat_key = disk_content_stat_key(&meta);
+    let Some(disk_digest) = cached_disk_content_digest(path, &stat_key) else {
+        return false;
+    };
+    disk_digest == content_digest(text.as_bytes())
 }
 
 #[cfg(test)]
 mod disk_bytes_equal_text_tests {
-    use super::disk_bytes_equal_text;
+    use super::{
+        DISK_EQUALITY_READS, disk_bytes_equal_text, reset_disk_equality_read_cache_for_tests,
+    };
+
+    fn temp_disk_path(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "ripr-disk-equal-{}-{}-{:?}.txt",
+            label,
+            std::process::id(),
+            std::thread::current().id()
+        ))
+    }
 
     #[test]
     fn device_and_directory_paths_never_equal_empty_text() {
+        reset_disk_equality_read_cache_for_tests();
         // `/dev/zero` stats as length 0, so an empty buffer passes the length
         // check; the unbounded read that followed grew RSS past 5 GB.
         #[cfg(target_os = "linux")]
@@ -13441,11 +13542,8 @@ mod disk_bytes_equal_text_tests {
 
     #[test]
     fn regular_file_equality_is_exact() -> Result<(), String> {
-        let path = std::env::temp_dir().join(format!(
-            "ripr-disk-equal-{}-{:?}.txt",
-            std::process::id(),
-            std::thread::current().id()
-        ));
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("exact");
         std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
         let equal = disk_bytes_equal_text(&path, "abc");
         let same_len_different = disk_bytes_equal_text(&path, "abd");
@@ -13454,6 +13552,44 @@ mod disk_bytes_equal_text_tests {
         if !equal || same_len_different || shorter {
             return Err(format!(
                 "equal={equal} same_len_different={same_len_different} shorter={shorter}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn same_length_buffer_checks_read_unchanged_disk_once() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("read-once");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        assert!(!disk_bytes_equal_text(&path, "abd"));
+        assert!(!disk_bytes_equal_text(&path, "abe"));
+        assert!(!disk_bytes_equal_text(&path, "abx"));
+        let reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        let _ = std::fs::remove_file(&path);
+        if reads != 1 {
+            return Err(format!("expected one disk read, got {reads}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn disk_rewrite_rereads_and_finds_equality() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("rewrite");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        if !disk_bytes_equal_text(&path, "abc") {
+            return Err("initial equality check failed".to_string());
+        }
+        std::fs::write(&path, "abd").map_err(|err| format!("rewrite failed: {err}"))?;
+        if !disk_bytes_equal_text(&path, "abd") {
+            return Err("post-rewrite equality check failed".to_string());
+        }
+        let reads = DISK_EQUALITY_READS.with(std::cell::Cell::get);
+        let _ = std::fs::remove_file(&path);
+        if reads != 2 {
+            return Err(format!(
+                "expected two disk reads after rewrite, got {reads}"
             ));
         }
         Ok(())
