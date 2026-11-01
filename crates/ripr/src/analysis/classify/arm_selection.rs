@@ -2476,8 +2476,7 @@ fn decoded_char_literal_inner(inner: &str) -> Option<char> {
     if inner.is_empty() {
         return None;
     }
-    if inner.starts_with('\\') {
-        let rest = &inner[1..];
+    if let Some(rest) = inner.strip_prefix('\\') {
         let (decoded, tail) = match rest.as_bytes().first().copied()? {
             b'n' => ('\n', &rest[1..]),
             b'r' => ('\r', &rest[1..]),
