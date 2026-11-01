@@ -249,7 +249,8 @@ match arm (`_ => Err(E::Unknown),` becomes `_ => Err(E::Blank),`) is also seen
 by an exact assertion that pins the *removed* variant, because the pin fails
 once the arm yields the new one. It confirms the change only when all of these
 hold: the paired old text names a different variant; the arm is one readable
-line of an owner `match`; the assertion is an exact error-variant check
+line of an owner `match` that is the owner's tail expression (a `let r = match ..;`
+read later may remap the error); the assertion is an exact error-variant check
 (including an admitted local `assert_matches!`) naming the removed variant;
 and the owner call it compares passes an input the arm selector reads as
 selecting the changed arm (RIPR-SPEC-0229). A pin through an input that selects
@@ -372,6 +373,7 @@ Tests in `crates/ripr/src/analysis/extract/oracles/` and
 | `error_path_arm_probe_restores_the_removed_expression_on_one_arm_line` | Part D arm view |
 | `error_path_removed_variant_pinned_credited` (fixture) | Part D positive |
 | `error_path_removed_variant_other_arm_not_credited` (fixture) | Part D other-arm negative |
+| `error_path_removed_variant_remapped_not_credited` (fixture) | Part D remapped-result negative |
 
 ## Acceptance Examples
 

@@ -2230,8 +2230,8 @@ fn analyze_related_assertions(
     let removed_variant = matches!(probe.family, ProbeFamily::ErrorPath)
         .then(|| {
             let removed = probe.before.as_deref().and_then(error_path_variant_path)?;
-            let removed = removed.rsplit("::").next()?.to_string();
-            (error_construction_variant.as_deref() != Some(removed.as_str())).then_some(removed)
+            let removed = removed.rsplit("::").next()?;
+            (error_construction_variant.as_deref() != Some(removed)).then(|| removed.to_string())
         })
         .flatten();
     let match_context = RevealMatchContext {

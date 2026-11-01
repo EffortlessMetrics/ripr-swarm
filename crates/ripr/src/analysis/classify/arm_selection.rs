@@ -364,7 +364,8 @@ pub(in crate::analysis) struct ObservedArmInputs {
 /// which owner-call input reaches it. The old text is the same line with the
 /// removed error expression restored, so the arm's pattern reads as
 /// unchanged. `None` when the owner's line is not one readable arm holding
-/// the changed expression, or the probe has no paired old text.
+/// the changed expression, the enclosing `match` is not the owner's tail
+/// expression, or the probe has no paired old text.
 pub(in crate::analysis) fn error_path_arm_probe(
     probe: &Probe,
     owner: &FunctionSummary,
@@ -381,6 +382,12 @@ pub(in crate::analysis) fn error_path_arm_probe(
         .trim();
     arm_pattern_text(line)?;
     if line.matches(expression).count() != 1 {
+        return None;
+    }
+    // The arm's result must be the owner's return value: a `let r = match ..;`
+    // read later may remap the error (`r.map_err(..)`), and then a pin of the
+    // removed variant passes before and after the change.
+    if !enclosing_match(owner, probe.location.line, true)?.match_is_tail {
         return None;
     }
     let mut arm = probe.clone();
@@ -3253,6 +3260,14 @@ mod tests {
         assert_eq!(arm.family, ProbeFamily::MatchArm);
         assert_eq!(arm.expression, "_ => Err(E::Blank),");
         assert_eq!(arm.before.as_deref(), Some("_ => Err(E::Unknown),"));
+
+        // The match result is bound and remapped afterwards: the owner's
+        // return value is not the arm's.
+        let remapped = "fn parse(raw: &str) -> Result<u32, E> {\n    let r = match raw {\n        \"k\" => Ok(1),\n        _ => Err(E::Blank),\n    };\n    r.map_err(|_| E::Unknown)\n}";
+        let remapped_owner = self::owner(remapped, "parse");
+        let mut remapped_probe = probe.clone();
+        remapped_probe.location = SourceLocation::new("src/lib.rs", 4, 1);
+        assert!(error_path_arm_probe(&remapped_probe, &remapped_owner).is_none());
 
         // Not an arm line: nothing to select.
         let mut statement = probe.clone();
