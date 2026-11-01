@@ -7,6 +7,11 @@ on:
         description: JSON string or object accepted by jobs.<job_id>.runs-on.
         required: true
         type: string
+      executing-route:
+        description: Literal identity of the executing runner lane.
+        required: false
+        default: unknown
+        type: string
       cargo-build-jobs:
         description: Parallel Cargo build jobs for the selected runner.
         required: false
@@ -46,6 +51,11 @@ on:
         required: false
         default: ''
         type: string
+      source-union:
+        description: Also execute the explicit source-route command union for integration qualification.
+        required: false
+        default: false
+        type: boolean
       test-shards:
         description: >-
           1 runs the required nextest step in this job. 4 leaves it to
@@ -59,6 +69,13 @@ on:
       scratch_message:
         value: ${{ jobs.rust-gates.outputs.scratch_message }}
 
+      subject_sha:
+        value: ${{ jobs.rust-gates.outputs.subject_sha }}
+      subject_tree:
+        value: ${{ jobs.rust-gates.outputs.subject_tree }}
+      execution_identity:
+        value: ${{ jobs.rust-gates.outputs.execution_identity }}
+
 permissions:
   contents: read
 
@@ -70,6 +87,9 @@ jobs:
     outputs:
       scratch_status: ${{ steps.scratch.outputs.status }}
       scratch_message: ${{ steps.scratch.outputs.message }}
+      subject_sha: ${{ steps.execution_identity.outputs.subject_sha }}
+      subject_tree: ${{ steps.execution_identity.outputs.subject_tree }}
+      execution_identity: ${{ steps.execution_identity.outputs.identity }}
     env:
       CARGO_BUILD_JOBS: ${{ inputs.cargo-build-jobs }}
       CARGO_TERM_COLOR: always
@@ -77,6 +97,18 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
+
+      - name: Observe child execution identity
+        id: execution_identity
+        shell: bash
+        env:
+          EXECUTING_ROUTE: ${{ inputs.executing-route }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          tree=$(git rev-parse 'HEAD^{tree}')
+          identity=$(jq -cn --arg route "$EXECUTING_ROUTE" --arg environment "$RUNNER_ENVIRONMENT" --arg name "$RUNNER_NAME" --arg os "$RUNNER_OS" --arg arch "$RUNNER_ARCH" --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" --arg sha "$sha" --arg tree "$tree" '{route:$route,runner_environment:$environment,runner_name:$name,runner_os:$os,runner_arch:$arch,run_id:$run,run_attempt:$attempt,subject_sha:$sha,subject_tree:$tree}')
+          printf 'subject_sha=%s\nsubject_tree=%s\nidentity=%s\n' "$sha" "$tree" "$identity" >> "$GITHUB_OUTPUT"
 
       # #3841: ownership and liveness of this job's per-run scratch trees come
       # from a kernel flock lease taken before any tree exists, never from a
@@ -240,6 +272,18 @@ jobs:
       - name: All-features ripr target check
         id: all_features_check
         run: cargo check -p ripr --all-targets --all-features
+
+      - name: Source workspace target check
+        if: inputs.source-union
+        run: cargo check --workspace --all-targets
+
+      - name: Source precommit
+        if: inputs.source-union
+        run: cargo xtask precommit
+
+      - name: Source agent skill contracts
+        if: inputs.source-union
+        run: cargo xtask check-agent-skills
 
       - name: Strict workspace Clippy
         id: clippy
@@ -425,6 +469,10 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Source workspace tests
+        if: inputs.source-union
+        run: cargo nextest run --workspace
+
       # Nextest does not execute Rust doctests; Cargo/rustdoc owns them (#3825).
       - name: Required Rust doctests
         run: cargo test --workspace --doc
@@ -477,6 +525,13 @@ jobs:
           cargo xtask ripr-pr-summary --check
           cargo xtask ripr-annotations
           cargo xtask ripr-annotations --check
+
+      - name: Source review-comments check
+        if: inputs.source-union && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: cargo xtask ripr-review-comments --base "$BASE_SHA" --head "$HEAD_SHA" --check-output target/ripr/pr/check.json --check
 
       # Published schema vs real producer bytes on the candidate (#9505, #3920).
       # Corpus rows read committed bytes via `git archive HEAD`; the runtime-only

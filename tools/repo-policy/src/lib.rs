@@ -1169,16 +1169,15 @@ pub const ROUTED_RUST_QUEUE_ENTRY_SNIPPET: &str =
 pub const ROUTED_RUST_REQUEST_LABEL: &str = "merge-ready";
 
 /// Result job name for every pull_request label event that is not a request.
-pub const ROUTED_RUST_NONREQUEST_RESULT_NAME: &str = "Merge-ready Nonrequest";
+pub const ROUTED_RUST_NONREQUEST_RESULT_NAME: &str = "Swarm Route Nonrequest";
 
 /// The result job name expression: the required context only for main/manual
 /// runs and an explicit merge-ready request, a different name otherwise.
-pub const ROUTED_RUST_RESULT_NAME_EXPRESSION: &str = "name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}";
+pub const ROUTED_RUST_RESULT_NAME_EXPRESSION: &str = "name: ${{ (github.repository == 'EffortlessMetrics/ripr-swarm' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.label.name == 'merge-ready'))) && 'Ripr Rust Small Result' || 'Swarm Route Nonrequest' }}";
 
 /// Job-level request guard that withholds route, docs detection and admission
 /// (and therefore every implementation job) from nonrequest label events.
-pub const ROUTED_RUST_REQUEST_GUARD_SNIPPET: &str =
-    "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'";
+pub const ROUTED_RUST_REQUEST_GUARD_SNIPPET: &str = "github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.label.name == 'merge-ready')";
 
 pub const ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET: &str = "group: ${{ github.event_name == 'pull_request' && github.event.label.name != 'merge-ready' && format('{0}-{1}-nonrequest-{2}', github.workflow, github.event.pull_request.number, github.run_id) || format('{0}-{1}-{2}', github.workflow, github.event.pull_request.number || github.ref, github.event_name) }}";
 
@@ -1322,8 +1321,8 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "pr-labels: ${{ needs.admission.outputs.labels }}",
         ),
         (
-            "apply the fork guard to queued PRs before selecting self-hosted runners",
-            "{ [ \"$EVENT_NAME\" = \"pull_request\" ] || [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\" != \"$REPOSITORY\" ]",
+            "route PR and queue qualification exclusively to hosted runners",
+            "if [ \"$EVENT_NAME\" = pull_request ] || [ \"$EVENT_NAME\" = merge_group ]; then target=github; reason=single_hosted_qualification; fi",
         ),
         (
             "refuse merge groups that carry more than one queued PR",
@@ -1403,18 +1402,14 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             ));
         }
     }
-    if workflow.contains(ROUTED_RUST_DRAFT_GUARD_SNIPPET) {
-        violations.push(
-            ".github/workflows/routed-rust.yml must not gate jobs on `github.event.pull_request.draft`; a skipped required job reports success, so job guards cannot distinguish withheld context from proof (#4986)".to_string(),
-        );
-    }
     if workflow.contains(ROUTED_RUST_IGNORED_LABEL_RESULT_NAME) {
         violations.push(
             ".github/workflows/routed-rust.yml must not post the retired `Ripr Rust Small Ignored Label Event` pseudo-result; the required context is either earned by a merge-ready request run or absent (#4986)".to_string(),
         );
     }
-    // The result job must run for every event (never skipped, a skipped
-    // required job reports success) and carry the single name expression.
+    // The result job must keep its exact name and condition: a skipped draft
+    // job must never acquire the required context, while a non-draft request
+    // reports a failed result even when a prerequisite is skipped.
     if !routed_rust_job_block_any(workflow, "result", |line| {
         line.trim() == ROUTED_RUST_RESULT_NAME_EXPRESSION
     }) {
@@ -1423,7 +1418,8 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
         ));
     }
     if !routed_rust_job_block_any(workflow, "result", |line| {
-        line.trim_end() == "    if: always()"
+        line.trim_end()
+            == "    if: always() && github.repository == 'EffortlessMetrics/ripr-swarm' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)"
     }) {
         violations.push(
             ".github/workflows/routed-rust.yml result job must keep the job-level `if: always()` so the required context is reported (failed) rather than skipped when a prerequisite is skipped or cancelled (#4986)".to_string(),
@@ -1542,8 +1538,11 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
         ),
     ];
 
+    let hosted_qualification = workflow.contains("reason=single_hosted_qualification");
     for (label, snippet) in required_workflow_snippets {
-        if !workflow.contains(snippet) {
+        if !workflow.contains(snippet)
+            && !(hosted_qualification && label == "trusted fork fallback reason")
+        {
             violations.push(format!(
                 ".github/workflows/routed-rust.yml is missing {label}: `{snippet}`"
             ));
@@ -1734,9 +1733,10 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
         );
     }
 
-    if !(workflow.contains("[ \"$EVENT_NAME\" = \"pull_request\" ]")
-        && workflow.contains("[ \"$HEAD_REPO\" != \"$REPOSITORY\" ]"))
-    {
+    let hosted_guard = workflow.contains("if [ \"$EVENT_NAME\" = pull_request ] || [ \"$EVENT_NAME\" = merge_group ]; then target=github; reason=single_hosted_qualification; fi");
+    let legacy_fork_guard = workflow.contains("[ \"$EVENT_NAME\" = \"pull_request\" ]")
+        && workflow.contains("[ \"$HEAD_REPO\" != \"$REPOSITORY\" ]");
+    if !hosted_guard && !legacy_fork_guard {
         violations.push(
             ".github/workflows/routed-rust.yml must guard pull_request events from forks before selecting self-hosted runners".to_string(),
         );

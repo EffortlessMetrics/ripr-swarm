@@ -1,0 +1,2 @@
+xtask/tests/routed_hosted_binding.rs|Command::new|2|hosted-proof-binding-tests|Linux-only controls run the extracted proof-binding shell in an isolated fixture and git hash-object for the reviewed gate blob; no network or user-repository mutation.
+xtask/tests/routed_hosted_binding.rs|use std::process::Command|1|hosted-proof-binding-tests|Linux-only controls import the standard process adapter for the isolated proof-binding shell and read-only git blob check.

@@ -1193,8 +1193,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "pr-labels: ${{ needs.admission.outputs.labels }}",
         ),
         (
-            "fork guard to queued PRs",
-            "|| [ \"$EVENT_NAME\" = \"merge_group\" ]; } && [ \"$HEAD_REPO\"",
+            "route PR and queue qualification exclusively to hosted runners",
+            "if [ \"$EVENT_NAME\" = pull_request ] || [ \"$EVENT_NAME\" = merge_group ]; then target=github; reason=single_hosted_qualification; fi",
         ),
         (
             "more than one queued PR",
@@ -1295,20 +1295,18 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&shared_group)
     );
 
-    let draft_guard = workflow.replace(
-        "    name: Route Ripr Rust Small",
-        "    if: github.event.pull_request.draft != true\n    name: Route Ripr Rust Small",
+    let unguarded_draft = workflow.replace(
+        "!github.event.pull_request.draft && github.event.label.name == 'merge-ready'",
+        "github.event.label.name == 'merge-ready'",
     );
+    assert_ne!(unguarded_draft, workflow);
     assert!(
-        routed_rust_ready_event_contract_violations(&draft_guard)
-            .iter()
-            .any(|violation| violation.contains("github.event.pull_request.draft")),
-        "a draft job guard must fail; a skipped required job reports success: {:?}",
-        routed_rust_ready_event_contract_violations(&draft_guard)
+        !routed_rust_ready_event_contract_violations(&unguarded_draft).is_empty(),
+        "draft label must not allocate qualification or earn the required context"
     );
 
     let pseudo_result = workflow.replace(
-        "'Merge-ready Nonrequest' }}",
+        "'Swarm Route Nonrequest' }}",
         "'Ripr Rust Small Ignored Label Event' }}",
     );
     assert_ne!(
@@ -1343,7 +1341,7 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     // would let a nonrequest event produce, or a request skip, the required
     // context, and must be rejected by name.
     let static_required_name = workflow.replace(
-        "    name: ${{ (github.event_name != 'pull_request' || github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result' || 'Merge-ready Nonrequest' }}",
+        "    name: ${{ (github.repository == 'EffortlessMetrics/ripr-swarm' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.label.name == 'merge-ready'))) && 'Ripr Rust Small Result' || 'Swarm Route Nonrequest' }}",
         "    name: Ripr Rust Small Result",
     );
     assert_ne!(
@@ -1358,8 +1356,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&static_required_name)
     );
     let any_label_request = workflow.replace(
-        "github.event.label.name == 'merge-ready') && 'Ripr Rust Small Result'",
-        "github.event.label.name != '') && 'Ripr Rust Small Result'",
+        "github.event.label.name == 'merge-ready'))) && 'Ripr Rust Small Result'",
+        "github.event.label.name != ''))) && 'Ripr Rust Small Result'",
     );
     assert_ne!(
         any_label_request, workflow,
@@ -1373,27 +1371,22 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: always() && github.repository == 'EffortlessMetrics/ripr-swarm' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)",
+        "    if: success()",
     );
-    assert_ne!(
-        skippable_result, workflow,
-        "fixture must make the result skippable"
-    );
+    assert_ne!(skippable_result, workflow);
     assert!(
         routed_rust_ready_event_contract_violations(&skippable_result)
             .iter()
-            .any(|violation| violation.contains("job-level `if: always()`")),
-        "a skippable result reports success when skipped: {:?}",
-        routed_rust_ready_event_contract_violations(&skippable_result)
+            .any(|violation| violation.contains("job-level `if: always()`"))
     );
     for job in ["route", "detect-docs-only", "admission"] {
         let unguarded = workflow.replace(
-            "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",
+            "github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.label.name == 'merge-ready')\n",
             "true\n",
         )
         .replace(
-            "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready')\n",
+            "github.event_name != 'pull_request' || (!github.event.pull_request.draft && github.event.label.name == 'merge-ready'))\n",
             "true)\n",
         );
         assert_ne!(

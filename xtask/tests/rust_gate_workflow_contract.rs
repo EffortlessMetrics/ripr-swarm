@@ -371,7 +371,7 @@ fn rust_gate_workflow_rejects_missing_unlocked_suppressed_or_duplicate_property_
     }
 }
 
-fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
+fn shard_contract_violations(shards: &str, _routed: &str) -> Vec<String> {
     let mut findings = Vec::new();
     let count = |text: &str, needle: &str| {
         text.lines()
@@ -406,26 +406,6 @@ fn shard_contract_violations(shards: &str, routed: &str) -> Vec<String> {
         if !shards.contains(required) {
             findings.push(format!("shards: verify lost `{required}`"));
         }
-    }
-    // The hosted route must run the shards behind its gates job and may not report
-    // the required result green without them.
-    for required in [
-        "      test-shards: 4\n",
-        "  rust-github-tests:\n    name: Ripr Rust Small tests on GitHub Hosted\n    needs: [rust-github]\n    if: ${{ !cancelled() && needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml\n",
-        "rust-github, rust-github-tests, docs-gate]",
-        "GITHUB_TESTS_RESULT: ${{ needs.rust-github-tests.result }}",
-        "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
-    ] {
-        if !routed.contains(required) {
-            findings.push(format!("routed: lost `{required}`"));
-        }
-    }
-    if count(
-        routed,
-        "[ \"$GITHUB_RESULT\" = \"success\" ] && [ \"$GITHUB_TESTS_RESULT\" = \"success\" ]",
-    ) != 3
-    {
-        findings.push("routed: every tempfail fallback must require the sharded tests".to_owned());
     }
     findings
 }
@@ -503,28 +483,46 @@ fn sharded_hosted_tests_reject_a_dropped_or_softened_shard_check() {
     }
 }
 
+fn single_hosted_contract_violations(routed: &str) -> Vec<String> {
+    let mut findings = Vec::new();
+    for required in [
+        "      test-shards: 1\n",
+        "      source-union: true\n",
+        "if [ \"$GITHUB_RESULT\" != \"success\" ]; then status=fail",
+        "id: proof_binding\n",
+        "PROOF_BINDING_RESULT: ${{ steps.proof_binding.outcome }}",
+        "[ \"$PROOF_BINDING_RESULT\" != success ]",
+        "needs.rust-github.outputs.execution_identity",
+    ] {
+        if !routed.contains(required) {
+            findings.push(format!("missing {required}"));
+        }
+    }
+    if routed.contains("rust-github-tests") || routed.contains("GITHUB_TESTS_RESULT") {
+        findings.push("obsolete separate shard dependency remains".to_owned());
+    }
+    findings
+}
+
 #[test]
-fn routed_result_cannot_pass_without_the_hosted_shards() {
+fn routed_result_requires_bound_unsharded_hosted_proof() {
+    assert!(single_hosted_contract_violations(ROUTED).is_empty());
     for (from, to) in [
-        ("test-shards: 4\n", "test-shards: 1\n"),
+        ("test-shards: 1\n", "test-shards: 4\n"),
+        ("source-union: true\n", "source-union: false\n"),
+        ("id: proof_binding\n", "id: other\n"),
+        ("[ \"$PROOF_BINDING_RESULT\" != success ]", "false"),
+        ("needs.rust-github.outputs.execution_identity", "github.sha"),
         (
-            "elif [ \"$GITHUB_TESTS_RESULT\" != \"success\" ]; then status=fail",
-            "elif false; then status=fail",
-        ),
-        (
-            "rust-github, rust-github-tests, docs-gate]",
-            "rust-github, docs-gate]",
-        ),
-        (
-            "needs.rust-github.result == 'success' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
-            "needs.rust-github.result != 'cancelled' }}\n    uses: ./.github/workflows/rust-test-shards.yml",
+            "if [ \"$GITHUB_RESULT\" != \"success\" ]; then status=fail",
+            "if false; then status=fail",
         ),
     ] {
         let changed = ROUTED.replace(from, to);
-        assert_ne!(changed, ROUTED, "fixture must change the caller: {from}");
+        assert_ne!(changed, ROUTED, "fixture did not change caller: {from}");
         assert!(
-            !shard_contract_violations(SHARDS, &changed).is_empty(),
-            "weakening `{from}` was not rejected"
+            !single_hosted_contract_violations(&changed).is_empty(),
+            "weakening {from} was not rejected"
         );
     }
 }
