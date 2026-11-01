@@ -120,7 +120,10 @@ pub mod app;
 #[doc(hidden)]
 pub mod cli;
 mod command_spec_digest;
+// Bounded model-checking harnesses (RIPR-SPEC-0371); compiled only by `cargo kani`.
 pub mod config;
+#[cfg(kani)]
+mod kani_smoke;
 // Kept public for compatibility; prefer the crate-root domain type re-exports
 // for new integrations.
 #[doc(hidden)]

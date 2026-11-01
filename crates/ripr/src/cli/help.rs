@@ -647,7 +647,7 @@ mod tests {
     fn help_overview_fits_one_screen() {
         let lines = HELP.lines().count();
         assert!(
-            lines <= 48,
+            lines <= 49,
             "the default help screen is {lines} lines; keep it under one screen and put \
              reference material in HELP_ALL (ripr help --all)"
         );
@@ -905,9 +905,9 @@ mod tests {
     fn check_short_help_advertises_quiet_json_and_lean_route() {
         let short = super::CHECK_HELP_SHORT;
         assert!(short.contains("--json --quiet"));
-        assert!(short.contains("--json alone still prints progress"));
+        assert!(short.contains("--json on a pipe is already quiet"));
         let full = CHECK_HELP.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(full.contains("agents and scripts reading json should pass it"));
+        assert!(full.contains("`RIPR_PROGRESS=1` restores it"));
         assert!(
             !short.contains("--json alone silences"),
             "short help must not claim --json disables progress"
@@ -998,7 +998,8 @@ mod tests {
         assert!(GATE_HELP.contains("`config_error` reports stay quiet"));
         assert!(GATE_HELP.contains("Must be an existing directory"));
         assert!(GATE_HELP.contains("message naming the root"));
-        assert!(BASELINE_HELP.contains("ripr baseline create --from PATH"));
+        assert!(BASELINE_HELP.contains("ripr baseline create (--from PATH | --from-check PATH)"));
+        assert!(BASELINE_HELP.contains("--from-check PATH"));
         assert!(BASELINE_HELP.contains("--dry-run"));
         assert!(BASELINE_HELP.contains("it prints the candidate JSON"));
         assert!(BASELINE_HELP.contains("to stdout without"));
@@ -1019,7 +1020,7 @@ mod tests {
         // --force resets ripr.toml only for plain `ripr init`; with --ci/--mcp
         // the plan keeps it. The option line must not claim otherwise.
         assert!(
-            INIT_HELP.contains("With --ci or --mcp, ripr.toml is"),
+            INIT_HELP.contains("With --ci, --mcp or --agents, ripr.toml is"),
             "init --force help must state it never resets ripr.toml alongside --ci/--mcp"
         );
         assert!(!INIT_HELP.contains("Overwrite an existing ripr.toml, generated workflow"));

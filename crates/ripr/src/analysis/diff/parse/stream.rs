@@ -3,9 +3,13 @@ use std::convert::Infallible;
 use std::path::{Path, PathBuf};
 
 use super::{
-    ChangedFile, DIFF_FILE_LIMIT_ENV, MAX_DIFF_PATH_COMPONENTS, ParsedDiff, is_new_path_marker,
-    parse_old_path_marker, parser_state, path_marker_exceeds_depth_bound,
+    ChangedFile, DIFF_CHANGED_LINE_LIMIT_ENV, DIFF_FILE_LIMIT_ENV, MAX_DIFF_PATH_COMPONENTS,
+    ParsedDiff, is_new_path_marker, parse_old_path_marker, parser_state,
+    path_marker_exceeds_depth_bound,
 };
+
+#[cfg(test)]
+use super::DEFAULT_DIFF_CHANGED_LINE_LIMIT;
 
 /// How many scoped-out paths the parse keeps by name for the disclosure; the
 /// total comes from the distinct-path set.
@@ -44,17 +48,19 @@ pub(super) fn parse_unbounded(input: &str) -> ParsedDiff {
         |_| true,
         |_| Ok::<(), Infallible>(()),
         |_| Ok::<(), Infallible>(()),
+        |_| Ok::<(), Infallible>(()),
     ) {
         Ok(parsed) => parsed,
         Err(never) => match never {},
     }
 }
 
+#[cfg(test)]
 pub(super) fn parse_bounded_lines<'a>(
     lines: impl Iterator<Item = &'a str>,
     limit: usize,
 ) -> Result<ParsedDiff, String> {
-    parse_bounded_lines_scoped(lines, limit, |_| true)
+    parse_bounded_lines_scoped(lines, limit, DEFAULT_DIFF_CHANGED_LINE_LIMIT, |_| true)
 }
 
 /// `keep` is the operator's `--path`/`--exclude` scope: a section it rejects
@@ -63,6 +69,7 @@ pub(super) fn parse_bounded_lines<'a>(
 pub(super) fn parse_bounded_lines_scoped<'a>(
     lines: impl Iterator<Item = &'a str>,
     limit: usize,
+    line_limit: usize,
     keep: impl Fn(&Path) -> bool,
 ) -> Result<ParsedDiff, String> {
     parse_lines(
@@ -78,6 +85,19 @@ pub(super) fn parse_bounded_lines_scoped<'a>(
                  remaining file bodies and analysis was not run. Repair route: reduce \
                  the diff scope, split the extraction PR, run a narrower diff, or \
                  raise the limit via {DIFF_FILE_LIMIT_ENV}=<number>."
+            ))
+        },
+        |count| {
+            if count <= line_limit {
+                return Ok(());
+            }
+            Err(format!(
+                "diff_scope_oversized: at least {count} changed lines exceed the \
+                 {DIFF_CHANGED_LINE_LIMIT_ENV} limit ({line_limit}); parsing stopped \
+                 before the remaining diff lines and analysis was not run. Repair \
+                 route: reduce the diff scope, split the extraction PR, run a \
+                 narrower diff, or raise the limit via \
+                 {DIFF_CHANGED_LINE_LIMIT_ENV}=<number>."
             ))
         },
         |raw| {
@@ -103,6 +123,7 @@ fn parse_lines<'a, E>(
     lines: impl Iterator<Item = &'a str>,
     keep: impl Fn(&Path) -> bool,
     mut admit_file_count: impl FnMut(usize) -> Result<(), E>,
+    mut admit_changed_lines: impl FnMut(usize) -> Result<(), E>,
     mut admit_line: impl FnMut(&str) -> Result<(), E>,
 ) -> Result<ParsedDiff, E> {
     let mut files: BTreeMap<PathBuf, ChangedFile> = BTreeMap::new();
@@ -171,7 +192,13 @@ fn parse_lines<'a, E>(
             continue;
         }
 
+        let before = state.changed_line_count();
         state.consume_hunk_line(raw, &mut files);
+        // The ceiling is checked at the one site that records a payload, before
+        // another input line is read, so the oversized tail stays unconsumed.
+        if state.changed_line_count() != before {
+            admit_changed_lines(state.changed_line_count())?;
+        }
     }
 
     // End of stream closes a hunk that was still open: lines it promised but

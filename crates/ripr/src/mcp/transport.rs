@@ -508,7 +508,7 @@ where
     // initialize, a valid-meta request, or stdin EOF.
     loop {
         let server = InitializeSessionService::new(status.clone(), analysis_root.clone())
-            .map_err(|_error| "MCP status projection failed".to_owned())?;
+            .map_err(|_error| "MCP status projection failed; restart `ripr mcp --stdio`, or report this as a ripr bug with the MCP client and ripr version".to_owned())?;
         let transport = BoundedTransport {
             reader: reader.clone(),
             writer: writer.clone(),
@@ -523,7 +523,7 @@ where
                 let reason = failure
                     .reason
                     .lock()
-                    .map_err(|_error| "MCP transport status unavailable".to_string())?
+                    .map_err(|_error| "MCP transport status unavailable; restart `ripr mcp --stdio`, or report this as a ripr bug with the MCP client and ripr version".to_string())?
                     .take();
                 if let Some(reason) = reason {
                     return Err(reason.to_string());
@@ -535,18 +535,18 @@ where
                     rmcp::service::ServerInitializeError::ExpectedInitializeRequest(_) => {
                         continue;
                     }
-                    _ => return Err("MCP SDK startup failed".to_string()),
+                    _ => return Err("MCP SDK startup failed; restart `ripr mcp --stdio`, or report this as a ripr bug with the MCP client and ripr version".to_string()),
                 }
             }
         };
         service
             .waiting()
             .await
-            .map_err(|_error| "MCP SDK service failed".to_string())?;
+            .map_err(|_error| "MCP SDK service failed; restart `ripr mcp --stdio`, or report this as a ripr bug with the MCP client and ripr version".to_string())?;
         let error = failure
             .reason
             .lock()
-            .map_err(|_error| "MCP transport status unavailable".to_string())?
+            .map_err(|_error| "MCP transport status unavailable; restart `ripr mcp --stdio`, or report this as a ripr bug with the MCP client and ripr version".to_string())?
             .take();
         return match error {
             Some(error) => Err(error.to_string()),

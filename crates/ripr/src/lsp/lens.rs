@@ -19,6 +19,9 @@ use super::uri::{file_uri_for_path, file_uris_match};
 /// - N == 0 uses "no related tests found" + the class label, not the
 ///   forbidden unexercised-synonym that belongs to runtime mutation tooling.
 use super::{REFRESH_COMMAND, state::AnalysisSnapshot};
+use crate::analysis_outcome::{
+    AnalysisLimitationKind, AnalysisStage, normalize_portable_analysis_path,
+};
 use crate::domain::{ExposureClass, Finding, LanguageStatus};
 use std::path::Path;
 use std::time::Duration;
@@ -50,6 +53,14 @@ impl LensViewIdentity {
             input_identity: None,
             items: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+impl LensViewIdentity {
+    /// The zero-based rows of the visible lens set, for row-owner tests.
+    pub(super) fn rows(&self) -> Vec<u32> {
+        self.items.iter().map(|item| item.line).collect()
     }
 }
 
@@ -89,7 +100,7 @@ pub(super) fn lens_view_identity(snapshot: &AnalysisSnapshot) -> LensViewIdentit
             LensViewItem {
                 finding_id: finding.id.clone(),
                 document_uri,
-                line: finding.probe.location.line.saturating_sub(1) as u32,
+                line: lens_line(snapshot, finding),
                 related_test_count: finding.related_tests.len(),
                 class: finding.class.as_str().to_string(),
                 preview: finding
@@ -123,7 +134,9 @@ pub(super) fn code_lens_response(uri: &Uri, snapshot: Option<&AnalysisSnapshot>)
     };
     let age = snapshot.refresh.age();
     let mut lenses: Vec<CodeLens> = Vec::new();
-    for lens in lens_findings(uri, snapshot).map(|finding| finding_to_code_lens(finding, age)) {
+    for lens in
+        lens_findings(uri, snapshot).map(|finding| finding_to_code_lens(snapshot, finding, age))
+    {
         // Several probes on one line (a predicate and its returned value) often
         // read identically; one lens per distinct line and title keeps the
         // editor from stacking repeated text. Hover still lists every finding.
@@ -162,12 +175,25 @@ pub(super) fn lens_findings_at_line<'a>(
     line: u32,
 ) -> Vec<&'a Finding> {
     lens_findings(uri, snapshot)
-        .filter(|finding| lens_line(finding) == line)
+        .filter(|finding| lens_line(snapshot, finding) == line)
         .collect()
 }
 
-fn lens_line(finding: &Finding) -> u32 {
-    finding.probe.location.line.saturating_sub(1) as u32
+/// The single row owner for code-lens placement, the semantic lens-view
+/// identity and unpublished line-hover lookup (#10609, RIPR-SPEC-0100).
+///
+/// A finding with a captured Rust diagnostic origin uses that origin's editor
+/// row, the same numeric row published diagnostics use, so standalone-CR files
+/// agree across surfaces. The row is read from the snapshot, never from disk,
+/// so a later save cannot move it, and it does not depend on whether a
+/// diagnostic was published. Without an origin (non-Rust finding or a producer
+/// that captured none) the fallback is the analyzer row; no text search is
+/// performed and no exact span is claimed. A lens is always zero-width.
+fn lens_line(snapshot: &AnalysisSnapshot, finding: &Finding) -> u32 {
+    match snapshot.rust_diagnostic_origins.for_finding(finding) {
+        Some(origin) => origin.line,
+        None => finding.probe.location.line.saturating_sub(1) as u32,
+    }
 }
 
 /// Build one `CodeLens` for a single finding.
@@ -175,16 +201,52 @@ fn lens_line(finding: &Finding) -> u32 {
 /// The resolved command refreshes saved-workspace analysis through the existing
 /// registered server command. Its title keeps the cached advisory distinct from
 /// the explicit action. No arguments or resolve round-trip are needed.
-fn finding_to_code_lens(finding: &Finding, age: Option<Duration>) -> CodeLens {
-    let line = lens_line(finding);
+/// Honest advisory when the Rust adapter recorded a parse failure for this file.
+const PARSE_FAILED_LENS_TITLE: &str =
+    "ripr: related tests unknown, this file did not parse · fix the syntax error and save";
+
+fn finding_portable_path(finding: &Finding, root: &Path) -> Option<String> {
+    let file = &finding.probe.location.file;
+    let relative = if file.is_absolute() {
+        file.strip_prefix(root).ok()?.to_path_buf()
+    } else {
+        file.clone()
+    };
+    normalize_portable_analysis_path(relative.to_string_lossy().as_ref()).ok()
+}
+
+/// True when `snapshot.analysis_outcome` carries a language-adapter producer
+/// failure limitation for the same portable path as `finding`.
+fn file_parse_failed(snapshot: &AnalysisSnapshot, finding: &Finding) -> bool {
+    let Some(finding_path) = finding_portable_path(finding, &snapshot.root) else {
+        return false;
+    };
+    let Some(outcome) = snapshot.analysis_outcome.as_ref() else {
+        return false;
+    };
+    outcome.limitations.iter().any(|limitation| {
+        limitation.kind == AnalysisLimitationKind::ProducerFailure
+            && limitation.producer_stage == AnalysisStage::LanguageAdapter
+            && limitation.path.as_deref() == Some(finding_path.as_str())
+    })
+}
+
+fn finding_to_code_lens(
+    snapshot: &AnalysisSnapshot,
+    finding: &Finding,
+    age: Option<Duration>,
+) -> CodeLens {
+    let line = lens_line(snapshot, finding);
     let range = Range {
         start: Position { line, character: 0 },
         end: Position { line, character: 0 },
     };
-    let title = format!(
-        "Refresh saved-workspace analysis · {}",
+    let body = if file_parse_failed(snapshot, finding) {
+        PARSE_FAILED_LENS_TITLE.to_string()
+    } else {
         related_test_lens_title(finding, age)
-    );
+    };
+    let title = format!("{body} · refresh saved workspace");
     CodeLens {
         range,
         command: Some(Command {
@@ -221,11 +283,14 @@ fn finding_matches_uri(finding: &Finding, uri: &Uri, root: &Path) -> bool {
 ///
 /// - Preview tier (`language_status == Some(Preview)`): prefix `preview:`,
 ///   use softened phrasing — the count may be incomplete for preview adapters.
+/// - `NoStaticPath`: `ripr: no test reaches this change (PLAIN) · static, cached`
+///   regardless of file/name-token overlap in `related_tests` (count is not shown
+///   as a positive related-test grip).
 /// - N > 0 + discriminating class (`Exposed`):
-///   `ripr: N related tests (exposed) · static, cached`
+///   `ripr: N related test(s) (exposed) · static, cached`
 /// - N > 0 + non-discriminating class (anything except `Exposed`):
-///   `ripr: N related tests, no static discriminator (PLAIN) · static, cached`
-/// - N == 0: `ripr: no related tests found (PLAIN) · static, cached`
+///   `ripr: N related test(s), no static discriminator (PLAIN) · static, cached`
+/// - N == 0 (non-`NoStaticPath`): `ripr: no related tests found (PLAIN) · static, cached`
 ///   where `PLAIN` is the same plain vocabulary word (`exposed`, `weak`,
 ///   `unrevealed`, `no path`, `unknown`) the `ripr check` summary uses, not
 ///   the schema value (`as_str` stays in JSON / `human-full` / `explain`).
@@ -241,26 +306,39 @@ pub(super) fn related_test_lens_title(finding: &Finding, age: Option<Duration>) 
     let class_label = finding.class.plain_label();
     let count = finding.related_tests.len();
 
+    let related_tests_phrase = |n: usize| {
+        if n == 1 {
+            "1 related test".to_string()
+        } else {
+            format!("{n} related tests")
+        }
+    };
+
     let body = if is_preview {
         // Preview tier: count may be incomplete; soften claim.
-        if count == 0 {
+        if matches!(finding.class, ExposureClass::NoStaticPath) {
+            format!("preview: no test reaches this change ({class_label}) · static, cached")
+        } else if count == 0 {
             format!("preview: no related tests found ({class_label}) · static, cached")
         } else {
-            format!("preview: {count} related tests (preview, {class_label}) · static, cached")
+            format!(
+                "preview: {} (preview, {class_label}) · static, cached",
+                related_tests_phrase(count)
+            )
         }
+    } else if matches!(finding.class, ExposureClass::NoStaticPath) {
+        format!("ripr: no test reaches this change ({class_label}) · static, cached")
     } else {
-        match (count, &finding.class) {
-            (0, _) => {
-                format!("ripr: no related tests found ({class_label}) · static, cached")
-            }
-            (n, ExposureClass::Exposed) => {
-                format!("ripr: {n} related tests (exposed) · static, cached")
-            }
-            (n, _) => {
-                format!(
-                    "ripr: {n} related tests, no static discriminator ({class_label}) · static, cached"
-                )
-            }
+        match count {
+            0 => format!("ripr: no related tests found ({class_label}) · static, cached"),
+            n if finding.class == ExposureClass::Exposed => format!(
+                "ripr: {} (exposed) · static, cached",
+                related_tests_phrase(n)
+            ),
+            n => format!(
+                "ripr: {}, no static discriminator ({class_label}) · static, cached",
+                related_tests_phrase(n)
+            ),
         }
     };
 
@@ -291,6 +369,11 @@ pub(super) fn lens_title_is_static_language_clean(title: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
     use crate::app::Mode;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageStatus,
@@ -384,6 +467,39 @@ mod tests {
         }
     }
 
+    fn language_adapter_producer_failure_limitation(
+        path: &str,
+    ) -> Result<AnalysisLimitation, String> {
+        let recovery = AnalysisRecovery::new(
+            AnalysisRecoveryKind::InspectFailure,
+            "Fix the syntax error and save the file.",
+        )?;
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            recovery,
+        )
+        .with_path(path)
+    }
+
+    fn snapshot_with_parse_failure_limitation(
+        root: &str,
+        findings: Vec<Finding>,
+        limitation: AnalysisLimitation,
+    ) -> Result<AnalysisSnapshot, String> {
+        let mut snapshot = make_snapshot_with_findings(root, findings);
+        snapshot.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                finding_count: snapshot.findings.len() as u64,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![limitation],
+        )?);
+        Ok(snapshot)
+    }
+
     fn make_snapshot_with_findings(root: &str, findings: Vec<Finding>) -> AnalysisSnapshot {
         // Build a diagnostics_by_uri that satisfies is_consistent():
         // one diagnostic per finding, each carrying "finding_id".
@@ -444,6 +560,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
@@ -619,8 +736,8 @@ mod tests {
                 .get("title")
                 .and_then(serde_json::Value::as_str)
                 .ok_or("missing wire command title")?;
-            if !title.starts_with("Refresh saved-workspace analysis · ")
-                || !title.contains("2 related tests")
+            if !title.contains("2 related tests")
+                || !title.ends_with("· refresh saved workspace")
                 || !title.contains("exposed")
                 || !title.contains("static, cached")
                 || preview != title.contains("preview")
@@ -738,9 +855,9 @@ mod tests {
             .ok_or("expected command in lens")?
             .title
             .clone();
-        if !title.contains("no related tests found") {
+        if !title.contains("no test reaches this change") {
             return Err(format!(
-                "title must say 'no related tests found', got: {title}"
+                "title must say no test reaches this change, got: {title}"
             ));
         }
         if !title.contains("no path") {
@@ -755,6 +872,50 @@ mod tests {
             return Err(format!(
                 "title must not use forbidden static-language vocabulary, got: {title}"
             ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn related_test_lens_title_no_static_path_never_claims_related_test_grip() -> Result<(), String>
+    {
+        for count in [0_usize, 1, 3] {
+            let finding = make_finding("src/lib.rs", 5, ExposureClass::NoStaticPath, count, None);
+            let title = related_test_lens_title(&finding, None);
+            if !title.contains("no test reaches this change") {
+                return Err(format!(
+                    "NoStaticPath count={count} must not imply reach, got: {title}"
+                ));
+            }
+            if title.contains("related test") {
+                return Err(format!(
+                    "NoStaticPath count={count} must not cite related-test count, got: {title}"
+                ));
+            }
+            if !title.contains("no path") {
+                return Err(format!(
+                    "NoStaticPath must include plain class label, got: {title}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn related_test_lens_title_pluralizes_related_test_count() -> Result<(), String> {
+        let one = related_test_lens_title(
+            &make_finding("src/lib.rs", 1, ExposureClass::Exposed, 1, None),
+            None,
+        );
+        if !one.contains("1 related test (exposed)") || one.contains("1 related tests") {
+            return Err(format!("expected singular related test label, got: {one}"));
+        }
+        let many = related_test_lens_title(
+            &make_finding("src/lib.rs", 1, ExposureClass::Exposed, 2, None),
+            None,
+        );
+        if !many.contains("2 related tests (exposed)") {
+            return Err(format!("expected plural related tests label, got: {many}"));
         }
         Ok(())
     }
@@ -913,6 +1074,106 @@ mod tests {
                     cmd.title
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_failed_file_lens_title_is_honest_not_zero_related_tests() -> Result<(), String> {
+        let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+        let limitation = language_adapter_producer_failure_limitation("src/lib.rs")?;
+        let snapshot =
+            snapshot_with_parse_failure_limitation("/workspace", vec![finding], limitation)?;
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let title = lenses
+            .first()
+            .and_then(|lens| lens.command.as_ref())
+            .map(|command| command.title.clone())
+            .ok_or("expected one parse-failed lens")?;
+        if title.contains("no related tests found") {
+            return Err(format!(
+                "parse-failed file must not claim no related tests found: {title}"
+            ));
+        }
+        if !title.contains("did not parse") {
+            return Err(format!(
+                "parse-failed file lens must cite parse failure: {title}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_failed_limitation_on_other_file_leaves_lens_unchanged() -> Result<(), String> {
+        let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+        let limitation = language_adapter_producer_failure_limitation("src/other.rs")?;
+        let snapshot =
+            snapshot_with_parse_failure_limitation("/workspace", vec![finding], limitation)?;
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let title = lenses
+            .first()
+            .and_then(|lens| lens.command.as_ref())
+            .map(|command| command.title.clone())
+            .ok_or("expected one lens")?;
+        if !title.contains("no related tests found") {
+            return Err(format!(
+                "limitation on another file must not change src/lib.rs lens: {title}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_failed_lens_unchanged_for_non_matching_limitation() -> Result<(), String> {
+        let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+        let recovery = AnalysisRecovery::new(
+            AnalysisRecoveryKind::InspectFailure,
+            "Inspect the typed limitation before retrying.",
+        )?;
+        let wrong_stage = AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::DiffParse,
+            recovery.clone(),
+        )
+        .with_path("src/lib.rs")?;
+        let snapshot_wrong_stage = snapshot_with_parse_failure_limitation(
+            "/workspace",
+            vec![finding.clone()],
+            wrong_stage,
+        )?;
+        let wrong_kind = AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerTimeout,
+            AnalysisStage::LanguageAdapter,
+            recovery,
+        )
+        .with_path("src/lib.rs")?;
+        let snapshot_wrong_kind =
+            snapshot_with_parse_failure_limitation("/workspace", vec![finding], wrong_kind)?;
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+        for snapshot in [snapshot_wrong_stage, snapshot_wrong_kind] {
+            let lenses = code_lens_response(&uri, Some(&snapshot));
+            let title = lenses
+                .first()
+                .and_then(|lens| lens.command.as_ref())
+                .map(|command| command.title.clone())
+                .ok_or("expected one lens")?;
+            if !title.contains("no related tests found") {
+                return Err(format!(
+                    "non-matching limitation must keep zero-count lens: {title}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_failed_lens_title_is_static_language_clean() -> Result<(), String> {
+        if !lens_title_is_static_language_clean(PARSE_FAILED_LENS_TITLE) {
+            return Err(format!(
+                "parse-failed lens title must pass static-language guard: {PARSE_FAILED_LENS_TITLE}"
+            ));
         }
         Ok(())
     }

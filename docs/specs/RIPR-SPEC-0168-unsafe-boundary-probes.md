@@ -44,6 +44,16 @@ containing the changed line. The probe family is `static_unknown` by
 construction, so the classifier cannot promote reach plus an oracle into
 `exposed` for this family.
 
+An `unsafe fn` boundary probe, and an `unsafe {}` block whose parsed calls
+include `unreachable_unchecked` or `assert_unchecked` (probe label
+`unsafe block (unchecked assumption)`), carry the stop reason
+`unsafe_obligation` instead of the generic `static_probe_unknown` (#11549).
+The reason says the change alters an unsafe contract that safe test code
+cannot discharge, and its next step is to check the safety contract and each
+caller or assumption site by hand. The class stays `static_unknown`, nothing
+is credited, and no test-stub repair is offered. Detection is by parsed call
+path, so a string, comment or similarly named item does not match.
+
 ## Non-Goals
 
 - Proving unsafe preconditions or replacing unsafe-review processes.
@@ -77,10 +87,18 @@ construction, so the classifier cannot promote reach plus an oracle into
 1. The `unsafe_boundary_probe` fixture: a changed loop body inside an
    `unsafe {}` block produces the boundary probe at the changed line and keeps
    the ordinary value probes for the surrounding function.
+2. The `unsafe_assumption_stop_reason` fixture: a function that gains the
+   `unsafe` qualifier and a function that gains an `unreachable_unchecked()`
+   block both read `static_unknown` with stop reason `unsafe_obligation`.
 
 ## Test Mapping
 
 - `fixtures/unsafe_boundary_probe` (golden corpus).
+- `fixtures/unsafe_assumption_stop_reason` (golden corpus).
+- `crates/ripr/src/analysis/syntax/ra/probe_shape_walk_tests.rs` —
+  `probe_walk_labels_unchecked_assumption_blocks_by_parsed_call_only`.
+- `crates/ripr/src/analysis/classify/decision.rs` —
+  `unsafe_obligation_is_recognised_by_probe_label_only`.
 - `crates/ripr/src/analysis/syntax/ra.rs` — parser extraction tests
   (`ra_adapter_extracts_unsafe_execution_boundaries_without_lexical_false_positives`
   family).

@@ -34,7 +34,7 @@ Language
 
 Preview actionability
   authority: preview_advisory_only
-  gap state: advisory
+  gap state: unknown
   category: incomplete_repair_packet
   repair packet ready: false
   why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
@@ -84,7 +84,7 @@ TypeScript repair packet (advisory)
   next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == amount - 20`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
+  TypeScript preview advisory: add or strengthen a focused assertion for the missing check `return value == amount - 20`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available
 Drill in:
   ripr explain --root <cwd>/fixtures/typescript_self_comparing_one_hop_local/input --diff <cwd>/fixtures/typescript_self_comparing_one_hop_local/diff.patch --mode fast probe:src_lib.ts:typescript_preview:c712a282
   ripr context --root <cwd>/fixtures/typescript_self_comparing_one_hop_local/input --diff <cwd>/fixtures/typescript_self_comparing_one_hop_local/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:c712a282

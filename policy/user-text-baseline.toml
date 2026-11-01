@@ -34,13 +34,8 @@ max_lines = 1
 
 [[ceiling]]
 surface = "golden-human"
-term = "delegatable"
-max_lines = 1
-
-[[ceiling]]
-surface = "golden-human"
 term = "discriminator"
-max_lines = 5
+max_lines = 3
 
 [[ceiling]]
 surface = "golden-human"
@@ -50,7 +45,7 @@ max_lines = 1
 [[ceiling]]
 surface = "golden-human"
 term = "seam"
-max_lines = 3
+max_lines = 1
 
 [[ceiling]]
 surface = "golden-human"

@@ -305,7 +305,7 @@ pub(crate) fn render_preview_promotion_json(
         "non_goals": report.non_goals,
         "limits_note": LIMITS_NOTE,
     }))
-    .map_err(|err| format!("failed to render preview promotion JSON: {err}"))
+    .map_err(|err| format!("failed to render preview promotion JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_preview_promotion_markdown(report: &PreviewPromotionReport) -> String {

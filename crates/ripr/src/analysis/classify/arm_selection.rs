@@ -36,7 +36,7 @@ use super::reveal::{
 };
 use crate::analysis::extract::{mask_comments_and_strings, mask_with_char_literals};
 use crate::analysis::syntax::HelperLoan;
-use crate::domain::Probe;
+use crate::domain::{Probe, ProbeFamily};
 
 /// Name an unsupported selector without extending `ArmSelector`'s proof rules.
 /// Only an unambiguous direct arm/header of a statement-free tail match qualifies.
@@ -357,6 +357,44 @@ pub(in crate::analysis) struct ObservedArmInputs {
     /// The input text of every direct owner call, in source order.
     pub(in crate::analysis) inputs: Vec<String>,
     pub(in crate::analysis) selection: ArmSelection,
+}
+
+/// #12110: the `MatchArm` view of an `error_path` probe whose changed line
+/// is a whole match arm (`_ => Err(E::New),`), so the arm selector can say
+/// which owner-call input reaches it. The old text is the same line with the
+/// removed error expression restored, so the arm's pattern reads as
+/// unchanged. `None` when the owner's line is not one readable arm holding
+/// the changed expression, the enclosing `match` is not the owner's tail
+/// expression, or the probe has no paired old text.
+pub(in crate::analysis) fn error_path_arm_probe(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> Option<Probe> {
+    let before = probe.before.as_deref()?.trim();
+    let expression = probe.expression.trim();
+    if before.is_empty() || expression.is_empty() {
+        return None;
+    }
+    let line = owner
+        .body
+        .lines()
+        .nth(probe.location.line.checked_sub(owner.start_line)?)?
+        .trim();
+    arm_pattern_text(line)?;
+    if line.matches(expression).count() != 1 {
+        return None;
+    }
+    // The arm's result must be the owner's return value: a `let r = match ..;`
+    // read later may remap the error (`r.map_err(..)`), and then a pin of the
+    // removed variant passes before and after the change.
+    if !enclosing_match(owner, probe.location.line, true)?.match_is_tail {
+        return None;
+    }
+    let mut arm = probe.clone();
+    arm.family = ProbeFamily::MatchArm;
+    arm.expression = line.to_string();
+    arm.before = Some(line.replacen(expression, before, 1));
+    Some(arm)
 }
 
 impl ArmSelector {
@@ -1696,22 +1734,45 @@ fn catch_all_binding(alternative: &str) -> Option<&str> {
 /// bring in any name. A glob of an enum's variants (`use Rule::*`) does
 /// not count: Rust variants are CamelCase.
 pub(in crate::analysis) fn may_name_constant(source: &str, name: &str) -> bool {
+    use ra_ap_syntax::AstNode;
     let masked = mask_comments_and_strings(source);
     let declared = whole_word_offsets(&masked, name).into_iter().any(|offset| {
         let before = masked[..offset].trim_end();
         let before = before.strip_suffix("mut").map_or(before, str::trim_end);
         before.ends_with("const") || before.ends_with("static")
     });
-    declared
-        || flattened_use_paths(source).iter().any(|import| {
-            let mut segments = import.path.rsplit("::");
-            let last = segments.next().unwrap_or("");
-            match &import.alias {
-                Some(alias) => alias == name,
-                None if last == "*" => !segments.next().is_some_and(is_variant_name),
-                None => last == name,
+    if declared {
+        return true;
+    }
+    let may_rebind = flattened_use_paths(source).iter().any(|import| {
+        let mut segments = import.path.rsplit("::");
+        let last = segments.next().unwrap_or("");
+        match &import.alias {
+            Some(alias) => alias == name,
+            // `super::*` is judged on the parse below.
+            None if last == "*" => {
+                import.path != "super::*" && !segments.next().is_some_and(is_variant_name)
             }
-        })
+            None => last == name,
+        }
+    });
+    if may_rebind {
+        return true;
+    }
+    if !flattened_use_paths(source)
+        .iter()
+        .any(|import| import.path == "super::*")
+    {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .any(|node| parent_glob_outside_this_file(&node))
 }
 
 /// The variant names of the one enum named `type_name` that `source`
@@ -3189,6 +3250,44 @@ mod tests {
     }
 
     #[test]
+    fn error_path_arm_probe_restores_the_removed_expression_on_one_arm_line() {
+        let body = "fn parse(raw: &str) -> Result<u32, E> {\n    match raw {\n        \"k\" => Ok(1),\n        _ => Err(E::Blank),\n    }\n}";
+        let owner = self::owner(body, "parse");
+        let mut probe = arm_probe("Err(E::Blank)", 4);
+        probe.family = ProbeFamily::ErrorPath;
+        probe.before = Some("Err(E::Unknown)".to_string());
+        let arm = error_path_arm_probe(&probe, &owner);
+        assert_eq!(
+            arm.as_ref().map(|arm| &arm.family),
+            Some(&ProbeFamily::MatchArm)
+        );
+        assert_eq!(
+            arm.as_ref().map(|arm| arm.expression.as_str()),
+            Some("_ => Err(E::Blank),")
+        );
+        assert_eq!(
+            arm.as_ref().and_then(|arm| arm.before.as_deref()),
+            Some("_ => Err(E::Unknown),")
+        );
+
+        // The match result is bound and remapped afterwards: the owner's
+        // return value is not the arm's.
+        let remapped = "fn parse(raw: &str) -> Result<u32, E> {\n    let r = match raw {\n        \"k\" => Ok(1),\n        _ => Err(E::Blank),\n    };\n    r.map_err(|_| E::Unknown)\n}";
+        let remapped_owner = self::owner(remapped, "parse");
+        let mut remapped_probe = probe.clone();
+        remapped_probe.location = SourceLocation::new("src/lib.rs", 4, 1);
+        assert!(error_path_arm_probe(&remapped_probe, &remapped_owner).is_none());
+
+        // Not an arm line: nothing to select.
+        let mut statement = probe.clone();
+        statement.location = SourceLocation::new("src/lib.rs", 2, 1);
+        assert!(error_path_arm_probe(&statement, &owner).is_none());
+        // No paired old text: the removed variant is unknown.
+        probe.before = None;
+        assert!(error_path_arm_probe(&probe, &owner).is_none());
+    }
+
+    #[test]
     #[cfg(feature = "lang-rust")]
     fn field_selector_limit_refuses_ambiguous_or_computed_subjects() {
         let valid = "fn reason(lease: &Lease) -> u64 {\n    match lease.elapsed {\n        Some(ms) => ms,\n        None => 600,\n    }\n}";
@@ -3632,6 +3731,47 @@ mod tests {
         // An owner file that was not read may declare anything.
         assert_eq!(judged(None), Some(ArmSelection::Unknown));
         Ok(())
+    }
+
+    #[test]
+    fn may_name_constant_ignores_inline_test_module_super_glob() {
+        let label = concat!(
+            "pub fn label(n: u8) -> &'static str {\n",
+            "    match n {\n",
+            "        0 => \"zero\",\n",
+            "        other => \"many\",\n",
+            "    }\n",
+            "}\n",
+        );
+        let inline_tests = concat!(
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    use super::*;\n",
+            "    #[test]\n",
+            "    fn t() {\n",
+            "        assert_eq!(label(5), \"many\");\n",
+            "    }\n",
+            "}\n",
+        );
+        assert!(
+            !may_name_constant(&format!("{label}{inline_tests}"), "other"),
+            "inline mod use super::* must not demote a binding arm"
+        );
+        assert!(
+            may_name_constant(&format!("use super::*;\n{label}"), "other"),
+            "file-root use super::* may still rebind"
+        );
+        assert!(
+            may_name_constant(
+                &format!("const other: u8 = 1;\n{label}{inline_tests}"),
+                "other"
+            ),
+            "declared const still counts"
+        );
+        assert!(
+            may_name_constant(&format!("use some_mod::*;\n{label}"), "other"),
+            "non-super module globs unchanged"
+        );
     }
 
     fn resolve_with(selector: &ArmSelector, source: Option<&str>) -> ArmSelector {

@@ -38,7 +38,7 @@ Preview actionability
   category: complete_repair_packet
   repair packet ready: true
   why actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)
-  repair action: add a focused assertion for the missing discriminator `DISCOUNT_THRESHOLD == amount` in the related test, shaped like `expect(discountedTotal(10000)).toBe(expected)`
+  repair action: add a focused assertion for the missing check `DISCOUNT_THRESHOLD == amount` in the related test, shaped like `expect(discountedTotal(10000)).toBe(expected)`
   raw evidence: src/pricing.ts:4 (typescript_preview_probe) source=probe:src_pricing.ts:typescript_preview:f12d3569 owner=discountedTotal
 
 Static exposure
@@ -64,14 +64,14 @@ TypeScript preview card (advisory)
   owner: discountedTotal
   owner kind: function
   changed behavior: predicate changed at src/pricing.ts:4: `if (DISCOUNT_THRESHOLD <= amount) {`
-  related test: tests/pricing.test.ts:7 discounts far above threshold
+  related test: tests/pricing.test.ts:3 no discount below threshold
   oracle: exact_value (strong)
   missing discriminator: DISCOUNT_THRESHOLD == amount
   suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
   verify: npx --no-install jest tests/pricing.test.ts
   repair packet ready: true
   why actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)
-  repair action: add a focused assertion for the missing discriminator `DISCOUNT_THRESHOLD == amount` in the related test, shaped like `expect(discountedTotal(10000)).toBe(expected)`
+  repair action: add a focused assertion for the missing check `DISCOUNT_THRESHOLD == amount` in the related test, shaped like `expect(discountedTotal(10000)).toBe(expected)`
   limits:
     - Syntax-first TypeScript/JavaScript preview evidence only.
     - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
@@ -80,7 +80,7 @@ TypeScript preview card (advisory)
 TypeScript repair packet (advisory)
   canonical gap: gap:typescript:typescript_preview:f12d3569
   source: discountedTotal at src/pricing.ts:4
-  related test: tests/pricing.test.ts::discounts far above threshold
+  related test: tests/pricing.test.ts::no discount below threshold
   oracle: expect(discountedTotal(10000)).toBe(expected)
   edit surface: tests/pricing.test.ts
   verify: npx --no-install jest tests/pricing.test.ts
@@ -95,7 +95,7 @@ TypeScript repair packet (advisory)
   authority: preview_advisory_only
 
 Next step
-  TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `DISCOUNT_THRESHOLD == amount`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)
+  TypeScript preview advisory: add or strengthen a focused assertion for the missing check `DISCOUNT_THRESHOLD == amount`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only)
 Drill in:
   ripr explain --root <cwd>/fixtures/ts_repair_packet_boundary_constant_first/input --diff <cwd>/fixtures/ts_repair_packet_boundary_constant_first/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:f12d3569
   ripr context --root <cwd>/fixtures/ts_repair_packet_boundary_constant_first/input --diff <cwd>/fixtures/ts_repair_packet_boundary_constant_first/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:f12d3569

@@ -38,12 +38,14 @@ interface KeybindingEntry {
 }
 
 interface CommandMenusManifest {
+  activationEvents?: string[];
   contributes?: {
     commands?: Array<{ command?: string; title?: string }>;
     submenus?: Array<{ id?: string; label?: string }>;
     menus?: {
       'editor/context'?: MenuEntry[];
       'ripr.editorContext'?: MenuEntry[];
+      commandPalette?: MenuEntry[];
     };
     keybindings?: KeybindingEntry[];
   };
@@ -78,6 +80,9 @@ const EXPECTED_EDITOR_CONTEXT_SUBMENU: Array<{ command: string; group: string }>
 // Payload-bound commands that must stay code-action-only: the targeted-test
 // group and the agent-loop group (#2083) both need the diagnostic payload a
 // code action carries, which an editor/context menu click cannot supply.
+// ripr.copyContext is intentionally omitted: without a payload it still copies
+// context for the active editor (and can fall back to CLI), so it stays in the
+// palette (#8586).
 const CODE_ACTION_ONLY_COMMANDS = [
   'ripr.copySuggestedAssertion',
   'ripr.copyTargetedTestBrief',
@@ -200,6 +205,68 @@ suite('Command Menus Manifest', () => {
       assert.ok(
         !entries.has(command),
         `${command} needs a diagnostic payload and must stay code-action-only, not in editor/context`
+      );
+    }
+  });
+
+  test('payload-bound commands are hidden from the command palette (#8586)', async () => {
+    const manifest = await readManifest();
+    const paletteEntries = manifest.contributes?.menus?.commandPalette ?? [];
+    for (const command of CODE_ACTION_ONLY_COMMANDS) {
+      const matches = paletteEntries.filter((entry) => entry.command === command);
+      assert.strictEqual(
+        matches.length,
+        1,
+        `${command} must have exactly one commandPalette entry`
+      );
+      assert.strictEqual(
+        matches[0].when,
+        'false',
+        `${command} must be hidden from the palette`
+      );
+    }
+  });
+
+  test('onCommand activation events are not hidden from the command palette (#2081/#2083)', async () => {
+    const manifest = await readManifest();
+    const activationCommands = new Set(
+      (manifest.activationEvents ?? [])
+        .filter((event) => event.startsWith('onCommand:'))
+        .map((event) => event.slice('onCommand:'.length))
+    );
+    const hiddenFromPalette = new Set(
+      (manifest.contributes?.menus?.commandPalette ?? [])
+        .filter((entry) => entry.when === 'false')
+        .map((entry) => entry.command)
+    );
+    for (const command of activationCommands) {
+      assert.ok(
+        !hiddenFromPalette.has(command),
+        `${command} is an onCommand activation event and must stay palette-visible`
+      );
+    }
+  });
+
+  test('ripr.copyContext stays palette-visible without an onCommand activation event (#8586)', async () => {
+    const manifest = await readManifest();
+    const hiddenFromPalette = (manifest.contributes?.menus?.commandPalette ?? [])
+      .filter((entry) => entry.when === 'false')
+      .map((entry) => entry.command);
+    assert.ok(
+      !hiddenFromPalette.includes('ripr.copyContext'),
+      'copyContext must not be hidden from the palette; it works from the active editor without a code-action payload'
+    );
+  });
+
+  test('every commandPalette entry references a contributed command', async () => {
+    const manifest = await readManifest();
+    const contributed = new Set(
+      (manifest.contributes?.commands ?? []).map((entry) => entry.command)
+    );
+    for (const entry of manifest.contributes?.menus?.commandPalette ?? []) {
+      assert.ok(
+        entry.command && contributed.has(entry.command),
+        `commandPalette references unregistered command ${entry.command}`
       );
     }
   });

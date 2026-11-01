@@ -482,9 +482,11 @@ this review.
 
 ## Merge readiness: resolving review threads
 
-Read the current ruleset and branch-protection requirements rather than
-inferring them from a blocked status. Ordinary PR repair never authorizes
-changing review counts, disabling required checks or bypassing protection.
+Use current-head PR-visible checks, reviews and merge state rather than reading
+branch-protection or ruleset settings for routine PR progression. An unknown
+check is not a pass, and `BLOCKED` alone does not identify a cause. Ordinary PR
+repair never authorizes changing review counts, disabling required checks or
+bypassing protection.
 
 Before merging a PR:
 
@@ -493,19 +495,14 @@ Before merging a PR:
 2. Confirm that the repair or reply exists, then resolve the thread and read
    back its state. Fetch all paginated threads; an empty first page is not a
    complete review denominator. Reply and resolve are independent operations.
-3. Diagnose approval/check requirements read-only from both authorities:
-   ```bash
-   gh api repos/EffortlessMetrics/ripr-swarm/branches/main/protection/required_pull_request_reviews
-   gh api repos/EffortlessMetrics/ripr-swarm/rules/branches/main
-   ```
-   A settings change requires explicit owner authorization naming the rule and
-   change. Do not assume a single-maintainer repository has no approval rule or
-   patch protection to match that assumption. If reads are unavailable, retain
-   the gap and let the protected merge API enforce its rules.
+3. Inspect available current-head checks and review evidence. A forbidden settings
+   read is not a blanket block or reason to seek broader access. A failure to read
+   ordinary PR/check evidence is a separate unknown; do not declare it passed.
+   The normal merge endpoint enforces applicable requirements.
 4. Only after substantive exact-head `REVIEW_READY`, addressed threads and
    required proof, use normal protected squash merge:
    ```bash
-   gh pr merge <PR> --squash
+   gh pr merge <PR> --squash --match-head-commit <reviewed-head-sha>
    ```
    Do not use an admin bypass. Special history-preserving source-integration
    transactions follow their own governing issue, not this ordinary PR route.

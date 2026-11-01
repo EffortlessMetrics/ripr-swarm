@@ -1,3 +1,0 @@
-crates/ripr/src/output/typescript_limitations.rs|expected check output object with findings array
-crates/ripr/src/output/typescript_limitations.rs|invalid JSON: {err}
-crates/ripr/src/output/typescript_limitations.rs|serialize TypeScript limitation leaderboard JSON failed: {err}
