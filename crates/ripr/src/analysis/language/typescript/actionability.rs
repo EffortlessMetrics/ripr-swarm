@@ -269,22 +269,30 @@ mod tests {
 
     #[test]
     fn every_returnable_gap_state_is_an_evidence_state_word() {
+        let limit = TypeScriptStaticLimit {
+            kind: StaticLimitKind::DynamicDispatch,
+            evidence: Vec::new(),
+            missing: String::new(),
+            repair_route: "Repair route: resolve the dispatch.".to_string(),
+        };
         for class in ExposureClass::ALL {
-            for owner_call in [false, true] {
-                for private_member in [false, true] {
-                    let actionability = typescript_actionability_for(
-                        &class,
-                        None,
-                        owner_call,
-                        &[],
-                        "related test",
-                        private_member,
-                    );
-                    assert!(
-                        EvidenceState::parse(actionability.gap_state).is_some(),
-                        "gap_state `{}` for {class:?} is outside EvidenceState",
-                        actionability.gap_state
-                    );
+            for static_limit in [None, Some(&limit)] {
+                for owner_call in [false, true] {
+                    for private_member in [false, true] {
+                        let actionability = typescript_actionability_for(
+                            &class,
+                            static_limit,
+                            owner_call,
+                            &[],
+                            "related test",
+                            private_member,
+                        );
+                        assert!(
+                            EvidenceState::parse(actionability.gap_state).is_some(),
+                            "gap_state `{}` for {class:?} is outside EvidenceState",
+                            actionability.gap_state
+                        );
+                    }
                 }
             }
         }
