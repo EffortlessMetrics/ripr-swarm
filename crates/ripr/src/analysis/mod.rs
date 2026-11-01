@@ -1312,10 +1312,9 @@ pub(crate) fn changed_const_reader_return_lines(
     if declaring.is_empty() {
         return Vec::new();
     }
-    // Every workspace Rust file: the rule reads the tests too. This is a
-    // superset of what `ripr check` indexes (check may decline a file under
-    // its budgets), and more tests only refuse more, so repair never scopes
-    // to a retarget check did not make.
+    // Every workspace Rust file, so the reader-caller rule sees what check
+    // sees; the decisive raw-text scan (`name_confined`) reads the same
+    // workspace file list from disk in both commands.
     let paths = workspace_rust_files(root)
         .into_iter()
         .chain(declaring.iter().map(|file| file.path.clone()))

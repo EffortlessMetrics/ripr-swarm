@@ -320,14 +320,16 @@ only when all of these hold:
   anywhere in the file imports an item spelled like it or a `format`; no
   inline module chain is opened twice (`#[cfg]` alternatives); and no
   `macro_rules! format` exists in the indexed workspace;
-- no test code anywhere in the indexed workspace mentions the name, in code,
-  a format string, a `use` (renamed or not) or an item outside a function.
-  Test code is the whole text of a file under a `tests` directory (its
-  helpers included), all text from the first test attribute on in any other
-  file, and every function the index marks as a test. Such a test may build
-  its expected value from the constant itself
-  (`assert_eq!(banner_line(), format!("[{BANNER}]"))`), which tracks the
-  edit; only the value-flow evaluation on the declaration judges that;
+- over the raw text (comments, strings, doc comments and macro bodies
+  included) of every Rust file the workspace discovery finds, the name as a
+  whole word occurs exactly twice: once on the declaration and once in the
+  reader's returned `format!`. Any other occurrence refuses: a test, a test
+  helper, a doc test, a `use .. as` alias, a path-qualified read
+  (`crate::fx::BANNER`), a copy into another constant, a macro body or a
+  comment. Such a mention may carry the constant's value into a test's
+  expected side (`assert_eq!(banner_line(), format!("[{BANNER}]"))` tracks
+  the edit), which only the value-flow evaluation on the declaration judges.
+  The rule does not depend on where tests live, so an alias cannot dodge it;
 - there is exactly one reader, and no other production code names it, so a
   test cannot build its expected side from a second reader (`tag()`) or a
   caller of the reader;
@@ -346,10 +348,13 @@ only when all of these hold:
 
 Any failure keeps the declaration's `static_unknown` probe, with no repair
 start. `ripr repair` scopes to the same returned lines and expressions by
-running the same probe pipeline over the change with every workspace Rust
-file indexed. That is a superset of check's index, so repair can only refuse
-more: on the same files the two commands offer the same start or neither
-does, and repair never starts on a reader check did not name. A returned value that a
+running the same probe pipeline over the change, and both commands read
+the same raw-text scan of the same workspace file list, so they offer the
+same start or neither does.
+
+Known missed advisory: the scan over-refuses on purpose. A constant that a
+test, a doc comment or any other file mentions, even harmlessly, keeps the
+declaration's unknown answer with no start. A returned value that a
 test checks exactly is reported as checked; a weak check gets the ordinary
 return-value repair.
 

@@ -896,6 +896,7 @@ fn retarget_changed_const_readers(
         return None;
     }
     let readers = crate::analysis::classify::const_reader_returns(
+        context.root,
         text,
         added.line,
         &context.changed.path,

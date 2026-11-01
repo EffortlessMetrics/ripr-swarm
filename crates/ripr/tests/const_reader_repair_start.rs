@@ -559,3 +559,78 @@ fn production_caller_of_the_reader_used_for_the_expected_value_keeps_the_declara
     )?;
     assert_declaration_kept("production caller", &repo)
 }
+
+/// `BANNER_OLD` plus `extra` appended to `src/lib.rs` on both sides.
+fn banner_with(extra: &str) -> (String, String) {
+    let old = format!("{BANNER_OLD}{extra}");
+    let new = banner_new(&old);
+    (old, new)
+}
+
+const BANNER_SELF_TEST: &str = "use fx::banner_line;\n\n#[test]\nfn banner_is_bracketed() {\n    assert!(banner_line().starts_with('['));\n}\n";
+
+#[test]
+fn out_of_line_test_module_aliasing_the_constant_keeps_the_declaration() -> Result<(), String> {
+    // B1: `src/tests.rs` imports and copies the constant before any #[test].
+    let (old, new) = banner_with("\n#[cfg(test)]\nmod tests;\n");
+    let repo = Repo::create_with_files(
+        &old,
+        &new,
+        BANNER_SELF_TEST,
+        &[(
+            "src/tests.rs",
+            "use crate::BANNER as B;\nconst EXP: &str = crate::BANNER;\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(crate::banner_line(), format!(\"[{B}]\"));\n    assert!(!EXP.is_empty());\n}\n",
+        )],
+    )?;
+    assert_declaration_kept("src/tests.rs alias", &repo)
+}
+
+#[test]
+fn production_reexport_alias_keeps_the_declaration() -> Result<(), String> {
+    // B2: `pub use crate::BANNER as LABEL;` in another file.
+    let (old, new) = banner_with("\npub mod alias;\n");
+    let repo = Repo::create_with_files(
+        &old,
+        &new,
+        "use fx::{alias::LABEL, banner_line};\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), format!(\"[{LABEL}]\"));\n}\n",
+        &[("src/alias.rs", "pub use crate::BANNER as LABEL;\n")],
+    )?;
+    assert_declaration_kept("pub use alias", &repo)
+}
+
+#[test]
+fn production_constant_copied_by_path_keeps_the_declaration() -> Result<(), String> {
+    // B2: `pub const LABEL: &str = crate::BANNER;` in the same file.
+    let (old, new) = banner_with("\npub const LABEL: &str = crate::BANNER;\n");
+    let repo = Repo::create(
+        &old,
+        &new,
+        "use fx::{banner_line, LABEL};\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), format!(\"[{LABEL}]\"));\n}\n",
+    )?;
+    assert_declaration_kept("path-qualified copy", &repo)
+}
+
+#[test]
+fn production_helper_reading_the_constant_by_path_keeps_the_declaration() -> Result<(), String> {
+    // B2: `expected()` in another file reads `crate::BANNER`, which is not
+    // counted as a reader by spelling.
+    let (old, new) = banner_with("\npub mod other;\n");
+    let repo = Repo::create_with_files(
+        &old,
+        &new,
+        "use fx::{banner_line, other::expected};\n\n#[test]\nfn banner_line_matches() {\n    assert_eq!(banner_line(), expected());\n}\n",
+        &[(
+            "src/other.rs",
+            "pub fn expected() -> String {\n    format!(\"[{}]\", crate::BANNER)\n}\n",
+        )],
+    )?;
+    assert_declaration_kept("path-qualified helper", &repo)
+}
+
+#[test]
+fn doctest_asserting_against_the_constant_keeps_the_declaration() -> Result<(), String> {
+    // B3: the doc test builds its expected value from the constant.
+    let old = "pub const BANNER: &str = \"v1\";\n\n/// ```\n/// assert_eq!(fx::banner_line(), format!(\"[{}]\", fx::BANNER));\n/// ```\npub fn banner_line() -> String {\n    format!(\"[{BANNER}]\")\n}\n";
+    let repo = Repo::create(old, &banner_new(old), BANNER_SELF_TEST)?;
+    assert_declaration_kept("doctest", &repo)
+}

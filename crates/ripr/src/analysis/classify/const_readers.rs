@@ -58,9 +58,11 @@ pub(in crate::analysis) fn same_file_const_readers<'a>(
 /// - the file has exactly one production reader ([`function_reads`]:
 ///   shadows, other-path qualifiers and escaped `{{NAME}}` are not reads),
 ///   and no other production code anywhere names that reader;
-/// - no code outside a function reads the name, no `use` anywhere in the file
-///   imports an item spelled like it or a `format`, and no test code in the
-///   workspace mentions it ([`tests_mention`]);
+/// - no code outside a function reads the name, and no `use` anywhere in the
+///   file imports an item spelled like it or a `format`;
+/// - the name occurs, over the raw text of every workspace Rust file, only on
+///   the declaration and in the reader's returned `format!`
+///   ([`name_confined`]);
 /// - the declaration sits directly in a module (not an `impl` or trait), the
 ///   reader is in that same module, and no module chain is opened twice;
 /// - the reader's whole body is one one-line returned expression that
@@ -70,6 +72,7 @@ pub(in crate::analysis) fn same_file_const_readers<'a>(
 ///
 /// The caller also requires the paired old and new values to differ.
 pub(in crate::analysis) fn const_reader_returns<'a>(
+    root: &Path,
     changed: &str,
     declaration_line: usize,
     file: &Path,
@@ -97,7 +100,6 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
         || imports_name(&masked, name)
         || imports_name(&masked, "format")
         || repeats_inline_module(&masked)
-        || tests_mention(index, name)
         || defines_format_macro(index)
     {
         return Vec::new();
@@ -145,49 +147,68 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
         }
         found.push(shape);
     }
-    found
+    // The structural rule: in the raw text of every workspace Rust file the
+    // name occurs exactly twice, once on the declaration and once in the
+    // reader's returned `format!`. Any other mention (a test, a helper, a
+    // `use .. as` alias, a path-qualified read, a doc test, a macro body or a
+    // comment) may carry the constant's value somewhere ripr does not follow.
+    match found.as_slice() {
+        [shape] if name_confined(root, file, name, declaration_line, shape.start_line) => found,
+        _ => Vec::new(),
+    }
 }
 
-/// Whether any test code in the index mentions `name`, in code, in a format
-/// string, in a `use` (also renamed: `use fx::BANNER as B`) or in an item
-/// outside a function (`const EXP: &str = fx::BANNER`). Such a test may build
-/// its expected value from the constant itself
-/// (`assert_eq!(banner(), format!("[{BANNER}]"))`), which tracks the edit and
-/// cannot notice it; only the value-flow evaluation on the declaration judges
-/// that, so the declaration keeps its probe.
-///
-/// Test code is, conservatively: the whole text of a file under a `tests`
-/// directory (helpers there are not marked as tests); in any other file, all
-/// text from its first test attribute (`#[test]`, `#[cfg(test)]`,
-/// `#[tokio::test]`, ...) on; and the body of every function the index marks
-/// as a test.
-fn tests_mention(index: &RustIndex, name: &str) -> bool {
-    index.files().iter().any(|(path, facts)| {
-        let in_tests_dir = path
-            .components()
-            .any(|component| component.as_os_str() == "tests");
-        let source: &str = &facts.source;
-        let test_text = if in_tests_dir {
-            Some(source)
-        } else {
-            first_test_attribute(source).and_then(|at| source.get(at..))
+/// Whether the whole word `name` occurs, over the raw text (comments,
+/// strings, doc comments and macro bodies included) of every Rust file
+/// `discover_rust_files` finds under `root`, exactly once on
+/// `declaration_line` and once on `return_line` of `file`, and nowhere else.
+/// An unreadable file, or a `file` the discovery does not list, fails
+/// closed. `ripr check` and `ripr repair` both read this same scan.
+pub(in crate::analysis) fn name_confined(
+    root: &Path,
+    file: &Path,
+    name: &str,
+    declaration_line: usize,
+    return_line: usize,
+) -> bool {
+    let target = super::related_tests::normalize_path(file);
+    let mut saw_file = false;
+    for path in crate::analysis::workspace_rust_files(root) {
+        let Ok(text) = std::fs::read_to_string(root.join(&path)) else {
+            return false;
         };
-        test_text.is_some_and(|text| contains_word(text, name))
-            || facts.functions.iter().any(|function| {
-                function.source_role != FunctionSourceRole::Production
-                    && contains_word(&function.body, name)
-            })
-    })
+        let lines = word_lines(&text, name);
+        if super::related_tests::normalize_path(&path) == target {
+            saw_file = true;
+            if lines != [declaration_line, return_line] {
+                return false;
+            }
+        } else if !lines.is_empty() {
+            return false;
+        }
+    }
+    saw_file
 }
 
-/// The byte offset of the first attribute (`#[..]`) whose text names `test`
-/// as a word.
-fn first_test_attribute(source: &str) -> Option<usize> {
-    source.match_indices("#[").find_map(|(at, _)| {
-        let rest = source.get(at..)?;
-        let attribute = rest.get(..rest.find(']')?)?;
-        contains_word(attribute, "test").then_some(at)
-    })
+/// The 1-based line of every whole-word occurrence of `name` in `text`, one
+/// entry per occurrence.
+fn word_lines(text: &str, name: &str) -> Vec<usize> {
+    text.lines()
+        .enumerate()
+        .flat_map(|(at, line)| {
+            let bytes = line.as_bytes();
+            line.match_indices(name)
+                .filter(move |(start, _)| {
+                    let end = start + name.len();
+                    start
+                        .checked_sub(1)
+                        .and_then(|before| bytes.get(before))
+                        .is_none_or(|byte| !is_ident_byte(*byte))
+                        && !bytes.get(end).is_some_and(|byte| is_ident_byte(*byte))
+                })
+                .map(move |_| at + 1)
+        })
+        .collect()
 }
 
 /// Whether production code other than `reader` names it. A caller such as
@@ -668,8 +689,8 @@ fn declaration_count(masked_source: &str, name: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        body_is_only, declaration_count, first_test_attribute, function_reads, imports_name,
-        repeats_inline_module, returns_constant_whole,
+        body_is_only, declaration_count, function_reads, imports_name, repeats_inline_module,
+        returns_constant_whole, word_lines,
     };
 
     #[test]
@@ -680,11 +701,10 @@ mod tests {
     }
 
     #[test]
-    fn test_code_starts_at_the_first_test_attribute() {
-        let source = "pub fn f() {}\n#[cfg(test)]\nmod tests {}\n";
-        assert_eq!(first_test_attribute(source), source.find("#[cfg(test)]"));
-        assert!(first_test_attribute("#[derive(Debug)]\nstruct Contest;\n").is_none());
-        assert!(first_test_attribute("#[tokio::test]\nasync fn t() {}\n").is_some());
+    fn word_lines_count_every_raw_occurrence() {
+        let text = "pub const BANNER: &str = \"v1\";\n/// `fx::BANNER`\nfn f() -> String { format!(\"[{BANNER}]\") }\nconst BANNER_X: u8 = 1;\n";
+        assert_eq!(word_lines(text, "BANNER"), vec![1, 2, 3]);
+        assert_eq!(word_lines("{BANNER}{BANNER}", "BANNER"), vec![1, 1]);
     }
 
     #[test]
