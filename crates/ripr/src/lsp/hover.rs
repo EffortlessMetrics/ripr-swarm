@@ -2746,4 +2746,46 @@ mod top_limitation_parity_tests {
         );
         Ok(())
     }
+
+    /// A ledger-derived limitation item (no repair route, analyzer limitation)
+    /// reaches the editor through two stored-field readers: hover and the
+    /// code-action note. They must name the same kind and detail, and neither
+    /// may turn the limitation into a repair offer.
+    #[test]
+    fn a_ledger_limitation_reads_the_same_in_hover_and_the_code_action_note() {
+        let data = serde_json::json!({
+            "source": "gap_decision_ledger",
+            "gap_state": "static_limitation",
+            "repairability": "analyzer_limitation",
+            "static_limit_kind": "rust_assertion_context_unresolved",
+            "static_limit_detail": "The assertion macro could not be read.",
+            "repair_route": Value::Null,
+        });
+        let diagnostic = Diagnostic {
+            source: Some("ripr".to_string()),
+            message: "limited".to_string(),
+            data: Some(data.clone()),
+            ..Diagnostic::default()
+        };
+        let hover = gap_diagnostic_hover_markdown(&diagnostic, &data);
+        let note = crate::lsp::actions::static_limit_note(&data).unwrap_or_default();
+        for surface in [&hover, &note] {
+            assert!(
+                surface.contains("Static limit: rust_assertion_context_unresolved"),
+                "kind missing:\n{surface}"
+            );
+            assert!(
+                surface.contains("The assertion macro could not be read."),
+                "stored detail missing:\n{surface}"
+            );
+            assert!(
+                !surface.contains("ripr repair"),
+                "a limitation must not offer a repair command:\n{surface}"
+            );
+        }
+        assert!(
+            note.contains("Boundary: static evidence only; advisory action."),
+            "the code-action note keeps its advisory boundary:\n{note}"
+        );
+    }
 }
