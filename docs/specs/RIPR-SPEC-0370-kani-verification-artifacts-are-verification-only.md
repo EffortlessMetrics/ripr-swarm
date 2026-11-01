@@ -66,8 +66,9 @@ are **Kani verification artifacts**, and their lines are verification-only
 (SPEC-0368 semantics: no probe, counted into `verification_only_change`):
 
 - a function carrying an exact proof-harness attribute (`kani::proof` or
-  `kani::proof_for_contract`, directly or introduced by `cfg_attr`; the same
-  path set as SPEC-0367), from the first attribute of its attribute group
+  `kani::proof_for_contract`, written directly; the same path set as
+  SPEC-0367. A `cfg_attr`-introduced harness gates only the attribute, so the
+  body stays ordinary code), from the first attribute of its attribute group
   through the item's closing `}`;
 - an item-level `#[cfg(kani)]` (exact predicate) on a `mod`, from the attribute
   group through the module's closing `}`, including everything inside it;
@@ -76,7 +77,7 @@ are **Kani verification artifacts**, and their lines are verification-only
   multi-line span.
 
 Fail closed: `cfg(not(kani))`, `cfg(any(kani, ..))`, a `cfg(kani)`-gated
-function or impl, a `cfg_attr` introducing anything else, another crate's
+function or impl, a `cfg_attr`-introduced harness, a `cfg_attr` introducing anything else, another crate's
 `proof` path, and an item sharing its closing line with other code are not
 matched and keep prior behavior.
 
@@ -137,3 +138,10 @@ See `.ripr/traceability.d/kani-verification-artifacts-0370.toml`.
 ## Metrics
 
 - `unit_test_pass_rate`.
+
+## Known limit
+
+The removed side is read from the old source rebuilt from the new-side index
+(`old_source`). A file the diff deletes outright is not indexed on the new
+side, so its removed lines keep prior behavior (probed). A deleted module or
+harness inside a surviving file is covered. Tracked in #12013.

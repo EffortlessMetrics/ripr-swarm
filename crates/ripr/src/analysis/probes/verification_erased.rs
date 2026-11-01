@@ -200,7 +200,10 @@ fn kani_item_extents(masked: &str, attributes: &[(usize, usize)]) -> Vec<(usize,
         let group = &attributes[index..=last];
         let (start, group_end) = (group[0].0, group[group.len() - 1].1);
         let texts = group.iter().map(|&(at, close)| &masked[at..=close]);
-        let harness = attributes_define_proof_harness(texts.clone());
+        // `cfg_attr(kani, kani::proof)` gates only the attribute: the function
+        // body is compiled in an ordinary build, so it keeps its probes.
+        let harness =
+            attributes_define_proof_harness(texts.clone().filter(|text| !is_cfg_attr(text)));
         let kani_mod = texts.clone().any(|text| {
             text.chars()
                 .filter(|ch| !ch.is_whitespace())
@@ -214,6 +217,12 @@ fn kani_item_extents(masked: &str, attributes: &[(usize, usize)]) -> Vec<(usize,
         index = last + 1;
     }
     extents
+}
+
+/// True for a `#[cfg_attr(..)]` attribute.
+fn is_cfg_attr(attribute: &str) -> bool {
+    let compact: String = attribute.chars().filter(|ch| !ch.is_whitespace()).collect();
+    compact.starts_with("#[cfg_attr(")
 }
 
 /// True when the item text starts with `mod name {` / `mod name;` (optionally
@@ -473,11 +482,9 @@ mod tests {
         // A whole `#[cfg(kani)] mod`, including a harness helper fn inside.
         let module = "fn f() {}\n#[cfg(kani)]\nmod proofs {\n    use super::*;\n    #[kani::proof_for_contract(f)]\n    fn p() {\n        f();\n    }\n}\nfn after() {}\n";
         assert_eq!(lines(module), [2, 3, 4, 5, 6, 7, 8, 9]);
-        // The same harness path introduced through cfg_attr.
-        assert_eq!(
-            lines("#[cfg_attr(kani, kani::proof)]\nfn p() {\n    g();\n}\n"),
-            [1, 2, 3, 4]
-        );
+        // The same harness path introduced through cfg_attr gates only the
+        // attribute; the body is compiled in an ordinary build and stays ordinary.
+        assert!(lines("#[cfg_attr(kani, kani::proof)]\nfn p() {\n    g();\n}\n").is_empty());
     }
 
     #[test]
