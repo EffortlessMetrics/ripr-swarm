@@ -122,6 +122,7 @@ jobs:
           { echo "### Ripr Rust Small Router"; echo ""; echo "- repo: \`$REPOSITORY\`"; echo "- workflow: \`routed-rust\`"; echo "- run: \`$RUN_ID\`"; echo "- target: \`$target\`"; echo "- reason: \`$reason\`"; for row in "runner query:$runner_query" "runner command exit code:$runner_query_exit_code" "visible runners:$runner_total" "cx43 online:$cx43_online" "cx43 idle ready:$cx43_idle_ready" "cpx42 online:$cpx42_online" "cpx42 idle ready:$cpx42_idle_ready" "cx53 online:$cx53_online" "cx53 idle ready:$cx53_idle_ready"; do echo "- ${row%%:*}: \`${row#*:}\`"; done; } >> "$GITHUB_STEP_SUMMARY"
           if [ "$runner_query" = "failed" ]; then
             { echo '- inventory operation: `gh api --paginate orgs/EffortlessMetrics/actions/runners?per_page=100`'; echo "- attempts: \`$runner_query_attempts\` of 3"; echo "- last HTTP status reported by gh: \`$runner_query_http\` (\`none\` means gh printed none); command exit code is not an HTTP status, the underlying cause is not claimed and raw stderr is withheld."; } >> "$GITHUB_STEP_SUMMARY"
+            case "$runner_query_http" in 401|403) echo "::warning title=Runner inventory token rejected::EM_RUNNER_READ_TOKEN (or the fallback token) was refused with HTTP $runner_query_http; routing fell back to the GitHub-hosted leg. The PR is not red for this: check the token expiry and organization self-hosted-runners read scope (#8858)." ;; esac
           fi
 
   detect-docs-only:
@@ -634,7 +635,7 @@ jobs:
           # Name the refused stage in the job log. The step already fails closed;
           # without this the log shows only an exit code (#8858).
           why=before_check
-          trap 'rc=$?; [ "$rc" -eq 0 ] || echo "::error::eligibility recheck refused at stage $why (exit $rc) for PR #$PR_NUMBER head $EXPECTED_HEAD"' EXIT
+          trap 'rc=$?; [ "$rc" -eq 0 ] || echo "::error::eligibility recheck refused at stage $why (exit $rc) for PR #$PR_NUMBER head $EXPECTED_HEAD"; [ "$rc" -eq 0 ] || [ "$why" != admission_binding ] || [ "$GITHUB_RUN_ATTEMPT" -le 1 ] || echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Remove and re-add merge-ready to start a fresh run (#8858)."' EXIT
           current_eligibility
       - name: Summarize routed result
         if: always()

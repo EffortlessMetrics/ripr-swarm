@@ -37,6 +37,25 @@ fn run_route_env(
     untrusted: bool,
     extra: &[(&str, &str)],
 ) -> TestResult<(String, String, bool, u32)> {
+    let (output, summary, called, attempts, stdout) =
+        run_route_stdout(status, fail_first, error, runners, untrusted, extra)?;
+    // Only the token-rejection warning may reach the job log; error text never does.
+    assert!(
+        stdout.is_empty()
+            || stdout.starts_with("::warning title=Runner inventory token rejected::"),
+        "unexpected log output: {stdout}"
+    );
+    Ok((output, summary, called, attempts))
+}
+
+fn run_route_stdout(
+    status: u8,
+    fail_first: u32,
+    error: &str,
+    runners: &str,
+    untrusted: bool,
+    extra: &[(&str, &str)],
+) -> TestResult<(String, String, bool, u32, String)> {
     let scratch = Scratch(std::env::temp_dir().join(format!(
         "ripr-runner-query-{}-{}",
         std::process::id(),
@@ -112,7 +131,6 @@ fn run_route_env(
         .env("RUNNERS", runners)
         .output()?;
     assert!(result.status.success(), "actual shell: {result:?}");
-    assert!(result.stdout.is_empty());
     assert!(result.stderr.is_empty());
     let called = calls.exists();
     if called {
@@ -131,6 +149,7 @@ fn run_route_env(
         fs::read_to_string(summary)?,
         called,
         attempts,
+        String::from_utf8(result.stdout)?,
     ))
 }
 
@@ -296,6 +315,29 @@ fn malformed_retry_delay_falls_back_without_changing_retries() -> TestResult {
         )?;
         assert_eq!(attempts, 2, "delay {bad:?}");
         assert!(output.contains("runner_query=ok\n"), "{output}");
+    }
+    Ok(())
+}
+
+#[test]
+fn rejected_inventory_token_is_a_warning_not_a_failure() -> TestResult {
+    for (http, warned) in [("401", true), ("403", true), ("404", false), ("502", false)] {
+        let err = format!("HTTP {http}: ghp_SECRET\n::error::injected");
+        let (output, _, _, _, stdout) = run_route_stdout(1, 99, &err, "", false, &[])?;
+        // Routing is unchanged: the hosted leg is still selected.
+        assert!(output.contains("router_target=github\nrouter_reason=runner_api_failed\n"));
+        assert_eq!(
+            stdout.contains("::warning title=Runner inventory token rejected::"),
+            warned,
+            "{http}: {stdout}"
+        );
+        assert!(
+            !stdout.contains("::error::") && !stdout.contains("SECRET"),
+            "{stdout}"
+        );
+        if warned {
+            assert!(stdout.contains(&format!("HTTP {http}")), "{stdout}");
+        }
     }
     Ok(())
 }

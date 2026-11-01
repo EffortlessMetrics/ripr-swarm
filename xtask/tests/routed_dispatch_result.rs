@@ -705,6 +705,22 @@ fn refused_eligibility_names_the_stage_that_refused() -> Result<(), String> {
             "the refused stage must be named: {stage}\n{report}"
         );
     }
+    // A re-run (attempt 2) of a request minted at attempt 1 is explained, not
+    // just refused, and the first attempt gets no such hint.
+    let (success, report) = run_result(
+        &source,
+        "pull_request",
+        "refs/pull/10/merge",
+        "success",
+        "admitted",
+        &[("GITHUB_RUN_ATTEMPT", "2")],
+    )?;
+    assert!(!success, "a re-run must still refuse");
+    assert!(
+        report.contains("this is attempt 2 but the admitted request was minted by attempt 1")
+            && report.contains("re-add merge-ready"),
+        "{report}"
+    );
     let (success, report) = run_result(
         &source,
         "pull_request",
@@ -715,6 +731,7 @@ fn refused_eligibility_names_the_stage_that_refused() -> Result<(), String> {
     )?;
     assert!(success, "a live request is unchanged");
     assert!(!report.contains("eligibility recheck refused"));
+    assert!(!report.contains("minted by attempt 1"));
     Ok(())
 }
 
