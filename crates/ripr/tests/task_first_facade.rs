@@ -285,6 +285,11 @@ fn assert_refusal_code(output: &Output, code: &str, disposition: &str, label: &s
         vec![expected.as_str()],
         "{label}: expected exactly the code line `{expected}`\nstderr:\n{stderr}"
     );
+    // #12193: the machine line follows the prose; stderr never opens with it.
+    assert!(
+        !stderr.starts_with("ripr: refusal code="),
+        "{label}: the first stderr line must be plain words, not the code line\nstderr:\n{stderr}"
+    );
 }
 
 fn attempt_id_from_before_stderr(stderr: &str) -> Result<String, String> {
@@ -5772,7 +5777,11 @@ fn normalize_refusal_stderr(stderr: &str, root_arg: &str, drop_narration: bool) 
                     || line.starts_with("ripr: agent repair --phase after for attempt")))
         })
         .map(|line| {
-            let line = line.replace(root_arg, "<root>");
+            // `ripr` prints the root with forward slashes, so on Windows the
+            // native spelling alone never matches (#9272).
+            let line = line
+                .replace(root_arg, "<root>")
+                .replace(&root_arg.replace('\\', "/"), "<root>");
             line.split_inclusive(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
                 .map(|word| {
                     let bare =

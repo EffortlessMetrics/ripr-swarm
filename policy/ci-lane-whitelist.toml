@@ -50,6 +50,10 @@ id = "pilot-ranking"
 paths = ["target/ripr/reports/pilot-ranking.json", "target/ripr/reports/pilot-ranking.md", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
 [[artifact_family]]
+id = "pilot-measure"
+paths = ["pilot-self/", "pilot-humantime/"]
+
+[[artifact_family]]
 id = "first-run-install"
 paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-run-rows.jsonl", "target/ripr/first-run/first-run.md", "target/ripr/first-run/install_published.stderr.log", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
@@ -214,6 +218,16 @@ commands = ["cargo build --release -p ripr --bin ripr", "cargo xtask pilot-ranki
 estimated_lem = 15
 artifact_families = ["pilot-ranking"]
 description = "Pilot ranking answer key: nightly, on demand, and at draft-to-ready on pilot ranking or seam grading changes; fails only when pooled top-5 or top-10 precision, scored share or function diversity regresses past its margin against the committed baseline, or a pinned crate cannot be fetched."
+
+[[lane]]
+id = "pilot-measure"
+posture = "advisory"
+workflow = ".github/workflows/pilot-measure.yml"
+jobs = ["measure"]
+commands = ["cargo build --release --locked -p ripr", "\"$RUNNER_TEMP/ripr-target/release/ripr\" pilot --root \"$GITHUB_WORKSPACE\" --out \"$RUNNER_TEMP/pilot-self\" --timeout-ms \"$eff\" --quiet", "cargo xtask pilot-ranking fetch --allow-network --repo humantime --root \"$RUNNER_TEMP/pilot-ranking\"", "\"$RUNNER_TEMP/ripr-target/release/ripr\" check --root \"$RUNNER_TEMP/pilot-ranking/humantime\" --base \"$pin\" --committed --format agent"]
+estimated_lem = 15
+artifact_families = ["pilot-measure"]
+description = "On-demand hosted measurement of a current-main release ripr (#11951, #12058): reports pilot artifact byte sizes, exit code and run_status for this repository and the agent-format open=/stop= state on the pinned humantime fortnight gap commit; reports only, never asserts."
 
 [[lane]]
 id = "first-run-install"

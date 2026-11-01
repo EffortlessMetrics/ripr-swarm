@@ -173,7 +173,7 @@
         {"kind":"return_value","text":"return amount + 5","line":2}
       ],
       "evidence": ["owner: calculate_fee", "owner_kind: function", "test_framework: pytest (test_calculate_fee_exact)", "test_verify_command: python -m pytest tests/test_observed.py::test_calculate_fee_exact (test_calculate_fee_exact)", "related_test_relation: syntactic_call (test_calculate_fee_exact)", "test_oracle: exact_value strong (test_calculate_fee_exact)"],
-      "missing": ["Related Python test reaches `calculate_fee` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `calculate_fee` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {

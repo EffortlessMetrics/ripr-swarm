@@ -1490,13 +1490,13 @@ fn compare_golden(
     let actual_text = read_text_lossy(actual)?;
     let (expected_text, actual_text) = if surface == "check.json" {
         (
-            normalize_check_json_golden_document(&expected_text),
-            normalize_check_json_golden_document(&actual_text),
+            mask_check_json_test_locations(&normalize_check_json_golden_document(&expected_text)),
+            mask_check_json_test_locations(&normalize_check_json_golden_document(&actual_text)),
         )
     } else {
         (
-            mask_repair_refusal_reason(&expected_text),
-            mask_repair_refusal_reason(&actual_text),
+            mask_test_file_citations(&mask_repair_refusal_reason(&expected_text)),
+            mask_test_file_citations(&mask_repair_refusal_reason(&actual_text)),
         )
     };
     let normalized_expected = normalize_golden_text(&expected_text);
@@ -1806,8 +1806,144 @@ fn normalize_seam_count(body: &str) -> Option<String> {
     Some(format!("{SEAMS_UNTIED_OPENING}<reason>"))
 }
 
+/// Opening of the `PreviewPacketNotComplete` sentence (#12086). It embeds the
+/// language and a reason, so it is not a fixed-wording arm; only the test
+/// location inside the reason moves with unrelated edits.
+const PREVIEW_PACKET_REFUSAL_OPENING: &str = "ripr has no complete repair packet for this ";
+
+/// Where a TypeScript blocker reason cites a test: `the test at `path:line``.
+const PREVIEW_TEST_LOCATION_OPENING: &str = "the test at `";
+
+/// Mask the backticked `path:line` a `PreviewPacketNotComplete` reason cites
+/// (#12086). The language, the blocker wording and the rest of the sentence
+/// stay compared, so rewording any of them is drift while adding a line above
+/// the cited test is not. A reason with no cited location (for example the
+/// moved-assertion-selection blocker, which names a test, not a location) is
+/// compared verbatim.
+fn normalize_preview_packet_location(body: &str) -> Option<String> {
+    if !body.starts_with(PREVIEW_PACKET_REFUSAL_OPENING) {
+        return None;
+    }
+    let start = body.find(PREVIEW_TEST_LOCATION_OPENING)? + PREVIEW_TEST_LOCATION_OPENING.len();
+    let len = body[start..].find('`')?;
+    // An empty span cites nothing; leave it verbatim so it reads as drift.
+    if len == 0 {
+        return None;
+    }
+    Some(format!(
+        "{}<location>{}",
+        &body[..start],
+        &body[start + len..]
+    ))
+}
+
+/// Filename suffixes of JS/TS test files whose cited line moves when an
+/// unrelated edit shifts the test (#12163).
+const TEST_FILE_SUFFIXES: &[&str] = &[
+    ".test.ts",
+    ".test.tsx",
+    ".test.js",
+    ".test.jsx",
+    ".test.mjs",
+    ".test.cjs",
+    ".spec.ts",
+    ".spec.tsx",
+    ".spec.js",
+    ".spec.jsx",
+    ".spec.mjs",
+    ".spec.cjs",
+];
+
+fn ends_with_test_file(text: &str) -> bool {
+    TEST_FILE_SUFFIXES
+        .iter()
+        .any(|suffix| text.ends_with(suffix))
+}
+
+/// Replace the line in every `<test file>:<line>` citation with `<line>`
+/// (#12163). Only a JS/TS test-file path immediately followed by `:` and
+/// digits is touched, so source locations, blocker wording and every other
+/// number stay compared.
+fn mask_test_file_citations(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(colon) = rest.find(':') {
+        let (head, tail) = rest.split_at(colon);
+        out.push_str(head);
+        out.push(':');
+        let after = &tail[1..];
+        let digits = after.bytes().take_while(u8::is_ascii_digit).count();
+        // Judge the path against the whole text already emitted, not just
+        // this segment, so a path split by an earlier citation still matches.
+        if digits > 0 && ends_with_test_file(&out[..out.len() - 1]) {
+            out.push_str("<line>");
+            rest = &after[digits..];
+        } else {
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// True when the rest of a pretty-printed member line is exactly an unsigned
+/// canonical unsigned integer (no leading zero), with at most one trailing comma. `null`, a quoted string or a
+/// malformed number is not masked, so a broken test pointer stays drift.
+fn is_unsigned_json_number_member(rest: &str) -> bool {
+    let value = rest.trim_end();
+    let value = value.strip_suffix(',').unwrap_or(value);
+    !value.is_empty()
+        && (value == "0" || !value.starts_with('0'))
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// In pretty `check.json`, mask `"line": N` when the nearest preceding
+/// `"file"` member names a JS/TS test file (#12163). Related-test entries put
+/// `file` immediately before `line`; a `line` after any other file, or with no
+/// file before it, is compared as written.
+fn mask_test_lines_in_check_json(text: &str) -> String {
+    let mut last_file_is_test = false;
+    let mut out = String::with_capacity(text.len());
+    for chunk in text.split_inclusive('\n') {
+        let trimmed = chunk.trim_start();
+        // A `file` only governs the `line` in its own object: leaving or
+        // entering an object ends it, so a later `line` with no `file` of its
+        // own stays compared.
+        if trimmed.starts_with('}') || trimmed.trim_end().ends_with('{') {
+            last_file_is_test = false;
+        }
+        if let Some(value) = trimmed.strip_prefix("\"file\": \"") {
+            let name = value.split('"').next().unwrap_or("");
+            last_file_is_test = ends_with_test_file(name);
+        } else if last_file_is_test
+            && trimmed
+                .strip_prefix("\"line\": ")
+                .is_some_and(is_unsigned_json_number_member)
+        {
+            let indent = &chunk[..chunk.len() - trimmed.len()];
+            let comma = if trimmed.trim_end().ends_with(',') {
+                ","
+            } else {
+                ""
+            };
+            let newline = if chunk.ends_with('\n') { "\n" } else { "" };
+            out.push_str(&format!("{indent}\"line\": \"<line>\"{comma}{newline}"));
+            continue;
+        }
+        out.push_str(chunk);
+    }
+    out
+}
+
+fn mask_check_json_test_locations(text: &str) -> String {
+    mask_test_lines_in_check_json(&mask_test_file_citations(text))
+}
+
 fn mask_refusal_body(body: &str) -> String {
     if let Some(masked) = normalize_seam_count(body) {
+        return masked;
+    }
+    if let Some(masked) = normalize_preview_packet_location(body) {
         return masked;
     }
     for rule in REPAIR_REFUSAL_RULES {
@@ -3734,6 +3870,59 @@ mod tests {
                 mask_repair_refusal_reason(&wrap(&format!("{opening} two")))
             );
         }
+        // The preview-packet arm masks only the cited test location (#12086).
+        let preview = |language: &str, cite: &str, tail: &str| {
+            wrap(&format!(
+                "ripr has no complete repair packet for this {language} finding (ripr cannot tell whether the test at `{cite}` covers this change: {tail}); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`"
+            ))
+        };
+        let base = preview(
+            "TypeScript",
+            "tests/a.test.ts:8",
+            "its `.toBe(...)` compares against a variable",
+        );
+        // A moved location is not drift.
+        assert_eq!(
+            mask_repair_refusal_reason(&base),
+            mask_repair_refusal_reason(&preview(
+                "TypeScript",
+                "tests/b.test.ts:12",
+                "its `.toBe(...)` compares against a variable"
+            ))
+        );
+        // A changed language, matcher or reason wording is drift.
+        for changed in [
+            preview(
+                "JavaScript",
+                "tests/a.test.ts:8",
+                "its `.toBe(...)` compares against a variable",
+            ),
+            preview(
+                "TypeScript",
+                "tests/a.test.ts:8",
+                "its `.toEqual(...)` compares against a variable",
+            ),
+            preview(
+                "TypeScript",
+                "tests/a.test.ts:8",
+                "its `.toBe(...)` compares against a computed value",
+            ),
+        ] {
+            assert_ne!(
+                mask_repair_refusal_reason(&base),
+                mask_repair_refusal_reason(&changed)
+            );
+        }
+        // A reason with no cited location is compared verbatim.
+        let no_cite = |name: &str| {
+            wrap(&format!(
+                "ripr has no complete repair packet for this TypeScript finding (related test `{name}` asserts a different kind of behavior); add or strengthen the test by hand"
+            ))
+        };
+        assert_ne!(
+            mask_repair_refusal_reason(&no_cite("one")),
+            mask_repair_refusal_reason(&no_cite("two"))
+        );
         // Negative: a variant change is drift even though both are refusals.
         assert_ne!(
             mask_repair_refusal_reason(&wrap(fixed[0])),
@@ -3775,6 +3964,138 @@ mod tests {
             ),
             "  no repair start offered: classifying the finding's seams failed<reason>"
         );
+    }
+
+    /// #12163: moving a cited TypeScript test shifts its line in every surface
+    /// that names it. The real `ts_dynamic_oracle` golden, with each cited
+    /// test line moved, must still compare equal; a changed blocker wording, a
+    /// changed oracle or a moved *source* line must not.
+    #[test]
+    fn moved_typescript_test_line_is_not_drift_on_any_surface_but_other_changes_are()
+    -> Result<(), String> {
+        let fixture = "ts_dynamic_oracle";
+        let root =
+            crate::dogfood::repo_rooted_fixture_path(&format!("fixtures/{fixture}/expected"));
+        let dir = unique_temp_path("12163-moved-test-line");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let shift = |text: &str, from: &str, to: &str| text.replace(from, to);
+        for surface in ["human.txt", "check.json"] {
+            let golden_path = root.join(surface);
+            let golden = std::fs::read_to_string(&golden_path).map_err(|err| err.to_string())?;
+            let write = |name: &str, text: &str| -> Result<std::path::PathBuf, String> {
+                let path = dir.join(format!("{surface}.{name}"));
+                std::fs::write(&path, text).map_err(|err| err.to_string())?;
+                Ok(path)
+            };
+            let compare = |actual: &Path| -> Result<bool, String> {
+                Ok(compare_golden(
+                    fixture,
+                    if surface == "human.txt" {
+                        "human.txt"
+                    } else {
+                        "check.json"
+                    },
+                    &golden_path,
+                    actual,
+                )?
+                .matches)
+            };
+            // Fixture-construction guard: the golden really cites the test.
+            assert!(
+                golden.contains("tests/pricing.test.ts:5") || golden.contains("\"line\": 3"),
+                "{surface}: fixture no longer cites the test line"
+            );
+            // Move every cited test line (citations and structured lines).
+            let moved = shift(
+                &golden,
+                "tests/pricing.test.ts:5",
+                "tests/pricing.test.ts:9",
+            );
+            let moved = shift(&moved, "tests/pricing.test.ts:3", "tests/pricing.test.ts:7");
+            let moved = if surface == "check.json" {
+                moved
+                    .replace(
+                        "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 3",
+                        "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 7",
+                    )
+                    .replace(
+                        "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 3,",
+                        "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 7,",
+                    )
+            } else {
+                moved
+            };
+            assert_ne!(moved, golden, "{surface}: the moved copy must differ");
+            assert!(
+                compare(&write("moved", &moved)?)?,
+                "{surface}: moved test line is not drift"
+            );
+            // Negative controls: other changes remain drift.
+            let reworded = shift(
+                &moved,
+                "compares against a variable",
+                "compares against a computed value",
+            );
+            if reworded != moved {
+                assert!(
+                    !compare(&write("reworded", &reworded)?)?,
+                    "{surface}: reworded blocker is drift"
+                );
+            }
+            let other_test = shift(&moved, "tests/pricing.test.ts:9", "tests/other.test.ts:9");
+            if other_test != moved {
+                assert!(
+                    !compare(&write("other_file", &other_test)?)?,
+                    "{surface}: a different test file is drift"
+                );
+            }
+            if surface == "check.json" {
+                for broken in ["null", "\"7\"", "7x", "-7", "07", "7,,", ""] {
+                    let invalid = moved.replace(
+                        "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 7",
+                        &format!(
+                            "\"file\": \"tests/pricing.test.ts\",\n          \"line\": {broken}"
+                        ),
+                    );
+                    assert_ne!(
+                        invalid, moved,
+                        "the invalid-line control must edit the JSON"
+                    );
+                    assert!(
+                        !compare(&write("invalid_line", &invalid)?)?,
+                        "a test line of `{broken}` is drift, not a masked line"
+                    );
+                }
+                // A `line` in a later object with no `file` of its own is not
+                // governed by the earlier test-file object.
+                let closed =
+                    "{\n  \"file\": \"tests/a.test.ts\",\n  \"line\": 3\n},\n{\n  \"line\": ";
+                assert_ne!(
+                    mask_test_lines_in_check_json(&format!("{closed}3\n}}")),
+                    mask_test_lines_in_check_json(&format!("{closed}4\n}}")),
+                    "a bare line after a closed test-file object stays compared"
+                );
+                assert_eq!(
+                    mask_test_lines_in_check_json(
+                        "{\n  \"file\": \"tests/a.test.ts\",\n  \"line\": 3\n}"
+                    ),
+                    mask_test_lines_in_check_json(
+                        "{\n  \"file\": \"tests/a.test.ts\",\n  \"line\": 4\n}"
+                    ),
+                    "a test-file line inside its own object is masked"
+                );
+                let source_moved = shift(&moved, "\"line\": 2", "\"line\": 3");
+                assert_ne!(
+                    source_moved, moved,
+                    "check.json cites a source line to move"
+                );
+                assert!(
+                    !compare(&write("source_moved", &source_moved)?)?,
+                    "a moved source line is drift"
+                );
+            }
+        }
+        Ok(())
     }
 
     #[test]

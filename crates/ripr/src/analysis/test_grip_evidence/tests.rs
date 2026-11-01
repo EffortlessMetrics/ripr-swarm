@@ -21108,6 +21108,302 @@ fn inherent_helper_declarations_are_not_executable_self_edges() -> Result<(), St
     Ok(())
 }
 
+/// Not-ready burn-down: a match-arm start credits only a plain literal arm
+/// pattern; and the literal-aware scanners skip brackets inside literals.
+#[test]
+fn match_arm_patterns_and_scanners_read_only_plain_literals() {
+    for literal in ["\"silver\"", "3", "-4", "'x'"] {
+        assert!(is_plain_literal_pattern(literal), "{literal}");
+    }
+    for pattern in [
+        "\"si\\\"lver\"",
+        "1..=3",
+        "Kind::Silver",
+        "_",
+        "s if s.len() > 3",
+        "other",
+        "'\\n'",
+        "",
+    ] {
+        assert!(!is_plain_literal_pattern(pattern), "{pattern}");
+    }
+    let text = "{ \"}{\" => '}', x => (1, 2) }";
+    assert_eq!(matching_close(text, 0), Some(text.len() - 1));
+    assert_eq!(find_top_level(text, 1, text.len() - 1, "=>"), Some(7));
+    assert_eq!(skip_literal("'a b", 0), 0);
+    assert_eq!(skip_literal("'}' x", 0), 3);
+}
+
+/// A match on a derived value (`n + 1`) is not a match on the parameter: the
+/// whole-body reader refuses it by itself, while the bare twin is read.
+#[test]
+fn whole_body_match_reads_only_a_bare_identifier_scrutinee() -> Result<(), String> {
+    let source = |scrutinee: &str| {
+        format!(
+            "pub fn rate(n: u32) -> u32 {{\n    match {scrutinee} {{\n        3 => 5,\n        _ => 0,\n    }}\n}}\n"
+        )
+    };
+    for (scrutinee, read) in [("n", true), ("n + 1", false), ("(n)", false)] {
+        let text = source(scrutinee);
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), text.as_str())])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "rate")
+            .ok_or("fixture must hold `rate`")?;
+        let arms = whole_body_match_arms(owner);
+        assert_eq!(arms.is_some(), read, "{scrutinee}: {arms:?}");
+    }
+    Ok(())
+}
+
+/// The one-call reader admits only a top-level `let` or an assertion's
+/// condition operand around one call with simple arguments; each refused
+/// body differs from an admitted one by the shape named.
+#[test]
+fn arm_call_reader_admits_only_plain_top_level_call_shapes() {
+    let read = |statements: &str| {
+        arm_call_argument_in_body(&format!("fn t() {{\n{statements}\n}}\n"), "rate", false, 1)
+    };
+    for admitted in [
+        "    let r = rate(9, \"silver\");\n    assert!(r < 100);",
+        "    assert!(rate(9, \"silver\") < 100);",
+        "    assert!(ar::rate(9, \"silver\") < 100, \"message\");",
+        "    assert_ne!(rate(&k, \"silver\"), 100);",
+        "    let w = W { a: 1 };\n    let r: u32 = rate(w.a, \"silver\");\n    assert!(r < 100);",
+    ] {
+        assert_eq!(read(admitted).as_deref(), Some("\"silver\""), "{admitted}");
+    }
+    for (shape, refused) in [
+        (
+            "branch",
+            "    let r = if c { rate(9, \"silver\") } else { 0 };",
+        ),
+        (
+            "match",
+            "    let r = match c { true => rate(9, \"silver\"), false => 0 };",
+        ),
+        ("closure", "    let f = || rate(9, \"silver\");"),
+        ("short-circuit", "    let g = c && rate(9, \"silver\") > 0;"),
+        (
+            "question mark",
+            "    let r = make()?.max(rate(9, \"silver\"));",
+        ),
+        (
+            "loop",
+            "    loop {\n        let r = rate(9, \"silver\");\n    }",
+        ),
+        (
+            "for",
+            "    for _ in 0..1 {\n        assert!(rate(9, \"silver\") < 100);\n    }",
+        ),
+        (
+            "return",
+            "    return;\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "early exit",
+            "    if skip() {\n        return;\n    }\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "let else",
+            "    let Some(x) = y else { panic!() };\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "nested fn",
+            "    fn inner() -> u32 {\n        rate(9, \"silver\")\n    }\n    assert!(inner() < 100);",
+        ),
+        (
+            "async block",
+            "    let f = async { rate(9, \"silver\") };\n    assert!(true);",
+        ),
+        (
+            "cfg attribute",
+            "    #[cfg(feature = \"slow\")]\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "inner cfg attribute",
+            "    #![cfg(any())]\n    let ok = true;\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "message argument",
+            "    assert!(ok, \"rate {}\", rate(9, \"silver\"));",
+        ),
+        (
+            "eq message argument",
+            "    assert_eq!(a, 1, \"{}\", rate(9, \"silver\"));",
+        ),
+        (
+            "closure argument",
+            "    assert!(rate(|a, b| a + b, \"silver\", \"gold\") < 100);",
+        ),
+        (
+            "generic argument",
+            "    assert!(rate(HashMap::<u32, u32>::new(), \"silver\", \"gold\") < 100);",
+        ),
+        (
+            "second call",
+            "    let _a = rate(9, \"gold\");\n    let r = rate(9, \"silver\");",
+        ),
+        ("method form", "    assert!(x.rate(9, \"silver\") < 100);"),
+        (
+            "else alone",
+            "    let _v = if ok { 1 } else { 2 };\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "panic alone",
+            "    let _ = ok || panic!(\"x\");\n    assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "macro wrapper",
+            "    let r = keep!(rate(9, \"silver\"));\n    assert!(r < 100);",
+        ),
+        (
+            "debug assert",
+            "    debug_assert!(rate(9, \"silver\") < 100);",
+        ),
+        (
+            "spaced macro",
+            "    let r = stringify ! (rate(9, \"silver\"));\n    assert!(r.len() < 100);",
+        ),
+        (
+            "comment-spaced macro",
+            "    let r = keep /**/ !(rate(9, \"silver\"));\n    assert!(r < 100);",
+        ),
+    ] {
+        assert_eq!(read(refused), None, "{shape}");
+    }
+    // The single-word controls: the same bodies without the exit word or the
+    // wrapper are admitted, so only that word refuses.
+    for admitted in [
+        "    let _v = if ok { 1 } else_ { 2 };\n    assert!(rate(9, \"silver\") < 100);",
+        "    let _ = ok || abort(\"x\");\n    assert!(rate(9, \"silver\") < 100);",
+        "    let r = keep(rate(9, \"silver\"));\n    assert!(r < 100);",
+    ] {
+        assert_eq!(read(admitted).as_deref(), Some("\"silver\""), "{admitted}");
+    }
+}
+
+/// The owner's parameters are read only from a plain signature: a generic
+/// type's commas or `pub(crate)` cannot shift or invent a parameter name.
+#[test]
+fn arm_owner_signature_reads_only_plain_parameter_lists() -> Result<(), String> {
+    for (signature, expected) in [
+        (
+            "pub fn rate(t: u32, kind: &str, tier: &str) -> u32",
+            Some((false, vec!["t", "kind", "tier"])),
+        ),
+        (
+            "pub(crate) fn rate(kind: &str) -> u32",
+            Some((false, vec!["kind"])),
+        ),
+        (
+            "pub fn rate(&'a mut self, kind: &str) -> u32",
+            Some((true, vec!["kind"])),
+        ),
+        (
+            "pub fn rate(t: HashMap<u32, std::string::String>, kind: &str, tier: &str) -> u32",
+            None,
+        ),
+        (
+            "pub fn rate(t: Result<u8, io::Error>, kind: &str) -> u32",
+            None,
+        ),
+        ("pub fn rate<T>(t: T, kind: &str) -> u32", None),
+        ("pub fn rate((a, b): (u32, u32), kind: &str) -> u32", None),
+        ("pub fn rate(self: Box<Self>, kind: &str) -> u32", None),
+    ] {
+        let source = format!(
+            "pub struct W;\nimpl W {{\n    {signature} {{\n        match kind {{\n            \"a\" => 1,\n            _ => 0,\n        }}\n    }}\n}}\n"
+        );
+        let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "rate")
+            .ok_or_else(|| format!("fixture must hold `rate`: {signature}"))?;
+        let read = arm_owner_signature(owner);
+        let expected = expected.map(|(takes_self, names)| {
+            (
+                takes_self,
+                names.into_iter().map(str::to_string).collect::<Vec<_>>(),
+            )
+        });
+        assert_eq!(read, expected, "{signature}");
+    }
+    Ok(())
+}
+
+/// The changed arm `1` after an earlier `01` (or `0` after `-0`) never runs;
+/// read through the arm reader itself, so text equality would not pass.
+#[test]
+fn earlier_arm_with_the_same_integer_value_refuses_the_arm() -> Result<(), String> {
+    for (first, changed, refused) in [("01", "1", true), ("-0", "0", true), ("2", "1", false)] {
+        let source = format!(
+            "pub fn rate(n: i32) -> u32 {{\n    match n {{\n        {first} => 1,\n        {changed} => 5,\n        _ => 0,\n    }}\n}}\n"
+        );
+        let prod = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(prod.clone(), source.as_str())])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "rate")
+            .ok_or("fixture must hold `rate`")?;
+        let seam = inventory_seams_from_index(std::slice::from_ref(&prod), &index)
+            .into_iter()
+            .find(|seam| seam.kind() == SeamKind::MatchArm && seam.display_line() == 4)
+            .ok_or_else(|| format!("{first}/{changed}: expected a match-arm seam on line 4"))?;
+        let read = arm_scrutinee_argument(&seam, owner);
+        assert_eq!(read.is_none(), refused, "{first}/{changed}: {read:?}");
+        if !refused {
+            assert_eq!(read, Some((0, changed.to_string())));
+        }
+    }
+    Ok(())
+}
+
+/// A quote inside a comment does not hide an arm from the arm reader.
+#[test]
+fn whole_body_match_reads_arms_past_quotes_in_comments() -> Result<(), String> {
+    let source = "pub fn rate(kind: &str) -> u32 {\n    match kind {\n        \"gold\" => 1 /* \" */,\n        s if s.len() == 6 => 2 /* \" */,\n        \"silver\" => 5,\n        _ => 0,\n    }\n}\n";
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source)])?;
+    let owner = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "rate")
+        .ok_or("fixture must hold `rate`")?;
+    let (_, arms) = whole_body_match_arms(owner).ok_or("the match must be read")?;
+    let patterns: Vec<&str> = arms.iter().map(|(pattern, _)| pattern.trim()).collect();
+    assert_eq!(
+        patterns,
+        vec!["\"gold\"", "s if s.len() == 6", "\"silver\"", "_"]
+    );
+    Ok(())
+}
+
+/// Earlier-arm duplicates compare integer values, not spellings.
+#[test]
+fn same_literal_value_compares_integers_by_value() {
+    for (left, right) in [("1", "01"), ("0", "-0"), ("\"a\"", "\"a\"")] {
+        assert!(same_literal_value(left, right), "{left} {right}");
+    }
+    for (left, right) in [("1", "2"), ("\"1\"", "1"), ("'a'", "\"a\"")] {
+        assert!(!same_literal_value(left, right), "{left} {right}");
+    }
+}
+
+/// The shadow guard counts whole-word item declarations only.
+#[test]
+fn item_declarations_are_counted_as_whole_words() {
+    let masked = "pub struct Window {}\nmod tests { struct Window; struct WindowExt; }\nfn substruct Window() {}\n";
+    assert_eq!(count_item_declarations(masked, "Window", &["struct"]), 2);
+    assert_eq!(count_item_declarations(masked, "WindowExt", &["struct"]), 1);
+    assert_eq!(
+        count_item_declarations(masked, "Window", &["enum", "trait"]),
+        0
+    );
+}
+
 /// #11382: the seam-side relation applies the finding-level refusal for a
 /// receiver whose type the test's own module shadows. The shadowed test's
 /// `window.clone()` calls the test-local `Window`, so it is never a direct

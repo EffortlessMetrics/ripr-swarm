@@ -612,10 +612,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.129`: a repo predicate seam whose one-line `if` arms all hold the same
 /// statement no longer reads propagated, so it cannot read strongly gripped
 /// (#12053).
-/// `1.130`: a proximity-only or assertion-affinity test whose assertion pins
+/// `1.131`: an `error_path` finding credits an exact pin of the variant a changed
+/// arm removed when the owner call's input selects that arm (#12110).
+/// `1.132`: a proximity-only or assertion-affinity test whose assertion pins
 /// another function no longer lends a match-arm seam its propagation, activation
 /// or discrimination credit (#12060).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.130";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.132";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -5563,8 +5565,10 @@ mod tests {
         // audited locked versions (RIPR-SPEC-0369).
         // 1.127 -> 1.128: imported unit-variant receiver (#8782).
         // 1.128 -> 1.129: identical-arms predicate seam propagation (#12053).
-        // 1.129 -> 1.130: proximity assertions pinning another function (#12060).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.130");
+        // 1.129 -> 1.131: an exact pin of the variant a changed error arm
+        // removed is credited when its input selects that arm (#12110).
+        // 1.131 -> 1.132: proximity assertions pinning another function (#12060).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.132");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.

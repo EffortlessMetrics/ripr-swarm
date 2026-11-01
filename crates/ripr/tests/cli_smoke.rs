@@ -3193,6 +3193,165 @@ fn check_navigation_replays_explicit_draft_over_configured_ready() -> Result<(),
     Ok(())
 }
 
+/// #12104: `explain --format agent` prints the compact one-finding lines with
+/// an explicit terminal state, `--format json` is refused toward `ripr context`,
+/// and the default stays the human explanation.
+#[test]
+fn explain_format_agent_prints_compact_lines_and_json_is_refused() -> Result<(), String> {
+    let (root, diff) =
+        agent_brief_sample_workspace("explain-format-agent").map_err(|err| err.to_string())?;
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+    let check = run_ripr(&[
+        "check", "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft",
+    ]);
+    assert_success(&check);
+    let stdout = String::from_utf8_lossy(&check.stdout);
+    let selector = stdout
+        .lines()
+        .find(|line| line.starts_with("  ripr explain "))
+        .and_then(|line| line.split_whitespace().find(|t| t.starts_with("probe:")))
+        .ok_or_else(|| format!("check output omitted a probe selector:\n{stdout}"))?
+        .to_string();
+    let base = [
+        "explain", "--root", &root_arg, "--diff", &diff_arg, "--mode", "draft",
+    ];
+    let agent_args: Vec<&str> = base
+        .iter()
+        .copied()
+        .chain(["--format", "agent", selector.as_str()])
+        .collect();
+    let agent = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &agent_args)
+        .map_err(|err| format!("run explain --format agent: {err}"))?;
+    assert_success(&agent);
+    let text = String::from_utf8_lossy(&agent.stdout).to_string();
+    assert!(
+        text.starts_with("#ripr explain agent static-advisory class="),
+        "{text}"
+    );
+    let terminals = text
+        .lines()
+        .filter(|l| l.starts_with("done=") || l.starts_with("open=") || l.starts_with("stop="))
+        .count();
+    assert_eq!(terminals, 1, "exactly one terminal line:\n{text}");
+    assert!(
+        text.lines().any(|l| l.starts_with("next=ripr context ")),
+        "{text}"
+    );
+    assert!(text.contains(&format!("|id={selector}")), "{text}");
+    assert!(
+        !text.contains("Why:"),
+        "agent lines are not the human body:\n{text}"
+    );
+
+    let human_args: Vec<&str> = base.iter().copied().chain([selector.as_str()]).collect();
+    let human = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &human_args)
+        .map_err(|err| format!("run explain: {err}"))?;
+    assert_success(&human);
+    assert!(
+        !String::from_utf8_lossy(&human.stdout).starts_with("#ripr explain agent"),
+        "default format must stay human"
+    );
+
+    let json_args: Vec<&str> = base
+        .iter()
+        .copied()
+        .chain(["--format", "json", selector.as_str()])
+        .collect();
+    let json = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &json_args)
+        .map_err(|err| format!("run explain --format json: {err}"))?;
+    assert!(!json.status.success(), "json must be refused");
+    assert!(json.stdout.is_empty(), "refusal keeps stdout empty");
+    assert!(
+        String::from_utf8_lossy(&json.stderr).contains("ripr context --at"),
+        "{}",
+        String::from_utf8_lossy(&json.stderr)
+    );
+    Ok(())
+}
+
+/// #12104: the `--from` replay path prints the same agent lines, and its
+/// `next=` context command is runnable and succeeds against the same artifact.
+#[test]
+fn explain_format_agent_from_artifact_replays_the_context_next_command() -> Result<(), String> {
+    let (root, diff) =
+        agent_brief_sample_workspace("explain-agent-from").map_err(|err| err.to_string())?;
+    let root_arg = root.display().to_string();
+    let diff_arg = diff.display().to_string();
+    let artifact = root.join("check-artifact.json");
+    let artifact_arg = artifact.display().to_string();
+    let check = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--diff",
+        &diff_arg,
+        "--mode",
+        "draft",
+        "--write-artifact",
+        &artifact_arg,
+    ]);
+    assert_success(&check);
+    let stdout = String::from_utf8_lossy(&check.stdout);
+    let selector = stdout
+        .lines()
+        .find(|line| line.starts_with("  ripr explain "))
+        .and_then(|line| line.split_whitespace().find(|t| t.starts_with("probe:")))
+        .ok_or_else(|| format!("check output omitted a probe selector:\n{stdout}"))?
+        .to_string();
+    let args = [
+        "explain",
+        "--root",
+        &root_arg,
+        "--diff",
+        &diff_arg,
+        "--mode",
+        "draft",
+        "--from",
+        &artifact_arg,
+        "--format",
+        "agent",
+        selector.as_str(),
+    ];
+    let replay = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &args)
+        .map_err(|err| format!("run explain --from --format agent: {err}"))?;
+    assert_success(&replay);
+    let text = String::from_utf8_lossy(&replay.stdout).to_string();
+    assert!(
+        text.starts_with("#ripr explain agent static-advisory"),
+        "{text}"
+    );
+    let next = text
+        .lines()
+        .find_map(|l| l.strip_prefix("next="))
+        .ok_or_else(|| format!("no next= line:\n{text}"))?;
+    assert!(next.starts_with("ripr context "), "{next}");
+    assert!(
+        next.contains("--from"),
+        "replay next= must keep the artifact: {next}"
+    );
+    assert!(next.contains("--at"), "{next}");
+    // The printed command is runnable: swap in the same typed argv (the display
+    // line is shell-quoted, so it is not split into argv here, #2816).
+    let context_args = [
+        "context",
+        "--root",
+        &root_arg,
+        "--diff",
+        &diff_arg,
+        "--mode",
+        "draft",
+        "--from",
+        &artifact_arg,
+        "--at",
+        selector.as_str(),
+    ];
+    let context = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&root), &context_args)
+        .map_err(|err| format!("run context: {err}"))?;
+    assert_success(&context);
+    Ok(())
+}
+
 #[test]
 fn check_json_output_has_stable_contract_fields() -> sample_output::TestResult {
     let fixture = sample_output::Fixture::new()?;
@@ -18078,6 +18237,168 @@ fn without_volatile_repo_artifact_fields(mut value: serde_json::Value) -> serde_
         artifact.remove("content_sha256");
     }
     value
+}
+
+/// #12108: the seam budget bounds the seam count, not bytes. A byte budget
+/// cuts `repo-exposure.json`'s `seams[]`, says so in the file and in
+/// `pilot-summary.json`, leaves the packets and ranking whole, and `ripr
+/// outcome` refuses the cut file instead of reading every cut seam as removed.
+#[test]
+fn pilot_repo_exposure_byte_bound_is_disclosed_and_refused_by_outcome()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("pilot-repo-exposure-bytes");
+    std::fs::create_dir_all(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let pilot_dir = root.join("target/ripr/pilot");
+    let read = |name: &str| -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        Ok(serde_json::from_str(&std::fs::read_to_string(
+            pilot_dir.join(name),
+        )?)?)
+    };
+
+    // Negative: the default budget does not touch a fixture-sized file.
+    let uncut = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0")],
+    )?;
+    assert_success(&uncut);
+    let complete = read("repo-exposure.json")?;
+    assert_eq!(complete["run_status"], "complete", "{complete}");
+    assert!(complete.get("limitations").is_none(), "{complete}");
+    assert!(read("pilot-summary.json")?["repo_exposure_byte_bound"].is_null());
+    let seams_total = complete["seams"].as_array().map_or(0, Vec::len);
+    assert!(seams_total > 0, "fixture must have seams: {complete}");
+    let complete_path = pilot_dir.join("repo-exposure.complete.json");
+    std::fs::copy(pilot_dir.join("repo-exposure.json"), &complete_path)?;
+
+    // Positive: a one-byte budget keeps no entry and discloses the cut.
+    let cut = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[
+            ("RIPR_PILOT_REPO_EXPOSURE_BYTES", "1"),
+            ("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "0"),
+        ],
+    )?;
+    assert_success(&cut);
+    let bounded = read("repo-exposure.json")?;
+    assert_eq!(
+        bounded["run_status"], "limited_repo_exposure_bytes",
+        "{bounded}"
+    );
+    assert_eq!(bounded["seams"].as_array().map(Vec::len), Some(0));
+    assert!(bounded.get("artifact").is_none(), "{bounded}");
+    let limit = &bounded["limitations"][0];
+    assert_eq!(limit["category"], "pilot_repo_exposure_byte_bound_applied");
+    assert_eq!(limit["seams_rendered"], 0, "{bounded}");
+    assert_eq!(limit["seams_total"], seams_total, "{bounded}");
+    assert_eq!(limit["byte_budget"], 1, "{bounded}");
+    assert_eq!(limit["limit_source"], "configured", "{bounded}");
+    assert_eq!(limit["control"], "RIPR_PILOT_REPO_EXPOSURE_BYTES");
+    let summary = read("pilot-summary.json")?;
+    assert_eq!(summary["repo_exposure_byte_bound"]["seams_rendered"], 0);
+    assert_eq!(
+        summary["repo_exposure_byte_bound"]["seams_total"], seams_total,
+        "{summary}"
+    );
+    // Every printed route is runnable: none names the cut file as the
+    // `ripr outcome` baseline, and each names a full baseline to capture.
+    let cut_file = "target/ripr/pilot/repo-exposure.json";
+    let next_json = &summary["next"];
+    let before_cmd = next_json["before_snapshot_command"]
+        .as_str()
+        .ok_or("bounded run must name a baseline snapshot command")?;
+    assert!(before_cmd.contains("repo-exposure-json"), "{before_cmd}");
+    let outcome_cmd = next_json["outcome_command"]
+        .as_str()
+        .ok_or("outcome_command")?;
+    assert!(!outcome_cmd.contains(cut_file), "{outcome_cmd}");
+    assert!(
+        outcome_cmd.contains("before.repo-exposure.json"),
+        "{outcome_cmd}"
+    );
+    let markdown = std::fs::read_to_string(pilot_dir.join("pilot-summary.md"))?;
+    assert!(markdown.contains("byte bound reached"), "{markdown}");
+    // The repair-start route prints only `ripr agent repair`; whenever a
+    // surface does print the outcome comparison it must name the baseline.
+    assert!(
+        !markdown.contains("ripr outcome") || markdown.contains(before_cmd),
+        "{markdown}"
+    );
+    assert!(
+        !markdown.contains(&format!("--before {cut_file}")),
+        "{markdown}"
+    );
+    let terminal = String::from_utf8_lossy(&cut.stdout);
+    assert!(terminal.contains("byte bound reached"), "{terminal}");
+    assert!(
+        !terminal.contains("ripr outcome") || terminal.contains(before_cmd),
+        "{terminal}"
+    );
+    assert!(
+        !terminal.contains(&format!("--before {cut_file}")),
+        "{terminal}"
+    );
+    // Negative: the uncut run has no baseline step and still compares the file.
+    // (checked above: repo_exposure_byte_bound is null for the default run)
+    // The packets and the ranking are not cut by the file's byte budget.
+    assert_ne!(
+        read("agent-seam-packets.json")?["run_status"],
+        "limited_repo_exposure_bytes"
+    );
+    assert_eq!(summary["actionable_seams_total_is_lower_bound"], false);
+
+    // `ripr outcome` refuses the cut file in either position.
+    let bounded_path = pilot_dir.join("repo-exposure.json");
+    let complete_arg = complete_path.to_string_lossy().to_string();
+    let bounded_arg = bounded_path.to_string_lossy().to_string();
+    for (before, after) in [(&bounded_arg, &complete_arg), (&complete_arg, &bounded_arg)] {
+        let outcome = run_command_with_env(
+            env!("CARGO_BIN_EXE_ripr"),
+            &root,
+            &["outcome", "--before", before, "--after", after],
+            &[],
+        )?;
+        assert_failure(&outcome);
+        let stderr = String::from_utf8_lossy(&outcome.stderr);
+        assert!(stderr.contains("byte-bounded"), "{stderr}");
+        assert!(
+            stderr.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{stderr}"
+        );
+    }
+    // Negative: the uncut file still compares.
+    let same = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &[
+            "outcome",
+            "--before",
+            &complete_arg,
+            "--after",
+            &complete_arg,
+        ],
+        &[],
+    )?;
+    assert_success(&same);
+
+    // An invalid value fails closed before any analysis, naming the variable.
+    let invalid = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &root,
+        &["pilot", "--root", ".", "--mode", "draft"],
+        &[("RIPR_PILOT_REPO_EXPOSURE_BYTES", "lots")],
+    )?;
+    assert_failure(&invalid);
+    assert!(
+        String::from_utf8_lossy(&invalid.stderr).contains("RIPR_PILOT_REPO_EXPOSURE_BYTES `lots`"),
+        "{}",
+        String::from_utf8_lossy(&invalid.stderr)
+    );
+    Ok(())
 }
 
 /// When the pilot seam budget truncates the inventory, pilot's snapshot holds

@@ -187,6 +187,9 @@ pub(crate) struct RefusalNotice {
     pub(crate) identity: &'static str,
     pub(crate) repair_route: &'static str,
     pub(crate) message: String,
+    /// The structured next step the `message` prose states (#11790), derived
+    /// once here from the same redacted message every renderer prints.
+    pub(crate) remedy: crate::domain::RefusalRemedy,
 }
 
 impl CoreError {
@@ -422,10 +425,12 @@ impl CoreError {
         } else {
             self.to_string()
         };
+        let remedy = crate::domain::RefusalRemedy::from_prose(&message);
         RefusalNotice {
             identity: refusal.identity,
             repair_route: refusal.repair_route,
             message,
+            remedy,
         }
     }
 }

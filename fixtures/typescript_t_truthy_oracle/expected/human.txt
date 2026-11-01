@@ -25,9 +25,8 @@ Start here:
     a repair packet
   Related test: tests/score.test.ts:3 scores a truthy result (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: replace or augment the smoke-only assertion with an
-    exact-value assertion for missing discriminator `return value == total - penalty + 1`; no
-    actionable repair packet is emitted until verify, receipt, and edit-boundary fields are
-    available
+    exact-value assertion for the missing check `return value == total - penalty + 1`; no actionable
+    repair packet is emitted until verify, receipt, and edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

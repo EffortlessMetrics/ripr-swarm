@@ -14,10 +14,11 @@ use super::classify::{
 use super::related_tests::RelatedCandidateMemo;
 use super::{
     ChangedFile, Finding, PythonNoBehaviorContext, PythonOwner, PythonTest, is_python_import_line,
-    is_python_no_behavior_line, is_python_structural_line, line_is_in_ranges, normalized_path,
+    is_python_no_behavior_line, is_python_structural_line, line_is_in_ranges,
+    normalize_python_expression, normalized_path,
 };
 use crate::analysis::diff::ChangedLine;
-use crate::analysis::probes::{collision_ordinals, collision_rank_key, normalize_expression};
+use crate::analysis::probes::{collision_ordinals, collision_rank_key};
 use crate::domain::{Probe, SourceCurrentness};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::RangeInclusive;
@@ -98,6 +99,7 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
             && is_removed_behavior_line(removed, old_side)
             && !opens_only_brackets(&removed.text)
     });
+    let identity_context = old_side.source.and_then(super::PythonIdentityContext::new);
     let mut pending: Vec<PendingDeleted> = Vec::new();
     for removed in &changed.removed_lines {
         if paired.contains(&removed.line)
@@ -142,6 +144,11 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
             continue;
         };
         let original_probe = finding.probe.clone();
+        let normalized = identity_context
+            .as_ref()
+            .and_then(|context| context.normalize_line(removed.line, &removed.text))
+            .unwrap_or_else(|| normalize_python_expression(&removed.text));
+        super::reidentify_python_finding(&mut finding, &normalized);
         let expression = removed.text.trim();
         // Same-text evidence is the only movement evidence; without it the
         // record stays `base_deleted` (RIPR-SPEC-0156).
@@ -156,11 +163,7 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
         };
         finding.probe.before = Some(removed.text.clone());
         finding.probe.after = None;
-        let key = collision_rank_key(
-            &finding.probe.id.0,
-            &owner.symbol_id().0,
-            &normalize_expression(&removed.text),
-        );
+        let key = collision_rank_key(&finding.probe.id.0, &owner.symbol_id().0, &normalized);
         pending.push(PendingDeleted {
             finding,
             original_probe,

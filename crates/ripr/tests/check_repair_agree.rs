@@ -182,7 +182,10 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     let repo = Repo::create(
         "pub fn label(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1 => \"one\",\n        _ => \"many\",\n    }\n}\n",
         "pub fn label(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1 => \"uno\",\n        _ => \"many\",\n    }\n}\n",
-        "use ar::label;\n\n#[test]\nfn labels() {\n    assert!(!label(1).is_empty());\n}\n",
+        // The test takes the wildcard arm, so no test runs a literal arm
+        // and repair lists seams instead of starting one (a test passing
+        // `label(1)` is a match-arm repair start since #11111).
+        "use ar::label;\n\n#[test]\nfn labels() {\n    assert!(!label(7).is_empty());\n}\n",
     )?;
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
