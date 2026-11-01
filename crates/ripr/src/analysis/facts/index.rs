@@ -165,6 +165,10 @@ pub struct RustIndex {
     /// Complete-source syntax and lexical answers, owned by immutable source
     /// snapshots rather than by individual owners or probe computations.
     pub(crate) source_syntax: crate::analysis::syntax::SourceSyntaxMemos,
+    /// The committed `.snap` files under the workspace root, read on first
+    /// use (#12189). Not serialized: a rebuilt or deserialized index reads
+    /// the listing again.
+    pub(crate) snapshot_listing: crate::analysis::rust_snapshot_files::SnapshotListingCell,
     /// The display name and synthetic source of each registered doc
     /// example test, keyed by (file, start line) (#6648). A doctest is its
     /// own crate: its scopes come from this text, not from the file that
