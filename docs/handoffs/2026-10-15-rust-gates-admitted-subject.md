@@ -13,16 +13,17 @@ activated.
 The `workflow_call` interface gains `proof-profile` plus `head-sha`, `base-sha`,
 `subject-sha`, `subject-tree`, `workflow-generation`, `subject-json` and
 `subject-identity`. Every input is optional: `proof-profile` defaults to
-`legacy` and the rest to empty, so the existing caller (which passes only
-`runner-config`) keeps its behavior. Source branch deviation: it declared
+`legacy` and the rest to empty, so the existing caller (which passes runner and
+routing configuration but none of the admission inputs) keeps its behavior. Source branch deviation: it declared
 `proof-profile` required; that would break the current caller, so it is optional
 here.
 
 The checkout resolves `inputs.subject-sha || github.sha`. A new
 `Verify admitted integration before proof` step runs before any proof:
 
-- `legacy` rejects any partial qualification input and publishes the legacy
-  event head/base.
+- `legacy` rejects any partial qualification input and publishes no outputs, so
+  PR evidence and the summary keep exactly the original event expressions
+  (`pull_request`, `merge_group` and `push` behave as on main).
 - `qualification` requires 40-hex head/base/merge/tree/generation, a 64-hex
   identity, generation equal to `GITHUB_WORKFLOW_SHA`, subject JSON (version 2)
   matching repository, PR, destination, head, base, merge, tree, generation and

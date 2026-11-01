@@ -97,3 +97,28 @@ fn main_only_nextest_archive_measurement_is_preserved() {
     assert!(WORKFLOW.contains("- name: Measure nextest archive"));
     assert!(WORKFLOW.contains("- name: Upload nextest archive (measurement)"));
 }
+
+#[test]
+fn legacy_profile_publishes_no_outputs_and_keeps_main_expressions() {
+    // Main's expressions are the fallbacks after the admitted output.
+    assert!(WORKFLOW.contains("SUBJECT_HEAD: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.sha }}"));
+    assert!(
+        WORKFLOW.contains(
+            "|| github.event.pull_request.base.sha || github.event.merge_group.base_sha }}"
+        )
+    );
+    assert!(
+        WORKFLOW.contains(
+            "|| github.event.pull_request.head.sha || github.event.merge_group.head_sha }}"
+        )
+    );
+    // The legacy branch must not write head/base outputs (merge_group would then
+    // publish merge_group.head_sha as the summary subject head instead of github.sha).
+    let (_, tail) = WORKFLOW
+        .split_once("            legacy)\n")
+        .expect("legacy arm");
+    let (legacy, _) = tail.split_once("              ;;").expect("legacy arm end");
+    assert!(!legacy.contains("GITHUB_OUTPUT"), "{legacy}");
+    // The integration lines appear only for an admitted subject.
+    assert!(WORKFLOW.contains("[[ -z \"$INTEGRATION_TREE\" ]] || printf"));
+}

@@ -122,8 +122,6 @@ jobs:
           ADMITTED_TREE: ${{ inputs.subject-tree }}
           GENERATION: ${{ inputs.workflow-generation }}
           IDENTITY: ${{ inputs.subject-identity }}
-          LEGACY_HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
-          LEGACY_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           REPOSITORY_ID: ${{ github.event.repository.node_id }}
           PR_ID: ${{ github.event.pull_request.node_id }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -134,7 +132,7 @@ jobs:
               for value in "$SUBJECT_JSON" "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION" "$IDENTITY"; do
                 [[ -z "$value" ]] || { echo 'Partial qualification cannot use legacy profile' >&2; exit 1; }
               done
-              printf 'head=%s\nbase=%s\n' "$LEGACY_HEAD" "$LEGACY_BASE" >> "$GITHUB_OUTPUT"
+              # Legacy publishes no outputs: consumers fall back to the original event expressions.
               ;;
             qualification)
               for value in "$ADMITTED_HEAD" "$ADMITTED_BASE" "$ADMITTED_MERGE" "$ADMITTED_TREE" "$GENERATION"; do [[ "$value" =~ ^[0-9a-f]{40}$ ]]; done
@@ -629,7 +627,7 @@ jobs:
         run: |
           {
             echo "## Rust gate outcomes"
-            printf -- '- Integration subject: `%s`\n- Integration tree: `%s`\n' "$INTEGRATION_SUBJECT" "$INTEGRATION_TREE"
+            [[ -z "$INTEGRATION_TREE" ]] || printf -- '- Integration subject: `%s`\n- Integration tree: `%s`\n' "$INTEGRATION_SUBJECT" "$INTEGRATION_TREE"
             echo ""
             printf -- '- Workflow commit: `%s`\n- Subject head: `%s`\n- Run / attempt: `%s` / `%s`\n- Route: `%s`\n' "$GITHUB_SHA" "$SUBJECT_HEAD" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$EXECUTION_ROUTE"
             echo ""
