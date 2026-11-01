@@ -655,7 +655,7 @@ jobs:
           # is in its suite: a skipped check from an earlier nonrequest event is
           # in another suite and can never stand in for it. The surface check
           # must also belong to the ci.yml run for this same label event: created
-          # within 30s of this run's creation on either side, closest wins (both
+          # within 30s of this run's creation on either side, newest wins (both
           # runs are created at the event time, not the runner queue), so an
           # earlier request's suite is not read. No such check yet means
           # ci.yml has not got that far: wait, then fail closed. In the suite,
@@ -679,7 +679,6 @@ jobs:
             surface_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode%20surface&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode surface check runs for $EXPECTED_HEAD"; exit 1; }
             vscode_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode check runs for $EXPECTED_HEAD"; exit 1; }
             surface='{}'
-            best=31
             while IFS= read -r candidate; do
               [ -n "$candidate" ] || continue
               candidate_run=$(jq -r '(.html_url // "") | try (capture("/runs/(?<r>[0-9]+)/") | .r) catch empty' <<<"$candidate")
@@ -687,7 +686,7 @@ jobs:
               candidate_created=$(api "repos/$REPOSITORY/actions/runs/$candidate_run" --jq .created_at) || { echo "::error::could not read the creation time of run $candidate_run"; exit 1; }
               candidate_epoch=$(date -u -d "$candidate_created" +%s) || { echo "::error::could not parse creation time $candidate_created of run $candidate_run"; exit 1; }
               delta=$((candidate_epoch - run_epoch)); [ "$delta" -ge 0 ] || delta=$((-delta))
-              if [ "$delta" -le 30 ] && [ "$delta" -lt "$best" ]; then surface=$candidate; best=$delta; fi
+              if [ "$delta" -le 30 ]; then surface=$candidate; break; fi
             done < <(jq -s -c '[.[] | select(.app.slug == "github-actions" and .conclusion != "skipped")] | sort_by(.id) | reverse | .[0:5][]' <<<"$surface_raw")
             state=$(jq -r '.status // "none"' <<<"$surface")
             if [ "$state" = completed ]; then
