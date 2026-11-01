@@ -113,7 +113,7 @@ directly contradicts the complete packet. Specifically, when actionable:
   boundaries are available" text;
 - the `evidence needed:` line is omitted entirely (nothing is needed);
 - the `Next step` line drops the "; no actionable repair packet is emitted until
-  ... available" tail and confirms the packet is complete and names `ripr context --at <finding-id>`; the seam-based `ripr repair` covers Rust files only (#10682).
+  ... available" tail and confirms the packet is complete and names `ripr context --at <finding-id>`; `ripr repair` covers Rust files only (#10682).
 
 The blocked cases are unchanged: they keep `why not actionable`, `repair route`,
 and `evidence needed`. The JSON `preview_actionability` object keeps its stable
