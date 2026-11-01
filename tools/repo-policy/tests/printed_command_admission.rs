@@ -126,7 +126,8 @@ fn exact_checkout_and_full_platform_shell_payload_are_preserved() {
             "      {key}:\n        type: string\n        required: true"
         )));
     }
-    let checkout = WORKFLOW.find("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0");
+    let checkout =
+        WORKFLOW.find("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0");
     let guard = WORKFLOW.find("Verify exact source before product execution");
     let toolchain =
         WORKFLOW.find("dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591");
