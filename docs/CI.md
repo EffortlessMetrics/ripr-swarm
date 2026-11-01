@@ -994,6 +994,7 @@ only the proof unique to it, the non-default `lang-perl` feature:
 ```bash
 cargo check -p ripr --features lang-perl
 cargo test -p ripr --features lang-perl --lib analysis::language::perl
+cargo test -p xtask --features perl-identity reports::sarif::identity_tests
 ```
 
 On pushes to `main` or `master` and on pull requests labeled `release-check`
@@ -1509,8 +1510,11 @@ a later release does not change CI behavior until you regenerate. It
 downloads that release's prebuilt binary from the `EffortlessMetrics/ripr`
 GitHub Release and checks it against the release's published SHA-256, which
 takes seconds instead of the minutes `cargo install` spends compiling. A
-checksum mismatch fails the step. On a runner with no prebuilt archive
-(Windows), or when the download fails, it falls back to
+checksum mismatch, a missing checksum, or a malformed archive fails the step
+instead of falling back. Windows x64 installs the release's `zip` (extracted
+with the `tar.exe` that Windows ships, then `ripr.exe` is run by absolute path);
+Windows ARM64 is reported as unsupported. On a runner with no prebuilt archive
+(for example Linux ARM32), or when the download fails, it falls back to
 `cargo install ripr --version <that version> --locked`, which needs a Rust
 toolchain on the runner; on a runner without `cargo` the step fails and says
 to install Rust or add a toolchain step. A development build newer than the
@@ -1846,8 +1850,11 @@ Permissions and job settings:
   scanning.
 - `labeled` and `unlabeled` re-run the gate when a waiver label such as
   `ripr-waive` is added or removed, since the gate reads labels from the event.
-  Any label change re-runs the job, and the concurrency group cancels the
-  superseded run.
+  The job runs for them only when `RIPR_GATE_MODE` is set to a mode other than
+  `visible-only`; in advisory (unset) and `visible-only` mode an unrelated label
+  does nothing. `labeled` and `unlabeled` each use their own concurrency group,
+  so a label never cancels an analysis in flight for a push or the other label
+  event.
 - Every run step is bash (`$'\t'` in the publish loop), so `defaults.run.shell`
   pins bash; the steps still parse if the job moves to `windows-latest`, whose
   default shell is PowerShell.
@@ -1879,9 +1886,11 @@ Steps:
   checkout, so the cleanup never discards it.
 - **Install ripr** pins the version whose commands the steps use; an unpinned
   install takes the newest release, whose CLI may not match. It downloads that
-  release's prebuilt binary and checks it against the published SHA-256, falls
-  back to `cargo install` where there is no prebuilt binary, and fails with the
-  fix when the runner has no cargo. The summary step reads this step's outcome
+  release's prebuilt binary (a zip on Windows x64) and checks it against the
+  published SHA-256 before extracting it, falls back to `cargo install` only
+  where there is no prebuilt binary, and fails with the fix when the runner has
+  no cargo. An integrity or archive rejection never falls back, and Windows
+  ARM64 is an explicit unsupported error. The summary step reads this step's outcome
   by its id.
 - **actions/cache** restores ripr's analysis cache. Entries are keyed on file
   contents, configuration, and the ripr version, so an entry that no longer

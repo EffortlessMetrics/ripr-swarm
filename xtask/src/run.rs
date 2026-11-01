@@ -455,6 +455,36 @@ fn parse_env_timeout_secs(
     }
 }
 
+/// Cargo output that says it could not replace the debug binary because a
+/// running process holds it. Unix unlinks a running executable; Windows answers
+/// `Access is denied (os error 5)`.
+pub(crate) fn binary_replacement_blocked(output: &str) -> bool {
+    output.contains("failed to remove file") && output.contains("Access is denied")
+}
+
+/// Repeat a nested `cargo build -p ripr` that Windows refused because a test
+/// running in parallel holds `target/debug/ripr.exe` (#9272). The compile has
+/// finished when the link step fails, so a repeat only redoes that step. The
+/// retry is Windows-only and bounded (about a minute); `blocked` decides from
+/// the error text whether a failure is this one, so a real compile error
+/// fails at once. Pass `|_| true` where the caller cannot see Cargo's output.
+pub(crate) fn retry_while_binary_busy<T>(
+    blocked: impl Fn(&str) -> bool,
+    mut attempt: impl FnMut() -> Result<T, String>,
+) -> Result<T, String> {
+    const ATTEMPTS: u32 = 12;
+    let mut tries = 1;
+    loop {
+        match attempt() {
+            Err(error) if cfg!(windows) && tries < ATTEMPTS && blocked(&error) => {
+                tries += 1;
+                thread::sleep(Duration::from_secs(5));
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Like `run_output_owned`, but bounds the child with the shared
 /// timed-process machinery so a wedged build cannot hang the caller. A
 /// timeout is a named result: the child process tree is terminated and the

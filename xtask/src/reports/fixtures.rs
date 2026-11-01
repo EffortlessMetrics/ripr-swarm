@@ -1200,12 +1200,52 @@ static RIPR_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 /// reaches the binary through — rather than to individual command entry points,
 /// where a newly added entry point (as `golden-drift` was) silently opts out.
 pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
+    if isolate_fixture_binary() {
+        let target = isolated_default_target_dir(&ripr_debug_binary())?;
+        let binary = ripr_debug_binary_in(Some(target.clone()));
+        return ripr_fixture_binary_built_by(binary, &RIPR_ISOLATED_BINARY_BUILD, &|| {
+            preparation::build_default_isolated(&target)
+        });
+    }
     // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
     // routed CI jobs set it, so `cargo build` writes there.
     ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
-        preparation::build(&["build", "-p", "ripr"])
+        // The build output goes straight to the console here, so the retry
+        // cannot read why it failed; it is Windows-only and bounded.
+        crate::run::retry_while_binary_busy(
+            |_| true,
+            || preparation::build(&["build", "-p", "ripr"]),
+        )
     })
 }
+
+/// Set by a lane whose test run is itself built with a different feature set
+/// than the fixture corpus (Test Analytics: `nextest --all-features`). There the
+/// suite's `target/debug/ripr` is the all-features build, and the corpus's plain
+/// `cargo build -p ripr` would relink it to the default-feature build mid-suite,
+/// so feature-aware tests would race the swap (#11602). With the variable set,
+/// the corpus builds its default binary in a private target directory instead.
+/// Unset (the required lane builds default features throughout), behavior is
+/// unchanged and the shared binary is rebuilt in place as before (#3054).
+pub(crate) const FIXTURE_BINARY_ISOLATE_ENV: &str = "RIPR_FIXTURE_BINARY_ISOLATE";
+
+fn isolate_fixture_binary() -> bool {
+    std::env::var_os(FIXTURE_BINARY_ISOLATE_ENV).is_some_and(|value| value == "1")
+}
+
+/// Private target for the isolated default-feature build, beside (not inside)
+/// the Perl variant's own `debug/` so the two feature sets never thrash one
+/// Cargo fingerprint.
+pub(crate) fn isolated_default_target_dir(shared: &Path) -> Result<PathBuf, String> {
+    let root = shared
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("missing shared target root")?;
+    std::path::absolute(root.join("fixture-variants").join("default"))
+        .map_err(|err| format!("resolve isolated default target: {err}"))
+}
+
+static RIPR_ISOLATED_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 
 /// Memoized result of the one `cargo build -p ripr --features lang-perl` this
 /// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
@@ -3097,6 +3137,19 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() {
+        let shared = std::path::Path::new("/w/target/debug/ripr");
+        assert_eq!(
+            super::isolated_default_target_dir(shared),
+            Ok(std::path::PathBuf::from(
+                "/w/target/fixture-variants/default"
+            ))
+        );
+        let missing = super::isolated_default_target_dir(std::path::Path::new("ripr"));
+        assert_eq!(missing, Err("missing shared target root".to_string()));
+    }
 
     #[test]
     fn windows_python_golden_projection_keeps_fixture_and_selector_identity() {
