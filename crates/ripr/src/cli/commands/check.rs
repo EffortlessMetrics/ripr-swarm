@@ -1593,6 +1593,13 @@ fn check_inner(
     // diff-scoped path promises (`ripr progress: <stage> [<scope>]`,
     // throttled heartbeats included). Both the audit-path disclosure and the
     // stage lines are stderr-only and cannot change machine stdout.
+    // #11879: a first `check` in a project whose git ignore rules do not cover
+    // ripr's artifact root says so once, with the exact entry; `doctor` gives
+    // the same verdict. stderr only, so stdout and machine formats are
+    // unchanged, and silent when `--quiet` or when git cannot establish it.
+    if !quiet && let Some(note) = super::doctor::first_check_artifact_ignore_note(&input.root) {
+        eprintln!("{}", terminal_safe(note));
+    }
     let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
         std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
             std::io::stderr().is_terminal(),

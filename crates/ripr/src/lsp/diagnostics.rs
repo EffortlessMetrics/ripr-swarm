@@ -7612,7 +7612,7 @@ mod lsp_next_step_parity_tests {
         let finding = complete_ts_finding();
         let message = lsp_message(&finding);
         assert!(
-            message.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)"),
+            message.contains("the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only)"),
             "LSP diagnostic must contain reconciled next-step for complete packet; got: {message}"
         );
         assert!(
@@ -7807,6 +7807,44 @@ mod canonical_group_member_tests {
             .collect::<BTreeSet<_>>();
         if ids.len() != 3 {
             return Err("group must retain every finding id".to_string());
+        }
+        Ok(())
+    }
+
+    /// Group order is a function of the groups' stable keys, not of the order
+    /// the snapshot lists findings in (#11862 made it follow list order).
+    #[test]
+    fn group_order_does_not_depend_on_the_order_findings_are_listed() -> Result<(), String> {
+        let canonical = gapped_site_finding(
+            "probe:lib:9:predicate",
+            ProbeFamily::Predicate,
+            "gap:rust:src/lib.rs:can_vote:predicate_boundary:predicate:age==18",
+            "age == 18",
+        );
+        let mut raw = gapped_site_finding(
+            "probe:lib:2:predicate",
+            ProbeFamily::Predicate,
+            "unused",
+            "other == 1",
+        );
+        raw.canonical_gap = None;
+        raw.probe.location.line = 2;
+
+        let primaries = |findings: &[Finding]| -> Vec<String> {
+            canonical_group_members(findings)
+                .into_iter()
+                .map(|(primary, _)| primary.id.clone())
+                .collect()
+        };
+        let forward = primaries(&[canonical.clone(), raw.clone()]);
+        let reversed = primaries(&[raw, canonical]);
+        if forward != reversed {
+            return Err(format!(
+                "order moved with input: {forward:?} vs {reversed:?}"
+            ));
+        }
+        if forward != ["probe:lib:9:predicate", "probe:lib:2:predicate"] {
+            return Err(format!("canonical group must sort before raw: {forward:?}"));
         }
         Ok(())
     }

@@ -36,7 +36,7 @@ use crate::output::gate::{GATE_STATUS_BLOCKED, GATE_STATUS_CONFIG_ERROR};
 /// Schema version of the `help --json` document. Bump on any material shape
 /// change to the DTO; the value is pinned by unit tests and documented in
 /// `docs/OUTPUT_SCHEMA.md`.
-pub(crate) const HELP_JSON_SCHEMA_VERSION: u64 = 3;
+pub(crate) const HELP_JSON_SCHEMA_VERSION: u64 = 4;
 
 /// Top-level limitations of the machine document: what governs its identity
 /// and what a consumer must not infer from it.
@@ -86,7 +86,22 @@ struct CommandJsonRow {
     primary_inputs: Vec<&'static str>,
     outputs: OutputsJson,
     state_target: Option<&'static str>,
-    json_support: bool,
+    /// The exact spelling that makes this command print JSON on stdout, or
+    /// null when it has none. `cli_help_json_flags` compares it to the
+    /// command's own parsed help body (shared-body rows and four documented
+    /// gaps exempt); it is not invoked at runtime by any test.
+    accepts_json_flag: Option<&'static str>,
+    /// True when the command writes JSON artifact files (a fixed
+    /// `target/ripr/...json` path or `--out`), independent of any flag. It is
+    /// not exclusive of `accepts_json_flag`: a command may do both (for example
+    /// `check`, `pilot`), and many write artifacts with no JSON flag.
+    writes_json_artifacts: bool,
+    /// Flags parsed from the command's help body.
+    flags: Vec<crate::cli::help_flags::FlagJson>,
+    /// `own_help_body`, `shared_help_body` (flags are the union for a group), or
+    /// `no_help_body` (the command has no help body of its own, so an empty
+    /// `flags` list says nothing about the flags it accepts).
+    flags_scope: &'static str,
     example: &'static str,
     next_routes: Vec<&'static str>,
     stop_states: Vec<&'static str>,
@@ -316,6 +331,17 @@ fn sorted_strings(values: &[&'static str]) -> Vec<&'static str> {
 }
 
 fn command_row(entry: &CommandCatalogEntry, metadata_row: &CommandMetadata) -> CommandJsonRow {
+    let help_body = crate::cli::help::help_text_for(entry.path);
+    let shared_body = help_body.is_some_and(|body| {
+        crate::cli::command_catalog::catalog()
+            .iter()
+            .filter(|other| {
+                crate::cli::help::help_text_for(other.path)
+                    .is_some_and(|candidate| std::ptr::eq(candidate, body))
+            })
+            .count()
+            > 1
+    });
     CommandJsonRow {
         id: entry.id,
         path: entry.path,
@@ -350,7 +376,18 @@ fn command_row(entry: &CommandCatalogEntry, metadata_row: &CommandMetadata) -> C
             optional: sorted_strings(metadata_row.outputs.optional),
         },
         state_target: metadata_row.state_target,
-        json_support: metadata_row.json_support,
+        accepts_json_flag: metadata_row.accepts_json_flag.spelling(),
+        writes_json_artifacts: metadata_row.writes_json_artifacts,
+        flags: help_body
+            .map(|body| crate::cli::help_flags::flags_for(entry.path, body))
+            .unwrap_or_default(),
+        flags_scope: if help_body.is_none() {
+            "no_help_body"
+        } else if shared_body {
+            "shared_help_body"
+        } else {
+            "own_help_body"
+        },
         example: metadata_row.example,
         next_routes: sorted_strings(metadata_row.next_routes),
         stop_states: sorted_strings(metadata_row.stop_states),
@@ -563,17 +600,17 @@ mod tests {
     }
 
     /// The machine catalog must advertise its own route. `cmd:help` is the
-    /// command that emits this document; reporting `json_support: false` for
+    /// command that emits this document; reporting no JSON flag for
     /// it made `ripr help --json` undiscoverable from the catalog (#5266).
     #[test]
-    fn help_command_reports_json_support_in_the_machine_catalog() -> Result<(), String> {
+    fn help_command_reports_json_flag_in_the_machine_catalog() -> Result<(), String> {
         let document = production_document()?;
         let Some(help) = document.commands.iter().find(|row| row.id == "cmd:help") else {
             return Err("cmd:help row missing from the machine catalog".to_string());
         };
-        if !help.json_support {
+        if help.accepts_json_flag != Some("--json") {
             return Err(
-                "cmd:help must report json_support: true because ripr help --json emits this document"
+                "cmd:help must report accepts_json_flag --json because ripr help --json emits this document"
                     .to_string(),
             );
         }
