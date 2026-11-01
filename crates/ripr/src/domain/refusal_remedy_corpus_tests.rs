@@ -336,7 +336,7 @@ fn every_message_yields_a_grounded_remedy_or_an_explicit_none() -> Result<(), St
                 }
             }
         }
-        if stated_conditional_ripr_command_span(message) {
+        if stated_conditional_ripr_command_span(message) && !stated_ripr_command_span(message) {
             if matches!(remedy.kind, RemedyKind::None) {
                 failures.push(format!(
                     "stated conditional command dropped to none: {message}"
@@ -435,12 +435,16 @@ fn the_oracle_tells_a_conditional_command_from_a_description() {
     assert!(stated_conditional_ripr_command_span(
         "otherwise run `ripr y`"
     ));
+    assert!(!stated_ripr_command_span(
+        "run `ripr pilot`; if it persists, run `ripr doctor`"
+    ));
 }
 
 #[test]
 fn a_dropped_conditional_command_would_be_caught_by_the_corpus_oracle() {
     let prose = "if stale, run `ripr doctor`";
     assert!(stated_conditional_ripr_command_span(prose));
+    assert!(!stated_ripr_command_span(prose));
     let remedy = RefusalRemedy::from_prose(prose);
     assert_ne!(remedy.kind, RemedyKind::None);
     assert!(remedy.conditional);
