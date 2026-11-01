@@ -345,7 +345,7 @@ pub(super) fn resolve_action(
     let data = action
         .data
         .clone()
-        .ok_or_else(|| "code action is missing its ripr data payload".to_string())?;
+        .ok_or_else(|| "code action is missing its ripr data payload; ask the client to request code actions again, and send each action back unchanged".to_string())?;
     let command_id = resolve_command_id(&action, &data)?;
     let parsed = parse_validated_action_data(&data, &command_id)?;
     if parsed.addresses_artifact() {
@@ -418,7 +418,7 @@ fn resolve_command_id(action: &CodeAction, data: &Value) -> Result<String, Strin
         Some(capability) if capability != "server" && !capability.trim().is_empty() => {
             Ok(capability.to_string())
         }
-        _ => Err("code action carries no command and its payload cannot recover one".to_string()),
+        _ => Err("code action carries no command and its payload cannot recover one; ask the client to request code actions again, and send each action back unchanged".to_string()),
     }
 }
 
@@ -2076,7 +2076,7 @@ fn limitation_array_contains_category(data: &Value, path: &[&str], category: &st
         })
 }
 
-fn static_limit_note(data: &Value) -> Option<String> {
+pub(super) fn static_limit_note(data: &Value) -> Option<String> {
     let mut lines = Vec::new();
     if let Some(kind) = string_at(data, &["static_limit_kind"]) {
         lines.push(format!("Static limit: {kind}"));
@@ -2365,7 +2365,7 @@ pub(super) fn show_related_test_params(
     });
     if !inside_root {
         return Err(format!(
-            "`{SHOW_RELATED_TEST_COMMAND}` target is not an existing file inside the workspace"
+            "`{SHOW_RELATED_TEST_COMMAND}` target is not an existing file inside the workspace; pass a file path or URI under the workspace root"
         ));
     }
     let position = Position::new(line, 0);
@@ -3195,6 +3195,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 

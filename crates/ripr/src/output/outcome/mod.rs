@@ -473,6 +473,15 @@ fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>,
     let value: Value = serde_json::from_str(json)
         .map_err(|err| format!("failed to parse repo exposure JSON: {err}"))?;
     if let Some(seams) = value.get("seams").and_then(Value::as_array) {
+        // #12108: a pilot file whose seams[] the byte budget cut lists only
+        // some seams, so a seam missing from it would read as removed or
+        // fixed. Refuse it rather than compare.
+        if crate::output::repo_exposure::is_byte_bounded_repo_exposure(&value) {
+            return Err(
+                "static snapshot is a byte-bounded repo-exposure file (`ripr pilot` cut its seams[] to RIPR_PILOT_REPO_EXPOSURE_BYTES, so a missing seam cannot be read as removed; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0, or produce the snapshot with `ripr check --format repo-exposure-json`, then compare)"
+                    .to_string(),
+            );
+        }
         return parse_repo_exposure_seams(seams);
     }
     if let Some(findings) = value.get("findings").and_then(Value::as_array) {
@@ -3475,6 +3484,85 @@ mod tests {
         assert!(
             matches!(result, Err(message) if message.contains("does not contain selected seam_id"))
         );
+    }
+
+    #[test]
+    fn outcome_refuses_a_byte_bounded_repo_exposure_snapshot() -> Result<(), String> {
+        // #12108: the cut file lists only some seams; comparing it would read
+        // every cut seam as removed.
+        let snapshot = |run_status: &str| {
+            serde_json::json!({
+                "schema_version": "0.5",
+                "scope": "repo",
+                "run_status": run_status,
+                "seams": [{
+                    "seam_id": "seam:src/a.rs:1",
+                    "kind": "return_value",
+                    "file": "src/a.rs",
+                    "line": 1,
+                    "grip_class": "ungripped"
+                }]
+            })
+            .to_string()
+        };
+        let bounded = snapshot("limited_repo_exposure_bytes");
+        let complete = snapshot("complete");
+        for (before, after) in [(&bounded, &complete), (&complete, &bounded)] {
+            let Err(refusal) = targeted_test_outcome_report_from_json(
+                before,
+                after,
+                "before.json".to_string(),
+                "after.json".to_string(),
+            ) else {
+                return Err("a byte-bounded snapshot must not be compared".to_string());
+            };
+            assert!(refusal.contains("byte-bounded"), "{refusal}");
+            assert!(
+                refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+                "{refusal}"
+            );
+        }
+        // Both limits applied: a seam cap owns run_status, so the byte cut is
+        // only a limitations[] entry, and it must still be refused.
+        let both = serde_json::from_str::<serde_json::Value>(&snapshot("seam_limit_applied"))
+            .map_err(|err| err.to_string())
+            .map(|mut document| {
+                document["limitations"] = serde_json::json!([
+                    {"category": "pilot_seam_budget_applied"},
+                    {"category": "pilot_repo_exposure_byte_bound_applied"}
+                ]);
+                document.to_string()
+            })?;
+        for (before, after) in [(&both, &complete), (&complete, &both)] {
+            let refused = targeted_test_outcome_report_from_json(
+                before,
+                after,
+                "before.json".to_string(),
+                "after.json".to_string(),
+            );
+            assert!(
+                refused.is_err_and(|error| error.contains("byte-bounded")),
+                "seam cap plus byte bound must be refused"
+            );
+        }
+        // Negative: a seam cap alone is not a byte bound; this refusal is
+        // specific to the byte-bound category.
+        let seam_cap_only = snapshot("seam_limit_applied");
+        targeted_test_outcome_report_from_json(
+            &seam_cap_only,
+            &complete,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        // Discriminating negative: the same documents with a complete status
+        // compare, so the refusal is the status, not the shape.
+        targeted_test_outcome_report_from_json(
+            &complete,
+            &complete,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        Ok(())
     }
 
     #[test]

@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-floating-resolves-unawaited",
+  "subject_id": "authored-ts-jest-floating-promise",
+  "diff": "cases/jest-floating-resolves-unawaited.diff",
+  "anchor": {
+    "file": "src/limit.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "boundary_comparison",
+  "test_shape": "jest_resolves_tobe_unawaited",
+  "hard_case": "An un-awaited `expect(p).resolves.toBe(x)` cannot fail its test; jest 30 reports the test passed and only the worker's late unhandled rejection fails the run.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci",
+    "toolchain": "node 22.23.4; jest 30.5.2 with ts-jest 29.4.14 (the subject's pinned versions); edit applied by hand and `npx jest --ci` run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return n > 100;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/limit.test.ts",
+        "equivalence_review": "not equivalent: atLimit(100) is true, not false"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test calls `expect(Promise.resolve(atLimit(100))).resolves.toBe(true)` with no `await` and no `return`. The edit makes atLimit(100) false, and `npx jest --ci` fails: jest 30 on node 22 crashes the worker with the unhandled `JestAssertionError` and exits 1, although the test itself is reported passed (a late-settling promise behaves the same: the run exits 1 with the suite reported passed). The failure is a process-level race, not an attributable test failure, so ripr withholds the credit and reads `static_unknown` (abstained) instead of `exposed` with an exact_value oracle.",
+  "labeling_observation": {
+    "ripr_commit": "a561a277",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

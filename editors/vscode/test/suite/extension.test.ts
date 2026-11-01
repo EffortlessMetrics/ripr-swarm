@@ -1216,6 +1216,32 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('copyContext never copies an empty static-limit note and says so', async () => {
+    // copyContext refuses with a repair-actions message unless an active
+    // workspace file exists, so open one like the neighbouring copy tests do.
+    const relativePath = 'src/empty-static-limit-note.rs';
+    const uri = workspaceFileUri(relativePath);
+    const context = createControllerTestContext({});
+    try {
+      await writeWorkspaceFile(relativePath, 'pub fn empty_static_limit_note_target() {}\n');
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+      await context.controller.start();
+      await context.controller.copyContext({ label: 'static_limit_note', note: '  \n ' });
+
+      assert.deepStrictEqual(context.clipboardWrites, []);
+      assert.deepStrictEqual(context.client.requests, []);
+      assert.ok(
+        context.infoMessages.at(-1)?.includes('No ripr static-limit note is available'),
+        `expected the empty-note message, got: ${context.infoMessages.join(' | ')}`
+      );
+    } finally {
+      await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
+    }
+  });
+
   test('copyContext copies first repair packets without LSP fallback for active workspace file', async () => {
     const relativePath = 'src/first-repair-packet.rs';
     const uri = workspaceFileUri(relativePath);
@@ -1606,7 +1632,7 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Enabled languages: none'));
       assert.ok(String(context.status.tooltip).includes('ripr.toml [languages] enabled'));
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('no enabled languages'));
+      assert.ok(context.outputLines.join('\n').includes('no enabled languages'));
       assert.ok(context.outputLines.join('\n').includes('Enabled languages: none'));
       assert.ok(context.outputLines.join('\n').includes('Next safe action:'));
 
@@ -1685,7 +1711,7 @@ suite('Extension Smoke', () => {
       });
       assert.ok(context.status.text.includes('ripr: failed'));
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('analysis refresh failed'));
+      assert.ok(context.outputLines.join('\n').includes('analysis refresh failed'));
     } finally {
       await context.dispose();
     }
@@ -2615,7 +2641,6 @@ suite('Extension Smoke', () => {
       assert.strictEqual(context.runRiprCalls.length, 0);
 
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('First useful action: Add equality-boundary discriminator test'));
       assert.ok(context.outputLines.join('\n').includes('First useful action: Add equality-boundary discriminator test'));
       assert.ok(context.outputLines.join('\n').includes('Report: target/ripr/reports/first-useful-action.json'));
     } finally {
@@ -4419,14 +4444,14 @@ suite('Extension Smoke', () => {
     }
   });
 
-  test('main status bar visibility hides only disabled and keeps noWorkspace', () => {
+  test('main status bar visibility hides disabled and serverUnavailable and keeps noWorkspace', () => {
     const expectedVisible: Record<RiprStatusKind, boolean> = {
       disabled: false,
       noWorkspace: true,
       workspaceUntrusted: true,
       workspaceAmbiguous: true,
       resolvingServer: true,
-      serverUnavailable: true,
+      serverUnavailable: false,
       serverFailed: true,
       starting: true,
       analysisQueued: true,
@@ -4548,6 +4573,11 @@ suite('Extension Smoke', () => {
       await context.controller.start();
 
       assert.ok(context.status.text.includes('ripr: server missing'));
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'serverUnavailable must hide the main status-bar item'
+      );
       assert.ok(String(context.status.tooltip).includes('Missing configured ripr server path'));
       assert.ok(String(context.status.tooltip).includes('Workspace:'));
       assert.ok(String(context.status.tooltip).includes('Server: not resolved'));
@@ -4693,7 +4723,7 @@ suite('Extension Smoke', () => {
       // the buffer is closed, so no unsaved-changes wording may remain.
       assert.ok(!String(context.status.tooltip).includes('Unsaved routed files'));
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('ripr analysis completed'));
+      assert.ok(context.outputLines.join('\n').includes('ripr analysis completed'));
     } finally {
       await context.dispose();
     }
@@ -4773,7 +4803,7 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes(document.uri.fsPath));
       assert.ok(String(context.status.tooltip).includes('without saving'));
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('saved workspace'));
+      assert.ok(context.outputLines.join('\n').includes('saved workspace'));
     } finally {
       await context.dispose();
     }

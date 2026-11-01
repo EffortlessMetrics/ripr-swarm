@@ -47,7 +47,7 @@ pub(crate) fn write_temporary_diff_file(diff_text: &str) -> Result<PathBuf, Stri
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(err) => {
                 return Err(format!(
-                    "create temporary diff dir {} failed: {err}",
+                    "create temporary diff dir {} failed: {err}; check the temp directory is writable (set TMPDIR, or TEMP on Windows, to a writable directory)",
                     dir.display()
                 ));
             }
@@ -74,7 +74,7 @@ pub(crate) fn write_temporary_diff_file(diff_text: &str) -> Result<PathBuf, Stri
                     let _ = std::fs::remove_file(&path);
                     let _ = std::fs::remove_dir(&dir);
                     return Err(format!(
-                        "write temporary diff file {} failed: {err}",
+                        "write temporary diff file {} failed: {err}; check free space in the temp directory (set TMPDIR, or TEMP on Windows, to a writable directory)",
                         path.display()
                     ));
                 }
@@ -83,13 +83,13 @@ pub(crate) fn write_temporary_diff_file(diff_text: &str) -> Result<PathBuf, Stri
             Err(err) => {
                 let _ = std::fs::remove_dir(&dir);
                 return Err(format!(
-                    "create temporary diff file {} failed: {err}",
+                    "create temporary diff file {} failed: {err}; check the temp directory is writable (set TMPDIR, or TEMP on Windows, to a writable directory)",
                     path.display()
                 ));
             }
         }
     }
-    Err("create temporary diff dir failed: all name candidates exist".to_string())
+    Err("create temporary diff dir failed: all name candidates exist; clear old ripr temp directories or set TMPDIR, or TEMP on Windows, to a writable directory".to_string())
 }
 
 #[cfg(test)]

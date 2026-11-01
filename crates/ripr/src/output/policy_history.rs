@@ -247,7 +247,7 @@ pub(crate) fn build_policy_history_report(input: PolicyHistoryInput) -> PolicyHi
 
 pub(crate) fn render_policy_history_json(report: &PolicyHistoryReport) -> Result<String, String> {
     serde_json::to_string_pretty(&policy_history_json_value(report))
-        .map_err(|err| format!("failed to render policy history JSON: {err}"))
+        .map_err(|err| format!("failed to render policy history JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// Compact snapshot line for `--out-jsonl`. Matches `example_append_record`.
@@ -255,7 +255,7 @@ pub(crate) fn render_policy_history_jsonl_record(
     report: &PolicyHistoryReport,
 ) -> Result<String, String> {
     serde_json::to_string(&snapshot_json(&report.example_append_record))
-        .map_err(|err| format!("failed to render policy history JSONL record: {err}"))
+        .map_err(|err| format!("failed to render policy history JSONL record: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn policy_history_current_is_durable(report: &PolicyHistoryReport) -> bool {

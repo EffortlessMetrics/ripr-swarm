@@ -342,6 +342,38 @@ impl OutputFormat {
             .is_some_and(|spec| spec.is_full_repo_analysis)
     }
 
+    /// Returns `true` for formats a program or an agent consumes rather than a
+    /// person reading a terminal: the JSON, SARIF and badge documents and the
+    /// compact `agent` report (#11598). With one of these on a non-terminal
+    /// stderr, `ripr progress:` lines are off by default. Exhaustive on
+    /// purpose: a new format must decide.
+    pub(crate) fn is_machine_readable(&self) -> bool {
+        match self {
+            Self::Json
+            | Self::CheckFindingsJson
+            | Self::Sarif
+            | Self::BadgeJson
+            | Self::BadgeShields
+            | Self::BadgePlusJson
+            | Self::BadgePlusShields
+            | Self::RepoBadgeJson
+            | Self::RepoBadgeShields
+            | Self::RepoBadgePlusJson
+            | Self::RepoBadgePlusShields
+            | Self::RepoSeamsJson
+            | Self::RepoExposureJson
+            | Self::RepoExposureSummaryJson
+            | Self::RepoSarif
+            | Self::AgentSeamPacketsJson
+            | Self::Agent => true,
+            Self::Human
+            | Self::HumanFull
+            | Self::Github
+            | Self::RepoSeamsMd
+            | Self::RepoExposureMd => false,
+        }
+    }
+
     /// Returns `true` only when warm reruns of the format's walk can hit a
     /// seam-facts cache: the classified and compact-classified inventory
     /// paths. The raw `repo-seams-*` walks rebuild the corpus index on every
@@ -383,6 +415,30 @@ impl OutputFormat {
 #[cfg(test)]
 mod tests {
     use super::{FORMAT_SPECS, OutputFormat};
+
+    /// #11598: the machine/human split decides whether piped progress is off
+    /// by default, so pin both sides by CLI name.
+    #[test]
+    fn machine_readable_formats_are_the_documents_and_the_agent_report() {
+        for (name, machine) in [
+            ("json", true),
+            ("sarif", true),
+            ("badge-json", true),
+            ("repo-exposure-json", true),
+            ("agent", true),
+            ("human", false),
+            ("human-full", false),
+            ("github", false),
+            ("repo-seams-md", false),
+        ] {
+            let parsed = OutputFormat::parse_cli_name(name);
+            assert_eq!(
+                parsed.map(|format| format.is_machine_readable()),
+                Some(machine),
+                "{name}"
+            );
+        }
+    }
 
     #[test]
     fn parses_human_full_aliases() {

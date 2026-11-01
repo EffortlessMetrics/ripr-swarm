@@ -43,8 +43,8 @@ Evidence
 Weakness
   - A test may reach this change through an internal helper-call chain ripr cannot fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named limitation, not a coverage claim
 Stop reasons:
-  - a candidate test path exists but passes through calls ripr only matched by name (transitive_reach_unresolved)
-    Next: Call the changed owner directly from a test if tests can name it; if the path runs through private helpers ripr only matched by name, the edge can stay unresolved even with an exact assertion.
+  - ripr could not establish whether a test reaches this change through internal calls (transitive_reach_unresolved)
+    Next: Call the changed owner directly from a test if tests can name it; if it is private or reached only through private helpers, ripr cannot finish the call chain, so the edge can stay unresolved even with an exact assertion.
 Static limitation
   rust_transitive_reach_unresolved — A test may reach this change through an internal helper-call chain ripr cannot fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named limitation, not a coverage claim.
   Next: Call the changed owner directly from a test if tests can name it; if it is a private helper, ripr cannot finish the call chain, so this limitation can remain even when an assertion through the public API is exact.
@@ -82,8 +82,8 @@ Evidence
 Weakness
   - A test may reach this change through an internal helper-call chain ripr cannot fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named limitation, not a coverage claim
 Stop reasons:
-  - a candidate test path exists but passes through calls ripr only matched by name (transitive_reach_unresolved)
-    Next: Call the changed owner directly from a test if tests can name it; if the path runs through private helpers ripr only matched by name, the edge can stay unresolved even with an exact assertion.
+  - ripr could not establish whether a test reaches this change through internal calls (transitive_reach_unresolved)
+    Next: Call the changed owner directly from a test if tests can name it; if it is private or reached only through private helpers, ripr cannot finish the call chain, so the edge can stay unresolved even with an exact assertion.
 Static limitation
   rust_transitive_reach_unresolved — A test may reach this change through an internal helper-call chain ripr cannot fully trace (macros, generics, trait dispatch, or depth greater than 5). This is a named limitation, not a coverage claim.
   Next: Call the changed owner directly from a test if tests can name it; if it is a private helper, ripr cannot finish the call chain, so this limitation can remain even when an assertion through the public API is exact.

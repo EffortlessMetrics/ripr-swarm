@@ -628,7 +628,7 @@ test.only("discount boundary", () => {
         module_entries: Vec::new(),
         arity: None,
         source_text: None,
-        imports: Vec::new(),
+        imports: Default::default(),
         method_kind: TypeScriptMethodKind::Ordinary,
     };
     let candidates = related_test_candidates(

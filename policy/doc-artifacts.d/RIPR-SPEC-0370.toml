@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0370"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0370-loop-range-bound-change.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Issue #11399 records that a changed for-header range bound has no probe or seam, and that crediting it needs the old and new range evaluated per exact pin; this spec pins the fail-closed floor and the producer contract beneath RIPR-SPEC-0360."

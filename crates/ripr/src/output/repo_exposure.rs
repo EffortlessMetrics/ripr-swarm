@@ -295,6 +295,175 @@ impl<'a> RepoExposureLimit<'a> {
     }
 }
 
+/// Environment variable overriding the pilot `repo-exposure.json` byte budget
+/// (#12108). `0` removes the cap; a positive integer sets the budget in
+/// bytes. When unset, `DEFAULT_PILOT_REPO_EXPOSURE_BYTES` applies.
+pub(crate) const PILOT_REPO_EXPOSURE_BYTES_ENV: &str = "RIPR_PILOT_REPO_EXPOSURE_BYTES";
+
+/// Default byte budget for the `seams[]` entries of pilot's
+/// `repo-exposure.json`. `RIPR_PILOT_SEAM_BUDGET` bounds the seam count only:
+/// at the default 2000 seams the file measured 13.1 MB on this repository
+/// (about 6.6 KB per seam, mostly each seam's `evidence_record`). The budget
+/// keeps the file agent-readable; the full set stays one
+/// `RIPR_PILOT_REPO_EXPOSURE_BYTES=0` rerun away.
+pub(crate) const DEFAULT_PILOT_REPO_EXPOSURE_BYTES: usize = 8_000_000;
+
+/// `run_status` of a pilot `repo-exposure.json` whose `seams[]` the byte
+/// budget cut and no seam limit also marked. Uses the `limited_*` family so a
+/// reader never takes the file for a complete one.
+pub(crate) const REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS: &str = "limited_repo_exposure_bytes";
+const REPO_EXPOSURE_BYTE_BOUND_CATEGORY: &str = "pilot_repo_exposure_byte_bound_applied";
+const REPO_EXPOSURE_BYTE_BOUND_ROUTE: &str = "Set RIPR_PILOT_REPO_EXPOSURE_BYTES=0 and rerun `ripr pilot` to write every seam, or read `agent-seam-packets.json` and `pilot-summary.json`, which this budget does not cut.";
+
+/// Resolve the pilot repo-exposure byte budget. `None` is the unbounded
+/// opt-out. Fails closed on an unparseable value, naming the variable.
+pub(crate) fn pilot_repo_exposure_byte_budget() -> Result<Option<(usize, SeamLimitSource)>, String>
+{
+    pilot_repo_exposure_byte_budget_from_env(std::env::var(PILOT_REPO_EXPOSURE_BYTES_ENV))
+}
+
+fn pilot_repo_exposure_byte_budget_from_env(
+    value: Result<String, std::env::VarError>,
+) -> Result<Option<(usize, SeamLimitSource)>, String> {
+    let env_name = PILOT_REPO_EXPOSURE_BYTES_ENV;
+    match value {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            let invalid = || {
+                format!(
+                    "{env_name} `{raw}` is not a byte budget: set a positive integer, or 0 to remove the cap"
+                )
+            };
+            match trimmed.parse::<usize>() {
+                Ok(0) if trimmed == "0" => Ok(None),
+                Ok(0) | Err(_) => Err(invalid()),
+                Ok(limit) => Ok(Some((limit, SeamLimitSource::Configured))),
+            }
+        }
+        Err(std::env::VarError::NotPresent) => Ok(Some((
+            DEFAULT_PILOT_REPO_EXPOSURE_BYTES,
+            SeamLimitSource::Default,
+        ))),
+        Err(std::env::VarError::NotUnicode(value)) => Err(format!(
+            "{env_name} is not valid UTF-8 (got {value:?}): set a positive byte budget, or 0 to remove the cap"
+        )),
+    }
+}
+
+/// A byte-budget cut of the `seams[]` entries of one `repo-exposure.json`.
+/// It records which entries (by index into the classified list) the file
+/// carries, and what the budget dropped, so the document discloses it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RepoExposureByteBound {
+    kept: Vec<usize>,
+    pub(crate) total: usize,
+    pub(crate) budget: usize,
+    /// Bytes of the `seams[]` entries that were kept.
+    pub(crate) bytes: usize,
+    pub(crate) source: SeamLimitSource,
+}
+
+impl RepoExposureByteBound {
+    pub(crate) fn rendered(&self) -> usize {
+        self.kept.len()
+    }
+}
+
+/// The one predicate for "this repo-exposure document's `seams[]` was cut by
+/// the pilot byte budget" (#12108). It reads the limitation category as well
+/// as `run_status`, because a seam cap that also fired keeps
+/// `run_status = seam_limit_applied` and the byte cut is then only a
+/// `limitations[]` entry. Every consumer that compares seams uses this.
+pub(crate) fn is_byte_bounded_repo_exposure(document: &Value) -> bool {
+    byte_bounded_from_parts(
+        document.get("run_status").and_then(Value::as_str),
+        document.get("limitations").and_then(Value::as_array),
+    )
+}
+
+/// The predicate over an already-parsed `run_status` and `limitations[]`, so a
+/// typed consumer does not parse the document a second time.
+pub(crate) fn byte_bounded_from_parts(
+    run_status: Option<&str>,
+    limitations: Option<&Vec<Value>>,
+) -> bool {
+    run_status == Some(REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS)
+        || limitations.is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry.get("category").and_then(Value::as_str)
+                    == Some(REPO_EXPOSURE_BYTE_BOUND_CATEGORY)
+            })
+        })
+}
+
+/// Bytes the writer adds between two `seams[]` entries (`,\n`).
+const SEAM_SEPARATOR_BYTES: usize = 2;
+
+/// Choose the `seams[]` entries that fit `budget` bytes. Seams `keep` names
+/// (the current change) are chosen first, then the rest in inventory order;
+/// each group stops at its first entry that does not fit, so the cut is a
+/// deterministic prefix and never skips ahead to a smaller seam. `None` when
+/// there is no budget or every entry fits: the document is then unchanged.
+pub(crate) fn bound_repo_exposure_seams(
+    classified: &[ClassifiedSeam],
+    budget: Option<(usize, SeamLimitSource)>,
+    keep: impl Fn(&ClassifiedSeam) -> bool,
+) -> Option<RepoExposureByteBound> {
+    let (budget, source) = budget?;
+    let canonical_gaps = canonical_gap_identities(classified);
+    let sizes: Vec<usize> = classified
+        .iter()
+        .map(|entry| render_seam_json(entry, &canonical_gaps).len())
+        .collect();
+    // The writer joins entries with `,\n`, so a selection of n entries costs
+    // their bytes plus 2 * (n - 1): the budget bounds the written `seams[]`
+    // content, not just the entry payloads.
+    if sizes.iter().sum::<usize>().saturating_add(
+        classified
+            .len()
+            .saturating_sub(1)
+            .saturating_mul(SEAM_SEPARATOR_BYTES),
+    ) <= budget
+    {
+        return None;
+    }
+    let mut used = 0usize;
+    let mut chosen_count = 0usize;
+    let mut chosen = vec![false; classified.len()];
+    // The first entry that does not fit ends the selection for both groups:
+    // a smaller, lower-priority seam never fills budget a higher-priority one
+    // could not use.
+    'select: for want_keep in [true, false] {
+        for (idx, entry) in classified.iter().enumerate() {
+            if keep(entry) != want_keep {
+                continue;
+            }
+            let cost = sizes[idx].saturating_add(if chosen_count == 0 {
+                0
+            } else {
+                SEAM_SEPARATOR_BYTES
+            });
+            if used.saturating_add(cost) > budget {
+                break 'select;
+            }
+            used += cost;
+            chosen_count += 1;
+            chosen[idx] = true;
+        }
+    }
+    Some(RepoExposureByteBound {
+        kept: chosen
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, chosen)| chosen.then_some(idx))
+            .collect(),
+        total: classified.len(),
+        budget,
+        bytes: used,
+        source,
+    })
+}
+
 /// Render the repo exposure JSON.
 #[cfg(test)]
 pub(crate) fn render_repo_exposure_json(
@@ -329,12 +498,35 @@ pub(crate) fn render_repo_exposure_json_with_generated_skip(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn render_repo_exposure_json_with_limit(
     classified: &[ClassifiedSeam],
     limit_info: Option<RepoExposureLimit<'_>>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
+) -> String {
+    render_repo_exposure_json_bounded(
+        classified,
+        limit_info,
+        ts_guidance,
+        python_guidance,
+        generated_skip,
+        None,
+    )
+}
+
+/// Like [`render_repo_exposure_json_with_limit`], with the `seams[]` entries
+/// cut to `byte_bound` and the cut disclosed (#12108). The bounded document
+/// carries no artifact identity, so no consumer can take it for a comparable
+/// snapshot.
+pub(crate) fn render_repo_exposure_json_bounded(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<RepoExposureLimit<'_>>,
+    ts_guidance: Option<&TsFullRepoGuidance>,
+    python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
+    byte_bound: Option<&RepoExposureByteBound>,
 ) -> String {
     let mut bytes = Vec::new();
     if write_repo_exposure_json(
@@ -343,6 +535,7 @@ pub(crate) fn render_repo_exposure_json_with_limit(
         ts_guidance,
         python_guidance,
         generated_skip,
+        byte_bound,
         &mut bytes,
     )
     .is_err()
@@ -367,8 +560,13 @@ fn write_repo_exposure_json<W: io::Write>(
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
+    byte_bound: Option<&RepoExposureByteBound>,
     out: &mut W,
 ) -> io::Result<()> {
+    let mut seams = SeamJsons::new(classified, 0);
+    if let Some(bound) = byte_bound {
+        seams.order.clone_from(&bound.kept);
+    }
     write_repo_exposure_json_document(
         limit_info,
         RepoExposureJsonDisclosures {
@@ -376,10 +574,11 @@ fn write_repo_exposure_json<W: io::Write>(
             python_guidance,
             generated_skip,
             analysis_inputs: None,
+            byte_bound,
         },
         None,
         None,
-        &SeamJsons::new(classified, 0),
+        &seams,
         out,
     )
 }
@@ -426,6 +625,7 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         python_guidance,
         generated_skip,
         analysis_inputs: analysis_inputs.as_ref(),
+        byte_bound: None,
     };
     // The hash pass streams the document through `Sha256Writer`, which
     // hashes each chunk without buffering it, so no destination I/O
@@ -501,6 +701,10 @@ const PRERENDERED_SEAM_JSON_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 struct SeamJsons<'a> {
     classified: &'a [ClassifiedSeam],
     canonical_gaps: BTreeMap<crate::analysis::seams::SeamId, CanonicalGapIdentity>,
+    /// Indices into `classified` of the entries this document carries: all of
+    /// them, or the subset a byte bound kept (#12108). Prerendering runs only
+    /// for the full set.
+    order: Vec<usize>,
     prefix: Vec<String>,
 }
 
@@ -530,16 +734,17 @@ impl<'a> SeamJsons<'a> {
         Self {
             classified,
             canonical_gaps,
+            order: (0..classified.len()).collect(),
             prefix,
         }
     }
 
     /// Hand `idx`'s entry to `use_json`, from the prefix when it holds one.
-    fn with_entry<R>(&self, idx: usize, use_json: impl FnOnce(&str) -> R) -> R {
-        match self.prefix.get(idx) {
+    fn with_entry<R>(&self, pos: usize, use_json: impl FnOnce(&str) -> R) -> R {
+        match self.prefix.get(pos) {
             Some(seam_json) => use_json(seam_json),
             None => use_json(&render_seam_json(
-                &self.classified[idx],
+                &self.classified[self.order[pos]],
                 &self.canonical_gaps,
             )),
         }
@@ -573,8 +778,8 @@ fn repo_exposure_source_subject(
         crate::output::gap_source_subject::named_files_in_value(root, &seam, &mut files);
         Some(())
     };
-    for idx in 0..seams.classified.len() {
-        seams.with_entry(idx, &mut collect)?;
+    for pos in 0..seams.order.len() {
+        seams.with_entry(pos, &mut collect)?;
     }
     if files.is_empty() {
         return None;
@@ -594,6 +799,8 @@ struct RepoExposureJsonDisclosures<'a> {
     /// Non-Rust analysis input identity (#9599). Top-level, not inside
     /// `source_subject`, whose corpus identity stays checkout-path independent.
     analysis_inputs: Option<&'a serde_json::Value>,
+    /// The byte-budget cut of `seams[]` (#12108); `None` when nothing was cut.
+    byte_bound: Option<&'a RepoExposureByteBound>,
 }
 
 fn write_repo_exposure_json_document<W: io::Write>(
@@ -609,10 +816,10 @@ fn write_repo_exposure_json_document<W: io::Write>(
         python_guidance,
         generated_skip,
         analysis_inputs,
+        byte_bound,
     } = disclosures;
     // The seams' own slice: the entry index below can never run past it.
-    let classified = seams.classified;
-    let metrics = ExposureMetrics::from(classified);
+    let metrics = ExposureMetrics::from(seams.order.iter().map(|idx| &seams.classified[*idx]));
 
     writeln!(out, "{{")?;
     writeln!(
@@ -648,8 +855,15 @@ fn write_repo_exposure_json_document<W: io::Write>(
     let has_limitations = limit_info.is_some()
         || ts_guidance.is_some()
         || python_guidance.is_some()
-        || generated_skip.is_some();
+        || generated_skip.is_some()
+        || byte_bound.is_some();
     match (limit_info, declined) {
+        (None, None) if byte_bound.is_some() => {
+            writeln!(
+                out,
+                "  \"run_status\": \"{REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS}\","
+            )?;
+        }
         (None, None) => {
             writeln!(out, "  \"run_status\": \"complete\",")?;
         }
@@ -691,6 +905,36 @@ fn write_repo_exposure_json_document<W: io::Write>(
             )?;
             writeln!(out, "    }}")?;
             first = false;
+        }
+        if let Some(bound) = byte_bound {
+            if !first {
+                writeln!(out, "    ,")?;
+            }
+            first = false;
+            writeln!(out, "    {{")?;
+            writeln!(
+                out,
+                "      \"category\": \"{REPO_EXPOSURE_BYTE_BOUND_CATEGORY}\","
+            )?;
+            writeln!(out, "      \"seams_rendered\": {},", bound.rendered())?;
+            writeln!(out, "      \"seams_total\": {},", bound.total)?;
+            writeln!(out, "      \"seam_bytes_rendered\": {},", bound.bytes)?;
+            writeln!(out, "      \"byte_budget\": {},", bound.budget)?;
+            writeln!(
+                out,
+                "      \"limit_source\": \"{}\",",
+                bound.source.as_str()
+            )?;
+            writeln!(
+                out,
+                "      \"control\": \"{PILOT_REPO_EXPOSURE_BYTES_ENV}\","
+            )?;
+            writeln!(
+                out,
+                "      \"repair_route\": \"{}\"",
+                json_escape(REPO_EXPOSURE_BYTE_BOUND_ROUTE)
+            )?;
+            writeln!(out, "    }}")?;
         }
         if let Some(guidance) = ts_guidance {
             if !first {
@@ -905,18 +1149,19 @@ fn write_repo_exposure_json_document<W: io::Write>(
     writeln!(out, "  }},")?;
 
     write!(out, "  \"seams\": [")?;
-    for idx in 0..classified.len() {
-        if idx == 0 {
+    let entries = seams.order.len();
+    for pos in 0..entries {
+        if pos == 0 {
             writeln!(out)?;
         }
-        seams.with_entry(idx, |seam_json| out.write_all(seam_json.as_bytes()))?;
-        if idx + 1 != classified.len() {
+        seams.with_entry(pos, |seam_json| out.write_all(seam_json.as_bytes()))?;
+        if pos + 1 != entries {
             writeln!(out, ",")?;
         } else {
             writeln!(out)?;
         }
     }
-    if !classified.is_empty() {
+    if entries != 0 {
         write!(out, "  ")?;
     }
     writeln!(out, "]")?;
@@ -975,7 +1220,7 @@ fn repo_exposure_summary_json_value(
     base: Option<&str>,
     mode: &str,
 ) -> Value {
-    let metrics = ExposureMetrics::from(classified);
+    let metrics = ExposureMetrics::from(classified.iter());
     let canonical_gaps = canonical_gap_identities(classified);
     let mut canonical_gap_ids = BTreeSet::<String>::new();
     let mut actionable_gap_ids = BTreeSet::<String>::new();
@@ -1330,7 +1575,7 @@ pub(crate) fn render_repo_exposure_md_with_limit(
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
 ) -> String {
-    let metrics = ExposureMetrics::from(classified);
+    let metrics = ExposureMetrics::from(classified.iter());
     let mut out = String::new();
     out.push_str("# ripr repo exposure report\n\n");
     out.push_str(&format!(
@@ -1587,7 +1832,7 @@ struct ExposureMetrics {
 }
 
 impl ExposureMetrics {
-    fn from(classified: &[ClassifiedSeam]) -> Self {
+    fn from<'a>(classified: impl Iterator<Item = &'a ClassifiedSeam> + Clone) -> Self {
         let mut counts: [(SeamGripClass, usize); 11] = [
             (SeamGripClass::StronglyGripped, 0),
             (SeamGripClass::WeaklyGripped, 0),
@@ -1602,6 +1847,7 @@ impl ExposureMetrics {
             (SeamGripClass::Suppressed, 0),
         ];
         let mut headline_eligible = 0;
+        let seams_total = classified.clone().count();
         for entry in classified {
             for bucket in counts.iter_mut() {
                 if bucket.0 == entry.class {
@@ -1614,7 +1860,7 @@ impl ExposureMetrics {
             }
         }
         ExposureMetrics {
-            seams_total: classified.len(),
+            seams_total,
             headline_eligible,
             counts,
         }
@@ -1717,6 +1963,7 @@ mod tests {
             python_guidance: None,
             generated_skip: None,
             analysis_inputs: None,
+            byte_bound: None,
         };
         let document = |budget: usize| -> Result<Vec<u8>, String> {
             let mut out = Vec::new();
@@ -2769,5 +3016,287 @@ mod tests {
             md.contains("helper_owner_call"),
             "Markdown missing helper_owner_call tag: {md}"
         );
+    }
+
+    fn byte_bound_corpus() -> Vec<ClassifiedSeam> {
+        (0..6)
+            .map(|idx| {
+                classified_at(
+                    &format!("src/f{idx}.rs"),
+                    &format!("f{idx}::gate"),
+                    idx + 1,
+                    SeamGripClass::Ungripped,
+                )
+            })
+            .collect()
+    }
+
+    fn render_bounded(
+        classified: &[ClassifiedSeam],
+        limit: Option<RepoExposureLimit<'_>>,
+        bound: Option<&RepoExposureByteBound>,
+    ) -> Result<serde_json::Value, String> {
+        let json = render_repo_exposure_json_bounded(classified, limit, None, None, None, bound);
+        serde_json::from_str(&json).map_err(|err| format!("bounded JSON did not parse: {err}"))
+    }
+
+    fn seam_files(document: &serde_json::Value) -> Vec<String> {
+        document["seams"]
+            .as_array()
+            .map(|seams| {
+                seams
+                    .iter()
+                    .filter_map(|seam| seam["file"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn byte_bound_cuts_seams_and_discloses_the_cut_in_the_document() -> Result<(), String> {
+        let classified = byte_bound_corpus();
+        let canonical_gaps = canonical_gap_identities(&classified);
+        let one = render_seam_json(&classified[0], &canonical_gaps).len();
+        // Room for exactly three entries.
+        let budget = one * 3 + one / 2;
+        let bound = bound_repo_exposure_seams(
+            &classified,
+            Some((budget, SeamLimitSource::Configured)),
+            |_| false,
+        )
+        .ok_or("six entries over a three-entry budget must be cut")?;
+        assert_eq!(bound.rendered(), 3);
+        assert_eq!(bound.total, 6);
+        assert!(bound.bytes <= budget, "{} > {budget}", bound.bytes);
+
+        let document = render_bounded(&classified, None, Some(&bound))?;
+        assert_eq!(document["run_status"], REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS);
+        assert_eq!(document["seams"].as_array().map(Vec::len), Some(3));
+        // The file's own metrics describe the file's own seams.
+        assert_eq!(document["metrics"]["seams_total"], 3);
+        assert!(
+            document.get("artifact").is_none(),
+            "a bounded document must carry no comparable identity: {document}"
+        );
+        let entry = &document["limitations"][0];
+        assert_eq!(entry["category"], "pilot_repo_exposure_byte_bound_applied");
+        assert_eq!(entry["seams_rendered"], 3);
+        assert_eq!(entry["seams_total"], 6);
+        assert_eq!(entry["seam_bytes_rendered"], bound.bytes);
+        assert_eq!(entry["byte_budget"], budget);
+        assert_eq!(entry["limit_source"], "configured");
+        assert_eq!(entry["control"], "RIPR_PILOT_REPO_EXPOSURE_BYTES");
+        assert!(
+            entry["repair_route"]
+                .as_str()
+                .is_some_and(|route| route.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0")),
+            "{entry}"
+        );
+        // Without `keep`, the cut is the inventory-order prefix.
+        assert_eq!(
+            seam_files(&document),
+            ["src/f0.rs", "src/f1.rs", "src/f2.rs"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn byte_bound_that_fits_changes_nothing() -> Result<(), String> {
+        let classified = byte_bound_corpus();
+        let unbounded = render_repo_exposure_json_with_limit(&classified, None, None, None, None);
+        // Exactly the entries' total: nothing is cut, so no bound exists and
+        // the document is byte-identical to the unbounded one.
+        let canonical_gaps = canonical_gap_identities(&classified);
+        let total: usize = classified
+            .iter()
+            .map(|entry| render_seam_json(entry, &canonical_gaps).len())
+            .sum::<usize>()
+            + (classified.len() - 1) * SEAM_SEPARATOR_BYTES;
+        for budget in [Some((total, SeamLimitSource::Default)), None] {
+            let bound = bound_repo_exposure_seams(&classified, budget, |_| false);
+            assert_eq!(bound, None);
+            assert_eq!(
+                render_repo_exposure_json_bounded(
+                    &classified,
+                    None,
+                    None,
+                    None,
+                    None,
+                    bound.as_ref()
+                ),
+                unbounded
+            );
+        }
+        let document: serde_json::Value =
+            serde_json::from_str(&unbounded).map_err(|err| err.to_string())?;
+        assert_eq!(document["run_status"], "complete");
+        assert!(document.get("limitations").is_none(), "{document}");
+        Ok(())
+    }
+
+    #[test]
+    fn byte_bound_keeps_the_current_change_seams_first() -> Result<(), String> {
+        let classified = byte_bound_corpus();
+        let canonical_gaps = canonical_gap_identities(&classified);
+        let one = render_seam_json(&classified[0], &canonical_gaps).len();
+        let bound = bound_repo_exposure_seams(
+            &classified,
+            Some((one * 2 + one / 2, SeamLimitSource::Default)),
+            |entry| entry.seam.file().ends_with("f5.rs"),
+        )
+        .ok_or("must be cut")?;
+        let document = render_bounded(&classified, None, Some(&bound))?;
+        assert_eq!(seam_files(&document), ["src/f0.rs", "src/f5.rs"]);
+        assert_eq!(document["limitations"][0]["limit_source"], "default");
+        Ok(())
+    }
+
+    #[test]
+    fn byte_bound_overflow_in_the_keep_group_ends_selection_for_both_groups() -> Result<(), String>
+    {
+        // f0, f1 are kept-group seams; f2.. are the rest. The budget fits one
+        // kept seam but not both. The first overflow stops everything: the
+        // smaller-or-equal rest seams must not fill leftover budget.
+        let classified = byte_bound_corpus();
+        let canonical_gaps = canonical_gap_identities(&classified);
+        let one = render_seam_json(&classified[0], &canonical_gaps).len();
+        let bound = bound_repo_exposure_seams(
+            &classified,
+            Some((one * 3 / 2, SeamLimitSource::Configured)),
+            |entry| {
+                let file = entry.seam.file();
+                file.ends_with("f0.rs") || file.ends_with("f1.rs")
+            },
+        )
+        .ok_or("must be cut")?;
+        let document = render_bounded(&classified, None, Some(&bound))?;
+        assert_eq!(seam_files(&document), ["src/f0.rs"]);
+        Ok(())
+    }
+
+    #[test]
+    fn byte_bound_counts_the_separators_the_writer_adds_at_the_exact_threshold()
+    -> Result<(), String> {
+        let classified = byte_bound_corpus();
+        let canonical_gaps = canonical_gap_identities(&classified);
+        let sizes: Vec<usize> = classified
+            .iter()
+            .map(|entry| render_seam_json(entry, &canonical_gaps).len())
+            .collect();
+        let three = sizes[..3].iter().sum::<usize>() + 2 * SEAM_SEPARATOR_BYTES;
+        for (budget, expect) in [(three, 3usize), (three - 1, 2)] {
+            let bound = bound_repo_exposure_seams(
+                &classified,
+                Some((budget, SeamLimitSource::Configured)),
+                |_| false,
+            )
+            .ok_or("must be cut")?;
+            assert_eq!(bound.rendered(), expect, "budget {budget}");
+            assert!(bound.bytes <= budget);
+            let document = render_bounded(&classified, None, Some(&bound))?;
+            assert_eq!(document["seams"].as_array().map(Vec::len), Some(expect));
+            let written: usize = bound.kept.iter().map(|i| sizes[*i]).sum::<usize>()
+                + (expect - 1) * SEAM_SEPARATOR_BYTES;
+            assert_eq!(written, bound.bytes);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn byte_bounded_predicate_reads_status_or_category_and_nothing_else() {
+        use serde_json::json;
+        assert!(is_byte_bounded_repo_exposure(
+            &json!({"run_status": "limited_repo_exposure_bytes"})
+        ));
+        assert!(is_byte_bounded_repo_exposure(&json!({
+            "run_status": "seam_limit_applied",
+            "limitations": [{"category": "pilot_repo_exposure_byte_bound_applied"}]
+        })));
+        assert!(!is_byte_bounded_repo_exposure(&json!({
+            "run_status": "seam_limit_applied",
+            "limitations": [{"category": "pilot_seam_budget_applied"}]
+        })));
+        assert!(!is_byte_bounded_repo_exposure(
+            &json!({"run_status": "complete"})
+        ));
+    }
+
+    #[test]
+    fn byte_bound_zero_budget_keeps_no_seam_and_still_discloses() -> Result<(), String> {
+        let classified = byte_bound_corpus();
+        let bound =
+            bound_repo_exposure_seams(&classified, Some((1, SeamLimitSource::Configured)), |_| {
+                false
+            })
+            .ok_or("must be cut")?;
+        let document = render_bounded(&classified, None, Some(&bound))?;
+        assert_eq!(document["seams"].as_array().map(Vec::len), Some(0));
+        assert_eq!(document["limitations"][0]["seams_rendered"], 0);
+        assert_eq!(document["run_status"], REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS);
+        Ok(())
+    }
+
+    #[test]
+    fn byte_bound_keeps_the_seam_limit_status_and_adds_its_own_entry() -> Result<(), String> {
+        use crate::analysis::SeamLimitInfo;
+        let classified = byte_bound_corpus();
+        let info = SeamLimitInfo {
+            analyzed: 6,
+            total: 60,
+            source: SeamLimitSource::Default,
+        };
+        let bound =
+            bound_repo_exposure_seams(&classified, Some((1, SeamLimitSource::Default)), |_| false)
+                .ok_or("must be cut")?;
+        let document = render_bounded(
+            &classified,
+            Some(RepoExposureLimit::PilotBudget(&info)),
+            Some(&bound),
+        )?;
+        assert_eq!(document["run_status"], "seam_limit_applied");
+        let categories: Vec<&str> = document["limitations"]
+            .as_array()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(|entry| entry["category"].as_str())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            categories,
+            [
+                "pilot_seam_budget_applied",
+                "pilot_repo_exposure_byte_bound_applied"
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_repo_exposure_byte_budget_resolves_default_configured_and_opt_out() {
+        use std::env::VarError::NotPresent;
+        assert_eq!(
+            pilot_repo_exposure_byte_budget_from_env(Err(NotPresent)),
+            Ok(Some((
+                DEFAULT_PILOT_REPO_EXPOSURE_BYTES,
+                SeamLimitSource::Default
+            )))
+        );
+        assert_eq!(
+            pilot_repo_exposure_byte_budget_from_env(Ok("4096".to_string())),
+            Ok(Some((4096, SeamLimitSource::Configured)))
+        );
+        assert_eq!(
+            pilot_repo_exposure_byte_budget_from_env(Ok("0".to_string())),
+            Ok(None)
+        );
+        for invalid in ["many", "-1", "+0", "00", "", "1.5"] {
+            assert!(
+                pilot_repo_exposure_byte_budget_from_env(Ok(invalid.to_string()))
+                    .is_err_and(|error| error.starts_with("RIPR_PILOT_REPO_EXPOSURE_BYTES `")),
+                "`{invalid}` must fail closed, not fall back to a default or the opt-out"
+            );
+        }
     }
 }
