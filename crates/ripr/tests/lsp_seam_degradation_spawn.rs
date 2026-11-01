@@ -924,7 +924,7 @@ fn spawned_server_with_invalid_seam_limit_degrades_seam_inventory_through_produc
     // different inventory failure (a cache-limit parse error, a walk error)
     // must fail here, not pass as the forced degradation.
     let detail = seam["message"].as_str().unwrap_or("");
-    if !detail.contains("spot diagnostics skipped")
+    if !detail.contains("repo-wide spot diagnostics skipped")
         || !detail.contains(SEAM_LIMIT_ENV)
         || !detail.contains(INVALID_SEAM_LIMIT)
     {

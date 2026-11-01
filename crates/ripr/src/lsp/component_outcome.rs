@@ -447,7 +447,7 @@ mod tests {
         degraded = ComponentOutcome::unavailable_recoverable(
             AnalysisComponent::SeamInventory,
             "disabled",
-            "spot diagnostics are disabled by configuration",
+            "repo-wide spot diagnostics are disabled by configuration",
             "set [lsp] seam_diagnostics = true in ripr.toml, then run ripr.refresh",
         );
         assert!(!degraded.is_degraded());
@@ -684,7 +684,7 @@ mod tests {
         let outcome = ComponentOutcome::unavailable_recoverable(
             AnalysisComponent::SeamInventory,
             "seam_diagnostics_not_enabled",
-            "spot diagnostics require the full profile (current: actionable)",
+            "repo-wide spot diagnostics require the full profile (current: actionable)",
             "set [lsp] diagnostic_profile = \"full\" in ripr.toml, then run ripr.refresh",
         );
         if outcome.is_degraded() {

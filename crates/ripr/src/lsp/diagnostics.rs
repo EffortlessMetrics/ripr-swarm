@@ -1349,7 +1349,7 @@ fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOu
         let (message, recovery) = if session_controlled("diagnostic_profile") {
             (
                 format!(
-                    "spot diagnostics require the full diagnostic profile (current: {}, \
+                    "repo-wide spot diagnostics require the full diagnostic profile (current: {}, \
                      from a session setting)",
                     config.diagnostic_profile.as_str()
                 ),
@@ -1359,7 +1359,7 @@ fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOu
         } else {
             (
                 format!(
-                    "spot diagnostics require the full diagnostic profile (current: {})",
+                    "repo-wide spot diagnostics require the full diagnostic profile (current: {})",
                     config.diagnostic_profile.as_str()
                 ),
                 "set [lsp] diagnostic_profile = \"full\" in ripr.toml, then run ripr.refresh",
@@ -1374,13 +1374,13 @@ fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOu
     } else if !config.enable_seam_diagnostics {
         let (message, recovery) = if session_controlled("seam_diagnostics") {
             (
-                "spot diagnostics are disabled by a session setting",
+                "repo-wide spot diagnostics are disabled by a session setting",
                 "set the seamDiagnostics session setting (VS Code setting \
                  ripr.seamDiagnostics) to true, then run ripr.refresh",
             )
         } else {
             (
-                "spot diagnostics are disabled by configuration",
+                "repo-wide spot diagnostics are disabled by configuration",
                 "set [lsp] seam_diagnostics = true in ripr.toml, then run ripr.refresh",
             )
         };
@@ -1394,7 +1394,7 @@ fn seam_inventory_not_enabled_outcome(config: &LspAnalysisConfig) -> ComponentOu
         ComponentOutcome::unavailable_recoverable(
             AnalysisComponent::SeamInventory,
             "seam_diagnostics_not_enabled",
-            "spot diagnostics require the rust language to be enabled",
+            "repo-wide spot diagnostics require the rust language to be enabled",
             "enable the rust language in the [languages] configuration, then run ripr.refresh",
         )
     }
@@ -1584,7 +1584,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
                 ComponentOutcome::failed(
                     AnalysisComponent::SeamInventory,
                     "seam_inventory_failed",
-                    format!("spot diagnostics skipped this refresh: {err}"),
+                    format!("repo-wide spot diagnostics skipped this refresh: {err}"),
                     true,
                     "retry ripr.refreshDiagnostics",
                 ),
@@ -7484,7 +7484,7 @@ mod diagnostic_policy_tests {
             ComponentOutcome::unavailable_recoverable(
                 AnalysisComponent::SeamInventory,
                 "seam_diagnostics_not_enabled",
-                "spot diagnostics require the full diagnostic profile (current: actionable)",
+                "repo-wide spot diagnostics require the full diagnostic profile (current: actionable)",
                 "set [lsp] diagnostic_profile = \"full\" in ripr.toml, then run ripr.refresh",
             ),
         ];
@@ -7534,7 +7534,9 @@ mod diagnostic_policy_tests {
             ));
         }
         if payload["message"].as_str()
-            != Some("spot diagnostics require the full diagnostic profile (current: actionable)")
+            != Some(
+                "repo-wide spot diagnostics require the full diagnostic profile (current: actionable)",
+            )
         {
             return Err(format!(
                 "message must name the current profile so the agent sees it is not full: {payload}"
