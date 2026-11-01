@@ -298,11 +298,30 @@ fn shadowed_undefined_cannot_disable_test_qualification_options() {
             // `var` hoists out of its block, so it still shadows.
             format!("{{ var undefined = true; }} {registration}"),
             format!("if (flag) {{ var undefined = true; }} {registration}"),
+            format!("for (;;) {{ var undefined = true; }} {registration}"),
+            format!("for (const x of [true]) {{ var undefined = true; }} {registration}"),
+            format!("for (const x in {{ a: true }}) {{ var undefined = true; }} {registration}"),
+            format!("while (flag) {{ var undefined = true; }} {registration}"),
+            format!("do {{ var undefined = true; }} while (flag); {registration}"),
+            format!("label: {{ var undefined = true; }} {registration}"),
+            format!("try {{ var undefined = true; }} catch (e) {{}} {registration}"),
+            format!("try {{}} catch (e) {{ var undefined = true; }} {registration}"),
+            format!("try {{}} finally {{ var undefined = true; }} {registration}"),
+            format!("switch (flag) {{ case 1: var undefined = true; }} {registration}"),
+            format!("for (var undefined = true; ;) {{}} {registration}"),
         ] {
             let source = format!("{imports}{source}");
             let tests = extract_tests(Path::new("tests/shadowed.test.ts"), &source);
             assert!(tests.is_empty(), "{source}: {tests:?}");
         }
+    }
+    let script_head =
+        "const assert = require('node:assert/strict'); const { test } = require('node:test');\n";
+    for key in ["skip", "todo", "fails", "expectFailure"] {
+        let registration = format!("test('qualified', {{ {key}: undefined }}, {callback});");
+        let source = format!("{script_head}{{ function undefined() {{}} }} {registration}");
+        let tests = extract_tests(Path::new("tests/shadowed.test.cjs"), &source);
+        assert!(tests.is_empty(), "{source}: {tests:?}");
     }
     for source in [
         format!("function unrelated(undefined) {{ return undefined; }} test('ordinary', {{ expectFailure: undefined }}, {callback});"),
@@ -316,7 +335,9 @@ fn shadowed_undefined_cannot_disable_test_qualification_options() {
         // Ambient `declare` forms are erased before the test runs.
         format!("declare const undefined: undefined; test('ordinary', {{ expectFailure: undefined }}, {callback});"),
         format!("declare function undefined(): void; test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        format!("declare class undefined {{}} test('ordinary', {{ expectFailure: undefined }}, {callback});"),
         format!("export declare const undefined: undefined; test('ordinary', {{ expectFailure: undefined }}, {callback});"),
+        format!("{{ function undefined() {{}} }} test('ordinary', {{ expectFailure: undefined }}, {callback});"),
         // Block-scoped bindings end with their block.
         format!("{{ let undefined = true; }} test('ordinary', {{ expectFailure: undefined }}, {callback});"),
         format!("if (flag) {{ const undefined = true; }} test('ordinary', {{ expectFailure: undefined }}, {callback});"),

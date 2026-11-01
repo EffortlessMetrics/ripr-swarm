@@ -207,6 +207,12 @@ Static findings may use only these exposure classes:
 - `propagation_unknown`
 - `static_unknown`
 
+When one changed expression (same file, line and text) carries findings of more
+than one class, the check summary reports `conflicting_expressions` with the
+number of such expressions, emitted only when above zero. The per-class counts
+still count every finding, and selecting a finding by location stays ambiguous
+rather than picking a class (#11554).
+
 `exposed` requires reach evidence that a test runs the changed owner: a
 captured call, a helper chain, or assertion affinity. A test linked only by
 sharing the changed file, module, or a name token stays listed as the likely

@@ -57,6 +57,22 @@ fn shell(name: &str) -> TestResult<String> {
     Ok(script)
 }
 
+fn vscode_step_shell() -> TestResult<String> {
+    let (_, tail) = job("result")?
+        .split_once("      - name: Read the extension e2e check for the admitted head\n")
+        .ok_or("production extension e2e step exists")?;
+    let (step, _) = tail
+        .split_once("      - name: Summarize routed result\n")
+        .ok_or("summary step follows the extension e2e step")?;
+    let (_, body) = step.split_once("        run: |\n").ok_or("shell block")?;
+    Ok(body
+        .lines()
+        .take_while(|line| line.is_empty() || line.starts_with("          "))
+        .map(|line| line.strip_prefix("          ").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
 fn capability_shell() -> TestResult<String> {
     let source = job("docs-gate")?;
     let marker = "      - name: Capability registry checks (SUPPORT_TIERS.md, preview guide or spec change)\n";
@@ -975,6 +991,356 @@ fn actual_result_block_requires_successful_detection_and_selected_proof() -> Tes
                 &fixture, event, "success", docs, "skipped", "success"
             )?);
         }
+    }
+    Ok(())
+}
+
+// #12160: the extension e2e verdict step is executed with a stub `gh` and fixture
+// check-run JSON, so the classification (not just the pinned text) is proved.
+const VSCODE_HEAD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const VSCODE_RUN_CREATED: &str = "2026-11-01T11:02:00Z";
+
+fn check_json(id: u64, app: &str, status: &str, conclusion: &str, suite: u64, run: u64) -> String {
+    let conclusion = if conclusion.is_empty() {
+        "null".to_string()
+    } else {
+        format!("\"{conclusion}\"")
+    };
+    format!(
+        "{{\"id\":{id},\"app\":{{\"slug\":\"{app}\"}},\"status\":\"{status}\",\"conclusion\":{conclusion},\"check_suite\":{{\"id\":{suite}}},\"html_url\":\"https://github.com/o/r/actions/runs/{run}/job/{id}\"}}"
+    )
+}
+
+type NamedCase<'a> = (&'a str, VscodeCase<'a>, bool, &'a str);
+
+struct VscodeCase<'a> {
+    // (run id, created_at) of ci.yml runs referenced by the check rows.
+    runs: &'a [(u64, &'a str)],
+    surface: Vec<String>,
+    vscode: Vec<String>,
+    // Leading `gh` invocations that fail before the stub answers.
+    api_failures: u32,
+}
+
+fn run_vscode_step(case: &VscodeCase) -> TestResult<(bool, String)> {
+    let fixture = Fixture::new()?;
+    let jq = fixture.command("jq").and_then(|mut jq| {
+        jq.arg("--version");
+        fixture.output(&mut jq)
+    });
+    if !jq.is_ok_and(|output| output.status.success()) {
+        return Ok((true, "skip: jq unavailable".to_string()));
+    }
+    let stub = fixture.root.join(".git/stub");
+    fs::create_dir_all(stub.join("bin"))?;
+    fs::create_dir_all(stub.join("runs"))?;
+    fs::write(stub.join("runs/1"), format!("{VSCODE_RUN_CREATED}\n"))?;
+    for (run, created) in case.runs {
+        fs::write(stub.join(format!("runs/{run}")), format!("{created}\n"))?;
+    }
+    fs::write(stub.join("surface"), case.surface.join("\n") + "\n")?;
+    fs::write(stub.join("vscode"), case.vscode.join("\n") + "\n")?;
+    fs::write(stub.join("fails"), format!("{}\n", case.api_failures))?;
+    let gh = stub.join("bin/gh");
+    fs::write(
+        &gh,
+        r#"#!/bin/bash
+set -e
+n=$(cat "$STUB/fails")
+if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$STUB/fails"; exit 1; fi
+case "$*" in
+  *actions/runs/1\ *|*actions/runs/1) cat "$STUB/runs/1" ;;
+  *actions/runs/*) rid=$(sed -E 's#.*actions/runs/([0-9]+).*#\1#' <<<"$*"); cat "$STUB/runs/$rid" ;;
+  *check_name=vscode%20surface*) cat "$STUB/surface" ;;
+  *check_name=vscode*) cat "$STUB/vscode" ;;
+  *) exit 2 ;;
+esac
+"#,
+    )?;
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755))?;
+    // A shell function shadows `sleep` and advances $SECONDS, so the 20 minute
+    // deadline is reached without waiting. Retry sleeps run in a subshell and
+    // are no-ops.
+    fs::write(
+        stub.join("bash_env"),
+        "sleep() { SECONDS=$((SECONDS + 400)); }\n",
+    )?;
+    let stub_dir = stub.to_string_lossy().into_owned();
+    let bash_env = stub.join("bash_env").to_string_lossy().into_owned();
+    let env = [
+        ("STUB", stub_dir.as_str()),
+        ("BASH_ENV", bash_env.as_str()),
+        ("REPOSITORY", "o/r"),
+        ("GITHUB_RUN_ID", "1"),
+        ("EXPECTED_HEAD", VSCODE_HEAD),
+    ];
+    let output = fixture.run(&vscode_step_shell()?, &env, Some(&stub.join("bin")))?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok((output.status.success(), text))
+}
+
+#[test]
+fn extension_e2e_step_classifies_check_runs_by_the_requests_own_suite() -> TestResult {
+    let ga = "github-actions";
+    // Surface and vscode rows for one request: run 100, suite 100, created with the routed run.
+    let mine = [(100, "2026-11-01T11:02:01Z")];
+    let surface_ok = || vec![check_json(10, ga, "completed", "success", 100, 100)];
+    let cases: Vec<NamedCase> = vec![
+        (
+            "no surface check yet fails closed after the wait",
+            VscodeCase {
+                runs: &mine,
+                surface: vec![],
+                vscode: vec![],
+                api_failures: 0,
+            },
+            false,
+            "is vscode surface absent",
+        ),
+        (
+            "pending surface fails closed after the wait",
+            VscodeCase {
+                runs: &mine,
+                surface: vec![check_json(10, ga, "in_progress", "", 100, 100)],
+                vscode: vec![],
+                api_failures: 0,
+            },
+            false,
+            "vscode surface in_progress",
+        ),
+        (
+            "failed surface fails the Result",
+            VscodeCase {
+                runs: &mine,
+                surface: vec![check_json(10, ga, "completed", "failure", 100, 100)],
+                vscode: vec![],
+                api_failures: 0,
+            },
+            false,
+            "vscode surface concluded 'failure'",
+        ),
+        (
+            "skipped surface never counts",
+            VscodeCase {
+                runs: &mine,
+                surface: vec![check_json(10, ga, "completed", "skipped", 100, 100)],
+                vscode: vec![check_json(11, ga, "completed", "success", 100, 100)],
+                api_failures: 0,
+            },
+            false,
+            "vscode surface absent",
+        ),
+        (
+            "a surface from another app never counts",
+            VscodeCase {
+                runs: &mine,
+                surface: vec![check_json(
+                    10,
+                    "other-app",
+                    "completed",
+                    "success",
+                    100,
+                    100,
+                )],
+                vscode: vec![check_json(11, ga, "completed", "success", 100, 100)],
+                api_failures: 0,
+            },
+            false,
+            "vscode surface absent",
+        ),
+        (
+            "skipped vscode in the request's own suite means not selected",
+            VscodeCase {
+                runs: &mine,
+                surface: surface_ok(),
+                vscode: vec![check_json(11, ga, "completed", "skipped", 100, 100)],
+                api_failures: 0,
+            },
+            true,
+            "was skipped in this request's run",
+        ),
+        (
+            "a stale skipped vscode from another suite cannot read as not selected",
+            VscodeCase {
+                runs: &mine,
+                surface: surface_ok(),
+                vscode: vec![check_json(5, ga, "completed", "skipped", 50, 50)],
+                api_failures: 0,
+            },
+            false,
+            "not yet created",
+        ),
+        (
+            "a succeeding vscode check passes",
+            VscodeCase {
+                runs: &mine,
+                surface: surface_ok(),
+                vscode: vec![check_json(11, ga, "completed", "success", 100, 100)],
+                api_failures: 0,
+            },
+            true,
+            "vscode check succeeded",
+        ),
+        (
+            "a failing vscode check fails",
+            VscodeCase {
+                runs: &mine,
+                surface: surface_ok(),
+                vscode: vec![check_json(11, ga, "completed", "failure", 100, 100)],
+                api_failures: 0,
+            },
+            false,
+            "concluded 'failure'",
+        ),
+        (
+            "a vscode check still running at the deadline fails closed",
+            VscodeCase {
+                runs: &mine,
+                surface: surface_ok(),
+                vscode: vec![check_json(11, ga, "in_progress", "", 100, 100)],
+                api_failures: 0,
+            },
+            false,
+            "is in_progress",
+        ),
+        (
+            "a passing re-run in the suite clears an earlier failure",
+            VscodeCase {
+                runs: &mine,
+                surface: surface_ok(),
+                vscode: vec![
+                    check_json(11, ga, "completed", "failure", 100, 100),
+                    check_json(12, ga, "completed", "success", 100, 100),
+                ],
+                api_failures: 0,
+            },
+            true,
+            "vscode check succeeded",
+        ),
+        (
+            "a later failure in the suite overrides an earlier pass",
+            VscodeCase {
+                runs: &mine,
+                surface: surface_ok(),
+                vscode: vec![
+                    check_json(11, ga, "completed", "success", 100, 100),
+                    check_json(12, ga, "completed", "failure", 100, 100),
+                ],
+                api_failures: 0,
+            },
+            false,
+            "concluded 'failure'",
+        ),
+        (
+            "an earlier request's surface run outside the window is ignored",
+            VscodeCase {
+                runs: &[(100, "2026-11-01T11:00:00Z")],
+                surface: surface_ok(),
+                vscode: vec![check_json(11, ga, "completed", "success", 100, 100)],
+                api_failures: 0,
+            },
+            false,
+            "vscode surface absent",
+        ),
+        (
+            "a manual-dispatch run created long after the request is another suite and does not count",
+            VscodeCase {
+                runs: &[(100, "2026-11-01T11:30:00Z")],
+                surface: surface_ok(),
+                vscode: vec![check_json(11, ga, "completed", "success", 100, 100)],
+                api_failures: 0,
+            },
+            false,
+            "vscode surface absent",
+        ),
+        (
+            "a second request binds its own suite, not the earlier request's failure (#12191)",
+            VscodeCase {
+                runs: &[(100, "2026-11-01T11:01:45Z"), (200, "2026-11-01T11:02:01Z")],
+                surface: vec![
+                    check_json(10, ga, "completed", "success", 100, 100),
+                    check_json(20, ga, "completed", "success", 200, 200),
+                ],
+                vscode: vec![
+                    check_json(11, ga, "completed", "failure", 100, 100),
+                    check_json(21, ga, "completed", "success", 200, 200),
+                ],
+                api_failures: 0,
+            },
+            true,
+            "runs/200",
+        ),
+        (
+            "a second request's own failure fails even when the earlier request passed (#12191)",
+            VscodeCase {
+                runs: &[(100, "2026-11-01T11:01:45Z"), (200, "2026-11-01T11:02:01Z")],
+                surface: vec![
+                    check_json(10, ga, "completed", "success", 100, 100),
+                    check_json(20, ga, "completed", "success", 200, 200),
+                ],
+                vscode: vec![
+                    check_json(11, ga, "completed", "success", 100, 100),
+                    check_json(21, ga, "completed", "failure", 200, 200),
+                ],
+                api_failures: 0,
+            },
+            false,
+            "runs/200",
+        ),
+        (
+            "interleaved creation: the newest in-window surface wins even when the earlier one is nearer (#12191 review)",
+            VscodeCase {
+                runs: &[(100, "2026-11-01T11:02:01Z"), (200, "2026-11-01T11:02:05Z")],
+                surface: vec![
+                    check_json(10, ga, "completed", "success", 100, 100),
+                    check_json(20, ga, "completed", "success", 200, 200),
+                ],
+                vscode: vec![
+                    check_json(11, ga, "completed", "success", 100, 100),
+                    check_json(21, ga, "completed", "failure", 200, 200),
+                ],
+                api_failures: 0,
+            },
+            false,
+            "runs/200",
+        ),
+        (
+            "transient API failures are retried",
+            VscodeCase {
+                runs: &mine,
+                surface: surface_ok(),
+                vscode: vec![check_json(11, ga, "completed", "success", 100, 100)],
+                api_failures: 2,
+            },
+            true,
+            "vscode check succeeded",
+        ),
+        (
+            "persistent API failure fails the Result",
+            VscodeCase {
+                runs: &mine,
+                surface: surface_ok(),
+                vscode: vec![check_json(11, ga, "completed", "success", 100, 100)],
+                api_failures: 1000,
+            },
+            false,
+            "could not read this run's creation time",
+        ),
+    ];
+    for (name, case, passes, needle) in cases {
+        let (ok, text) = run_vscode_step(&case)?;
+        if text.starts_with("skip:") {
+            return Ok(());
+        }
+        assert_eq!(ok, passes, "{name}: {text}");
+        assert!(
+            text.contains(needle),
+            "{name}: expected `{needle}` in {text}"
+        );
     }
     Ok(())
 }

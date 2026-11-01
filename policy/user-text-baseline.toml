@@ -65,7 +65,7 @@ max_lines = 2
 [[ceiling]]
 surface = "help-all"
 term = "seam"
-max_lines = 3
+max_lines = 2
 
 [[ceiling]]
 surface = "help-check"
@@ -101,11 +101,6 @@ max_lines = 10
 surface = "help-repair"
 term = "seam"
 max_lines = 10
-
-[[ceiling]]
-surface = "help-top"
-term = "seam"
-max_lines = 1
 
 [[ceiling]]
 surface = "pilot"

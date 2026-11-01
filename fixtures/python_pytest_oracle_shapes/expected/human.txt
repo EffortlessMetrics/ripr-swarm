@@ -13,7 +13,7 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: preview language, advisory only
   Safe next action: static limitation `unsupported_syntax` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
-  File: src/notifications.py:6
+  File: src/notifications.py:7
   Language: python
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.20)
@@ -40,8 +40,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_pytest_oracle_shapes/input --diff <cwd>/fixtures/python_pytest_oracle_shapes/diff.patch --mode fast probe:src_notifications.py:python_preview:5ec908f0
-  ripr context --root <cwd>/fixtures/python_pytest_oracle_shapes/input --diff <cwd>/fixtures/python_pytest_oracle_shapes/diff.patch --mode fast --at probe:src_notifications.py:python_preview:5ec908f0
+  ripr explain --root <cwd>/fixtures/python_pytest_oracle_shapes/input --diff <cwd>/fixtures/python_pytest_oracle_shapes/diff.patch --mode fast probe:src_notifications.py:python_preview:v1-948086b4
+  ripr context --root <cwd>/fixtures/python_pytest_oracle_shapes/input --diff <cwd>/fixtures/python_pytest_oracle_shapes/diff.patch --mode fast --at probe:src_notifications.py:python_preview:v1-948086b4
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:

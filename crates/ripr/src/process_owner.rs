@@ -813,11 +813,15 @@ mod tests {
         }
         let marker = marker.replace('\'', "''");
         let mut command = Command::new("powershell");
+        // The primary records its own PID first (`{marker}.primary`) so the
+        // unbound control can end it too; the descendant marker is the
+        // readiness signal and is written last.
         command.args([
             "-NoProfile",
             "-Command",
             &format!(
-                "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 40') -NoNewWindow -PassThru; \
+                "Set-Content -LiteralPath '{marker}.primary' -Value $PID; \
+                 $p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 40') -NoNewWindow -PassThru; \
                  Set-Content -LiteralPath '{marker}' -Value $p.Id; Start-Sleep -Seconds 40"
             ),
         ]);
@@ -830,14 +834,17 @@ mod tests {
     /// Re-exec this test binary as the helper owner in `mode`, wait until its
     /// descendant is demonstrably alive, then hard-kill the helper with
     /// `TerminateProcess` (std `Child::kill`), so no `Drop` can run.
-    /// Returns the descendant PID.
+    /// Returns the descendant PID and the owned primary's PID, so the unbound
+    /// control can end both survivors.
     #[cfg(windows)]
-    fn hard_kill_helper_owner(mode: &str) -> Result<u32, String> {
+    fn hard_kill_helper_owner(mode: &str) -> Result<(u32, u32), String> {
         let marker_path = std::env::temp_dir().join(format!(
             "ripr-owner-hardkill-{mode}-{}.pid",
             std::process::id()
         ));
+        let primary_path = std::path::PathBuf::from(format!("{}.primary", marker_path.display()));
         let _ = std::fs::remove_file(&marker_path);
+        let _ = std::fs::remove_file(&primary_path);
         let exe = std::env::current_exe().map_err(|err| format!("current_exe: {err}"))?;
         let mut helper = Command::new(exe)
             .args([
@@ -862,6 +869,22 @@ mod tests {
             }
         };
         let _ = std::fs::remove_file(&marker_path);
+        let primary_pid = std::fs::read_to_string(&primary_path)
+            .map_err(|err| format!("read primary PID marker: {err}"))
+            .and_then(|text| {
+                text.trim()
+                    .parse::<u32>()
+                    .map_err(|err| format!("primary PID marker {:?}: {err}", text.trim()))
+            });
+        let _ = std::fs::remove_file(&primary_path);
+        let primary_pid = match primary_pid {
+            Ok(pid) => pid,
+            Err(err) => {
+                let _ = helper.kill();
+                let _ = helper.wait();
+                return Err(err);
+            }
+        };
         if !alive_on_windows(descendant_pid) {
             let _ = helper.kill();
             let _ = helper.wait();
@@ -875,7 +898,7 @@ mod tests {
         helper
             .wait()
             .map_err(|err| format!("reap helper owner: {err}"))?;
-        Ok(descendant_pid)
+        Ok((descendant_pid, primary_pid))
     }
 
     /// #9564 / #9323 F2: a force-terminated owner must not leak descendants once it
@@ -887,15 +910,20 @@ mod tests {
     #[test]
     fn force_terminated_owner_ends_descendants_only_when_bound() -> Result<(), String> {
         // Control: an unbound owner's descendant survives the hard kill.
-        let leaked_pid = hard_kill_helper_owner("nobind")?;
+        let (leaked_pid, leaked_primary_pid) = hard_kill_helper_owner("nobind")?;
         std::thread::sleep(Duration::from_secs(3));
         let leaked = alive_on_windows(leaked_pid);
-        // Clean the control's survivor before asserting so a failure leaks nothing.
+        // Clean both of the control's survivors before asserting so a failure
+        // leaks nothing. The unbound owned primary outlives the hard kill too,
+        // and left running it holds the harness's inherited output pipe for
+        // its remaining 40 s, which nextest reports as LEAK.
         let _ = Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-Command",
-                &format!("Stop-Process -Id {leaked_pid} -Force -ErrorAction SilentlyContinue"),
+                &format!(
+                    "Stop-Process -Id {leaked_pid},{leaked_primary_pid} -Force -ErrorAction SilentlyContinue"
+                ),
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -906,7 +934,7 @@ mod tests {
             ));
         }
         // Subject: a bound owner's descendant ends with it.
-        let bound_pid = hard_kill_helper_owner("bind")?;
+        let (bound_pid, _bound_primary_pid) = hard_kill_helper_owner("bind")?;
         assert_descendant_terminated(bound_pid, "hard kill of a kill-on-close-bound owner")
     }
 

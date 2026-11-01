@@ -45,7 +45,7 @@ use super::term_activation::python_inactive_term_evidence;
 use super::transitive_reach::apply_python_no_static_path_limit;
 use super::type_guard::removed_type_guard_credit;
 use super::{
-    PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_expression,
+    PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_python_expression,
     owner_for_changed_line, python_no_family_relevant_missing_summary,
     python_recommended_next_step, python_weak_missing_summary, stop_reason_for_python_static_limit,
 };
@@ -1339,14 +1339,25 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     let canonical_gap = (static_limit.is_none() && !imported_literal_gap)
         .then(|| canonical_python_gap_for(file, owner, &family, line_text));
     let owner_id = owner.symbol_id();
-    let probe_id = fingerprint_probe_id(
+    let normalized = normalize_python_expression(line_text);
+    let mut probe_id = fingerprint_probe_id(
         "probe",
         &id_path,
         "python_preview",
         owner_id.0.as_str(),
-        &normalize_expression(line_text),
+        &normalized,
         1,
     );
+    let marker = if normalized.starts_with("\0python-literal-v1\0") {
+        Some("v1-")
+    } else if normalized.starts_with("\0python-uncertain-v1\0") {
+        Some("v1u-")
+    } else {
+        None
+    };
+    if let (Some(marker), Some(separator)) = (marker, probe_id.0.rfind(':')) {
+        probe_id.0.insert_str(separator + 1, marker);
+    }
     let probe = Probe {
         id: probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
@@ -1938,6 +1949,7 @@ fn note_runner_invocation(finding: &mut Finding, owner: &PythonOwner, tests: &[P
 pub(super) fn number_colliding_candidates(
     findings: &mut [Finding],
     value_origins: &mut crate::value_origins::ValueOrigins,
+    context: Option<&super::PythonIdentityContext<'_>>,
 ) {
     let keys: Vec<[u8; 32]> = findings
         .iter()
@@ -1949,7 +1961,11 @@ pub(super) fn number_colliding_candidates(
                     .owner
                     .as_ref()
                     .map_or("", |owner| owner.0.as_str()),
-                &normalize_expression(&finding.probe.expression),
+                &context
+                    .and_then(|context| {
+                        context.normalize(finding.probe.location.line, &finding.probe.expression)
+                    })
+                    .unwrap_or_else(|| normalize_python_expression(&finding.probe.expression)),
             )
         })
         .collect();

@@ -503,3 +503,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_cross_file_construct_call (30)
+
+Reason:
+RIPR-SPEC-0182: Python finding ids move to the versioned v1- namespace (#11368); classification and finding count unchanged; fixture diff and input made consistent so source context is verifiable
+
+Command:
+`cargo xtask goldens bless python_cross_file_construct_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

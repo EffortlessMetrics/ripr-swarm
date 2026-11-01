@@ -6702,6 +6702,29 @@
       ]
     },
     {
+      "id": "rust_copy_builder_field_write_unmoved_read",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_copy_builder_field_write",
+      "vector": "by_value_receiver_write_never_reaches_the_callers_binding",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "rust_match_arm_shared_result_oracle",
       "language": "rust",
       "tier": "pure",
@@ -10829,6 +10852,30 @@
           "owner": "src/lib.rs::tier_differing",
           "expression": "x >= 5",
           "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_proximity_other_function_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/proximity-other-function",
+      "vector": "repo_exposure_proximity_test_pinning_another_function_cannot_grade_a_match_arm_up",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::consume",
+          "expression": "Reduction::Over(wait) =>",
+          "grip_class": "reachable_unrevealed",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::reduce",
+          "expression": "tokens > 9",
+          "grip_class": "weakly_gripped",
           "reach": "yes"
         }
       ]
