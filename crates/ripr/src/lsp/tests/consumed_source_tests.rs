@@ -1231,7 +1231,7 @@ fn open_rust_index_cache_invalidation_is_scoped_to_the_affected_documents() -> R
             return Err(format!("event at {event:?} must drop the entry"));
         }
         let (paths, count) = projections(&mut store);
-        if paths.contains(&key) || count != 2 * per_document {
+        if paths.contains(&key) || count != per_document {
             return Err(format!(
                 "retargeted symlink must leave the index after {event:?}: {count}"
             ));
