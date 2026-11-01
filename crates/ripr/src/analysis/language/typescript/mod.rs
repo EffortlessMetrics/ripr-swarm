@@ -59,8 +59,6 @@ mod assertion_selection;
 mod assertion_selection_tests;
 mod boundary_input;
 #[cfg(test)]
-mod boundary_input_one_line_tests;
-#[cfg(test)]
 mod boundary_input_tests;
 #[cfg(test)]
 mod boundary_label_tests;
@@ -672,6 +670,11 @@ impl TypeScriptAdapter {
         // recomputed. Deferred so storing never interleaves with parsing;
         // worker-refusal files never reach here, exactly like the memory
         // cache, and are not persisted.
+        // Export facts of every cleanly parsed non-test file, kept for the
+        // re-export index: the facts cache clears itself at its entry bound,
+        // which a large workspace exceeds within this loop.
+        let mut export_facts_by_file: std::collections::HashMap<PathBuf, ModuleExportFacts> =
+            std::collections::HashMap::new();
         let mut pending_fact_stores: Vec<(
             fact_store::TypeScriptFileFactKey,
             std::rc::Rc<extraction_cache::FileFacts>,
@@ -898,6 +901,7 @@ impl TypeScriptAdapter {
                 if recomputed_facts && fact_store::export_facts_are_disk_independent(&facts) {
                     pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None));
                 }
+                export_facts_by_file.insert(relative.clone(), facts.export_facts.clone());
                 all_owners.extend(facts.owners.clone());
             }
         }
@@ -917,12 +921,13 @@ impl TypeScriptAdapter {
         // (RIPR-SPEC-0095). The index enables crediting tests that reach the owner
         // through `export { N } from` / `export * from` barrel chains.
         // Sources come from the Phase-1 cache so each file is read once per run.
-        let reexport_index = ReExportIndex::build(
+        let reexport_index = ReExportIndex::build_with_known_facts(
             &workspace_files,
             &source_cache,
             &options.root,
             alias_map_ref,
             is_test_file,
+            &export_facts_by_file,
         );
 
         // A named import of `export * as ns from` reads as the namespace import
