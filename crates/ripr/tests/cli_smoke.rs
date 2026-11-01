@@ -29204,6 +29204,21 @@ fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
         assert_eq!(refused.status.code(), Some(3), "{refused:?}");
         let stderr = String::from_utf8_lossy(&refused.stderr);
         assert!(stderr.contains("no repository movement"), "{stderr}");
+        // #11597: exactly one typed line; the refusal that spends the budget
+        // is terminal, like the call after it, and earlier ones are retryable.
+        let expected = if refusal_number == 5 {
+            "ripr: refusal code=retry_budget_exhausted disposition=terminal"
+        } else {
+            "ripr: refusal code=awaiting_edit disposition=retryable"
+        };
+        assert_eq!(
+            stderr
+                .lines()
+                .filter(|line| line.starts_with("ripr: refusal code="))
+                .collect::<Vec<_>>(),
+            vec![expected],
+            "{stderr}"
+        );
         // Escalation starts at the second refusal, never on the first.
         assert_eq!(
             stderr.contains("retry budget for this attempt"),
@@ -29304,6 +29319,14 @@ fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
     let stopped_stderr = String::from_utf8_lossy(&stopped.stderr);
     assert!(
         stopped_stderr.contains("spent its after-phase retry budget"),
+        "{stopped_stderr}"
+    );
+    assert_eq!(
+        stopped_stderr
+            .lines()
+            .filter(|line| line.starts_with("ripr: refusal code="))
+            .collect::<Vec<_>>(),
+        vec!["ripr: refusal code=retry_budget_exhausted disposition=terminal"],
         "{stopped_stderr}"
     );
     // The recovery names a new attempt; the shared repair gate may withhold
