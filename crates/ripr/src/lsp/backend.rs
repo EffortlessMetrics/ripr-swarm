@@ -13511,9 +13511,10 @@ fn disk_change_time_is_racy(meta: &fs::Metadata) -> bool {
         u64::try_from(meta.ctime()),
         u32::try_from(meta.ctime_nsec()),
     ) {
-        (Ok(secs), Ok(nanos)) => {
-            disk_instant_is_racy(std::time::UNIX_EPOCH + std::time::Duration::new(secs, nanos))
-        }
+        // `checked_add`: an out-of-range change time must not panic; treat it as racy.
+        (Ok(secs), Ok(nanos)) => std::time::UNIX_EPOCH
+            .checked_add(std::time::Duration::new(secs, nanos))
+            .is_none_or(disk_instant_is_racy),
         _ => true,
     }
 }
@@ -13546,7 +13547,9 @@ fn cached_disk_content_digest(
     stat_key: &DiskContentStatKey,
     bypass_cache: bool,
 ) -> Option<String> {
-    if let Ok(cache) = DISK_EQUALITY_DIGEST_CACHE.lock()
+    // A bypass lookup never consults the cache, so no earlier entry can answer it.
+    if !bypass_cache
+        && let Ok(cache) = DISK_EQUALITY_DIGEST_CACHE.lock()
         && let Some((cached_key, digest)) = cache.get(path)
         && cached_key == stat_key
     {
@@ -13574,8 +13577,12 @@ fn cached_disk_content_digest(
 /// (`/dev/zero` reports length 0), so the read goes through the bounded
 /// regular-file reader, never an unbounded `fs::read`. Unchanged on-disk
 /// content is digested once per `(len, mtime, ctime, ino)` stat key on Unix,
-/// except that a file modified within [`DISK_EQUALITY_RACY_WINDOW`] is never
-/// cached; off Unix every lookup rereads (#12046).
+/// except that a file whose mtime or ctime is within
+/// [`DISK_EQUALITY_RACY_WINDOW`] of the check is not cached; off Unix every
+/// lookup rereads (#12046). The window assumes filesystem timestamps no
+/// coarser than the window and a clock that does not step backwards; a
+/// filesystem with coarser timestamps (for example 2 s FAT) can still reuse a
+/// digest across a same-key rewrite.
 fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
     let Ok(text_len) = u64::try_from(text.len()) else {
         return false;
@@ -13600,7 +13607,8 @@ fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
 #[cfg(test)]
 mod disk_bytes_equal_text_tests {
     use super::{
-        DISK_EQUALITY_READS, disk_bytes_equal_text, reset_disk_equality_read_cache_for_tests,
+        DISK_EQUALITY_READS, cached_disk_content_digest, disk_bytes_equal_text,
+        disk_content_stat_key, reset_disk_equality_read_cache_for_tests,
     };
 
     fn temp_disk_path(label: &str) -> std::path::PathBuf {
@@ -13762,6 +13770,28 @@ mod disk_bytes_equal_text_tests {
             return Err(format!(
                 "first={first} second={second} stale_abc_still_equal={stale}"
             ));
+        }
+        Ok(())
+    }
+
+    /// A key cached by an earlier cacheable lookup must not answer a later
+    /// bypass lookup: the cache check comes after the bypass decision.
+    #[test]
+    fn bypass_lookup_ignores_previously_cached_key() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("bypass-after-cached");
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        backdate(&path)?;
+        let meta = std::fs::metadata(&path).map_err(|err| format!("stat failed: {err}"))?;
+        let key = disk_content_stat_key(&meta);
+        let cached = cached_disk_content_digest(&path, &key, false);
+        // Same-length rewrite; the key handed in is the old one, as a coarse
+        // timestamp collision would produce.
+        std::fs::write(&path, "abd").map_err(|err| format!("rewrite failed: {err}"))?;
+        let bypassed = cached_disk_content_digest(&path, &key, true);
+        let _ = std::fs::remove_file(&path);
+        if cached.is_none() || bypassed.is_none() || cached == bypassed {
+            return Err(format!("cached={cached:?} bypassed={bypassed:?}"));
         }
         Ok(())
     }
