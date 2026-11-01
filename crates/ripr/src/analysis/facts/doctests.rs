@@ -335,7 +335,11 @@ fn file_has_inner_cfg_gate(source: &str) -> bool {
         if trimmed.is_empty() || trimmed.starts_with("//") {
             continue;
         }
-        if trimmed.starts_with("#![") && attribute_is_cfg_family(trimmed) {
+        // Only `#![cfg(..)]` gates the file; `#![cfg_attr(docsrs, ..)]` and
+        // `#![cfg_attr(not(test), no_std)]` are ordinary crate-root headers.
+        if trimmed.starts_with("#![")
+            && matches!(attribute_cfg_family(trimmed), AttributeCfgFamily::Cfg)
+        {
             return true;
         }
         if !trimmed.starts_with('#') {
@@ -362,13 +366,6 @@ enum AttributeCfgFamily {
     Cfg,
     CfgAttr,
     Other,
-}
-
-fn attribute_is_cfg_family(trimmed: &str) -> bool {
-    matches!(
-        attribute_cfg_family(trimmed),
-        AttributeCfgFamily::Cfg | AttributeCfgFamily::CfgAttr
-    )
 }
 
 fn attribute_cfg_family(trimmed: &str) -> AttributeCfgFamily {
@@ -462,9 +459,8 @@ fn whole_line_attribute(trimmed: &str) -> bool {
     false
 }
 
-/// Whether the doc run `lines[start..end]` shares its item's document with
-/// another `///` run or a doc-bearing attribute (`#[doc = ..]`,
-/// `#[cfg_attr(.., doc = ..)]`), before or after it.
+/// Whether an attribute line carries doc metadata (`#[doc ..]` or a
+/// `cfg_attr(.., doc = ..)`), as opposed to a name that merely contains `doc`.
 fn attribute_bears_doc_metadata(trimmed: &str) -> bool {
     if !trimmed.starts_with("#[") {
         return false;
@@ -475,6 +471,9 @@ fn attribute_bears_doc_metadata(trimmed: &str) -> bool {
         || trimmed.contains(", doc=")
 }
 
+/// Whether the doc run `lines[start..end]` shares its item's document with
+/// another `///` run or a doc-bearing attribute (`#[doc = ..]`,
+/// `#[cfg_attr(.., doc = ..)]`), before or after it.
 fn shares_its_document(lines: &[&str], start: usize, end: usize) -> bool {
     let doc_fragment = |line: &str| {
         let trimmed = line.trim_start();

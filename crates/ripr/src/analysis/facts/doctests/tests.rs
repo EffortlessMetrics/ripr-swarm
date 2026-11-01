@@ -401,6 +401,13 @@ fn cfg_gated_items_and_inner_cfg_files_register_nothing() -> Result<(), Box<dyn 
     }
     package(&dir.0, "", &format!("#![cfg(feature = \"x\")]\n{WIRE}"))?;
     assert_eq!(doctests(&dir.0, &["src/lib.rs"])?, Vec::new());
+    // An inner `#![cfg_attr(..)]` is an ordinary crate-root header, not a gate.
+    package(
+        &dir.0,
+        "",
+        &format!("#![cfg_attr(docsrs, feature(doc_cfg))]\n{WIRE}"),
+    )?;
+    assert_eq!(doctests(&dir.0, &["src/lib.rs"])?.len(), 1);
     let cfg_doctest = format!("{example}#[cfg(doctest)]\npub fn read_u16() {{}}\n");
     assert_eq!(examples(&cfg_doctest).len(), 1);
     Ok(())
