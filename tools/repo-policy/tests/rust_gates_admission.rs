@@ -99,7 +99,7 @@ fn main_only_nextest_archive_measurement_is_preserved() {
 }
 
 #[test]
-fn legacy_profile_publishes_no_outputs_and_keeps_main_expressions() {
+fn legacy_profile_publishes_no_outputs_and_keeps_main_expressions() -> TestResult {
     // Main's expressions are the fallbacks after the admitted output.
     assert!(WORKFLOW.contains("SUBJECT_HEAD: ${{ steps.admitted.outputs.head || github.event.pull_request.head.sha || github.sha }}"));
     assert!(
@@ -112,13 +112,43 @@ fn legacy_profile_publishes_no_outputs_and_keeps_main_expressions() {
             "|| github.event.pull_request.head.sha || github.event.merge_group.head_sha }}"
         )
     );
+    let verify = WORKFLOW
+        .find("- name: Verify admitted integration before proof")
+        .ok_or("verification step exists")?;
+    let step = &WORKFLOW[verify..];
+    let step = step.split_once("\n      # #3841").map_or(step, |(s, _)| s);
     // The legacy branch must not write head/base outputs (merge_group would then
     // publish merge_group.head_sha as the summary subject head instead of github.sha).
-    let (_, tail) = WORKFLOW
+    let (_, tail) = step
         .split_once("            legacy)\n")
-        .expect("legacy arm");
-    let (legacy, _) = tail.split_once("              ;;").expect("legacy arm end");
-    assert!(!legacy.contains("GITHUB_OUTPUT"), "{legacy}");
+        .ok_or("legacy arm exists")?;
+    let (legacy, _) = tail
+        .split_once("              ;;")
+        .ok_or("legacy arm terminator exists")?;
+    assert!(
+        legacy.contains("Partial qualification cannot use legacy profile"),
+        "legacy arm slice is empty or misparsed: {legacy:?}"
+    );
+    assert!(
+        !legacy.contains("GITHUB_OUTPUT") && !legacy.contains("GITHUB_ENV"),
+        "{legacy}"
+    );
+    // Outside the qualification arm nothing may write outputs or env either.
+    let (_, qual_and_after) = step
+        .split_once("            qualification)\n")
+        .ok_or("qualification arm exists")?;
+    let (_, after_esac) = qual_and_after
+        .split_once("          esac")
+        .ok_or("case terminator exists")?;
+    assert!(
+        !after_esac.contains("GITHUB_OUTPUT") && !after_esac.contains("GITHUB_ENV"),
+        "{after_esac}"
+    );
+    let (before_legacy, _) = step
+        .split_once("            legacy)\n")
+        .ok_or("legacy arm")?;
+    assert!(!before_legacy.contains("GITHUB_OUTPUT") && !before_legacy.contains("GITHUB_ENV"));
     // The integration lines appear only for an admitted subject.
     assert!(WORKFLOW.contains("[[ -z \"$INTEGRATION_TREE\" ]] || printf"));
+    Ok(())
 }
