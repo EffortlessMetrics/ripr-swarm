@@ -200,6 +200,78 @@ fn contains_narration_literal(args: &str) -> bool {
         || args.contains("\"wrote ")
 }
 
+/// Production-site scan: prefix constants, formatters, and stderr macros.
+/// A `format!("{PROGRESS_PREFIX}...")` / `eprintln!("{line}")` split is a
+/// hit because the constant left the sink (#12103 Devin review). Whole-file
+/// string search is avoided: `#[cfg(test)]` stripping is item-shaped, so
+/// leftover test asserts can still mention the prefix as expected output.
+fn production_violations(relative: &str, production: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    if production.contains("PROGRESS_PREFIX") {
+        violations.push(format!(
+            "{relative}: uses PROGRESS_PREFIX outside {SINK}; keep formatting in the sink"
+        ));
+    }
+    if production.contains("WROTE_PREFIX") {
+        violations.push(format!(
+            "{relative}: uses WROTE_PREFIX outside {SINK}; keep formatting in the sink"
+        ));
+    }
+    for args in macro_calls(production, "format") {
+        if contains_narration_literal(args) {
+            violations.push(format!(
+                "{relative}: format! builds a narration literal; route it through {SINK}"
+            ));
+        }
+    }
+    for args in macro_calls(production, "eprintln") {
+        if contains_narration_literal(args) {
+            violations.push(format!(
+                "{relative}: eprintln! emits a narration literal; route it through {SINK}"
+            ));
+        }
+    }
+    for name in ["write", "writeln"] {
+        for args in macro_calls(production, name) {
+            if writes_stderr(args) && contains_narration_literal(args) {
+                violations.push(format!(
+                    "{relative}: {name}!(stderr) emits a narration literal; route it through {SINK}"
+                ));
+            }
+        }
+    }
+    violations
+}
+
+#[test]
+fn preformatted_progress_prefix_use_outside_the_sink_is_reported() {
+    let snippet = r#"
+        let line = format!("{PROGRESS_PREFIX}building_output [repo]");
+        eprintln!("{line}");
+    "#;
+    let hits = production_violations("cli/commands/summary.rs", snippet);
+    assert!(
+        hits.iter().any(|row| row.contains("PROGRESS_PREFIX")),
+        "preformatted PROGRESS_PREFIX must fail the scan: {hits:?}"
+    );
+    let formatted = r#"
+        let line = format!("ripr progress: building_output [repo]");
+        eprintln!("{line}");
+    "#;
+    let formatted_hits = production_violations("cli/commands/summary.rs", formatted);
+    assert!(
+        formatted_hits.iter().any(|row| row.contains("format!")),
+        "preformatted narration literal must fail the scan: {formatted_hits:?}"
+    );
+    let clean = r#"
+        eprintln!("ripr: attempt next command: ripr check");
+    "#;
+    assert!(
+        production_violations("cli/commands/summary.rs", clean).is_empty(),
+        "non-narration eprintln must not fail the scan"
+    );
+}
+
 #[test]
 fn narration_eprintln_sites_outside_the_progress_sink_are_explicit() -> Result<(), String> {
     let mut files = Vec::new();
@@ -214,22 +286,7 @@ fn narration_eprintln_sites_outside_the_progress_sink_are_explicit() -> Result<(
         let source = std::fs::read_to_string(path)
             .map_err(|error| format!("read {}: {error}", path.display()))?;
         let production = strip_cfg_test_items(&source);
-        for args in macro_calls(&production, "eprintln") {
-            if contains_narration_literal(args) {
-                violations.push(format!(
-                    "{relative}: eprintln! emits a narration literal; route it through {SINK}"
-                ));
-            }
-        }
-        for name in ["write", "writeln"] {
-            for args in macro_calls(&production, name) {
-                if writes_stderr(args) && contains_narration_literal(args) {
-                    violations.push(format!(
-                        "{relative}: {name}!(stderr) emits a narration literal; route it through {SINK}"
-                    ));
-                }
-            }
-        }
+        violations.extend(production_violations(&relative, &production));
     }
     if !violations.is_empty() {
         return Err(format!(
