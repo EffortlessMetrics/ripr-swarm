@@ -40,7 +40,48 @@ fn string_named_assertion_names_the_literal() {
 #[test]
 fn an_unqualified_macro_needs_insta_in_the_file() {
     let body = "fn t() { assert_snapshot!(render()); }";
-    assert!(names("t", &["#[test]"], body, "assert_snapshot!(render());", FILE).is_some());
+    assert!(
+        names(
+            "t",
+            &["#[test]"],
+            body,
+            "assert_snapshot!(render());",
+            "use insta::assert_snapshot;\n"
+        )
+        .is_some()
+    );
+    // A mention of insta is not an import, and a local macro of the same name
+    // is not insta's.
+    for file in [
+        "// uses insta elsewhere\n",
+        "use insta::assert_json_snapshot;\n",
+        "use insta::assert_snapshot;\nmacro_rules! assert_snapshot { ($v:expr) => {}; }\n",
+    ] {
+        assert!(
+            names("t", &["#[test]"], body, "assert_snapshot!(render());", file).is_none(),
+            "{file}"
+        );
+    }
+    assert!(
+        names(
+            "t",
+            &["#[test]"],
+            body,
+            "assert_snapshot!(render());",
+            "use insta::*;\n"
+        )
+        .is_some()
+    );
+    assert!(
+        names(
+            "t",
+            &["#[test]"],
+            body,
+            "assert_snapshot!(render());",
+            "use insta::{assert_snapshot, Settings};\n"
+        )
+        .is_some()
+    );
     assert!(names("t", &["#[test]"], body, "assert_snapshot!(render());", "").is_none());
     let other = "fn t() { other::assert_snapshot!(render()); }";
     assert!(
@@ -115,6 +156,22 @@ fn a_macro_whose_first_argument_is_not_a_name_is_unresolved() {
     let unknown = "insta::assert_future_snapshot!(\"x\", v);";
     let body = format!("fn t() {{ {unknown} }}");
     assert_eq!(names("t", &["#[test]"], &body, unknown, FILE), None);
+}
+
+#[test]
+fn a_multibyte_character_before_the_macro_path_does_not_split_a_char() {
+    // `→` is three bytes; slicing one byte past its start would panic.
+    for text in [
+        "→insta::assert_snapshot!(v);",
+        "// 日本語\ninsta::assert_snapshot!(v);",
+        "é insta::assert_snapshot!(v);",
+    ] {
+        assert_eq!(
+            snapshot_call(text, FILE).map(|call| call.macro_name),
+            Some("assert_snapshot".to_string()),
+            "{text}"
+        );
+    }
 }
 
 #[test]
@@ -226,4 +283,41 @@ fn an_unknown_listing_never_says_a_snapshot_is_missing() {
     assert!(complete.certainly_lacks(&names));
     assert!(!unknown.certainly_lacks(&names));
     assert_ne!(complete.identity(), unknown.identity());
+}
+
+#[test]
+fn an_unreadable_directory_makes_the_listing_unknown() -> Result<(), String> {
+    let missing = scratch("unreadable")?.join("gone");
+    let mut out = Vec::new();
+    assert!(
+        collect(&missing, &missing, &mut out),
+        "a directory that cannot be read is incomplete"
+    );
+    assert!(out.is_empty());
+    let root = scratch("readable")?;
+    assert!(!collect(&root, &root, &mut out));
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_searchable_but_unlistable_directory_is_not_read_as_empty() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let root = scratch("execute-only")?;
+    let dir = root.join("src/snapshots");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("krate__tests__check.snap"), "x").map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o111))
+        .map_err(|e| e.to_string())?;
+    // The walk may run as a user that ignores permissions; only assert the
+    // behavior when the directory really is unlistable.
+    let unlistable = std::fs::read_dir(&dir).is_err();
+    let mut out = Vec::new();
+    let incomplete = collect(&root, &root, &mut out);
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(incomplete, unlistable);
+    Ok(())
 }
