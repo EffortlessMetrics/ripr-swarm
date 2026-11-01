@@ -830,7 +830,8 @@ next=COMMAND
 - `open=` replaces `stop=` when no gap is listed but a candidate-current
   `weakly_exposed` or `reachable_unrevealed` finding is held only by the
   reach-only `rust_transitive_reach_unresolved` limitation and still carries a
-  contributing related test with a `weak` or `smoke` oracle (#11825). It is not a
+  contributing related test with a `weak` or `smoke` oracle (#11825) that is not
+  related by file or module proximity alone (#12058). It is not a
   confirmed gap, so `gaps=` does not count it; the finding is listed in the gap
   line shape (with `missing=-`), the weak test in its `tK` row, `limits=` still
   counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
@@ -3251,7 +3252,7 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 
 - `rust_integration_public_api_path_unresolved` -- (RIPR-SPEC-0118, additive) An integration test appears to call crate public API, or a test helper that calls crate public API, along a candidate path toward the changed Rust owner. RIPR cannot fully resolve that integration/public-API path, so classification stays `no_static_path` (or `weakly_exposed` for a proximity-only finding, #7071); this is a named limitation, not a reach, coverage, or oracle claim.
 
-- `rust_macro_reach_unresolved` -- (RIPR-SPEC-0117, additive) A test appears to call a Rust entry point whose path toward the changed owner stops at a same-repo macro invocation. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for proximity-only reach, #7071, or a recognized weak admitted direct oracle beside an unresolved macro witness, #7542); this is a named limitation, not a coverage claim.
+- `rust_macro_reach_unresolved` -- (RIPR-SPEC-0117, additive) A test appears to call a Rust entry point whose path toward the changed owner stops at a same-repo macro invocation. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for proximity-only reach, #7071, or a recognized weak admitted direct oracle beside an unresolved macro witness, #7542); an owner that only an opaque property macro (`proptest!`, `quickcheck!`) lexically mentions reads `static_unknown` instead (#11544); this is a named limitation, not a coverage claim.
 
 - `rust_macro_wrapped_test_call_unresolved` -- (RIPR-SPEC-0119, additive) A Rust test directly invokes a same-repo macro whose definition mentions the changed owner. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for proximity-only reach, #7071, or a recognized weak admitted direct oracle beside an unresolved macro witness, #7542); this is a named limitation, not a reach, coverage, or oracle claim.
 
@@ -19247,7 +19248,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.128",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.129",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20032,7 +20033,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.128",
+      "schema_version": "1.129",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

@@ -441,6 +441,11 @@ Updated:
 Reason:
 RIPR-SPEC-0108: discriminate message follows delta-token confirmation; class unchanged
 
+## Pending — rust_constructor_field_observation (33)
+
+Reason:
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
+
 Command:
 `cargo xtask goldens bless rust_constructor_field_observation --reason "..."`
 

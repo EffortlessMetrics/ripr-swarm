@@ -136,7 +136,7 @@ pub(crate) fn render_agent_gap_record_queue_json_with_currentness(
     let must_not_infer = object
         .get_mut("must_not_infer")
         .and_then(Value::as_array_mut)
-        .ok_or_else(|| "typed swarm queue is missing must_not_infer".to_string())?;
+        .ok_or_else(|| "typed swarm queue is missing must_not_infer; regenerate the input with the command that wrote it, then rerun".to_string())?;
     must_not_infer.push(Value::String(
         "only queue_state=queued with staleness_status=current is assignable; stale and not_evaluated packets are review-only"
             .to_string(),

@@ -119,12 +119,14 @@ Updated:
 ## Pending — rust_nested_use_cfg (10)
 
 Reason:
-RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
+RIPR-SPEC-0117 #10046: PR call-value identity reads these nested-use owners unresolved (infection_unknown/warning) composed with current main; RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
 
 Command:
 `cargo xtask goldens bless rust_nested_use_cfg --reason "..."`
 
 Updated:
 - `expected/check.json`
-- `expected/human.txt`
 - `expected/human-full.txt`
+
+Removed:
+- `expected/human.txt` (optional; its repair-advisory line now uses the shared legend wording that the user-text merge-base matcher bans as a new path)

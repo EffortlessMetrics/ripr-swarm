@@ -812,7 +812,7 @@ fn python_recommended_next_step(
                 }
             };
             Some(format!(
-                "Python preview: {action} for missing discriminator `{missing}`."
+                "Python preview: {action} for the missing check `{missing}`."
             ))
         }
     }

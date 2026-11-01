@@ -307,6 +307,57 @@ fn reach_limit_without_weak_assertion_row_keeps_stop() {
     assert!(!text.contains("open="), "{text}");
 }
 
+/// #12058 negative: an unrelated weak test that is related only by file or
+/// module proximity does not make a reach-limited finding open; it stays
+/// `stop=`. The same row bound to the owner (a direct call or an owner-named
+/// test) still opens it.
+#[test]
+fn reach_limit_with_a_proximity_only_weak_row_keeps_stop() {
+    use crate::domain::RelationReason;
+    for reason in [
+        RelationReason::SameTestFile,
+        RelationReason::SameModule,
+        RelationReason::WeakTokenSubstring,
+    ] {
+        let mut limited = reach_limited_weak("probe:unrelated", 264);
+        limited.related_tests[0].relation_reason = Some(reason);
+        let text = rendered(&output(vec![limited]));
+        assert!(text.contains("\nstop="), "{reason:?}: {text}");
+        assert!(!text.contains("open="), "{reason:?}: {text}");
+        assert!(!text.contains("\nnext="), "{reason:?}: {text}");
+    }
+    for reason in [
+        RelationReason::DirectOwnerCall,
+        RelationReason::HelperOwnerCall,
+        RelationReason::OwnerNamedTest,
+    ] {
+        let mut limited = reach_limited_weak("probe:bound", 264);
+        limited.related_tests[0].relation_reason = Some(reason);
+        let text = rendered(&output(vec![limited]));
+        assert!(text.contains("\nopen="), "{reason:?}: {text}");
+        assert!(!text.contains("stop="), "{reason:?}: {text}");
+    }
+}
+
+/// #12058: a proximity-only weak row ahead of an owner-bound weak row must not
+/// hide the bound one; the bound row opens the finding and is the one shown.
+#[test]
+fn reach_limit_prefers_a_later_owner_bound_row_over_a_proximity_only_one() {
+    use crate::domain::RelationReason;
+    let mut limited = reach_limited_weak("probe:mixed", 264);
+    let mut proximity = limited.related_tests[0].clone();
+    proximity.name = "unrelated_same_file".to_string();
+    proximity.relation_reason = Some(RelationReason::SameTestFile);
+    limited.related_tests[0].relation_reason = Some(RelationReason::DirectOwnerCall);
+    // The proximity row comes first.
+    limited.related_tests.insert(0, proximity);
+    let text = rendered(&output(vec![limited]));
+    assert!(text.contains("\nopen="), "{text}");
+    assert!(!text.contains("stop="), "{text}");
+    assert!(text.contains("discount_runs"), "{text}");
+    assert!(!text.contains("unrelated_same_file"), "{text}");
+}
+
 /// #11825 negative: a non-current (base-side) limited weak finding is not
 /// open work.
 #[test]

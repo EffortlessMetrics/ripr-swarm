@@ -333,7 +333,7 @@ pub(crate) fn attach_to_json(
     object.insert(
         "run_receipt".to_string(),
         serde_json::to_value(receipt)
-            .map_err(|err| format!("serialize review-comments receipt failed: {err}"))?,
+            .map_err(|err| format!("serialize review-comments receipt failed: {err}; this is a ripr bug, report it with the command you ran"))?,
     );
     serde_json::to_string_pretty(&value)
         .map_err(|err| format!("render review-comments JSON with receipt failed: {err}; this is a ripr bug, report it with the command you ran"))

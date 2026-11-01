@@ -1238,6 +1238,8 @@ npm run package
 xvfb-run -a npm run test:e2e
 ```
 
+On a pull request, the legacy `CI` workflow's `vscode` job runs under the `merge-ready` request when the PR changes `editors/vscode/**` or `.github/workflows/ci.yml` (the `vscode surface` job classifies the diff and selects on any classification failure), or when the PR carries the `vscode` or `full-ci` label. Other PRs skip it. It runs on every push to `main` and on manual dispatch. A skipped `vscode` check on a PR that touches the extension is therefore a defect, not a pass (#12122).
+
 The `test:e2e` step launches a headless VS Code instance via `@vscode/test-electron`, activates the extension in a fixture Rust workspace, and runs the smoke test suite. `xvfb-run` provides the virtual display required on Linux CI runners. The runner pins host user-data at `target/ripr/vscode-test-user-data` (logs under `logs/`). If the host fails — including before Mocha starts — it copies a size-capped, redacted log subset into `target/ripr/vscode-test-host-diagnostics/`. The vscode job uploads that directory only on `failure()`, with 5-day retention. Diagnostic collection cannot change the original test exit status and is not a root-cause fix.
 
 The VS Code extension build and extension publish workflows use Node 24. This

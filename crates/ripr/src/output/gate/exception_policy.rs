@@ -253,7 +253,7 @@ fn validate_ledger(raw: RawExceptionLedger, display: &str) -> Result<ExceptionLe
 
     if !violations.is_empty() {
         return Err(format!(
-            "exception policy `{display}` is invalid:\n{}",
+            "exception policy `{display}` is invalid; edit the policy to fix each violation listed, then rerun:\n{}",
             violations.join("\n")
         ));
     }
