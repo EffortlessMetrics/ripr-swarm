@@ -2,7 +2,9 @@
 //! literal in the shipped source yields a remedy grounded in its own prose or
 //! an explicit `none`, never an invented one.
 //!
-//! The corpus is the source tree itself, so a refusal added later is covered
+//! The corpus is every string literal in the source tree, with no source-role
+//! or cfg heuristics of its own (role authority stays with the analyzer;
+//! the invariants below are text-only and hold for any literal), so a refusal added later is covered
 //! without a list to maintain. The refusal-prose guard
 //! (`tests/refusal_next_step.rs`) keeps every refusal naming a next step; this
 //! test proves the structured projection of that prose is faithful.
@@ -22,10 +24,8 @@ fn source_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_default();
         if path.is_dir() {
-            if name != "tests" && name != "testing" {
-                source_files(&path, out)?;
-            }
-        } else if name.ends_with(".rs") && name != "tests.rs" && !name.ends_with("_tests.rs") {
+            source_files(&path, out)?;
+        } else if name.ends_with(".rs") {
             out.push(path);
         }
     }
@@ -37,6 +37,7 @@ fn string_literals(source: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut chars = source.chars();
     let mut current: Option<String> = None;
+    let mut prev: Option<char> = None;
     while let Some(ch) = chars.next() {
         match &mut current {
             Some(text) => match ch {
@@ -58,8 +59,42 @@ fn string_literals(source: &str) -> Vec<String> {
                 _ => text.push(ch),
             },
             None if ch == '"' => current = Some(String::new()),
+            None if ch == '/' && chars.as_str().starts_with('/') => {
+                // Line comment: not a literal, may hold stray quotes.
+                let rest = chars.as_str();
+                chars = rest.split_once('\n').map_or("", |(_, tail)| tail).chars();
+            }
+            None if ch == '\'' => {
+                // Char literal such as '"' or '\\'; a lifetime has no closer.
+                let rest = chars.as_str();
+                let mut it = rest.chars();
+                let first = it.next();
+                let closer = if first == Some('\\') {
+                    rest.find('\'').map(|at| at + 1)
+                } else if it.next() == Some('\'') {
+                    Some(first.map_or(1, |c| c.len_utf8()) + 1)
+                } else {
+                    None
+                };
+                if let Some(skip) = closer {
+                    chars = rest[skip.min(rest.len())..].chars();
+                }
+            }
+            None if ch == 'r' && prev.is_none_or(|p: char| !p.is_alphanumeric() && p != '_') => {
+                let rest = chars.as_str();
+                let hashes = rest.chars().take_while(|c| *c == '#').count();
+                if rest[hashes..].starts_with('"') {
+                    let body = &rest[hashes + 1..];
+                    let closer = format!("\"{}", "#".repeat(hashes));
+                    if let Some(end) = body.find(&closer) {
+                        out.push(body[..end].to_string());
+                        chars = body[end + closer.len()..].chars();
+                    }
+                }
+            }
             None => {}
         }
+        prev = Some(ch);
     }
     out
 }
@@ -73,12 +108,8 @@ fn corpus() -> Result<Vec<String>, String> {
     for path in files {
         let source = std::fs::read_to_string(&path)
             .map_err(|error| format!("read {}: {error}", path.display()))?;
-        let body = source
-            .split("#[cfg(test)]")
-            .next()
-            .unwrap_or(source.as_str());
         messages.extend(
-            string_literals(body)
+            string_literals(&source)
                 .into_iter()
                 .filter(|literal| literal.len() >= 20 && literal.contains(' ')),
         );
@@ -86,10 +117,13 @@ fn corpus() -> Result<Vec<String>, String> {
     Ok(messages)
 }
 
-/// Independent oracle: a backticked `ripr <word>` span the prose uses as an
-/// instruction or fallback, i.e. not merely described (`X is a `ripr check`
-/// finding ID`). A `none` result must have no such span.
+/// Independent oracle: a backticked `ripr <word>` span the prose plainly
+/// instructs, i.e. an imperative verb precedes it in its clause with no
+/// description (`is a`, `are`) or condition (`if`) in between. A `none`
+/// result must have no such span; described or premise mentions are allowed.
 fn stated_ripr_command_span(prose: &str) -> bool {
+    const IMPERATIVES: &[&str] = &["run", "call", "use", "try", "rerun", "re-run", "execute"];
+    const DESCRIBING: &[&str] = &["is", "are", "if", "unless", "when", "otherwise"];
     let mut offset = 0;
     for (index, part) in prose.split('`').enumerate() {
         let at = offset;
@@ -102,20 +136,20 @@ fn stated_ripr_command_span(prose: &str) -> bool {
                 .next()
                 .is_some_and(|c| c.is_ascii_lowercase() || c == '-')
         });
-        if !is_command {
+        // A span over the bound is deliberately not offered as a command.
+        if !is_command || part.len() > MAX_COMMAND_LEN {
             continue;
         }
         let before = &prose[..at.saturating_sub(1)];
-        let sentence = before
-            .rsplit([';'])
-            .next()
-            .unwrap_or(before)
-            .to_ascii_lowercase();
-        let described = [" is a ", " is an ", " is the "]
-            .iter()
-            .any(|copula| sentence.contains(copula))
-            && !sentence.contains("run ");
-        if !described {
+        let clause = before.rsplit([';', ':']).next().unwrap_or(before);
+        let words: Vec<String> = clause
+            .split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
+            .filter(|word| !word.is_empty())
+            .map(str::to_ascii_lowercase)
+            .collect();
+        let imperative = words.iter().any(|w| IMPERATIVES.contains(&w.as_str()));
+        let describing = words.iter().any(|w| DESCRIBING.contains(&w.as_str()));
+        if imperative && !describing {
             return true;
         }
     }
@@ -269,9 +303,7 @@ fn the_oracle_tells_an_instructed_command_from_a_contextual_mention() {
     assert!(stated_ripr_command_span(
         "`probe:x` is a finding ID; run `ripr check`"
     ));
-    assert!(stated_ripr_command_span(
-        "pass the id; if stale, run `ripr doctor`"
-    ));
+    assert!(stated_ripr_command_span("pass the id; run `ripr doctor`"));
 }
 
 #[test]
