@@ -2899,6 +2899,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_missing_stale_or_unknown_limitation_read_never_yields_a_limitation_document()
+    -> Result<(), String> {
+        // #11821: the limitation read is committed-facts only. Every state in
+        // which the item's limitation cannot be established answers with a
+        // typed failure (and its recovery), never with a limitation document a
+        // client could read as "no limitation, so a repair route".
+        expect_code(
+            WorkspaceSession::default().get_limitation("gap:any", None),
+            CODE_NO_SNAPSHOT,
+        )?;
+        expect_code(
+            WorkspaceSession {
+                in_flight: true,
+                ..Default::default()
+            }
+            .get_limitation("gap:any", None),
+            CODE_ANALYSIS_IN_FLIGHT,
+        )?;
+        let session = session_with_findings(1)?;
+        expect_code(
+            session.get_limitation("gap:any", Some("snapshot:sha256:old")),
+            CODE_STALE_SNAPSHOT,
+        )?;
+        expect_code(
+            session.get_limitation("gap:does-not-exist", None),
+            CODE_ITEM_NOT_FOUND,
+        )?;
+        Ok(())
+    }
+
     /// A snapshot carrying `count` distinct canonical items, built from the
     /// shared gaps test finding with per-index identities. No analysis runs:
     /// the session contract is exercised against typed producer output.
