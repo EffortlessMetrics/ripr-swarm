@@ -971,7 +971,7 @@ fn admitted_property(fixture: &Fixture, label: &str) -> Result<(Value, Value), S
 
 fn refused_property(fixture: &Fixture, label: &str) -> Result<(), String> {
     let diff = finding(fixture, &format!("{label}-diff"), None)?;
-    assert_eq!(diff["classification"], "no_static_path", "{diff}");
+    assert_eq!(diff["classification"], "static_unknown", "{diff}");
     assert_eq!(diff["related_tests_total"], 0, "{diff}");
     for values in [
         &diff["related_tests"],
