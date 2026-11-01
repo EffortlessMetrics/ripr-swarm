@@ -5864,7 +5864,7 @@ fn body_asserts_in_then_callback(masked: &str, owner_name: &str) -> bool {
                     _ => {}
                 }
             }
-            let tied_to_owner = calls_owner(&masked[receiver_start(&masked, start)..start])
+            let tied_to_owner = calls_owner(&masked[receiver_start(masked, start)..start])
                 || masked.get(open..end).is_some_and(calls_owner);
             tied_to_owner
                 && masked.get(open..end).is_some_and(|span| {
