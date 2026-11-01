@@ -14,6 +14,12 @@
 //! workspace carries the test's snapshot name. Every other shape keeps its
 //! existing grade, which is "not established", never "missing".
 //!
+//! `INSTA_UPDATE`/`INSTA_FORCE_PASS` set outside the Rust file (a
+//! `.cargo/config.toml` `[env]` table, `insta.yaml`) are not seen. Without
+//! `INSTA_FORCE_PASS` a missing `.snap` still fails the assertion, so the
+//! demotion stays right in the common case. A workspace with more than
+//! [`LISTING_LIMIT`] `.snap` files reads as unknown and keeps today's grade.
+//!
 //! The listing is shared with the analysis cache key, so adding, deleting or
 //! (un)tracking a `.snap` file moves the key. It follows the TypeScript
 //! committed-snapshot precedent in [`super::committed_source`]: a `.snap`
@@ -36,6 +42,23 @@ const LISTING_LIMIT: usize = 20_000;
 /// Text in the test file that can redirect or rename snapshot files. Any of
 /// it makes the expected name unresolvable, so the grade stays as it is.
 const NAMING_OVERRIDES: [&str; 3] = ["snapshot_path", "glob!", "INSTA_"];
+
+/// The insta macros whose first argument, when there are two, is the
+/// snapshot name. `assert_binary_snapshot!(".ext", bytes)` takes a file
+/// extension first and is deliberately absent: any macro not listed here is
+/// unresolved, so a first argument that is not a name is never guessed.
+const NAMED_FORM_MACROS: [&str; 10] = [
+    "assert_snapshot",
+    "assert_debug_snapshot",
+    "assert_compact_debug_snapshot",
+    "assert_display_snapshot",
+    "assert_json_snapshot",
+    "assert_compact_json_snapshot",
+    "assert_yaml_snapshot",
+    "assert_ron_snapshot",
+    "assert_toml_snapshot",
+    "assert_csv_snapshot",
+];
 
 /// Test attribute text that fans one function out into several snapshot
 /// names (`rstest` cases and similar). The name is not the function's.
@@ -100,6 +123,12 @@ impl SnapshotListing {
             text.push('\n');
         }
         text
+    }
+
+    /// `true` only when the listing is complete and no snapshot file CI would
+    /// see carries any of `names`. An unknown listing never says "lacks".
+    fn certainly_lacks(&self, names: &[String]) -> bool {
+        !self.unknown && !self.holds_any(names)
     }
 
     /// `true` when a snapshot file CI would see carries one of `names`.
@@ -205,7 +234,7 @@ pub(crate) fn file_backed_snapshot_missing(
         return false;
     };
     let listing = index.snapshot_listing.get(&authority.root);
-    !listing.unknown && !listing.holds_any(&names)
+    listing.certainly_lacks(&names)
 }
 
 /// The snapshot names the plain file-backed assertion can write, or `None`
@@ -228,6 +257,9 @@ fn expected_snapshot_names(
         return None;
     }
     let call = snapshot_call(oracle_text, file_source)?;
+    if !NAMED_FORM_MACROS.contains(&call.macro_name.as_str()) {
+        return None;
+    }
     // The assertion must sit in the test's own body: a helper's assertion is
     // named for the helper, and a second assertion advances insta's counter.
     if body.matches("snapshot!").count() != 1 || !body.contains(call.macro_name.as_str()) {
