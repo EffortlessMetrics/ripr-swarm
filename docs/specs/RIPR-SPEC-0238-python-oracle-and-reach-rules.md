@@ -619,6 +619,21 @@ This order is the existing behavior and is normative:
      non-literal `return_value`, another mock name in the body, or an
      edit to the patched call's arguments keeps the limit. The substituted
      calls are not read as unresolved imports (`time.time()`).
+   - `mocked_module` also applies when code the test does not spell runs
+     around it and substitutes: an autouse fixture in the test's module,
+     its class or a `conftest.py` up the directory chain; a fixture the
+     test names as a parameter or a `usefixtures` mark names (test, class or
+     `pytestmark`), and every fixture those request; a `setUp` or
+     `setup_method` hook or a patch decorator of the test's class, a
+     module setup hook, a `pytest_*` hook, or top-level code of the test's
+     module or a chain conftest. Substitution means the body forms above
+     plus a builtin `setattr(` call, `patch.dict(`, `sys.modules`,
+     `reload(`, `__dict__` or an assignment to an attribute of an imported
+     name. The read is a closed allow-list: it cannot prove a substitution's
+     target unrelated to the owner, so any such form keeps the limit, while
+     a fixture that uses none of them (data, `setenv`, `chdir`, `tmp_path`)
+     and a patching fixture the test cannot reach keep their credit. A
+     helper a fixture calls that itself substitutes is not followed.
 
 ### Sink alignment
 
