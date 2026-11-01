@@ -29,12 +29,19 @@
 //!   `no_run`, `compile_fail`, `should_panic`, `text` and every other
 //!   attribute refuse);
 //! - its code declares no `fn main` (rustdoc then runs the code as written,
-//!   not wrapped) and parses cleanly.
+//!   not wrapped) and parses cleanly;
+//! - no `#[cfg(..)]` or `#[cfg_attr(..)]` sits between the comment and the
+//!   item except `#[cfg(doctest)]`, which is active when rustdoc runs
+//!   doctests, and the file carries no inner `#![cfg(..)]` gate.
+//!
+//! Feature, target and custom cfg values are not resolved here: any cfg gate
+//! on the item or the crate root is refused rather than guessed.
 //!
 //! A doctest is its own crate: call identity reads its scopes from the
 //! synthetic text and names the library by its import names, never through
 //! `crate::` (`RustIndex::doctest_source`).
 
+use super::cfg_predicates::rust_ident_name;
 use super::{FunctionSourceRole, RustIndex, SourceRoleProvenanceEdgeKind, TestFact};
 use crate::analysis::syntax::ra::summarize_file_with_parser;
 use std::path::Path;
@@ -87,6 +94,9 @@ impl DocExample {
 pub(super) fn register_doctests(index: &mut RustIndex) {
     let mut generated: Vec<(TestFact, Arc<str>)> = Vec::new();
     for (path, file) in &index.files {
+        if file_has_inner_cfg_gate(&file.data.source) {
+            continue;
+        }
         // Most files hold no fenced example; check that before the manifest.
         let examples = doc_examples(&file.data.source);
         if examples.is_empty() || !composes_under_doctested_library(index, path) {
@@ -297,12 +307,16 @@ fn outer_doc_text(line: &str) -> Option<&str> {
 /// item. `#[inline] pub fn f` on one line is the item line itself, which
 /// then reads as no function head and registers nothing.
 fn item_after(lines: &[&str], from: usize) -> Option<usize> {
-    lines
-        .iter()
-        .enumerate()
-        .skip(from)
-        .find(|(_, line)| !is_between_doc_and_item(line))
-        .map(|(position, _)| position + 1)
+    for (position, line) in lines.iter().enumerate().skip(from) {
+        let trimmed = line.trim_start();
+        if between_doc_and_item_cfg_refuses(trimmed) {
+            return None;
+        }
+        if !is_between_doc_and_item(line) {
+            return Some(position + 1);
+        }
+    }
+    None
 }
 
 /// A blank line, a plain or doc comment, or an attribute that closes on its
@@ -311,6 +325,131 @@ fn item_after(lines: &[&str], from: usize) -> Option<usize> {
 fn is_between_doc_and_item(line: &str) -> bool {
     let trimmed = line.trim_start();
     trimmed.is_empty() || trimmed.starts_with("//") || whole_line_attribute(trimmed)
+}
+
+/// Whether the file is gated by an inner `#![cfg(..)]` attribute rustdoc
+/// may not satisfy in the default library build.
+fn file_has_inner_cfg_gate(source: &str) -> bool {
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        // Only `#![cfg(..)]` gates the file; `#![cfg_attr(docsrs, ..)]` and
+        // `#![cfg_attr(not(test), no_std)]` are ordinary crate-root headers.
+        if trimmed.starts_with("#![") && inner_attribute_may_gate_file(trimmed) {
+            return true;
+        }
+        if !trimmed.starts_with('#') {
+            break;
+        }
+    }
+    false
+}
+
+/// `#![cfg(..)]`, or an inner `#![cfg_attr(.., cfg(..))]` that can add a
+/// `cfg` gate. A `cfg_attr` that only sets other attributes
+/// (`no_std`, `feature(doc_cfg)`) does not gate the file.
+fn inner_attribute_may_gate_file(trimmed: &str) -> bool {
+    match attribute_cfg_family(trimmed) {
+        AttributeCfgFamily::Cfg => true,
+        AttributeCfgFamily::CfgAttr => attribute_path_and_optional_args(trimmed)
+            .and_then(|(_, args)| args)
+            .is_some_and(|args| {
+                let compact: String = args.split_whitespace().collect();
+                compact.contains(",cfg(")
+            }),
+        AttributeCfgFamily::Other => false,
+    }
+}
+
+/// A `#[cfg(..)]` other than `#[cfg(doctest)]`, or any `#[cfg_attr(..)]`,
+/// between the doc comment and the item: rustdoc may not run the example.
+fn between_doc_and_item_cfg_refuses(trimmed: &str) -> bool {
+    if !whole_line_attribute(trimmed) {
+        return false;
+    }
+    match attribute_cfg_family(trimmed) {
+        AttributeCfgFamily::CfgAttr => true,
+        AttributeCfgFamily::Cfg => !attribute_is_cfg_doctest(trimmed),
+        AttributeCfgFamily::Other => false,
+    }
+}
+
+enum AttributeCfgFamily {
+    Cfg,
+    CfgAttr,
+    Other,
+}
+
+fn attribute_cfg_family(trimmed: &str) -> AttributeCfgFamily {
+    let Some((path, _)) = attribute_path_and_optional_args(trimmed) else {
+        return AttributeCfgFamily::Other;
+    };
+    match path {
+        "cfg" => AttributeCfgFamily::Cfg,
+        "cfg_attr" => AttributeCfgFamily::CfgAttr,
+        _ => AttributeCfgFamily::Other,
+    }
+}
+
+/// True only for `#[cfg(doctest)]`, active when rustdoc runs doctests.
+fn attribute_is_cfg_doctest(trimmed: &str) -> bool {
+    let Some((path, args)) = attribute_path_and_optional_args(trimmed) else {
+        return false;
+    };
+    path == "cfg"
+        && args.is_some_and(|args| {
+            let collapsed: String = args.split_whitespace().collect();
+            rust_ident_name(&collapsed) == "doctest"
+        })
+}
+
+fn attribute_path_and_optional_args(trimmed: &str) -> Option<(&str, Option<&str>)> {
+    let body = attribute_bracket_body(trimmed)?;
+    let body = body.trim_start();
+    let path_end = body
+        .find(|c: char| c == '(' || c.is_whitespace())
+        .unwrap_or(body.len());
+    let path = rust_ident_name(body.get(..path_end)?.trim());
+    let rest = body.get(path_end..)?.trim_start();
+    let Some(rest) = rest.strip_prefix('(') else {
+        return Some((path, None));
+    };
+    let mut depth = 1usize;
+    for (position, ch) in rest.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((path, Some(rest.get(..position)?.trim())));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn attribute_bracket_body(trimmed: &str) -> Option<&str> {
+    let mut rest = trimmed.trim_start().strip_prefix('#')?;
+    rest = rest.strip_prefix('!').unwrap_or(rest);
+    rest = rest.trim_start().strip_prefix('[')?;
+    let mut depth = 1usize;
+    for (position, ch) in rest.char_indices() {
+        match ch {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest.get(..position)?.trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn whole_line_attribute(trimmed: &str) -> bool {
@@ -334,13 +473,25 @@ fn whole_line_attribute(trimmed: &str) -> bool {
     false
 }
 
+/// Whether an attribute line carries doc metadata (`#[doc ..]` or a
+/// `cfg_attr(.., doc = ..)`), as opposed to a name that merely contains `doc`.
+fn attribute_bears_doc_metadata(trimmed: &str) -> bool {
+    if !trimmed.starts_with("#[") {
+        return false;
+    }
+    // Whitespace is insignificant between `#[` and the path and around `=`
+    // (`#[ doc = ".."]` is a doc fragment), so compare the compacted text.
+    let compact: String = trimmed.split_whitespace().collect();
+    compact.starts_with("#[doc") || compact.contains(",doc=")
+}
+
 /// Whether the doc run `lines[start..end]` shares its item's document with
 /// another `///` run or a doc-bearing attribute (`#[doc = ..]`,
 /// `#[cfg_attr(.., doc = ..)]`), before or after it.
 fn shares_its_document(lines: &[&str], start: usize, end: usize) -> bool {
     let doc_fragment = |line: &str| {
         let trimmed = line.trim_start();
-        outer_doc_text(line).is_some() || (trimmed.starts_with("#[") && trimmed.contains("doc"))
+        outer_doc_text(line).is_some() || attribute_bears_doc_metadata(trimmed)
     };
     let after = lines
         .iter()
