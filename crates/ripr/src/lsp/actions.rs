@@ -1398,7 +1398,7 @@ fn first_repair_packet_text(
     {
         lines.push(format!("- Changed behavior: {changed_behavior}"));
     }
-    lines.push(format!("- Missing discriminator: {missing_discriminator}"));
+    lines.push(format!("- Missing check: {missing_discriminator}"));
     if let Some(focused_proof_intent) = focused_proof_intent_for_packet(repair_route) {
         lines.push(format!("- Focused proof intent: {focused_proof_intent}"));
     }
@@ -1532,14 +1532,17 @@ fn python_repair_card_text(
     lines.push("Current test evidence:".to_string());
     if let Some(related_test) = related_test {
         lines.push(format!("  Related test target: {related_test}"));
-        lines.push("  Current evidence is weak preview evidence; strengthen it with the missing discriminator.".to_string());
+        lines.push(
+            "  Current evidence is weak preview evidence; strengthen it with the missing check."
+                .to_string(),
+        );
     } else {
         lines.push(
             "  No related test selector is available in this GapRecord; use the suggested file."
                 .to_string(),
         );
     }
-    lines.push("Missing discriminator:".to_string());
+    lines.push("Missing check:".to_string());
     lines.push(format!("  {missing_discriminator}"));
     lines.push("Recommended repair:".to_string());
     lines.push(format!("  {route_kind}"));
@@ -1617,7 +1620,7 @@ fn python_pytest_skeleton_target(snapshot: &AnalysisSnapshot, data: &Value) -> O
         "# RIPR Python repair skeleton".to_string(),
         format!("# Gap: {gap_identity}"),
         format!("# Suggested file: {target_file}"),
-        format!("# Missing discriminator: {missing_discriminator}"),
+        format!("# Missing check: {missing_discriminator}"),
     ];
     if let Some(changed_behavior) = route.get("changed_behavior").and_then(non_empty_string) {
         lines.push(format!("# Changed behavior: {changed_behavior}"));

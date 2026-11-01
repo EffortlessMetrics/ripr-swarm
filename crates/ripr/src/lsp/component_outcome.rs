@@ -447,7 +447,7 @@ mod tests {
         degraded = ComponentOutcome::unavailable_recoverable(
             AnalysisComponent::SeamInventory,
             "disabled",
-            "seam diagnostics are disabled by configuration",
+            "spot diagnostics are disabled by configuration",
             "set [lsp] seam_diagnostics = true in ripr.toml, then run ripr.refresh",
         );
         assert!(!degraded.is_degraded());
@@ -684,7 +684,7 @@ mod tests {
         let outcome = ComponentOutcome::unavailable_recoverable(
             AnalysisComponent::SeamInventory,
             "seam_diagnostics_not_enabled",
-            "seam diagnostics require the full profile (current: actionable)",
+            "spot diagnostics require the full profile (current: actionable)",
             "set [lsp] diagnostic_profile = \"full\" in ripr.toml, then run ripr.refresh",
         );
         if outcome.is_degraded() {
@@ -722,7 +722,7 @@ mod tests {
             ComponentOutcome::deferred(
                 AnalysisComponent::SeamInventory,
                 "interactive_refresh_deferral",
-                "run ripr.refreshDiagnostics for the full seam inventory",
+                "run ripr.refreshDiagnostics for the full spot inventory",
             ),
         ];
         assert_eq!(degradation_signature(&clean), None);
@@ -807,7 +807,7 @@ mod tests {
         let deferred = ComponentOutcome::deferred(
             AnalysisComponent::SeamInventory,
             "interactive_refresh_deferral",
-            "run ripr.refreshDiagnostics for the full seam inventory",
+            "run ripr.refreshDiagnostics for the full spot inventory",
         );
         let failed = ComponentOutcome::failed(
             AnalysisComponent::SeamInventory,
@@ -823,7 +823,7 @@ mod tests {
             .as_str()
             .map(str::to_string);
         if generic_recovery.as_deref()
-            != Some("run ripr.refresh (workspace/executeCommand) for the full seam inventory")
+            != Some("run ripr.refresh (workspace/executeCommand) for the full spot inventory")
         {
             return Err(format!("generic deferred recovery: {generic_recovery:?}"));
         }
@@ -831,7 +831,7 @@ mod tests {
             .as_str()
             .map(str::to_string);
         if editor_recovery.as_deref()
-            != Some("run ripr.refreshDiagnostics for the full seam inventory")
+            != Some("run ripr.refreshDiagnostics for the full spot inventory")
         {
             return Err(format!("editor deferred recovery: {editor_recovery:?}"));
         }
