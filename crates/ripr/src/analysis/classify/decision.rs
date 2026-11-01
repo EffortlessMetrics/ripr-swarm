@@ -211,12 +211,13 @@ fn is_compile_time_assertion(expression: &str) -> bool {
     ) && name[ident_end..].starts_with('!')
 }
 
-/// #11549: the probe label of a changed `unsafe fn` or of an `unsafe` block
-/// holding an unchecked assumption. Label match only; the shape extractor owns
-/// the parsing.
-fn is_unsafe_obligation(expression: &str) -> bool {
-    expression.starts_with("unsafe fn ")
-        || expression == crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL
+/// #11549 / #12174: the probe label of a changed `unsafe fn` or of an `unsafe`
+/// block holding an unchecked assumption, only for `static_unknown` probes.
+/// The shape extractor owns the parsing.
+fn is_unsafe_obligation(probe: &Probe) -> bool {
+    matches!(probe.family, ProbeFamily::StaticUnknown)
+        && (probe.expression.starts_with("unsafe fn ")
+            || probe.expression == crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL)
 }
 
 pub(in crate::analysis) fn stop_reasons(
@@ -232,7 +233,7 @@ pub(in crate::analysis) fn stop_reasons(
             reasons.push(StopReason::NoChangedRustLine);
         }
     }
-    if is_unsafe_obligation(&probe.expression) {
+    if is_unsafe_obligation(probe) {
         reasons.push(StopReason::UnsafeObligation);
     }
     if related_tests.iter().any(|test| {
@@ -1482,14 +1483,35 @@ mod tests {
         );
     }
 
-    // #11549: only the unsafe-fn and unchecked-assumption labels name the stop reason.
+    // #12174: unsafe obligation requires static_unknown family, not label alone.
     #[test]
-    fn unsafe_obligation_is_recognised_by_probe_label_only() {
-        assert!(is_unsafe_obligation("unsafe fn pick"));
-        assert!(is_unsafe_obligation("unsafe block (unchecked assumption)"));
-        assert!(!is_unsafe_obligation("unsafe block"));
-        assert!(!is_unsafe_obligation("pub fn pick"));
-        assert!(!is_unsafe_obligation("unsafe_fn_pointer"));
+    fn unsafe_obligation_requires_static_unknown_family_and_label() {
+        use crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL;
+
+        assert!(!is_unsafe_obligation(&probe(
+            ProbeFamily::ReturnValue,
+            "unsafe fn x",
+        )));
+        assert!(!is_unsafe_obligation(&probe(
+            ProbeFamily::Predicate,
+            UNCHECKED_ASSUMPTION_LABEL,
+        )));
+        assert!(is_unsafe_obligation(&probe(
+            ProbeFamily::StaticUnknown,
+            "unsafe fn x",
+        )));
+        assert!(is_unsafe_obligation(&probe(
+            ProbeFamily::StaticUnknown,
+            UNCHECKED_ASSUMPTION_LABEL,
+        )));
+        assert!(!is_unsafe_obligation(&probe(
+            ProbeFamily::StaticUnknown,
+            "pub fn pick",
+        )));
+        assert!(!is_unsafe_obligation(&probe(
+            ProbeFamily::StaticUnknown,
+            "unsafe block",
+        )));
     }
 
     // #11547: a changed compile-time assertion names its own stop reason;
