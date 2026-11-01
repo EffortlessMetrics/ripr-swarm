@@ -179,6 +179,9 @@ mod assertion_helper;
 mod boolean_pin_guard;
 mod close_to_guard;
 #[cfg(test)]
+#[path = "tests/issue7483_masker_tests.rs"]
+mod issue7483_masker_tests;
+#[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
 mod issue7813_alias_member_tests;
 #[cfg(test)]
@@ -670,6 +673,11 @@ impl TypeScriptAdapter {
         // recomputed. Deferred so storing never interleaves with parsing;
         // worker-refusal files never reach here, exactly like the memory
         // cache, and are not persisted.
+        // Export facts of every cleanly parsed non-test file, kept for the
+        // re-export index: the facts cache clears itself at its entry bound,
+        // which a large workspace exceeds within this loop.
+        let mut export_facts_by_file: std::collections::HashMap<PathBuf, ModuleExportFacts> =
+            std::collections::HashMap::new();
         let mut pending_fact_stores: Vec<(
             fact_store::TypeScriptFileFactKey,
             std::rc::Rc<extraction_cache::FileFacts>,
@@ -896,6 +904,7 @@ impl TypeScriptAdapter {
                 if recomputed_facts && fact_store::export_facts_are_disk_independent(&facts) {
                     pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None));
                 }
+                export_facts_by_file.insert(relative.clone(), facts.export_facts.clone());
                 all_owners.extend(facts.owners.clone());
             }
         }
@@ -915,12 +924,13 @@ impl TypeScriptAdapter {
         // (RIPR-SPEC-0095). The index enables crediting tests that reach the owner
         // through `export { N } from` / `export * from` barrel chains.
         // Sources come from the Phase-1 cache so each file is read once per run.
-        let reexport_index = ReExportIndex::build(
+        let reexport_index = ReExportIndex::build_with_known_facts(
             &workspace_files,
             &source_cache,
             &options.root,
             alias_map_ref,
             is_test_file,
+            &export_facts_by_file,
         );
 
         // A named import of `export * as ns from` reads as the namespace import
@@ -1004,12 +1014,35 @@ impl TypeScriptAdapter {
                 continue;
             }
 
+            let private_boundaries = source_by_normalized
+                .get(&normalized_path(&changed.path))
+                .map(|source| {
+                    unsupported_private_member_ranges(
+                        &changed.path,
+                        source,
+                        &options.root,
+                        alias_map_ref,
+                    )
+                })
+                .unwrap_or_default();
             // Owner-extraction gap detection (#4104-A): a changed line inside
             // an owner shape the extractor does not index produces NO finding
             // below, so this bounded disclosure is the only honest signal.
             if let Some(source) = source_by_normalized.get(&normalized_path(&changed.path)) {
-                let changed_lines: Vec<usize> =
-                    changed.added_lines.iter().map(|added| added.line).collect();
+                let changed_lines: Vec<usize> = changed
+                    .added_lines
+                    .iter()
+                    .map(|added| added.line)
+                    .chain(
+                        changed
+                            .removed_lines
+                            .iter()
+                            .map(|removed| removed.new_side_line)
+                            .filter(|line| {
+                                inside_private_member_boundary(&private_boundaries, *line)
+                            }),
+                    )
+                    .collect();
                 if let Some(gap) = detect_owner_extraction_gap(
                     &changed.path,
                     source,
@@ -1146,6 +1179,9 @@ impl TypeScriptAdapter {
                 Some((source.lines().collect::<Vec<_>>(), facts))
             });
             for added in &changed.added_lines {
+                if inside_private_member_boundary(&private_boundaries, added.line) {
+                    continue;
+                }
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
                 }
@@ -1289,7 +1325,7 @@ impl TypeScriptAdapter {
                     // inference returns `None`. `typescript_test_runner_unresolved`
                     // names a missing runner, so emit it only when neither a
                     // framework nor a package-manager runner resolved. An empty
-                    // `related_tests` list also yields `None` (`max_by_key`
+                    // `related_tests` list also yields `None` (`min_by_key`
                     // over an empty iterator); that is a missing test target,
                     // not an unknown runner. When the runner is already known
                     // (`typescript_test_runner: vitest`, mocha detected, npm
@@ -1299,7 +1335,10 @@ impl TypeScriptAdapter {
                     let inferred_cmd = finding
                         .related_tests
                         .iter()
-                        .max_by_key(|t| t.oracle_strength.rank())
+                        // #11228: the first of the strongest rows, the one the
+                        // headline, card and packet name (`max_by_key` would
+                        // return the last of equal strength).
+                        .min_by_key(|t| std::cmp::Reverse(t.oracle_strength.rank()))
                         .and_then(|best_test| {
                             verify_command_for_discovery(&pkg_discovery, &best_test.file)
                         });
@@ -1348,6 +1387,9 @@ impl TypeScriptAdapter {
                 &all_owners,
                 &findings,
                 |line, text, owner| {
+                    if inside_private_member_boundary(&private_boundaries, line) {
+                        return None;
+                    }
                     // The wrapper's owner lookup is the span check only: the
                     // caller already resolved the sole owner this closure
                     // receives (its file matched by normalized path), so a

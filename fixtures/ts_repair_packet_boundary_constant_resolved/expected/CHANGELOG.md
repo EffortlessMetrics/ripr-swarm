@@ -411,3 +411,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_constant_resolved (35)
+
+Reason:
+RIPR-SPEC-0088: #11619 drop the seam-based qualifier from the repair-packet advisory
+RIPR-SPEC-0088: related-test selection ties keep the first row, matching the check headline (#11228)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_constant_resolved --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

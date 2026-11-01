@@ -90,9 +90,9 @@ pub enum StopReason {
     InfectionEvidenceUnknown,
     PropagationEvidenceUnknown,
     StaticProbeUnknown,
-    /// A bounded transitive-reach walk found a candidate path (test -> ... ->
-    /// owner) that ripr cannot fully resolve (lexical-only, name-match only).
-    /// Classification stays `no_static_path`. See RIPR-SPEC-0114.
+    /// Reach through internal calls is unresolved. A bounded walk may retain
+    /// a candidate path (RIPR-SPEC-0114), but an unmodeled private-member
+    /// boundary establishes no path either way (RIPR-SPEC-0243).
     TransitiveReachUnresolved,
     /// A Rust reach walk found a candidate test entry path that stops at a
     /// same-repo macro invocation whose definition lexically names the changed
@@ -176,8 +176,7 @@ impl StopReason {
                 "ripr could not model this change well enough to classify it"
             }
             StopReason::TransitiveReachUnresolved => {
-                "a candidate test path exists but passes through calls ripr only matched by \
-                 name"
+                "ripr could not establish whether a test reaches this change through internal calls"
             }
             StopReason::MacroReachUnresolved => {
                 "a candidate test path stops at a same-repo macro ripr does not expand"
@@ -927,6 +926,27 @@ impl Finding {
     /// upgrade a non-current finding.
     pub fn is_candidate_actionable(&self) -> bool {
         self.source_currentness.permits_candidate_action()
+    }
+
+    /// The one sentence every surface uses to say a finding is not a
+    /// candidate edit target (#11905). `None` for a candidate-current finding.
+    /// Human, hover and any later renderer take the wording from here so a
+    /// base-side finding reads the same on every surface.
+    pub fn source_currentness_disclosure(&self) -> Option<String> {
+        if self.is_candidate_actionable() {
+            return None;
+        }
+        // `unresolved_subject` means the producer could not tell, so it must
+        // not be called base-side evidence.
+        let reason = if self.source_currentness.is_base_side() {
+            "base-side evidence, not a candidate edit target"
+        } else {
+            "source currentness not established, not a candidate edit target"
+        };
+        Some(format!(
+            "{} \u{2014} {reason}",
+            self.source_currentness.as_str()
+        ))
     }
 
     /// Mark this finding as produced by a repo-mode run (#5531). The single

@@ -48,7 +48,9 @@ impl McpServer {
             ..Default::default()
         };
         let mut server = Self {
-            tools: typed(protocol::tools_list_result())?,
+            tools: typed(protocol::tools_list_result_for(
+                protocol::ToolsListMode::from_env(),
+            ))?,
             resources: typed(protocol::resources_list_result())?,
             resource_templates: typed(protocol::resource_templates_list_result())?,
             profile,
@@ -227,7 +229,11 @@ impl McpServer {
         let requested = optional_string_argument(&arguments, "snapshot_id")?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
         let omitted_offset = optional_nonnegative_argument(&arguments, "omitted_offset")?;
-        let limit = optional_positive_argument(&arguments, "limit")?;
+        let limit = optional_capped_page_limit(
+            &arguments,
+            "limit",
+            crate::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE,
+        )?;
         let file = optional_nonempty_string_argument(&arguments, "file")?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
         // An unknown class token would narrow to an empty page that reads like
@@ -583,6 +589,33 @@ impl McpServer {
         max_envelope_bytes: usize,
     ) -> Result<CallToolResponse, ErrorData> {
         let name = request.name.to_string();
+        match self
+            .call_tool_panic_contained(request, max_envelope_bytes)
+            .await
+        {
+            // A model-fixable argument problem on a known tool is a typed
+            // `invalid_argument` tool failure (`isError: true`), not a
+            // JSON-RPC error many hosts flatten to an opaque failure
+            // (#11621). An unknown tool and a malformed `tools/call` shape
+            // stay protocol errors: no tool ran, so no tool result exists.
+            Err(error) if error.code == ErrorCode::INVALID_PARAMS => {
+                match contained_tool_schema_version(&name) {
+                    Some(schema_version) => {
+                        self.typed_failure(invalid_argument_failure(&error), schema_version)
+                    }
+                    None => Err(error),
+                }
+            }
+            other => other,
+        }
+    }
+
+    async fn call_tool_panic_contained(
+        &self,
+        request: CallToolRequestParams,
+        max_envelope_bytes: usize,
+    ) -> Result<CallToolResponse, ErrorData> {
+        let name = request.name.to_string();
         let Some(schema_version) = contained_tool_schema_version(&name) else {
             return self.dispatch_tool(request, max_envelope_bytes).await;
         };
@@ -877,7 +910,9 @@ fn optional_nonnegative_argument(
     optional_integer_argument(arguments, name, 0, u64::MAX)
 }
 
-/// A paging limit (#6021): a JSON integer `>= 1`.
+/// A paging limit (#6021): a JSON integer `>= 1`. Production list tools use
+/// the capped variant; this uncapped form pins the shared validator in tests.
+#[cfg(test)]
 fn optional_positive_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
@@ -1048,8 +1083,8 @@ fn pagination_cursor_error(method: &str) -> ErrorData {
 }
 
 /// A paging limit with a typed row cap: a JSON integer `>= 1` and `<= max`.
-/// A request above the cap stays invalid params at the dispatch edge instead
-/// of being silently clamped, so the typed `page.limit` echo always names a
+/// A request above the cap is refused (an `invalid_argument` tool failure at
+/// the call boundary, #11621) instead of being silently clamped, so the typed `page.limit` echo always names a
 /// limit the server actually honors (#8735).
 fn optional_capped_page_limit(
     arguments: &Option<serde_json::Map<String, Value>>,
@@ -1135,6 +1170,32 @@ fn required_string_argument(
             Some(serde_json::json!({ "argument": name, "expected": "non-empty string" })),
         )
     })
+}
+
+/// The typed failure for a rejected argument. `message` becomes `detail`;
+/// the machine-readable `data` (`argument`, `expected`, `allowed`, ...) rides
+/// through unchanged, and `data.recovery` (when the validator named one)
+/// becomes the top-level `recovery` so the model reads one shape.
+fn invalid_argument_failure(error: &ErrorData) -> workspace::AttemptFailure {
+    let data = match &error.data {
+        Some(data @ Value::Object(_)) => data.clone(),
+        _ => serde_json::json!({}),
+    };
+    let recovery = data
+        .get("recovery")
+        .and_then(Value::as_str)
+        .map_or_else(
+            || {
+                "correct the named argument as described in `detail` and `data` (see the tool's inputSchema) and call the tool again".to_string()
+            },
+            str::to_string,
+        );
+    workspace::AttemptFailure::new(
+        workspace::CODE_INVALID_ARGUMENT,
+        error.message.to_string(),
+        recovery,
+    )
+    .with_data(data)
 }
 
 /// Failure schema version of each tool whose handler panics are contained at

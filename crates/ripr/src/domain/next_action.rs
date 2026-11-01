@@ -541,7 +541,7 @@ impl CanonicalNextActionV1 {
         limitations: Vec<String>,
     ) -> Result<Self, String> {
         if subject.root.trim().is_empty() {
-            return Err("canonical next action requires a bound root".to_string());
+            return Err("canonical next action requires a bound root; report this as a ripr bug with the command that produced it".to_string());
         }
         let chooses = matches!(
             action_class,
@@ -549,50 +549,50 @@ impl CanonicalNextActionV1 {
         );
         if chooses == subject.item.is_some() {
             return Err(
-                "canonical next action binds one item exactly when it is not a selection"
+                "canonical next action binds one item exactly when it is not a selection; report this as a ripr bug with the command that produced it"
                     .to_string(),
             );
         }
         if let Some(item) = &subject.item
             && item.trim().is_empty()
         {
-            return Err("canonical next action item must not be blank".to_string());
+            return Err("canonical next action item must not be blank; report this as a ripr bug with the command that produced it".to_string());
         }
         if action_class.is_executable() != command.is_some() {
             return Err(
-                "canonical next action is executable exactly when it references a command"
+                "canonical next action is executable exactly when it references a command; report this as a ripr bug with the command that produced it"
                     .to_string(),
             );
         }
         if action_class.is_executable() == stop.is_some() {
             return Err(
-                "canonical next action carries a typed stop exactly when it is not executable"
+                "canonical next action carries a typed stop exactly when it is not executable; report this as a ripr bug with the command that produced it"
                     .to_string(),
             );
         }
         if action_class.requires_transition() != expected_transition.is_some() {
             return Err(
-                "canonical next action names its expected transition exactly when it moves state"
+                "canonical next action names its expected transition exactly when it moves state; report this as a ripr bug with the command that produced it"
                     .to_string(),
             );
         }
         if let Some(command) = &command {
             if command.command_id.trim().is_empty() {
-                return Err("canonical next action command id must not be blank".to_string());
+                return Err("canonical next action command id must not be blank; report this as a ripr bug with the command that produced it".to_string());
             }
             if command.display.trim().is_empty() {
-                return Err("canonical next action command display must not be blank".to_string());
+                return Err("canonical next action command display must not be blank; report this as a ripr bug with the command that produced it".to_string());
             }
         }
         if alternatives.len() > MAX_NEXT_ACTION_ALTERNATIVES {
             return Err(format!(
-                "canonical next action carries at most {MAX_NEXT_ACTION_ALTERNATIVES} alternatives"
+                "canonical next action carries at most {MAX_NEXT_ACTION_ALTERNATIVES} alternatives; report this as a ripr bug with the command that produced it"
             ));
         }
         for alternative in &alternatives {
             if alternative.label.trim().is_empty() || alternative.route.trim().is_empty() {
                 return Err(
-                    "canonical next action alternatives must name a label and route".to_string(),
+                    "canonical next action alternatives must name a label and route; report this as a ripr bug with the command that produced it".to_string(),
                 );
             }
         }
@@ -684,20 +684,20 @@ pub(crate) fn select_canonical_next_action(
     input: &NextActionInput<'_>,
 ) -> Result<CanonicalNextActionV1, String> {
     if input.root.trim().is_empty() {
-        return Err("next-action producer must bind a root".to_string());
+        return Err("next-action producer must bind a root; report this as a ripr bug with the command that produced it".to_string());
     }
     if input.transition_from.trim().is_empty() {
-        return Err("next-action producer must name the current state".to_string());
+        return Err("next-action producer must name the current state; report this as a ripr bug with the command that produced it".to_string());
     }
     match input.producer {
         NextActionProducer::CheckTopResult if input.check_case.is_none() => {
-            return Err("check producer must bind its triage case".to_string());
+            return Err("check producer must bind its triage case; report this as a ripr bug with the command that produced it".to_string());
         }
         NextActionProducer::Doctor
             if input.doctor_recovery.is_none() && input.limitation.is_none() =>
         {
             return Err(
-                "doctor producer must bind a precise recovery or declare its limitation"
+                "doctor producer must bind a precise recovery or declare its limitation; report this as a ripr bug with the command that produced it"
                     .to_string(),
             );
         }
@@ -705,7 +705,7 @@ pub(crate) fn select_canonical_next_action(
     }
     if !input.item_id.trim().is_empty() && !input.item_candidates.is_empty() {
         return Err(
-            "next-action producer must bind one item or name candidates, not both".to_string(),
+            "next-action producer must bind one item or name candidates, not both; report this as a ripr bug with the command that produced it".to_string(),
         );
     }
 
@@ -998,7 +998,7 @@ pub(crate) fn select_canonical_next_action(
             );
         }
         let Some(transition_to) = input.transition_to.clone() else {
-            return Err("next-action producer must name the offered command's effect".to_string());
+            return Err("next-action producer must name the offered command's effect; report this as a ripr bug with the command that produced it".to_string());
         };
         return running(input, spec, transition_to);
     }
