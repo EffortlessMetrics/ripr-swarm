@@ -143,7 +143,6 @@ fn floating_owner_assertion_beside_an_awaited_unrelated_one_stays_a_gap() -> Res
 fn a_for_each_expression_body_assertion_floats() {
     // `forEach` discards its callback's result, so the expression-bodied
     // assertion cannot fail the test and earns no credit.
-    let body =
-        "test('t', () => { [100].forEach(v => expect(Promise.resolve(f(v))).resolves.toBe(false)); });";
+    let body = "test('t', () => { [100].forEach(v => expect(Promise.resolve(f(v))).resolves.toBe(false)); });";
     assert_eq!(assertion_count(&test_file(body)), 0);
 }
