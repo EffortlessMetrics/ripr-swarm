@@ -259,6 +259,7 @@ diff: ripr check --root <root>`) instead of `none`; the "pilot ranks Rust
 seams and found none" explanation stays secondary. Disabled preview languages
 still list the route in the languages section. JSON `language_routes` and
 `current_change.top_recommendation_in_change` are unchanged (#3906, #7665).
+When a zero-finding Python route is listed as unscanned, the Markdown summary omits the Python preview section exactly as the terminal does, so the two renderers agree (#11297).
 When Rust seams exist, the human output is unchanged and other languages are
 listed only in `pilot-summary.json` `language_routes`.
 
@@ -915,6 +916,7 @@ Current tests and reports that support the contract:
 - `crates/ripr/src/output/pilot/tests.rs::pilot_language_routes_state_follows_rust_seams_and_discovered_languages`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_renderers_show_language_routes_only_without_rust_seams`
 - `crates/ripr/src/output/pilot/tests.rs::pilot_headline_names_supported_language_check_route_when_no_rust_seams`
+- `crates/ripr/src/output/pilot/tests.rs::pilot_markdown_python_preview_matches_terminal_unscanned_gate`
 - `crates/ripr/tests/cli_smoke.rs::pilot_writes_default_packet_outputs_for_boundary_gap_fixture`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::timed_out_pilot_removes_prior_run_packet_siblings`
 - `crates/ripr/src/cli/commands/pilot.rs::tests::remove_unwritten_timeout_packet_siblings_is_a_no_op_when_absent`

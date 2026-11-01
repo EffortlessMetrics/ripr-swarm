@@ -1,4 +1,10 @@
 name: CI
+# #12236: a merge-ready request names itself with the head and the request time
+# from its event payload, which routed-rust.yml's Result reads from the same
+# event, so the Result binds the `vscode surface` of its own request by identity
+# rather than by run creation time. Every other event keeps a title like the
+# default one.
+run-name: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready' && format('CI merge-ready request {0} {1} {2} full-ci={3} vscode={4}', github.event.pull_request.head.sha, github.event.pull_request.updated_at, github.event.pull_request.base.sha, contains(github.event.pull_request.labels.*.name, 'full-ci'), contains(github.event.pull_request.labels.*.name, 'vscode')) || github.event.pull_request.title || github.event.head_commit.message || github.workflow }}
 
 on:
   workflow_call:

@@ -1148,11 +1148,19 @@ impl ClassifiedProbeEvidence {
                             .test_may_reach(test)
                     })
                 },
-                assertion_pins_other_function: &|assertion| {
+                assertion_pins_other_function: &|test, assertion| {
                     context.owner_fn.is_some_and(|owner| {
+                        // #12056: a local the assertion reads is the function
+                        // that bound it, so its initializer joins the text.
+                        let text = assertion_text_with_local_initializers(
+                            context.index,
+                            test,
+                            &assertion.text,
+                            owner,
+                        );
                         owner_reach
                             .get_or_init(|| proximity_reach.owner_reach(&owner.name))
-                            .assertion_pins_other_function(&assertion.text)
+                            .assertion_pins_other_function(&text)
                     })
                 },
                 owner_parameters: &owner_parameters,
@@ -2400,6 +2408,61 @@ fn macro_rules_bodies(source: &str) -> Vec<String> {
     bodies
 }
 
+/// `assertion` followed by the initializer of each local it reads (#12056).
+///
+/// `let r = tb.reduce(2500); assert_eq!(r, Reduction::Over(..))` pins what
+/// `reduce` returned, but the assertion text holds no call. The reader
+/// [`expected_operand_value`] already resolves a test's single immutable
+/// `let` (or a workspace constant) to its value text, so the per-assertion
+/// "pins another function" decision sees the call the local came from.
+/// A local with several bindings, a `mut` one or one the scan cannot read adds
+/// nothing, which leaves the assertion unattributed (credit stays as before).
+fn assertion_text_with_local_initializers(
+    index: &RustIndex,
+    test: &TestSummary,
+    assertion: &str,
+    owner: &FunctionSummary,
+) -> String {
+    // Only the compared operands are read: a trailing diagnostic argument is
+    // formatted after the comparison and never observes the local.
+    let operands = crate::analysis::extract::assertion_oracle_text(assertion);
+    let masked = mask_comments_and_strings(operands.as_deref().unwrap_or(assertion));
+    let mut seen = BTreeSet::new();
+    let mut text = assertion.to_string();
+    let bytes = masked.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() {
+        if !(bytes[start].is_ascii_alphabetic() || bytes[start] == b'_') {
+            start += 1;
+            continue;
+        }
+        let mut end = start;
+        while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+            end += 1;
+        }
+        let word = &masked[start..end];
+        let after = masked[end..].trim_start();
+        let before = masked[..start].trim_end();
+        // A call, a path segment, a macro, a field or a method name is not a
+        // local read.
+        let reads_local = !after.starts_with(['(', '!', ':'])
+            && !before.ends_with('.')
+            && !before.ends_with("::")
+            && word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_');
+        if reads_local
+            && seen.insert(word.to_string())
+            && let Some(value) = expected_operand_value(index, test, word, owner)
+        {
+            // A new line, so a trailing `// note` on the assertion cannot
+            // comment the initializer out.
+            text.push('\n');
+            text.push_str(&value);
+        }
+        start = end;
+    }
+    text
+}
+
 #[cfg(test)]
 mod tests {
     use super::evidence_summaries;
@@ -3441,6 +3504,67 @@ mod tests {
             !forged.digest_matches(),
             "callee identity must be bound to semantic digest"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn local_initializers_join_only_compared_operands_and_survive_trailing_comments()
+    -> Result<(), String> {
+        use crate::analysis::extract::mask_comments_and_strings;
+        let root = std::env::temp_dir().join(format!("ripr-12056-locals-{}", std::process::id()));
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).map_err(|error| error.to_string())?;
+        let file = src.join("lib.rs");
+        std::fs::write(
+            &file,
+            "pub fn reduce(t: u64) -> u64 { t }\nconst REDUCED: u64 = reduce(3);\npub fn owner(t: u64) -> u64 { t + 1 }\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn probe() {\n\
+             let other = reduce(3);\n        assert_eq!(wrapper(), 4, \"other: {:?}\", other);\n\
+             assert_eq!(other, 3); // note\n    }\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let index = crate::analysis::facts::build_index(&root, &[file])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "owner")
+            .ok_or("owner indexed")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "probe")
+            .ok_or("test indexed")?;
+        let diagnostic = super::assertion_text_with_local_initializers(
+            &index,
+            test,
+            "assert_eq!(wrapper(), 4, \"other: {:?}\", other);",
+            owner,
+        );
+        assert!(
+            !diagnostic.contains("reduce("),
+            "a local read only by the diagnostic is not an observed value: {diagnostic}"
+        );
+        let commented = super::assertion_text_with_local_initializers(
+            &index,
+            test,
+            "assert_eq!(other, 3); // note",
+            owner,
+        );
+        assert!(
+            mask_comments_and_strings(&commented).contains("reduce("),
+            "the initializer survives a trailing comment: {commented}"
+        );
+        let constant = super::assertion_text_with_local_initializers(
+            &index,
+            test,
+            "assert_eq!(REDUCED, 3);",
+            owner,
+        );
+        assert!(
+            constant.contains("reduce("),
+            "a workspace constant is resolved like a local: {constant}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 

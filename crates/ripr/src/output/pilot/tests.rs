@@ -3560,6 +3560,22 @@ fn pilot_omits_rust_gap_sentence_when_repo_has_no_rust() -> Result<(), String> {
     );
     assert!(!python_only.contains("no gaps"), "{python_only}");
 
+    let python_only_md = render_pilot_summary_md(
+        &[],
+        PilotSummaryContext {
+            language_routes: Some(&build(false)),
+            ..pilot_context(&artifacts)
+        },
+    );
+    assert!(
+        python_only_md.contains("Pilot found no Rust code to scan"),
+        "Markdown must match terminal no-Rust wording (#11297):\n{python_only_md}"
+    );
+    assert!(
+        !python_only_md.contains("found none in this repository"),
+        "{python_only_md}"
+    );
+
     let with_rust = render(&build(true));
     assert!(with_rust.contains("Rust code it checked"), "{with_rust}");
     Ok(())
@@ -3634,6 +3650,14 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
     assert!(
         md.contains("Pilot ranks Rust seams and found none in this repository. This is not a clean result for the languages listed under Languages Outside The Rust Seam Scan."),
         "{md}"
+    );
+    assert!(
+        !md.contains("## Python Preview First Use"),
+        "unscanned Python must not get a preview section in Markdown (#11297):\n{md}"
+    );
+    assert!(
+        !md.contains("no_python_findings"),
+        "unscanned Python must not read as 'no findings' in Markdown (#11297):\n{md}"
     );
 
     let json = render_pilot_summary_json(&[], context);
@@ -3726,6 +3750,65 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
     assert!(
         !mixed_terminal.contains("analyze the TypeScript diff:"),
         "{mixed_terminal}"
+    );
+    Ok(())
+}
+
+/// #11297 / #10773: Markdown hides the Python preview when Python is listed
+/// as not scanned, but still renders it after a successful selected-diff run.
+#[test]
+#[cfg(feature = "lang-python")]
+fn pilot_markdown_python_preview_matches_terminal_unscanned_gate() -> Result<(), String> {
+    use super::types::PilotPythonFirstUseStatus;
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let unscanned = PilotPythonFirstUse {
+        status: PilotPythonFirstUseStatus::NoPythonFindings,
+        findings_total: 0,
+        repair_cards_total: 0,
+        limitation_count: 0,
+        analysis_error: None,
+        top_repair_card: None,
+    };
+    let unscanned_context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        python_first_use: Some(&unscanned),
+        ..pilot_context(&artifacts)
+    };
+    let terminal_before = render_pilot_terminal(&[], unscanned_context);
+    let md = render_pilot_summary_md(&[], unscanned_context);
+    assert!(
+        !md.contains("## Python Preview First Use") && !md.contains("no_python_findings"),
+        "Markdown must not imply a clean Python bill when unscanned:\n{md}"
+    );
+    let terminal_after = render_pilot_terminal(&[], unscanned_context);
+    assert_eq!(
+        terminal_before, terminal_after,
+        "terminal output must stay unchanged by Markdown-only gating"
+    );
+
+    let analyzed = PilotPythonFirstUse {
+        status: PilotPythonFirstUseStatus::NoRepairCards,
+        findings_total: 1,
+        repair_cards_total: 0,
+        limitation_count: 0,
+        analysis_error: None,
+        top_repair_card: None,
+    };
+    let analyzed_context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        python_first_use: Some(&analyzed),
+        ..pilot_context(&artifacts)
+    };
+    let analyzed_md = render_pilot_summary_md(&[], analyzed_context);
+    assert!(
+        analyzed_md.contains("## Python Preview First Use")
+            && analyzed_md.contains("- Status: `no_repair_cards`"),
+        "successful selected-diff zero still renders in Markdown:\n{analyzed_md}"
     );
     Ok(())
 }
