@@ -97,6 +97,43 @@ fn a_truthiness_guard_reads_a_defaulted_or_omitted_flag() -> Result<(), String> 
     Ok(())
 }
 
+/// An entering parameter is read from the call row, never from a module
+/// constant that happens to share its name (#12171). Both directions are
+/// pinned so the module constant cannot decide the arm either way.
+#[test]
+fn a_parameter_is_read_from_the_call_not_a_same_named_module_constant() -> Result<(), String> {
+    // Constant `True`, parameter defaults to `False`: omitting the argument
+    // leaves the arm untaken, so a constant that masked the parameter would
+    // wrongly keep the credit.
+    let constant_true =
+        "flag = True\n\n\ndef label(x, flag=False):\n    if flag:\n        return 'loud'\n";
+    assert_eq!(
+        classify(constant_true, OLD_NIL, &test_of("label(1)", "None"))?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        classify(constant_true, OLD_NIL, &test_of("label(1, False)", "None"))?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        classify(constant_true, OLD_NIL, &test_of("label(1, True)", "'loud'"))?,
+        ExposureClass::Exposed
+    );
+    // Constant `False`, argument `True`: the call enters the arm, so a constant
+    // that masked the parameter would wrongly demote it.
+    let constant_false =
+        "flag = False\n\n\ndef label(x, flag=False):\n    if flag:\n        return 'loud'\n";
+    assert_eq!(
+        classify(
+            constant_false,
+            OLD_NIL,
+            &test_of("label(1, True)", "'loud'")
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
 #[test]
 fn a_negated_atom_and_a_string_or_number_truthiness_are_read() -> Result<(), String> {
     let negated = "def label(x, flag=True):\n    if not flag:\n        return 'quiet'\n";
