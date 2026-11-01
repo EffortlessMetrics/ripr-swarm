@@ -434,7 +434,7 @@ fn normalize_repo_relative_path(path: &str) -> String {
 /// is never hand-edited), so the next step names both routes.
 fn field_refusal(location: &str, problem: &str) -> String {
     format!(
-        "python repair-trust binding: {location}: {problem}; fix the selection manifest field, or for a retained record start a new attempt with `ripr agent repair --seam-id <id> --phase before`"
+        "python repair-trust binding: {location}: {problem}; fix the selection manifest field, or for a retained record start a new attempt with `ripr agent repair --seam-id <id> --phase before`, repeating the original `--root`, `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags"
     )
 }
 
@@ -442,7 +442,9 @@ fn field_refusal(location: &str, problem: &str) -> String {
 /// manifest artifacts). That state is driver output, so the remedy is a fresh
 /// attempt, never a hand edit or regeneration of the retained artifact.
 fn new_attempt_refusal(problem: String) -> String {
-    format!("{problem}; start a new attempt with `ripr agent repair --seam-id <id> --phase before`")
+    format!(
+        "{problem}; start a new attempt with `ripr agent repair --seam-id <id> --phase before`, repeating the original `--root`, `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags"
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -537,7 +539,7 @@ fn load_selection_manifest(
         )
     })?;
     let text = String::from_utf8(bytes)
-        .map_err(|error| format!("python repair-trust selection manifest is not UTF-8: {error}; check that --python-repair-trust-manifest names the UTF-8 JSON selection manifest"))?;
+        .map_err(|error| format!("python repair-trust selection manifest is not UTF-8: {error}; create a new selection and start a new trust-bound attempt, or put the manifest back to the exact bytes the attempt was bound to"))?;
     let value = parse_strict_json(&text).map_err(|error| {
         format!("python repair-trust selection manifest is not well-formed JSON: {error}")
     })?;
@@ -561,7 +563,7 @@ fn load_selection_manifest(
         let actual = require_string("selection manifest", top, field)?;
         if actual != expected {
             return Err(format!(
-                "python repair-trust selection manifest field `{field}` must be `{expected}`, got `{actual}`; point --python-repair-trust-manifest at the accepted selection manifest"
+                "python repair-trust selection manifest field `{field}` must be `{expected}`, got `{actual}`; create a new selection and start a new trust-bound attempt, or put the manifest back to the exact bytes the attempt was bound to"
             ));
         }
     }
@@ -569,7 +571,7 @@ fn load_selection_manifest(
         Some(Value::Array(rows)) => rows,
         _ => {
             return Err(
-                "python repair-trust selection manifest must contain a selections array; add a `selections` array or point --python-repair-trust-manifest at the accepted selection manifest"
+                "python repair-trust selection manifest must contain a selections array; create a new selection and start a new trust-bound attempt, or put the manifest back to the exact bytes the attempt was bound to"
                     .to_string(),
             );
         }
@@ -611,7 +613,7 @@ fn load_selection_manifest(
         let attempt_id = require_string("selection row", entry, "attempt_id")?;
         if !seen.insert(attempt_id.clone()) {
             return Err(format!(
-                "python repair-trust selection manifest carries duplicate attempt identity `{attempt_id}`"
+                "python repair-trust selection manifest carries duplicate attempt identity `{attempt_id}`; remove or rename the duplicate row in the selection manifest, then rerun `ripr agent repair`"
             ));
         }
         parsed.push(entry.clone());
@@ -1190,7 +1192,7 @@ pub(crate) fn reverify_for_apply(
     )?;
     if retained_authority != authority {
         return Err(format!(
-            "apply authorization authority `{authority}` does not match the retained authorization authority; a different authority requires a new re-authorized attempt; pass the same --edit-authority used at prepare, or start a new attempt with `ripr agent repair --seam-id <id> --phase before`"
+            "apply authorization authority `{authority}` does not match the retained authorization authority; a different authority requires a new re-authorized attempt; pass the same --edit-authority used at prepare, or start a new attempt with `ripr agent repair --seam-id <id> --phase before`, repeating the original `--root`, `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags"
         ));
     }
     let retained_method =
@@ -1335,7 +1337,7 @@ pub(crate) fn reverify_for_apply(
         require_string("retained binding trust", trust, "selection_manifest_sha256")?;
     if recorded_manifest_sha256 != manifest_sha256 {
         return Err(format!(
-            "stale selection manifest: the retained binding pins manifest sha256 `{recorded_manifest_sha256}` but {} now digests to `{manifest_sha256}`; a changed manifest requires a new re-authorized attempt; restore the pinned manifest bytes or start a new attempt with `ripr agent repair --seam-id <id> --phase before`",
+            "stale selection manifest: the retained binding pins manifest sha256 `{recorded_manifest_sha256}` but {} now digests to `{manifest_sha256}`; a changed manifest requires a new re-authorized attempt; restore the pinned manifest bytes or start a new attempt with `ripr agent repair --seam-id <id> --phase before`, repeating the original `--root`, `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags",
             request.manifest_path.display()
         ));
     }
@@ -1379,7 +1381,7 @@ pub(crate) fn reverify_for_apply(
     let packet_sha256 = sha256_hex(packet_bytes);
     if retained_packet_sha256 != packet_sha256 {
         return Err(format!(
-            "stale packet: the retained binding pins packet sha256 `{retained_packet_sha256}` but the attempt's retained packet digests to `{packet_sha256}`; start a new attempt with `ripr agent repair --seam-id <id> --phase before` so the binding pins the current packet"
+            "stale packet: the retained binding pins packet sha256 `{retained_packet_sha256}` but the attempt's retained packet digests to `{packet_sha256}`; start a new attempt with `ripr agent repair --seam-id <id> --phase before`, repeating the original `--root`, `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags so the binding pins the current packet"
         ));
     }
     Ok(verified)
@@ -1466,7 +1468,7 @@ pub(crate) fn confirm_manifest_unchanged(
     })?;
     if current != pinned {
         return Err(ManifestConfirmationError::Replaced(format!(
-            "stale selection manifest: the retained binding pins manifest sha256 `{pinned}` but {path} now digests to `{current}`; a changed manifest requires a new re-authorized attempt; restore the pinned manifest bytes or start a new attempt with `ripr agent repair --seam-id <id> --phase before`"
+            "stale selection manifest: the retained binding pins manifest sha256 `{pinned}` but {path} now digests to `{current}`; a changed manifest requires a new re-authorized attempt; restore the pinned manifest bytes or start a new attempt with `ripr agent repair --seam-id <id> --phase before`, repeating the original `--root`, `--python-repair-trust-manifest`, `--edit-authorized` and `--edit-authority <identity>` flags"
         )));
     }
     Ok(())
