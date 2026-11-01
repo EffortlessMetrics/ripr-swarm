@@ -482,6 +482,16 @@ fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>,
                     .to_string(),
             );
         }
+        // #12150: a seam-capped file is a prefix of the inventory, so a seam
+        // missing from it is unobserved, not removed. Same shared owner.
+        let cut = crate::output::repo_exposure::seam_limit_cut_controls(&value);
+        if !cut.is_empty() {
+            return Err(format!(
+                "static snapshot is a seam-limited repo-exposure file (its seams[] is a prefix of the inventory cut by {}, so a missing seam cannot be read as removed; {})",
+                cut.join(" and "),
+                crate::output::repo_exposure::seam_limit_cut_repair(&cut)
+            ));
+        }
         return parse_repo_exposure_seams(seams);
     }
     if let Some(findings) = value.get("findings").and_then(Value::as_array) {
@@ -3545,11 +3555,44 @@ mod tests {
                 "seam cap plus byte bound must be refused"
             );
         }
-        // Negative: a seam cap alone is not a byte bound; this refusal is
-        // specific to the byte-bound category.
-        let seam_cap_only = snapshot("seam_limit_applied");
+        // #12150: a seam cap alone keeps a prefix of the inventory, so it is
+        // refused too, by its own name and control, not as a byte bound.
+        for (category, control) in [
+            ("repo_seam_limit_applied", "RIPR_REPO_EXPOSURE_SEAM_LIMIT"),
+            ("pilot_seam_budget_applied", "RIPR_PILOT_SEAM_BUDGET"),
+        ] {
+            let capped = serde_json::from_str::<serde_json::Value>(&snapshot("seam_limit_applied"))
+                .map_err(|err| err.to_string())
+                .map(|mut document| {
+                    document["limitations"] = serde_json::json!([{"category": category}]);
+                    document.to_string()
+                })?;
+            for (before, after) in [(&capped, &complete), (&complete, &capped)] {
+                let Err(refusal) = targeted_test_outcome_report_from_json(
+                    before,
+                    after,
+                    "before.json".to_string(),
+                    "after.json".to_string(),
+                ) else {
+                    return Err(format!("a {category} snapshot must not be compared"));
+                };
+                assert!(refusal.contains("seam-limited"), "{refusal}");
+                assert!(!refusal.contains("byte-bounded"), "{refusal}");
+                assert!(refusal.contains(&format!("{control}=0")), "{refusal}");
+            }
+        }
+        // Negative: a declined-files limitation is not a seam cut, so a
+        // snapshot with it still compares.
+        let declined =
+            serde_json::from_str::<serde_json::Value>(&snapshot("limited_declined_files"))
+                .map_err(|err| err.to_string())
+                .map(|mut document| {
+                    document["limitations"] =
+                        serde_json::json!([{"category": "rust_files_declined"}]);
+                    document.to_string()
+                })?;
         targeted_test_outcome_report_from_json(
-            &seam_cap_only,
+            &declined,
             &complete,
             "before.json".to_string(),
             "after.json".to_string(),
