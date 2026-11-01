@@ -164,7 +164,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Install CI tools
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}
 
