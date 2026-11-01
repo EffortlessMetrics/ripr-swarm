@@ -427,7 +427,10 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     for relative in &input.production_files {
         match load_facts_with_source(root, relative).and_then(|(facts, source)| {
             let context = super::super::PythonIdentityContext::new(&source)
-                .ok_or_else(|| "Python source identity context could not be lexed".to_string())?;
+                .ok_or_else(|| {
+                    "Python source identity context could not be lexed; fix its syntax and re-run `ripr check`"
+                        .to_string()
+                })?;
             if representative_behavior_lines(&facts.facts)
                 .iter()
                 .any(|(line, text)| context.normalize(*line, text).is_none())
