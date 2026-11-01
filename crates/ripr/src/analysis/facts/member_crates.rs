@@ -44,6 +44,10 @@ const TEST_DEPENDENCY_TABLES: &[&str] = &["dependencies", "dev-dependencies", "d
 type ImportNames = BTreeMap<(PathBuf, PathBuf), Vec<String>>;
 /// Foreign-export answers per (owner crate root, item name).
 type ForeignExports = BTreeMap<(PathBuf, String), bool>;
+/// Selected library root and its witnessed literal macro-export lines.
+type LibraryMacroExports = (PathBuf, BTreeMap<String, usize>);
+/// Negative-only export witnesses per (consumer directory, imported crate).
+type ImportedMacroExports = BTreeMap<(PathBuf, String), Option<Arc<LibraryMacroExports>>>;
 
 /// Per-analysis cache of member-crate import names, keyed by the test file's
 /// directory and the owner's crate root. Clones share the cache.
@@ -57,6 +61,9 @@ pub(crate) struct MemberCrates {
     /// All possible library target roots in the selected manifest epoch.
     /// Missing inventory authority never establishes binary-only ownership.
     library_roots: Arc<OnceLock<Option<BTreeSet<PathBuf>>>>,
+    /// Kept for this analysis only. A missing entry or macro is not an
+    /// absence certificate and must never clear a broader ambiguity.
+    imported_macro_exports: Arc<Mutex<ImportedMacroExports>>,
 }
 
 impl MemberCrates {
@@ -66,6 +73,7 @@ impl MemberCrates {
             names: Arc::default(),
             foreign_exports: Arc::default(),
             library_roots: Arc::default(),
+            imported_macro_exports: Arc::default(),
         }
     }
 
@@ -130,6 +138,95 @@ impl MemberCrates {
             cache.insert(key, names.clone());
         }
         names
+    }
+
+    /// A selected local library that this consumer imports as `krate`, with
+    /// a literal unconditional root export of `name` (#11810). This supplies
+    /// only a refusal witness; `None` never certifies that an import is safe.
+    /// Registry/git crates, unknown placement and incomplete inventories are
+    /// outside this bounded query. Source-role/discovery selection is unchanged.
+    pub(crate) fn imported_literal_macro_export(
+        &self,
+        consumer: &Path,
+        krate: &str,
+        name: &str,
+    ) -> Option<(PathBuf, usize)> {
+        let read_root = self.root.as_deref()?;
+        let root = snapshot_root(read_root)?;
+        let consumer = lexical(&root.join(consumer));
+        let directory = consumer.parent()?;
+        let key = (
+            directory.to_path_buf(),
+            krate.trim_start_matches("r#").to_string(),
+        );
+        let cached = self
+            .imported_macro_exports
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&key).cloned());
+        let exports = match cached {
+            Some(exports) => exports,
+            None => {
+                let exports = self
+                    .local_library_macro_exports(read_root, &root, directory, &key.1)
+                    .map(Arc::new);
+                if let Ok(mut cache) = self.imported_macro_exports.lock() {
+                    cache.insert(key, exports.clone());
+                }
+                exports
+            }
+        }?;
+        exports
+            .1
+            .get(name.trim_start_matches("r#"))
+            .map(|line| (exports.0.clone(), *line))
+    }
+
+    fn local_library_macro_exports(
+        &self,
+        read_root: &Path,
+        root: &Path,
+        consumer_directory: &Path,
+        krate: &str,
+    ) -> Option<LibraryMacroExports> {
+        let listed_root = lexical(read_root);
+        let libraries = self
+            .library_roots
+            .get_or_init(|| selected_library_roots(read_root))
+            .as_ref()?;
+        let mut selected = None;
+        for library in libraries {
+            crate::analysis::cancellation::checkpoint().ok()?;
+            // The shared negative inventory includes possible library roots
+            // outside this workspace. They cannot be a local export witness;
+            // an unrelated external declaration must not hide a bound local one.
+            let Ok(relative) = library.strip_prefix(&listed_root) else {
+                continue;
+            };
+            let absolute = lexical(&root.join(relative));
+            let owner_directory = absolute.parent()?;
+            // Unlike import_names' worktree convenience query, this uses the
+            // selected manifest epoch, including configuration substitutions.
+            if resolve(root, consumer_directory, owner_directory, &absolute, true)
+                .is_some_and(|names| names.iter().any(|name| name == krate))
+            {
+                if selected.is_some() {
+                    return None;
+                }
+                selected = Some(relative.to_path_buf());
+            }
+        }
+        let relative = selected?;
+        let bytes =
+            crate::analysis::committed_source::read_source_bytes(root, &relative).ok()??;
+        // Bound the auxiliary syntax query, not a dependency source index.
+        // Large or unsupported libraries contribute no affirmative witness.
+        if bytes.len() > 256 * 1024 {
+            return None;
+        }
+        let source = std::str::from_utf8(&bytes).ok()?;
+        let exports = crate::analysis::syntax::literal_root_macro_exports(source);
+        Some((relative, exports))
     }
 
     /// Whether `crate_root`, a root-relative `src/lib.rs` or `src/main.rs`,
@@ -1219,6 +1316,296 @@ mod tests {
 
     const ROOT: &str = "[workspace]\nmembers = [\"pricing\", \"orders\"]\n";
     const PRICING: &str = "[package]\nname = \"pricing\"\nversion = \"0.1.0\"\n";
+    const MACRO_EXPORT: &str = "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n";
+
+    #[test]
+    fn literal_macro_exports_follow_selected_local_library_identity() -> Result<(), String> {
+        for (dependencies, library, imported, expected) in [
+            ("other={path='target/other'}", "", "other", true),
+            ("other={path='target/other'}", "", "r#other", true),
+            ("other={path='target/other'}", "", "unrelated", false),
+            ("", "", "other", false),
+            ("other='1'", "", "other", false),
+            (
+                "other={workspace=true}\n[workspace.dependencies]\nother={path='target/other'}",
+                "",
+                "other",
+                true,
+            ),
+            (
+                "renamed={package='other',path='target/other'}",
+                "",
+                "renamed",
+                true,
+            ),
+            (
+                "renamed={package='elsewhere',path='target/other'}",
+                "",
+                "renamed",
+                false,
+            ),
+            (
+                "other={path='target/other'}",
+                "[lib]\nname='exported_macros'\npath='lib/macros.rs'\n",
+                "exported_macros",
+                true,
+            ),
+            (
+                "other={path='target/other'}",
+                "[lib]\nname='exported_macros'\npath='lib/macros.rs'\n",
+                "other",
+                false,
+            ),
+        ] {
+            let manifest = format!(
+                "[package]\nname='consumer'\nversion='0.0.0'\n[dev-dependencies]\n{dependencies}\n"
+            );
+            let exporter = format!("[package]\nname='other'\nversion='0.0.0'\n{library}");
+            let root = temp_workspace(
+                "literal-macro-identity",
+                &[
+                    ("Cargo.toml", &manifest),
+                    ("tests/pin.rs", ""),
+                    ("target/other/Cargo.toml", &exporter),
+                    ("target/other/src/lib.rs", MACRO_EXPORT),
+                    ("target/other/lib/macros.rs", MACRO_EXPORT),
+                ],
+            )?;
+            let members = MemberCrates::new(&root);
+            let witness = members.imported_literal_macro_export(
+                Path::new("tests/pin.rs"),
+                imported,
+                "assert_eq",
+            );
+            let missing = members.imported_literal_macro_export(
+                Path::new("tests/pin.rs"),
+                imported,
+                "assert_ne",
+            );
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(
+                witness.is_some(),
+                expected,
+                "{dependencies}; {library}; {imported}"
+            );
+            if let Some((path, line)) = witness {
+                let selected = if library.is_empty() {
+                    "target/other/src/lib.rs"
+                } else {
+                    "target/other/lib/macros.rs"
+                };
+                assert_eq!(path, Path::new(selected));
+                assert_eq!(line, 2);
+            }
+            assert!(missing.is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn literal_macro_export_witness_reads_the_selected_manifest_and_source_epoch()
+    -> Result<(), String> {
+        use crate::analysis::committed_source::{CommittedSourceOverlay, with_overlay};
+        let manifest = "[package]\nname='consumer'\nversion='0.0.0'\n[dev-dependencies]\nother={path='target/other'}\n";
+        let no_dependency = "[package]\nname='consumer'\nversion='0.0.0'\n";
+        for (worktree_manifest, worktree_source, selected_manifest, selected_source, expected) in [
+            (manifest, MACRO_EXPORT, Some(manifest), Some(""), false),
+            (manifest, "", Some(manifest), Some(MACRO_EXPORT), true),
+            (
+                manifest,
+                MACRO_EXPORT,
+                Some(no_dependency),
+                Some(MACRO_EXPORT),
+                false,
+            ),
+            (
+                no_dependency,
+                MACRO_EXPORT,
+                Some(manifest),
+                Some(MACRO_EXPORT),
+                true,
+            ),
+            (manifest, MACRO_EXPORT, None, Some(MACRO_EXPORT), false),
+            (manifest, MACRO_EXPORT, Some(manifest), None, false),
+        ] {
+            let root = temp_workspace(
+                "literal-macro-epoch",
+                &[
+                    ("Cargo.toml", worktree_manifest),
+                    ("tests/pin.rs", ""),
+                    (
+                        "target/other/Cargo.toml",
+                        "[package]\nname='other'\nversion='0.0.0'\n",
+                    ),
+                    ("target/other/src/lib.rs", worktree_source),
+                ],
+            )?;
+            let overlay = CommittedSourceOverlay::from_entries(
+                &root,
+                [
+                    ("Cargo.toml", selected_manifest.map(str::as_bytes)),
+                    (
+                        "target/other/src/lib.rs",
+                        selected_source.map(str::as_bytes),
+                    ),
+                ],
+            );
+            let witness = with_overlay(Some(std::sync::Arc::new(overlay)), || {
+                MemberCrates::new(&root).imported_literal_macro_export(
+                    Path::new("tests/pin.rs"),
+                    "other",
+                    "assert_eq",
+                )
+            });
+            let _ = std::fs::remove_dir_all(&root);
+            assert_eq!(witness.is_some(), expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn literal_macro_export_does_not_bypass_the_output_set_input_boundary() -> Result<(), String> {
+        let root = temp_workspace(
+            "literal-macro-boundary",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname='consumer'\nversion='0.0.0'\n[dev-dependencies]\nother={path='target/other'}\n",
+                ),
+                ("tests/pin.rs", ""),
+                (
+                    "target/other/Cargo.toml",
+                    "[package]\nname='other'\nversion='0.0.0'\n",
+                ),
+                ("target/other/src/lib.rs", MACRO_EXPORT),
+            ],
+        )?;
+        let boundary = crate::analysis::input_boundary::Boundary::new(&root)?;
+        let witness = MemberCrates::new(&root).imported_literal_macro_export(
+            Path::new("tests/pin.rs"),
+            "other",
+            "assert_eq",
+        );
+        let guarded = boundary.verify();
+        drop(boundary);
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(witness.is_some());
+        assert!(
+            guarded.is_err(),
+            "excluded auxiliary source must not claim output-set custody"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn an_unrelated_external_library_root_does_not_hide_a_local_macro_export() -> Result<(), String>
+    {
+        let root = temp_workspace(
+            "literal-macro-external-root",
+            &[
+                (
+                    "Cargo.toml",
+                    "[package]\nname='consumer'\nversion='0.0.0'\n[dev-dependencies]\nother={path='target/other'}\n",
+                ),
+                ("tests/pin.rs", ""),
+                (
+                    "target/other/Cargo.toml",
+                    "[package]\nname='other'\nversion='0.0.0'\n",
+                ),
+                ("target/other/src/lib.rs", MACRO_EXPORT),
+                (
+                    "unrelated/Cargo.toml",
+                    "[package]\nname='unrelated'\nversion='0.0.0'\n[lib]\npath='../../outside.rs'\n",
+                ),
+            ],
+        )?;
+        let inventory = selected_library_roots(&root).ok_or("complete library inventory")?;
+        assert!(inventory.iter().any(|path| !path.starts_with(&root)));
+        let witness = MemberCrates::new(&root).imported_literal_macro_export(
+            Path::new("tests/pin.rs"),
+            "other",
+            "assert_eq",
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(witness, Some((PathBuf::from("target/other/src/lib.rs"), 2)));
+        Ok(())
+    }
+
+    #[test]
+    fn unchanged_index_reuse_refreshes_warmed_auxiliary_macro_export_witnesses()
+    -> Result<(), String> {
+        use crate::analysis::facts::{
+            build_analysis_index_from_loaded_files, index_build_probe,
+            reuse_cached_index_with_loaded_files,
+        };
+        let manifest = "[package]\nname='consumer'\nversion='0.0.0'\n[dev-dependencies]\nother={path='target/other'}\n";
+        let no_dependency = "[package]\nname='consumer'\nversion='0.0.0'\n";
+        let production = "pub fn value() -> u32 { 8 }\n";
+        let test = "#[macro_use] extern crate other;\n#[test]\nfn pins() { assert_eq!(consumer::value(), 8); }\n";
+        let root = temp_workspace(
+            "literal-macro-reuse",
+            &[
+                ("Cargo.toml", manifest),
+                ("src/lib.rs", production),
+                ("tests/pin.rs", test),
+                (
+                    "target/other/Cargo.toml",
+                    "[package]\nname='other'\nversion='0.0.0'\n",
+                ),
+                ("target/other/src/lib.rs", ""),
+            ],
+        )?;
+        // Neither auxiliary Rust source nor a manifest is among the reused
+        // parsed facts. Only those auxiliary bytes change in the loop below.
+        let files = vec![
+            (PathBuf::from("src/lib.rs"), production.as_bytes().to_vec()),
+            (PathBuf::from("tests/pin.rs"), test.as_bytes().to_vec()),
+        ];
+        assert!(files.iter().all(|(path, _)| !path.starts_with("target")));
+        let mut cached = build_analysis_index_from_loaded_files(&root, &files, &[])?;
+        let original_hash = cached.files_content_hash.clone();
+        assert!(
+            cached
+                .index
+                .member_crates
+                .imported_literal_macro_export(Path::new("tests/pin.rs"), "other", "assert_eq",)
+                .is_none()
+        );
+        for (source, selected_manifest, expected) in [
+            (MACRO_EXPORT, manifest, true),
+            (MACRO_EXPORT, no_dependency, false),
+            (MACRO_EXPORT, manifest, true),
+            ("", manifest, false),
+        ] {
+            std::fs::write(root.join("target/other/src/lib.rs"), source)
+                .map_err(|error| error.to_string())?;
+            std::fs::write(root.join("Cargo.toml"), selected_manifest)
+                .map_err(|error| error.to_string())?;
+            let previous = cached.index.member_crates.clone();
+            // A cloned index shares the old authority until the same-byte
+            // reuse boundary installs fresh run-scoped memos.
+            cached.index = cached.index.clone();
+            let (reused, builds) = index_build_probe::observe(|| {
+                reuse_cached_index_with_loaded_files(cached, &root, &files, &[])
+            });
+            cached = reused?;
+            assert_eq!(builds, 0, "auxiliary refresh must not reparse the index");
+            assert_eq!(cached.files_content_hash, original_hash);
+            assert_eq!(cached.index.files().len(), files.len());
+            assert!(!Arc::ptr_eq(
+                &previous.imported_macro_exports,
+                &cached.index.member_crates.imported_macro_exports,
+            ));
+            let witness = cached.index.member_crates.imported_literal_macro_export(
+                Path::new("tests/pin.rs"),
+                "other",
+                "assert_eq",
+            );
+            assert_eq!(witness.is_some(), expected);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
 
     #[test]
     fn binary_macro_boundaries_require_manifest_authority() -> Result<(), String> {
