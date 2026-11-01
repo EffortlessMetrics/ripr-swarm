@@ -3373,8 +3373,10 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 explicit.mode,
                 worktree,
                 worktree_from_default,
-                progress_sink,
-                format,
+                app::ExplainRun {
+                    format,
+                    sink: progress_sink,
+                },
             )?
         }
     };

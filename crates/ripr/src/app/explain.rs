@@ -16,6 +16,13 @@ pub(crate) enum ExplainFormat {
     Agent,
 }
 
+/// Output format and optional progress sink for one fresh `explain` run,
+/// bundled so the entry point stays within the argument-count bound.
+pub(crate) struct ExplainRun<'a> {
+    pub(crate) format: ExplainFormat,
+    pub(crate) sink: Option<&'a dyn AnalysisProgressSink>,
+}
+
 /// Renders the uniquely selected finding in the requested format.
 fn render_selected(
     format: ExplainFormat,
@@ -84,8 +91,10 @@ pub(crate) fn explain_finding_with_config_and_navigation_mode(
         mode_explicit,
         worktree,
         false,
-        None,
-        ExplainFormat::Human,
+        ExplainRun {
+            format: ExplainFormat::Human,
+            sink: None,
+        },
     )
 }
 
@@ -104,9 +113,9 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
     mode_explicit: bool,
     worktree: bool,
     worktree_from_default: bool,
-    sink: Option<&dyn AnalysisProgressSink>,
-    format: ExplainFormat,
+    run: ExplainRun<'_>,
 ) -> Result<String, String> {
+    let ExplainRun { format, sink } = run;
     let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
     let committed_list_command = explain_navigation_list_command(
         &super::finding_navigation_with_worktree(&input, None, mode_explicit, false),
