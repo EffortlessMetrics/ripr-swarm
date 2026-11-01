@@ -103,11 +103,11 @@ pub use context::{collect_context, collect_context_with_input};
 #[cfg(test)]
 pub(crate) use explain::explain_finding_from_artifact;
 pub use explain::explain_finding_with_config;
-pub use explain::{explain_finding, explain_finding_with_input};
 pub(crate) use explain::{
-    explain_finding_from_artifact_with_navigation_mode,
+    ExplainFormat, explain_finding_from_artifact_with_navigation_mode,
     explain_finding_with_config_navigation_mode_and_progress,
 };
+pub use explain::{explain_finding, explain_finding_with_input};
 pub(crate) use navigation::{
     CheckDiffProvenance, CheckRepairRoute, FindingDrillIn, FindingNavigation, GapRepairRoute,
     RepairRoute, RepairRouteRefusal, finding_navigation, finding_navigation_with_worktree,

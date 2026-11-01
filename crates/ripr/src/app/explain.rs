@@ -6,6 +6,37 @@ use crate::config::RiprConfig;
 use crate::output;
 use std::path::Path;
 
+/// How `ripr explain` renders the one selected finding (#12104).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ExplainFormat {
+    /// The human explanation (default).
+    #[default]
+    Human,
+    /// The compact `check --format agent` line style with a terminal state.
+    Agent,
+}
+
+/// Renders the uniquely selected finding in the requested format.
+fn render_selected(
+    format: ExplainFormat,
+    finding: &crate::domain::Finding,
+    config: &RiprConfig,
+    context_command: &str,
+    root: &Path,
+    files: Option<&[Option<std::path::PathBuf>]>,
+) -> String {
+    match format {
+        ExplainFormat::Human => output::human::render_finding_with_context_command_and_files(
+            finding,
+            config,
+            context_command,
+            root,
+            files,
+        ),
+        ExplainFormat::Agent => output::human::render_finding_agent(finding, root, context_command),
+    }
+}
+
 /// Computes findings and renders a single selected finding in human format.
 ///
 /// The selector can be a finding identifier (for example
@@ -51,6 +82,7 @@ pub(crate) fn explain_finding_with_config_and_navigation_mode(
         worktree,
         false,
         None,
+        ExplainFormat::Human,
     )
 }
 
@@ -70,6 +102,7 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
     worktree: bool,
     worktree_from_default: bool,
     sink: Option<&dyn AnalysisProgressSink>,
+    format: ExplainFormat,
 ) -> Result<String, String> {
     let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
     let committed_list_command = explain_navigation_list_command(
@@ -98,15 +131,14 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => Ok(
-            output::human::render_finding_with_context_command_and_files(
-                finding,
-                config,
-                &navigation.context_command(selector),
-                &output.root,
-                output.source_value_files(finding),
-            ),
-        ),
+        FindingSelection::Unique(finding) => Ok(render_selected(
+            format,
+            finding,
+            config,
+            &navigation.context_command(selector),
+            &output.root,
+            output.source_value_files(finding),
+        )),
         FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
             selector,
             &candidates,
@@ -389,6 +421,7 @@ pub(crate) fn explain_finding_from_artifact(
         artifact_path,
         asserted_base,
         false,
+        ExplainFormat::Human,
     )
 }
 
@@ -399,6 +432,7 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
     artifact_path: &Path,
     asserted_base: Option<&str>,
     mode_explicit: bool,
+    format: ExplainFormat,
 ) -> Result<String, String> {
     let navigation = super::finding_navigation(&input, Some(artifact_path), mode_explicit);
     let findings = super::check_artifact::load_findings_for_reuse(
@@ -417,16 +451,16 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => {
-            Ok(output::human::render_finding_with_context_command(
-                finding,
-                config,
-                &navigation.context_command(selector),
-                // The artifact was identity-verified against this root; the
-                // location renders against it like every fresh route (#5996).
-                &input.root,
-            ))
-        }
+        FindingSelection::Unique(finding) => Ok(render_selected(
+            format,
+            finding,
+            config,
+            &navigation.context_command(selector),
+            // The artifact was identity-verified against this root; the
+            // location renders against it like every fresh route (#5996).
+            &input.root,
+            None,
+        )),
         FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
             selector,
             &candidates,

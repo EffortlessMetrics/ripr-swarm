@@ -540,7 +540,7 @@ Exit status:
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--format human|agent] [--quiet] <finding-id|file:line>
 
 Options:
   --root PATH  Workspace root. Defaults to the current directory, then
@@ -552,6 +552,11 @@ Options:
                `--root .` or a finding ID; with
                --from or --diff, a selector naming no file is anchored to that
                directory).
+  --format F   human (default) or agent. agent prints the selected finding as
+               compact `check --format agent` lines (one record, its related
+               test, and an explicit done=/open=/stop= terminal line plus
+               next=<ripr context command>), static advisory only. For the
+               JSON packet use `ripr context --at <finding-id>`.
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.

@@ -28,6 +28,7 @@ use crate::domain::{ExposureClass, Finding, NextActionCheckCase, OracleStrength,
 use crate::output::next_action::render_next_action_plain_at_root;
 use crate::output::path::repository_display_path;
 use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Gap lines printed before the explicit `+N more` line.
 pub(super) const MAX_GAP_LINES: usize = 5;
@@ -75,8 +76,9 @@ pub(super) fn render(
 
     let mut tests: Vec<TestRef> = Vec::new();
     for finding in gaps.iter().take(MAX_GAP_LINES) {
-        let test_ref = strongest_test(finding).map(|test| intern_test(&mut tests, output, test));
-        out.push_str(&gap_line(output, finding, test_ref, true));
+        let test_ref =
+            strongest_test(finding).map(|test| intern_test(&mut tests, &output.root, test));
+        out.push_str(&gap_line(&output.root, finding, test_ref, true));
         out.push('\n');
     }
     for (index, test) in tests.iter().enumerate() {
@@ -93,6 +95,63 @@ pub(super) fn render(
         out.push_str(&line);
         out.push('\n');
     }
+    out
+}
+
+/// `ripr explain --format agent` (#12104): the one-finding counterpart of
+/// [`render`]. It reuses the same record, test-table and terminal vocabulary
+/// (`done=` / `open=` / `stop=`) and the same gap predicates, so a finding is
+/// never a "gap" here and not there. A pure projection of an already selected
+/// finding: no classification, ranking or validator of its own, and no runtime
+/// claim. `context_command` is the navigation's scope-bound `ripr context`
+/// route for this finding.
+pub(super) fn render_finding(finding: &Finding, root: &Path, context_command: &str) -> String {
+    let mut out = format!(
+        "#ripr explain agent static-advisory class={}\n",
+        finding.class.as_str()
+    );
+    let weak_row = triage::weak_assertion_row(finding);
+    let (terminal, test) = if is_test_side_gap(finding) {
+        (
+            "open=a test-side gap remains: no related test is shown to notice this change; static advisory, not runtime proof",
+            strongest_test(finding),
+        )
+    } else if triage::limit_leaves_weak_assertion_open(finding) {
+        (
+            "open=a static limit leaves reach unconfirmed, but a related test asserts too weakly to notice the change; not a confirmed gap, and tests may still help",
+            weak_row,
+        )
+    } else if finding.class == ExposureClass::Exposed
+        && !triage::is_static_limited(finding)
+        && !triage::is_preview_limited(finding)
+    {
+        (
+            "done=a related test appears to notice this change; static advisory, not runtime proof",
+            strongest_test(finding),
+        )
+    } else {
+        (
+            "stop=no test-side gap is offered for this finding; nothing more is fixable from the test side",
+            strongest_test(finding),
+        )
+    };
+    let mut tests: Vec<TestRef> = Vec::new();
+    let test_ref = test.map(|test| intern_test(&mut tests, root, test));
+    let with_missing = terminal.starts_with("open=a test-side");
+    out.push_str(&gap_line(root, finding, test_ref, with_missing));
+    out.push('\n');
+    for (index, test) in tests.iter().enumerate() {
+        out.push_str(&format!("t{}={}\n", index + 1, test.line));
+    }
+    // The producer's snake_case limit name (its serde spelling), never prose.
+    if let Some(kind) = finding.static_limit_kind
+        && let Ok(serde_json::Value::String(name)) = serde_json::to_value(kind)
+    {
+        out.push_str(&format!("limit={}\n", field(&name)));
+    }
+    out.push_str(terminal);
+    out.push('\n');
+    out.push_str(&format!("next={context_command}\n"));
     out
 }
 
@@ -137,9 +196,9 @@ fn render_open_limited(
     );
     let mut tests: Vec<TestRef> = Vec::new();
     for finding in open.iter().take(MAX_GAP_LINES) {
-        let test_ref =
-            triage::weak_assertion_row(finding).map(|test| intern_test(&mut tests, output, test));
-        out.push_str(&gap_line(output, finding, test_ref, false));
+        let test_ref = triage::weak_assertion_row(finding)
+            .map(|test| intern_test(&mut tests, &output.root, test));
+        out.push_str(&gap_line(&output.root, finding, test_ref, false));
         out.push('\n');
     }
     for (index, test) in tests.iter().enumerate() {
@@ -309,9 +368,9 @@ fn strength_rank(strength: &OracleStrength) -> u8 {
 
 /// Index (1-based) of `test` in the shared table, adding it on first use so a
 /// test that grips several gaps is written once.
-fn intern_test(tests: &mut Vec<TestRef>, output: &CheckOutput, test: &RelatedTest) -> usize {
+fn intern_test(tests: &mut Vec<TestRef>, root: &Path, test: &RelatedTest) -> usize {
     let key = (
-        repository_display_path(&output.root, &test.file),
+        repository_display_path(root, &test.file),
         test.line,
         test.name.clone(),
     );
@@ -339,15 +398,10 @@ fn intern_test(tests: &mut Vec<TestRef>, output: &CheckOutput, test: &RelatedTes
     tests.len()
 }
 
-fn gap_line(
-    output: &CheckOutput,
-    finding: &Finding,
-    test_ref: Option<usize>,
-    with_missing: bool,
-) -> String {
+fn gap_line(root: &Path, finding: &Finding, test_ref: Option<usize>, with_missing: bool) -> String {
     let location = format!(
         "{}:{}",
-        repository_display_path(&output.root, &finding.probe.location.file),
+        repository_display_path(root, &finding.probe.location.file),
         finding.probe.location.line
     );
     // An open limited finding has no established missing discriminator; its

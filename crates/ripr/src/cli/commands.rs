@@ -3201,11 +3201,17 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     let mut committed = false;
     // #8739: same meaning as `ripr check --quiet`: stderr progress only.
     let mut quiet = false;
+    // #12104: `--format human` (default) or `agent`.
+    let mut format = app::ExplainFormat::Human;
     let mut root_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--quiet" => quiet = true,
+            "--format" => {
+                i += 1;
+                format = parse_explain_format(expect_value(args, i, "--format")?)?;
+            }
             "--root" => {
                 i += 1;
                 input.root = PathBuf::from(expect_value(args, i, "--root")?);
@@ -3350,6 +3356,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             artifact_path,
             asserted_base.as_deref(),
             explicit.mode,
+            format,
         )?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
@@ -3361,6 +3368,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 worktree,
                 worktree_from_default,
                 progress_sink,
+                format,
             )?
         }
     };
@@ -3373,6 +3381,23 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     }
     println!("{rendered}");
     Ok(())
+}
+
+/// `ripr explain --format`: the human explanation or the compact agent lines
+/// (#12104). `json` is deliberately not offered: `ripr context` is the JSON
+/// route for one finding, and the refusal says so.
+fn parse_explain_format(value: &str) -> Result<app::ExplainFormat, String> {
+    match value {
+        "human" | "text" => Ok(app::ExplainFormat::Human),
+        "agent" => Ok(app::ExplainFormat::Agent),
+        "json" => Err(
+            "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
+                .to_string(),
+        ),
+        other => Err(format!(
+            "unknown explain format `{other}`; expected `human` or `agent`"
+        )),
+    }
 }
 
 /// The selector-less `explain`/`context` error. `listing` lists finding ids

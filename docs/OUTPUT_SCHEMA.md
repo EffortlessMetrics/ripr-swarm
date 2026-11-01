@@ -851,6 +851,35 @@ demo diff it measured 528 bytes against 2,549 (`human`), 4,475 (`human-full`)
 and 11,845 (`json`); it grows by roughly 150 bytes per listed gap and stops at
 five.
 
+`ripr explain <finding-id|file:line> --format agent` (#12104) is the one-finding
+counterpart of `check --format agent`: the same line-oriented text grammar, no
+JSON and no `schema_version`. `--format human` (alias `text`) stays the default.
+`--format json` is refused with a pointer to `ripr context`, which remains the
+JSON packet. It reuses the check projection's record, `tK` row and gap
+predicates, so a finding is a "gap" in both or in neither, and adds no verdict,
+class or ranking. Errors (no match, ambiguous selector, bad scope) stay prose on
+stderr with empty stdout.
+
+```text
+#ripr explain agent static-advisory class=CLASS
+CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
+tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
+limit=STATIC_LIMIT_KIND
+done=... | open=... | stop=...
+next=ripr context ... --at SELECTOR
+```
+
+- Exactly one record; `tK` is the strongest contributing related test (the
+  weak-assertion row for the limited `open=` case) and is absent when none
+  exists. `limit=` appears only when the producer named a static limit.
+- Exactly one terminal line: `open=` for a candidate-current test-side gap
+  (`weakly_exposed` or `reachable_unrevealed`, not limited) or for a
+  reach-only limit that still carries a weak related test (the `check` `open=`
+  rule); `done=` for an exposed finding; `stop=` otherwise (limited,
+  preview-only, base-side, `no_static_path`, unknown classes). All are static
+  advisory, never runtime mutation outcomes.
+- `next=` is the scope-bound `ripr context` command for this finding.
+
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
 state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or

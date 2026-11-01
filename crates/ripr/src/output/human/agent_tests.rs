@@ -1,6 +1,6 @@
 //! Contract tests for `ripr check --format agent` (#11580).
 
-use super::agent::{MAX_GAP_LINES, render};
+use super::agent::{MAX_GAP_LINES, render, render_finding};
 use crate::app::{CheckDiffProvenance, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
@@ -477,5 +477,100 @@ fn format_name_parses_and_stays_diff_scoped() {
     // Negative: near-miss spellings and the repo packet format do not alias it.
     for other in ["agents", "agent-json", "agent-text", "Agent"] {
         assert_eq!(OutputFormat::parse_cli_name(other), None, "{other}");
+    }
+}
+
+// ---- `ripr explain --format agent` (#12104) ----
+
+fn explained(finding: &Finding) -> String {
+    render_finding(
+        finding,
+        std::path::Path::new("repo"),
+        "ripr context --root repo --at probe:a",
+    )
+}
+
+#[test]
+fn explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next() {
+    let text = explained(&weak_gap("probe:a", 2));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "#ripr explain agent static-advisory class=weakly_exposed",
+            "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50|test=t1|id=probe:a",
+            "t1=tests/t.rs:3 discount_runs relational_check `assert!(discount(10, 100) > 0);` miss=weak_assertion",
+            "open=a test-side gap remains: no related test is shown to notice this change; static advisory, not runtime proof",
+            "next=ripr context --root repo --at probe:a",
+        ]
+    );
+}
+
+#[test]
+fn explain_agent_exposed_finding_is_done_not_open() {
+    let text = explained(&finding("probe:ok", ExposureClass::Exposed, 4));
+    assert!(text.lines().any(|line| line.starts_with("done=")), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    assert!(!text.contains("stop="), "{text}");
+    assert!(text.contains("|missing=-|test=-|"), "{text}");
+}
+
+#[test]
+fn explain_agent_limited_finding_stops_and_names_the_limit_without_a_gap_claim() {
+    let mut limited_weak = weak_gap("probe:limited", 4);
+    limited_weak.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    limited_weak.related_tests[0].oracle_strength = OracleStrength::Strong;
+    let text = explained(&limited_weak);
+    assert!(
+        text.lines()
+            .any(|line| line == "limit=rust_transitive_reach_unresolved"),
+        "{text}"
+    );
+    assert!(text.lines().any(|line| line.starts_with("stop=")), "{text}");
+    // Discriminating negative: a limited finding is not a gap, so the missing
+    // value must not be offered as something to assert.
+    assert!(!text.contains("|missing=pct == 50|"), "{text}");
+    assert!(!text.contains("open="), "{text}");
+}
+
+#[test]
+fn explain_agent_reach_limit_with_weak_row_is_open_without_a_missing_value() {
+    let text = explained(&reach_limited_weak("probe:fortnight", 264));
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("open=a static limit leaves reach unconfirmed")),
+        "{text}"
+    );
+    assert!(text.contains("|missing=-|test=t1|"), "{text}");
+}
+
+#[test]
+fn explain_agent_agrees_with_check_agent_on_gap_membership() {
+    // One predicate decides "gap" for both surfaces: for every class, explain
+    // prints `open=` exactly when check lists the finding in `gaps=`.
+    for class in [
+        ExposureClass::Exposed,
+        ExposureClass::WeaklyExposed,
+        ExposureClass::ReachableUnrevealed,
+        ExposureClass::NoStaticPath,
+        ExposureClass::StaticUnknown,
+    ] {
+        let f = finding("probe:x", class, 3);
+        let check_has_gap = rendered(&output(vec![f.clone()])).contains(" gaps=1 ");
+        let explain_open = explained(&f).contains("\nopen=");
+        assert_eq!(check_has_gap, explain_open, "{class:?}");
+    }
+}
+
+#[test]
+fn explain_agent_record_cannot_be_forged_and_stays_static() {
+    let mut gap = weak_gap("probe:a", 2);
+    gap.probe.expression = "a | b\nc".to_string();
+    let text = explained(&gap);
+    let line = text.lines().nth(1).unwrap_or_default();
+    assert!(line.contains("a \\| b c"), "{line}");
+    for parts in [["kil", "led"], ["surv", "ived"], ["pro", "ven"]] {
+        let word = parts.concat();
+        assert!(!text.contains(&word), "{word} in {text}");
     }
 }
