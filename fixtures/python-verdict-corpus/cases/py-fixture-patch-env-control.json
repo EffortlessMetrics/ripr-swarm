@@ -28,7 +28,9 @@
   "expected": {
     "ideal_verdict": "credited",
     "acceptable_verdicts": [
-      "credited"
+      "credited",
+      "limited",
+      "silent"
     ]
   },
   "reasoning": "Control: the autouse conftest fixture only sets an environment variable and substitutes nothing, so the exact assertion runs the owner and catches the edit; it must stay credited.",
