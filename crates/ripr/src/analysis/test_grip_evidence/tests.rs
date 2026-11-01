@@ -13650,6 +13650,42 @@ fn given_boundary_owner_call_when_input_operand_is_closure_local_then_activation
     Ok(())
 }
 
+/// #12053: a repo seam whose one-line arms all hold the same statement
+/// decides nothing an exact assertion can see, so it must not read propagated
+/// (and so not strongly gripped). Differing arms keep the propagated read.
+#[test]
+fn identical_inline_arm_predicate_seam_does_not_propagate_but_differing_arms_do()
+-> Result<(), String> {
+    let test = (
+        "tests/pick_tests.rs",
+        "#[test] fn pins_boundary() { assert_eq!(pick(5), 1); }\n",
+    );
+    let propagate_for = |branch: &str| -> Result<StageState, String> {
+        let prod_src =
+            format!("pub fn pick(x: i32) -> i32 {{\n    let r;\n    {branch}\n    r + 0\n}}\n");
+        let files: Vec<(PathBuf, &str)> = vec![
+            (PathBuf::from("src/lib.rs"), prod_src.as_str()),
+            (PathBuf::from(test.0), test.1),
+        ];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let predicate = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary)
+            .ok_or_else(|| "predicate seam present".to_string())?;
+        Ok(evidence_for_seam(predicate, &index).propagate.state)
+    };
+    assert_eq!(
+        propagate_for("if x >= 5 { r = 1; } else { r = 1; }")?,
+        StageState::Unknown
+    );
+    assert_eq!(
+        propagate_for("if x >= 5 { r = 1; } else { r = 2; }")?,
+        StageState::Yes
+    );
+    Ok(())
+}
+
 #[test]
 fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
     let owner = FunctionSummary {

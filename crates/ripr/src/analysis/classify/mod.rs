@@ -91,7 +91,9 @@ pub(in crate::analysis) use facade_reach::{
     FacadeReachWitness, RUST_FACADE_REACH_MESSAGE, facade_reach_limitation_detail_lines,
     facade_reach_witness, facade_reach_witness_pointer,
 };
-pub(in crate::analysis) use flow::{local_flow_sinks, propagation_evidence_with_witness};
+pub(in crate::analysis) use flow::{
+    local_flow_sinks, predicate_line_arms_all_agree, propagation_evidence_with_witness,
+};
 pub(in crate::analysis) use framework_oracle::withhold_framework_oracle_gap;
 pub(in crate::analysis) use gap_admission::{
     CALL_BUDGET_SATURATED, DEBUG_ASSERT_EQ_PIN_PREFIX, MIXED_REFUSAL_IS_ANALYZER_LIMIT,

@@ -1046,6 +1046,23 @@ fn inline_arms_all_agree(line: &str) -> bool {
     })
 }
 
+/// Whether the predicate line of `owner_fn` at `probe_line` is a one-line `if`
+/// whose arms all hold the same statement, so the condition decides nothing a
+/// test can observe. The shared owner of that reading for diff and repo seams
+/// (#10880, #12053).
+pub(in crate::analysis) fn predicate_line_arms_all_agree(
+    owner_fn: Option<&FunctionSummary>,
+    probe_line: usize,
+) -> bool {
+    owner_fn.is_some_and(|function| {
+        function
+            .body
+            .lines()
+            .nth(probe_line.saturating_sub(function.start_line))
+            .is_some_and(inline_arms_all_agree)
+    })
+}
+
 fn next_branch_value(
     owner_fn: Option<&FunctionSummary>,
     probe_line: usize,
@@ -1062,12 +1079,7 @@ fn next_branch_value(
     // line is not the predicate's produced value (#10880; #9843 for the tail
     // form). Arms that differ keep the adjacency rule: `let r = if c { 1 }
     // else { 0 };` really does feed `r` to the next line.
-    if function
-        .body
-        .lines()
-        .nth(start_index)
-        .is_some_and(inline_arms_all_agree)
-    {
+    if predicate_line_arms_all_agree(owner_fn, probe_line) {
         return None;
     }
     function
