@@ -5155,7 +5155,13 @@ pub(super) fn walk_body_lexical<'a>(
     let mut pending_dollar = false;
     let mut block_comment_has_newline = false;
     let mut comment_opened_at_statement_start = false;
+    let mut skip_comment_close_slash = false;
     for (idx, ch) in body_text.char_indices() {
+        if skip_comment_close_slash {
+            // The `/` of a closing `*/` is part of the comment, not code.
+            skip_comment_close_slash = false;
+            continue;
+        }
         if escaped {
             escaped = false;
             continue;
@@ -5251,6 +5257,7 @@ pub(super) fn walk_body_lexical<'a>(
                     // line-start check (ASI), so a declaration following it is
                     // still recognized as leading its line.
                     state = BodyScanState::Code;
+                    skip_comment_close_slash = true;
                     // A same-line comment is transparent: it keeps the
                     // statement position it opened at (`; /* n */ const f`).
                     at_line_start = block_comment_has_newline || comment_opened_at_statement_start;
