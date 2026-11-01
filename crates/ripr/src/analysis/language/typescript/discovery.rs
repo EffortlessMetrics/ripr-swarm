@@ -229,7 +229,14 @@ pub(crate) fn visit_workspace_with_handwritten(
         // Sorted names make DFS LIFO visit later names first (`src` before
         // `docs`), so a tiny operator cap still indexes the source file
         // before the docs tree trips the total-entry backstop.
-        let mut dir_entries: Vec<_> = entries.flatten().collect();
+        // Enumeration is bounded before sorting: at most one entry past the
+        // remaining backstop budget is collected, so one huge directory
+        // cannot exhaust memory before the backstop reports truncation.
+        let remaining = max_total_entries.saturating_sub(total_entries);
+        let mut dir_entries: Vec<_> = entries
+            .flatten()
+            .take(remaining.saturating_add(1))
+            .collect();
         dir_entries.sort_by_key(|entry| entry.file_name());
         let mut stop = false;
         for entry in dir_entries {
