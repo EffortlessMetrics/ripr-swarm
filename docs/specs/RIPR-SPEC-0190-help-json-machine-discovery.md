@@ -152,6 +152,13 @@ command or workflow claim.
 
 ## Required Evidence
 
+Limits of the evidence: `accepts_json_flag` is checked against each own-body
+help row (shared-body rows and the documented gaps `help`, `context`,
+`outcome` and `calibrate cargo-mutants`, whose help bodies omit the flag or
+its typed value set, are exempt and rest on the metadata table, which was
+derived by probing the prior binary). `writes_json_artifacts` has no
+independent runtime oracle; it is a hand-maintained metadata fact.
+
 - Production document integrity is empty of violations and the document is
   valid JSON with `schema_version` 4, non-empty `commands` and `workflows`,
   and a 64-hex-character sha256 digest.
