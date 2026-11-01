@@ -1,5 +1,0 @@
-crates/ripr/src/cli/commands/check.rs|--output-dir requires a named --diff file and cannot be combined with --format/--json, --worktree/--committed,
-crates/ripr/src/cli/commands/check.rs|RIPR_CHECK_TIMEOUT must be valid UTF-8
-crates/ripr/src/cli/commands/check.rs|failed to read gap ledger {}: {err}
-crates/ripr/src/cli/commands/check.rs|resolve current directory failed: {error}
-crates/ripr/src/cli/commands/check.rs|{source} is too large for the platform deadline; got {secs} seconds

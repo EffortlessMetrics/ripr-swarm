@@ -42,11 +42,11 @@ impl ServerInterrupts {
                 signal,
                 Arc::clone(&registration.interrupted),
             )
-            .map_err(|error| format!("cannot preserve native signal {signal}: {error}"))?;
+            .map_err(|error| format!("cannot preserve native signal {signal}: {error}; check the process may install signal handlers, or report this as a ripr bug with the command you ran"))?;
             registration.registrations.push(native);
             let cancellation =
                 signal_hook::flag::register(signal, Arc::clone(&registration.interrupted))
-                    .map_err(|error| format!("cannot observe signal {signal}: {error}"))?;
+                    .map_err(|error| format!("cannot observe signal {signal}: {error}; check the process may install signal handlers, or report this as a ripr bug with the command you ran"))?;
             registration.registrations.push(cancellation);
         }
         Ok(registration)
@@ -166,11 +166,13 @@ impl SignalRegistration {
         // Order matters: publication's store/checkpoint handshake relies on
         // cancellation being stored before the conditional native-action read.
         let cancellation = signal_hook::flag::register(signal, interrupted)
-            .map_err(|error| format!("check: cannot observe SIGINT: {error}"))?;
+            .map_err(|error| format!("check: cannot observe SIGINT: {error}; check the process may install signal handlers, or report this as a ripr bug with the command you ran"))?;
         if let Err(error) = signal_hook::flag::register_conditional_default(signal, native.clone())
         {
             signal_hook::low_level::unregister(cancellation);
-            return Err(format!("check: cannot preserve native SIGINT: {error}"));
+            return Err(format!(
+                "check: cannot preserve native SIGINT: {error}; check the process may install signal handlers, or report this as a ripr bug with the command you ran"
+            ));
         }
         // A second signal can escape blocked analysis I/O or stalled cleanup.
         // The first still requests cooperative settlement before arming this.
@@ -183,7 +185,9 @@ impl SignalRegistration {
             Err(error) => {
                 native.store(true, std::sync::atomic::Ordering::SeqCst);
                 signal_hook::low_level::unregister(cancellation);
-                Err(format!("check: cannot arm forced SIGINT: {error}"))
+                Err(format!(
+                    "check: cannot arm forced SIGINT: {error}; check the process may install signal handlers, or report this as a ripr bug with the command you ran"
+                ))
             }
         }
     }
@@ -201,7 +205,8 @@ impl Drop for SignalRegistration {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::{
         InterruptFlags, SignalRegistration, check, install_server_interrupts,
