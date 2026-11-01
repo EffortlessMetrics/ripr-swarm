@@ -2747,6 +2747,7 @@ impl AssertionRefusal {
                 | AssertionContextRefusal::AsyncTest
                 | AssertionContextRefusal::DuplicateSpelling
                 | AssertionContextRefusal::DuplicateSpellingOneRuns
+                | AssertionContextRefusal::ModelCheckClosure
                 | AssertionContextRefusal::StaleSource => true,
                 AssertionContextRefusal::TestAttribute(attribute) => {
                     !attribute_settles_test_outcome(attribute)
@@ -2838,6 +2839,9 @@ impl AssertionRefusal {
                 }
                 AssertionContextRefusal::ConditionalPath(construct) => {
                     format!("the assertion is inside {construct}")
+                }
+                AssertionContextRefusal::ModelCheckClosure => {
+                    "the assertion is inside a closure a model-checking runner (`loom::model`, `shuttle::check_*`) calls, and ripr does not read how often the runner calls it".into()
                 }
                 AssertionContextRefusal::GuardedReturn(condition) => format!(
                     "the assertion is inside a block that an earlier `if {condition} {{ return; }}` can skip"

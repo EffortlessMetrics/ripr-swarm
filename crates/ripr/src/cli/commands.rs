@@ -92,7 +92,7 @@ fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {
     crate::atomic_file::ensure_relative_output_contained(path)?;
     output::file_write::write(path, rendered.as_bytes()).map_err(|err| {
         format!(
-            "write output {} failed: {err}",
+            "write output {} failed: {err}; check you can write to that path, then rerun",
             output::outcome::display_path(path)
         )
     })
@@ -3840,15 +3840,15 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--records"])),
-            Err("missing value for --records".to_string())
+            Err("missing value for --records; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--repo-exposure"])),
-            Err("missing value for --repo-exposure".to_string())
+            Err("missing value for --repo-exposure; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--check-output"])),
-            Err("missing value for --check-output".to_string())
+            Err("missing value for --check-output; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&[
@@ -3909,7 +3909,7 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["ts-limitations", "--check-output"])),
-            Err("missing value for --check-output".to_string())
+            Err("missing value for --check-output; pass a value right after it".to_string())
         );
     }
 
@@ -3989,7 +3989,7 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["ts-false-actionable", "--corpus"])),
-            Err("missing value for --corpus".to_string())
+            Err("missing value for --corpus; pass a value right after it".to_string())
         );
     }
 
@@ -4975,7 +4975,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_operations_options(&args(&[])),
-            Err("policy operations requires --policy-readiness <path>".to_string())
+            Err("policy operations requires --policy-readiness <path>; add `--policy-readiness <path>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_operations_options(&args(&["--policy-readiness", ""])),
@@ -4987,7 +4987,9 @@ mod tests {
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&[])),
-            Err("policy promote requires --to <mode>".to_string())
+            Err(
+                "policy promote requires --to <mode>; add `--to <mode>` to the command".to_string()
+            )
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "strict"])),
@@ -5005,7 +5007,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "visible-only"])),
-            Err("policy promote requires --operations <path>".to_string())
+            Err("policy promote requires --operations <path>; add `--operations <path>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "visible-only", "--operations", ""])),
@@ -5020,7 +5022,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&[])),
-            Err("policy preview-promote requires --language <language>".to_string())
+            Err("policy preview-promote requires --language <language>; add `--language <language>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&["--language", "ruby"])),
@@ -5038,7 +5040,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&["--language", "typescript"])),
-            Err("policy preview-promote requires --class <class>".to_string())
+            Err("policy preview-promote requires --class <class>; add `--class <class>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&[
@@ -5087,7 +5089,10 @@ mod tests {
         );
         assert_eq!(
             parse_policy_history_options(&args(&[])),
-            Err("policy history requires --current <path>".to_string())
+            Err(
+                "policy history requires --current <path>; add `--current <path>` to the command"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_policy_history_options(&args(&["--current", ""])),
@@ -7878,11 +7883,11 @@ language = "rust"
     fn init_requires_root_value() {
         assert_eq!(
             init(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             init(&args(&["--ci"])),
-            Err("missing value for --ci".to_string())
+            Err("missing value for --ci; pass a value right after it".to_string())
         );
     }
 
@@ -8989,23 +8994,23 @@ language = "rust"
     fn explain_requires_values_for_value_flags() {
         assert_eq!(
             explain(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--diff"])),
-            Err("missing value for --diff".to_string())
+            Err("missing value for --diff; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--perl-facts"])),
-            Err("missing value for --perl-facts".to_string())
+            Err("missing value for --perl-facts; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--suppression-policy"])),
-            Err("missing value for --suppression-policy".to_string())
+            Err("missing value for --suppression-policy; pass a value right after it".to_string())
         );
     }
 

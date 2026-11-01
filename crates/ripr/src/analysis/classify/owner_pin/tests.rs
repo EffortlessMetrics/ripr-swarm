@@ -6347,6 +6347,59 @@ fn a_return_guard_that_spares_the_expected_value_is_an_analyzer_limit() {
     }
 }
 
+/// #11543: a model-checking runner's closure is a limit of ripr's reading,
+/// never a shape that can keep the assertion from running, so it must not
+/// read as a test gap. Local closures stay real refusals.
+#[test]
+fn a_model_check_closure_is_an_analyzer_limit_and_other_closures_are_not() {
+    let refusal = |body: &str| {
+        weight_refusal(
+            &format!("use demo::weight;\n#[test]\nfn weighs() {{\n{body}\n}}\n"),
+            &[],
+        )
+    };
+    let pin = "assert_eq!(weight(4), 12);";
+    for runner in [
+        "loom::model(|| { PIN })",
+        "::loom::model(|| { PIN });",
+        "shuttle::check_random(|| { PIN }, 100);",
+        "shuttle::check_dfs(|| { PIN }, None);",
+    ] {
+        let body = runner.replace("PIN", pin);
+        let found = refusal(&body);
+        assert_eq!(
+            found,
+            Some(AssertionRefusal::Syntax(
+                AssertionContextRefusal::ModelCheckClosure
+            )),
+            "{body}"
+        );
+        assert!(
+            found.is_some_and(|found| found.is_analyzer_limit()),
+            "{body}"
+        );
+    }
+    // Not a runner: a closure handed to an unknown function, a method named
+    // `model`, or a closure that is not the runner's first argument keeps the
+    // real-gap reading.
+    for runner in [
+        "run_it(|| { PIN });",
+        "loom.model(|| { PIN });",
+        "other::model(|| { PIN });",
+        "shuttle::check_random(100, || { PIN });",
+        "shuttle::replay(|| { PIN });",
+    ] {
+        let body = runner.replace("PIN", pin);
+        let found = refusal(&body);
+        assert!(
+            found
+                .as_ref()
+                .is_some_and(|found| !found.is_analyzer_limit()),
+            "{body}: {found:?}"
+        );
+    }
+}
+
 #[test]
 fn each_refusal_names_the_gate_that_failed() {
     let refusal = |body: &str, attrs: &str| {

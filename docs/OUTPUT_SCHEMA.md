@@ -836,10 +836,12 @@ next=COMMAND
   counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
   row, or any other limit kind, keeps `stop=`.
 - Terminal states are one explicit line: `done=` (no weak or unobserved gap is
-  left to fix from the test side, or no changed behavior was found in scope) or
+  left to fix from the test side, or no changed behavior was found in scope),
   `stop=` (every finding is base-side or unresolved, all are suppressed by
   policy, ripr cannot tell from reading the code, preview-only evidence, or
-  nothing was analyzed because no scope was given). `done=` is static advisory
+  nothing was analyzed because no scope was given), or `open=` (no gap is
+  listed, but a reach-only limitation still carries a weak or smoke related
+  test; it replaces `stop=` as described above). `done=` is static advisory
   evidence, not runtime mutation outcome or test adequacy.
 
 Machine consumers that need fields should keep using `--format json`; this

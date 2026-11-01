@@ -499,23 +499,23 @@ mod tests {
     fn context_requires_values_for_value_flags() {
         assert_eq!(
             context(&args(&["--at"])),
-            Err("missing value for --at".to_string())
+            Err("missing value for --at; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--finding"])),
-            Err("missing value for --finding".to_string())
+            Err("missing value for --finding; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--perl-facts"])),
-            Err("missing value for --perl-facts".to_string())
+            Err("missing value for --perl-facts; pass a value right after it".to_string())
         );
         assert_eq!(
             context(&args(&["--suppression-policy"])),
-            Err("missing value for --suppression-policy".to_string())
+            Err("missing value for --suppression-policy; pass a value right after it".to_string())
         );
     }
 
