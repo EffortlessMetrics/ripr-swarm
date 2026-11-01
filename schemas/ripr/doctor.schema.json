@@ -243,14 +243,7 @@
     "detected_language": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "language",
-        "status",
-        "adapter_available",
-        "enabled",
-        "availability_state",
-        "remediation"
-      ],
+      "required": ["language", "status", "adapter_available", "enabled"],
       "properties": {
         "language": { "type": "string", "minLength": 1 },
         "status": { "$ref": "#/$defs/language_status" },
@@ -264,7 +257,7 @@
           "type": ["boolean", "null"]
         },
         "availability_state": {
-          "description": "The shared language-availability state. `null` when the configuration could not be loaded (enablement unknown). Availability never means the adapter ran or that the support tier moved.",
+          "description": "The shared language-availability state, added within schema 0.4 and therefore optional so earlier 0.4 documents stay valid; the producer always emits it. `null` when the configuration could not be loaded (enablement unknown). Availability never means the adapter ran or that the support tier moved.",
           "enum": [
             "detected_compiled_enabled",
             "detected_compiled_disabled",
@@ -279,7 +272,7 @@
           ]
         },
         "remediation": {
-          "description": "Ordered remediation steps for the availability state; empty when none applies.",
+          "description": "Ordered remediation steps for the availability state, added within schema 0.4 and therefore optional; the producer always emits it, empty when none applies.",
           "type": "array",
           "items": { "type": "string", "minLength": 1 }
         }

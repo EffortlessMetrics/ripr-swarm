@@ -290,6 +290,7 @@ impl DoctorEnvironment {
                 detected_languages: detected_language_entries(
                     detected,
                     loaded.map(|config| config.languages().enabled()),
+                    loaded.is_some_and(|config| config.source_text().is_none()),
                 ),
                 unanalyzed_source_languages,
                 preview_language_gaps: preview_language_gaps(preview_enablement.as_ref()),
@@ -304,12 +305,19 @@ impl DoctorEnvironment {
     }
 }
 
+/// `auto_defaulted` is true when no `ripr.toml` was loaded, so the enabled list
+/// is the built-in default plus project-marker detection. Python and TypeScript
+/// are the languages that detection can enable; reporting them as explicitly
+/// configured would hide that origin, so they resolve with an unspecified
+/// intent and the when-detected policy (`auto_detected_enabled`).
 fn detected_language_entries(
     detected: &[LanguageId],
     enabled: Option<&[LanguageId]>,
+    auto_defaulted: bool,
 ) -> Vec<output::doctor::DoctorDetectedLanguage> {
     use crate::domain::language_availability::{
-        ConfiguredIntent, LanguageAvailabilityInput, resolve_language_availability,
+        AutoDetectionPolicy, ConfiguredIntent, LanguageAvailabilityInput,
+        resolve_language_availability,
     };
     detected
         .iter()
@@ -320,12 +328,23 @@ fn detected_language_entries(
             // mapping the gaps path uses. `None` (no loaded configuration)
             // stays unknown rather than reading as disabled.
             let enabled = enabled.map(|list| list.contains(&config_entry(*id)));
+            let auto_enabled = auto_defaulted
+                && enabled == Some(true)
+                && matches!(
+                    config_entry(*id),
+                    LanguageId::Python | LanguageId::TypeScript
+                );
             let report = resolve_language_availability(&LanguageAvailabilityInput {
                 project_detected: true,
                 configured: match enabled {
-                    Some(true) => ConfiguredIntent::Enabled,
+                    Some(true) if !auto_enabled => ConfiguredIntent::Enabled,
                     Some(false) => ConfiguredIntent::Disabled,
-                    None => ConfiguredIntent::Unspecified,
+                    _ => ConfiguredIntent::Unspecified,
+                },
+                auto_policy: if auto_enabled {
+                    AutoDetectionPolicy::WhenDetected
+                } else {
+                    AutoDetectionPolicy::Never
                 },
                 ..LanguageAvailabilityInput::for_language(*id)
             });
@@ -6557,7 +6576,8 @@ mod tests {
     fn detected_entries_carry_the_shared_availability_state() {
         // Rust is always compiled in, so the disabled branch is exercised on
         // every feature set rather than only where the Python adapter exists.
-        let disabled = detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Python]));
+        let disabled =
+            detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Python]), false);
         assert_eq!(
             disabled[0].availability_state,
             Some("detected_compiled_disabled")
@@ -6576,27 +6596,65 @@ mod tests {
             let js = detected_language_entries(
                 &[LanguageId::JavaScript],
                 Some(&[LanguageId::TypeScript]),
+                false,
             );
             assert_eq!(js[0].enabled, Some(true));
             assert_eq!(js[0].availability_state, Some("detected_compiled_enabled"));
         }
-        let enabled = detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]));
+        let enabled =
+            detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]), false);
         assert_eq!(
             enabled[0].availability_state,
             Some("detected_compiled_enabled")
         );
         assert!(enabled[0].remediation.is_empty());
-        let unknown = detected_language_entries(&[LanguageId::Rust], None);
+        let unknown = detected_language_entries(&[LanguageId::Rust], None, false);
         assert_eq!(unknown[0].enabled, None);
         // Unknown enablement publishes no state and no enable step.
         assert_eq!(unknown[0].availability_state, None);
         assert!(unknown[0].remediation.is_empty());
     }
 
+    /// Without a loaded `ripr.toml` the enabled list is the built-in default plus
+    /// marker detection, so an enabled Python or TypeScript reads as
+    /// `auto_detected_enabled`. The same list from a real `ripr.toml` is explicit.
+    #[test]
+    fn auto_defaulted_python_reads_as_auto_detected_not_configured() {
+        if !LanguageId::Python.is_available() {
+            return;
+        }
+        let auto =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Python]), true);
+        assert_eq!(auto[0].enabled, Some(true));
+        assert_eq!(auto[0].availability_state, Some("auto_detected_enabled"));
+        let configured =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Python]), false);
+        assert_eq!(
+            configured[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
+        // Rust is enabled by the built-in default, not by detection.
+        let rust = detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]), true);
+        assert_eq!(
+            rust[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
+        // A disabled entry stays disabled whatever the origin.
+        let disabled =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Rust]), true);
+        assert_eq!(
+            disabled[0].availability_state,
+            Some("detected_compiled_disabled")
+        );
+    }
+
     #[test]
     fn detected_entries_map_javascript_to_its_typescript_entry() {
-        let entries =
-            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::TypeScript]));
+        let entries = detected_language_entries(
+            &[LanguageId::JavaScript],
+            Some(&[LanguageId::TypeScript]),
+            false,
+        );
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].language, "javascript");
         assert_eq!(
@@ -6605,7 +6663,7 @@ mod tests {
             "the typescript entry analyzes javascript, so it reads as enabled"
         );
         let entries =
-            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::Rust]));
+            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::Rust]), false);
         assert_eq!(
             entries[0].enabled,
             Some(false),
@@ -6615,7 +6673,8 @@ mod tests {
 
     #[test]
     fn detected_entries_stay_unknown_without_a_loaded_configuration() {
-        let entries = detected_language_entries(&[LanguageId::Rust, LanguageId::Python], None);
+        let entries =
+            detected_language_entries(&[LanguageId::Rust, LanguageId::Python], None, false);
         assert!(
             entries.iter().all(|entry| entry.enabled.is_none()),
             "an unloadable config must not read as disabled: {entries:?}"
@@ -6669,7 +6728,7 @@ mod tests {
         // same line; the typed `adapter_available` field is what says it in JSON.
         // The expectation follows the compiled features: `--all-features`
         // builds (like CI's JUnit job) compile the Perl adapter (#7137).
-        let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]));
+        let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]), false);
         let first = &detected_languages_lines(&unavailable, &[])[0];
         if cfg!(feature = "lang-perl") {
             assert!(unavailable[0].adapter_available);

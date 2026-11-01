@@ -405,6 +405,20 @@ fn doctor_json_conforms_to_the_published_schema() -> Result<(), String> {
             ));
         }
     }
+    // Optional in the schema (added within 0.4), but the producer always
+    // emits both, so a live document that drops either has regressed.
+    let entries = document["detected_languages"]
+        .as_array()
+        .ok_or_else(|| format!("detected_languages must be an array: {document}"))?;
+    for entry in entries {
+        for key in ["availability_state", "remediation"] {
+            if entry.get(key).is_none() {
+                return Err(format!(
+                    "the producer must emit `{key}` for every detected language: {entry}"
+                ));
+            }
+        }
+    }
     if document["config_defaults"]["bun_ub_bridge_hints"]
         .as_str()
         .is_none_or(str::is_empty)
@@ -519,15 +533,17 @@ fn published_doctor_schema_rejects_documents_the_schema_forbids() -> Result<(), 
         &schema,
     )?;
 
-    let mut missing_availability_state = base.clone();
-    if let Some(object) = missing_availability_state["detected_languages"][0].as_object_mut() {
+    // The two fields were added within schema 0.4, so they are optional: a 0.4
+    // document written before they existed must still validate. The producer
+    // side of that bargain is asserted in the conformance test, which fails
+    // when a live document omits either key.
+    let mut earlier_document = base.clone();
+    if let Some(object) = earlier_document["detected_languages"][0].as_object_mut() {
         object.remove("availability_state");
+        object.remove("remediation");
     }
-    assert_rejected(
-        "missing availability state",
-        &missing_availability_state,
-        &schema,
-    )?;
+    check(&earlier_document, &schema, &schema, "doctor")
+        .map_err(|error| format!("an earlier 0.4 document was rejected: {error}"))?;
 
     let mut unknown_exporter_state = base.clone();
     unknown_exporter_state["perl_preview"]["exporter"]["state"] =
