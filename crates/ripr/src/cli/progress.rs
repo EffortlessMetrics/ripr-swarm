@@ -670,26 +670,51 @@ mod tests {
     /// `RIPR_PROGRESS` keeps progress; `--quiet` / `RIPR_QUIET` always win.
     #[test]
     fn progress_default_is_off_only_for_machine_formats_on_a_non_terminal() {
-        // (quiet_flag, quiet_env, progress_env, machine, terminal) -> silenced
-        let table: [(bool, Option<&str>, Option<&str>, bool, bool, bool); 11] = [
-            (false, None, None, true, false, true),
-            (false, None, None, true, true, false),
-            (false, None, None, false, false, false),
-            (false, None, None, false, true, false),
-            (false, None, Some("1"), true, false, false),
-            (false, None, Some("always"), true, false, false),
-            (false, None, Some("0"), true, false, true),
-            (true, None, Some("1"), true, false, true),
-            (false, Some("1"), Some("1"), true, false, true),
-            (true, None, None, false, true, true),
-            (false, Some("0"), None, false, false, false),
+        struct Case {
+            quiet: bool,
+            quiet_env: Option<&'static str>,
+            progress_env: Option<&'static str>,
+            machine: bool,
+            terminal: bool,
+            silenced: bool,
+        }
+        let case = |quiet, quiet_env, progress_env, machine, terminal, silenced| Case {
+            quiet,
+            quiet_env,
+            progress_env,
+            machine,
+            terminal,
+            silenced,
+        };
+        let table = [
+            case(false, None, None, true, false, true),
+            case(false, None, None, true, true, false),
+            case(false, None, None, false, false, false),
+            case(false, None, None, false, true, false),
+            case(false, None, Some("1"), true, false, false),
+            case(false, None, Some("always"), true, false, false),
+            case(false, None, Some("0"), true, false, true),
+            case(true, None, Some("1"), true, false, true),
+            case(false, Some("1"), Some("1"), true, false, true),
+            case(true, None, None, false, true, true),
+            case(false, Some("0"), None, false, false, false),
         ];
-        for (quiet, quiet_env, progress_env, machine, terminal, expected) in table {
+        for row in table {
             assert_eq!(
-                progress_silenced_with(quiet, quiet_env, progress_env, machine, terminal),
-                expected,
-                "quiet={quiet} RIPR_QUIET={quiet_env:?} RIPR_PROGRESS={progress_env:?} \
-                 machine={machine} terminal={terminal}"
+                progress_silenced_with(
+                    row.quiet,
+                    row.quiet_env,
+                    row.progress_env,
+                    row.machine,
+                    row.terminal
+                ),
+                row.silenced,
+                "quiet={} RIPR_QUIET={:?} RIPR_PROGRESS={:?} machine={} terminal={}",
+                row.quiet,
+                row.quiet_env,
+                row.progress_env,
+                row.machine,
+                row.terminal
             );
         }
     }
