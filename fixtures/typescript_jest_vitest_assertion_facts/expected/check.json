@@ -41,7 +41,7 @@
       "flow_sinks": [
       ],
       "evidence": ["owner: applyDiscount", "typescript_oracle_observed: applyDiscount(150, 100)", "typescript_oracle_expected: 140", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/signals.test.ts:23", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/signals.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_signals.ts:typescript_preview:7878a956;owner=applyDiscount", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related test reaches `applyDiscount` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "missing": ["Related test reaches `applyDiscount` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
       "assertion_texts": {
       },
       "activation": {
@@ -283,8 +283,8 @@
       "stop_reasons": [],
       "oracle_kind": "snapshot",
       "oracle_strength": "medium",
-      "recommended_next_step": "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for missing discriminator `return value == `summary:${status.trim()}``; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
-      "suggested_next_action": "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for missing discriminator `return value == `summary:${status.trim()}``; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "recommended_next_step": "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for the missing check `return value == `summary:${status.trim()}``; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for the missing check `return value == `summary:${status.trim()}``; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
@@ -430,8 +430,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `count == 1`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
-      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `count == 1`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "recommended_next_step": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `count == 1`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `count == 1`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",
@@ -469,7 +469,7 @@
         {"kind":"call_effect","text":"sink.record(status);","line":17}
       ],
       "evidence": ["owner: notifyStatus", "mock_payload_evidence: expect(sink.record).toHaveBeenCalledWith(\"ready\")", "typescript_oracle_observed: sink.record", "typescript_oracle_confidence: medium", "typescript_oracle_evidence_ref: tests/signals.test.ts:39", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/signals.ts;line=17;kind=typescript_preview_probe;source_id=probe:src_signals.ts:typescript_preview:5f264af5;owner=notifyStatus", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related test reaches `notifyStatus` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "missing": ["Related test reaches `notifyStatus` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
       "assertion_texts": {
       },
       "activation": {
@@ -594,7 +594,7 @@
         {"kind":"call_effect","text":"sink.record(\"ready\");","line":21}
       ],
       "evidence": ["owner: notifyLiteral", "mock_payload_evidence: expect(sink.record).toHaveBeenCalledWith(\"ready\")", "typescript_oracle_observed: sink.record", "typescript_oracle_confidence: medium", "typescript_oracle_evidence_ref: tests/signals.test.ts:45", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/signals.ts;line=21;kind=typescript_preview_probe;source_id=probe:src_signals.ts:typescript_preview:7d6e77de;owner=notifyLiteral", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related test reaches `notifyLiteral` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "missing": ["Related test reaches `notifyLiteral` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
       "assertion_texts": {
       },
       "activation": {
@@ -719,7 +719,7 @@
         {"kind":"return_value","text":"return await Promise.resolve(`profile:${id}`);","line":25}
       ],
       "evidence": ["owner: loadProfile", "typescript_oracle_observed: loadProfile(\"ada\")", "typescript_oracle_expected: \"profile:ada\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/signals.test.ts:55", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/signals.ts;line=25;kind=typescript_preview_probe;source_id=probe:src_signals.ts:typescript_preview:a68ad559;owner=loadProfile", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
-      "missing": ["Related test reaches `loadProfile` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "missing": ["Related test reaches `loadProfile` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
       "assertion_texts": {
       },
       "activation": {

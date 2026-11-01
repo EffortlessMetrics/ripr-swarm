@@ -23,10 +23,10 @@ Start here:
   Missing check (1 of 2): Only heuristic TypeScript test links were found for `loadProfile`; verify
     the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
   Related test: tests/profile.test.ts:1 rejects missing profile id broadly
-  Next step — TypeScript preview advisory: broad error evidence does not establish missing
-    discriminator `rejects Error matching "missing id"`; add an exact payload to `toThrow` (string,
-    object, or class reference) and no actionable repair packet is emitted until verify, receipt,
-    and edit-boundary fields are available
+  Next step — TypeScript preview advisory: broad error evidence does not establish the missing check
+    `rejects Error matching "missing id"`; add an exact payload to `toThrow` (string, object, or
+    class reference) and no actionable repair packet is emitted until verify, receipt, and
+    edit-boundary fields are available
   Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

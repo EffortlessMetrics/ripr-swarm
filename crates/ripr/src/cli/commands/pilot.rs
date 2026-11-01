@@ -47,6 +47,7 @@ fn write_pilot_repo_exposure_json(
     limit_info: Option<RepoExposureLimit<'_>>,
     generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
     context: Option<&crate::agent::artifact::RepoExposureArtifactContext>,
+    byte_bound: Option<&output::repo_exposure::RepoExposureByteBound>,
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, classified);
     let python_guidance =
@@ -55,12 +56,13 @@ fn write_pilot_repo_exposure_json(
     let Some(context) = context else {
         return write_pilot_file(
             path,
-            output::repo_exposure::render_repo_exposure_json_with_limit(
+            output::repo_exposure::render_repo_exposure_json_bounded(
                 classified,
                 limit_info,
                 ts_guidance.as_ref(),
                 python_guidance.as_ref(),
                 generated_skip,
+                byte_bound,
             ),
         );
     };
@@ -116,6 +118,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // it would bound, not after it.
     // The same guard bounds the built-in inventory cap by that budget (#10726).
     let _pilot_inventory_default = analysis::PilotInventoryDefault::enter()?;
+    // Refuse an invalid RIPR_PILOT_REPO_EXPOSURE_BYTES (#12108) the same way.
+    let repo_exposure_byte_budget = output::repo_exposure::pilot_repo_exposure_byte_budget()?;
     // RIPR_GIT_TIMEOUT bounds pilot's current-change git calls as it bounds
     // check's (#2613): seconds, `0` disables the deadline, and an invalid
     // value fails closed here rather than running with the default.
@@ -261,6 +265,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
                 language_routes: None,
                 current_change: None,
                 seam_limit: None,
+                repo_exposure_byte_bound: None,
             },
         )?;
         return Ok(());
@@ -410,6 +415,15 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     }
     timings.record("seam_budget", budget_started, Some(classified.len()));
     let pilot_budget_truncated = pilot_budget_info.is_some();
+    // #12108: the seam budget bounds the seam count, not bytes. Cut the
+    // `seams[]` entries of repo-exposure.json to the byte budget, disclosed in
+    // the file and pilot-summary.json. Markdown, packets and the summary keep
+    // the full classified population.
+    let repo_exposure_byte_bound = output::repo_exposure::bound_repo_exposure_seams(
+        &classified,
+        repo_exposure_byte_budget,
+        |entry| current_change.keeps_past_budget(entry),
+    );
     // The summary's disclosure counts from the outermost population: when
     // both caps fired, the pilot budget's total is the already-capped
     // inventory, which would hide the seams the inventory limit dropped.
@@ -467,6 +481,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         language_routes: Some(&language_routes),
         current_change: Some(&current_change),
         seam_limit: summary_limit.as_ref(),
+        repo_exposure_byte_bound: repo_exposure_byte_bound.as_ref(),
     };
 
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
@@ -474,7 +489,11 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, &classified);
     // The existing context is available only for the check-comparable full
     // population. Keep base None, matching pilot's printed after command.
-    let snapshot_context = if pilot_budget_truncated || change_seams_added || diff_bound_corpus {
+    let snapshot_context = if pilot_budget_truncated
+        || change_seams_added
+        || diff_bound_corpus
+        || repo_exposure_byte_bound.is_some()
+    {
         None
     } else {
         Some(
@@ -495,6 +514,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         repo_exposure_limit,
         generated_skip.as_ref(),
         snapshot_context.as_ref(),
+        repo_exposure_byte_bound.as_ref(),
     )?;
     write_pilot_file(
         &artifacts.repo_exposure_md,
@@ -1983,6 +2003,7 @@ mod tests {
                 language_routes: None,
                 current_change: None,
                 seam_limit: None,
+                repo_exposure_byte_bound: None,
             },
         )?;
 

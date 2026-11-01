@@ -1110,9 +1110,10 @@ fn failure_schema() -> Value {
             "code": { "type": "string", "enum": failure_vocabulary() },
             "detail": { "type": "string" },
             "recovery": { "type": "string" },
+            "remedy": { "type": "object" },
             "data": { "type": "object" }
         },
-        "required": ["code", "detail", "recovery", "data"],
+        "required": ["code", "detail", "recovery", "remedy", "data"],
         "additionalProperties": false
     })
 }

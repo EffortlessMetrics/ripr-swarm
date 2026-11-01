@@ -6110,6 +6110,43 @@
       ]
     },
     {
+      "id": "py_attribute_sink_same_value_other_receiver",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_adversarial_attribute_sink_same_value_other_receiver",
+      "vector": "attribute_sink_same_value_other_receiver_identity",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
       "id": "py_free_function_module_collision",
       "language": "python",
       "tier": "pure",

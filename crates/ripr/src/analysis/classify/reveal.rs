@@ -5226,10 +5226,36 @@ fn retain_owner_calling_rows(
     ranked: &[RelatedTest],
     owner_calls: &std::collections::BTreeSet<OwnerCallKey>,
 ) {
-    let signalled = |test: &RelatedTest| {
+    retain_signalled_rows(window, ranked, &|test: &RelatedTest| {
         test.relation_reason == Some(RelationReason::WeakTokenSubstring)
             && owner_calls.contains(&(test.file.clone(), test.line, test.name.clone()))
-    };
+    });
+}
+
+/// #12098: an owner-named row whose oracle is too weak to tell the old value
+/// from the new (`weak` or `smoke`) is the row `triage::weak_assertion_row`
+/// reads. It ties the file/module-proximity rows on confidence, so when the
+/// render cap cut rows, name order alone could leave it behind eight proximity
+/// rows that never name the owner. Lift it by the same rules as
+/// [`retain_owner_calling_rows`]: it replaces trailing location-only rows one
+/// for one, never takes row 0, and changes neither the window length nor the
+/// total. No row is rescored or re-tiered. A strong-oracle owner-named row and
+/// a proximity row are not lifted.
+fn retain_owner_named_weak_rows(window: &mut Vec<RelatedTest>, ranked: &[RelatedTest]) {
+    retain_signalled_rows(window, ranked, &|test: &RelatedTest| {
+        test.relation_reason == Some(RelationReason::OwnerNamedTest)
+            && matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
+            )
+    });
+}
+
+fn retain_signalled_rows(
+    window: &mut Vec<RelatedTest>,
+    ranked: &[RelatedTest],
+    signalled: &dyn Fn(&RelatedTest) -> bool,
+) {
     // A signalled test already in the window but behind location-only rows
     // moves up to just ahead of the first of them (its first row only; no row
     // is added or evicted).
@@ -5375,6 +5401,7 @@ fn finalize_related_tests_with_direct_rows(
         if !owner_calls.is_empty() {
             retain_owner_calling_rows(&mut oracle_rows, &ranked, owner_calls);
         }
+        retain_owner_named_weak_rows(&mut oracle_rows, &ranked);
     }
     let free = RELATED_TESTS_RENDER_CAP.saturating_sub(oracle_rows.len());
     oracle_rows.extend(unmatched.into_iter().take(free));

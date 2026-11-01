@@ -262,7 +262,7 @@ The digest's discriminator line label reflects the discriminator state:
 - `Missing check` — the finding is not `exposed`; the named
   discriminator is absent from the related tests (#10691: the digest says
   "check"; the internal word stays in JSON and specs).
-- `Discriminator (observed, advisory)` — the finding is `exposed` and the
+- `Check (observed, advisory)` — the finding is `exposed` and the
   field carries an observation rationale instead of a missing discriminator.
   Preview-language classifiers record that rationale in the same field, so an
   unconditional `Missing discriminator` header would contradict the exposure
@@ -922,7 +922,40 @@ unchanged, and the lines claim no runtime outcome.
   bounded default output.
 - Output-contract, static-language, traceability, and check-pr gates.
 
+### `explain --format agent` (#12104)
+
+`ripr explain <finding> --format agent` prints the selected finding in the
+`check --format agent` line style: one record, its strongest related test, at
+most one `limit=` line, exactly one terminal line, and a scope-bound
+`next=ripr context ...` command. The terminal states are:
+
+- `open=` only for a candidate-current, unsuppressed test-side gap (or a
+  reach-only limit that still carries a weak related test), using the same
+  predicates as `check --format agent`;
+- `done=` only for a candidate-current, unsuppressed `exposed` finding that is
+  not limited;
+- `stop=` for everything else. A base-deleted, moved or unresolved-subject
+  finding (`Finding::is_candidate_actionable` false) never prints `open=` or
+  `done=`; its `stop=` names the source currentness. A policy-suppressed finding
+  prints a suppression `stop=`. A `--from` replay combined with
+  `--suppression-policy` is refused for this format because the replay cannot
+  apply the policy.
+
+`--format json` is refused toward `ripr context`, which remains the JSON packet.
+The format adds no verdict and claims no runtime outcome.
+
 ## Test Mapping
+
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_exposed_finding_is_done_not_open`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_limited_finding_stops_and_names_the_limit_without_a_gap_claim`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_reach_limit_with_weak_row_is_open_without_a_missing_value`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_agrees_with_check_agent_on_gap_membership`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_record_cannot_be_forged_and_stays_static`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_non_current_findings_fail_closed_with_a_currentness_stop`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_suppressed_gap_is_not_open_but_unsuppressed_is`
+- `crates/ripr/tests/cli_smoke.rs::explain_format_agent_prints_compact_lines_and_json_is_refused`
+- `crates/ripr/tests/cli_smoke.rs::explain_format_agent_from_artifact_replays_the_context_next_command`
 
 - `crates/ripr/src/output/human.rs::tests::plain_language_default_and_glossed_human_full` (#10691: the default view carries none of probe, canonical gap, observable sink, unsuppressed, Missing discriminator; `human-full` keeps the glossed tokens)
 - `crates/ripr/src/output/human.rs::tests::bounded_adapter_unavailable_limitation_is_one_plain_pointer` (#10691)
@@ -1078,3 +1111,6 @@ unchanged, and the lines claim no runtime outcome.
     count line above the same two format pointers. When the omitted set includes
     preview-language or non-Rust identity, that line names the per-language
     counts; a Rust-only remainder stays the count line alone.
+11. `ripr explain <exposed finding> --format agent` prints `done=`; the same
+    finding marked base-deleted prints a `stop=` naming `base_deleted`, and a
+    policy-suppressed weak gap prints a suppression `stop=` rather than `open=`.
