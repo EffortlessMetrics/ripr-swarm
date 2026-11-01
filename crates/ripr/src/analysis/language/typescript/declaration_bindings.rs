@@ -282,16 +282,19 @@ impl DeclarationBindings {
             }
             scope = self.scopes[index].parent;
         }
-        // The tests run every lookup against the full scan this replaced.
+        // The tests run every lookup against the full scan this replaced (up
+        // to a size, so a test build stays linear on a large generated file).
         #[cfg(test)]
-        assert_eq!(
-            scope,
-            self.scopes
-                .iter()
-                .enumerate()
-                .filter(|(_, scope)| scope.span.start <= at && at < scope.span.end)
-                .min_by_key(|(index, scope)| (scope.span.size(), std::cmp::Reverse(*index)))
-                .map(|(index, _)| index),
+        assert!(
+            self.scopes.len() > 512
+                || scope
+                    == self
+                        .scopes
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, scope)| scope.span.start <= at && at < scope.span.end)
+                        .min_by_key(|(index, scope)| (scope.span.size(), std::cmp::Reverse(*index)))
+                        .map(|(index, _)| index),
             "indexed scope lookup disagrees with the full scan at offset {at}"
         );
         scope

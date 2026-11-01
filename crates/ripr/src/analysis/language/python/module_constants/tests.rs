@@ -545,3 +545,12 @@ fn a_test_name_defined_twice_keeps_the_whole_module() -> Result<(), String> {
     assert_eq!(blanked_test_bodies(source)?, source);
     Ok(())
 }
+
+#[test]
+fn a_unicode_named_test_called_at_import_keeps_the_whole_module() -> Result<(), String> {
+    // `\u{2118}` is a Python identifier character that is not alphanumeric to
+    // Rust, so the name is not a word of its own; the call must still count.
+    let source = "def test_\u{2118}():\n    globals()['CASES'] = []\ntest_\u{2118}()\n";
+    assert_eq!(blanked_test_bodies(source)?, source);
+    Ok(())
+}
