@@ -1776,8 +1776,11 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr repair [<item>] --root .",
         next_routes: &["continue", "status"],
         stop_states: &[
-            "several eligible seams print a bounded selection instead of starting",
-            "no eligible seam prints the setup or limitation action instead of starting",
+            "several eligible seams print a bounded selection instead of starting (stderr code several_eligible_seams)",
+            "no eligible seam prints the setup or limitation action instead of starting (stderr code no_eligible_seam)",
+            "an explicit item that names no seam (item_names_no_seam), several seams (item_names_several_seams), or a seam that is not repair-eligible (seam_not_repair_eligible) starts nothing",
+            "a start held by an uncommitted focused test file (start_refused_uncommitted_target) or with no test route (no_test_route) starts nothing",
+            "a bare `ripr repair` whose selector needs an explicit item (repair_needs_item) starts nothing",
         ],
         exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
         limitations: "records the before snapshot and packet for one subject; ripr never edits source files and never runs project verification from this command.",
@@ -1801,8 +1804,11 @@ const METADATA: &[CommandMetadata] = &[
         example: "ripr continue [--attempt ID] --root .",
         next_routes: &["status", "receipt write"],
         stop_states: &[
-            "a receipt-ready attempt reports already-complete; one that ended without a receipt refuses with exit 3",
-            "several current attempts print a bounded selection instead of continuing",
+            "a receipt-ready attempt reports already-complete and exits 0, with or without --attempt (the newest attempt when none is named); one that ended without a receipt refuses with exit 3 (stderr code attempt_ended_without_receipt, or attempt_completion_unconfirmed when no compliant receipt confirms it)",
+            "an attempt still awaiting the focused test edit refuses with exit 3 and code awaiting_edit; retry the same attempt after editing",
+            "an attempt that spent its after-phase retry budget refuses with exit 3 and code retry_budget_exhausted (terminal): start a fresh `ripr repair`",
+            "no current attempt (no_current_attempt) or several (ambiguous_attempts) starts nothing",
+            "an edit-cage violation exits 2 with code edit_cage_violation (attempt_stale or attempt_incomparable when HEAD moved or files cannot be compared): the attempt is terminal, start a fresh `ripr repair`",
         ],
         exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
         limitations: "records the after snapshot and composes static verification for one attempt; ripr never performs the edit and never runs project tests itself.",
@@ -3595,6 +3601,30 @@ mod tests {
         }
         if longest_catalog_prefix("zzz", &paths).is_some() {
             return Err("unknown prefix resolved".to_string());
+        }
+        Ok(())
+    }
+
+    /// #11597: the repair/continue `stop_states` (the `help --json` surface)
+    /// name every refusal code of the typed enum, so a new code cannot ship
+    /// without them.
+    #[test]
+    fn repair_and_continue_stop_states_name_every_refusal_code() -> Result<(), String> {
+        let stop_text = metadata()
+            .iter()
+            .filter(|row| {
+                row.example.starts_with("ripr repair ") || row.example.starts_with("ripr continue")
+            })
+            .flat_map(|row| row.stop_states.iter().copied())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for code in crate::app::task_first::RepairRefusalCode::ALL {
+            if !stop_text.contains(code.as_str()) {
+                return Err(format!(
+                    "repair/continue stop_states do not name `{}`",
+                    code.as_str()
+                ));
+            }
         }
         Ok(())
     }
