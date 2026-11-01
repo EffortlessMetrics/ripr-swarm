@@ -183,7 +183,7 @@ fn external_pins_need_a_nightly_plan_and_cannot_mix_with_direct_arguments() {
 
 #[cfg(unix)]
 #[test]
-fn a_stalled_remote_times_out_and_a_reachable_one_still_runs() {
+fn a_stalled_remote_times_out_at_its_deadline() {
     use super::nightly::git_within;
     use std::time::{Duration, Instant};
     let dir = std::env::temp_dir().join(format!("ripr-warm-ab-stall-{}", std::process::id()));
@@ -209,7 +209,9 @@ fn a_stalled_remote_times_out_and_a_reachable_one_still_runs() {
         "a stalled clone must fail as a timeout"
     );
     assert!(started.elapsed() < Duration::from_secs(30));
-    // The next pin's git call still runs and succeeds.
+    // The primitive is not wedged by the kill. That the nightly loop moves on
+    // to the next pin is the per-pin handler in `run_in`, which needs two
+    // release builds and is not covered here.
     assert_eq!(
         git_within(&["--version"], &dir, Duration::from_secs(30)).map(|v| v.starts_with("git")),
         Ok(true)
