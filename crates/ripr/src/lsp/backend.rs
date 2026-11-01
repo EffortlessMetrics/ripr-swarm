@@ -13454,6 +13454,24 @@ fn disk_content_stat_key(meta: &fs::Metadata) -> DiskContentStatKey {
     }
 }
 
+/// A file modified within this window of the read can be rewritten again with
+/// the same length inside one filesystem timestamp tick (coarse on Windows and
+/// some Linux filesystems), which leaves its stat key unchanged. Git's "racy
+/// timestamp" rule applies: such a digest is used once and never cached, so a
+/// same-length rewrite in the same tick is reread (#12046). A future mtime is
+/// treated the same way.
+const DISK_EQUALITY_RACY_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn disk_mtime_is_racy(meta: &fs::Metadata) -> bool {
+    match meta.modified() {
+        Ok(modified) => std::time::SystemTime::now()
+            .duration_since(modified)
+            .map(|age| age < DISK_EQUALITY_RACY_WINDOW)
+            .unwrap_or(true),
+        Err(_) => true,
+    }
+}
+
 type DiskEqualityDigestCache = Mutex<BTreeMap<PathBuf, (DiskContentStatKey, Option<String>)>>;
 
 static DISK_EQUALITY_DIGEST_CACHE: LazyLock<DiskEqualityDigestCache> =
@@ -13472,7 +13490,11 @@ fn reset_disk_equality_read_cache_for_tests() {
     DISK_EQUALITY_READS.with(|reads| reads.set(0));
 }
 
-fn cached_disk_content_digest(path: &Path, stat_key: &DiskContentStatKey) -> Option<String> {
+fn cached_disk_content_digest(
+    path: &Path,
+    stat_key: &DiskContentStatKey,
+    racy: bool,
+) -> Option<String> {
     if let Ok(cache) = DISK_EQUALITY_DIGEST_CACHE.lock()
         && let Some((cached_key, digest)) = cache.get(path)
         && cached_key == stat_key
@@ -13485,7 +13507,13 @@ fn cached_disk_content_digest(path: &Path, stat_key: &DiskContentStatKey) -> Opt
 
     let digest = super::state::read_saved_bytes(path).map(|disk| content_digest(&disk));
     if let Ok(mut cache) = DISK_EQUALITY_DIGEST_CACHE.lock() {
-        cache.insert(path.to_path_buf(), (stat_key.clone(), digest.clone()));
+        if racy {
+            // Drop any older entry too, so a racy read never leaves a key that
+            // a later same-tick rewrite could match.
+            cache.remove(path);
+        } else {
+            cache.insert(path.to_path_buf(), (stat_key.clone(), digest.clone()));
+        }
     }
     digest
 }
@@ -13494,7 +13522,8 @@ fn cached_disk_content_digest(path: &Path, stat_key: &DiskContentStatKey) -> Opt
 /// A cheap length check precedes the read. The path may be a device or FIFO
 /// (`/dev/zero` reports length 0), so the read goes through the bounded
 /// regular-file reader, never an unbounded `fs::read`. Unchanged on-disk
-/// content is digested once per `(len, mtime, ino)` stat key.
+/// content is digested once per `(len, mtime, ino)` stat key, except that a
+/// file modified within [`DISK_EQUALITY_RACY_WINDOW`] is never cached (#12046).
 fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
     let Ok(text_len) = u64::try_from(text.len()) else {
         return false;
@@ -13506,7 +13535,8 @@ fn disk_bytes_equal_text(path: &Path, text: &str) -> bool {
         return false;
     }
     let stat_key = disk_content_stat_key(&meta);
-    let Some(disk_digest) = cached_disk_content_digest(path, &stat_key) else {
+    let racy = disk_mtime_is_racy(&meta);
+    let Some(disk_digest) = cached_disk_content_digest(path, &stat_key, racy) else {
         return false;
     };
     disk_digest == content_digest(text.as_bytes())
@@ -13525,6 +13555,22 @@ mod disk_bytes_equal_text_tests {
             std::process::id(),
             std::thread::current().id()
         ))
+    }
+
+    /// Moves the mtime well outside the racy window so the digest is cacheable.
+    fn backdate(path: &std::path::Path) -> Result<(), String> {
+        set_mtime(
+            path,
+            std::time::SystemTime::now() - std::time::Duration::from_mins(1),
+        )
+    }
+
+    fn set_mtime(path: &std::path::Path, when: std::time::SystemTime) -> Result<(), String> {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .and_then(|file| file.set_modified(when))
+            .map_err(|err| format!("set mtime failed: {err}"))
     }
 
     #[test]
@@ -13562,6 +13608,7 @@ mod disk_bytes_equal_text_tests {
         reset_disk_equality_read_cache_for_tests();
         let path = temp_disk_path("read-once");
         std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        backdate(&path)?;
         assert!(!disk_bytes_equal_text(&path, "abd"));
         assert!(!disk_bytes_equal_text(&path, "abe"));
         assert!(!disk_bytes_equal_text(&path, "abx"));
@@ -13601,6 +13648,30 @@ mod disk_bytes_equal_text_tests {
         if reads != 2 {
             return Err(format!(
                 "expected two disk reads after rewrite, got {reads}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #12046: two same-length writes inside one timestamp tick leave the stat
+    /// key unchanged. The rewrite must still be seen. Fails without the racy
+    /// window: the second call would hit the digest cached for the first write.
+    #[test]
+    fn same_length_rewrite_with_unchanged_stat_key_is_reread() -> Result<(), String> {
+        reset_disk_equality_read_cache_for_tests();
+        let path = temp_disk_path("same-tick");
+        let tick = std::time::SystemTime::now();
+        std::fs::write(&path, "abc").map_err(|err| format!("write failed: {err}"))?;
+        set_mtime(&path, tick)?;
+        let first = disk_bytes_equal_text(&path, "abc");
+        std::fs::write(&path, "abd").map_err(|err| format!("rewrite failed: {err}"))?;
+        set_mtime(&path, tick)?;
+        let second = disk_bytes_equal_text(&path, "abd");
+        let stale = disk_bytes_equal_text(&path, "abc");
+        let _ = std::fs::remove_file(&path);
+        if !first || !second || stale {
+            return Err(format!(
+                "first={first} second={second} stale_abc_still_equal={stale}"
             ));
         }
         Ok(())
