@@ -2101,7 +2101,7 @@ Status: proposed
                 "the digest job must publish its summary (or instrument-failure annotation) with if: always()".to_string(),
             );
         }
-        if !job.contains("actions/upload-artifact@") || !job.contains("ripr-spec-maintenance") {
+        if !uploads_artifact_at_v7(&job) || !job.contains("ripr-spec-maintenance") {
             return Err(
                 "the digest job must retain the full report as the ripr-spec-maintenance artifact"
                     .to_string(),
@@ -2119,6 +2119,44 @@ Status: proposed
             }
         }
         Ok(())
+    }
+
+    /// The retained artifact must come from `upload-artifact` at major v7. A
+    /// SHA pin names its release only in the trailing comment, so both facts
+    /// must hold on the same line: the action name alone would accept any
+    /// version, and `# v7` alone would accept any action.
+    fn uploads_artifact_at_v7(job: &str) -> bool {
+        job.lines().any(|line| {
+            line.contains("actions/upload-artifact@")
+                && line
+                    .split_once('#')
+                    .and_then(|(_, comment)| comment.trim().strip_prefix("v7"))
+                    .is_some_and(|tail| !tail.starts_with(|ch: char| ch.is_ascii_digit()))
+        })
+    }
+
+    #[test]
+    fn upload_artifact_major_is_required_on_the_pinned_line() {
+        let pin = "d23441a48e516b6c34aea4fa41551a30e30af803";
+        let good = format!("      - uses: actions/upload-artifact@{pin} # v7.0.2\n");
+        assert!(uploads_artifact_at_v7(&good));
+        assert!(uploads_artifact_at_v7(&format!(
+            "        uses: actions/upload-artifact@{pin} # v7\n"
+        )));
+        // A retired or different major, a longer major that starts with v7,
+        // a missing version comment and another action on a v7 line all fail.
+        for bad in [
+            format!("      - uses: actions/upload-artifact@{pin} # v6.1.0\n"),
+            format!("      - uses: actions/upload-artifact@{pin} # v70.0.0\n"),
+            format!("      - uses: actions/upload-artifact@{pin}\n"),
+            format!("      - uses: actions/cache@{pin} # v7.0.2\n"),
+        ] {
+            assert!(!uploads_artifact_at_v7(&bad), "accepted {bad}");
+        }
+        // The version comment and the action name must share one line.
+        assert!(!uploads_artifact_at_v7(&format!(
+            "      - uses: actions/upload-artifact@{pin}\n      - run: x # v7\n"
+        )));
     }
 
     #[test]
