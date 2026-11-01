@@ -384,7 +384,7 @@ pub(crate) fn render_comment_publish_plan_json(
         warnings: &report.warnings,
         limits_note: &report.limits_note,
     })
-    .map_err(|err| format!("render PR inline comment publish-plan JSON failed: {err}"))
+    .map_err(|err| format!("render PR inline comment publish-plan JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_comment_publish_plan_markdown(report: &CommentPublishPlanReport) -> String {

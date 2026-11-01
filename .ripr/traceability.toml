@@ -577,6 +577,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_shares_facts_and_complete_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_replacement_and_external_source_cannot_borrow_answers",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::module_shadow_snapshot_keeps_raw_alias_same_line_and_owner_ambiguity",
+  "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::fragment_parses_share_only_exact_bytes_and_clones_start_empty",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::owner_lexical_facts_are_shared_across_syntax_owners",
   "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::source_snapshot_reuses_parse_and_scopes_across_threads_and_owners",
   "crates/ripr/src/analysis/syntax/source_snapshot.rs::tests::source_snapshot_preserves_qualifiers_ambiguity_and_complete_query_identity",
@@ -3862,6 +3863,8 @@ tests = [
   "crates/ripr/src/analysis/language/python/classify/tests.rs::truthiness_swap_fails_open_on_assert_named_helpers_and_result_callees",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::truthiness_swap_fails_open_on_fstring_alias_and_doctest_reach",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::truthiness_swap_fails_open_on_a_separating_default_or_a_branch_value_edit",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::a_class_header_lookalike_inside_a_multiline_string_keeps_its_probe",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::object_base_class_change_pins_type_params_keywords_and_header_shapes",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_stays_uncredited_without_a_bound_owner_receiver",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_receiver_read_in_bracketed_call_arguments_is_still_credited",
   "crates/ripr/src/analysis/language/python/tests.rs::protocol_entry_quoted_for_membership_reads_keep_receiver_credit",
@@ -12389,6 +12392,15 @@ tests = [
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_whose_callee_name_is_bound_elsewhere_is_not_credited",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_resolved_through_a_use_glob_or_another_file_is_not_credited",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_classes_follow_the_tests_shape",
+  "crates/ripr/tests/computed_edge_argument_fold.rs::edge_argument_over_the_callers_parameter_is_credited",
+  "crates/ripr/tests/computed_edge_argument_fold.rs::edge_argument_two_hops_down_is_credited",
+  "crates/ripr/tests/computed_edge_argument_fold.rs::edge_argument_that_cannot_be_folded_exactly_is_not_credited",
+  "crates/ripr/tests/computed_edge_argument_fold.rs::edge_argument_over_a_rebound_or_shadowed_parameter_is_not_credited",
+  "crates/ripr/tests/computed_edge_argument_fold.rs::edge_argument_over_a_narrow_or_generic_parameter_is_not_credited",
+  "crates/ripr/tests/computed_edge_argument_fold.rs::edge_argument_adds_no_credit_beyond_the_straight_through_edge",
+  "crates/ripr/tests/computed_edge_argument_fold.rs::edge_argument_with_two_owner_calls_is_not_credited",
+  "crates/ripr/tests/computed_edge_argument_fold.rs::edge_argument_built_by_a_macro_is_not_credited",
+  "crates/ripr/src/analysis/classify/argument_fold.rs::tests::a_hop_argument_folds_only_over_readable_caller_parameters",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_that_is_a_trait_method_is_not_credited",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_whose_callee_is_declared_in_another_scope_is_not_credited",
   "crates/ripr/tests/free_call_return_pin.rs::free_call_entry_method_beside_a_same_named_associated_fn_is_not_credited",
@@ -14394,6 +14406,20 @@ name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
   "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_whole_value_and_field_assertion_credit",
+  "crates/ripr/tests/rust_macro_crate_scope.rs::field_macro_use_of_a_literal_export_refuses_credit_in_either_order",
+  "crates/ripr/tests/rust_macro_crate_scope.rs::field_macro_use_export_respects_raw_renamed_and_library_identities",
+  "crates/ripr/tests/rust_macro_crate_scope.rs::field_macro_use_selected_other_name_keeps_the_standard_assertion",
+  "crates/ripr/tests/rust_macro_crate_scope.rs::field_macro_use_witness_refreshes_after_only_auxiliary_inputs_change",
+  "crates/ripr/tests/rust_macro_crate_scope.rs::field_retained_opaque_blocker_is_not_masked_by_an_earlier_glob",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::literal_macro_export_tests::only_a_plain_unconditional_root_declaration_supplies_an_export_witness",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::literal_macro_export_tests::macro_use_records_the_source_crate_only_for_selected_plain_imports",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::literal_macro_exports_follow_selected_local_library_identity",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::literal_macro_export_witness_reads_the_selected_manifest_and_source_epoch",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::literal_macro_export_does_not_bypass_the_output_set_input_boundary",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::an_unrelated_external_library_root_does_not_hide_a_local_macro_export",
+  "crates/ripr/src/analysis/facts/member_crates.rs::tests::unchanged_index_reuse_refreshes_warmed_auxiliary_macro_export_witnesses",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::unchanged_index_reuse_refreshes_a_warmed_field_macro_blocker",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_withheld_first_glob_cannot_certify_field_macro_safety",
   "crates/ripr/tests/rust_macro_crate_scope.rs::field_assertion_rebindings_refuse_credit_and_disclose_the_site",
   "crates/ripr/tests/rust_macro_crate_scope.rs::unrelated_fuzz_binary_keeps_bare_and_standard_assertion_credit",
   "crates/ripr/tests/rust_macro_crate_scope.rs::visible_macro_rebindings_and_unknown_placement_still_refuse_credit",
@@ -20559,6 +20585,37 @@ outputs = [
 ]
 metrics = [
   "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0352"
+name = "An inherent receiver blocked only by an assertion macro ripr cannot verify, because target-root placement is unavailable, is a named limitation and not a gap"
+spec = "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md"
+tests = [
+  "crates/ripr/tests/receiver_unestablished_limit.rs::an_unplaced_standard_assertion_over_the_owner_call_is_a_named_limitation",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::the_repository_consumer_credits_nothing_for_the_unplaced_call",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::a_receiver_that_does_not_resolve_even_with_the_macro_trusted_keeps_its_gap",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::available_placement_keeps_the_rebound_root_gap_and_the_plain_credit",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::a_weak_oracle_keeps_its_gap_even_though_the_macro_is_unverifiable",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::an_unrelated_weak_assertion_does_not_lift_the_withhold",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::a_visible_macro_that_replaces_the_bare_assertion_keeps_its_gap",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::another_crates_glob_reexport_is_part_of_the_unplaced_doubt",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::a_bare_factory_shadowed_by_an_import_keeps_the_gap",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::a_qualified_associated_factory_keeps_the_gap",
+  "crates/ripr/tests/receiver_unestablished_limit.rs::an_unauthoritative_inherent_factory_declaration_keeps_the_gap",
+  "crates/ripr/src/analysis/classify/receiver_unestablished.rs::tests::a_related_row_names_one_of_two_same_named_tests_by_its_start_line",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::imported_enum_variant_value_admits_only_the_single_unambiguous_import",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::imported_crate_roots_read_through_whitespace_and_comments",
+]
+code = [
+  "crates/ripr/src/analysis/classify/receiver_unestablished.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md",
+  "docs/STATIC_LIMITS.md",
+]
+metrics = [
+  "verdict_corpus_false_actionable_rate",
 ]
 
 [[behavior]]

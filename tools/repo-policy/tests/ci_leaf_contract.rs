@@ -521,7 +521,15 @@ fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult 
                             .is_some_and(|(_, sha)| sha.len() == 40) =>
                     {
                         let name = pinned.rsplit_once('@').map_or(pinned, |(name, _)| name);
-                        format!("{name}@{}", tag.trim())
+                        // A comment may carry the exact release (`v6.1.0`) while the
+                        // predecessor names the major (`v6`); compare the major.
+                        let tag = tag.trim();
+                        let tag = if tag.starts_with('v') {
+                            tag.split('.').next().unwrap_or(tag)
+                        } else {
+                            tag
+                        };
+                        format!("{name}@{tag}")
                     }
                     _ => line.to_owned(),
                 })

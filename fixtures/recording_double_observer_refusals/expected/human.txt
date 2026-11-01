@@ -44,7 +44,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_assertion_message.rs:call_deletion:24b7502f
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_assertion_message.rs:call_deletion:24b7502f
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 Write this test by hand: call the function, then assert the visible change the changed call makes (a changed value, state, or output). ripr has no repair route for this kind of change yet, so there is no command to run; add the test, then rerun `ripr check`.
 

@@ -1,0 +1,60 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/compile_time_assert_stop_reason/input
+
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 2 unclear. 2 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Start here:
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
+  File: ./src/lib.rs:1
+  Static exposure: unknown (severity: note, confidence 0.40)
+  Why unknown: the analysis could not determine a static exposure state
+  Changed behavior: pub const N: usize = 12;
+  Analyzer limit: No relevant oracle was detected
+  Related test: tests/n_tests.rs:4 n_is_twelve
+  Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
+    gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place
+    this line inside an analyzed Rust function. Add or strengthen a test only if this inspection
+    finds a gap. Compare the original and changed implementations with a focused run using the
+    project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification
+    may remain unknown
+  Evidence: reach weak · infection unknown · propagation unknown · observation unknown · discriminator unknown
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach weak: Tests call `n`, which reads the changed constant `N`; whether the tested path executes that read is not established: n_is_twelve
+    - infection unknown: Changed syntax is not mapped to a high-confidence change type
+    - 6 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/compile_time_assert_stop_reason/input --diff <cwd>/fixtures/compile_time_assert_stop_reason/diff.patch --mode fast probe:src_lib.rs:static_unknown:00607549
+  ripr context --root <cwd>/fixtures/compile_time_assert_stop_reason/input --diff <cwd>/fixtures/compile_time_assert_stop_reason/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:00607549
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/compile_time_assert_stop_reason/input --at src/lib.rs:3 --kind return_value
+
+Hidden:
+  1 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:2 (unknown: static analysis limited); kind: unclear; reason: No relevant oracle was detected
+  Hidden classes:
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: ripr could not classify any of the 2 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed Rust file(s), 2 changed expression(s), and
+  1 statically linked related test(s). This is not a coverage assessment. A test may already
+  exercise these changes through macros, helper-call chains, or integration tests that ripr's static
+  model does not yet trace; if none does, add co-located tests that observe the changed behavior.
