@@ -53,10 +53,10 @@ mod variant_field_pattern;
 
 pub(in crate::analysis) use absorbing_tail::absorbing_tail_sink;
 pub(in crate::analysis) use activation::{
-    LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
-    chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
-    local_boundary, macro_names_rebound, pushed_collection_compared_whole, pushed_literal_path,
-    signature_parameters, sort_value_facts,
+    LocalBoundary, TestValueFacts, activation_and_boundary_input, assigned_field_read_confirms,
+    call_parameter_names, chain_row_transfer_stop, comparison_operands, computed_input_parameters,
+    literal_operand_value, local_boundary, macro_names_rebound, pushed_collection_compared_whole,
+    pushed_literal_path, signature_parameters, sort_value_facts,
 };
 pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
@@ -140,7 +140,7 @@ pub(in crate::analysis) use pinned_shape::{
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_compares_hand_built_field,
     assertion_observes_collection_argument, assertion_observes_direct_collection_for_probe,
-    concat_literal_tail, concat_tail_witness, current_path_witness_with,
+    assigned_field_path, concat_literal_tail, concat_tail_witness, current_path_witness_with,
     direct_collection_mutation_receiver, field_assignment_target, owner_may_exit_before_line,
     retain_returned_ledger, returned_ledger_witness,
 };
