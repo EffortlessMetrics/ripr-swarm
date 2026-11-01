@@ -399,8 +399,8 @@ Progress:
   throttled `still active after <elapsed class>` heartbeats. Non-TTY
   / CI output is newline-delimited with no control sequences. A TTY
   may reuse one line and stays silent for sub-threshold flashes.
-  Machine formats keep stdout byte-clean. When a machine format (json,
-  sarif, badge-*, agent) is selected and stderr is not a terminal, the
+  Machine formats (json, sarif, github) keep stdout byte-clean. With json,
+  sarif, badge-* or agent selected and stderr not a terminal, the
   stream is off by default; `RIPR_PROGRESS=1` restores it. A terminal and
   the human formats keep it. Unknown totals never become a
   percentage or ETA. Progress does not mean analysis is faster or
