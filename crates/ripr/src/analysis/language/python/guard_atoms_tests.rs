@@ -134,6 +134,70 @@ fn a_parameter_is_read_from_the_call_not_a_same_named_module_constant() -> Resul
     Ok(())
 }
 
+/// Direct control for the reader's precedence. The end-to-end test above goes
+/// through the owner extractor, which may not hand the reader a same-named
+/// constant at all, so it cannot tell whether `Reader::scalar` reads the
+/// parameter first. Here the constant is passed to the reader explicitly.
+#[test]
+fn the_reader_prefers_the_call_row_over_a_constant_it_is_handed() -> Result<(), String> {
+    use super::boundary::{Binding, CallRow};
+    use super::guard_atoms::guard_condition_holds;
+    use super::module_constants::PythonModuleConstant;
+    use std::collections::BTreeMap;
+
+    let source = "def label(x, flag=False):\n    if flag:\n        return 'loud'\n";
+    let owners = extract_owners(Path::new(OWNER_FILE), source);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.name == "label")
+        .ok_or_else(|| "label owner missing".to_string())?;
+    let row_with = |value: &str| CallRow {
+        file: Path::new(TEST_FILE).to_path_buf(),
+        line: 1,
+        text: "label(1)".to_string(),
+        bindings: BTreeMap::from([(
+            "flag".to_string(),
+            Binding {
+                value: value.to_string(),
+                from_default: false,
+            },
+        )]),
+        elements: BTreeMap::new(),
+    };
+    let constant = |value: &str| {
+        vec![PythonModuleConstant {
+            name: "flag".to_string(),
+            value: value.to_string(),
+            line: 1,
+        }]
+    };
+    // The call enters the arm; a constant `False` must not decide otherwise.
+    assert_eq!(
+        guard_condition_holds(
+            owner,
+            "flag",
+            2,
+            &row_with("True"),
+            &constant("False"),
+            source
+        ),
+        Some(true)
+    );
+    // The call skips the arm; a constant `True` must not decide otherwise.
+    assert_eq!(
+        guard_condition_holds(
+            owner,
+            "flag",
+            2,
+            &row_with("False"),
+            &constant("True"),
+            source
+        ),
+        Some(false)
+    );
+    Ok(())
+}
+
 #[test]
 fn a_negated_atom_and_a_string_or_number_truthiness_are_read() -> Result<(), String> {
     let negated = "def label(x, flag=True):\n    if not flag:\n        return 'quiet'\n";
