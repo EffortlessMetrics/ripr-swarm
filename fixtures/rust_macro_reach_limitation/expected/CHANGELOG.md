@@ -605,6 +605,7 @@ Updated:
 
 Reason:
 RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
 
 Command:
 `cargo xtask goldens bless rust_macro_reach_limitation --reason "..."`

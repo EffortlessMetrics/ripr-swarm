@@ -46,7 +46,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_typeof_kind_gap/input --diff <cwd>/fixtures/typescript_typeof_kind_gap/diff.patch --mode fast probe:src_utils.ts:typescript_preview:7534e133
   ripr context --root <cwd>/fixtures/typescript_typeof_kind_gap/input --diff <cwd>/fixtures/typescript_typeof_kind_gap/diff.patch --mode fast --at probe:src_utils.ts:typescript_preview:7534e133
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full
