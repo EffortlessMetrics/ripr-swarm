@@ -32,6 +32,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::evidence_record::{
     CROSS_LANGUAGE_TARGET_UNRESOLVED_CATEGORY, repair_start_command_for,
 };
+use crate::output::human::plain_stop_condition;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1423,7 +1424,7 @@ fn first_repair_packet_text(
         lines.push("- Stop conditions:".to_string());
         for item in items {
             if let Some(text) = item.as_str().map(str::trim).filter(|text| !text.is_empty()) {
-                lines.push(format!("  - {text}"));
+                lines.push(format!("  - {}", plain_stop_condition(text)));
             }
         }
     }
@@ -1577,7 +1578,7 @@ fn python_repair_card_text(
         lines.push("Stop conditions:".to_string());
         for item in items {
             if let Some(text) = item.as_str().map(str::trim).filter(|text| !text.is_empty()) {
-                lines.push(format!("  - {text}"));
+                lines.push(format!("  - {}", plain_stop_condition(text)));
             }
         }
     }
@@ -1639,7 +1640,7 @@ fn python_pytest_skeleton_target(snapshot: &AnalysisSnapshot, data: &Value) -> O
         .map(str::trim)
         .filter(|item| !item.is_empty())
         .take(3)
-        .map(ToOwned::to_owned)
+        .map(plain_stop_condition)
         .collect::<Vec<_>>();
     if !stop_conditions.is_empty() {
         lines.push("# Stop if:".to_string());

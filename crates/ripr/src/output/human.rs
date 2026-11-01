@@ -288,7 +288,7 @@ fn no_findings_line(output: &CheckOutput) -> &'static str {
         // #11396: nothing in scope, or only non-source files changed, examined
         // no behavior; say what was not checked instead of "No findings".
         _ if no_source_examined(output) => {
-            "Nothing to check: no changed Rust, Python or TypeScript source was available to analyze, so ripr examined no behavior.\n"
+            "Nothing to check: no changed source file in a language ripr analyzes was available, so ripr examined no behavior.\n"
         }
         _ => "No findings: ripr checked no changed behavior.\n",
     }
@@ -1396,7 +1396,9 @@ pub(crate) fn render_finding_agent(
     ))
 }
 
-pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
+pub(crate) use evidence_lines::{
+    JsonPointerWording, plain_observation_wording, plain_stop_condition,
+};
 pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
 pub(crate) use sections::render_finding_with_config;
 pub(crate) use triage::unresolved_boundary_operand;
@@ -1606,7 +1608,7 @@ mod tests {
                 // not open with an all-clear style "No findings".
                 assert!(
                     rendered.contains(
-                        "Nothing to check: no changed Rust, Python or TypeScript source was available to analyze"
+                        "Nothing to check: no changed source file in a language ripr analyzes was available"
                     ),
                     "{rendered}"
                 );
@@ -1658,7 +1660,9 @@ mod tests {
             render_full_with_config(&docs_only, &config),
         ] {
             assert!(
-                rendered.contains("Nothing to check: no changed Rust, Python or TypeScript source"),
+                rendered.contains(
+                    "Nothing to check: no changed source file in a language ripr analyzes"
+                ),
                 "{rendered}"
             );
             assert!(!rendered.contains("No findings:"), "{rendered}");
@@ -8398,6 +8402,26 @@ mod tests {
             rendered.contains("observation yes: Observed; the changed value is never named"),
             "{rendered}"
         );
+    }
+
+    #[test]
+    fn plain_stop_condition_rewrites_only_the_known_producer_form() {
+        use super::evidence_lines::plain_stop_condition;
+        // #12214: editor text says "missing check"; the producer string itself
+        // stays the JSON/agent contract, so only the exact form is rewritten.
+        assert_eq!(
+            plain_stop_condition(
+                "Stop if the expected value for the missing discriminator is ambiguous."
+            ),
+            "Stop if the expected value for the missing check is ambiguous."
+        );
+        for unchanged in [
+            "Stop if imports, fixtures, or test setup cannot call the changed owner.",
+            "Stop if the related test belongs to another package.",
+            "Stop if the expected value for the missing discriminator `x` is ambiguous.",
+        ] {
+            assert_eq!(plain_stop_condition(unchanged), unchanged);
+        }
     }
 
     #[test]

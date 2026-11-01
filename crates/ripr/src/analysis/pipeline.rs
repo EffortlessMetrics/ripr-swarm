@@ -802,20 +802,24 @@ fn non_source_disclosure_message(changed_files: &[diff::ChangedFile]) -> Option<
         ));
     }
     let summary = summary.join(", ");
-    let verdict = if truncated_paths.is_empty() {
-        "Nothing was analyzed: ripr cannot analyze non-source files, so this is not a statement about changed behavior.".to_string()
-    } else {
-        let listed = truncated_paths
-            .iter()
-            .take(MAX_NAMED_PATHS)
-            .map(String::as_str)
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            "Path(s) ending in `.` with no extension ({listed}) usually mean a truncated \
-             `+++` header, so this empty result is not a clean pass — verify the diff input."
-        )
-    };
+    if truncated_paths.is_empty() {
+        // #11396: the stderr note is the only disclosure JSON and explicit-scope
+        // runs get, so it keeps the non-claim in plain words; the human headline
+        // adds the verdict for the default scope.
+        return Some(format!(
+            "ripr: diff contained {non_source_count} non-source file(s) ({summary}). Nothing was analyzed, so this says nothing about whether changed behavior is tested."
+        ));
+    }
+    let listed = truncated_paths
+        .iter()
+        .take(MAX_NAMED_PATHS)
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let verdict = format!(
+        "Path(s) ending in `.` with no extension ({listed}) usually mean a truncated \
+         `+++` header, so this empty result is not a clean pass — verify the diff input."
+    );
     Some(format!(
         "ripr: diff contained {non_source_count} non-source file(s) ({summary}); \
          no analyzable Rust, TypeScript, Python, or Perl files found. {verdict}"
