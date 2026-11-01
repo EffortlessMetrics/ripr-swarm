@@ -190,7 +190,9 @@ pub(crate) fn parse_args(args: &[String]) -> Result<Options, String> {
         )?);
     } else {
         if baseline_ref.is_some() || candidate_ref.is_some() {
-            return Err("--baseline-ref and --candidate-ref need --pins".to_string());
+            return Err(
+                "--baseline-ref and --candidate-ref need --pins or --external-pins".to_string(),
+            );
         }
         options.baseline = baseline.ok_or("warm-ab requires --baseline <binary>")?;
         options.candidate = candidate.ok_or("warm-ab requires --candidate <binary>")?;
