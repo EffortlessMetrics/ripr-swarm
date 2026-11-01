@@ -1016,9 +1016,10 @@ mod tests {
         for needle in [
             "Linux-X64) target=x86_64-unknown-linux-gnu ;;",
             "macOS-ARM64) target=aarch64-apple-darwin ;;",
-            r#"asset="ripr-server-v$version-$target.tar.gz""#,
+            "Windows-X64) target=x86_64-pc-windows-msvc ;;",
+            r#"asset="ripr-server-v$version-$target.$ext""#,
             r#"url="https://github.com/EffortlessMetrics/ripr/releases/download/v$version/$asset""#,
-            r#"curl -fsSL --retry 3 -O "$url.sha256"; then"#,
+            r#"curl -fsSL --retry 3 -O "$url.sha256" ||"#,
             r#"if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then"#,
             r#"echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH""#,
         ] {
@@ -1026,11 +1027,12 @@ mod tests {
         }
         // The mismatch branch exits before the `else` that compiles.
         let mismatch = install.find("does not match its published SHA-256");
-        let exit = install.find("exit 1");
+        let exit = mismatch.and_then(|at| install[at..].find("exit 1").map(|rel| at + rel));
+        let extract = install.find("tar -xzf");
         let fallback = install.find("cargo install ripr");
         assert!(
-            mismatch < exit && exit < fallback && mismatch.is_some(),
-            "a checksum mismatch must fail before the cargo fallback"
+            mismatch < exit && exit < extract && extract < fallback && mismatch.is_some(),
+            "a checksum mismatch must fail before extraction and the cargo fallback"
         );
     }
 

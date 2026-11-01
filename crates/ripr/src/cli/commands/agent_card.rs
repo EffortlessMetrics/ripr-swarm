@@ -1307,7 +1307,10 @@ mod tests {
     /// plain-text command surface.
     #[test]
     fn plain_brief_pairs_new_commands_with_a_powershell_form() -> Result<(), String> {
-        let root = std::path::Path::new("/tmp/it's here");
+        // The `$` keeps the Bash single-quote form on Windows too: the Windows
+        // console form is identical in PowerShell, so a root with only a quote
+        // would print no PowerShell pair there.
+        let root = std::path::Path::new("/tmp/it's $here");
         let mut card = prose_test_card();
         card.instruction.state = FixInstructionState::Unavailable;
         let lines = agent_card_plain_lines(&card, "ripr agent packet --json", Some(root), None);
