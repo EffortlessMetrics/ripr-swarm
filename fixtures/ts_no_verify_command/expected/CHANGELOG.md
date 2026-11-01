@@ -578,3 +578,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_no_verify_command (32)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless ts_no_verify_command --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
