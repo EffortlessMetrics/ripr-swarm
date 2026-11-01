@@ -52,6 +52,10 @@ macro was expanded:
 no_static_path + static_limit_kind: rust_macro_reach_unresolved
 ```
 
+When the only witness is an opaque property macro (`proptest!`, `quickcheck!`)
+that lexically mentions the owner, the class is `static_unknown` with the same
+`static_limit_kind` (#11544): unresolved macro reach is not ruled-out reach.
+
 ## Behavior
 
 ### Trigger condition

@@ -2,14 +2,17 @@ use super::capabilities::WorkspaceRootResolution;
 use super::component_outcome::ComponentOutcome;
 use super::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
 use super::input_identity::LspAnalysisInputIdentity;
-use super::uri::{file_uri_relative_to_root, file_uris_match, path_from_file_uri};
+use super::uri::{
+    RelativeKeyProjector, file_uri_is_lexically_non_rust, file_uri_relative_to_root,
+    file_uris_match, path_from_file_uri,
+};
 use crate::analysis::language_outcome::{LanguageCompletenessView, LanguageDisclosure};
 use crate::analysis::{ClassifiedSeam, PreviewLanguageAdvisory};
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::Mode;
 use crate::config::LspDiagnosticProfile;
 use crate::domain::{Finding, LanguageId};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1915,6 +1918,14 @@ fn invalidate_incremental_document_state(state: &mut DocumentState) -> Quarantin
 #[derive(Default)]
 pub(super) struct DocumentStore {
     pub(super) documents: BTreeMap<Uri, DocumentState>,
+    /// Workspace-relative keys already resolved for open `.rs` candidates,
+    /// keyed by URI; each entry is valid only for the root recorded with it (#11763). Each
+    /// resolution canonicalizes the root and the candidate, so recomputing
+    /// every document on every refresh made N `didOpen`s cost O(N^2)
+    /// filesystem calls. An entry is dropped on reopen, close, a save of that
+    /// document and watched-file events at or above its path, and ignored when
+    /// the root differs.
+    rust_index_keys: BTreeMap<Uri, (PathBuf, Option<PathBuf>)>,
 }
 
 impl DocumentStore {
@@ -1926,8 +1937,87 @@ impl DocumentStore {
             params.text_document.text,
         );
         let transition = state.refresh_quarantine();
+        self.rust_index_keys.remove(&uri);
         self.documents.insert(uri, state);
         transition
+    }
+
+    /// Workspace-relative paths of the open `.rs` documents under `root`.
+    /// Equivalent to resolving every document with `file_uri_relative_to_root`
+    /// and keeping `.rs` keys, without repeating the filesystem resolution for
+    /// documents whose key is already known or lexically cannot be `.rs`.
+    ///
+    /// Staleness boundary: a cached key is served until the document is
+    /// reopened, closed or saved, a watched-file event at or above its path
+    /// arrives, or the root changes. A symlink retargeted outside the editor
+    /// with no watcher covering it is therefore seen late. That is acceptable
+    /// because this index is not the containment authority: workspace
+    /// diagnostics still resolve their own projector on every refresh.
+    pub(super) fn open_rust_index_paths(&mut self, root: &Path) -> BTreeSet<PathBuf> {
+        let Self {
+            documents,
+            rust_index_keys,
+        } = self;
+        // One projector per pass, built on the first cache miss: the root and
+        // each directory are resolved once for all misses, not once per
+        // document, and a fully warm pass resolves nothing.
+        let mut projector: Option<RelativeKeyProjector<'_>> = None;
+        documents
+            .keys()
+            .filter_map(|uri| {
+                if let Some((cached_root, key)) = rust_index_keys.get(uri)
+                    && cached_root == root
+                {
+                    return key.clone();
+                }
+                if file_uri_is_lexically_non_rust(root, uri) {
+                    return None;
+                }
+                let key = projector
+                    .get_or_insert_with(|| RelativeKeyProjector::new(root))
+                    .relative(uri);
+                rust_index_keys.insert(uri.clone(), (root.to_path_buf(), key.clone()));
+                key
+            })
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn rust_index_key_is_cached(&self, uri: &Uri) -> bool {
+        self.rust_index_keys.contains_key(uri)
+    }
+
+    /// Forget the resolved index key of one document so its next refresh
+    /// re-resolves it against the current filesystem (a save can replace a
+    /// symlink with a regular file). Other documents keep their keys.
+    pub(super) fn invalidate_rust_index_key(&mut self, uri: &Uri) {
+        self.rust_index_keys.remove(uri);
+    }
+
+    /// Forget resolved index keys a filesystem event at `event` can affect:
+    /// the document at that path and any document below it (a directory
+    /// event can retarget or replace a symlinked ancestor). Entries elsewhere
+    /// stay warm, so unrelated watched events (build output, logs) cost no
+    /// re-resolution.
+    pub(super) fn invalidate_rust_index_keys_under(&mut self, event: &Uri) {
+        let prefix = event.as_str().trim_end_matches('/');
+        // Equivalent spellings of one file (`file://localhost/...`, percent
+        // escapes) differ as raw strings, so the decoded paths are compared
+        // too.
+        let event_path = path_from_file_uri(event);
+        self.rust_index_keys.retain(|uri, _| {
+            let candidate = uri.as_str();
+            let raw_below = candidate == prefix
+                || candidate
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| rest.starts_with('/'));
+            let path_below = match (&event_path, path_from_file_uri(uri)) {
+                (Some(event_path), Some(path)) => path.starts_with(event_path),
+                _ => false,
+            };
+            !(raw_below || path_below)
+        });
     }
 
     /// Whether the just-opened buffer already matches the persisted saved
@@ -2188,6 +2278,7 @@ impl DocumentStore {
     }
 
     pub(super) fn close(&mut self, params: DidCloseTextDocumentParams) {
+        self.rust_index_keys.remove(&params.text_document.uri);
         self.documents.remove(&params.text_document.uri);
     }
 

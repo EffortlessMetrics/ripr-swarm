@@ -1,0 +1,49 @@
+{
+  "subject_id": "authored-ts-vitest-partial",
+  "origin": "authored",
+  "version_label": "authored@2026-10-31",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "6e44db78946bd8ed62bee7a1774e780fd86b1323c6acf3b03bf81e3c4fa161bd"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/arrayLen.ts",
+      "sha256": "f4d814e756b81106c86b47c782271ee159a163df3fd939e88bf4900ce061ab58"
+    },
+    {
+      "path": "src/asymAny.ts",
+      "sha256": "f4d814e756b81106c86b47c782271ee159a163df3fd939e88bf4900ce061ab58"
+    },
+    {
+      "path": "src/exactPin.ts",
+      "sha256": "f4d814e756b81106c86b47c782271ee159a163df3fd939e88bf4900ce061ab58"
+    },
+    {
+      "path": "src/typeofKind.ts",
+      "sha256": "f4d814e756b81106c86b47c782271ee159a163df3fd939e88bf4900ce061ab58"
+    },
+    {
+      "path": "test/arrayLen.test.ts",
+      "sha256": "f84df4642dd16d3224069a6308f3a4e2ea69f70724df3ff936125e2ecb4a324c"
+    },
+    {
+      "path": "test/asymAny.test.ts",
+      "sha256": "64e588045b99ee6723cdeda435b6b9ab28ce7f2e0b6ac2f97b0c171bd1ccdbba"
+    },
+    {
+      "path": "test/exactPin.test.ts",
+      "sha256": "9c7a3073ff06b85ab74a4884406a6a468b9e24d4d4b616569442136cbb693051"
+    },
+    {
+      "path": "test/typeofKind.test.ts",
+      "sha256": "9baf9d2f87d3cf7d6425c547916cdc1ce2995078366aa64d981b2579db83793c"
+    }
+  ]
+}

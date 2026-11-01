@@ -1,2 +1,0 @@
-crates/ripr/src/output/badge/test_efficiency.rs|test-efficiency.json is missing `metrics.tests_scanned`
-crates/ripr/src/output/badge/test_efficiency.rs|test-efficiency.json is missing the `tests` array

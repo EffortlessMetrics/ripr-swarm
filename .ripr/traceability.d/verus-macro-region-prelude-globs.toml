@@ -7,6 +7,7 @@ spec = "docs/specs/RIPR-SPEC-0369-verus-macro-region-and-verification-prelude-gl
 tests = [
   "crates/ripr/src/analysis/facts/drop_in.rs::spec_audited_version_table_matches_the_code_authority",
   "crates/ripr/src/analysis/facts/drop_in.rs::a_nested_workspace_is_judged_by_its_own_lockfile",
+  "crates/ripr/src/analysis/syntax/owner_pin.rs::every_trusted_prelude_glob_has_an_audit_row_and_back",
   "crates/ripr/src/analysis/probes/macro_definition.rs::verus_regions_cover_the_token_tree_and_ignore_lookalikes",
   "crates/ripr/src/analysis/probes/macro_definition.rs::a_verus_region_braces_in_comments_strings_and_chars_do_not_unbalance_it",
   "crates/ripr/src/analysis/probes/macro_definition.rs::an_unclosed_verus_region_runs_to_the_end_and_a_mixed_line_is_unowned",

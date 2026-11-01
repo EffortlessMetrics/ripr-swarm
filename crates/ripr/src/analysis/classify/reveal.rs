@@ -3428,6 +3428,9 @@ fn called_paths(text: &str) -> Vec<(Option<String>, String)> {
     names
 }
 
+#[cfg(kani)]
+mod kani_proofs;
+
 /// A self-computed assertion's probe-relative strength is at most `weak`.
 fn self_computed_cap(strength: OracleStrength, self_computed: bool) -> OracleStrength {
     if self_computed && strength.rank() > OracleStrength::Weak.rank() {

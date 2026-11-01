@@ -72,6 +72,10 @@ pub(crate) fn json_terminal_safe(json: String) -> String {
     out
 }
 
+#[cfg(kani)]
+#[path = "terminal_text_kani.rs"]
+mod kani_proofs;
+
 #[cfg(test)]
 mod tests {
     use super::{json_terminal_safe, single_line, terminal_safe};

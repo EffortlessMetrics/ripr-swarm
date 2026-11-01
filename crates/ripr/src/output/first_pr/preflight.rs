@@ -738,7 +738,7 @@ mod tests {
         };
         if !load_error.contains("ripr.toml") {
             return Err(format!(
-                "load_for_root must name ripr.toml for a chmod-000 file: {load_error}"
+                "load_for_root must name ripr.toml for a chmod-000 file: {load_error}; check that the config loader error includes the file path"
             ));
         }
         let check = preflight_config_check(&root);
@@ -750,13 +750,13 @@ mod tests {
         }
         if check.message.contains("built-in advisory defaults") {
             return Err(format!(
-                "an unreadable regular ripr.toml must not be described as built-in defaults: {}",
+                "an unreadable regular ripr.toml must not be described as built-in defaults: {}; check that `preflight_config_check` reports the unreadable file instead",
                 check.message
             ));
         }
         if !check.message.contains("ripr.toml") || !check.message.contains("unreadable") {
             return Err(format!(
-                "preflight must name ripr.toml as present but unreadable: {}",
+                "preflight must name ripr.toml as present but unreadable: {}; check that `preflight_config_check` reports the unreadable file instead",
                 check.message
             ));
         }

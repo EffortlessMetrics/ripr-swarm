@@ -101,7 +101,7 @@ pub fn parse_test_efficiency_badge_summary(
     let tests = value
         .get("tests")
         .and_then(Value::as_array)
-        .ok_or_else(|| "test-efficiency.json is missing the `tests` array".to_string())?;
+        .ok_or_else(|| "test-efficiency.json is missing the `tests` array; regenerate it with `cargo xtask test-efficiency-report`, then rerun".to_string())?;
 
     let mut unsuppressed = 0usize;
     let mut intentional = 0usize;
@@ -180,7 +180,7 @@ pub fn parse_test_efficiency_badge_summary(
         .get("metrics")
         .and_then(|m| m.get("tests_scanned"))
         .and_then(Value::as_u64)
-        .ok_or_else(|| "test-efficiency.json is missing `metrics.tests_scanned`".to_string())?
+        .ok_or_else(|| "test-efficiency.json is missing `metrics.tests_scanned`; regenerate it with `cargo xtask test-efficiency-report`, then rerun".to_string())?
         as usize;
 
     let mut reason_counts: BTreeMap<&'static str, usize> = BTreeMap::new();

@@ -76,7 +76,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `response.status_code == 400`
+  Python preview: strengthen the existing related test with a field/object assertion for the missing check `response.status_code == 400`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_effect_order_module_before_call/input --diff <cwd>/fixtures/python_effect_order_module_before_call/diff.patch --mode fast probe:shop_route.py:python_preview:6a58f374
   ripr context --root <cwd>/fixtures/python_effect_order_module_before_call/input --diff <cwd>/fixtures/python_effect_order_module_before_call/diff.patch --mode fast --at probe:shop_route.py:python_preview:6a58f374
