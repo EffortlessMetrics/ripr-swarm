@@ -987,13 +987,28 @@ fn an_impl_the_index_cannot_see_may_define_the_method_so_no_sole_credit() -> Res
     let invoked = Case {
         label: "sole_macro_invocation",
         extra_items: concat!(
-            "add_for!(Money);\n",
+            "mod generated { add_for!(Money); }\n",
             "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
         ),
         ..base
     };
-    assert!(source(&invoked).contains("add_for!(Money);"));
+    assert!(source(&invoked).contains("mod generated { add_for!(Money); }"));
     assert_eq!(classes(&invoked)?, [ExposureClass::StaticUnknown]);
+
+    // Discriminating negative: an item-level invocation (in a module the test
+    // does not enclose, as the scope rule would otherwise refuse the lift
+    // first) that does not name `Money` leaves the credit.
+    let invoked_other = Case {
+        label: "sole_macro_invocation_other",
+        extra_items: concat!(
+            "mod generated { add_for!(Other); }\n",
+            "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let sum = Money::add(Money(1), Money(1)); assert_eq!(sum.0, 2); } }"
+        ),
+        ..base
+    };
+    assert!(source(&invoked_other).contains("mod generated { add_for!(Other); }"));
+    assert!(!source(&invoked_other).contains("mod generated { add_for!(Money); }"));
+    assert_eq!(classes(&invoked_other)?, [ExposureClass::WeaklyExposed]);
 
     // `cfg_attr(.., derive(..))` hides the derive list behind a cfg.
     let cfg_derived = Case {
