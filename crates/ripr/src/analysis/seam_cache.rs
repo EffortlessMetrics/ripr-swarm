@@ -628,7 +628,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// spelling already was (#12266).
 /// `1.137`: indirect-owner item scope decisions: item declarations and a known
 /// different same-name item no longer read as owner-value uses (#10162).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.137";
+/// `1.138`: a file-backed insta snapshot whose committed `.snap` file is
+/// certainly missing no longer discriminates a seam, and the `.snap` listing is
+/// part of the key (#12189).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.138";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -807,7 +810,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.137";
 /// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
 /// `0.138`: same inline `unwrap_err` variant pin as full `1.136` (#12266).
 /// `0.139`: same indirect-owner item scope decisions as full `1.137` (#10162).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.139";
+/// `0.140`: same missing-committed-snapshot rule as full `1.138` (#12189).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.140";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -988,7 +992,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.139";
 /// `0.137`: same proximity-pins-another-function rule as full `1.133` (#12060).
 /// `0.138`: same inline `unwrap_err` variant pin as full `1.136` (#12266).
 /// `0.139`: same indirect-owner item scope decisions as full `1.137` (#10162).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.139";
+/// `0.140`: same missing-committed-snapshot rule as full `1.138` (#12189).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.140";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1509,11 +1514,6 @@ impl RepoFileFactCacheKey {
             file_path: file_path.to_path_buf(),
             content_hash: hash_bytes(content),
         }
-    }
-
-    /// Workspace-relative path this key describes.
-    pub(crate) fn file_path(&self) -> &Path {
-        &self.file_path
     }
 
     /// Digest of the bytes this key was built from, in the per-file form
@@ -5609,7 +5609,8 @@ mod tests {
         // 1.134 -> 1.135: a consumed `match` value remaps the arm result (#12143).
         // 1.135 -> 1.136: inline unwrap_err variant pin (#12266).
         // 1.136 -> 1.137: indirect-owner item scope decisions (#10162).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.137");
+        // 1.137 -> 1.138: file-backed snapshot with no committed `.snap` (#12189).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.138");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5728,8 +5729,9 @@ mod tests {
         // 0.136 -> 0.137: same proximity rule as full 1.133 (#12060).
         // 0.137 -> 0.138: same inline unwrap_err pin as full 1.136 (#12266).
         // 0.138 -> 0.139: same indirect-owner item scope decisions as full 1.137 (#10162).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.139");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.139");
+        // 0.139 -> 0.140: same missing-snapshot rule as full 1.138 (#12189).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.140");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.140");
     }
 
     #[test]
