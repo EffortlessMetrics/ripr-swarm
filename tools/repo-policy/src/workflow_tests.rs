@@ -1921,3 +1921,32 @@ fn publish_jobs_run_locked_tools_with_scoped_pat_and_gate() -> Result<(), String
     }
     Ok(())
 }
+
+#[test]
+fn retired_major_is_rejected_when_a_sha_pin_comment_names_it() {
+    let sha = "d23441a48e516b6c34aea4fa41551a30e30af803";
+    let rejects = |line: &str| {
+        workflow_runtime_violations(".github/workflows/ci.yml", line, &BTreeMap::new())
+            .iter()
+            .any(|violation| violation.contains("actions/checkout@v4"))
+    };
+    // A SHA pinned to a retired major still trips the gate through its comment.
+    assert!(rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v4.2.0\n"
+    )));
+    assert!(rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v4\n"
+    )));
+    // The current major, a longer major that merely starts with `v4`, a
+    // non-SHA ref and a different action do not.
+    assert!(!rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v6.1.0\n"
+    )));
+    assert!(!rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v40.1.0\n"
+    )));
+    assert!(!rejects("      - uses: actions/checkout@main # v4.2.0\n"));
+    assert!(!rejects(&format!(
+        "      - uses: actions/cache@{sha} # v4.2.0\n"
+    )));
+}

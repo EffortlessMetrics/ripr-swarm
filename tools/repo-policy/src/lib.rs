@@ -799,8 +799,8 @@ fn is_full_commit_sha(reference: &str) -> bool {
 ///
 /// A tag or branch is mutable: whoever controls it can change the code that
 /// runs beside this job's `GITHUB_TOKEN` and secrets. First-party `actions/*`
-/// are pinned too (#11692); `deprecated_workflow_action_refs` still rejects
-/// retired major tags. Existing
+/// are pinned too (#11692); `deprecated_workflow_action_refs` rejects retired
+/// majors both as tags and as a SHA pin whose version comment names them. Existing
 /// exceptions were held in `policy/workflow_unpinned_action_allowlist.txt` with
 /// a per-file count. The production entry point now requires that retired
 /// allowlist to remain empty, including rows whose count is zero (#9529).
@@ -1798,6 +1798,37 @@ pub fn routed_rust_workflow_contract_violations_with_reusable(
     violations
 }
 
+/// Count lines that pin a retired major by commit SHA, e.g.
+/// `actions/checkout@<40 hex> # v4.2.0` for the retired `actions/checkout@v4`.
+///
+/// SHA pinning (#11692) removes the literal `owner/repo@vN` text this gate
+/// matches, so the pin's trailing version comment is the only place the major
+/// is still recorded. The comment must start with `v<major>` followed by a
+/// non-digit or the end of the line, so `# v40.1.0` does not read as `v4`.
+fn pinned_retired_ref_count(text: &str, old_ref: &str) -> usize {
+    let Some((action, major)) = old_ref.split_once('@') else {
+        return 0;
+    };
+    let prefix = format!("{action}@");
+    text.lines()
+        .filter(|line| {
+            let Some(rest) = line.split_once(prefix.as_str()).map(|(_, rest)| rest) else {
+                return false;
+            };
+            let Some((sha, comment)) = rest.split_once('#') else {
+                return false;
+            };
+            if !is_full_commit_sha(sha.trim()) {
+                return false;
+            }
+            comment
+                .trim()
+                .strip_prefix(major)
+                .is_some_and(|tail| !tail.starts_with(|ch: char| ch.is_ascii_digit()))
+        })
+        .count()
+}
+
 pub fn workflow_runtime_violations(
     path: &str,
     text: &str,
@@ -1805,7 +1836,7 @@ pub fn workflow_runtime_violations(
 ) -> Vec<String> {
     let mut violations = Vec::new();
     for (old_ref, new_ref) in deprecated_workflow_action_refs() {
-        let count = text.matches(old_ref).count();
+        let count = text.matches(old_ref).count() + pinned_retired_ref_count(text, old_ref);
         if count > 0 {
             violations.push(format!(
                 "{path} uses deprecated action runtime ref `{old_ref}` {count} time(s); use `{new_ref}`"
