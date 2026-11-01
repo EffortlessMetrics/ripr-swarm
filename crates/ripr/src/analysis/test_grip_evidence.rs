@@ -1780,11 +1780,52 @@ fn test_assertion_observes_owner(
         // Comments and string literals (including `assert!` messages) are not
         // observations.
         let masked = crate::analysis::extract::mask_comments_and_strings(&oracle.text);
-        calls_owner(&masked)
+        // Failure-message arguments run only when the assertion fails, so a
+        // result named only there is not observed by the assertion.
+        let operands = assertion_condition_operands(&masked);
+        calls_owner(operands)
             || locals
                 .iter()
-                .any(|local| mentions_identifier(&masked, local))
+                .any(|local| mentions_identifier(operands, local))
     })
+}
+
+/// The leading condition operands of a masked `assert!`, `assert_eq!` or
+/// `assert_ne!` (see [`ARM_CALL_ASSERTIONS`]), without the failure-message
+/// arguments. Any other text, or text that does not parse, is returned whole.
+fn assertion_condition_operands(masked: &str) -> &str {
+    let text = masked.trim_start();
+    for (name, operands) in ARM_CALL_ASSERTIONS {
+        let Some(rest) = text.strip_prefix(name) else {
+            continue;
+        };
+        let Some(rest) = rest.trim_start().strip_prefix('!') else {
+            continue;
+        };
+        let open = text.len() - rest.len() + (rest.len() - rest.trim_start().len());
+        if !text[open..].starts_with('(') {
+            continue;
+        }
+        let Some(close) = matching_close(text, open) else {
+            return masked;
+        };
+        let mut end = close;
+        let mut from = open + 1;
+        for _ in 0..operands {
+            match find_top_level(text, from, close, ",") {
+                Some(comma) => {
+                    end = comma;
+                    from = comma + 1;
+                }
+                None => {
+                    end = close;
+                    break;
+                }
+            }
+        }
+        return &text[open + 1..end];
+    }
+    masked
 }
 
 /// Names bound by a `let` whose initializer calls `owner_name`
@@ -1996,6 +2037,16 @@ mod equality_pin_tests {
         assert!(!pinned("assert!(v > 0);", &locals), "weak stays unpinned");
         assert!(!pinned("assert!(vv == 12);", &locals), "whole identifiers");
         assert!(!pinned("assert!(v == 12);", &[]), "no local, no pin");
+    }
+
+    #[test]
+    fn assertion_condition_operands_exclude_the_failure_message() {
+        use super::assertion_condition_operands as operands;
+        assert_eq!(operands("assert!(r < 100, \"  \", r);"), "r < 100");
+        assert_eq!(operands("assert!(f(a, b) < 3);"), "f(a, b) < 3");
+        assert_eq!(operands("assert_eq!(f(a), r, \"\", w);"), "f(a), r");
+        assert_eq!(operands("assert_ne!(x, y);"), "x, y");
+        assert_eq!(operands("check(r, w);"), "check(r, w);");
     }
 
     #[test]

@@ -1068,6 +1068,17 @@ fn match_arm_without_an_observing_assertion_is_not_a_repair_start() -> Result<()
 }
 
 #[test]
+fn match_arm_result_named_only_in_the_failure_message_is_not_a_repair_start() -> Result<(), String> {
+    assert_no_start_at(
+        "match-arm-message-only",
+        ARM_OLD,
+        ARM_NEW,
+        "use ar::rate;\n\n#[test]\nfn silver_runs() {\n    let r = rate(\"silver\");\n    assert!(1 < 100, \"{}\", r);\n}\n",
+        "src/lib.rs:4",
+    )
+}
+
+#[test]
 fn exact_field_or_arm_assertion_and_sibling_field_are_not_repair_starts() -> Result<(), String> {
     assert_no_start_at(
         "field-exact",
