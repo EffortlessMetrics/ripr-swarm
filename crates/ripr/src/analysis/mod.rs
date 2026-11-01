@@ -1277,9 +1277,11 @@ pub(crate) fn changed_const_reader_return_lines(
     if declaring.is_empty() {
         return Vec::new();
     }
-    let paths = declaring
-        .iter()
-        .map(|file| file.path.clone())
+    // The whole workspace, as `ripr check` indexes it: the rule reads the
+    // tests too, so both commands must see the same ones.
+    let paths = workspace_rust_files(root)
+        .into_iter()
+        .chain(declaring.iter().map(|file| file.path.clone()))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();

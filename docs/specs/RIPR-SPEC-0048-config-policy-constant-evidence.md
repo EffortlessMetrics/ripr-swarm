@@ -315,9 +315,15 @@ only when all of these hold:
   the two initializers evaluate to different values. A visibility-only edit,
   a rewrite to the same value (`10` to `5 + 5`), a type-only edit or a value
   that cannot be evaluated is not a changed value;
-- the file declares the name exactly once, directly in a module (not in an
-  `impl` or trait), and no `use` anywhere in the file imports an item
-  spelled like it;
+- the declaration line holds no `{` or `}`; the file declares the name
+  exactly once, directly in a module (not in an `impl` or trait); no `use`
+  anywhere in the file imports an item spelled like it or a `format`; no
+  inline module chain is opened twice (`#[cfg]` alternatives); and no
+  `macro_rules! format` exists in the indexed workspace;
+- no test or test helper anywhere in the indexed workspace mentions the name.
+  Such a test may build its expected value from the constant itself
+  (`assert_eq!(banner_line(), format!("[{BANNER}]"))`), which tracks the
+  edit; only the value-flow evaluation on the declaration judges that;
 - one to six production functions read the name. Shadowing and other-path
   reads are not reads. Every reader sits in the declaration's own module, and
   no code outside a function reads the name (another constant's initializer,
@@ -333,7 +339,8 @@ only when all of these hold:
 
 Any failure keeps the declaration's `static_unknown` probe, with no repair
 start. `ripr repair` scopes to the same returned lines and expressions by
-running the same probe pipeline over the change, so `ripr check` and
+running the same probe pipeline over the change with the whole workspace
+indexed, so `ripr check` and
 `ripr repair` offer the same start or neither does. A returned value that a
 test checks exactly is reported as checked; a weak check gets the ordinary
 return-value repair.

@@ -338,7 +338,7 @@ fn trait_default_read_through_self_does_not_start() -> Result<(), String> {
 
 #[test]
 fn return_inside_a_closure_does_not_start() -> Result<(), String> {
-    let old = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    [name].iter().map(|_| { return GREETING; }).count().to_string()\n}\n";
+    let old = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    [name].iter().map(|_| { return format!(\"{GREETING}\"); }).count().to_string()\n}\n";
     let repo = Repo::create(old, &old.replace("\"hello\"", "\"hi\""), WEAK_TEST)?;
     assert_no_start("closure return", &repo).map(|_| ())
 }
@@ -352,11 +352,101 @@ fn named_format_argument_that_shadows_the_name_does_not_start() -> Result<(), St
 
 #[test]
 fn conditional_return_of_the_constant_does_not_start() -> Result<(), String> {
-    let old = "pub const GREETING: &str = \"hello\";\n\npub fn greet(flag: bool) -> &'static str {\n    if flag {\n        return GREETING;\n    }\n    \"fixed\"\n}\n";
+    let old = "pub const GREETING: &str = \"hello\";\n\npub fn greet(flag: bool) -> String {\n    if flag {\n        return format!(\"{GREETING}\");\n    }\n    String::new()\n}\n";
     let repo = Repo::create(
         old,
         &old.replace("\"hello\"", "\"hi\""),
         "use fx::greet;\n\n#[test]\nfn greet_is_not_empty() {\n    assert!(!greet(true).is_empty());\n}\n",
     )?;
     assert_no_start("conditional return", &repo).map(|_| ())
+}
+
+/// `pub fn n() -> String { format!("{N}") }` with `N` changed from `old` to
+/// `new`, loosely tested.
+fn number_format_case(old: &str, new: &str) -> Result<Repo, String> {
+    let source = |value: &str| {
+        format!("pub const N: {value};\n\npub fn n() -> String {{\n    format!(\"{{N}}\")\n}}\n")
+    };
+    Repo::create(
+        &source(old),
+        &source(new),
+        "use fx::n;\n\n#[test]\nfn n_is_not_empty() {\n    assert!(!n().is_empty());\n}\n",
+    )
+}
+
+/// Check offers `ripr repair <id>` and bare repair starts on that same id.
+fn assert_same_start(case: &str, repo: &Repo) -> Result<(), String> {
+    let (check, started, repair) = repo.answers()?;
+    let Some(id) = check_start_id(&check) else {
+        return Err(format!("{case}: check must offer a repair start:\n{check}"));
+    };
+    if !started || !repair.contains(&format!("seam `{id}`")) {
+        return Err(format!("{case}: bare repair must start on {id}:\n{repair}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn changed_number_rendered_by_format_starts_in_both_commands() -> Result<(), String> {
+    // Positive twin of the two negatives below.
+    let repo = number_format_case("u32 = 10", "u32 = 11")?;
+    assert_same_start("number format", &repo)
+}
+
+#[test]
+fn same_value_rewritten_behind_a_format_reader_does_not_start() -> Result<(), String> {
+    let repo = number_format_case("u32 = 10", "u32 = 5 + 5")?;
+    assert_no_start("format reader, 10 to 5 + 5", &repo).map(|_| ())
+}
+
+#[test]
+fn type_only_change_behind_a_format_reader_does_not_start() -> Result<(), String> {
+    let repo = number_format_case("u32 = 10", "u64 = 10")?;
+    assert_no_start("format reader, u32 to u64", &repo).map(|_| ())
+}
+
+#[test]
+fn single_return_statement_starts_in_both_commands() -> Result<(), String> {
+    let old = "pub const GREETING: &str = \"hello\";\n\npub fn greet(name: &str) -> String {\n    return format!(\"{GREETING}, {name}\");\n}\n";
+    let repo = Repo::create(old, &old.replace("\"hello\"", "\"hi\""), WEAK_TEST)?;
+    assert_same_start("single return", &repo)
+}
+
+#[test]
+fn test_that_builds_its_expected_value_from_the_constant_does_not_start() -> Result<(), String> {
+    // The verdict-corpus case `spec0048-flow-self-computed-expected`: the
+    // expected side tracks the edit, so the pin cannot notice it.
+    let old = "pub const BANNER: &str = \"v1\";\n\npub fn banner_line() -> String {\n    format!(\"[{BANNER}]\")\n}\n";
+    let repo = Repo::create(
+        old,
+        &old.replace("\"v1\"", "\"v2\""),
+        "use fx::{banner_line, BANNER};\n\n#[test]\nfn banner_line_wraps_banner() {\n    assert_eq!(banner_line(), format!(\"[{BANNER}]\"));\n}\n",
+    )?;
+    let (check, _) = assert_no_start("self-computed expected", &repo)?;
+    if check.contains("Static exposure: exposed") {
+        return Err(format!(
+            "self-computed expected: check must not read exposed:\n{check}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn workspace_format_macro_does_not_start() -> Result<(), String> {
+    let old = format!(
+        "macro_rules! format {{\n    ($($t:tt)*) => {{\n        String::new()\n    }};\n}}\n\n{GREET_OLD}"
+    );
+    let repo = Repo::create(&old, &old.replace("\"hello\"", "\"hi\""), WEAK_TEST)?;
+    assert_no_start("format macro", &repo).map(|_| ())
+}
+
+#[test]
+fn cfg_alternative_module_opened_twice_does_not_start() -> Result<(), String> {
+    let old = "#[cfg(unix)]\npub mod a {\n    pub const GREETING: &str = \"hello\";\n\n    pub fn greet(name: &str) -> String {\n        format!(\"{GREETING}, {name}\")\n    }\n}\n\n#[cfg(not(unix))]\npub mod a {\n    pub fn greet(name: &str) -> String {\n        format!(\"{GREETING}, {name}\")\n    }\n}\n";
+    let repo = Repo::create(
+        old,
+        &old.replace("\"hello\"", "\"hi\""),
+        "use fx::a::greet;\n\n#[test]\nfn greet_mentions_name() {\n    assert!(greet(\"bob\").contains(\"bob\"));\n}\n",
+    )?;
+    assert_no_start("duplicate module", &repo).map(|_| ())
 }

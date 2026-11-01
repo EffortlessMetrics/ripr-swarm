@@ -94,6 +94,10 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
     if declaration_count(&masked, name) != 1
         || item_level_read(&masked, name, &spans)
         || imports_name(&masked, name)
+        || imports_name(&masked, "format")
+        || repeats_inline_module(&masked)
+        || tests_mention(index, name)
+        || defines_format_macro(index)
     {
         return Vec::new();
     }
@@ -135,6 +139,81 @@ pub(in crate::analysis) fn const_reader_returns<'a>(
         found.push(shape);
     }
     found
+}
+
+/// Whether any test or test helper in the index mentions `name`, in code or
+/// in a format string. Such a test may build its expected value from the
+/// constant itself (`assert_eq!(banner(), format!("[{BANNER}]"))`), which
+/// tracks the edit and cannot notice it; only the value-flow evaluation on the
+/// declaration judges that, so the declaration keeps its probe.
+fn tests_mention(index: &RustIndex, name: &str) -> bool {
+    index.files().iter().any(|(_, facts)| {
+        facts.functions.iter().any(|function| {
+            function.source_role != FunctionSourceRole::Production
+                && contains_word(&function.body, name)
+        })
+    })
+}
+
+/// Whether a workspace `macro_rules! format` could replace `std::format!`.
+fn defines_format_macro(index: &RustIndex) -> bool {
+    index.files().iter().any(|(_, facts)| {
+        facts.source.contains("macro_rules!") && {
+            let masked = mask_comments_and_strings(&facts.source);
+            masked.match_indices("macro_rules!").any(|(at, found)| {
+                let rest = masked
+                    .get(at + found.len()..)
+                    .unwrap_or_default()
+                    .trim_start();
+                rest.strip_prefix("format").is_some_and(|after| {
+                    after
+                        .as_bytes()
+                        .first()
+                        .is_none_or(|byte| !is_ident_byte(*byte))
+                })
+            })
+        }
+    })
+}
+
+/// Whether one chain of inline modules (`mod a { .. }`) is opened twice, as a
+/// pair of `#[cfg]` alternatives does: spelling cannot tell which copy a
+/// reader or the declaration belongs to.
+fn repeats_inline_module(masked: &str) -> bool {
+    let mut stack: Vec<Option<String>> = Vec::new();
+    let mut seen: std::collections::BTreeSet<Vec<Option<String>>> =
+        std::collections::BTreeSet::new();
+    for line in masked.lines() {
+        let mut words = line.split_whitespace().peekable();
+        let mut module: Option<String> = None;
+        while let Some(word) = words.next() {
+            if word == "mod"
+                && let Some(name) = words.peek()
+            {
+                module = Some(name.trim_end_matches(['{', ';']).to_string());
+            }
+        }
+        for ch in line.chars() {
+            match ch {
+                '{' => {
+                    let opened = module.take();
+                    if opened.is_some() {
+                        let mut chain = stack.clone();
+                        chain.push(opened.clone());
+                        if !seen.insert(chain) {
+                            return true;
+                        }
+                    }
+                    stack.push(opened);
+                }
+                '}' => {
+                    stack.pop();
+                }
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 /// Whether the function `body` (signature included) consists of exactly the

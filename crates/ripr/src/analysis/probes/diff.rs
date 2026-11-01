@@ -883,7 +883,9 @@ fn retarget_changed_const_readers(
     text: &str,
     changed_lines: &[usize],
 ) -> Option<Vec<SeededProbe>> {
-    if !text.trim_end().ends_with(';') {
+    // One plain declaration line: a brace could open or close an item on
+    // the same line.
+    if !text.trim_end().ends_with(';') || text.contains(['{', '}']) {
         return None;
     }
     // Only a value that really changed: the removed declaration of the same
