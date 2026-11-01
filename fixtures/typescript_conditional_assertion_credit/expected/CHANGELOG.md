@@ -171,3 +171,15 @@ Updated:
 - `expected/human.txt`
 
 Note (#10700): `expected/human.txt` also moves its repair-refusal opening from the no-gap-id wording to `nothing to repair here`; that move is #10702/#10885 behavior, not caused by confidence_basis, and its transitional entry was removed in this bless.
+
+## Pending — typescript_conditional_assertion_credit (15)
+
+Reason:
+RIPR-SPEC-0027: plain wording for the conditional-credit recovery text (glossary: discriminator -> check)
+
+Command:
+`cargo xtask goldens bless typescript_conditional_assertion_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
