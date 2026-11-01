@@ -7,7 +7,7 @@ permissions:
   contents: write
 concurrency:
   group: ripr-11358-proof
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   proof:
     runs-on: ubuntu-latest
@@ -46,7 +46,7 @@ jobs:
           workspaces: build -> target
           shared-key: ripr-8547-focused
           save-if: 'true'
-      - name: Materialize pinned scripts and exact regression ordering repair
+      - name: Materialize pinned scripts and bounded instrument repairs
         run: |
           set -euo pipefail
           export EVIDENCE="$RUNNER_TEMP/predicate-reuse-evidence"
@@ -66,6 +66,29 @@ jobs:
               end=start
               while end<len(lines) and (not lines[end].strip() or lines[end].startswith('          ')): end+=1
               script=''.join(line[10:] if line.startswith('          ') else line for line in lines[start:end])
+              if short=='baseline':
+                  old='run baseline-doctor cargo +1.95.0 run --locked -p xtask -- worktree doctor\n'
+                  assert script.count(old)==1
+                  new="""git rev-parse origin/main > "$EVIDENCE/observed-main.sha"
+          git log --oneline "$BASIS..origin/main" > "$EVIDENCE/observed-main-movement.txt"
+          git diff --name-only "$BASIS" origin/main > "$EVIDENCE/observed-main-paths.txt"
+          if run baseline-doctor cargo +1.95.0 run --locked -p xtask -- worktree doctor; then
+            :
+          else
+            doctor_code=$?
+            test "$doctor_code" = 1
+            python3 - <<'DOCTOR'
+          import os, re
+          from pathlib import Path
+          text=(Path(os.environ['EVIDENCE'])/'baseline-doctor.stdout').read_text()
+          section=text.split('Errors:\\n',1)[1].split('\\nNext actions:',1)[0]
+          errors=[line.strip() for line in section.splitlines() if line.strip()]
+          assert len(errors)==1 and re.fullmatch(r'- branch is behind origin/main by [1-9][0-9]* commit\\(s\\); refresh before opening or updating a PR',errors[0]), text
+          DOCTOR
+            echo 'baseline doctor remains FAILED: behind-only observation retained under AGENTS.md no-restack rule; not merge or integration clearance' >> "$EVIDENCE/status.txt"
+          fi
+          """
+                  script=script.replace(old,new,1)
               if short=='prepare':
                   anchor='cargo +1.95.0 fmt --all\n'
                   assert script.count(anchor)==1
@@ -132,5 +155,6 @@ jobs:
             ${{ runner.temp }}/predicate-reuse-evidence/
             build/target/ripr/reports/check-fast*
             build/target/ripr/reports/precommit*
+            build/target/ripr/reports/worktree-doctor*
           if-no-files-found: error
           retention-days: 14
