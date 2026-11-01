@@ -5154,6 +5154,7 @@ pub(super) fn walk_body_lexical<'a>(
     let mut escaped = false;
     let mut pending_dollar = false;
     let mut block_comment_has_newline = false;
+    let mut comment_opened_at_statement_start = false;
     for (idx, ch) in body_text.char_indices() {
         if escaped {
             escaped = false;
@@ -5182,7 +5183,11 @@ pub(super) fn walk_body_lexical<'a>(
             BodyScanState::Code => match ch {
                 c if c.is_whitespace() => {}
                 '/' if body_text[idx + 1..].starts_with('/') => state = BodyScanState::LineComment,
-                '/' if body_text[idx + 1..].starts_with('*') => state = BodyScanState::BlockComment,
+                '/' if body_text[idx + 1..].starts_with('*') => {
+                    state = BodyScanState::BlockComment;
+                    comment_opened_at_statement_start = at_line_start;
+                    block_comment_has_newline = false;
+                }
                 '\'' => state = BodyScanState::SingleQuoted,
                 '"' => state = BodyScanState::DoubleQuoted,
                 '`' => state = BodyScanState::Template,
@@ -5246,7 +5251,9 @@ pub(super) fn walk_body_lexical<'a>(
                     // line-start check (ASI), so a declaration following it is
                     // still recognized as leading its line.
                     state = BodyScanState::Code;
-                    at_line_start = block_comment_has_newline;
+                    // A same-line comment is transparent: it keeps the
+                    // statement position it opened at (`; /* n */ const f`).
+                    at_line_start = block_comment_has_newline || comment_opened_at_statement_start;
                 }
             }
             BodyScanState::SingleQuoted => {
@@ -5345,6 +5352,7 @@ fn split_top_level_declarators(after: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;
+    let mut end = after.len();
     for (offset, c) in masked.char_indices() {
         match c {
             '(' | '[' | '{' => depth += 1,
@@ -5353,10 +5361,16 @@ fn split_top_level_declarators(after: &str) -> Vec<&str> {
                 parts.push(after[start..offset].trim());
                 start = offset + 1;
             }
+            // The declaration statement ends at a top-level `;`; a later
+            // comma expression (`; void 0, f(100)`) is not another declarator.
+            ';' if depth == 0 => {
+                end = offset;
+                break;
+            }
             _ => {}
         }
     }
-    parts.push(after[start..].trim());
+    parts.push(after[start..end].trim());
     parts.into_iter().filter(|part| !part.is_empty()).collect()
 }
 
@@ -5548,6 +5562,9 @@ mod same_line_shadow_tests {
             "() => { const f = function(n) { return false; }; expect(f(100)).toBe(false); }",
             "() => { const a = 1; const f = () => false; expect(f(100)).toBe(false); }",
             "() => {\n  function f(n) {\n return false; }\n  expect(f(100)).toBe(false);\n}",
+            // A same-line block comment keeps the statement position.
+            "() => { const a = 1; /* note */ const f = () => false; expect(f(100)).toBe(false); }",
+            "() => { /* a\n b */ /* c */ const f = () => false; expect(f(100)).toBe(false); }",
         ];
         for body in shadows {
             if !local_identifier_declared_in_test_body(body, "f") {
@@ -5564,6 +5581,8 @@ mod same_line_shadow_tests {
             "() => { { function f() { return 1; } } expect(f(100)).toBe(true); }",
             // A different name sharing a prefix.
             "() => { function fx(n) { return false; } expect(f(100)).toBe(true); }",
+            // A comma expression after the statement is not a declarator.
+            "() => { const a = 1; void 0, f(100); expect(f(100)).toBe(90); }",
             // The name only appears as a member and in a string.
             "() => { const o = { f: 1 }; expect(f(100)).toBe(true); const s = 'function f()'; }",
         ];
