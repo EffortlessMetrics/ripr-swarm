@@ -5449,7 +5449,8 @@ mod bounded_failure_message_tests {
             .path()
             .join("a long folder name with spaces ".repeat(6))
             .join("another long folder name");
-        std::fs::create_dir_all(&deep).map_err(|error| format!("create root failed: {error}"))?;
+        // The refusal only formats the path, so the long root is never created:
+        // on Windows it would pass MAX_PATH and fail with "path not found".
         // The production builder of the non-Git refusal; a non-Git temp root
         // is not constructible here because unit-test temp roots sit inside
         // the checkout's own work tree.
@@ -9466,6 +9467,7 @@ mod top_limitation_selection_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
@@ -11411,6 +11413,7 @@ mod delivery_selection_parity_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
         WorkspaceDiagnostics { snapshot, batches }
     }
@@ -12568,6 +12571,7 @@ mod list_actionable_items_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
@@ -13408,6 +13412,7 @@ mod pull_disclosure_dedup_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 }
