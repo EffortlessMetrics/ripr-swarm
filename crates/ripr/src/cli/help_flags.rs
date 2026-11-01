@@ -117,12 +117,17 @@ fn parse_options(body: &str) -> Vec<ParsedOption> {
         }
         let mut tokens = rest.split_whitespace().peekable();
         let mut name = String::new();
+        // `--name=VALUE` spells a value-taking flag without a separate token;
+        // no shipped help body does, but fail closed rather than report a
+        // boolean switch.
+        let mut inline_value = false;
         while let Some(token) = tokens.peek().copied() {
             let flag = token.trim_end_matches(',');
             if !flag.starts_with('-') {
                 break;
             }
             if flag.starts_with("--") && name.is_empty() {
+                inline_value = flag.contains('=');
                 name = flag.split('=').next().unwrap_or(flag).to_string();
             }
             tokens.next();
@@ -130,7 +135,7 @@ fn parse_options(body: &str) -> Vec<ParsedOption> {
         if name.is_empty() {
             continue;
         }
-        let mut takes_value = false;
+        let mut takes_value = inline_value;
         let mut literal_value = None;
         if let Some(token) = tokens.peek().copied() {
             if is_metavar(token) {
@@ -240,6 +245,17 @@ mod tests {
             .iter()
             .find(|candidate| candidate.name == name)
             .ok_or_else(|| format!("flag {name} not parsed: {flags:?}"))
+    }
+
+    /// No shipped help body writes `--name=VALUE`, but a value-taking flag
+    /// spelled that way must not read as a boolean switch.
+    #[test]
+    fn an_equals_spelled_flag_takes_a_value() -> Result<(), String> {
+        let body = "Do a thing.\n\nUsage: ripr thing [--depth=N] [--json]\n\nOptions:\n  --depth=N        How deep.\n  --json           Print JSON.\n";
+        let flags = flags_for("thing", body);
+        assert!(flag(&flags, "--depth")?.takes_value, "{flags:?}");
+        assert!(!flag(&flags, "--json")?.takes_value, "{flags:?}");
+        Ok(())
     }
 
     #[test]
