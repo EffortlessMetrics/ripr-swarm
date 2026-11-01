@@ -1171,12 +1171,52 @@ static RIPR_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 /// reaches the binary through — rather than to individual command entry points,
 /// where a newly added entry point (as `golden-drift` was) silently opts out.
 pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
+    if isolate_fixture_binary() {
+        let target = isolated_default_target_dir(&ripr_debug_binary())?;
+        let binary = ripr_debug_binary_in(Some(target.clone()));
+        return ripr_fixture_binary_built_by(binary, &RIPR_ISOLATED_BINARY_BUILD, &|| {
+            preparation::build_default_isolated(&target)
+        });
+    }
     // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
     // routed CI jobs set it, so `cargo build` writes there.
     ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
-        preparation::build(&["build", "-p", "ripr"])
+        // The build output goes straight to the console here, so the retry
+        // cannot read why it failed; it is Windows-only and bounded.
+        crate::run::retry_while_binary_busy(
+            |_| true,
+            || preparation::build(&["build", "-p", "ripr"]),
+        )
     })
 }
+
+/// Set by a lane whose test run is itself built with a different feature set
+/// than the fixture corpus (Test Analytics: `nextest --all-features`). There the
+/// suite's `target/debug/ripr` is the all-features build, and the corpus's plain
+/// `cargo build -p ripr` would relink it to the default-feature build mid-suite,
+/// so feature-aware tests would race the swap (#11602). With the variable set,
+/// the corpus builds its default binary in a private target directory instead.
+/// Unset (the required lane builds default features throughout), behavior is
+/// unchanged and the shared binary is rebuilt in place as before (#3054).
+pub(crate) const FIXTURE_BINARY_ISOLATE_ENV: &str = "RIPR_FIXTURE_BINARY_ISOLATE";
+
+fn isolate_fixture_binary() -> bool {
+    std::env::var_os(FIXTURE_BINARY_ISOLATE_ENV).is_some_and(|value| value == "1")
+}
+
+/// Private target for the isolated default-feature build, beside (not inside)
+/// the Perl variant's own `debug/` so the two feature sets never thrash one
+/// Cargo fingerprint.
+pub(crate) fn isolated_default_target_dir(shared: &Path) -> Result<PathBuf, String> {
+    let root = shared
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("missing shared target root")?;
+    std::path::absolute(root.join("fixture-variants").join("default"))
+        .map_err(|err| format!("resolve isolated default target: {err}"))
+}
+
+static RIPR_ISOLATED_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 
 /// Memoized result of the one `cargo build -p ripr --features lang-perl` this
 /// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
@@ -1823,8 +1863,34 @@ fn mask_refusal_body(body: &str) -> String {
     body.to_string()
 }
 
+/// Classification goldens pin analyzer findings, not the per-language
+/// completeness projection (#11272). The report renderer writes it as one
+/// compact member, and later adapters (`source_subject`, canonical next
+/// action) may append after it, so measure the member's own JSON value rather
+/// than assuming it is last. Dedicated schema tests own the field.
+fn strip_language_completeness_member(value: &str) -> String {
+    const MARKER: &str = ",\n  \"language_completeness\": ";
+    let Some(start) = value.find(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let mut values = serde_json::Deserializer::from_str(rest).into_iter::<serde_json::Value>();
+    if !matches!(values.next(), Some(Ok(_))) {
+        return value.to_string();
+    }
+    let end = start + MARKER.len() + values.byte_offset();
+    // The renderer's optional members follow the findings array's own newline
+    // (`]\n,\n  "member"`); drop it with the member so the root closer keeps
+    // the golden's `]\n}` shape.
+    let head = &value[..start];
+    let head = head.strip_suffix('\n').unwrap_or(head);
+    format!("{head}{}", &value[end..])
+}
+
 fn normalize_check_json_golden_document(value: &str) -> String {
-    split_compact_root_object_closer(&strip_canonical_next_action_member(value))
+    split_compact_root_object_closer(&strip_language_completeness_member(
+        &strip_canonical_next_action_member(value),
+    ))
 }
 
 /// Project the checkout's absolute path prefix to the machine-independent
@@ -3033,6 +3099,20 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 mod tests {
 
     #[test]
+    fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() {
+        let shared = std::path::Path::new("/w/target/debug/ripr");
+        // `std::path::absolute` anchors a rootless Windows path to the current
+        // drive (`/w` gains a drive prefix), so the expectation goes through it too.
+        assert_eq!(
+            super::isolated_default_target_dir(shared),
+            std::path::absolute("/w/target/fixture-variants/default")
+                .map_err(|err| format!("resolve isolated default target: {err}"))
+        );
+        let missing = super::isolated_default_target_dir(std::path::Path::new("ripr"));
+        assert_eq!(missing, Err("missing shared target root".to_string()));
+    }
+
+    #[test]
     fn windows_python_golden_projection_keeps_fixture_and_selector_identity() {
         let bash = "  Verify command (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";
         let manual = "  Suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_a.py::test_one\n";
@@ -3546,6 +3626,26 @@ mod tests {
             "{\"config_path\":\"<cwd>/fixtures/x/input/ripr.toml\"}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn normalize_json_strips_language_completeness_wherever_it_sits() {
+        let member = "{\"mode\":\"diff\",\"languages\":[{\"language\":\"rust\"}]}";
+        // After the findings array's own newline, ahead of later members.
+        let input = format!(
+            "{{\n  \"findings\": [\n  ]\n,\n  \"language_completeness\": {member},\n  \"source_subject\": {{\"a\":1}},\n  \"canonical_next_action\": {{\"x\":1}}\n}}\n"
+        );
+        assert_eq!(
+            normalize_fixture_json_output(&input),
+            "{\n  \"findings\": [\n  ],\n  \"source_subject\": {\"a\":1}\n}\n"
+        );
+        // Last member after a compact `]`.
+        let compact =
+            format!("{{\n  \"findings\": [\n  ],\n  \"language_completeness\": {member}}}\n");
+        assert_eq!(
+            normalize_fixture_json_output(&compact),
+            "{\n  \"findings\": [\n  ]\n}\n"
+        );
     }
 
     #[test]

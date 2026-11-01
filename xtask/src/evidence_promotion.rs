@@ -10,6 +10,8 @@
 
 use super::*;
 
+mod partial_analysis;
+
 pub(crate) const EVIDENCE_PROMOTION_HONESTY_CORPUS: &str =
     "fixtures/evidence-promotion-honesty-corpus/corpus.json";
 
@@ -300,6 +302,9 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
     },
     ExpectedCompleteness {
         completeness: String,
+    },
+    ExpectedPartialAnalysis {
+        detail: partial_analysis::ExpectedPartialAnalysis,
     },
     ExpectedChangedRustFiles {
         count: u64,
@@ -800,6 +805,11 @@ fn evidence_promotion_parse_assertion(
                 evidence_promotion_required_assertion_class(case_id, index, assertion, "class")?;
             Ok(EvidencePromotionSemanticAssertion::MaximumClass { class })
         }
+        "expected_partial_analysis" => Ok(
+            EvidencePromotionSemanticAssertion::ExpectedPartialAnalysis {
+                detail: partial_analysis::parse(case_id, index, assertion)?,
+            },
+        ),
         "expected_completeness" => {
             let completeness = evidence_promotion_required_assertion_string(
                 case_id,
@@ -2035,6 +2045,13 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                     }
                 }
             }
+            EvidencePromotionSemanticAssertion::ExpectedPartialAnalysis { detail } => {
+                if !partial_analysis::matches(detail, check_json) {
+                    violations.push(format!(
+                        "{case_label}: `expected_partial_analysis` requires incomplete typed partial_with_limitations and exactly one matching limitation: {detail:?}"
+                    ));
+                }
+            }
             EvidencePromotionSemanticAssertion::ExpectedCompleteness { completeness } => {
                 let observed = check_json
                     .get("analysis_scope")
@@ -2784,7 +2801,9 @@ fn evidence_promotion_finding_packet_ready(finding: &Value) -> bool {
 
 fn evidence_promotion_packet_blocked_message_reason(value: &str) -> Option<&'static str> {
     let trimmed = value.trim();
-    if trimmed == "gap_state: advisory" {
+    // `advisory` was the TypeScript adapter's non-vocabulary word until #11691
+    // mapped it to `unknown`; keep recognizing both so older artifacts stay blocked.
+    if matches!(trimmed, "gap_state: advisory" | "gap_state: unknown") {
         return Some("blocked gap_state evidence");
     }
     if trimmed == "actionability_category: incomplete_repair_packet" {
@@ -2882,7 +2901,10 @@ fn evidence_promotion_human_packet_blocked_message_reason(value: &str) -> Option
     if normalized == "repair packet ready: false" {
         return Some("blocked packet-ready false status");
     }
-    if normalized == "gap state: advisory" {
+    if matches!(
+        normalized.as_str(),
+        "gap state: advisory" | "gap state: unknown"
+    ) {
         return Some("blocked advisory gap state");
     }
     if normalized == "category: incomplete_repair_packet" {

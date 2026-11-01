@@ -178,7 +178,7 @@ pub(crate) fn decide_repair_start(
             .subject()
             .item
             .clone()
-            .ok_or_else(|| "repair-start decision bound no subject".to_string())?;
+            .ok_or_else(|| "repair-start decision bound no subject; this is a ripr bug, report it with the command you ran".to_string())?;
         return Ok(RepairStartDecision::Start { seam_id });
     }
     // Describe exactly the candidates the stop lists, in the stop's order; its
@@ -511,11 +511,81 @@ fn route_not_ready_reason(
     // A named stub route already answers "no test calls this"; a second
     // suffix would read as competing advice.
     if !label.contains("ripr agent stub")
-        && let Some(guidance) = owner_call_absent_guidance(entry, root)
+        && let Some(guidance) =
+            owner_call_absent_guidance(entry, root).or_else(|| reaching_test_guidance(entry, root))
     {
         label.push_str(&format!(": {guidance}"));
     }
     label
+}
+
+/// A test already reaches the changed code but ripr cannot follow the changed
+/// value to an assertion on it (`*_unknown` class past activation): name that
+/// test so the reader knows where to strengthen, instead of listing missing
+/// evidence alone (#11466). An activation-unknown seam is named too, but only
+/// through a direct owner call: it reaches the owner, yet ripr cannot show its
+/// input reaches the changed branch (#11895). Refusal text only; class and
+/// eligibility are untouched.
+fn reaching_test_guidance(
+    entry: &crate::analysis::ClassifiedSeam,
+    root: RefusalRoot<'_>,
+) -> Option<String> {
+    use crate::analysis::seams::SeamGripClass;
+    use crate::domain::RelationReason;
+    // Activation unknown with a test that calls the owner directly: the test
+    // reaches the function but ripr cannot show its input reaches the changed
+    // branch (#11466 follow-up). Only a direct owner call counts there, since
+    // activation is exactly what a weaker relation fails to establish.
+    if entry.class == SeamGripClass::ActivationUnknown {
+        let test = entry
+            .evidence
+            .related_tests
+            .iter()
+            .find(|test| test.relation_reason == RelationReason::DirectOwnerCall)?;
+        let file = root
+            .source
+            .and_then(|root| test.file.strip_prefix(root).ok())
+            .unwrap_or(&test.file);
+        return Some(format!(
+            "`{}` ({}:{}) calls this code, but ripr cannot show that its input reaches the changed branch. Check by hand that it does and asserts on the result there, and add a test input only if the existing one does not",
+            test.test_name,
+            crate::analysis::stable_path_text(file),
+            test.line
+        ));
+    }
+    if !matches!(
+        entry.class,
+        SeamGripClass::PropagationUnknown
+            | SeamGripClass::ObservationUnknown
+            | SeamGripClass::DiscriminationUnknown
+    ) {
+        return None;
+    }
+    // Same pick as `RepairStartRefusal::related_test` (a direct owner call
+    // first), so one refusal never names two different tests.
+    let related = &entry.evidence.related_tests;
+    let test = related
+        .iter()
+        .find(|test| test.relation_reason == RelationReason::DirectOwnerCall)
+        .or_else(|| related.first())?;
+    if !matches!(
+        test.relation_reason,
+        RelationReason::DirectOwnerCall
+            | RelationReason::HelperOwnerCall
+            | RelationReason::ReExportChainFollowed
+    ) {
+        return None;
+    }
+    let file = root
+        .source
+        .and_then(|root| test.file.strip_prefix(root).ok())
+        .unwrap_or(&test.file);
+    Some(format!(
+        "`{}` ({}:{}) calls this code, but ripr cannot follow the changed value to an assertion on it. Check by hand that it exercises the changed branch and asserts on its result, and add the assertion there",
+        test.test_name,
+        crate::analysis::stable_path_text(file),
+        test.line
+    ))
 }
 
 /// Why `ripr agent stub` would refuse this seam, read through the stub's own
@@ -771,7 +841,7 @@ pub(crate) fn resolve_repair_start(
         && info.is_truncated()
     {
         return Err(format!(
-            "repair start refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
+            "repair start refused: the seam inventory is truncated ({} of {} seams); next step: {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
@@ -1372,7 +1442,8 @@ fn describe_candidate(
 /// or the deliberate message naming why no seam was selected.
 pub(crate) enum RepairSubject {
     Seam(String),
-    Decision(String),
+    /// The deliberate no-selection message with its typed reason code.
+    Decision(RepairRefusalCode, String),
 }
 
 /// The structured outcome of resolving one explicit repair item, before
@@ -1392,8 +1463,13 @@ pub(crate) enum RepairSubjectOutcome {
         reason: String,
         kind: RefusalKind,
     },
-    /// Several seams name the item; the bounded seam IDs to choose from.
-    Ambiguous(Vec<String>),
+    /// Several seams name the item: the seam IDs to choose from, and a
+    /// parallel description of each (kind, expression, owner) so the reader
+    /// can tell the candidates apart (#11466).
+    Ambiguous {
+        seam_ids: Vec<String>,
+        descriptions: Vec<String>,
+    },
     /// No current seam names the item (stale or unmapped).
     Unknown,
 }
@@ -1410,12 +1486,21 @@ pub(crate) fn resolve_repair_subject(root: &Path, item: &str) -> Result<RepairSu
         RepairSubjectOutcome::Seam(seam_id) => RepairSubject::Seam(seam_id),
         RepairSubjectOutcome::Ineligible {
             seam_id, reason, ..
-        } => RepairSubject::Decision(ineligible_repair_item(root, item, &seam_id, &reason)),
-        RepairSubjectOutcome::Ambiguous(seam_ids) => {
-            let seam_refs: Vec<&str> = seam_ids.iter().map(String::as_str).collect();
-            RepairSubject::Decision(ambiguous_gap_item(root, item, &seam_refs))
+        } => RepairSubject::Decision(
+            RepairRefusalCode::SeamNotRepairEligible,
+            ineligible_repair_item(root, item, &seam_id, &reason),
+        ),
+        RepairSubjectOutcome::Ambiguous { descriptions, .. } => {
+            let listed: Vec<&str> = descriptions.iter().map(String::as_str).collect();
+            RepairSubject::Decision(
+                RepairRefusalCode::ItemNamesSeveralSeams,
+                ambiguous_gap_item(root, item, &listed),
+            )
         }
-        RepairSubjectOutcome::Unknown => RepairSubject::Decision(unknown_repair_item(root, item)),
+        RepairSubjectOutcome::Unknown => RepairSubject::Decision(
+            RepairRefusalCode::ItemNamesNoSeam,
+            unknown_repair_item(root, item),
+        ),
     })
 }
 
@@ -1440,7 +1525,7 @@ pub(crate) fn resolve_repair_subject_outcome(
         && info.is_truncated()
     {
         return Err(format!(
-            "repair item refused: the seam inventory is truncated ({} of {} seams); {WIDEN_SEAM_BUDGET}",
+            "repair item refused: the seam inventory is truncated ({} of {} seams); next step: {WIDEN_SEAM_BUDGET}",
             info.analyzed, info.total
         ));
     }
@@ -1500,12 +1585,16 @@ pub(crate) fn resolve_repair_subject_in(
     match matches.len() {
         1 => outcome_for(matches[0]),
         0 => RepairSubjectOutcome::Unknown,
-        _ => RepairSubjectOutcome::Ambiguous(
-            matches
+        _ => RepairSubjectOutcome::Ambiguous {
+            seam_ids: matches
                 .iter()
                 .map(|entry| entry.seam.id().as_str().to_string())
                 .collect(),
-        ),
+            descriptions: matches
+                .iter()
+                .map(|entry| describe_ambiguous_seam(entry))
+                .collect(),
+        },
     }
 }
 
@@ -2554,6 +2643,31 @@ pub(crate) fn unknown_repair_item_reason(root: Option<&Path>, item: &str) -> Str
     format!("repair item `{item}` names no seam in the selected root; run {list}")
 }
 
+/// One candidate in an ambiguous-item listing: the seam ID (what the retry
+/// takes) followed by what distinguishes it, so several seams on one line can
+/// be told apart without opening `ripr pilot` (#11466).
+fn describe_ambiguous_seam(entry: &crate::analysis::ClassifiedSeam) -> String {
+    const MAX_EXPRESSION: usize = 48;
+    let expression = entry
+        .seam
+        .expression()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let expression = if expression.chars().count() > MAX_EXPRESSION {
+        let cut: String = expression.chars().take(MAX_EXPRESSION).collect();
+        format!("{cut}...")
+    } else {
+        expression
+    };
+    format!(
+        "{} ({} `{expression}` in {})",
+        entry.seam.id().as_str(),
+        entry.seam.kind().as_str(),
+        entry.seam.owner()
+    )
+}
+
 fn ambiguous_gap_item(root: &Path, item: &str, matches: &[&str]) -> String {
     const MAX_LISTED: usize = 8;
     let mut listed: Vec<&str> = matches.iter().take(MAX_LISTED).copied().collect();
@@ -2587,6 +2701,164 @@ pub(crate) fn card_after_publish_message(
     format!(
         "repair started attempt `{attempt_id}` for seam `{seam_id}`, but the handoff card is unavailable: {card_error}. The attempt awaits its edit; inspect it with `ripr status --attempt {attempt_id} --root {root_display}`, or continue after editing with `ripr continue --attempt {attempt_id} --root {root_display}`"
     )
+}
+
+/// The typed reason behind a `ripr repair` / `ripr continue` refusal (#11597).
+///
+/// The exit code says only "decision" (3) or "could not complete" (2); this
+/// closed vocabulary says which state produced it, so a script switches on
+/// the code instead of parsing prose. One owner: the façade and the shared
+/// after phase both print [`RepairRefusalCode::stderr_line`], and a JSON
+/// carrier added later reads the same value. Prose is unchanged.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RepairRefusalCode {
+    /// `repair <item>`: no current seam is named by the item.
+    ItemNamesNoSeam,
+    /// `repair <item>`: the item names several seams.
+    ItemNamesSeveralSeams,
+    /// `repair <item>`: the one seam it names is not repair-eligible.
+    SeamNotRepairEligible,
+    /// Bare `repair`: no seam is repair-eligible.
+    NoEligibleSeam,
+    /// Bare `repair`: several eligible seams; the caller selects one.
+    SeveralEligibleSeams,
+    /// Bare `repair`: the selector needs an explicit item.
+    RepairNeedsItem,
+    /// The start was refused: the focused test file has uncommitted changes.
+    StartRefusedUncommittedTarget,
+    /// The start was refused: no test file or module ripr can safely edit.
+    NoTestRoute,
+    /// `continue`: the attempt awaits the focused test edit; retry after it.
+    AwaitingEdit,
+    /// `continue`: the attempt spent its after-phase retry budget.
+    RetryBudgetExhausted,
+    /// `continue`: no current attempt exists.
+    NoCurrentAttempt,
+    /// `continue`: several current attempts; select one with `--attempt`.
+    AmbiguousAttempts,
+    /// `continue`: the attempt ended without a receipt.
+    AttemptEndedWithoutReceipt,
+    /// `continue`: the attempt finished but no compliant receipt confirms it.
+    AttemptCompletionUnconfirmed,
+    /// `continue`: the edit cage rejected the edit; the attempt is terminal.
+    EditCageViolation,
+    /// `continue`: HEAD moved after the repair started; the attempt is stale.
+    AttemptStale,
+    /// `continue`: the cage could not compare the files; the attempt is terminal.
+    AttemptIncomparable,
+}
+
+/// What the caller can do about a refusal, so retryable and terminal states
+/// are not told apart by prose (#11597).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RepairRefusalDisposition {
+    /// The same attempt can proceed after the stated action.
+    Retryable,
+    /// The attempt is over; only a fresh `ripr repair` can proceed.
+    Terminal,
+    /// The caller must name one of several choices.
+    NeedsSelection,
+    /// Nothing started; fix the stated cause and run `ripr repair` again.
+    NotStarted,
+}
+
+impl RepairRefusalDisposition {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Retryable => "retryable",
+            Self::Terminal => "terminal",
+            Self::NeedsSelection => "needs_selection",
+            Self::NotStarted => "not_started",
+        }
+    }
+}
+
+impl RepairRefusalCode {
+    /// Every code, for the docs/help parity test.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 17] = [
+        Self::ItemNamesNoSeam,
+        Self::ItemNamesSeveralSeams,
+        Self::SeamNotRepairEligible,
+        Self::NoEligibleSeam,
+        Self::SeveralEligibleSeams,
+        Self::RepairNeedsItem,
+        Self::StartRefusedUncommittedTarget,
+        Self::NoTestRoute,
+        Self::AwaitingEdit,
+        Self::RetryBudgetExhausted,
+        Self::NoCurrentAttempt,
+        Self::AmbiguousAttempts,
+        Self::AttemptEndedWithoutReceipt,
+        Self::AttemptCompletionUnconfirmed,
+        Self::EditCageViolation,
+        Self::AttemptStale,
+        Self::AttemptIncomparable,
+    ];
+
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ItemNamesNoSeam => "item_names_no_seam",
+            Self::ItemNamesSeveralSeams => "item_names_several_seams",
+            Self::SeamNotRepairEligible => "seam_not_repair_eligible",
+            Self::NoEligibleSeam => "no_eligible_seam",
+            Self::SeveralEligibleSeams => "several_eligible_seams",
+            Self::RepairNeedsItem => "repair_needs_item",
+            Self::StartRefusedUncommittedTarget => "start_refused_uncommitted_target",
+            Self::NoTestRoute => "no_test_route",
+            Self::AwaitingEdit => "awaiting_edit",
+            Self::RetryBudgetExhausted => "retry_budget_exhausted",
+            Self::NoCurrentAttempt => "no_current_attempt",
+            Self::AmbiguousAttempts => "ambiguous_attempts",
+            Self::AttemptEndedWithoutReceipt => "attempt_ended_without_receipt",
+            Self::AttemptCompletionUnconfirmed => "attempt_completion_unconfirmed",
+            Self::EditCageViolation => "edit_cage_violation",
+            Self::AttemptStale => "attempt_stale",
+            Self::AttemptIncomparable => "attempt_incomparable",
+        }
+    }
+
+    pub(crate) const fn disposition(self) -> RepairRefusalDisposition {
+        match self {
+            Self::AwaitingEdit => RepairRefusalDisposition::Retryable,
+            Self::RetryBudgetExhausted
+            | Self::AttemptEndedWithoutReceipt
+            | Self::AttemptCompletionUnconfirmed
+            | Self::EditCageViolation
+            | Self::AttemptStale
+            | Self::AttemptIncomparable => RepairRefusalDisposition::Terminal,
+            Self::SeveralEligibleSeams
+            | Self::ItemNamesSeveralSeams
+            | Self::AmbiguousAttempts
+            | Self::RepairNeedsItem => RepairRefusalDisposition::NeedsSelection,
+            Self::ItemNamesNoSeam
+            | Self::SeamNotRepairEligible
+            | Self::NoEligibleSeam
+            | Self::StartRefusedUncommittedTarget
+            | Self::NoTestRoute
+            | Self::NoCurrentAttempt => RepairRefusalDisposition::NotStarted,
+        }
+    }
+
+    /// The code an attempt that the after phase finished as not
+    /// receipt-ready carries, from its durable state.
+    pub(crate) fn for_finished_state(state: &RepairAttemptState) -> Self {
+        match state {
+            RepairAttemptState::Stale => Self::AttemptStale,
+            RepairAttemptState::Incomparable => Self::AttemptIncomparable,
+            _ => Self::EditCageViolation,
+        }
+    }
+
+    /// The one stderr line a script greps for, printed beside the refusal
+    /// prose: `ripr: refusal code=<code> disposition=<disposition>`.
+    pub(crate) fn stderr_line(self) -> String {
+        format!(
+            "ripr: refusal code={} disposition={}",
+            self.as_str(),
+            self.disposition().as_str()
+        )
+    }
 }
 
 /// What `ripr continue` resolved to: run the after path, report an ended
@@ -2626,6 +2898,83 @@ pub(crate) enum ContinueSelection {
     },
     /// Several current attempts exist: select one explicitly.
     Ambiguous { candidates: Vec<String> },
+}
+
+/// Tally of the attempts an implicit `ripr continue` sees. The newest attempt
+/// is tracked so a repeated `continue` after a confirmed finish reports that
+/// attempt's already-complete status instead of refusing (#11597); that route
+/// is only open when the newest creation time is unique, the attempt finished,
+/// and no prepared or trust-bound attempt exists anywhere in the store.
+#[derive(Default)]
+struct ContinueTally {
+    eligible: Vec<String>,
+    prepared: usize,
+    terminal: usize,
+    trust_bound: usize,
+    latest_ms: Option<u64>,
+    latest_count: usize,
+    latest_finished: Option<RepairAttemptId>,
+}
+
+impl ContinueTally {
+    fn add(&mut self, manifest: &RepairAttemptManifest) {
+        let created = manifest.created_unix_ms;
+        if self.latest_ms.is_none_or(|ms| created > ms) {
+            self.latest_ms = Some(created);
+            self.latest_count = 1;
+            self.latest_finished = matches!(manifest.state, RepairAttemptState::ReadyToFinish)
+                .then(|| manifest.repair_attempt_id.clone());
+        } else if self.latest_ms == Some(created) {
+            self.latest_count += 1;
+            self.latest_finished = None;
+        }
+        match manifest.state {
+            RepairAttemptState::AwaitingEdit => {
+                // The façade passes no edit authorization, so a trust-bound
+                // attempt can never continue on this route: the after phase
+                // would refuse it. Exclude it from implicit selection and name
+                // the advanced route instead. The binding is an immutable
+                // manifest fact, so this filter cannot go stale between
+                // selection and the after phase. An explicitly named bound
+                // attempt still proceeds into the shared after selection,
+                // whose refusal names the missing signals.
+                if find_manifest_artifact_by_role(
+                    manifest,
+                    crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+                )
+                .is_some()
+                {
+                    self.trust_bound += 1;
+                } else if crate::app::repair_attempt::after_refusal_budget_exhausted(manifest) {
+                    // #8726: a spent retry budget refuses the after phase, so
+                    // the attempt is ended, not a continue candidate.
+                    self.terminal += 1;
+                } else {
+                    self.eligible
+                        .push(manifest.repair_attempt_id.as_str().to_string());
+                }
+            }
+            RepairAttemptState::Prepared => self.prepared += 1,
+            RepairAttemptState::ReadyToFinish
+            | RepairAttemptState::Stale
+            | RepairAttemptState::Incomparable
+            | RepairAttemptState::Failed => self.terminal += 1,
+        }
+    }
+
+    /// The attempt an implicit already-complete report may name, if any.
+    fn already_complete_candidate(&self) -> Option<&RepairAttemptId> {
+        match (
+            &self.latest_finished,
+            self.latest_count,
+            self.prepared,
+            self.trust_bound,
+            self.eligible.is_empty(),
+        ) {
+            (Some(id), 1, 0, 0, true) => Some(id),
+            _ => None,
+        }
+    }
 }
 
 /// Resolve the attempt `ripr continue` acts on. An explicit ID loads
@@ -2674,46 +3023,10 @@ pub(crate) fn select_continue_attempt(
             report: Box::new(report),
         });
     }
-    let mut eligible = Vec::new();
-    let mut prepared = 0usize;
-    let mut terminal = 0usize;
-    let mut trust_bound = 0usize;
+    let mut tally = ContinueTally::default();
     for entry in inventory_repair_attempts_from(root, None)? {
         match entry {
-            RepairAttemptInventoryEntry::Valid(manifest) => match manifest.state {
-                RepairAttemptState::AwaitingEdit => {
-                    // The façade passes no edit authorization, so a
-                    // trust-bound attempt can never continue on this
-                    // route: the after phase would refuse it. Exclude it
-                    // from implicit selection and name the advanced
-                    // route instead. The binding is an immutable
-                    // manifest fact, so this filter cannot go stale
-                    // between selection and the after phase. An
-                    // explicitly named bound attempt still proceeds
-                    // into the shared after selection, whose refusal
-                    // names the missing signals.
-                    if find_manifest_artifact_by_role(
-                        &manifest,
-                        crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
-                    )
-                    .is_some()
-                    {
-                        trust_bound += 1;
-                    } else if crate::app::repair_attempt::after_refusal_budget_exhausted(&manifest)
-                    {
-                        // #8726: a spent retry budget refuses the after phase,
-                        // so the attempt is ended, not a continue candidate.
-                        terminal += 1;
-                    } else {
-                        eligible.push(manifest.repair_attempt_id.as_str().to_string());
-                    }
-                }
-                RepairAttemptState::Prepared => prepared += 1,
-                RepairAttemptState::ReadyToFinish
-                | RepairAttemptState::Stale
-                | RepairAttemptState::Incomparable
-                | RepairAttemptState::Failed => terminal += 1,
-            },
+            RepairAttemptInventoryEntry::Valid(manifest) => tally.add(&manifest),
             RepairAttemptInventoryEntry::Invalid { directory, error } => {
                 return Err(format!(
                     "continue selection refused: attempt row `{directory}` is invalid: {error}"
@@ -2721,6 +3034,14 @@ pub(crate) fn select_continue_attempt(
             }
         }
     }
+    let already_complete_id = tally.already_complete_candidate().cloned();
+    let ContinueTally {
+        eligible,
+        prepared,
+        terminal,
+        trust_bound,
+        ..
+    } = tally;
     if eligible.len() > 1 {
         return Ok(ContinueSelection::Ambiguous {
             candidates: eligible,
@@ -2731,11 +3052,24 @@ pub(crate) fn select_continue_attempt(
             attempt_id: RepairAttemptId::parse(id)
                 .map_err(|error| format!("continue selection: {error}"))?,
         }),
-        None => Ok(ContinueSelection::NoneAvailable {
-            prepared,
-            terminal,
-            trust_bound,
-        }),
+        None => {
+            if let Some(id) = already_complete_id {
+                let report = build_agent_attempt_status(root, root, None, &id)?;
+                if matches!(
+                    report.attempt.status_class,
+                    "finished_current" | "finished_historical"
+                ) {
+                    return Ok(ContinueSelection::AlreadyComplete {
+                        report: Box::new(report),
+                    });
+                }
+            }
+            Ok(ContinueSelection::NoneAvailable {
+                prepared,
+                terminal,
+                trust_bound,
+            })
+        }
     }
 }
 
@@ -2823,6 +3157,83 @@ fn held_inline_target(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    /// #11597: the refusal-code vocabulary is closed and snake_case, every
+    /// code is unique, each is documented with its disposition in
+    /// `docs/EXIT_CODES.md`, and the stderr line carries both.
+    #[test]
+    fn refusal_codes_are_unique_documented_and_render_one_line() -> Result<(), String> {
+        let docs = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/EXIT_CODES.md"),
+        )
+        .map_err(|error| format!("read EXIT_CODES.md: {error}"))?;
+        let mut seen = std::collections::BTreeSet::new();
+        for code in RepairRefusalCode::ALL {
+            let name = code.as_str();
+            if !seen.insert(name) {
+                return Err(format!("duplicate refusal code {name}"));
+            }
+            if !name
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'_')
+            {
+                return Err(format!("refusal code {name} is not snake_case"));
+            }
+            let row = format!(
+                "| `{name}` | {} | `{}` |",
+                if matches!(
+                    code,
+                    RepairRefusalCode::NoTestRoute
+                        | RepairRefusalCode::EditCageViolation
+                        | RepairRefusalCode::AttemptStale
+                        | RepairRefusalCode::AttemptIncomparable
+                ) {
+                    "2"
+                } else {
+                    "3"
+                },
+                code.disposition().as_str()
+            );
+            if !docs.contains(&row) {
+                return Err(format!("EXIT_CODES.md is missing the row `{row}`"));
+            }
+            let line = code.stderr_line();
+            if line.contains('\n')
+                || line
+                    != format!(
+                        "ripr: refusal code={name} disposition={}",
+                        code.disposition().as_str()
+                    )
+            {
+                return Err(format!("unexpected stderr line {line:?}"));
+            }
+        }
+        // Retryable and terminal states are told apart by disposition alone.
+        if RepairRefusalCode::AwaitingEdit.disposition() != RepairRefusalDisposition::Retryable
+            || RepairRefusalCode::EditCageViolation.disposition()
+                != RepairRefusalDisposition::Terminal
+        {
+            return Err(
+                "awaiting_edit must be retryable and a cage violation terminal".to_string(),
+            );
+        }
+        for (state, expected) in [
+            (
+                RepairAttemptState::Failed,
+                RepairRefusalCode::EditCageViolation,
+            ),
+            (RepairAttemptState::Stale, RepairRefusalCode::AttemptStale),
+            (
+                RepairAttemptState::Incomparable,
+                RepairRefusalCode::AttemptIncomparable,
+            ),
+        ] {
+            if RepairRefusalCode::for_finished_state(&state) != expected {
+                return Err(format!("finished state {state:?} must map to {expected:?}"));
+            }
+        }
+        Ok(())
+    }
+
     use super::*;
 
     /// A default-cap cut within the ceiling reruns at its exact total; an
@@ -3160,30 +3571,21 @@ pub(crate) mod tests {
     #[test]
     fn candidate_commands_carry_a_powershell_form_when_quoting_differs() {
         let root = "/home/o'neil/proj";
+        // The Bash single-quote form is the stimulus on every host: Windows
+        // prints a double-quoted root that PowerShell reads identically.
+        let bash_root = crate::agent::loop_commands::shell_arg_for(root, false);
         let mut first = note("src/lib.rs:2", "a >= b", "aaa");
-        first.command = format!("ripr repair aaa --root {}", shell_arg(root));
+        first.command = format!("ripr repair aaa --root {bash_root}");
         let mut second = note("src/lib.rs:10", "c >= d", "bbb");
-        second.command = format!("ripr repair bbb --root {}", shell_arg(root));
+        second.command = format!("ripr repair bbb --root {bash_root}");
         let text = render_repair_choice(&[first, second], 2, root);
         for seam in ["aaa", "bbb"] {
-            if cfg!(windows) {
-                // The Windows console form is already double-quoted, which
-                // PowerShell reads unchanged, so no second form is printed.
-                assert!(
-                    text.contains(&format!(
-                        "     ripr repair {seam} --root \"/home/o'neil/proj\"\n"
-                    )),
-                    "{text}"
-                );
-                assert!(!text.contains("PowerShell"), "{text}");
-            } else {
-                assert!(
-                    text.contains(&format!(
-                        "     (PowerShell) ripr repair {seam} --root '/home/o''neil/proj'\n"
-                    )),
-                    "{text}"
-                );
-            }
+            assert!(
+                text.contains(&format!(
+                    "     (PowerShell) ripr repair {seam} --root '/home/o''neil/proj'\n"
+                )),
+                "{text}"
+            );
         }
         assert!(
             !render_repair_choice(&[note("src/lib.rs:2", "a >= b", "aaa")], 1, ".")
@@ -3873,6 +4275,91 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// #11466: a propagation/observation-unknown seam that a test already runs
+    /// names that test; a seam no test calls directly, or a class past the
+    /// unknown stages, stays bare.
+    #[test]
+    fn unknown_stage_refusal_names_the_test_that_runs_the_code() {
+        use crate::analysis::seams::SeamGripClass;
+        let root = RefusalRoot::named(Path::new("/repo"));
+        let missing = vec!["incomplete evidence stage: propagation".to_string()];
+
+        let entry = gate_entry(SeamGripClass::PropagationUnknown, vec![weak_related_test()]);
+        let reason = route_not_ready_reason(&entry, "repair route not ready", &missing, root);
+        assert!(
+            reason.contains("`at_threshold_runs` (tests/pricing.rs:12) calls this code"),
+            "{reason}"
+        );
+
+        // The refusal's own pick wins: a direct owner call listed after a
+        // helper call is the one named, and other unknown stages name it too.
+        let mut helper = weak_related_test();
+        helper.test_name = "via_helper".to_string();
+        helper.relation_reason = crate::domain::RelationReason::HelperOwnerCall;
+        for class in [
+            SeamGripClass::ObservationUnknown,
+            SeamGripClass::DiscriminationUnknown,
+        ] {
+            let both = gate_entry(class, vec![helper.clone(), weak_related_test()]);
+            let reason = route_not_ready_reason(&both, "repair route not ready", &missing, root);
+            assert!(reason.contains("`at_threshold_runs`"), "{reason}");
+            assert!(!reason.contains("`via_helper`"), "{reason}");
+        }
+
+        // Negatives: no related test, a non-reaching relation, another class.
+        let none = gate_entry(SeamGripClass::PropagationUnknown, Vec::new());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+        let mut weak = weak_related_test();
+        weak.relation_reason = crate::domain::RelationReason::SameModule;
+        let same_module = gate_entry(SeamGripClass::PropagationUnknown, vec![weak]);
+        let reason = route_not_ready_reason(&same_module, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+        let weakly = gate_entry(SeamGripClass::WeaklyGripped, vec![weak_related_test()]);
+        let reason = route_not_ready_reason(&weakly, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+    }
+
+    /// Activation-unknown seam that a test calls directly: the refusal names
+    /// that test and says its input may not reach the changed branch. A weaker
+    /// relation, or a seam with no related test, names nothing.
+    #[test]
+    fn activation_unknown_with_a_direct_call_names_the_calling_test() {
+        use crate::analysis::seams::SeamGripClass;
+        let root = RefusalRoot::named(Path::new("/repo"));
+        let missing = vec!["incomplete evidence stage: activation".to_string()];
+
+        let entry = gate_entry(SeamGripClass::ActivationUnknown, vec![weak_related_test()]);
+        let reason = route_not_ready_reason(&entry, "repair route not ready", &missing, root);
+        assert!(
+            reason.contains("`at_threshold_runs` (tests/pricing.rs:12) calls this code")
+                && reason.contains("its input reaches the changed branch"),
+            "{reason}"
+        );
+
+        // A weaker relation listed before the direct caller never wins.
+        let mut via_helper = weak_related_test();
+        via_helper.test_name = "via_helper".to_string();
+        via_helper.relation_reason = crate::domain::RelationReason::HelperOwnerCall;
+        let both = gate_entry(
+            SeamGripClass::ActivationUnknown,
+            vec![via_helper, weak_related_test()],
+        );
+        let reason = route_not_ready_reason(&both, "repair route not ready", &missing, root);
+        assert!(reason.contains("`at_threshold_runs`"), "{reason}");
+        assert!(!reason.contains("`via_helper`"), "{reason}");
+
+        // Negatives: a weaker relation and no related test.
+        let mut weak = weak_related_test();
+        weak.relation_reason = crate::domain::RelationReason::HelperOwnerCall;
+        let helper = gate_entry(SeamGripClass::ActivationUnknown, vec![weak]);
+        let reason = route_not_ready_reason(&helper, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+        let none = gate_entry(SeamGripClass::ActivationUnknown, Vec::new());
+        let reason = route_not_ready_reason(&none, "repair route not ready", &missing, root);
+        assert!(!reason.contains("calls this code"), "{reason}");
+    }
+
     /// #11466: a return-value or error-path seam whose only blocker is the
     /// missing test module names its stub route too (the stub adds the module);
     /// a seam kind with no stub kind stays bare.
@@ -4153,6 +4640,70 @@ pub(crate) mod tests {
             after_refusal_history: Vec::new(),
             terminal_artifacts: Vec::new(),
         })
+    }
+
+    fn tally_of(
+        attempts: &[(char, RepairAttemptState, u64, bool)],
+    ) -> Result<ContinueTally, String> {
+        let mut tally = ContinueTally::default();
+        for (tail, state, created, bound) in attempts {
+            let mut manifest = awaiting(*tail, "seam1", "head1", *created)?;
+            manifest.state = state.clone();
+            if *bound {
+                manifest
+                    .artifacts
+                    .push(crate::app::repair_attempt::RepairAttemptArtifact {
+                        role: crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE.to_string(),
+                        path: "binding.json".to_string(),
+                        sha256: "0".repeat(64),
+                        bytes: 2,
+                    });
+            }
+            tally.add(&manifest);
+        }
+        Ok(tally)
+    }
+
+    /// #11597: the implicit already-complete route is open only when the
+    /// newest creation time is unique and finished, with no prepared,
+    /// trust-bound or eligible attempt anywhere in the store.
+    #[test]
+    fn implicit_already_complete_is_fail_closed_on_every_other_attempt() -> Result<(), String> {
+        use RepairAttemptState::{AwaitingEdit, Failed, Prepared, ReadyToFinish};
+        let id = |tail: char| format!("repair-attempt-{}", tail.to_string().repeat(24));
+        // Positive: a lone newest finished attempt, older terminal ones ignored.
+        let open = tally_of(&[('a', Failed, 1, false), ('b', ReadyToFinish, 2, false)])?;
+        assert_eq!(
+            open.already_complete_candidate()
+                .map(|id| id.as_str().to_string()),
+            Some(id('b'))
+        );
+        // Tied newest creation times: no attempt is the newest.
+        let tied = tally_of(&[
+            ('a', ReadyToFinish, 5, false),
+            ('b', ReadyToFinish, 5, false),
+        ])?;
+        assert!(tied.already_complete_candidate().is_none());
+        // A newer prepared attempt is the newest and not finished.
+        let newer_prepared =
+            tally_of(&[('a', ReadyToFinish, 1, false), ('b', Prepared, 2, false)])?;
+        assert!(newer_prepared.already_complete_candidate().is_none());
+        // An older prepared attempt still blocks the report.
+        let older_prepared =
+            tally_of(&[('a', Prepared, 1, false), ('b', ReadyToFinish, 2, false)])?;
+        assert!(older_prepared.already_complete_candidate().is_none());
+        // An older trust-bound attempt blocks it too.
+        let older_bound =
+            tally_of(&[('a', AwaitingEdit, 1, true), ('b', ReadyToFinish, 2, false)])?;
+        assert_eq!(older_bound.trust_bound, 1);
+        assert!(older_bound.already_complete_candidate().is_none());
+        // An older eligible awaiting attempt means continue proceeds instead.
+        let older_eligible = tally_of(&[
+            ('a', AwaitingEdit, 1, false),
+            ('b', ReadyToFinish, 2, false),
+        ])?;
+        assert!(older_eligible.already_complete_candidate().is_none());
+        Ok(())
     }
 
     #[test]
@@ -4528,6 +5079,38 @@ pub(crate) mod tests {
             return Err(format!("listing must stop at eight seams:\n{many}"));
         }
         Ok(())
+    }
+
+    /// #11466: each ambiguous candidate carries its seam ID first (what the
+    /// retry takes), then kind, normalized expression and owner; a long
+    /// expression is cut so one line stays readable.
+    #[test]
+    fn ambiguous_candidates_describe_what_tells_them_apart() {
+        use crate::analysis::seams::SeamGripClass;
+        let entry = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        let text = describe_ambiguous_seam(&entry);
+        assert!(
+            text.starts_with(entry.seam.id().as_str())
+                && text.contains("`amount >= discount_threshold`")
+                && text.contains("in pricing::discounted_total"),
+            "{text}"
+        );
+        let mut long = gate_entry(SeamGripClass::Ungripped, Vec::new());
+        long.seam = crate::analysis::seams::RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::discounted_total",
+            crate::analysis::seams::SeamKind::PredicateBoundary,
+            42,
+            88,
+            format!("a\n   {}", "b".repeat(80)),
+            crate::analysis::seams::RequiredDiscriminator::BoundaryValue {
+                description: "x".to_string(),
+            },
+            crate::analysis::seams::ExpectedSink::ReturnValue,
+        );
+        let text = describe_ambiguous_seam(&long);
+        assert!(text.contains("`a bbbb") && text.contains("...`"), "{text}");
+        assert!(!text.contains('\n'), "{text}");
     }
 
     /// The bound keeps the first eight matches in the order the caller supplied

@@ -48,6 +48,35 @@
       "type": "array",
       "items": { "$ref": "#/$defs/run_limitation" }
     },
+    "language_completeness": {
+      "description": "Per-language projection of the shared completeness view (language_completeness.v1, #11272). Rows mirror the sealed language aggregate; it never strengthens a child.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "mode", "completeness", "total_findings", "languages"],
+      "properties": {
+        "schema_version": { "const": "language_completeness.v1" },
+        "mode": { "enum": ["diff", "repo"] },
+        "completeness": { "enum": ["complete", "incomplete"] },
+        "total_findings": { "type": "integer", "minimum": 0 },
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["language", "status", "findings", "limitations", "disclosure"],
+            "properties": {
+              "language": { "type": "string" },
+              "status": {
+                "enum": ["complete", "complete_zero", "partial", "unavailable", "invalid", "failed", "unsupported", "not_selected", "no_current_scope"]
+              },
+              "findings": { "type": "integer", "minimum": 0 },
+              "limitations": { "type": "array", "items": { "type": "string" } },
+              "disclosure": { "enum": ["silent", "language_run", "typed_limitation", "advisory_only"] }
+            }
+          }
+        }
+      }
+    },
     "scope_disclosures": {
       "type": "array",
       "items": { "type": "object" }
