@@ -1,0 +1,69 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/ts_table_row_expected_refused/input
+config: <cwd>/fixtures/ts_table_row_expected_refused/input/ripr.toml
+
+Summary: 10 changed behaviors checked: 0 appear noticed by tests, 7 partly noticed, 0 reached but not noticed, 0 no test path, 3 unclear. 10 found, 0 suppressed by your settings
+
+Changed file(s) by language: typescript = 10
+
+Analysis outcome: limitations below (analysis incomplete)
+  The 10 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: a test or credited assertion sits under a condition static analysis cannot evaluate during language analysis; affected items: 3; recovery: inspect the failure — Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the check executes.
+
+Start here:
+  State: preview language, advisory only
+  Safe next action: ripr cannot tell whether the test at `tests/aliasedKeys.test.ts:10` covers this change: its `.toBe(...)` compares against a variable or computed value, not a literal; replace that expected value with a literal, or check by hand that the test covers this change, then rerun `ripr check`. No repair is started for this finding: `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it
+  File: src/aliasedKeys.ts:2
+  Language: typescript
+  Language status: preview
+  Static exposure: weak (severity: warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Changed behavior: if (point.points >= 1000) {
+  Missing check (1 of 2): Related tests reach `aliasedKeys` with a strong oracle, but no strong
+    assertion observes a `aliasedKeys(...)` call at the changed predicate boundary `point.points ==
+    1000`; inputs on one side of the boundary do not discriminate the changed comparison
+  Related test: tests/aliasedKeys.test.ts:5 aliasedKeys tier by points (the preview adapter could not confirm that this assertion observes the changed behavior)
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
+    check `point.points == 1000`; no actionable repair packet is emitted until verify, receipt, and
+    edit-boundary fields are available
+  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: 1 related test(s) found for owner `aliasedKeys`
+    - infection unknown: TypeScript preview adapter does not yet model infection
+    - 4 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/ts_table_row_expected_refused/input --diff <cwd>/fixtures/ts_table_row_expected_refused/diff.patch --mode fast probe:src_aliasedKeys.ts:typescript_preview:8dec6447
+  ripr context --root <cwd>/fixtures/ts_table_row_expected_refused/input --diff <cwd>/fixtures/ts_table_row_expected_refused/diff.patch --mode fast --at probe:src_aliasedKeys.ts:typescript_preview:8dec6447
+  no repair start offered: ripr has no complete repair packet for this TypeScript finding (ripr cannot tell whether the test at `tests/aliasedKeys.test.ts:10` covers this change: its `.toBe(...)` compares against a variable or computed value, not a literal); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`
+
+Hidden:
+  9 lower-priority finding(s) omitted from default human output (TypeScript preview: 9).
+    - src/derivedTable.ts:2 (unknown: static analysis limited); kind: predicate; reason: Related tests reach `derivedTable` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what they…
+    - src/exportedTable.ts:2 (unknown: static analysis limited); kind: predicate; reason: Related tests reach `exportedTable` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what…
+    - src/identifierCell.ts:2 (weak); kind: predicate; reason: Related tests reach `identifierCell` with a strong oracle, but no strong assertion observes a `identifierCell(...)` call at the changed predicate boundary `points == 1000`; inputs…
+    - src/letTable.ts:2 (unknown: static analysis limited); kind: predicate; reason: Related tests reach `letTable` only through a registration under a condition static analysis cannot evaluate (a platform or environment guard); whether they run, and what they…
+    - src/missingKey.ts:2 (weak); kind: predicate; reason: Related tests reach `missingKey` with a strong oracle, but no strong assertion observes a `missingKey(...)` call at the changed predicate boundary `points == 1000`; inputs on one…
+    - src/mutatedContainer.ts:2 (weak); kind: predicate; reason: Related tests reach `mutatedContainer` with a strong oracle, but no strong assertion observes a `mutatedContainer(...)` call at the changed predicate boundary…
+    - src/offBoundary.ts:2 (weak); kind: predicate; reason: Related tests reach `offBoundary` with a strong oracle, but no strong assertion observes a `offBoundary(...)` call at the changed predicate boundary `points == 1000`; inputs on…
+    - src/pushedTable.ts:2 (weak); kind: predicate; reason: Related tests reach `pushedTable` with a strong oracle, but no strong assertion observes a `pushedTable(...)` call at the changed predicate boundary `points == 1000`; inputs on…
+    - src/titleMutation.ts:2 (weak); kind: predicate; reason: Related tests reach `titleMutation` with a strong oracle, but no strong assertion observes a `titleMutation(...)` call at the changed predicate boundary `point.points == 1000`;…
+  Hidden classes:
+    weak = tests reach it but check it only loosely
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: 10 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
