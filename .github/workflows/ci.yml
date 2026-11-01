@@ -334,6 +334,13 @@ jobs:
             if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
               git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || return 0
             fi
+            # A three-dot diff picks one merge base. With several (criss-cross
+            # history) it can miss an extension change, so select instead.
+            reason=unavailable_merge_base
+            merge_bases="$(git merge-base --all "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)" || return 0
+            [ -n "$merge_bases" ] || return 0
+            reason=ambiguous_merge_base
+            [[ "$merge_bases" != *$'\n'* ]] || return 0
             reason=diff_failed
             changed="$(mktemp)" || return 0
             trap 'rm -f "$changed"' EXIT
