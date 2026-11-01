@@ -1475,11 +1475,12 @@ fn run_agent_repair_with_identity_ctx(
             Err(render_error) => eprintln!("ripr: {render_error}"),
         }
     }
-    if result.is_err()
-        && let Some(code) = refusal.code
-    {
-        eprintln!("{}", code.stderr_line());
-    }
+    // #12193: the machine line follows the prose the caller prints, so the
+    // first stderr line stays the plain-words reason.
+    let result = match (result, refusal.code) {
+        (Err(error), Some(code)) => Err(code.message_with_stderr_line(&error)),
+        (other, _) => other,
+    };
     let start_refused = refusal.start_refused;
     let result = if refusal.typed {
         result.map_err(CommandError::Decision)
