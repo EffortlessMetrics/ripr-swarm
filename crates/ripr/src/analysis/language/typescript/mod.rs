@@ -181,6 +181,9 @@ mod assertion_helper;
 mod boolean_pin_guard;
 mod close_to_guard;
 #[cfg(test)]
+#[path = "tests/issue7483_masker_tests.rs"]
+mod issue7483_masker_tests;
+#[cfg(test)]
 #[path = "tests/issue7813_alias_member_tests.rs"]
 mod issue7813_alias_member_tests;
 #[cfg(test)]
