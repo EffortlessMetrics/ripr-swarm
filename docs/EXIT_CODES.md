@@ -258,9 +258,10 @@ reached the caller.
   `retryable` (the same attempt proceeds after the stated action),
   `terminal` (the attempt is over; start a fresh `ripr repair`),
   `needs_selection` (name one of several), or `not_started` (nothing
-  started). The codes are closed. A refusal raised before any code is
-  assigned (for example a store or argument error on a shared
-  `agent repair` path) is exit `2` with prose only and no code line; the
+  started). The codes are closed. Operational errors (a store or argument error on a shared
+  `agent repair` path) exit `2` with prose only and no code line. Some
+  existing typed refusals still exit `3` without a code line (for example
+  `agent repair --phase before` on an unknown or policy-withheld seam). The
   table is the covered set, not a claim over every error path:
 
   | code | exit | disposition | state |

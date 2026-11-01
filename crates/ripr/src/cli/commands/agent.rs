@@ -2672,8 +2672,7 @@ fn run_agent_repair_phase(
                             // never open, or still reads open. Counts against
                             // the same retry budget as a no-movement refusal.
                             refusal.narrate(format!("{error}."));
-                            refusal.code =
-                                Some(crate::app::task_first::RepairRefusalCode::AwaitingEdit);
+                            refusal.code = Some(no_movement_refusal_code(prior_refusals));
                             for line in repair_after_no_movement_lines(
                                 &caller_root,
                                 store_ref,
@@ -2684,8 +2683,7 @@ fn run_agent_repair_phase(
                                 refusal.narrate(line);
                             }
                         } else if error.starts_with(AGENT_VERIFY_NO_MOVEMENT_PREFIX) {
-                            refusal.code =
-                                Some(crate::app::task_first::RepairRefusalCode::AwaitingEdit);
+                            refusal.code = Some(no_movement_refusal_code(prior_refusals));
                             for line in repair_after_no_movement_lines(
                                 &caller_root,
                                 store_ref,
@@ -3513,6 +3511,19 @@ fn repair_after_commit_busy_lines(
             "to recover: wait for the other after phase to complete, then rerun `ripr agent repair --root {root_arg}{store_flag} --attempt {attempt_arg} --phase after`."
         ),
     ]
+}
+
+/// The typed code for a no-movement after refusal. The refusal that spends
+/// the retry budget is terminal, matching the next call, which refuses without
+/// running (`RetryBudgetExhausted`); earlier ones are retryable.
+fn no_movement_refusal_code(prior_refusals: u32) -> crate::app::task_first::RepairRefusalCode {
+    if prior_refusals.saturating_add(1)
+        >= crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET
+    {
+        crate::app::task_first::RepairRefusalCode::RetryBudgetExhausted
+    } else {
+        crate::app::task_first::RepairRefusalCode::AwaitingEdit
+    }
 }
 
 /// Recovery for the verify authority's no-movement refusal. The policy was
@@ -6264,5 +6275,27 @@ mod start_output_tests {
         let without_next = agent_start_prose_lines(&written(None));
         assert_eq!(without_next.len(), 3);
         assert!(!without_next.iter().any(|line| line.starts_with("Next:")));
+    }
+}
+
+#[cfg(test)]
+mod no_movement_code_tests {
+    use super::no_movement_refusal_code;
+    use crate::app::repair_attempt::REPAIR_ATTEMPT_AFTER_REFUSAL_BUDGET as BUDGET;
+    use crate::app::task_first::{RepairRefusalCode, RepairRefusalDisposition};
+
+    /// The refusal that spends the budget is terminal like the next call, which
+    /// refuses without running; every earlier one stays retryable.
+    #[test]
+    fn the_budget_spending_refusal_is_terminal_and_earlier_ones_retryable() {
+        for prior in 0..BUDGET - 1 {
+            let code = no_movement_refusal_code(prior);
+            assert_eq!(code, RepairRefusalCode::AwaitingEdit, "prior={prior}");
+            assert_eq!(code.disposition(), RepairRefusalDisposition::Retryable);
+        }
+        let last = no_movement_refusal_code(BUDGET - 1);
+        assert_eq!(last, RepairRefusalCode::RetryBudgetExhausted);
+        assert_eq!(last.as_str(), "retry_budget_exhausted");
+        assert_eq!(last.disposition(), RepairRefusalDisposition::Terminal);
     }
 }
