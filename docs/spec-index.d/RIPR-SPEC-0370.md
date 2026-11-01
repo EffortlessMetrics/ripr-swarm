@@ -1,1 +1,1 @@
-| [RIPR-SPEC-0370](../specs/RIPR-SPEC-0370-kani-bounded-model-checking-lane.md) | proposed | Kani bounded model checking lane: per-harness VERIFIED, FAILED or NOT-ESTABLISHED, never a pass by absence, and an explicit statement of what a bounded proof does not claim |
+| [RIPR-SPEC-0370](../specs/RIPR-SPEC-0370-loop-range-bound-change.md) | proposed | A changed `for` range bound is credited only by an exact pin that makes the old and new ranges differ (#11399) |

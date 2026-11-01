@@ -1,5 +1,5 @@
 //! Kani smoke harness: the minimal proof that keeps the `cargo xtask kani`
-//! lane honest (RIPR-SPEC-0370).
+//! lane honest (RIPR-SPEC-0371).
 //!
 //! Compiled only under `cargo kani` (`cfg(kani)`); ordinary builds never see
 //! this module. It proves one tiny property of production code so the lane

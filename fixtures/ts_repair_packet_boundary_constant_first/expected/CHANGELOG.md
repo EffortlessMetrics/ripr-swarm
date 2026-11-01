@@ -571,6 +571,7 @@ Updated:
 ## Pending — ts_repair_packet_boundary_constant_first (44)
 
 Reason:
+RIPR-SPEC-0088: #11619 drop the seam-based qualifier from the repair-packet advisory
 RIPR-SPEC-0088: related-test selection ties keep the first row, matching the check headline (#11228)
 
 Command:

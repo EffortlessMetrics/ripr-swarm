@@ -22,7 +22,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
   cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
 
-# Kani lane (RIPR-SPEC-0370): bounded model checking of pure cores.
+# Kani lane (RIPR-SPEC-0371): bounded model checking of pure cores.
 #
 # "Lighter, later, tighter" (docs/CI.md): this is not a required check and does
 # not run on ordinary pushes or PR updates. It runs nightly, on dispatch, and

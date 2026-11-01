@@ -1,4 +1,4 @@
-# RIPR-SPEC-0370: Kani bounded model checking lane states exactly what a proof covers and never passes by absence
+# RIPR-SPEC-0371: Kani bounded model checking lane states exactly what a proof covers and never passes by absence
 
 Status: proposed
 

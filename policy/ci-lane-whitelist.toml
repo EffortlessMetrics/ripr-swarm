@@ -373,7 +373,7 @@ jobs = ["kani"]
 commands = ["cargo xtask kani"]
 estimated_lem = 25
 artifact_families = []
-description = "Advisory Kani bounded-model-checking lane (RIPR-SPEC-0370): runs cargo kani -p ripr over every #[kani::proof] harness and reports VERIFIED, FAILED or NOT-ESTABLISHED per harness. Nightly, on dispatch, and on merge-ready for pull requests touching ripr source. A missing tool, missing verdict, unreachable cover! or zero harnesses fails the job; a proof is bounded to its documented assumptions and is not a full-program or runtime-mutation claim."
+description = "Advisory Kani bounded-model-checking lane (RIPR-SPEC-0371): runs cargo kani -p ripr over every #[kani::proof] harness and reports VERIFIED, FAILED or NOT-ESTABLISHED per harness. Nightly, on dispatch, and on merge-ready for pull requests touching ripr source. A missing tool, missing verdict, unreachable cover! or zero harnesses fails the job; a proof is bounded to its documented assumptions and is not a full-program or runtime-mutation claim."
 
 [[lane]]
 id = "future-clippy"

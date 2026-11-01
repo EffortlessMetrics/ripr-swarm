@@ -1,7 +1,7 @@
 [[behavior]]
-id = "RIPR-SPEC-0370"
+id = "RIPR-SPEC-0371"
 name = "Kani lane never passes by absence"
-spec = "docs/specs/RIPR-SPEC-0370-kani-bounded-model-checking-lane.md"
+spec = "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md"
 tests = [
   "xtask/src/kani_lane.rs::discovery_finds_named_harnesses_past_attributes_and_docs",
   "xtask/src/kani_lane.rs::classification_requires_an_explicit_success_verdict",

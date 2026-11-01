@@ -1,5 +1,5 @@
 //! `cargo xtask kani`: honest runner for the Kani bounded-model-checking lane
-//! (RIPR-SPEC-0370).
+//! (RIPR-SPEC-0371).
 //!
 //! The lane runs `cargo kani -p ripr` once (Kani compiles the whole library, so
 //! one invocation per harness would multiply a minutes-long build) and reads
@@ -257,7 +257,7 @@ pub(crate) fn lane_verdict(
 }
 
 pub(crate) fn render_report(results: &[HarnessResult], note: &str) -> String {
-    let mut out = String::from("# Kani lane (RIPR-SPEC-0370)\n\n");
+    let mut out = String::from("# Kani lane (RIPR-SPEC-0371)\n\n");
     out.push_str("Bounded model checking of pure cores. A VERIFIED row means no violation within the harness bounds, not a full-program or runtime-mutation claim.\n\n");
     if !note.is_empty() {
         out.push_str(&format!("{note}\n\n"));

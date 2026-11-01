@@ -2083,7 +2083,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/kani.md",
             false,
             true,
-            "Runs `cargo kani -p ripr` over every `#[kani::proof]` harness in one invocation (RIPR-SPEC-0370) and reports VERIFIED, FAILED or NOT-ESTABLISHED per harness; a missing tool, a timeout, a missing verdict, an unreachable `cover!` or zero harnesses (without `--allow-empty`) never passes. Bounded proof of pure cores only; not a full-program or runtime-mutation claim.",
+            "Runs `cargo kani -p ripr` over every `#[kani::proof]` harness in one invocation (RIPR-SPEC-0371) and reports VERIFIED, FAILED or NOT-ESTABLISHED per harness; a missing tool, a timeout, a missing verdict, an unreachable `cover!` or zero harnesses (without `--allow-empty`) never passes. Bounded proof of pure cores only; not a full-program or runtime-mutation claim.",
         ),
         command_entry(
             "rust-conversion-candidates",

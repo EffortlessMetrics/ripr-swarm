@@ -675,7 +675,7 @@ normalization behavior surfaced only on a maintainer's local run.
 
 ### Advisory Kani Lane
 
-`.github/workflows/kani.yml` (RIPR-SPEC-0370) runs Kani bounded model checking
+`.github/workflows/kani.yml` (RIPR-SPEC-0371) runs Kani bounded model checking
 over pure cores. It follows "lighter, later, tighter": it is not a required
 check and does not run on ordinary pushes or PR updates.
 
