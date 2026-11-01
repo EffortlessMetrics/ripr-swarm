@@ -14,7 +14,7 @@ must remain inline: a newline before `const` hid this defect in the old scan.
 
 ## When
 
-Run `ripr check --root input --diff ../diff.patch --format json --mode fast`.
+Run `ripr check --root input --diff diff.patch --format json --mode fast`.
 The native `typescript_implicit_promise_return` integration target contrasts
 JavaScript/TypeScript, zero/one callback parameters, implicit/explicit/awaited
 promises, inline statement boundaries and independent nested scopes. Actual

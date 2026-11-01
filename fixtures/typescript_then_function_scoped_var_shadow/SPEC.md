@@ -15,7 +15,7 @@ controls using the resolved value fail for the wrong return.
 
 ## When
 
-Run `ripr check --root input --diff ../diff.patch --format json --mode fast`.
+Run `ripr check --root input --diff diff.patch --format json --mode fast`.
 The native typescript_implicit_promise_return integration target contrasts
 zero/one parameters, TS/JS, returned/awaited/implicit promises, nested const/let,
 var in separate nested functions and function-declaration hoisting.

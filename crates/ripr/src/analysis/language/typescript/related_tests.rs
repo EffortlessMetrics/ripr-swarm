@@ -5195,7 +5195,12 @@ pub(super) fn walk_body_lexical<'a>(
         }
         if ch == '\n' {
             match state {
-                BodyScanState::LineComment => state = BodyScanState::Code,
+                BodyScanState::LineComment => {
+                    // The newline ends the comment and starts a statement
+                    // line (ASI), exactly as in plain code.
+                    state = BodyScanState::Code;
+                    at_declaration_start = true;
+                }
                 BodyScanState::SingleQuoted | BodyScanState::DoubleQuoted => {
                     // Unterminated string: recover instead of mis-scoping the
                     // remainder of the body.
@@ -5351,10 +5356,9 @@ pub(super) fn declaration_line_declarators(line: &str) -> Vec<(&str, usize)> {
             let after = &after[..top_level_semicolon(after)];
             // Comments are blanked so a `// note` between continued declarators
             // is never read as a name; the masking keeps byte offsets.
-            let masked = super::classifier::ts_mask_literals_and_comments(after);
-            if masked.len() != after.len() {
+            let Some(masked) = super::tests_extract::byte_preserving_code_mask(after) else {
                 return Vec::new();
-            }
+            };
             split_top_level_declarators(after)
                 .into_iter()
                 .filter_map(|declarator| {
@@ -5387,7 +5391,11 @@ pub(super) fn declaration_line_declarators(line: &str) -> Vec<(&str, usize)> {
 
 /// Byte offset of the first top-level `;` in `after`, or its length.
 fn top_level_semicolon(after: &str) -> usize {
-    let masked = super::classifier::ts_mask_literals_and_comments(after);
+    // Byte-preserving, so a multibyte character in a string or comment keeps
+    // the returned offset valid for `after`.
+    let Some(masked) = super::tests_extract::byte_preserving_code_mask(after) else {
+        return after.len();
+    };
     let mut depth = 0usize;
     for (offset, ch) in masked.char_indices() {
         match ch {
@@ -5404,7 +5412,11 @@ fn top_level_semicolon(after: &str) -> usize {
 /// on top-level commas, so commas inside `()`, `[]`, `{}`, strings,
 /// templates and regexes never split a declarator.
 fn split_top_level_declarators(after: &str) -> Vec<&str> {
-    let masked = super::classifier::ts_mask_literals_and_comments(after);
+    // Byte-preserving, so offsets taken from the mask are valid slice
+    // boundaries of `after` even with multibyte characters in literals.
+    let Some(masked) = super::tests_extract::byte_preserving_code_mask(after) else {
+        return vec![after.trim()];
+    };
     let mut parts = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;

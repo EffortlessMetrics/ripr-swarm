@@ -186,6 +186,10 @@ pub(crate) fn collect_test_arrow_expression_assertions(
     let [Statement::ExpressionStatement(statement)] = arrow.body.statements.as_slice() else {
         return None;
     };
+    // The statement path reads AVA `t.throws`/`t.throwsAsync` payloads only
+    // when the receiver is used solely as `t.method(...)`; a concise arrow is
+    // the same body, so it gets the same fact.
+    let text = statements_text(&arrow.body.statements, source);
     let context = AssertionContext {
         receiver,
         bindings,
@@ -193,7 +197,9 @@ pub(crate) fn collect_test_arrow_expression_assertions(
         literal_consts: &[],
         match_object_consts: &[],
         receiver_named_once: false,
-        receiver_only_called: false,
+        receiver_only_called: receiver.is_some_and(|name| {
+            identifier_occurrences(text, name) == receiver_method_call_occurrences(text, name)
+        }),
         returned_to_runner: true,
         table_consts: &[],
     };

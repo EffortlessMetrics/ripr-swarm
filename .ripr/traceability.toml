@@ -17962,6 +17962,8 @@ tests = [
   "crates/ripr/tests/typescript_implicit_promise_return.rs::nested_var_binds_the_entire_promise_callback",
   "crates/ripr/tests/typescript_implicit_promise_return.rs::var_in_an_independent_nested_function_does_not_capture_the_callback",
   "crates/ripr/tests/typescript_implicit_promise_return.rs::hoisted_function_assertions_do_not_confirm_the_imported_owner",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::a_named_callback_expression_rebinds_the_receiver_to_itself",
+  "crates/ripr/tests/typescript_implicit_promise_return.rs::a_declarator_continued_onto_the_next_line_still_shadows_the_receiver",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::awaited_subtest_on_the_receiver_is_collected",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::copy_for_identity_change_needs_an_identity_matcher",
   "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::identity_copy_subject_reads_both_directions",

@@ -164,6 +164,8 @@ fn inline_receiver_bindings_cannot_supply_promise_credit() -> Result<(), String>
                     "/* local */ const total = () => 30;",
                     "const unused = 0, total = () => 30;",
                     "function total() { return 30; }",
+                    "void 0 // note\nconst total = () => 30;",
+                    "const label = '\u{e9}', total = () => 30;",
                 ] {
                     for callback in [
                         format!(
