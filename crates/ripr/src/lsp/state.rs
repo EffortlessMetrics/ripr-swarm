@@ -3,7 +3,8 @@ use super::component_outcome::ComponentOutcome;
 use super::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
 use super::input_identity::LspAnalysisInputIdentity;
 use super::uri::{
-    file_uri_is_lexically_non_rust, file_uri_relative_to_root, file_uris_match, path_from_file_uri,
+    RelativeKeyProjector, file_uri_is_lexically_non_rust, file_uri_relative_to_root,
+    file_uris_match, path_from_file_uri,
 };
 use crate::analysis::language_outcome::{LanguageCompletenessView, LanguageDisclosure};
 use crate::analysis::{ClassifiedSeam, PreviewLanguageAdvisory};
@@ -1219,8 +1220,10 @@ impl AnalysisSnapshot {
     pub(super) fn prepare_diagnostic_uri_index(&mut self) {
         let uris = self.diagnostics_by_uri.keys().cloned().collect::<Vec<_>>();
         let mut by_relative = BTreeMap::new();
+        let root = self.root.clone();
+        let mut projector = super::uri::RelativeKeyProjector::new(&root);
         for (position, uri) in uris.iter().enumerate() {
-            if let Some(relative) = file_uri_relative_to_root(&self.root, uri) {
+            if let Some(relative) = projector.relative(uri) {
                 by_relative
                     .entry(relative)
                     .and_modify(|stored| *stored = None)
@@ -1943,11 +1946,22 @@ impl DocumentStore {
     /// Equivalent to resolving every document with `file_uri_relative_to_root`
     /// and keeping `.rs` keys, without repeating the filesystem resolution for
     /// documents whose key is already known or lexically cannot be `.rs`.
+    ///
+    /// Staleness boundary: a cached key is served until the document is
+    /// reopened, closed or saved, a watched-file event at or above its path
+    /// arrives, or the root changes. A symlink retargeted outside the editor
+    /// with no watcher covering it is therefore seen late. That is acceptable
+    /// because this index is not the containment authority: workspace
+    /// diagnostics still resolve their own projector on every refresh.
     pub(super) fn open_rust_index_paths(&mut self, root: &Path) -> BTreeSet<PathBuf> {
         let Self {
             documents,
             rust_index_keys,
         } = self;
+        // One projector per pass, built on the first cache miss: the root and
+        // each directory are resolved once for all misses, not once per
+        // document, and a fully warm pass resolves nothing.
+        let mut projector: Option<RelativeKeyProjector<'_>> = None;
         documents
             .keys()
             .filter_map(|uri| {
@@ -1959,7 +1973,9 @@ impl DocumentStore {
                 if file_uri_is_lexically_non_rust(root, uri) {
                     return None;
                 }
-                let key = file_uri_relative_to_root(root, uri);
+                let key = projector
+                    .get_or_insert_with(|| RelativeKeyProjector::new(root))
+                    .relative(uri);
                 rust_index_keys.insert(uri.clone(), (root.to_path_buf(), key.clone()));
                 key
             })
@@ -2189,13 +2205,18 @@ impl DocumentStore {
     ) -> (BTreeMap<Uri, Option<String>>, Vec<Uri>) {
         let mut digests = BTreeMap::new();
         let mut entered = Vec::new();
+        // One projector per refresh: the root and each directory are
+        // canonicalized once, not once per open document (#11763).
+        let mut projector = super::uri::RelativeKeyProjector::new(root);
         for (uri, state) in &self.documents {
             let analyzed = if state
                 .path
                 .extension()
                 .is_some_and(|extension| extension == "rs")
             {
-                file_uri_relative_to_root(root, uri).and_then(|relative| consumed.digest(&relative))
+                projector
+                    .relative(uri)
+                    .and_then(|relative| consumed.digest(&relative))
             } else {
                 read_saved_digest(uri).or_else(|| state.saved_digest.clone())
             };

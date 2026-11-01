@@ -92,7 +92,7 @@ fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {
     crate::atomic_file::ensure_relative_output_contained(path)?;
     output::file_write::write(path, rendered.as_bytes()).map_err(|err| {
         format!(
-            "write output {} failed: {err}",
+            "write output {} failed: {err}; check you can write to that path, then rerun",
             output::outcome::display_path(path)
         )
     })
@@ -3837,15 +3837,15 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--records"])),
-            Err("missing value for --records".to_string())
+            Err("missing value for --records; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--repo-exposure"])),
-            Err("missing value for --repo-exposure".to_string())
+            Err("missing value for --repo-exposure; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--check-output"])),
-            Err("missing value for --check-output".to_string())
+            Err("missing value for --check-output; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&[
@@ -3906,7 +3906,7 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["ts-limitations", "--check-output"])),
-            Err("missing value for --check-output".to_string())
+            Err("missing value for --check-output; pass a value right after it".to_string())
         );
     }
 
@@ -3986,7 +3986,7 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["ts-false-actionable", "--corpus"])),
-            Err("missing value for --corpus".to_string())
+            Err("missing value for --corpus; pass a value right after it".to_string())
         );
     }
 
@@ -4972,7 +4972,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_operations_options(&args(&[])),
-            Err("policy operations requires --policy-readiness <path>".to_string())
+            Err("policy operations requires --policy-readiness <path>; add `--policy-readiness <path>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_operations_options(&args(&["--policy-readiness", ""])),
@@ -4984,7 +4984,9 @@ mod tests {
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&[])),
-            Err("policy promote requires --to <mode>".to_string())
+            Err(
+                "policy promote requires --to <mode>; add `--to <mode>` to the command".to_string()
+            )
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "strict"])),
@@ -5002,7 +5004,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "visible-only"])),
-            Err("policy promote requires --operations <path>".to_string())
+            Err("policy promote requires --operations <path>; add `--operations <path>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "visible-only", "--operations", ""])),
@@ -5017,7 +5019,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&[])),
-            Err("policy preview-promote requires --language <language>".to_string())
+            Err("policy preview-promote requires --language <language>; add `--language <language>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&["--language", "ruby"])),
@@ -5035,7 +5037,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&["--language", "typescript"])),
-            Err("policy preview-promote requires --class <class>".to_string())
+            Err("policy preview-promote requires --class <class>; add `--class <class>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&[
@@ -5084,7 +5086,10 @@ mod tests {
         );
         assert_eq!(
             parse_policy_history_options(&args(&[])),
-            Err("policy history requires --current <path>".to_string())
+            Err(
+                "policy history requires --current <path>; add `--current <path>` to the command"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_policy_history_options(&args(&["--current", ""])),
@@ -7875,11 +7880,11 @@ language = "rust"
     fn init_requires_root_value() {
         assert_eq!(
             init(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             init(&args(&["--ci"])),
-            Err("missing value for --ci".to_string())
+            Err("missing value for --ci; pass a value right after it".to_string())
         );
     }
 
@@ -8284,6 +8289,9 @@ language = "rust"
         assert!(workflow.contains("RIPR_UPLOAD_SARIF"));
         assert!(workflow.contains("RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}"));
         assert!(workflow.contains("RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}"));
+        assert!(
+            workflow.contains("RIPR_PILOT_TIMEOUT_MS: ${{ vars.RIPR_PILOT_TIMEOUT_MS || '' }}")
+        );
         assert!(workflow.contains("RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}"));
         assert!(workflow.contains("pull-requests: write"));
         assert!(workflow.contains("run: ripr reports ci-packet --root ."));
@@ -8564,8 +8572,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 214,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
+            line_count <= 216,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, #11205 added the optional pilot-timeout binding, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8986,23 +8994,23 @@ language = "rust"
     fn explain_requires_values_for_value_flags() {
         assert_eq!(
             explain(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--diff"])),
-            Err("missing value for --diff".to_string())
+            Err("missing value for --diff; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--perl-facts"])),
-            Err("missing value for --perl-facts".to_string())
+            Err("missing value for --perl-facts; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--suppression-policy"])),
-            Err("missing value for --suppression-policy".to_string())
+            Err("missing value for --suppression-policy; pass a value right after it".to_string())
         );
     }
 

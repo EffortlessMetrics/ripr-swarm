@@ -145,12 +145,37 @@ impl ReExportIndex {
     /// `alias_map` is forwarded to `normalized_relative_import_module` so that
     /// tsconfig.json-aliased sources (e.g. `@/owner`) can be followed through
     /// re-exports when `resolve_tsconfig_paths` is enabled.
+    #[cfg(test)]
     pub(crate) fn build(
         workspace_files: &[PathBuf],
         sources: &HashMap<PathBuf, String>,
         workspace_root: &Path,
         alias_map: Option<&TsAliasMap>,
         is_test: impl Fn(&Path) -> bool,
+    ) -> Self {
+        Self::build_with_known_facts(
+            workspace_files,
+            sources,
+            workspace_root,
+            alias_map,
+            is_test,
+            &HashMap::new(),
+        )
+    }
+
+    /// [`Self::build`] with the export facts the caller already derived this
+    /// run. The process-lifetime facts cache clears itself at its entry bound,
+    /// so on a workspace larger than that bound a lookup here re-parses every
+    /// file the clear dropped (VS Code: ~3,300 of 5,300 files, 55 s on a warm
+    /// run). A `known` entry is the facts of exactly the source in `sources`,
+    /// from a clean parse; a file without one falls back to the cache.
+    pub(crate) fn build_with_known_facts(
+        workspace_files: &[PathBuf],
+        sources: &HashMap<PathBuf, String>,
+        workspace_root: &Path,
+        alias_map: Option<&TsAliasMap>,
+        is_test: impl Fn(&Path) -> bool,
+        known: &HashMap<PathBuf, ModuleExportFacts>,
     ) -> Self {
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
         let mut star_edges: HashSet<(String, String)> = HashSet::new();
@@ -191,12 +216,14 @@ impl ReExportIndex {
             // that file instead of every non-test source in the workspace.
             // Facts depend on the workspace root and the tsconfig alias map,
             // both carried by the cache key.
-            let Some(file_facts) = super::extraction_cache::export_facts_cached(
-                relative,
-                source.as_str(),
-                workspace_root,
-                alias_map,
-            ) else {
+            let Some(file_facts) = known.get(relative).cloned().or_else(|| {
+                super::extraction_cache::export_facts_cached(
+                    relative,
+                    source.as_str(),
+                    workspace_root,
+                    alias_map,
+                )
+            }) else {
                 indexed_modules.remove(&module);
                 continue;
             };
@@ -5115,8 +5142,12 @@ pub(crate) fn scan_body_lexical_facts(body_text: &str, identifier: &str) -> Body
 
 /// An identifier-independent event from [`walk_body_lexical`].
 pub(super) enum BodyWalkEvent<'a> {
-    /// A line-leading `const|let|var|function` declaration line.
-    /// `name_start` is the first non-blank offset after the keyword.
+    /// A `const|let|var|function` declaration at a statement position: the
+    /// start of the body or the first token after a `{`, `}` or `;`. `line`
+    /// is the remainder of the physical line from the keyword, so it may span
+    /// several statements (`const a = 1; const f = 2;`); a consumer reads only
+    /// its leading declarator. `name_start` is the first non-blank offset
+    /// after the keyword.
     DeclarationLine {
         line: &'a str,
         name_start: usize,
@@ -5129,7 +5160,8 @@ pub(super) enum BodyWalkEvent<'a> {
 
 /// The conservative lexer shared by the per-identifier scan and the
 /// per-body shadow index (#10925): one definition of comments, strings,
-/// templates, brace scopes and line-start declarations, with the identifier
+/// templates, brace scopes and statement-position declarations (after `{`, `}`
+/// or `;`, not only at a line start), with the identifier
 /// left to the visitor. `DeclarationLine` fires before `CodePosition` for the
 /// same offset. Returns the scope table (see [`BodyLexicalScan::scopes`]).
 pub(super) fn walk_body_lexical<'a>(
@@ -5149,7 +5181,14 @@ pub(super) fn walk_body_lexical<'a>(
     let mut escaped = false;
     let mut pending_dollar = false;
     let mut block_comment_has_newline = false;
+    let mut comment_opened_at_statement_start = false;
+    let mut skip_comment_close_slash = false;
     for (idx, ch) in body_text.char_indices() {
+        if skip_comment_close_slash {
+            // The `/` of a closing `*/` is part of the comment, not code.
+            skip_comment_close_slash = false;
+            continue;
+        }
         if escaped {
             escaped = false;
             continue;
@@ -5177,14 +5216,21 @@ pub(super) fn walk_body_lexical<'a>(
             BodyScanState::Code => match ch {
                 c if c.is_whitespace() => {}
                 '/' if body_text[idx + 1..].starts_with('/') => state = BodyScanState::LineComment,
-                '/' if body_text[idx + 1..].starts_with('*') => state = BodyScanState::BlockComment,
+                '/' if body_text[idx + 1..].starts_with('*') => {
+                    state = BodyScanState::BlockComment;
+                    comment_opened_at_statement_start = at_line_start;
+                    block_comment_has_newline = false;
+                }
                 '\'' => state = BodyScanState::SingleQuoted,
                 '"' => state = BodyScanState::DoubleQuoted,
                 '`' => state = BodyScanState::Template,
                 '{' => {
                     scopes.push((idx, usize::MAX));
                     open_scopes.push(scopes.len() - 1);
-                    at_line_start = false;
+                    // A `{` opens a statement position: a declaration that
+                    // follows on the SAME line (`test('x', () => { function f()
+                    // {...} ...`) binds exactly like one on its own line.
+                    at_line_start = true;
                 }
                 '}' => {
                     if interpolation_returns.last() == Some(&open_scopes.len()) {
@@ -5195,7 +5241,13 @@ pub(super) fn walk_body_lexical<'a>(
                     } else if let Some(frame) = open_scopes.pop() {
                         scopes[frame].1 = idx;
                     }
-                    at_line_start = false;
+                    // A `}` ends a statement/block, so a same-line declaration
+                    // after it is a statement start too.
+                    at_line_start = true;
+                }
+                ';' => {
+                    visit(BodyWalkEvent::CodePosition { idx });
+                    at_line_start = true;
                 }
                 _ => {
                     if at_line_start
@@ -5232,7 +5284,10 @@ pub(super) fn walk_body_lexical<'a>(
                     // line-start check (ASI), so a declaration following it is
                     // still recognized as leading its line.
                     state = BodyScanState::Code;
-                    at_line_start = block_comment_has_newline;
+                    skip_comment_close_slash = true;
+                    // A same-line comment is transparent: it keeps the
+                    // statement position it opened at (`; /* n */ const f`).
+                    at_line_start = block_comment_has_newline || comment_opened_at_statement_start;
                 }
             }
             BodyScanState::SingleQuoted => {
@@ -5331,6 +5386,7 @@ fn split_top_level_declarators(after: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;
+    let mut end = after.len();
     for (offset, c) in masked.char_indices() {
         match c {
             '(' | '[' | '{' => depth += 1,
@@ -5339,10 +5395,16 @@ fn split_top_level_declarators(after: &str) -> Vec<&str> {
                 parts.push(after[start..offset].trim());
                 start = offset + 1;
             }
+            // The declaration statement ends at a top-level `;`; a later
+            // comma expression (`; void 0, f(100)`) is not another declarator.
+            ';' if depth == 0 => {
+                end = offset;
+                break;
+            }
             _ => {}
         }
     }
-    parts.push(after[start..].trim());
+    parts.push(after[start..end].trim());
     parts.into_iter().filter(|part| !part.is_empty()).collect()
 }
 
@@ -5516,6 +5578,51 @@ mod spread_call_boundary_tests {
             let actual = contains_call_name(text, "steps");
             if actual != expected {
                 return Err(format!("{text}: expected call={expected}, got {actual}"));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod same_line_shadow_tests {
+    use super::local_identifier_declared_in_test_body;
+
+    #[test]
+    fn same_line_declarations_shadow_like_multiline_ones() -> Result<(), String> {
+        let shadows = [
+            "() => { function f(n) { return false; } expect(f(100)).toBe(false); }",
+            "() => { let f = (n) => false; expect(f(100)).toBe(false); }",
+            "() => { const f = function(n) { return false; }; expect(f(100)).toBe(false); }",
+            "() => { const a = 1; const f = () => false; expect(f(100)).toBe(false); }",
+            "() => {\n  function f(n) {\n return false; }\n  expect(f(100)).toBe(false);\n}",
+            // A same-line block comment keeps the statement position.
+            "() => { const a = 1; /* note */ const f = () => false; expect(f(100)).toBe(false); }",
+            "() => { /* a\n b */ /* c */ const f = () => false; expect(f(100)).toBe(false); }",
+        ];
+        for body in shadows {
+            if !local_identifier_declared_in_test_body(body, "f") {
+                return Err(format!("expected a shadow of f in: {body}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn same_line_declaration_in_another_block_or_name_does_not_shadow() -> Result<(), String> {
+        let clear = [
+            // Declared in a sibling block that closed before the use.
+            "() => { { function f() { return 1; } } expect(f(100)).toBe(true); }",
+            // A different name sharing a prefix.
+            "() => { function fx(n) { return false; } expect(f(100)).toBe(true); }",
+            // A comma expression after the statement is not a declarator.
+            "() => { const a = 1; void 0, f(100); expect(f(100)).toBe(90); }",
+            // The name only appears as a member and in a string.
+            "() => { const o = { f: 1 }; expect(f(100)).toBe(true); const s = 'function f()'; }",
+        ];
+        for body in clear {
+            if local_identifier_declared_in_test_body(body, "f") {
+                return Err(format!("unexpected shadow of f in: {body}"));
             }
         }
         Ok(())

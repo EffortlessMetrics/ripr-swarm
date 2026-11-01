@@ -42,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_table_reflection_multiline_import/input --diff <cwd>/fixtures/python_table_reflection_multiline_import/diff.patch --mode fast probe:hostile_settings.py:python_preview:f6277be6
   ripr context --root <cwd>/fixtures/python_table_reflection_multiline_import/input --diff <cwd>/fixtures/python_table_reflection_multiline_import/diff.patch --mode fast --at probe:hostile_settings.py:python_preview:f6277be6
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full
