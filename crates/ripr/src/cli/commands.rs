@@ -153,6 +153,8 @@ pub(super) use doctor::doctor;
 
 #[path = "commands/gate.rs"]
 mod gate;
+#[cfg(kani)]
+mod gate_exit_kani;
 pub(super) use gate::gate;
 
 #[path = "commands/init.rs"]

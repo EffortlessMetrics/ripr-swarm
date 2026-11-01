@@ -54,6 +54,16 @@ const AUDITED_PRELUDE_VERSIONS: &[(&str, &str, &[&str])] = &[
     ("prusti_contracts", "prusti-contracts", &["0.3.3"]),
 ];
 
+/// The source crate names with an audit row, for the cross-check against the
+/// trusted prelude globs in `syntax/owner_pin.rs`.
+#[cfg(test)]
+pub(crate) fn audited_prelude_crates() -> Vec<&'static str> {
+    AUDITED_PRELUDE_VERSIONS
+        .iter()
+        .map(|(name, _, _)| *name)
+        .collect()
+}
+
 /// Whether `krate` needs an audited locked version beyond the manifest proof,
 /// and if so whether the lockfile has one. The lockfile is the nearest one
 /// above the importing package's directory, so a nested workspace with its own

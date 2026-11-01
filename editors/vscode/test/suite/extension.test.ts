@@ -1217,8 +1217,15 @@ suite('Extension Smoke', () => {
   });
 
   test('copyContext never copies an empty static-limit note and says so', async () => {
+    // copyContext refuses with a repair-actions message unless an active
+    // workspace file exists, so open one like the neighbouring copy tests do.
+    const relativePath = 'src/empty-static-limit-note.rs';
+    const uri = workspaceFileUri(relativePath);
     const context = createControllerTestContext({});
     try {
+      await writeWorkspaceFile(relativePath, 'pub fn empty_static_limit_note_target() {}\n');
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
       await context.controller.start();
       await context.controller.copyContext({ label: 'static_limit_note', note: '  \n ' });
 
@@ -1230,6 +1237,8 @@ suite('Extension Smoke', () => {
       );
     } finally {
       await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
     }
   });
 
