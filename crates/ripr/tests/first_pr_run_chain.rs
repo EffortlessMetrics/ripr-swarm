@@ -15,8 +15,18 @@ const CHANGED_SRC: &str = "pub fn add(a: i32, b: i32) -> i32 {\n    if a > 10 { 
 const DEFAULT_DISCLOSURE: &str = "ripr first-pr - side effects and cost disclosure\n  cost class:      artifact composition only; runs no analysis\n  writes to:       target/ripr/reports/\n  cache location:  none\n  git reads:       yes (base and head preflight)\n  network:         none\n  runtime hint:    seconds\n\n";
 
 fn run(dir: &Path, program: &str, args: &[&str]) -> Result<Output, String> {
+    run_env(dir, program, args, &[])
+}
+
+fn run_env(
+    dir: &Path,
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+) -> Result<Output, String> {
     Command::new(program)
         .current_dir(dir)
+        .envs(envs.iter().copied())
         .args(args)
         .output()
         .map_err(|err| format!("{program} {args:?}: {err}"))
@@ -485,6 +495,46 @@ fn run_chain_on_a_fresh_typescript_repo_reaches_a_non_missing_state() -> Result<
         "{packet}"
     );
     assert!(root.join("target/ripr/reports/start-here.json").is_file());
+    Ok(())
+}
+
+const TIMEOUT_ENV: &str = "RIPR_FIRST_PR_RUN_CHAIN_STEP_TIMEOUT_SECS";
+
+#[test]
+fn an_unparseable_step_timeout_env_is_refused_before_any_step_runs() -> Result<(), String> {
+    let root = fresh_repo("bad-timeout")?;
+    let output = run_env(
+        &root,
+        env!("CARGO_BIN_EXE_ripr"),
+        &["first-pr", "--base", "main", "--run-chain"],
+        &[(TIMEOUT_ENV, "soon")],
+    )?;
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(TIMEOUT_ENV) && stderr.contains("set it"),
+        "{stderr}"
+    );
+    assert!(!root.join("target/ripr/reports/start-here.json").exists());
+    assert!(!stdout_of(&output).contains("run-chain step"));
+    Ok(())
+}
+
+#[test]
+fn a_zero_step_timeout_env_disables_the_bound_and_the_chain_still_runs() -> Result<(), String> {
+    let root = fresh_repo("zero-timeout")?;
+    let output = run_env(
+        &root,
+        env!("CARGO_BIN_EXE_ripr"),
+        &["first-pr", "--base", "main", "--run-chain"],
+        &[(TIMEOUT_ENV, "0")],
+    )?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout_of(&output).contains("run-chain step 1/3"));
     Ok(())
 }
 

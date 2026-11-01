@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- TypeScript preview text says "check" where it said "discriminator": the "cannot name a safe target check or observer shape" reason, the "whether a test checks this behavior is not established" cap, and the two "reach … but not confirmed" analyzer limits. The wire code `discriminator_not_established` is unchanged. 23 TypeScript fixtures were re-blessed one by one (#11619).

@@ -8,6 +8,13 @@
 //! or observe them. A changed line of this kind is not a runtime behavior to
 //! probe, and "add a co-located test" would be a wrong repair signal for it.
 //!
+//! Kani verification artifacts (RIPR-SPEC-0373) are the same kind of text. A
+//! proof-harness item (`#[kani::proof]`, `#[kani::proof_for_contract(..)]`, or
+//! the same path under `cfg_attr`), an item-level `#[cfg(kani)] mod`, and a
+//! `#[cfg_attr(kani, kani::requires(..), ..)]` contract are recognised from the
+//! text of whichever side holds them, so a harness that a diff only *deletes*
+//! (absent from the new-side index) is still known to be verification source.
+//!
 //! This module only recognises such lines. Runtime code that merely carries a
 //! contract attribute (`#[check(ghost)]`, `#[trusted]`, Prusti `#[pure]`) is
 //! not matched and stays ordinary. Matching is lexical and fail-closed: a line
@@ -17,6 +24,7 @@
 use super::diff::macro_invocation_extents;
 use crate::analysis::diff::ChangedFile;
 use crate::analysis::extract::mask_comments_and_strings;
+use crate::analysis::facts::attributes_define_proof_harness;
 use crate::analysis::rust_index::{RustIndex, find_file_facts};
 use std::collections::BTreeSet;
 
@@ -107,6 +115,7 @@ pub(super) fn verification_only_lines(source: &str) -> BTreeSet<usize> {
     let line_end = |at: usize| masked[at..].find('\n').map_or(masked.len(), |n| at + n);
     let mut lines = BTreeSet::new();
     let verifiers = Verifiers::of(&masked);
+    let mut attributes: Vec<(usize, usize)> = Vec::new();
 
     for &start in &line_starts {
         let Some(offset) = masked[start..]
@@ -122,10 +131,17 @@ pub(super) fn verification_only_lines(source: &str) -> BTreeSet<usize> {
         let Some(close) = closing_bracket(bytes, at + 1) else {
             continue;
         };
+        attributes.push((at, close));
         let Some(name) = attribute_name(&masked[at + 2..close]) else {
             continue;
         };
-        if is_contract(&name, &verifiers) {
+        if name == "cfg_attr" {
+            if is_kani_contract_cfg_attr(&masked[at..=close])
+                && masked[close + 1..line_end(close)].trim().is_empty()
+            {
+                lines.extend(line_of(at)..=line_of(close));
+            }
+        } else if is_contract(&name, &verifiers) {
             // A runtime token after the `]` keeps the whole line ordinary.
             if masked[close + 1..line_end(close)].trim().is_empty() {
                 lines.extend(line_of(at)..=line_of(close));
@@ -134,6 +150,12 @@ pub(super) fn verification_only_lines(source: &str) -> BTreeSet<usize> {
             && let Some(end) = item_end(bytes, close + 1)
         {
             lines.extend(line_of(at)..=line_of(end));
+        }
+    }
+
+    for (start, end) in kani_item_extents(&masked, &attributes) {
+        if masked[end + 1..line_end(end)].trim().is_empty() {
+            lines.extend(line_of(start)..=line_of(end));
         }
     }
 
@@ -155,6 +177,113 @@ pub(super) fn verification_only_lines(source: &str) -> BTreeSet<usize> {
         }
     }
     lines
+}
+
+/// Byte extents (first attribute to closing brace or `;`) of Kani verification
+/// items: a proof harness, or a `#[cfg(kani)] mod`. `attributes` are the
+/// line-leading `#[..]` spans in source order; consecutive ones form the
+/// attribute group of the item that follows. Fail-closed: `cfg(kani)` must be
+/// the exact predicate and the gated item must be a module, so `cfg(not(kani))`,
+/// `cfg(any(kani, test))` and gated functions stay ordinary.
+fn kani_item_extents(masked: &str, attributes: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let mut extents = Vec::new();
+    let mut index = 0;
+    while index < attributes.len() {
+        let mut last = index;
+        while last + 1 < attributes.len()
+            && masked[attributes[last].1 + 1..attributes[last + 1].0]
+                .trim()
+                .is_empty()
+        {
+            last += 1;
+        }
+        let group = &attributes[index..=last];
+        let (start, group_end) = (group[0].0, group[group.len() - 1].1);
+        let texts = group.iter().map(|&(at, close)| &masked[at..=close]);
+        // `cfg_attr(kani, kani::proof)` gates only the attribute: the function
+        // body is compiled in an ordinary build, so it keeps its probes.
+        let harness =
+            attributes_define_proof_harness(texts.clone().filter(|text| !is_cfg_attr(text)));
+        let kani_mod = texts.clone().any(|text| {
+            text.chars()
+                .filter(|ch| !ch.is_whitespace())
+                .eq("#[cfg(kani)]".chars())
+        }) && item_is_module(&masked[group_end + 1..]);
+        if (harness || kani_mod)
+            && let Some(end) = item_end(masked.as_bytes(), group_end + 1)
+        {
+            extents.push((start, end));
+        }
+        index = last + 1;
+    }
+    extents
+}
+
+/// True for a `#[cfg_attr(..)]` attribute.
+fn is_cfg_attr(attribute: &str) -> bool {
+    let compact: String = attribute.chars().filter(|ch| !ch.is_whitespace()).collect();
+    compact.starts_with("#[cfg_attr(")
+}
+
+/// True when the item text starts with `mod name {` / `mod name;` (optionally
+/// `pub`/`pub(..)`).
+fn item_is_module(rest: &str) -> bool {
+    let header = rest
+        .trim_start()
+        .split(['{', ';'])
+        .next()
+        .unwrap_or_default();
+    let mut words = header.split_whitespace();
+    let first = words.next();
+    let first = match first {
+        Some(word) if word.starts_with("pub") => {
+            if word.starts_with("pub(") && !word.ends_with(')') {
+                // `pub(in path)` spans words; skip to the closing one.
+                words.find(|w| w.ends_with(')'));
+            }
+            words.next()
+        }
+        other => other,
+    };
+    first == Some("mod")
+}
+
+/// `#[cfg_attr(kani, kani::requires(..), kani::ensures(..), ..)]` whose every
+/// introduced attribute is a Kani contract: erased from any non-Kani build.
+fn is_kani_contract_cfg_attr(attribute: &str) -> bool {
+    let compact: String = attribute.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let Some(inner) = compact
+        .strip_prefix("#[cfg_attr(")
+        .and_then(|rest| rest.strip_suffix(")]"))
+    else {
+        return false;
+    };
+    let mut parts = Vec::new();
+    let (mut depth, mut from) = (0usize, 0usize);
+    for (at, ch) in inner.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&inner[from..at]);
+                from = at + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&inner[from..]);
+    let mut parts = parts.into_iter();
+    if parts.next() != Some("kani") {
+        return false;
+    }
+    let introduced: Vec<&str> = parts.filter(|part| !part.is_empty()).collect();
+    !introduced.is_empty()
+        && introduced.iter().all(|part| {
+            part.split('(')
+                .next()
+                .and_then(|path| path.strip_prefix("kani::"))
+                .is_some_and(|name| CONTRACT_ATTRIBUTES.contains(&name))
+        })
 }
 
 /// Count of `changed` lines (added, on the new side; removed, on the old side)
@@ -344,5 +473,41 @@ mod tests {
             ),
             [3, 4]
         );
+    }
+    #[test]
+    fn kani_harnesses_and_cfg_kani_modules_are_verification_source() {
+        // Harness item with its attribute group, nested in a production fn.
+        let nested = "fn f() {\n    #[cfg(kani)]\n    #[kani::proof]\n    fn proof() {\n        g();\n    }\n    h();\n}\n";
+        assert_eq!(lines(nested), [2, 3, 4, 5, 6]);
+        // A whole `#[cfg(kani)] mod`, including a harness helper fn inside.
+        let module = "fn f() {}\n#[cfg(kani)]\nmod proofs {\n    use super::*;\n    #[kani::proof_for_contract(f)]\n    fn p() {\n        f();\n    }\n}\nfn after() {}\n";
+        assert_eq!(lines(module), [2, 3, 4, 5, 6, 7, 8, 9]);
+        // The same harness path introduced through cfg_attr gates only the
+        // attribute; the body is compiled in an ordinary build and stays ordinary.
+        assert!(lines("#[cfg_attr(kani, kani::proof)]\nfn p() {\n    g();\n}\n").is_empty());
+    }
+
+    #[test]
+    fn cfg_attr_kani_contracts_are_verification_only() {
+        let source = "#[cfg_attr(\n    kani,\n    kani::requires(a > 0),\n    // note\n    kani::ensures(|&p| p < 2, ),\n)]\nfn f() {}\n";
+        assert_eq!(lines(source), [1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn kani_lookalikes_stay_ordinary() {
+        for source in [
+            "#[cfg(not(kani))]\nmod m {\n    fn f() { g(); }\n}\n",
+            "#[cfg(any(kani, test))]\nmod m {\n    fn f() { g(); }\n}\n",
+            "#[cfg(kani)]\nfn f() { g(); }\n",
+            "#[cfg_attr(feature = \"x\", kani::requires(a))]\nfn f() {}\n",
+            "#[cfg_attr(kani, inline)]\nfn f() {}\n",
+            "#[cfg_attr(kani, kani::requires(a), inline)]\nfn f() {}\n",
+            "#[my::kani::proof]\nfn f() { g(); }\n",
+            "#[proof]\nfn f() { g(); }\n",
+            // Runtime tokens after the closing brace keep the item ordinary.
+            "#[kani::proof]\nfn f() { g(); } fn after() { h(); }\n",
+        ] {
+            assert!(lines(source).is_empty(), "{source}");
+        }
     }
 }
