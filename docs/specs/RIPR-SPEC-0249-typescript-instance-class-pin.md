@@ -249,9 +249,12 @@ documented decisions and proceed"). Recorded on #6654.
   patches a global class (`globalThis.Error = ...`) before the test runs
   is not seen.
 - The scan reads masked text. The shared masker reads a `/` after a
-  non-null assertion (`n! / 2`) or a postfix `++`/`--` as division, so the
-  rest of that line stays visible to the name scan; a prefix `!` before a
-  regex (`!/re/.test(x)`) still opens one (#7483).
+  non-null assertion (`n! / 2`) or a postfix `++`/`--` after an operand as
+  division, so the rest of that line stays visible to the name scan; a
+  prefix `!` before a regex (`!/re/.test(x)`) still opens one (#7483). A
+  prefix `!` directly after `)`, `]`, `}`, `else` or `do`
+  (`if (c) !/re/.test(x)`) reads as a non-null assertion, so that regex body
+  stays unmasked, and `a!++ / 2` still reads its `/` as a regex.
 - The boundary witness checks that a tested call carries the boundary
   input, not that control reaches the changed `if`: an earlier
   `if (admin) { return ...; }` can stop the tested call first. This
