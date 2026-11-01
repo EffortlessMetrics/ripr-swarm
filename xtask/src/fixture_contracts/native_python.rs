@@ -382,7 +382,7 @@ mod tests {
         rel_path: &str,
         file: &Path,
     ) -> Result<(), String> {
-        let bytes = fs::metadata(file).map_err(|error| error.to_string())?.len() as u64;
+        let bytes = fs::metadata(file).map_err(|error| error.to_string())?.len();
         let digest = hash_file(file)?;
         let files = manifest["files"]
             .as_array_mut()
