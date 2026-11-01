@@ -111,6 +111,30 @@ Updated:
 ## Pending — typescript_platform_guarded_test (10)
 
 Reason:
+RIPR-SPEC-0246: plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless typescript_platform_guarded_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_platform_guarded_test (11)
+
+Reason:
+RIPR-SPEC-0246: re-render after merging main; plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless typescript_platform_guarded_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_platform_guarded_test (12)
+
+Reason:
 RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
 
 Command:

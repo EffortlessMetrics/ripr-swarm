@@ -289,8 +289,15 @@ and the outcomes `no_scope`, `no_changed_lines`, `unsupported_input` and
 `analysis_failed` fail the run as an unestablished measurement; they are never
 a silent verdict. An explicit non-`ok` Perl `language_runs` row for a packet
 case keeps its own refusal, and a sibling language's row is left in the output.
-This reads the existing producer outcome and does not add a field or change
-`language_runs`.
+The output must also carry the producer's `language_completeness` projection
+(#11272) with exactly one row for the expected language whose `status` is
+`complete`, `complete_zero` or `partial`. The aggregate outcome can read
+complete while a sibling language supplied the evidence; the per-language row
+says the expected language's own adapter ran. A missing projection, no single
+row for that language, or a row that is `unavailable`, `invalid`, `failed`,
+`unsupported`, `not_selected` or `no_current_scope` fails the run as an
+unestablished measurement. This reads the existing producer outcome and view
+and does not add a field or change `language_runs`.
 
 ### Spec-example coverage
 

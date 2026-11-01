@@ -63,6 +63,30 @@ Updated:
 ## Pending — ts_coincident_state_update (6)
 
 Reason:
+RIPR-SPEC-0246: plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless ts_coincident_state_update --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_coincident_state_update (7)
+
+Reason:
+RIPR-SPEC-0246: re-render after merging main; plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless ts_coincident_state_update --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_coincident_state_update (8)
+
+Reason:
 RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
 
 Command:

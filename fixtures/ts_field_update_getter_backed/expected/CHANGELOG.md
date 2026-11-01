@@ -211,6 +211,32 @@ Updated:
 ## Pending — ts_field_update_getter_backed (17)
 
 Reason:
+RIPR-SPEC-0246: plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless ts_field_update_getter_backed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_field_update_getter_backed (18)
+
+Reason:
+RIPR-SPEC-0246: re-render after merging main; plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless ts_field_update_getter_backed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — ts_field_update_getter_backed (19)
+
+Reason:
 RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
 
 Command:

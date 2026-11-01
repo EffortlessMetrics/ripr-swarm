@@ -107,6 +107,32 @@ Updated:
 ## Pending — typescript_call_removal_absent_method (9)
 
 Reason:
+RIPR-SPEC-0246: plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_absent_method --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_call_removal_absent_method (10)
+
+Reason:
+RIPR-SPEC-0246: re-render after merging main; plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_absent_method --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_call_removal_absent_method (11)
+
+Reason:
 RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
 
 Command:
