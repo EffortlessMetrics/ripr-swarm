@@ -96,8 +96,8 @@
       "stop_reasons": ["fixture_opaque"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "`assert_relative_eq!` reads like a floating-point tolerance comparison, but ripr cannot establish its tolerance semantics or bound how far this change moves the value. Check that the tolerance is tighter than the smallest difference the change can make, then run the existing test against the changed code.",
-      "suggested_next_action": "`assert_relative_eq!` reads like a floating-point tolerance comparison, but ripr cannot establish its tolerance semantics or bound how far this change moves the value. Check that the tolerance is tighter than the smallest difference the change can make, then run the existing test against the changed code.",
+      "recommended_next_step": "`assert_relative_eq!` reads like a floating-point tolerance comparison that passes when the values are within the tolerance, but ripr cannot establish its tolerance semantics or bound how far this change moves the value. Check that the tolerance is tighter than the smallest difference the change can make, then run the existing test against the changed code.",
+      "suggested_next_action": "`assert_relative_eq!` reads like a floating-point tolerance comparison that passes when the values are within the tolerance, but ripr cannot establish its tolerance semantics or bound how far this change moves the value. Check that the tolerance is tighter than the smallest difference the change can make, then run the existing test against the changed code.",
       "language": "rust",
       "static_limit_kind": "rust_macro_wrapped_assertion_unresolved",
       "static_limitation": {
