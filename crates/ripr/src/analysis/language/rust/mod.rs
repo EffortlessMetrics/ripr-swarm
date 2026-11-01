@@ -4080,7 +4080,7 @@ mod tests {
     /// RIPR-SPEC-0369: repository mode yields no expression finding for text
     /// inside `verus! { .. }`; the macro token tree is not indexed as Rust.
     #[test]
-    fn repo_analysis_reports_nothing_for_verus_region_only_file() -> Result<(), String> {
+    fn repo_analysis_excludes_verus_region_and_keeps_sibling_fn() -> Result<(), String> {
         let root = temp_root("verus-region-repo")?;
         fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
         fs::write(

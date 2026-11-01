@@ -197,7 +197,7 @@ substituted dependencies remain foreign globs.
 - `crates/ripr/src/analysis/probes/repo.rs`: repository-mode seeding test
   (`repo_mode_verus_region_seeds_no_expression_probes`) and
   `language/rust/mod.rs`
-  (`repo_analysis_reports_nothing_for_verus_region_only_file`).
+  (`repo_analysis_excludes_verus_region_and_keeps_sibling_fn`).
 - `crates/ripr/src/analysis/language/rust/probes.rs`: finding limit tests.
 - `crates/ripr/src/analysis/syntax/owner_pin.rs` and the classify owner-pin
   tests: prelude-glob tests.

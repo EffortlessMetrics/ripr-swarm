@@ -12,7 +12,7 @@ tests = [
   "crates/ripr/src/analysis/language/rust/probes.rs::verus_region_limit_names_the_region_and_changes_nothing_else",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crates",
   "crates/ripr/src/analysis/probes/repo.rs::repo_mode_verus_region_seeds_no_expression_probes",
-  "crates/ripr/src/analysis/language/rust/mod.rs::repo_analysis_reports_nothing_for_verus_region_only_file",
+  "crates/ripr/src/analysis/language/rust/mod.rs::repo_analysis_excludes_verus_region_and_keeps_sibling_fn",
 ]
 code = [
   "crates/ripr/src/analysis/probes/macro_definition.rs",
