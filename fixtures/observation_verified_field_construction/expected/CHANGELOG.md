@@ -555,7 +555,7 @@ Updated:
 ## Pending — observation_verified_field_construction (46)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
 
 Command:
 `cargo xtask goldens bless observation_verified_field_construction --reason "..."`
@@ -565,6 +565,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — observation_verified_field_construction (47)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless observation_verified_field_construction --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_verified_field_construction (48)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

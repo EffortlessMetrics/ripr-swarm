@@ -172,9 +172,33 @@ fn contains_needle(haystack_lower: &str, needle: &str) -> bool {
     false
 }
 
+/// The Evidence stage vocabulary the digest defines for the reader in its own
+/// legend: the fifth stage name in the `Evidence:` chain and the legend's
+/// definitions of it (`HUMAN_EVIDENCE_LEGEND`). These phrases are exempt because
+/// the output glosses the word in plain language where it introduces it. Every
+/// other use of the word, including prose such as "No strong discriminator",
+/// stays counted.
+const STAGE_VOCABULARY: &[&str] = &[
+    "discriminator = assertion distinguishes intended from wrong behavior",
+    "named discriminator absent from tests",
+    "discriminator unconfirmed",
+];
+
+/// Remove the digest's stage vocabulary (see `STAGE_VOCABULARY`) before matching.
+fn strip_stage_vocabulary(line: &str) -> String {
+    let mut out = line.to_string();
+    for phrase in STAGE_VOCABULARY {
+        out = out.replace(phrase, " ");
+    }
+    if out.trim_start().starts_with("Evidence:") {
+        out = out.replace(" · discriminator ", " · ");
+    }
+    out
+}
+
 /// Banned term ids found on one line of output.
 pub(crate) fn banned_terms_in_line(line: &str) -> Vec<&'static str> {
-    let lower = strip_identifiers(line).to_ascii_lowercase();
+    let lower = strip_identifiers(&strip_stage_vocabulary(line)).to_ascii_lowercase();
     BANNED
         .iter()
         .filter(|banned| banned.needles.iter().any(|n| contains_needle(&lower, n)))
@@ -1399,6 +1423,26 @@ fn write_report(root: &Path, body: &str) {
     let _ = fs::write(path, body);
 }
 
+/// `--tree <path>` (#11385): scan and gate the goldens of another checkout with
+/// the matcher compiled into this binary. CI builds the merge-base's xtask in a
+/// separate worktree and points it at the PR tree, so the judge is the code the
+/// PR could not have changed. `.github/workflows/rust-gates.yml` looks for this literal in the
+/// base source to know whether the merge-base can do that yet.
+const TREE_FLAG: &str = "--tree";
+
+fn tree_root(path: &Path) -> Result<PathBuf, String> {
+    let root = path
+        .canonicalize()
+        .map_err(|err| format!("{TREE_FLAG} {}: {err}", path.display()))?;
+    if !root.join(BASELINE_PATH).is_file() {
+        return Err(format!(
+            "{TREE_FLAG} {} is not a ripr checkout (no {BASELINE_PATH})",
+            root.display()
+        ));
+    }
+    Ok(root)
+}
+
 fn repo_root() -> Result<PathBuf, String> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest_dir.parent().map(Path::to_path_buf).ok_or_else(|| {
@@ -1449,9 +1493,16 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
     let mut ripr: Option<String> = None;
     let mut ratchet = false;
     let mut full = false;
+    let mut tree: Option<PathBuf> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
+            TREE_FLAG => {
+                tree = Some(PathBuf::from(
+                    iter.next()
+                        .ok_or_else(|| format!("{TREE_FLAG} needs a path"))?,
+                ));
+            }
             "--ripr" => {
                 ripr = Some(
                     iter.next()
@@ -1463,12 +1514,20 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
             "--full" => full = true,
             other => {
                 return Err(format!(
-                    "unknown argument `{other}`; usage: cargo xtask check-user-text [--ripr <path>] [--ratchet] [--full]"
+                    "unknown argument `{other}`; usage: cargo xtask check-user-text [--ripr <path>] [--ratchet] [--full] [--tree <path>]"
                 ));
             }
         }
     }
-    let root = repo_root()?;
+    if tree.is_some() && (ratchet || full || ripr.is_some()) {
+        return Err(format!(
+            "{TREE_FLAG} judges committed goldens only; it cannot combine with --ratchet, --full or --ripr"
+        ));
+    }
+    let root = match &tree {
+        Some(path) => tree_root(path)?,
+        None => repo_root()?,
+    };
     let baseline_text = fs::read_to_string(root.join(BASELINE_PATH))
         .map_err(|err| format!("read {BASELINE_PATH}: {err}"))?;
     let baseline = parse_baseline(&baseline_text)?;
@@ -1484,14 +1543,24 @@ pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
     // The live half builds `ripr` and runs ~25 commands. Run it when forced
     // (`--full`, `--ripr`, `--ratchet`, check-pr/CI) or when the change can
     // alter live output; a docs-only change scans the goldens only.
-    let run_live = live_half_decision(full || ratchet || ripr.is_some(), changed_paths());
+    // A foreign tree has no binary built from it, so its live output is not
+    // judged here; the golden delta is the whole judgment in that mode.
+    let run_live =
+        tree.is_none() && live_half_decision(full || ratchet || ripr.is_some(), changed_paths());
     let (live, baseline) = if run_live {
         let bin = resolve_ripr_binary(ripr.as_deref())?;
         (scan_live(&bin, &root, &mut counts)?, baseline)
     } else {
-        println!(
-            "check-user-text: live output half skipped, no ripr source or baseline change vs origin/main (golden half only; use --full to force)"
-        );
+        if tree.is_some() {
+            println!(
+                "check-user-text: live output half skipped, --tree judges the goldens of {} with this binary's matcher",
+                root.display()
+            );
+        } else {
+            println!(
+                "check-user-text: live output half skipped, no ripr source or baseline change vs origin/main (golden half only; use --full to force)"
+            );
+        }
         let golden_only = baseline
             .into_iter()
             .filter(|((surface, _), _)| surface == GOLDEN_SURFACE)
@@ -1889,6 +1958,42 @@ mod tests {
         let _ = fs::remove_dir_all(&removed);
         assert!(passing.violations.is_empty(), "{passing:?}");
         Ok(())
+    }
+
+    #[test]
+    fn tree_must_be_a_ripr_checkout_and_names_a_path() -> Result<(), String> {
+        let empty =
+            std::env::temp_dir().join(format!("ripr-user-text-tree-{}", std::process::id()));
+        fs::create_dir_all(&empty).map_err(|err| err.to_string())?;
+        let outcome = tree_root(&empty);
+        let _ = fs::remove_dir_all(&empty);
+        assert!(
+            matches!(outcome, Err(ref e) if e.contains("not a ripr checkout")),
+            "{outcome:?}"
+        );
+        let missing = tree_root(&empty);
+        assert!(
+            matches!(missing, Err(ref e) if e.contains(TREE_FLAG)),
+            "{missing:?}"
+        );
+        let no_path = check_user_text_with_args(&[TREE_FLAG.to_string()]);
+        assert!(
+            matches!(no_path, Err(ref e) if e.contains("needs a path")),
+            "{no_path:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tree_judges_goldens_only_and_rejects_the_modes_that_need_a_local_binary() {
+        for other in ["--ratchet", "--full"] {
+            let outcome =
+                check_user_text_with_args(&[TREE_FLAG.to_string(), ".".into(), other.to_string()]);
+            assert!(
+                matches!(outcome, Err(ref e) if e.contains("goldens only")),
+                "{other}: {outcome:?}"
+            );
+        }
     }
 
     fn scanned_in(root: &Path) -> Result<Scanned, String> {
@@ -2606,6 +2711,35 @@ mod tests {
             assert!(
                 banned_terms_in_line(exempt).is_empty(),
                 "should be exempt: {exempt}"
+            );
+        }
+    }
+
+    /// The digest's Evidence line and legend introduce the stage name with its
+    /// own gloss (#10261); exempt exactly that, nothing around it.
+    #[test]
+    fn the_digest_stage_vocabulary_is_exempt_and_nothing_around_it() {
+        for exempt in [
+            "  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak",
+            "Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no",
+            "      discriminator = assertion distinguishes intended from wrong behavior",
+            "      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused",
+        ] {
+            assert!(
+                banned_terms_in_line(exempt).is_empty(),
+                "should be exempt: {exempt}"
+            );
+        }
+        for flagged in [
+            "Missing check: No strong discriminator was detected",
+            "Next step: add a discriminator for this input",
+            "Note: observation yes · discriminator weak",
+            "Evidence: reach yes · seam weak · discriminator weak",
+            "discriminator = something else entirely",
+        ] {
+            assert!(
+                !banned_terms_in_line(flagged).is_empty(),
+                "should be flagged: {flagged}"
             );
         }
     }

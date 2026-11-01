@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Unknown `ripr gate --mode`, `ripr pr-comments plan --mode` and `ripr doctor --profile` values now use the shared near-miss helpers, so a close typo gets a "Did you mean" suggestion and the accepted values are listed in the common `Accepted:` form. Unknown `ripr mcp` arguments use the shared flag helper; close flag typos get a "Did you mean" suggestion and the error points to `ripr mcp --help` (#5059).

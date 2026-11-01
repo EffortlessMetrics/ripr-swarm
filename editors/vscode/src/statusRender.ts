@@ -67,10 +67,11 @@ export interface FirstUsefulActionStatus {
  *
  * - error (red): the analysis run failed, the server binary is missing, or
  *   a resolved server failed to start. These need user attention.
- * - warning (yellow): the run is stale or limited (`analysisLimited` — the
- *   server completed the run but withheld evidence, #4326), the workspace is
- *   untrusted or ambiguous, or the gap-artifact validation flagged something.
- *   These are degraded-but-not-failed states.
+ * - warning (yellow): limited runs (`analysisLimited` — the server completed
+ *   the run but withheld evidence, #4326), the workspace is untrusted or
+ *   ambiguous, or the gap-artifact validation flagged something. These are
+ *   degraded-but-not-failed states. Unsaved-buffer `stale` uses the default
+ *   colour (#5319).
  * - default: transient (analysisRunning/starting/analysisQueued), idle
  *   (ready/analysisReady/gapActionable/...), and the initial `stopped`
  *   state. Setting a colour here would cry wolf; the codicon + text already
@@ -85,15 +86,17 @@ export interface StatusBarColors {
 /**
  * Whether the main status-bar item should occupy shared status-bar space.
  *
- * Hide only `disabled`: `ripr.enabled` already documents that it controls
- * status, and the user has explicitly opted out of editor analysis. Keep
- * `noWorkspace` visible. Opening a loose file is not an opt-out; the item
+ * Hide `disabled`: `ripr.enabled` already documents that it controls status,
+ * and the user has explicitly opted out of editor analysis. Hide
+ * `serverUnavailable`: the missing-server warning already names the recovery,
+ * so a persistent red item is a second surface for the same failure (#5319).
+ * Keep `noWorkspace` visible. Opening a loose file is not an opt-out; the item
  * remains the persistent next-step cue (`ripr: open workspace`) because the
  * walkthrough is one-shot and this change adds no visibility setting.
- * Error and warning states stay visible so they can still demand attention.
+ * Other error and warning states stay visible so they can still demand attention.
  */
 export function shouldShowMainStatusBar(kind: RiprStatusKind): boolean {
-  return kind !== 'disabled';
+  return kind !== 'disabled' && kind !== 'serverUnavailable';
 }
 
 /**
@@ -181,7 +184,7 @@ export function statusText(kind: RiprStatusKind, firstAction?: FirstUsefulAction
     case 'noEnabledLanguages':
       return '$(circle-slash) ripr: languages off';
     case 'stale':
-      return '$(warning) ripr: stale';
+      return '$(circle-outline) ripr: unsaved changes';
     case 'analysisFailed':
       return '$(error) ripr: failed';
     case 'stopped':
@@ -206,7 +209,6 @@ export function statusBarColors(kind: RiprStatusKind): StatusBarColors | undefin
         background: new vscode.ThemeColor('statusBarItem.errorBackground'),
         foreground: new vscode.ThemeColor('statusBarItem.errorForeground'),
       };
-    case 'stale':
     case 'analysisLimited':
     case 'languageNotEnabled':
     case 'workspaceAmbiguous':

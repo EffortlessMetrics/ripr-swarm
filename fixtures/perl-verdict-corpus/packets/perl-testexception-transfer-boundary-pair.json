@@ -113,7 +113,7 @@
         "start_column": 0,
         "start_line": 6
       },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": null,
       "test_id": "test:t/account.t"
     },
@@ -133,7 +133,7 @@
         "start_column": 0,
         "start_line": 8
       },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": "owner:lib/Account.pm:sub:Account::transfer:346-495",
       "test_id": "test:t/account.t"
     },
@@ -213,7 +213,7 @@
         "start_column": 0,
         "start_line": 15
       },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": null,
       "test_id": "test:t/account.t"
     },
@@ -462,7 +462,8 @@
       "verify_commands",
       "limitations",
       "provenance",
-      "test_facts"
+      "test_facts",
+      "oracle_matcher_grading"
     ],
     "name": "perl-lsp",
     "version": "0.17.0"

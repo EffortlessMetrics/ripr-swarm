@@ -15,15 +15,15 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:impl ParserA::parse_summary:call_deletion:call_deletion:try_parse_summary_raw_.map_err_into_into
   Changed behavior: try_parse_summary(raw).map_err(Into::into)
-  Missing check: No strong check was detected
+  Missing check: No strong assertion was detected
   Related test (1 of 2 matched rows): tests/errors.rs:4 parse_summary_callee_witness_pins_variant (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Strengthen the related assertion so it discriminates the changed behavior
-  Evidence: reach weak · infection yes · propagation yes · observation yes · assertion weak
+  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;

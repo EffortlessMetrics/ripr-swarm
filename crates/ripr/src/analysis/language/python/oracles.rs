@@ -57,12 +57,16 @@ fn collect_assertions(
             }
             Stmt::For(for_stmt) => {
                 let inner = loop_names(loops, for_stmt.target.as_ref());
-                collect_assertions(&for_stmt.body, source, &inner, out);
+                if !iterates_nothing(for_stmt.iter.as_ref()) {
+                    collect_assertions(&for_stmt.body, source, &inner, out);
+                }
                 collect_assertions(&for_stmt.orelse, source, loops, out);
             }
             Stmt::AsyncFor(for_stmt) => {
                 let inner = loop_names(loops, for_stmt.target.as_ref());
-                collect_assertions(&for_stmt.body, source, &inner, out);
+                if !iterates_nothing(for_stmt.iter.as_ref()) {
+                    collect_assertions(&for_stmt.body, source, &inner, out);
+                }
                 collect_assertions(&for_stmt.orelse, source, loops, out);
             }
             Stmt::While(while_stmt) => {
@@ -114,6 +118,46 @@ fn collect_assertions(
             }
             _ => {}
         }
+        // Statements after a definite exit never run: an assertion there can
+        // never fail, so it earns no credit.
+        if statement_exits_test(stmt) {
+            break;
+        }
+    }
+}
+
+/// A loop over an empty literal never runs its body.
+pub(super) fn iterates_nothing(iter: &Expr) -> bool {
+    match iter {
+        Expr::List(list) => list.elts.is_empty(),
+        Expr::Tuple(tuple) => tuple.elts.is_empty(),
+        Expr::Dict(dict) => dict.keys.is_empty(),
+        _ => false,
+    }
+}
+
+/// Whether control cannot continue past `stmt` in its statement list:
+/// `return`, `raise`, or a bare call that skips, fails or exits the process.
+fn statement_exits_test(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Return(_) | Stmt::Raise(_) => true,
+        Stmt::Expr(expr) => matches!(
+            expr.value.as_ref(),
+            Expr::Call(call) if expr_full_name(call.func.as_ref()).is_some_and(|name| matches!(
+                name.as_str(),
+                "pytest.skip"
+                    | "pytest.fail"
+                    | "pytest.exit"
+                    | "pytest.xfail"
+                    | "os._exit"
+                    | "sys.exit"
+                    | "exit"
+                    | "quit"
+                    | "self.skipTest"
+                    | "self.fail"
+            ))
+        ),
+        _ => false,
     }
 }
 
@@ -318,6 +362,14 @@ fn collect_with_item_assertions(
     }
 }
 
+/// True when `full_name` is `self.<method>`, `cls.<method>`, or `super().<method>`.
+fn is_unittest_receiver(full_name: &str, method: &str) -> bool {
+    let suffix = format!(".{method}");
+    full_name
+        .strip_suffix(&suffix)
+        .is_some_and(|receiver| matches!(receiver, "self" | "cls" | "super"))
+}
+
 /// RIPR-SPEC-0238 rule 14: the text of the first statement after a
 /// `raises(...) as N` / `assertRaises(...) as N` item that compares a
 /// value-preserving read of the raised error with `==`, when nothing in
@@ -335,10 +387,14 @@ fn bound_exception_comparison(
         return None;
     };
     let name = expr_full_name(call.func.as_ref())?;
-    let field = match name.as_str() {
-        "self.assertRaises" | "self.assertRaisesRegex" => "exception",
-        "pytest.raises" | "raises" => "value",
-        _ => return None,
+    let field = if is_unittest_receiver(&name, "assertRaises")
+        || is_unittest_receiver(&name, "assertRaisesRegex")
+    {
+        "exception"
+    } else if name == "pytest.raises" || name == "raises" {
+        "value"
+    } else {
+        return None;
     };
     for stmt in after {
         if let Some((left, right)) = equality_operands(stmt) {
@@ -531,12 +587,14 @@ fn assertion_from_assert(
         oracle_for_assert_expr(assert_stmt.test.as_ref(), source);
     // RIPR-SPEC-0238 rule 25: a property check relates the owner to itself
     // or to the value it was given, so it pins no value (#9594).
+    let mut owner_exact_callee = None;
     if oracle_strength == OracleStrength::Strong
         && let Expr::Compare(compare) = assert_stmt.test.as_ref()
         && is_property_compare(compare, loops, source)
     {
         oracle_kind = OracleKind::RelationalCheck;
         oracle_strength = OracleStrength::Weak;
+        owner_exact_callee = independent_outer_callee(compare, source);
     }
     PythonAssertion {
         text: text_for_range(source, assert_stmt.range).trim().to_string(),
@@ -569,6 +627,7 @@ fn assertion_from_assert(
         oracle_shape,
         bare_bool_call: bare_bool_call(assert_stmt.test.as_ref(), source),
         known_equality_helper: None,
+        owner_exact_callee,
     }
 }
 
@@ -704,6 +763,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
             oracle_shape,
             bare_bool_call: None,
             known_equality_helper: None,
+            owner_exact_callee: None,
         });
     }
     let gate_text = compared_operands(call)
@@ -743,6 +803,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
         known_equality_helper: (oracle_shape == PythonOracleShape::UnknownCustomHelper)
             .then(|| known_equality_candidate(call, source))
             .flatten(),
+        owner_exact_callee: None,
     })
 }
 
@@ -886,6 +947,43 @@ fn is_property_compare(compare: &ast::ExprCompare, loops: &[String], source: &st
         })
 }
 
+/// `f(g(x)) == g(x)`: the bare callee `f` whose result an independent `g(x)`
+/// pins (#9814). `g(x)` runs on both sides, so a changed `g` passes through an
+/// identity-like `f`; only a changed `f` is discriminated. The outer call takes
+/// the shared call as its sole argument and `f` appears nowhere inside it.
+/// Whether the finding's owner is `f` is decided per finding in
+/// `owner_exact.rs`.
+fn independent_outer_callee(compare: &ast::ExprCompare, source: &str) -> Option<String> {
+    let ([ast::CmpOp::Eq], [right]) = (compare.ops.as_slice(), compare.comparators.as_slice())
+    else {
+        return None;
+    };
+    [
+        (compare.left.as_ref(), right),
+        (right, compare.left.as_ref()),
+    ]
+    .into_iter()
+    .find_map(|(outer, shared)| {
+        let (Expr::Call(outer), Expr::Call(_)) = (outer, shared) else {
+            return None;
+        };
+        let Expr::Name(callee) = outer.func.as_ref() else {
+            return None;
+        };
+        let [argument] = outer.args.as_slice() else {
+            return None;
+        };
+        if !outer.keywords.is_empty() {
+            return None;
+        }
+        let shared_text = text_for_range(source, shared.range());
+        let same = code_without_spacing(&text_for_range(source, argument.range()))
+            == code_without_spacing(&shared_text);
+        (same && !super::mentions_python_name(&shared_text, callee.id.as_str()))
+            .then(|| callee.id.to_string())
+    })
+}
+
 fn oracle_for_compare(
     compare: &ast::ExprCompare,
     source: &str,
@@ -1010,7 +1108,8 @@ fn oracle_for_call(
     if matches!(
         last_segment,
         "assertEqual" | "assertDictEqual" | "assertAlmostEqual"
-    ) && (last_segment != "assertAlmostEqual" || name == "self.assertAlmostEqual")
+    ) && (last_segment != "assertAlmostEqual"
+        || is_unittest_receiver(&name, "assertAlmostEqual"))
         && compared_operands(call).is_some_and(|(first, second)| same_tokens(source, first, second))
     {
         // RIPR-SPEC-0238 rule 1: comparing an expression with itself pins nothing.
@@ -1048,9 +1147,9 @@ fn oracle_for_call(
             oracle_shape_for_call_arguments(call, PythonOracleShape::BoundaryAssertion),
         )),
         // RIPR-SPEC-0238 rule 12: at its default tolerance the call pins the
-        // value; an explicit band may admit the old value. Only `self.` is the
-        // unittest method; another receiver may be a project helper.
-        "assertAlmostEqual" if name == "self.assertAlmostEqual" => {
+        // value; an explicit band may admit the old value. Only unittest
+        // receivers count; another receiver may be a project helper.
+        "assertAlmostEqual" if is_unittest_receiver(&name, "assertAlmostEqual") => {
             let explicit = |position: usize, keyword: &str| {
                 call.args
                     .get(position)

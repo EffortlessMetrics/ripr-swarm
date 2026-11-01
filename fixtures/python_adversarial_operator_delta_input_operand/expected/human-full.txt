@@ -76,7 +76,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_adversarial_operator_delta_input_operand/input --diff <cwd>/fixtures/python_adversarial_operator_delta_input_operand/diff.patch --mode fast probe:src_counter.py:python_preview:a702e9d2
   ripr context --root <cwd>/fixtures/python_adversarial_operator_delta_input_operand/input --diff <cwd>/fixtures/python_adversarial_operator_delta_input_operand/diff.patch --mode fast --at probe:src_counter.py:python_preview:a702e9d2

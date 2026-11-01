@@ -521,6 +521,19 @@ Proof: `match_arm_proximity_test_cannot_confirm_beside_reaching_test`, the
 `match_arm_proximity_wrapper_confirms` (a same-file test of a public wrapper
 keeps `exposed`), both registered in the honesty corpus.
 
+A test related only by file or module is also withheld when one of its
+assertions calls an indexed function with no call or `macro_rules!` path to the
+owner and calls nothing that has one, even if the test makes an unindexed call
+(`.unwrap()`) that could reach the owner by name (#11552). Such an assertion
+reads that function's result: `TokenBucket::reduce`'s `OverConsumption` does not
+confirm `RateLimiter::consume`'s arm. The refusal is per assertion, needs no
+other reaching test, and only withholds. The inline-call form is covered; an
+assertion over a value bound on an earlier line is not (#12056).
+
+Proof: `match_arm_proximity_test_pinning_another_function_cannot_confirm`, the
+`match_arm_proximity_other_function_not_credited` fixture; the wrapper control
+above shows a call that reaches the owner is not withheld.
+
 ## Owner-scoped tokens and self-computed expected values (#5830)
 
 A token confirms observation only when the shared word can name the same

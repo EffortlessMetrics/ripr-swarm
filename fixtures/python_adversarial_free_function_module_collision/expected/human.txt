@@ -24,12 +24,12 @@ Start here:
   Next step — Python preview: no statically linked test calls `validate(`; add a test that calls the
     changed owner with an exact return-value assertion, run the project's native Python test
     command, then rerun `ripr check` to refresh the finding
-  Evidence: reach no · infection yes · propagation yes · observation no · assertion no
+  Evidence: reach no · infection yes · propagation yes · observation no · discriminator no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -42,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_adversarial_free_function_module_collision/input --diff <cwd>/fixtures/python_adversarial_free_function_module_collision/diff.patch --mode fast probe:src_handler.py:python_preview:c48883f0
   ripr context --root <cwd>/fixtures/python_adversarial_free_function_module_collision/input --diff <cwd>/fixtures/python_adversarial_free_function_module_collision/diff.patch --mode fast --at probe:src_handler.py:python_preview:c48883f0
-  no repair start offered: the gap inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/handler.py` has no gap to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/handler.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

@@ -92,13 +92,13 @@ pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCar
             ))
     {
         return Err(
-            "repair card route gate is closed; the card must not present a runnable route"
+            "repair card route gate is closed, so no runnable route can be shown; report this as a ripr bug with the command you ran"
                 .to_string(),
         );
     }
     if input.instruction.has_suggested_assertion && input.assertion_goal_detail.is_none() {
         return Err(
-            "producer claims a suggested assertion but supplied no assertion text".to_string(),
+            "producer claims a suggested assertion but supplied no assertion text; this is a ripr bug, report it with the command you ran".to_string(),
         );
     }
     if input.subject.seam_id != input.readiness.seam_id {
@@ -116,7 +116,7 @@ pub(crate) fn build_repair_card(input: &RepairCardInput<'_>) -> Result<RepairCar
     }
     if input.rejected_alternatives.len() > crate::domain::MAX_REPAIR_CARD_REJECTED_ALTERNATIVES {
         return Err(
-            "repair card rejected_alternatives exceed the compact-card boundary".to_string(),
+            "repair card rejected_alternatives exceed the compact-card boundary; this is a ripr bug, report it with the command you ran".to_string(),
         );
     }
     let selected_basis = input
@@ -761,7 +761,9 @@ mod tests {
         input.next_command = Some(&command);
         assert_eq!(
             build_repair_card(&input).err().as_deref(),
-            Some("repair card route gate is closed; the card must not present a runnable route")
+            Some(
+                "repair card route gate is closed, so no runnable route can be shown; report this as a ripr bug with the command you ran"
+            )
         );
         Ok(())
     }

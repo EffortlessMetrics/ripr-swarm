@@ -172,6 +172,8 @@ fn touches_test(
     Some(lines.iter().any(|line| {
         index.functions().iter().any(|function| {
             function.source_role.is_evidence_role()
+                // A proof harness is verification source, not a test.
+                && function.source_role != crate::analysis::facts::FunctionSourceRole::ProofHarness
                 && function.start_line <= line.line
                 && line.line <= function.end_line
         })

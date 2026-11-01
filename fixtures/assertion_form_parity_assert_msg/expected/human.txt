@@ -15,17 +15,17 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
   Changed behavior: amount >= discount_threshold
-  Missing check: No strong check was detected
+  Missing check: No strong assertion was detected
   Related test: tests/pricing.rs:4 boundary_matches_expected (assertion too weak to tell the old behavior from the new)
   Next step: A related test already reaches the boundary input, but ripr grades its assertion as a
     weak check; write it as an exact-value assertion ripr can credit, for example assert_eq!(result,
     expected), so the old and changed behavior differ
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -43,8 +43,8 @@ No test stub here: A related test already reaches the boundary input, but ripr g
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (unknown: static analysis limited); kind: static_unknown; reason: No strong discriminator was detected
-    - ./src/lib.rs:5 (unknown: static analysis limited); kind: static_unknown; reason: No strong discriminator was detected
+    - ./src/lib.rs:3 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
+    - ./src/lib.rs:5 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
   Hidden classes:
     unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full

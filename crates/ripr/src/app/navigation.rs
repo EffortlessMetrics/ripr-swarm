@@ -187,7 +187,7 @@ impl RepairRouteRefusal {
             ),
             Self::NoCanonicalGap => {
                 "no repair start offered: this finding has no gap ID, so there is \
-                 nothing to start a repair from; follow the Next step above"
+                 no gap to start a repair from; follow the Next step above"
                     .to_string()
             }
             Self::PreviewPacketNotComplete { language, reason } => format!(
@@ -197,7 +197,7 @@ impl RepairRouteRefusal {
             ),
             Self::NoSeamInventory { language, file } => format!(
                 "no repair start offered: {}",
-                super::task_first::no_seam_inventory_reason(language, file)
+                super::task_first::no_seam_inventory_reason_plain(language, file)
             ),
             Self::ConfigUnreadable => "no repair start offered: the root's config could not be \
                  read; fix the ripr.toml error at the root, then rerun `ripr check`"
@@ -214,7 +214,7 @@ impl RepairRouteRefusal {
             }
             Self::NoBindingSeam { seams_in_file: 0 } => {
                 "no repair start offered: ripr found no spot in this \
-                 finding's file to bind it to, so there is nothing to start a repair from; \
+                 finding's file to bind it to, so there is no spot to start a repair from; \
                  follow the Next step above"
                     .to_string()
             }
@@ -228,10 +228,10 @@ impl RepairRouteRefusal {
                  the related tests already notice this change (exposed)"
                 .to_string(),
             Self::SeamGrippedFindingNot => "no repair start offered: `ripr check` reads a gap \
-                 or limit for this change, but `ripr repair` judges the whole spot and finds \
+                 or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds \
                  its tests already notice changes there (exposed), so it has no gap to start \
-                 from. The two read different evidence (your changed lines versus the whole \
-                 spot) and ripr does not start a repair on conflicting evidence; follow the \
+                 from. The two read different evidence (your changed lines versus the surrounding \
+                 code as a whole) and ripr does not start a repair on conflicting evidence; follow the \
                  Next step above"
                 .to_string(),
             Self::SeveralBindingSeams => "no repair start offered: several gaps bind this finding \
@@ -942,8 +942,8 @@ mod tests {
         let no_gap = RepairRouteRefusal::NoCanonicalGap.advisory(gate);
         assert_eq!(
             no_gap,
-            "no repair start offered: this finding has no gap ID, so there is \
-             nothing to start a repair from; follow the Next step above"
+            "no repair start offered: this finding has no gap ID, so there is no \
+             gap to start a repair from; follow the Next step above"
         );
         assert!(
             !no_gap.contains("ripr repair") && !no_gap.contains("full gate's answer"),
@@ -954,8 +954,8 @@ mod tests {
         let unbound = RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 }.advisory(gate);
         assert_eq!(
             unbound,
-            "no repair start offered: ripr found no spot in this finding's file to \
-             bind it to, so there is nothing to start a repair from; follow the Next step above"
+            "no repair start offered: ripr found no spot in this finding's file to bind it \
+             to, so there is no spot to start a repair from; follow the Next step above"
         );
         assert!(
             !unbound.contains("ripr repair") && !unbound.contains("full gate's answer"),
@@ -965,8 +965,8 @@ mod tests {
         let counted = RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 }.advisory(gate);
         assert!(
             counted.contains("found 3 spots in this finding's file")
-                && !counted.contains("no spot in this finding's file")
-                && !counted.contains("found no spot"),
+                && !counted.contains("no seam in this finding's file")
+                && !counted.contains("found no seam"),
             "{counted}"
         );
         let one = RepairRouteRefusal::NoBindingSeam { seams_in_file: 1 }.advisory(gate);
@@ -1026,6 +1026,10 @@ mod tests {
                 && terminal.contains("covers Rust files only")
                 && terminal.contains("Python finding in `pricing/core.py`")
                 && terminal.contains("manual route")
+                && terminal.contains("no spot to start a repair from")
+                && terminal.contains("add the missing check to that test")
+                && !terminal.contains("seam")
+                && !terminal.contains("discriminator")
                 && !terminal.contains("ripr repair probe:one"),
             "terminal reason must name language, file and manual route: {terminal}"
         );

@@ -93,7 +93,7 @@ Updated:
 ## Pending — rust_call_chain_literal_input (8)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0197: #10046 returned comparisons share the predicate lens's unresolved-input reading, so a returned comparison whose boundary input is a computed call result or an unresolved owner call is infection_unknown instead of the inherited exposed fallback; no gap or equality is invented
 
 Command:
 `cargo xtask goldens bless rust_call_chain_literal_input --reason "..."`
@@ -104,6 +104,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — rust_call_chain_literal_input (9)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless rust_call_chain_literal_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_call_chain_literal_input (10)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testdeep-sku-re.json",
-    "sha256": "672642423f69500611879515fc38a8317eca2a7f615ebb0c134bccf554a72904",
+    "sha256": "10613d19b48bca88a292e9d59130679ca480fc37ce2539dbb0fff30ebc1733c1",
     "provenance": "producer"
   }
 }

@@ -14,7 +14,7 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.50)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: pub(crate) const OBSERVATION_SCHEMA_GENERATION: u32 = 3;
-  Analyzer limit: No strong check was detected
+  Analyzer limit: No strong assertion was detected
   Related test: src/lib.rs:34 observation_schema_generation_matches_policy
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place
@@ -22,12 +22,12 @@ Start here:
     finds a gap. Compare the original and changed implementations with a focused run using the
     project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification
     may remain unknown
-  Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -40,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/constant_declaration_probe_reconciliation/input --diff <cwd>/fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast probe:src_lib.rs:static_unknown:c48715e6
   ripr context --root <cwd>/fixtures/constant_declaration_probe_reconciliation/input --diff <cwd>/fixtures/constant_declaration_probe_reconciliation/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:c48715e6
-  no repair start offered: this finding has no gap ID, so there is nothing to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

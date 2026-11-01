@@ -6,6 +6,47 @@ use crate::config::RiprConfig;
 use crate::output;
 use std::path::Path;
 
+/// How `ripr explain` renders the one selected finding (#12104).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ExplainFormat {
+    /// The human explanation (default).
+    #[default]
+    Human,
+    /// The compact `check --format agent` line style with a terminal state.
+    Agent,
+}
+
+/// Output format and optional progress sink for one fresh `explain` run,
+/// bundled so the entry point stays within the argument-count bound.
+pub(crate) struct ExplainRun<'a> {
+    pub(crate) format: ExplainFormat,
+    pub(crate) sink: Option<&'a dyn AnalysisProgressSink>,
+}
+
+/// Renders the uniquely selected finding in the requested format.
+fn render_selected(
+    format: ExplainFormat,
+    finding: &crate::domain::Finding,
+    config: &RiprConfig,
+    context_command: &str,
+    root: &Path,
+    files: Option<&[Option<std::path::PathBuf>]>,
+    suppressed: bool,
+) -> String {
+    match format {
+        ExplainFormat::Human => output::human::render_finding_with_context_command_and_files(
+            finding,
+            config,
+            context_command,
+            root,
+            files,
+        ),
+        ExplainFormat::Agent => {
+            output::human::render_finding_agent(finding, root, context_command, suppressed)
+        }
+    }
+}
+
 /// Computes findings and renders a single selected finding in human format.
 ///
 /// The selector can be a finding identifier (for example
@@ -50,7 +91,10 @@ pub(crate) fn explain_finding_with_config_and_navigation_mode(
         mode_explicit,
         worktree,
         false,
-        None,
+        ExplainRun {
+            format: ExplainFormat::Human,
+            sink: None,
+        },
     )
 }
 
@@ -69,11 +113,13 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
     mode_explicit: bool,
     worktree: bool,
     worktree_from_default: bool,
-    sink: Option<&dyn AnalysisProgressSink>,
+    run: ExplainRun<'_>,
 ) -> Result<String, String> {
+    let ExplainRun { format, sink } = run;
     let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
-    let committed_list_command =
-        super::finding_navigation_with_worktree(&input, None, mode_explicit, false).list_command();
+    let committed_list_command = explain_navigation_list_command(
+        &super::finding_navigation_with_worktree(&input, None, mode_explicit, false),
+    );
     let root = input.root.clone();
     // The worktree retry names the same repository and base the failed run
     // analyzed; a bare `ripr explain --worktree` prefix would analyze the
@@ -81,7 +127,7 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
     let worktree_navigation =
         super::finding_navigation_with_worktree(&input, None, mode_explicit, true);
     let retry_command = worktree_navigation.explain_command(selector);
-    let worktree_list_command = worktree_navigation.list_command();
+    let worktree_list_command = explain_navigation_list_command(&worktree_navigation);
     // A supplied scope (`--diff`, candidate tree) was the analyzed input:
     // uncommitted edits were never excluded, and a worktree retry cannot
     // replay the supplied patch, so the clause stays silent there.
@@ -97,28 +143,33 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => Ok(
-            output::human::render_finding_with_context_command_and_files(
-                finding,
-                config,
-                &navigation.context_command(selector),
-                &output.root,
-                output.source_value_files(finding),
-            ),
-        ),
+        FindingSelection::Unique(finding) => Ok(render_selected(
+            format,
+            finding,
+            config,
+            &navigation.context_command(selector),
+            &output.root,
+            output.source_value_files(finding),
+            output.suppression.as_ref().is_some_and(|outcome| {
+                outcome
+                    .suppressed
+                    .iter()
+                    .any(|entry| entry.finding_id == finding.id)
+            }),
+        )),
         FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
             selector,
             &candidates,
-            &navigation.list_command(),
+            &explain_navigation_list_command(&navigation),
         )),
         FindingSelection::Undecided(limitation) => Err(selector_limitation_fresh_run(
             selector,
-            &navigation.list_command(),
+            &explain_navigation_list_command(&navigation),
             &limitation,
         )),
         FindingSelection::NoMatch => Err(no_finding_matched_fresh_run(
             selector,
-            &navigation.list_command(),
+            &explain_navigation_list_command(&navigation),
             &root,
             worktree,
             committed_history,
@@ -131,8 +182,23 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
     }
 }
 
+const EXPLAIN_JSON_FORMAT_SUFFIX: &str = " --format json";
+
+/// User-facing explain hints prefer the documented `--format json` spelling (#11570 item 4).
+fn explain_list_command(list_command: &str) -> String {
+    if let Some(prefix) = list_command.strip_suffix(" --json") {
+        format!("{prefix}{EXPLAIN_JSON_FORMAT_SUFFIX}")
+    } else {
+        list_command.to_string()
+    }
+}
+
+fn explain_navigation_list_command(navigation: &super::FindingNavigation) -> String {
+    explain_list_command(&navigation.list_command())
+}
+
 /// The miss message names the listing command for the same scope (root,
-/// base, `--worktree`, mode): a bare `ripr check --json` would list findings
+/// base, `--worktree`, mode): a bare `ripr check --format json` would list findings
 /// from the caller's directory and default base, and without `--worktree`
 /// it omits the findings only the uncommitted edits produce.
 pub(crate) fn no_finding_matched(
@@ -373,6 +439,7 @@ pub(crate) fn explain_finding_from_artifact(
         artifact_path,
         asserted_base,
         false,
+        ExplainFormat::Human,
     )
 }
 
@@ -383,6 +450,7 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
     artifact_path: &Path,
     asserted_base: Option<&str>,
     mode_explicit: bool,
+    format: ExplainFormat,
 ) -> Result<String, String> {
     let navigation = super::finding_navigation(&input, Some(artifact_path), mode_explicit);
     let findings = super::check_artifact::load_findings_for_reuse(
@@ -401,30 +469,37 @@ pub(crate) fn explain_finding_from_artifact_with_navigation_mode(
         config,
         selector,
     ) {
-        FindingSelection::Unique(finding) => {
-            Ok(output::human::render_finding_with_context_command(
-                finding,
-                config,
-                &navigation.context_command(selector),
-                // The artifact was identity-verified against this root; the
-                // location renders against it like every fresh route (#5996).
-                &input.root,
-            ))
-        }
+        FindingSelection::Unique(finding) => Ok(render_selected(
+            format,
+            finding,
+            config,
+            &navigation.context_command(selector),
+            // The artifact was identity-verified against this root; the
+            // location renders against it like every fresh route (#5996).
+            &input.root,
+            None,
+            // `--from` replay applies no suppression policy; the CLI refuses
+            // the agent format when one is supplied (fail closed).
+            false,
+        )),
         FindingSelection::Ambiguous(candidates) => Err(ambiguous_finding_match(
             selector,
             &candidates,
-            "ripr check --json",
+            &explain_navigation_list_command(&navigation),
         )),
         // `select_finding` never inventories seams, so it cannot produce a
         // limitation; the arm keeps the match exhaustive and renders the
         // honest state if a future producer starts carrying one.
         FindingSelection::Undecided(limitation) => Err(selector_limitation_fresh_run(
             selector,
-            "ripr check --json",
+            &explain_navigation_list_command(&navigation),
             &limitation,
         )),
-        FindingSelection::NoMatch => Err(no_finding_matched(selector, "ripr check --json", None)),
+        FindingSelection::NoMatch => Err(no_finding_matched(
+            selector,
+            &explain_navigation_list_command(&navigation),
+            None,
+        )),
     }
 }
 #[cfg(test)]
@@ -432,6 +507,8 @@ mod tests {
     use super::*;
     use crate::app::Mode;
     use std::path::PathBuf;
+
+    const SAMPLE_LIST_COMMAND: &str = "ripr check --format json";
 
     fn sample_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/sample")
@@ -622,14 +699,14 @@ mod tests {
     #[test]
     fn crafted_seam_prefixed_selector_never_reaches_a_suggested_command() {
         for selector in ["seam:$(touch pwned)", "seam:0123456789abcdeg", "seam:`id`"] {
-            let message = no_finding_matched(selector, "ripr check --json", None);
+            let message = no_finding_matched(selector, SAMPLE_LIST_COMMAND, None);
             assert!(!message.contains("ripr repair"), "{message}");
             assert!(
                 message.contains("to list available finding ids"),
                 "{message}"
             );
         }
-        let message = no_finding_matched("seam:0123456789abcdef", "ripr check --json", None);
+        let message = no_finding_matched("seam:0123456789abcdef", SAMPLE_LIST_COMMAND, None);
         assert!(
             message.contains("`ripr repair 0123456789abcdef`"),
             "{message}"
@@ -641,7 +718,7 @@ mod tests {
     /// well-formed `file:line` selectors keep their existing wording.
     #[test]
     fn bare_word_selector_miss_names_the_accepted_selector_forms() {
-        let message = no_finding_matched("nocolon", "ripr check --json", None);
+        let message = no_finding_matched("nocolon", SAMPLE_LIST_COMMAND, None);
         assert!(
             message.contains(
                 "give a finding id from `ripr check`, or a file location like src/lib.rs:12"
@@ -654,7 +731,7 @@ mod tests {
             "{message}"
         );
         for selector in ["probe:not-a-real-id", "src/lib.rs:12"] {
-            let message = no_finding_matched(selector, "ripr check --json", None);
+            let message = no_finding_matched(selector, SAMPLE_LIST_COMMAND, None);
             assert!(
                 !message.contains("give a finding id from"),
                 "{selector}: {message}"
@@ -678,6 +755,16 @@ mod tests {
                 !seam_shaped,
                 "finding-id miss keeps the check hint, seam id drops it: {message}"
             );
+            if !seam_shaped {
+                assert!(
+                    message.contains("--format json"),
+                    "finding-id miss must suggest documented json format flag: {message}"
+                );
+                assert!(
+                    !message.contains(" --json`"),
+                    "explain must not suggest bare --json alias in list hint: {message}"
+                );
+            }
             if seam_shaped {
                 assert!(
                     message.contains("ripr repair 0123456789abcdef"),
@@ -701,6 +788,18 @@ mod tests {
                 "zero-match refusal must keep the no-match message for {selector}: {message}"
             );
         }
+    }
+
+    #[test]
+    fn explain_list_command_rewrites_json_alias_suffix() {
+        assert_eq!(
+            explain_list_command("ripr check --root ./x --json"),
+            "ripr check --root ./x --format json"
+        );
+        assert_eq!(
+            explain_list_command("ripr check --format json"),
+            "ripr check --format json"
+        );
     }
 
     #[test]

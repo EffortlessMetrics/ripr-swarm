@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use crate::app::task_first::{
-    ContinueSelection, RepairStartDecision, RepairSubject, resolve_repair_start,
+    ContinueSelection, RepairRefusalCode, RepairStartDecision, RepairSubject, resolve_repair_start,
     resolve_repair_subject, select_continue_attempt,
 };
 use crate::cli::CommandError;
@@ -25,7 +25,7 @@ use crate::cli::suggest::unknown_argument;
 
 pub(in crate::cli) const REPAIR_HELP: &str = r#"Start a repair attempt from a Rust gap, or select a gap to repair.
 
-Usage: ripr repair [<item>] [--root PATH] [--base REF]
+Usage: ripr repair [<item>] [--root PATH] [--base REF] [--quiet]
 
 Options:
   --root PATH      Workspace root. Defaults to the current directory, then
@@ -35,6 +35,10 @@ Options:
                    `ripr check --base`. Without it, repair infers the base
                    the way `ripr check` does. Only for a start ripr picks;
                    not allowed with an item.
+  --quiet          Drop the start's progress narration and `wrote <path>`
+                   lines from stderr. Refusal prose, the attempt id and the
+                   next command stay. `RIPR_QUIET` (any value except empty,
+                   `0` or `false`) does the same.
 
 Without an item, repair starts only when exactly one repair-eligible gap
 is visible under the selected root. Several eligible gaps print a bounded
@@ -66,13 +70,16 @@ before phase with explicit phase vocabulary."#;
 
 pub(in crate::cli) const CONTINUE_HELP: &str = r#"Continue the current repair attempt through its after phase.
 
-Usage: ripr continue [--attempt ID] [--root PATH]
+Usage: ripr continue [--attempt ID] [--root PATH] [--quiet]
 
 Options:
   --attempt ID     Select one repair attempt by ID.
   --root PATH      Workspace root. Defaults to the current directory, then
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
+  --quiet          Drop the after phase's progress narration and `wrote
+                   <path>` lines from stderr. Refusal prose and the result
+                   stay. `RIPR_QUIET` does the same.
 
 Without an ID, continue runs only when exactly one current attempt is
 eligible under the selected root. Several current attempts print a bounded
@@ -95,7 +102,7 @@ after phase with explicit phase vocabulary."#;
 
 pub(in crate::cli) const STATUS_HELP: &str = r#"Report the current repair state and the one next action.
 
-Usage: ripr status [--attempt ID] [--root PATH] [--json]
+Usage: ripr status [--attempt ID] [--root PATH] [--json] [--quiet]
 
 Options:
   --attempt ID     Select exactly one repair attempt by ID and report its
@@ -107,6 +114,8 @@ Options:
                    walks up to the enclosing workspace or package, or the git
                    top level; `--root .` pins this directory.
   --json           Emit the machine-readable status report. Human Markdown is the default.
+  --quiet          Accepted for uniformity with `repair` and `continue`;
+                   status writes no progress or `wrote` lines.
 
 Status projects the repair-attempt state with its canonical next action.
 Human and JSON forms derive from one semantic state. The command is
@@ -124,6 +133,9 @@ pub(super) struct RepairFacadeOptions {
     /// `--base`: the diff base for scoping an automatic start, as in
     /// `ripr check --base` (#11246). `None` infers it the way check does.
     pub(super) base: Option<String>,
+    /// `--quiet` (#11598): drop the start's progress narration and `wrote`
+    /// lines; refusal prose and the result lines stay.
+    pub(super) quiet: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -132,6 +144,8 @@ pub(super) struct ContinueFacadeOptions {
     /// `--root` was typed, so the root is used as given (#8767).
     pub(super) root_explicit: bool,
     pub(super) attempt_id: Option<String>,
+    /// `--quiet` (#11598), as for `repair`.
+    pub(super) quiet: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -169,6 +183,7 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
     let mut root_explicit = false;
     let mut item: Option<String> = None;
     let mut base: Option<String> = None;
+    let mut quiet = false;
     let mut index = 0usize;
     while index < args.len() {
         match args[index].as_str() {
@@ -177,11 +192,15 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
                 root = PathBuf::from(expect_value(args, index, "--root")?);
                 root_explicit = true;
             }
+            "--quiet" => quiet = true,
             "--base" => {
                 index += 1;
                 let value = expect_value(args, index, "--base")?;
                 if value.trim().is_empty() {
-                    return Err("repair requires a non-empty --base".to_string());
+                    return Err(
+                        "repair requires a non-empty --base; pass a git ref right after --base"
+                            .to_string(),
+                    );
                 }
                 base = Some(value.to_string());
             }
@@ -190,7 +209,10 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
             }
             other => {
                 if other.trim().is_empty() {
-                    return Err("repair requires a non-empty item".to_string());
+                    return Err(
+                        "repair requires a non-empty item; pass the finding or seam ID to repair"
+                            .to_string(),
+                    );
                 }
                 if item.is_some() {
                     return Err(format!(
@@ -214,6 +236,7 @@ pub(super) fn parse_repair_args(args: &[String]) -> Result<RepairFacadeCommand, 
         root_explicit,
         item,
         base,
+        quiet,
     }))
 }
 
@@ -224,6 +247,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
     let mut root = PathBuf::from(".");
     let mut root_explicit = false;
     let mut attempt_id: Option<String> = None;
+    let mut quiet = false;
     let mut index = 0usize;
     while index < args.len() {
         match args[index].as_str() {
@@ -232,11 +256,12 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
                 root = PathBuf::from(expect_value(args, index, "--root")?);
                 root_explicit = true;
             }
+            "--quiet" => quiet = true,
             "--attempt" => {
                 index += 1;
                 let value = expect_value(args, index, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("continue --attempt requires a non-empty ID".to_string());
+                    return Err("continue --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
                 }
                 attempt_id = Some(value.to_string());
             }
@@ -248,6 +273,7 @@ pub(super) fn parse_continue_args(args: &[String]) -> Result<ContinueFacadeComma
         root,
         root_explicit,
         attempt_id,
+        quiet,
     }))
 }
 
@@ -271,11 +297,15 @@ pub(super) fn parse_status_args(args: &[String]) -> Result<StatusFacadeCommand, 
                 index += 1;
                 let value = expect_value(args, index, "--attempt")?;
                 if value.trim().is_empty() {
-                    return Err("status --attempt requires a non-empty ID".to_string());
+                    return Err("status --attempt requires a non-empty ID; pass a value right after --attempt".to_string());
                 }
                 attempt_id = Some(value.to_string());
             }
             "--json" => json = true,
+            // #11598: status writes no progress and no `wrote` lines, so the
+            // flag changes nothing; it is accepted so `--quiet` is uniform
+            // across the task-first commands.
+            "--quiet" => {}
             other => return Err(unknown_argument("status", other)),
         }
         index += 1;
@@ -318,6 +348,13 @@ pub(in crate::cli) fn status(args: &[String]) -> Result<(), CommandError> {
     }
 }
 
+/// A façade decision (exit 3) carrying its typed reason code: the code line
+/// follows the unchanged prose, so the first line stays plain words (#11597,
+/// #12193).
+fn typed_decision(code: RepairRefusalCode, message: String) -> CommandError {
+    CommandError::Decision(code.message_with_stderr_line(&message))
+}
+
 fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandError> {
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
     let prefix =
@@ -329,7 +366,9 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                 super::check::bind_member_selector_item(prefix.as_deref(), &options.root, item)?;
             match resolve_repair_subject(&options.root, &item).map_err(CommandError::from)? {
                 RepairSubject::Seam(seam_id) => seam_id,
-                RepairSubject::Decision(message) => return Err(CommandError::Decision(message)),
+                RepairSubject::Decision(code, message) => {
+                    return Err(typed_decision(code, message));
+                }
             }
         }
         None => match resolve_repair_start(&options.root, options.base.as_deref())
@@ -338,18 +377,23 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
             RepairStartDecision::Start { seam_id } => seam_id,
             RepairStartDecision::NoEligible {
                 total_seams,
+                change,
                 reasons,
                 reasons_total,
             } => {
                 // A deliberate named outcome, not a failure: the honest
                 // setup/limitation message on stderr, stdout empty.
-                return Err(CommandError::Decision(no_eligible_seam_message(
-                    &options.root,
-                    options.base.as_deref(),
-                    total_seams,
-                    &reasons,
-                    reasons_total,
-                )));
+                return Err(typed_decision(
+                    RepairRefusalCode::NoEligibleSeam,
+                    no_eligible_seam_message(
+                        &options.root,
+                        options.base.as_deref(),
+                        change,
+                        total_seams,
+                        &reasons,
+                        reasons_total,
+                    ),
+                ));
             }
             RepairStartDecision::Action(action, candidates) => {
                 // A deliberate named outcome, not a failure: stderr, stdout
@@ -371,7 +415,8 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                         "{}",
                         crate::app::task_first::render_repair_choice(&candidates, total, &bound)
                     );
-                    return Err(CommandError::Decision(
+                    return Err(typed_decision(
+                        RepairRefusalCode::SeveralEligibleSeams,
                         "no repair started; run one of the commands above".to_string(),
                     ));
                 }
@@ -388,8 +433,9 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
                         crate::agent::loop_commands::shell_arg(&bound)
                     ));
                 }
-                return Err(CommandError::Decision(
-                    "repair selected no gap; rerun with an explicit item".to_string(),
+                return Err(typed_decision(
+                    RepairRefusalCode::RepairNeedsItem,
+                    "repair selected no seam; rerun with an explicit item".to_string(),
                 ));
             }
         },
@@ -409,7 +455,7 @@ fn run_facade_repair(mut options: RepairFacadeOptions) -> Result<(), CommandErro
     // preceded by a success document would hand an orchestrator
     // success-shaped output on a retry that already started (#7032).
     let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
-        facade_before_options(&options.root, &seam_id),
+        facade_before_options(&options.root, &seam_id, options.quiet),
     )?;
     // The compact handoff renders through the same card service the
     // advanced route serves. The attempt is already published here, so a
@@ -470,7 +516,7 @@ fn resume_awaiting_attempt(
     Ok(())
 }
 
-fn facade_before_options(root: &std::path::Path, seam_id: &str) -> AgentRepairOptions {
+fn facade_before_options(root: &std::path::Path, seam_id: &str, quiet: bool) -> AgentRepairOptions {
     AgentRepairOptions {
         root: root.to_path_buf(),
         root_explicit: true,
@@ -491,6 +537,7 @@ fn facade_before_options(root: &std::path::Path, seam_id: &str) -> AgentRepairOp
         verify_rollback: false,
         store: None,
         json: false,
+        quiet,
     }
 }
 
@@ -529,6 +576,7 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 verify_rollback: false,
                 store: None,
                 json: false,
+                quiet: options.quiet,
             },
             None,
         ),
@@ -557,18 +605,21 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             let root = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
-            Err(CommandError::Decision(format!(
-                "repair attempt `{}` ended {} without a receipt; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; {}",
-                report.attempt.attempt_id,
-                report.attempt.status_class,
-                report.attempt.attempt_id,
-                start_fresh_clause(
-                    &options.root,
-                    &root,
-                    report.attempt.seam_id.as_deref(),
-                    &format!("start fresh: `ripr repair --root {root}`")
-                )
-            )))
+            Err(typed_decision(
+                RepairRefusalCode::AttemptEndedWithoutReceipt,
+                format!(
+                    "repair attempt `{}` ended {} without a receipt; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; {}",
+                    report.attempt.attempt_id,
+                    report.attempt.status_class,
+                    report.attempt.attempt_id,
+                    start_fresh_clause(
+                        &options.root,
+                        &root,
+                        report.attempt.seam_id.as_deref(),
+                        &format!("start fresh: `ripr repair --root {root}`")
+                    )
+                ),
+            ))
         }
         ContinueSelection::EndedUnconfirmed { report } => {
             // The after phase committed, but the status authority's
@@ -585,18 +636,21 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             let root = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
-            Err(CommandError::Decision(format!(
-                "repair attempt `{}` ended `{}` without confirming completion; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; {}",
-                report.attempt.attempt_id,
-                report.attempt.status_class,
-                report.attempt.attempt_id,
-                start_fresh_clause(
-                    &options.root,
-                    &root,
-                    report.attempt.seam_id.as_deref(),
-                    &format!("start fresh when appropriate: `ripr repair --root {root}`")
-                )
-            )))
+            Err(typed_decision(
+                RepairRefusalCode::AttemptCompletionUnconfirmed,
+                format!(
+                    "repair attempt `{}` ended `{}` without confirming completion; no completion is claimed. Inspect: `ripr status --attempt {} --root {root}`; {}",
+                    report.attempt.attempt_id,
+                    report.attempt.status_class,
+                    report.attempt.attempt_id,
+                    start_fresh_clause(
+                        &options.root,
+                        &root,
+                        report.attempt.seam_id.as_deref(),
+                        &format!("start fresh when appropriate: `ripr repair --root {root}`")
+                    )
+                ),
+            ))
         }
         ContinueSelection::NoneAvailable {
             prepared,
@@ -606,11 +660,14 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             let root = crate::agent::loop_commands::shell_arg(
                 &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             );
-            Err(CommandError::Decision(format!(
-                "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; {}",
-                none_available_detail(prepared, terminal, trust_bound, &root),
-                start_with_repair_clause(&options.root, &root)
-            )))
+            Err(typed_decision(
+                RepairRefusalCode::NoCurrentAttempt,
+                format!(
+                    "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; {}",
+                    none_available_detail(prepared, terminal, trust_bound, &root),
+                    start_with_repair_clause(&options.root, &root)
+                ),
+            ))
         }
         ContinueSelection::Ambiguous { candidates } => {
             let root = crate::agent::loop_commands::shell_arg(
@@ -631,7 +688,8 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
             print_retry_line(&format!(
                 "ripr continue --attempt <attempt-id> --root {root}"
             ));
-            Err(CommandError::Decision(
+            Err(typed_decision(
+                RepairRefusalCode::AmbiguousAttempts,
                 "continue selected no attempt; rerun with --attempt".to_string(),
             ))
         }
@@ -669,11 +727,12 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
     match resolve_repair_start(root, None) {
         Ok(RepairStartDecision::NoEligible {
             total_seams,
+            change,
             reasons,
             reasons_total,
         }) => format!(
             "`ripr repair` starts nothing right now: {}",
-            no_eligible_seam_message(root, None, total_seams, &reasons, reasons_total)
+            no_eligible_seam_message(root, None, change, total_seams, &reasons, reasons_total)
         ),
         // The auto selector uses only the packet-eligibility gate; the start
         // itself also applies the edit-target and held-inline checks, so the
@@ -702,6 +761,7 @@ fn start_with_repair_clause(root: &std::path::Path, root_arg: &str) -> String {
 fn no_eligible_seam_message(
     root: &std::path::Path,
     base: Option<&str>,
+    change: crate::app::task_first::NoEligibleChange,
     total_seams: usize,
     reasons: &[String],
     reasons_total: usize,
@@ -714,9 +774,29 @@ fn no_eligible_seam_message(
     let root = crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
         &root.to_string_lossy(),
     ));
+    // The closing `ripr check` reads the same base this run used, so "reports
+    // the same" holds for the command the reader actually runs.
+    let check = match base {
+        Some(base) => format!(
+            "ripr check --root {root} --base {}",
+            crate::agent::loop_commands::shell_arg(base)
+        ),
+        None => format!("ripr check --root {root}"),
+    };
+    use crate::app::task_first::NoEligibleChange;
+    let by_hand = format!(
+        ". Next: write a test for this change by hand; `{check}` shows what ripr can tell about it"
+    );
     if total_seams == 0 {
         if !changed_non_rust.is_empty() {
             return crate::app::task_first::non_rust_repair_guidance(&root, &changed_non_rust);
+        }
+        // A readable change on lines with no repairable code (#11111
+        // burn-down): the lead already says so; close with the hand-written
+        // test, not the repository-seam route.
+        if change == NoEligibleChange::NoRepairableCode {
+            let notes = reasons.join("; ");
+            return format!("no seams visible under {root} ({notes}){by_hand}");
         }
         // #11246: with no seams there is no list to narrow, but a missing diff
         // still decides what the reader may conclude, so the unscoped note
@@ -730,27 +810,40 @@ fn no_eligible_seam_message(
         );
     }
     let noun = if total_seams == 1 { "spot" } else { "spots" };
+    // The closing step follows what the outcome says about the change
+    // (#11111 burn-down): nothing to do when every changed spot is already
+    // checked, a hand-written test when the change touches no repairable
+    // code, and otherwise the repository-wide route first, since `repair`
+    // inventories saved repository seams while `check` reads a diff.
+    let next = match change {
+        NoEligibleChange::AlreadyChecked => format!(
+            "Nothing to do for this change: the existing tests already check it, and `{check}` reports the same. To look for gaps elsewhere in the repository, run `ripr pilot --root {root}`"
+        ),
+        NoEligibleChange::NoRepairableCode => by_hand.trim_start_matches(". ").to_string(),
+        NoEligibleChange::Other => format!(
+            "Next: `ripr pilot --root {root}` explores the whole repository; when this branch has changed code, `{check}` names a gap in it to test by hand"
+        ),
+    };
+    // #11883: the next step leads on its own sentence and the reasons follow
+    // as one bullet each, instead of one unwrapped line with the command last.
     let mut message = format!(
-        "ripr looked at {total_seams} {noun} in the code under {root}; none is ready for an automatic repair"
+        "ripr looked at {total_seams} {noun} in the code under {root}; none is ready for an automatic repair. {next}"
     );
     if !reasons.is_empty() {
-        message.push_str(&format!(" ({})", reasons.join("; ")));
+        message.push_str("\nWhy:");
+        for reason in reasons {
+            message.push_str(&format!("\n  - {reason}"));
+        }
         // The list is bounded (#8728): when the total count exceeds what
         // was rendered, disclose the remainder instead of letting three
         // read as the whole story.
         if reasons_total > reasons.len() {
             message.push_str(&format!(
-                " (and {} more; run `ripr pilot --root {root}` for per-gap detail)",
+                "\n  (and {} more; run `ripr pilot --root {root}` for per-seam detail)",
                 reasons_total - reasons.len()
             ));
         }
     }
-    // `repair` inventories saved repository seams, while `check` reads a
-    // diff: promise a gap only when the branch has changed code, and keep
-    // the repository-wide route first.
-    message.push_str(&format!(
-        ". Next: `ripr pilot --root {root}` explores the whole repository; when this branch has changed code, `ripr check --root {root}` names a gap in it to test by hand"
-    ));
     message
 }
 
@@ -808,7 +901,19 @@ fn run_facade_status(mut options: StatusFacadeOptions) -> Result<(), CommandErro
         store: None,
         attempt_id: options.attempt_id,
     })
-    .map_err(CommandError::from)
+    .map_err(|message| CommandError::from(facade_status_message(message)))
+}
+
+/// #11600: the façade's `status --attempt` shares the agent status body, whose
+/// errors name `agent status`; name the command the caller actually typed.
+fn facade_status_message(message: String) -> String {
+    let message = match message.strip_prefix("agent status --attempt") {
+        Some(rest) => format!("status --attempt{rest}"),
+        None => message,
+    };
+    // The shared ID error also tells the caller where IDs are listed; point
+    // at the command they typed.
+    message.replace("`ripr agent status`", "`ripr status`")
 }
 
 /// Print one retry template and, when PowerShell needs a different spelling
@@ -902,13 +1007,24 @@ mod tests {
     #[test]
     fn retry_template_translates_root_around_its_placeholder() {
         let root = crate::agent::loop_commands::shell_arg("/home/o'neil/proj");
-        assert_eq!(
-            retry_lines(&format!("ripr continue --attempt <attempt-id> --root {root}")),
-            vec![
-                format!("retry: ripr continue --attempt <attempt-id> --root {root}"),
+        let mut expected = vec![format!(
+            "retry: ripr continue --attempt <attempt-id> --root {root}"
+        )];
+        if cfg!(windows) {
+            // The Windows console form is double-quoted, which PowerShell
+            // reads unchanged, so no second line is printed.
+            assert_eq!(root, "\"/home/o'neil/proj\"");
+        } else {
+            expected.push(
                 "retry (PowerShell): ripr continue --attempt <attempt-id> --root '/home/o''neil/proj'"
                     .to_string(),
-            ]
+            );
+        }
+        assert_eq!(
+            retry_lines(&format!(
+                "ripr continue --attempt <attempt-id> --root {root}"
+            )),
+            expected
         );
         assert_eq!(
             retry_lines("ripr repair <seam-id> --root /work/proj"),
@@ -939,7 +1055,14 @@ mod tests {
             "cross-language oracle visibility unresolved".to_string(),
             "repair target unresolved".to_string(),
         ];
-        let truncated = no_eligible_seam_message(Path::new("."), None, 9, &reasons, 5);
+        let truncated = no_eligible_seam_message(
+            Path::new("."),
+            None,
+            crate::app::task_first::NoEligibleChange::Other,
+            9,
+            &reasons,
+            5,
+        );
         for expected in ["(and 2 more", "ripr pilot"] {
             if !truncated.contains(expected) {
                 return Err(format!(
@@ -947,7 +1070,14 @@ mod tests {
                 ));
             }
         }
-        let complete = no_eligible_seam_message(Path::new("."), None, 9, &reasons, 3);
+        let complete = no_eligible_seam_message(
+            Path::new("."),
+            None,
+            crate::app::task_first::NoEligibleChange::Other,
+            9,
+            &reasons,
+            3,
+        );
         if complete.contains("and 2 more") {
             return Err(format!(
                 "complete list must not claim a remainder: {complete}"
@@ -973,6 +1103,41 @@ mod tests {
                 RepairFacadeCommand::Help => {
                     return Err("an item must not print help".to_string());
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// #11598: `--quiet` is accepted by all three task-first commands and
+    /// defaults off; a typo of it still fails closed.
+    #[test]
+    fn quiet_flag_parses_on_repair_continue_and_status() -> Result<(), String> {
+        match parse_repair_args(&args(&["--quiet", "seam-a"]))? {
+            RepairFacadeCommand::Repair(options) if options.quiet && options.item.is_some() => {}
+            other => return Err(format!("repair --quiet lost: {other:?}")),
+        }
+        match parse_repair_args(&args(&["seam-a"]))? {
+            RepairFacadeCommand::Repair(options) if !options.quiet => {}
+            other => return Err(format!("repair must default to loud: {other:?}")),
+        }
+        match parse_continue_args(&args(&["--attempt", "a", "--quiet"]))? {
+            ContinueFacadeCommand::Continue(options) if options.quiet => {}
+            other => return Err(format!("continue --quiet lost: {other:?}")),
+        }
+        match parse_continue_args(&args(&[]))? {
+            ContinueFacadeCommand::Continue(options) if !options.quiet => {}
+            other => return Err(format!("continue must default to loud: {other:?}")),
+        }
+        match parse_status_args(&args(&["--quiet", "--json"]))? {
+            StatusFacadeCommand::Status(options) if options.json => {}
+            other => return Err(format!("status --quiet lost: {other:?}")),
+        }
+        for bad in ["--quite", "--quiet=1"] {
+            if parse_continue_args(&args(&[bad])).is_ok()
+                || parse_repair_args(&args(&[bad])).is_ok()
+                || parse_status_args(&args(&[bad])).is_ok()
+            {
+                return Err(format!("`{bad}` must stay an unknown argument"));
             }
         }
         Ok(())
@@ -1072,18 +1237,18 @@ mod tests {
         for (body, usage, flags) in [
             (
                 REPAIR_HELP,
-                "Usage: ripr repair [<item>] [--root PATH] [--base REF]",
-                &["--root", "--base"][..],
+                "Usage: ripr repair [<item>] [--root PATH] [--base REF] [--quiet]",
+                &["--root", "--base", "--quiet"][..],
             ),
             (
                 CONTINUE_HELP,
-                "Usage: ripr continue [--attempt ID] [--root PATH]",
-                &["--attempt", "--root"][..],
+                "Usage: ripr continue [--attempt ID] [--root PATH] [--quiet]",
+                &["--attempt", "--root", "--quiet"][..],
             ),
             (
                 STATUS_HELP,
-                "Usage: ripr status [--attempt ID] [--root PATH] [--json]",
-                &["--attempt", "--root", "--json"][..],
+                "Usage: ripr status [--attempt ID] [--root PATH] [--json] [--quiet]",
+                &["--attempt", "--root", "--json", "--quiet"][..],
             ),
         ] {
             if !body.contains(usage) {
@@ -1239,31 +1404,114 @@ mod tests {
         Ok(())
     }
 
+    /// #11111 burn-down: the closing step follows what the outcome says
+    /// about the change, so an exposed change is not sent to look for a gap.
+    #[test]
+    fn no_eligible_closing_step_follows_the_change() -> Result<(), String> {
+        use crate::app::task_first::NoEligibleChange;
+        let root = Path::new("/ripr-task-first-root");
+        let reasons = ["the code at src/lib.rs:2 `x`: existing tests already check it".to_string()];
+        let checked =
+            no_eligible_seam_message(root, None, NoEligibleChange::AlreadyChecked, 1, &reasons, 1);
+        let no_code = no_eligible_seam_message(
+            root,
+            None,
+            NoEligibleChange::NoRepairableCode,
+            1,
+            &reasons,
+            1,
+        );
+        let other = no_eligible_seam_message(root, None, NoEligibleChange::Other, 1, &reasons, 1);
+        if !checked.contains("Nothing to do for this change")
+            || checked.contains("names a gap in it")
+        {
+            return Err(format!("already-checked tail: {checked}"));
+        }
+        if !no_code.contains("Next: write a test for this change by hand")
+            || no_code.contains("names a gap in it")
+        {
+            return Err(format!("no-repairable-code tail: {no_code}"));
+        }
+        if !other.contains("names a gap in it to test by hand") {
+            return Err(format!("generic tail: {other}"));
+        }
+        // The closing check carries the base this run used; without one it
+        // names none.
+        let based = no_eligible_seam_message(
+            root,
+            Some("origin/release"),
+            NoEligibleChange::AlreadyChecked,
+            1,
+            &reasons,
+            1,
+        );
+        if !based.contains("--base origin/release` reports the same") || checked.contains("--base")
+        {
+            return Err(format!("the closing check must keep the base: {based}"));
+        }
+        // No seams at all, but a readable change on lines with no
+        // repairable code: the lead and a hand-written test, not the
+        // repository-seam route.
+        let lead = ["your changed lines (src/lib.rs:2) touch no code ripr can start a repair on, the same as `ripr check`".to_string()];
+        let zero = no_eligible_seam_message(
+            root,
+            Some("main"),
+            NoEligibleChange::NoRepairableCode,
+            0,
+            &lead,
+            1,
+        );
+        if !zero.starts_with("no seams visible under ")
+            || !zero.contains("touch no code ripr can start a repair on")
+            || !zero.contains("write a test for this change by hand")
+            || !zero.contains("--base main`")
+            || zero.contains("does not reuse the diff")
+        {
+            return Err(format!("zero seams with a change: {zero}"));
+        }
+        Ok(())
+    }
+
     /// The no-eligible message separates the zero-seam setup outcome from
     /// the limitation outcome, pluralizes the noun, and carries the named
     /// reasons only when there are some.
     #[test]
     fn no_eligible_seam_message_separates_setup_from_limitation() -> Result<(), String> {
         let root = Path::new("/ripr-task-first-root");
-        let setup = no_eligible_seam_message(root, None, 0, &["unscoped note".to_string()], 1);
-        if !setup.starts_with("no gaps visible under ")
+        let setup = no_eligible_seam_message(
+            root,
+            None,
+            crate::app::task_first::NoEligibleChange::Other,
+            0,
+            &["unscoped note".to_string()],
+            1,
+        );
+        if !setup.starts_with("no seams visible under ")
             || setup.contains("automatic repair")
             || !setup.contains(" (unscoped note); ")
             || !setup.contains("`ripr pilot --root ")
         {
             return Err(format!("zero seams must be the setup outcome:\n{setup}"));
         }
-        let one = no_eligible_seam_message(root, None, 1, &[], 0);
+        let one = no_eligible_seam_message(
+            root,
+            None,
+            crate::app::task_first::NoEligibleChange::Other,
+            1,
+            &[],
+            0,
+        );
         if !one.starts_with("ripr looked at 1 spot in the code under ") || one.contains("spots in")
         {
             return Err(format!("one seam must be singular:\n{one}"));
         }
-        if one.contains("automatic repair (") {
+        if one.contains("Why:") || one.contains('\n') {
             return Err(format!("no reasons must print no reason list:\n{one}"));
         }
         let several = no_eligible_seam_message(
             root,
             None,
+            crate::app::task_first::NoEligibleChange::Other,
             3,
             &[
                 "repair route not ready".to_string(),
@@ -1273,17 +1521,40 @@ mod tests {
         );
         for expected in [
             "ripr looked at 3 spots in the code under ",
-            "none is ready for an automatic repair (repair route not ready; configured off). Next:",
+            "none is ready for an automatic repair. Next:",
+            "\n  - repair route not ready\n  - configured off",
             "`ripr check --root ",
         ] {
             if !several.contains(expected) {
                 return Err(format!("limitation must carry {expected:?}:\n{several}"));
             }
         }
+        // #11883: next step on the first line, then `Why:` and one indented
+        // bullet per reason.
+        let lines: Vec<&str> = several.lines().collect();
+        if lines.len() != 4
+            || !lines[0].contains("Next:")
+            || lines[1] != "Why:"
+            || lines[2] != "  - repair route not ready"
+            || lines[3] != "  - configured off"
+        {
+            return Err(format!("layout must be next step then bullets:\n{several}"));
+        }
         // A bounded reason list discloses the omitted remainder (#8728).
-        let bounded =
-            no_eligible_seam_message(root, None, 5, &["repair route not ready".to_string()], 4);
-        if !bounded.contains("(and 3 more; run `ripr pilot --root ") {
+        let bounded = no_eligible_seam_message(
+            root,
+            None,
+            crate::app::task_first::NoEligibleChange::Other,
+            5,
+            &["repair route not ready".to_string()],
+            4,
+        );
+        if !bounded
+            .lines()
+            .last()
+            .is_some_and(|l| l.starts_with("  (and 3 more; run `ripr pilot --root "))
+            || !bounded.contains("\n  (and 3 more; run `ripr pilot --root ")
+        {
             return Err(format!(
                 "bounded reasons must disclose the rest:\n{bounded}"
             ));
@@ -1390,7 +1661,7 @@ mod tests {
         // The start holds its document: it comes back as a value, so
         // nothing reaches stdout before the card has rendered.
         let (attempt_id, before_stdout) = crate::cli::drive_before_phase_deferring_stdout(
-            facade_before_options(&root, FIXTURE_SEAM),
+            facade_before_options(&root, FIXTURE_SEAM, false),
         )
         .map_err(|error| error.to_string())?;
         if before_stdout.trim().is_empty() {
@@ -1445,5 +1716,40 @@ mod tests {
             return Err("the refusal message must name the started attempt".to_string());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod facade_status_message_tests {
+    use super::facade_status_message;
+
+    #[test]
+    fn status_facade_errors_name_the_status_command() {
+        assert_eq!(
+            facade_status_message(
+                "agent status --attempt: repair attempt ID must start with `repair-attempt-`"
+                    .to_string()
+            ),
+            "status --attempt: repair attempt ID must start with `repair-attempt-`"
+        );
+    }
+
+    #[test]
+    fn the_id_hint_names_status_not_agent_status() {
+        assert_eq!(
+            facade_status_message(
+                "agent status --attempt: bad; copy the ID that `ripr agent repair` printed or `ripr agent status` lists"
+                    .to_string()
+            ),
+            "status --attempt: bad; copy the ID that `ripr agent repair` printed or `ripr status` lists"
+        );
+    }
+
+    #[test]
+    fn unrelated_messages_pass_through_unchanged() {
+        assert_eq!(
+            facade_status_message("could not read store".to_string()),
+            "could not read store"
+        );
     }
 }

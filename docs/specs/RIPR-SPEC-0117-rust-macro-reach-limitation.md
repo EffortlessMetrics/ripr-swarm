@@ -52,6 +52,10 @@ macro was expanded:
 no_static_path + static_limit_kind: rust_macro_reach_unresolved
 ```
 
+When the only witness is an opaque property macro (`proptest!`, `quickcheck!`)
+that lexically mentions the owner, the class is `static_unknown` with the same
+`static_limit_kind` (#11544): unresolved macro reach is not ruled-out reach.
+
 ## Behavior
 
 ### Trigger condition
@@ -166,6 +170,30 @@ test-writing route. Direct reach remains established when a test calls the
 owner; the separate mixed weak-direct rule below can still name an independent
 unresolved macro path. The subprocess-binary and property-macro limits stay
 `no_static_path`-only.
+
+#### `infection_unknown` with an owner-named test (#11481)
+
+The same trigger also admits an `infection_unknown` finding with `weak` reach
+whose related tests are all proximity-only or `owner_named_test` (a test
+related only by naming the owner; it never has to call it). Only the
+`infection_unknown` class admits `owner_named_test`: a `weakly_exposed`
+finding related solely by `owner_named_test`, and any set that also holds a
+non-proximity relation (`import_path_affinity`, `fixture_owner_affinity`, a
+direct or helper owner call), stays unlimited. The `weakly_exposed` asymmetry is
+a decided, fail-closed boundary (#11481 follow-up), not a pending extension.
+Whether an owner-named test runs the owner is equally unknown for both classes.
+The difference is the claim at stake: `infection_unknown` makes no assertion
+claim, while `weakly_exposed` exists only because a related test carries a
+credited weak assertion and publishes a gap for it. The witness is repo-wide
+and not tied to that test, so limiting the finding would withdraw that gap and
+its next step on name evidence alone, a change to actionable output that no
+corpus case justifies. Soundness of the extension is therefore not established
+and the finding is left unchanged; a corpus case showing a mislabeled gap would
+reopen it. The pinned pair
+`a_weakly_exposed_owner_named_weak_assertion_keeps_its_gap_while_proximity_is_limited`
+shows the owner-named shape unlimited and the proximity-only twin limited. The
+witness walk is name-only, so a same-named function in another module can name
+the limit; the finding stays advisory.
 
 ### Weak direct test beside a macro witness (#7542)
 
@@ -468,7 +496,8 @@ admit a function-form property only when all of the following are established:
    refuse. The macro is an item at the source file's root, outside inline
    modules. Generated functions have no original AST function; line-based
    scope fallback cannot establish a same-line module's value namespace.
-   The property carries exactly `#[test]`; source-role provenance also holds.
+   The property carries exactly one `#[test]`; inert documentation and lint
+   attributes are allowed, and source-role provenance also holds.
 3. Calls use canonical `proptest::proptest!`, `proptest::strategy::Just` and
    `proptest::prop_assert`/`proptest::prop_assert_eq` paths (optionally leading
    `::`). The initial closed
@@ -531,11 +560,16 @@ forms stay withheld wherever that authority cannot establish them; registration
 and `Just` spelling alone do not grant owner credit. A mixed property cannot
 lend a different function's boundary input to a legitimate owner call.
 
-Admission is atomic for a macro's properties. Refused properties retain the
-existing `rust_macro_reach_unresolved` limitation, and a supported ordinary
-assertion beside them remains available. CLI, JSON and MCP consume the same
-facts and evidence; the Rust capability limit describes this exact profile.
-No new repair route or support-tier promotion follows from it.
+Admission is per property after every sibling's declaration boundary and name
+is understood. A refused body or strategy does not erase an independently
+admitted sibling. Every generated sibling name, including an unsupported one,
+remains in the admitted property's root namespace. A partial macro retains
+the existing `rust_macro_reach_unresolved` limitation for its unsupported
+siblings; the limitation is removed only when every property is admitted.
+Unbounded declarations, duplicate names or an unreadable macro structure
+refuse the entire invocation. A supported ordinary assertion beside it remains
+available. CLI, JSON and MCP consume the same facts and evidence; no new repair
+route or support-tier promotion follows from this registration.
 
 The retained integration fixture and
 `crates/ripr/tests/registered_proptest_profile.rs` enforce provider/target/
@@ -545,14 +579,72 @@ and custom inequality refusals, and native original/wrong-owner, zero-cases,
 diagnostic-return and weak-check controls. Native runtime truth stays separate
 from static exposure.
 
-This is a foundational subset with **no unchanged real-repository positive
-established**. The real Perl-LSP position property at
-`6ffb36a1d2eff471407badf15721452696850d68` uses `proptest::prelude::*`, string
-strategies, model helpers and loops. Its recorded runtime witness does not
-qualify this source profile. Prelude/import authority, ranges and strings,
-relational/model flow, the non-macro bool-helper corpus row, QuickCheck,
-`TestRunner::run/run_one`, repair and installed daily-use acceptance remain
-open under #6643 and its supporting issues.
+### Original empty-string property (#10843)
+
+An additional closed profile reads the unchanged `empty_string` function in
+Perl-LSP's `prop_utf16_roundtrip.rs` at
+`6ffb36a1d2eff471407badf15721452696850d68`. It uses the same provider, target,
+configuration, cache and exact-receipt authority above. The entire original
+file is retained in `crates/ripr/tests/fixtures/proptest_empty_string`, with
+its source hash and standalone-fixture adaptations documented there.
+
+The profile admits one file-root proptest invocation and exactly one
+`Just(String::new())` input. In addition to canonical paths, the single exact
+`use proptest::prelude::*;` import supplies the audited `proptest`, `Just` and
+`prop_assert_eq` exports. Foreign globs, aliases, imports or declarations
+shadowing those names or `String`, unknown attributes, macro definitions and
+out-of-line test modules refuse. This is a receipt-local interpretation; the
+general foreign-glob and trusted-macro policies do not change.
+
+Opaque sibling strategies and bodies still expand, so they cannot be assumed
+binding-free. The profile refuses their attributes, namespace declarations,
+macro definitions and unknown nested macro invocations. Elsewhere in the file
+the only accepted expression macros are unshadowed audited proptest assertions
+and `prop_oneof`, plus the standard `vec` and `assert_eq` forms used by the
+original source; their argument token trees receive the same nested check.
+This prevents an unsupported sibling or helper from exporting a crate-root
+macro that replaces a bare prelude assertion. These allowances establish only
+absence of crate-root binding emission, not property evidence for the
+unsupported sibling.
+The provider's transitive call-site `vec`, `concat` and `file` macro bindings
+must also remain unshadowed, even when no such call appears literally in the
+source. Raw import spellings are refused rather than treated as distinct names.
+The same existing resolved Cargo receipt must also show that the consumer does
+not supply `std`, `core` or `alloc` through a dependency name, dependency rename,
+resolved dependency-library name or its own target name. Provider expansions
+use those standard roots at the call site, so canonical proptest identity alone
+cannot establish them. This extra refusal applies only to the empty-String
+profile; it adds no metadata process or independent cache authority.
+
+The four body statements must bind a two-element tuple from an explicitly
+imported free-function call with `(&s, 0)`, compare the same ordered tuple to
+`(0, 0)`, bind a second free-function result from `(&s, first, second)`, and
+compare that same result to `0`. Both imports must be unrenamed and their
+owners must resolve through the existing free-owner authority. This profile
+also accepts a library-root `pub use child::owner` through exactly one
+unrenamed composed child module; absolute extern paths, renamed children,
+competing bindings and ambiguous composition refuse. Ordinary tests gain no
+new import-resolution authority from this profile. Discarded or overwritten results,
+reordered tuple fields, diagnostics, extra statements, assignments and other
+control flow refuse.
+
+The interpreted body retains the standard `String` construction, shared
+borrow, original owner calls, tuple destructuring and result bindings. Only
+the provider-bound assertion spelling changes. A private receipt carries the
+empty input value to ordinary repository and diff value resolution: substituting `""` into the
+source would change `&String` to `&str` and could change generic behavior.
+Tuple components are **not** substituted with asserted literals. The ordinary
+owner, activation, propagation and discriminator rules still decide which
+seams receive evidence; registration is not a proof that every branch or
+return is reached. Source/assertion lines are preserved.
+
+The other Unicode strategies, model helpers and loop properties in the same
+original file remain unsupported and retain their limitation. General string
+domains, arbitrary tuple/result flows, ranges, relational/model reasoning,
+the non-macro bool-helper corpus row, QuickCheck, `TestRunner::run/run_one`,
+repair and installed daily-use acceptance remain open under #6643 and its
+supporting issues. The original-workspace native witness and this static
+source-profile acceptance remain separate evidence planes.
 
 ## Wire Format
 
@@ -697,6 +789,8 @@ open under #6643 and its supporting issues.
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_macro_names_the_macro_limit`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_weak_direct_test_preserves_the_unresolved_macro_witness`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_without_a_witness_keeps_the_gap`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::the_owner_named_admission_is_limited_to_infection_unknown_all_owner_named`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_weakly_exposed_owner_named_weak_assertion_keeps_its_gap_while_proximity_is_limited`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_helper_names_the_transitive_limit`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::repetition_shadowing_scope_and_order_refuse`

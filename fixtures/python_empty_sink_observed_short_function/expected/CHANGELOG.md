@@ -198,7 +198,7 @@ Updated:
 ## Pending — python_empty_sink_observed_short_function (16)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
 
 Command:
 `cargo xtask goldens bless python_empty_sink_observed_short_function --reason "..."`
@@ -211,7 +211,7 @@ Updated:
 ## Pending — python_empty_sink_observed_short_function (17)
 
 Reason:
-RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
 `cargo xtask goldens bless python_empty_sink_observed_short_function --reason "..."`
@@ -222,6 +222,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — python_empty_sink_observed_short_function (18)
+
+Reason:
+RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless python_empty_sink_observed_short_function --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_empty_sink_observed_short_function (19)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

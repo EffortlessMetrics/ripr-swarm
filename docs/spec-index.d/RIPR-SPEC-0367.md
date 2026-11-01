@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0367](../specs/RIPR-SPEC-0367-proof-harness-is-not-a-test-or-production-seam.md) | proposed | Kani proof harness is neither a test nor a production seam; ripr discloses it as not evaluated (#10686) |

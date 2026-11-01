@@ -80,6 +80,9 @@ const MAX_RELATED_TESTS_PER_PACKET: usize = 8;
 const RUNTIME_CONFIRMATION_NOTE: &str =
     "optional cargo-mutants confirmation; ripr reports static evidence only";
 
+/// Repair route for a pilot packet bound (#11951).
+const PILOT_PACKET_BOUND_ROUTE: &str = "Set RIPR_PILOT_PACKET_BUDGET=0 and rerun `ripr pilot` to write every packet, or run `ripr check --format agent-seam-packets-json` for the full set.";
+
 /// Packet task for a seam the agent can repair with a targeted test.
 pub(crate) const TASK_WRITE_TARGETED_TEST: &str = "write_targeted_test";
 
@@ -205,6 +208,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
         analysis_outcome_required,
         PacketCommandContext::Portable,
         &[],
+        None,
     )
 }
 
@@ -218,6 +222,7 @@ pub(crate) fn render_agent_seam_packets_json_for_root(
     causal_projection: Option<&CausalDeltaArtifact>,
     root: &str,
     declined: &[crate::analysis::DeclinedRustFile],
+    bound: Option<PacketBound>,
 ) -> String {
     render_agent_seam_packets_json_with_root(
         classified,
@@ -227,7 +232,19 @@ pub(crate) fn render_agent_seam_packets_json_for_root(
         false,
         PacketCommandContext::Standalone { root },
         declined,
+        bound,
     )
+}
+
+/// How many packets a pilot artifact carries (#11951). A repo-scope run can
+/// hold hundreds of packets (2-4 MB), more than an agent can read, so the
+/// pilot file keeps the first `max` packets and discloses the rest in
+/// `limitations[]`. The bound is a presentation cut: it never changes which
+/// seams are packet-eligible, any packet's content, or the `next` block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PacketBound {
+    pub(crate) max: usize,
+    pub(crate) source: crate::analysis::SeamLimitSource,
 }
 
 #[derive(Clone, Copy)]
@@ -260,6 +277,10 @@ pub(crate) fn render_refusal_json(notice: &crate::core_error::RefusalNotice) -> 
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is an independent render input shared by every packet entry point; the pilot bound is the eighth and bundling them would force every caller through a new options struct."
+)]
 fn render_agent_seam_packets_json_with_root(
     classified: &[ClassifiedSeam],
     limit_info: Option<RepoExposureLimit<'_>>,
@@ -268,6 +289,7 @@ fn render_agent_seam_packets_json_with_root(
     analysis_outcome_required: bool,
     context: PacketCommandContext<'_>,
     declined: &[crate::analysis::DeclinedRustFile],
+    bound: Option<PacketBound>,
 ) -> String {
     let canonical_gaps = canonical_gap_identities(classified);
     let mut out = String::new();
@@ -287,14 +309,37 @@ fn render_agent_seam_packets_json_with_root(
     // run_status mirrors the repo-exposure pattern: "complete" when nothing
     // was capped, "seam_limit_applied" when either cap fired, and
     // "limited_declined_files" when only a parse-limit decline applies (#9308).
-    match (limit_info, declined.is_empty()) {
-        (None, true) => out.push_str("  \"run_status\": \"complete\",\n"),
-        (None, false) => out.push_str("  \"run_status\": \"limited_declined_files\",\n"),
-        (Some(_), _) => out.push_str("  \"run_status\": \"seam_limit_applied\",\n"),
+    let actionable: Vec<&ClassifiedSeam> = classified
+        .iter()
+        .filter(|entry| repair_packet_queue_visible(entry))
+        .collect();
+    // The bound keeps the packets an agent can act on ahead of the static
+    // limitations, each group in its existing order, and cuts the tail.
+    let bound = bound.filter(|bound| actionable.len() > bound.max);
+    let rendered: Vec<&ClassifiedSeam> = match &bound {
+        Some(bound) => {
+            let (writable, rest): (Vec<_>, Vec<_>) = actionable
+                .iter()
+                .copied()
+                .partition(|entry| task_for(entry) == TASK_WRITE_TARGETED_TEST);
+            writable.into_iter().chain(rest).take(bound.max).collect()
+        }
+        None => actionable.clone(),
+    };
+
+    match (limit_info, declined.is_empty(), &bound) {
+        (None, true, None) => out.push_str("  \"run_status\": \"complete\",\n"),
+        (None, false, _) => out.push_str("  \"run_status\": \"limited_declined_files\",\n"),
+        (None, true, Some(_)) => out.push_str("  \"run_status\": \"packet_bound_applied\",\n"),
+        (Some(_), _, _) => out.push_str("  \"run_status\": \"seam_limit_applied\",\n"),
     }
 
     let mut limitations = Vec::new();
-    if let Some(limit) = limit_info {
+    for limit in limit_info
+        .into_iter()
+        .flat_map(RepoExposureLimit::parts)
+        .flatten()
+    {
         let info = limit.info();
         let repair_route = limit.repair_route();
         limitations.push(format!(
@@ -326,18 +371,43 @@ fn render_agent_seam_packets_json_with_root(
             files
         ));
     }
+    if let Some(bound) = &bound {
+        // #12064: the cut keeps actionable packets first, so it only drops
+        // an actionable one when there are more of them than the bound.
+        // Say so by count; a reader of the file could otherwise believe it
+        // holds every repairable seam.
+        let actionable_omitted = actionable
+            .iter()
+            .filter(|entry| task_for(entry) == TASK_WRITE_TARGETED_TEST)
+            .count()
+            .saturating_sub(bound.max);
+        let omitted_field = if actionable_omitted > 0 {
+            format!(
+                "      \"actionable_packets_omitted\": {actionable_omitted},\n      \"actionable_packets_message\": \"{}\",\n",
+                crate::output::json::escape(&format!(
+                    "{actionable_omitted} {TASK_WRITE_TARGETED_TEST} packet(s) were omitted by the packet bound, so this file does not list every repairable seam."
+                ))
+            )
+        } else {
+            String::new()
+        };
+        limitations.push(format!(
+            "    {{\n      \"category\": \"pilot_packet_bound_applied\",\n      \"packets_emitted\": {},\n      \"packets_eligible\": {},\n{}      \"limit_source\": \"{}\",\n      \"control\": \"{}\",\n      \"repair_route\": \"{}\"\n    }}",
+            rendered.len(),
+            actionable.len(),
+            omitted_field,
+            bound.source.as_str(),
+            crate::analysis::PILOT_PACKET_BUDGET_ENV,
+            crate::output::json::escape(PILOT_PACKET_BOUND_ROUTE),
+        ));
+    }
     if !limitations.is_empty() {
         out.push_str("  \"limitations\": [\n");
         out.push_str(&limitations.join(",\n"));
         out.push_str("\n  ],\n");
     }
 
-    let actionable: Vec<&ClassifiedSeam> = classified
-        .iter()
-        .filter(|entry| repair_packet_queue_visible(entry))
-        .collect();
-
-    out.push_str(&format!("  \"packets_total\": {},\n", actionable.len()));
+    out.push_str(&format!("  \"packets_total\": {},\n", rendered.len()));
     // #4379: portable and standalone documents write the workflow snapshot
     // family in their `next` block, so their embedded records verify that
     // family. A prepared packet's `next` block advertises no independent
@@ -358,7 +428,7 @@ fn render_agent_seam_packets_json_with_root(
         }
     };
     out.push_str("  \"packets\": [");
-    for (idx, entry) in actionable.iter().enumerate() {
+    for (idx, entry) in rendered.iter().enumerate() {
         if idx == 0 {
             out.push('\n');
         }
@@ -371,13 +441,13 @@ fn render_agent_seam_packets_json_with_root(
                 .as_ref()
                 .map(|(command, root)| (command.as_str(), Path::new(*root))),
         );
-        if idx + 1 != actionable.len() {
+        if idx + 1 != rendered.len() {
             out.push_str(",\n");
         } else {
             out.push('\n');
         }
     }
-    if !actionable.is_empty() {
+    if !rendered.is_empty() {
         out.push_str("  ");
     }
     out.push(']');
@@ -547,6 +617,7 @@ pub(crate) fn render_agent_seam_packet_json_with_context(
         false,
         context,
         &[],
+        None,
     )
 }
 
@@ -559,7 +630,7 @@ pub(crate) fn render_agent_seam_packet_json_with_context(
 /// cannot score (#7204): the rendered document discloses it and the plain
 /// summary replaces the after-edit directive with the ambiguity warning
 /// and the clean-state restart route.
-pub(crate) const TYPESCRIPT_TEST_CACHE_GUIDANCE: &str = "Some TypeScript test runners write ignored cache files that the edit cage still observes. To avoid a terminal cache-only refusal, run the focused test after continue succeeds and record its result separately; the receipt reports static evidence and does not record a test run. Cache writes may make that receipt stale in agent status, even if HEAD did not change.";
+pub(crate) const TYPESCRIPT_TEST_CACHE_GUIDANCE: &str = "Some TypeScript test runners write ignored cache files that the edit cage still observes. To avoid a terminal cache-only refusal, run the focused test after continue succeeds and record its result separately; the receipt reports static evidence and does not record a test run. Vitest cache files written after continue do not make the receipt stale in agent status.";
 
 pub(crate) struct BeforePhaseAttemptContinuation {
     pub(crate) attempt_id: String,
@@ -2284,6 +2355,18 @@ pub(crate) fn task_for(entry: &ClassifiedSeam) -> &'static str {
     }
 }
 
+fn proof_obligation_json(obligation: &crate::analysis::test_stub::ProofObligation) -> String {
+    json!({
+        "kind": obligation.kind,
+        "function": obligation.function,
+        "changed_predicate": obligation.changed_predicate,
+        "witness_inputs": obligation.witness_inputs,
+        "property_skeleton": obligation.property_skeleton,
+        "limits": obligation.limits,
+    })
+    .to_string()
+}
+
 fn push_packet_json(
     out: &mut String,
     entry: &ClassifiedSeam,
@@ -2340,6 +2423,15 @@ fn push_packet_json(
         json_escape(recommended.reason.as_str())
     ));
     out.push_str("},\n");
+
+    // #11551: advisory proof obligation. Computed after `task_for` and the
+    // recommended test, and read by neither: it cannot change actionability.
+    if let Some(obligation) = crate::analysis::test_stub::proof_obligation_for(seam) {
+        out.push_str(&format!(
+            "      \"proof_obligation\": {},\n",
+            proof_obligation_json(&obligation)
+        ));
+    }
 
     // The edit cage this packet's repair will enforce, stated where the work
     // is planned (#4330). `edit_cage_policy_from_packet` consumes the
@@ -3927,7 +4019,7 @@ mod tests {
               "language_status":"preview",
               "scope":"diff",
               "evidence_class":"weakly_exposed",
-              "gap_state":"advisory",
+              "gap_state": "unknown",
               "policy_state":"preview",
               "repairability":"repairable",
               "anchor":{{"file":"src/pricing.ts","line":7,"owner":"discountedTotal","dedupe_fingerprint":"probe:src/pricing.ts:typescript_preview:1a2b3c4d"}},
@@ -4622,6 +4714,41 @@ mod tests {
                 return Err(format!("missing v2 field {needle:?} in: {json}"));
             }
         }
+        Ok(())
+    }
+
+    // #11551: the proof obligation is an additive advisory member; the
+    // actionability fields beside it are produced without reading it.
+    #[test]
+    fn packet_carries_advisory_proof_obligation_for_a_relational_boundary() -> Result<(), String> {
+        let entry = weakly_gripped_classified();
+        let json = render_agent_seam_packets_json(std::slice::from_ref(&entry), None);
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| format!("packet is JSON: {error}"))?;
+        let packet = &value["packets"][0];
+        let obligation = &packet["proof_obligation"];
+        assert_eq!(obligation["kind"], "boundary", "{json}");
+        assert_eq!(obligation["function"], packet["owner"], "{json}");
+        assert_eq!(
+            obligation["changed_predicate"],
+            packet["changed_expression"]
+        );
+        assert_eq!(
+            obligation["witness_inputs"].as_array().map(Vec::len),
+            Some(3),
+            "{json}"
+        );
+        assert!(
+            obligation["limits"]
+                .as_array()
+                .is_some_and(|l| !l.is_empty())
+        );
+        assert_eq!(packet["task"], task_for(&entry), "{json}");
+        assert_eq!(
+            packet["headline_eligible"],
+            entry.class.is_headline_eligible(),
+            "{json}"
+        );
         Ok(())
     }
 
@@ -7120,6 +7247,240 @@ mod tests {
         entry
     }
 
+    /// `count` inspection packets with identities of their own, so a bound has
+    /// a long static-limitation tail to cut (#11951).
+    fn static_limitation_tail(count: usize) -> Vec<ClassifiedSeam> {
+        (0..count)
+            .map(|index| {
+                let mut entry = weakly_gripped_classified();
+                let seam = RepoSeam::new(
+                    "src/limits.rs",
+                    format!("limits::opaque_{index}"),
+                    SeamKind::PredicateBoundary,
+                    100 + index,
+                    100 + index,
+                    format!("opaque_{index} >= threshold"),
+                    RequiredDiscriminator::BoundaryValue {
+                        description: format!("opaque_{index} >= threshold"),
+                    },
+                    ExpectedSink::ReturnValue,
+                );
+                entry.evidence.seam_id = seam.id().clone();
+                entry.seam = seam;
+                entry.class = SeamGripClass::Opaque;
+                entry
+            })
+            .collect()
+    }
+
+    fn pilot_bound(max: usize) -> Option<PacketBound> {
+        Some(PacketBound {
+            max,
+            source: crate::analysis::SeamLimitSource::Default,
+        })
+    }
+
+    fn render_pilot_packets(
+        subjects: &[ClassifiedSeam],
+        bound: Option<PacketBound>,
+    ) -> Result<(String, serde_json::Value), String> {
+        let text = render_agent_seam_packets_json_for_root(subjects, None, None, ".", &[], bound);
+        let doc = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+        Ok((text, doc))
+    }
+
+    #[test]
+    fn pilot_packet_bound_cuts_the_static_limitation_tail_and_discloses_it() -> Result<(), String> {
+        // Forty inspection packets precede the two writable ones in input
+        // order, so the bound must reorder, not just truncate the front.
+        let mut subjects = static_limitation_tail(40);
+        subjects.push(weakly_gripped_classified());
+        subjects.push(second_actionable_classified());
+        let (full_text, full) = render_pilot_packets(&subjects, None)?;
+        let (bounded_text, bounded) = render_pilot_packets(&subjects, pilot_bound(5))?;
+
+        let full_packets = full["packets"].as_array().ok_or("full packets")?;
+        let bounded_packets = bounded["packets"].as_array().ok_or("bounded packets")?;
+        assert_eq!(full_packets.len(), 42, "{full}");
+        assert_eq!(bounded_packets.len(), 5, "{bounded}");
+        assert_eq!(bounded["packets_total"], 5, "{bounded}");
+        assert_eq!(bounded["run_status"], "packet_bound_applied", "{bounded}");
+        assert_eq!(
+            bounded["limitations"],
+            serde_json::json!([{
+                "category": "pilot_packet_bound_applied",
+                "packets_emitted": 5,
+                "packets_eligible": 42,
+                "limit_source": "default",
+                "control": "RIPR_PILOT_PACKET_BUDGET",
+                "repair_route": PILOT_PACKET_BOUND_ROUTE,
+            }]),
+            "{bounded}"
+        );
+
+        // Actionable packets lead; every kept packet is byte-for-byte the
+        // packet the unbounded document carries for that seam.
+        let tasks: Vec<_> = bounded_packets.iter().map(|p| p["task"].clone()).collect();
+        assert_eq!(tasks[0], "write_targeted_test", "{tasks:?}");
+        assert_eq!(tasks[1], "write_targeted_test", "{tasks:?}");
+        assert_eq!(tasks[2], "inspect_static_limitation", "{tasks:?}");
+        for packet in bounded_packets {
+            assert!(full_packets.contains(packet), "{packet}");
+        }
+
+        // The bound is a presentation cut: the next block (repair-loop
+        // commands) is the unbounded document's, unchanged.
+        assert_eq!(bounded["next"], full["next"], "{bounded}");
+        assert!(!full["next"].is_null(), "{full}");
+
+        // Size bound with a discriminating negative: the cut file is a
+        // fraction of the uncut one, and the uncut one is not small.
+        assert!(
+            bounded_text.len() * 4 < full_text.len(),
+            "bounded {} vs full {}",
+            bounded_text.len(),
+            full_text.len()
+        );
+        assert!(bounded_text.len() < 60_000, "{}", bounded_text.len());
+        Ok(())
+    }
+
+    /// #12064: more writable packets than the bound drops some of them, and
+    /// the limitation says how many; a cut of only the static-limitation tail
+    /// carries no such wording.
+    #[test]
+    fn pilot_packet_bound_counts_omitted_actionable_packets() -> Result<(), String> {
+        let mut subjects = vec![weakly_gripped_classified(), second_actionable_classified()];
+        subjects.extend(static_limitation_tail(3));
+
+        // Bound of 1 keeps one of two writable packets: one is omitted.
+        let (_, cut) = render_pilot_packets(&subjects, pilot_bound(1))?;
+        let limitation = &cut["limitations"][0];
+        assert_eq!(limitation["actionable_packets_omitted"], 1, "{cut}");
+        let message = limitation["actionable_packets_message"]
+            .as_str()
+            .ok_or("message")?;
+        assert!(message.contains("write_targeted_test"), "{message}");
+        assert!(
+            limitation["repair_route"]
+                .as_str()
+                .ok_or("route")?
+                .contains("RIPR_PILOT_PACKET_BUDGET=0"),
+            "{cut}"
+        );
+
+        // The count is the number dropped, not a flag: three writable
+        // packets under a bound of 1 omit two.
+        let mut three = vec![weakly_gripped_classified(), second_actionable_classified()];
+        let mut third = second_actionable_classified();
+        let seam = RepoSeam::new(
+            "src/shipping.rs",
+            "shipping::bulk_total",
+            SeamKind::PredicateBoundary,
+            40,
+            41,
+            "count >= bulk_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "count >= bulk_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        third.evidence.seam_id = seam.id().clone();
+        third.seam = seam;
+        third.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "bulk_threshold (equality boundary)".to_string(),
+            reason: "observed values do not include the equality-boundary case".to_string(),
+            flow_sink: None,
+        }];
+        three.push(third);
+        let (_, many) = render_pilot_packets(&three, pilot_bound(1))?;
+        assert_eq!(
+            many["limitations"][0]["actionable_packets_omitted"], 2,
+            "{many}"
+        );
+
+        // Bound of 2 keeps both writable packets and cuts only the tail.
+        let (_, tail_only) = render_pilot_packets(&subjects, pilot_bound(2))?;
+        let limitation = &tail_only["limitations"][0];
+        assert_eq!(limitation["packets_emitted"], 2, "{tail_only}");
+        assert!(
+            limitation.get("actionable_packets_omitted").is_none(),
+            "{tail_only}"
+        );
+        assert!(
+            limitation.get("actionable_packets_message").is_none(),
+            "{tail_only}"
+        );
+
+        // Bound of 4 keeps both writable and part of the tail: still no
+        // actionable-omission wording.
+        let (_, partial) = render_pilot_packets(&subjects, pilot_bound(4))?;
+        assert!(
+            partial["limitations"][0]
+                .get("actionable_packets_omitted")
+                .is_none(),
+            "{partial}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_packet_bound_is_absent_when_everything_fits_or_unbounded() -> Result<(), String> {
+        let mut subjects = static_limitation_tail(3);
+        subjects.push(weakly_gripped_classified());
+        let (unbounded_text, unbounded) = render_pilot_packets(&subjects, None)?;
+        assert_eq!(unbounded["run_status"], "complete", "{unbounded}");
+        assert!(unbounded.get("limitations").is_none(), "{unbounded}");
+        // A bound at or above the eligible count is not a cut: no
+        // disclosure, and the document is the unbounded one byte for byte.
+        for max in [4, 5, 1000] {
+            let (text, _) = render_pilot_packets(&subjects, pilot_bound(max))?;
+            assert_eq!(text, unbounded_text, "max {max}");
+        }
+        // One below the eligible count is a cut and says so.
+        let (_, cut) = render_pilot_packets(&subjects, pilot_bound(3))?;
+        assert_eq!(cut["packets_total"], 3, "{cut}");
+        assert_eq!(cut["limitations"][0]["packets_eligible"], 4, "{cut}");
+        Ok(())
+    }
+
+    #[test]
+    fn pilot_packet_bound_keeps_other_run_status_and_limitations() -> Result<(), String> {
+        let info = crate::analysis::SeamLimitInfo {
+            analyzed: 2,
+            total: 9,
+            source: crate::analysis::SeamLimitSource::Default,
+        };
+        let subjects = static_limitation_tail(6);
+        let text = render_agent_seam_packets_json_for_root(
+            &subjects,
+            Some(RepoExposureLimit::PilotBudget(&info)),
+            None,
+            ".",
+            &[],
+            pilot_bound(2),
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&text).map_err(|error| error.to_string())?;
+        // The seam cap still owns run_status; the packet bound is added.
+        assert_eq!(doc["run_status"], "seam_limit_applied", "{doc}");
+        let categories: Vec<_> = doc["limitations"]
+            .as_array()
+            .ok_or("limitations")?
+            .iter()
+            .map(|limitation| limitation["category"].clone())
+            .collect();
+        assert_eq!(
+            categories,
+            [
+                serde_json::json!("pilot_seam_budget_applied"),
+                serde_json::json!("pilot_packet_bound_applied")
+            ],
+            "{doc}"
+        );
+        Ok(())
+    }
+
     fn parsed_envelope(json: &str) -> Result<serde_json::Value, String> {
         serde_json::from_str(json)
             .map_err(|err| format!("packet JSON did not parse: {err}: {json}"))
@@ -7891,8 +8252,14 @@ mod tests {
                 RepoExposureLimit::PilotBudget(&info)
             };
             let subjects = [weakly_gripped_classified(), strongly_gripped_classified()];
-            let rendered =
-                render_agent_seam_packets_json_for_root(&subjects, Some(limit), None, ".", &[]);
+            let rendered = render_agent_seam_packets_json_for_root(
+                &subjects,
+                Some(limit),
+                None,
+                ".",
+                &[],
+                None,
+            );
             let doc: serde_json::Value =
                 serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
             assert_eq!(doc["run_status"], "seam_limit_applied", "{doc}");

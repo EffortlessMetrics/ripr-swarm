@@ -21,12 +21,12 @@ Start here:
     do not establish that discriminator
   Related test (1 of 2 matched rows): tests/contract.rs:19 contract_journey
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -39,7 +39,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/source_role_harness_suppression/input --diff <cwd>/fixtures/source_role_harness_suppression/diff.patch --mode fast probe:src_lib.rs:predicate:34000fd8
   ripr context --root <cwd>/fixtures/source_role_harness_suppression/input --diff <cwd>/fixtures/source_role_harness_suppression/diff.patch --mode fast --at probe:src_lib.rs:predicate:34000fd8
-  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the whole spot and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the whole spot) and ripr does not start a repair on conflicting evidence; follow the Next step above
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/source_role_harness_suppression/input --at src/lib.rs:2 --kind predicate
 

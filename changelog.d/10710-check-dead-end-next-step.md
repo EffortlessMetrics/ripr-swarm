@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr check` no longer ends a gap in a dead end. When a changed gap has neither a repair start nor a test stub (an async or side-effect change, for example), it now prints one plain step: write the test by hand, what to assert, and that ripr has no repair route for this kind of change yet. When several seams share the finding's line (two fields of one struct), `check` now prints a stub command only for the seam that produces a stub, instead of listing a seam whose command refuses (#10710).

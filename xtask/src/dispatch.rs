@@ -204,6 +204,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckLocalContext => super::check_local_context(),
         XtaskCommand::CheckFilePolicy => super::check_file_policy(),
         XtaskCommand::CheckCoveredBy => super::check_covered_by(),
+        XtaskCommand::Kani(args) => super::kani_lane::run_lane(&args),
         XtaskCommand::RustConversionCandidates => super::rust_conversion_candidates(),
         XtaskCommand::CheckExecutableFiles => super::check_executable_files(),
         XtaskCommand::CheckTextEncoding => super::check_text_encoding(),
@@ -233,6 +234,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckChangelogFragments(args) => {
             super::policy::check_changelog_fragments_with_args(&args)
         }
+        XtaskCommand::FoldChangelog(args) => super::policy::fold_changelog(&args),
         XtaskCommand::CheckReadmeState => super::check_readme_state(),
         XtaskCommand::MarkdownLinks => super::markdown_links(),
         XtaskCommand::CheckPrShape(args) => super::check_pr_shape_with_args(&args),

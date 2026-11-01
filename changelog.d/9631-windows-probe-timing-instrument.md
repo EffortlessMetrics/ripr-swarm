@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- Windows hang-hunt probe timing is now a validated instrument: monotonic clock, per-probe deadline with a recorded cleanup outcome, verified target output and exit or start-failure markers, round and position labels, and target, wrapper-module and PowerShell identities in `shardN-probe-timing.json` (schema 2). Diagnostic only; prerequisite to the ADR 0024 latency criterion (#9631).

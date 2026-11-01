@@ -212,8 +212,11 @@ fn uncompiled_preview_file_counts(
 
 /// Typed limitation kinds as stable wire labels, in adapter order.
 fn limitation_kind_labels(limitations: &[AnalysisLimitation]) -> Vec<String> {
+    // An advisory disclosure does not scope the language run down, so it must
+    // not read as a partial language outcome.
     limitations
         .iter()
+        .filter(|limitation| !limitation.kind.is_advisory_disclosure())
         .map(|limitation| limitation.kind.as_str().to_string())
         .collect()
 }
@@ -269,6 +272,9 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     if let Some(subject) = options.git_candidate.as_ref() {
         let resolved = super::git_candidate_execution::resolve(subject, options.git_timeout)
             .map_err(|error| error.to_string())?;
+        // #10796: the candidate subject is the requested input source; the
+        // exact-tree identity below is what a deadline refusal may echo.
+        super::publish_input_source_fact(super::InputSource::GitCandidate);
         if crate::is_verbose() {
             eprintln!(
                 "ripr: immutable git candidate resolved: {}",
@@ -324,6 +330,16 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
         options.diff_file.as_ref(),
         options.git_timeout,
     )?;
+    // #10796: publish only what this completed load actually resolved; a
+    // supplied diff ignores `base`, so its base facts stay unavailable.
+    super::publish_loaded_input_facts(
+        if options.diff_file.is_some() {
+            super::InputSource::SuppliedDiff
+        } else {
+            super::InputSource::Committed
+        },
+        &loaded,
+    );
     cancellation::checkpoint()?;
     // A committed-history diff names lines as they exist at HEAD, so the
     // adapters must read HEAD content for tracked files with uncommitted
@@ -479,6 +495,9 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options.base.as_deref(),
         options.git_timeout,
     )?;
+    // #10796: the working-tree load completed and holds this diff's base and
+    // merge-base origin; publish them for a possible deadline refusal.
+    super::publish_loaded_input_facts(super::InputSource::WorkingTree, &loaded);
     cancellation::checkpoint()?;
     // #7716: consumers that render neither the untracked-routed-files
     // naming (RIPR-SPEC-0116) nor the analyzed-revisions naming (#5997) —
@@ -1394,6 +1413,10 @@ fn run_pipeline_for_diff_text_with_language_config(
     if out_of_scope.count > 0 && changed_files.is_empty() {
         return Err(scope_matched_nothing_error(diff_scope, &out_of_scope));
     }
+    // #10796: the scoped intake completed — publish the adapter-facing scoped
+    // file count and the out-of-scope count. These are intake quantities, not
+    // raw Git path counts and not adapter result counts.
+    super::publish_scoped_intake_facts(changed_files.len(), out_of_scope.count);
     let mut limitations = parsed_diff
         .limitations
         .into_iter()
@@ -1615,6 +1638,22 @@ fn run_pipeline_for_diff_text_with_language_config(
                     )
                 })
             }
+            // A diff that touches no Python path gives the adapter nothing to
+            // classify: its findings come only from changed Python files, and
+            // the arm below drops its limitations for a language the diff does
+            // not touch. Indexing the whole Python workspace for that result
+            // was most of a warm Rust check in a repository that bundles Python
+            // tooling (servo's 200k-file `tests/wpt`: 3.5 s of 3.6 s).
+            // Without the adapter compiled in, the unavailable-language error
+            // below is the recorded outcome, so only skip a real adapter.
+            #[cfg(feature = "lang-python")]
+            LanguageId::Python
+                if !preview_changed_files
+                    .iter()
+                    .any(|file| route(&file.path) == Some(LanguageId::Python)) =>
+            {
+                Ok(untouched_preview_result())
+            }
             LanguageId::Python => contain_adapter_panic(options, *language, || {
                 analyze_python_diff(
                     options,
@@ -1667,7 +1706,14 @@ fn run_pipeline_for_diff_text_with_language_config(
                     .any(|file| route(&file.path) == Some(adapter_language));
                 let keeps_limitations =
                     reads_only_supplied_evidence || diff_touches_language || produced_findings;
-                diff_outcomes.extend(LanguageAnalysisOutcomeV1::from_diff_result(
+                // Unreadable (for example non-UTF-8) unchanged sources are
+                // counted in `skipped_files`, never in `result.limitations`.
+                // The language child turns that count into a partial
+                // denominator, so a diff that depends on this language must
+                // carry the matching top-level limitation; a diff that
+                // cannot depend on it keeps the child out of scope.
+                let unread_sources = result.skipped_files > 0;
+                let outcomes = LanguageAnalysisOutcomeV1::from_diff_result(
                     *language,
                     &result,
                     &if keeps_limitations {
@@ -1677,7 +1723,24 @@ fn run_pipeline_for_diff_text_with_language_config(
                     },
                     &routed_outcome_labels(preview_changed_files),
                     &scope_label,
-                ));
+                );
+                diff_outcomes.extend(if unread_sources && !keeps_limitations {
+                    outcomes
+                        .iter()
+                        .map(LanguageAnalysisOutcomeV1::without_scope)
+                        .collect()
+                } else {
+                    outcomes
+                });
+                // A changed file that cannot be read already reports its own
+                // path-bearing `language_scope_unsupported`; do not stack a
+                // pathless duplicate in front of it.
+                let already_disclosed = result.limitations.iter().any(|limitation| {
+                    limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported
+                });
+                if unread_sources && keeps_limitations && !already_disclosed {
+                    limitations.push(unread_sources_limitation(*language, result.skipped_files)?);
+                }
                 if repeat_typescript_pass {
                     continue;
                 }
@@ -2174,7 +2237,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         AnalysisOutcomeKind::UnsupportedInput
     } else if limitations
         .iter()
-        .any(|limitation| limitation.kind != AnalysisLimitationKind::EolOnlyChurn)
+        .any(|limitation| !limitation.kind.is_advisory_disclosure())
     {
         // #4952: the EOL-only disclosure alone does not make the analysis
         // partial; see the limitation push above.
@@ -2883,7 +2946,7 @@ fn file_is_eol_only_churn(file: &diff::ChangedFile, raw_line1_bom_paths: &[PathB
             .all(|(added, removed)| added.text == removed.text && added.line == removed.line)
 }
 
-fn bounded_path_listing(paths: &[String]) -> String {
+pub(crate) fn bounded_path_listing(paths: &[String]) -> String {
     let shown = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
     let more = paths.len().saturating_sub(3);
     let listed = if more > 0 {
@@ -3033,6 +3096,27 @@ fn analyze_typescript_diff(
     _handwritten: &[String],
 ) -> Result<LanguageDiffResult, String> {
     unavailable_language(LanguageId::TypeScript)
+}
+
+/// What a preview adapter reports for a diff that touches none of its
+/// language, without indexing the workspace: no findings, no limitations, no
+/// changed files and no cache work.
+#[cfg(feature = "lang-python")]
+fn untouched_preview_result() -> LanguageDiffResult {
+    LanguageDiffResult {
+        value_origins: Default::default(),
+        findings: Vec::new(),
+        harness_projections: Vec::new(),
+        changed_files: 0,
+        candidate_line_count: 0,
+        changed_files_by_language: Vec::new(),
+        partial_scope: None,
+        skipped_files: 0,
+        limitations: Vec::new(),
+        rust_diagnostic_origins: Default::default(),
+        rust_consumed_sources: Default::default(),
+        preview_fact_cache: crate::analysis::language::PreviewFactCacheStats::zero_work(),
+    }
 }
 
 #[cfg(feature = "lang-python")]
@@ -3189,6 +3273,28 @@ fn rebase_finding_paths_to_repository(
     for finding in &mut result.findings {
         finding.probe.location.file = rebase(&finding.probe.location.file);
     }
+}
+
+/// The analysis-outcome limitation for unchanged source files a preview
+/// adapter could not read (non-UTF-8, permissions): tests living in them are
+/// not part of the evidence, so the result cannot claim a complete denominator.
+fn unread_sources_limitation(
+    language: LanguageId,
+    unread: usize,
+) -> Result<AnalysisLimitation, String> {
+    AnalysisLimitation::new(
+        AnalysisLimitationKind::LanguageScopeUnsupported,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            "Restore read access to the files or re-encode them as UTF-8, then re-run the analysis.",
+        )?,
+    )
+    .with_affected_items(unread as u64)?
+    .with_detail(format!(
+        "{unread} {} source file(s) could not be read (permissions or non-UTF-8 encoding) and are not part of the evidence; a test in them is not considered.",
+        language.as_str()
+    ))
 }
 
 /// The analysis-outcome limitation for a `limited_partial_scope` run. Its
@@ -8159,6 +8265,80 @@ index 0000000..1111111 100644
             languages,
             vec!["rust"],
             "Rust-only run must record only a rust per-language entry"
+        );
+        Ok(())
+    }
+
+    /// A diff that touches no Python path must not index the Python workspace:
+    /// the adapter's per-file fact store is the observable of that work. The
+    /// same workspace with a Python file in the diff is the control that the
+    /// store is written when the adapter does run.
+    #[cfg(feature = "lang-python")]
+    #[test]
+    fn diff_pipeline_skips_python_workspace_index_for_rust_only_diff() -> Result<(), String> {
+        let store_has_entries = |root: &std::path::Path| {
+            let base = crate::analysis::seam_cache::cache_base_dir(root);
+            fs::read_dir(base)
+                .map(|entries| {
+                    entries.flatten().any(|entry| {
+                        entry
+                            .file_name()
+                            .to_string_lossy()
+                            .contains("python-file-facts")
+                    })
+                })
+                .unwrap_or(false)
+        };
+        let run = |name: &str, diff: &str| -> Result<(PathBuf, usize), String> {
+            let root = temp_root(name)?;
+            fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+            write(
+                &root.join("tools.py"),
+                "def helper(value):\n    return value + 1\n",
+            )?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 { a }\n",
+            )?;
+            let diff_file = root.join("change.diff");
+            write(&diff_file, diff)?;
+            let result = run_diff_pipeline_with_oracle_policy(
+                &AnalysisOptions {
+                    root: root.clone(),
+                    base: None,
+                    diff_file: Some(diff_file),
+                    mode: AnalysisMode::Draft,
+                    resolved_subject_identity: None,
+                    open_rust_index_paths: Default::default(),
+                    include_unchanged_tests: true,
+                    resolve_tsconfig_paths: false,
+                    perl_facts_path: None,
+                    perl_producer_failure: None,
+                    git_timeout: None,
+                    git_candidate: None,
+                    production_like_targets: Default::default(),
+                    test_harnesses: Vec::new(),
+                },
+                &OraclePolicy::default(),
+                &[LanguageId::Rust, LanguageId::Python],
+            )?;
+            Ok((root, result.findings.len()))
+        };
+        let (rust_root, _) = run(
+            "python-skip-rust-only",
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn price(a: i32) -> i32 { a }\n+pub fn price(a: i32) -> i32 { a + 1 }\n",
+        )?;
+        assert!(
+            !store_has_entries(&rust_root),
+            "a Rust-only diff must not fact-extract the Python workspace"
+        );
+        let (python_root, _) = run(
+            "python-skip-control",
+            "diff --git a/tools.py b/tools.py\n--- a/tools.py\n+++ b/tools.py\n@@ -1,2 +1,2 @@\n def helper(value):\n-    return value\n+    return value + 1\n",
+        )?;
+        assert!(
+            store_has_entries(&python_root),
+            "control: a Python diff must populate the Python fact store"
         );
         Ok(())
     }

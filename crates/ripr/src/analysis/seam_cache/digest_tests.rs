@@ -139,8 +139,15 @@ fn real_file_facts_keep_original_cache_bytes_and_integrity() -> Result<(), Strin
     let facts = crate::analysis::syntax::RaRustSyntaxAdapter.summarize_file(path, &source)?;
     assert_eq!(facts.functions.len(), 128);
     assert_eq!(facts.tests.len(), 64);
-    let envelope =
-        FileFactCacheEnvelope::new(RepoFileFactCacheKey::new(path, source.as_bytes()), facts);
+    let key = RepoFileFactCacheKey::new(path, source.as_bytes());
+    // The borrowing write path must emit the owned envelope's exact digest
+    // and bytes without cloning the facts.
+    let borrowed = FileFactCacheEnvelopeRef::new(&key, &facts);
+    let borrowed_bytes = codec::encode_file_facts_ref(&borrowed)?;
+    let borrowed_digest = borrowed.expected_digest()?;
+    let envelope = FileFactCacheEnvelope::new(key, facts);
+    assert_eq!(borrowed_digest, envelope.expected_digest()?);
+    assert_eq!(borrowed_bytes, codec::encode_file_facts(&envelope)?);
     let digest = reference_digest("ripr-cache:FileFactCacheEnvelope:v1", &envelope)?;
     let expected = serde_json::to_vec_pretty(&ChecksummedBody {
         body: &envelope,

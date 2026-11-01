@@ -768,6 +768,19 @@ fn normalizer_credits_explicit_attribute(value: u8) -> bool { value == value }
 fn promoted_parameterized_expansion(value: i32) {
     assert_eq!(value, 1);
 }
+
+#[kani::proof]
+fn proof_harness_item() { assert_eq!(ordinary_production(), 1); }
+
+#[cfg_attr(kani, kani::proof)]
+fn proof_harness_cfg_attr() {}
+
+#[my::kani::proof]
+fn proof_attribute_lookalike() {}
+
+#[test]
+#[kani::proof]
+fn test_attribute_beats_proof_attribute() {}
 "#,
     )?;
     // Invalid syntax forces the lexical fallback producer for this file.
@@ -778,6 +791,9 @@ this is intentionally invalid rust
 
 #[test]
 fn fallback_attribute_test() { assert!(true); }
+
+#[kani::proof]
+fn fallback_proof_harness() {}
 
 fn fallback_unannotated_helper() -> i32 { 3 }
 "#,
@@ -903,6 +919,36 @@ fn integration_test() {
             "integration_test",
             FunctionSourceRole::TestAttribute,
             "parser: integration test attribute",
+        ),
+        (
+            "src/lib.rs",
+            "proof_harness_item",
+            FunctionSourceRole::ProofHarness,
+            "normalizer: exact kani::proof attribute, not a test and not production",
+        ),
+        (
+            "src/lib.rs",
+            "proof_harness_cfg_attr",
+            FunctionSourceRole::ProofHarness,
+            "normalizer: kani::proof introduced by cfg_attr",
+        ),
+        (
+            "src/lib.rs",
+            "proof_attribute_lookalike",
+            FunctionSourceRole::Production,
+            "normalizer: my::kani::proof is not the exact proof path",
+        ),
+        (
+            "src/lib.rs",
+            "test_attribute_beats_proof_attribute",
+            FunctionSourceRole::TestAttribute,
+            "normalizer: a test attribute keeps its existing refusal path",
+        ),
+        (
+            "tests/integration_fallback.rs",
+            "fallback_proof_harness",
+            FunctionSourceRole::ProofHarness,
+            "lexical fallback: same exact proof attribute authority",
         ),
     ];
 
@@ -1768,6 +1814,7 @@ fn binary_root_alias_requires_manifest_authority_and_automatic_targets() -> Resu
     ] {
         // Keep dependency binding valid so each negative case exercises
         // target authority rather than failing earlier on dependency lookup.
+        let label = format!("{manifest:?}");
         let manifest = manifest
             .map(|text| format!("{text}\n[dependencies]\nmy_macros={{path='../macros'}}\n"));
         let names = alias_test_names_with_manifest(
@@ -1779,7 +1826,7 @@ fn binary_root_alias_requires_manifest_authority_and_automatic_targets() -> Resu
         )?;
         assert!(
             names.is_empty(),
-            "unconfirmed binary root credited: {names:?}"
+            "unconfirmed binary root credited for manifest {label}: {names:?}"
         );
     }
     for manifest in [
@@ -1864,4 +1911,49 @@ fn syntax_adapter_does_not_make_cfg_attr_test_beside_ignore_a_test_fact() -> Res
     normalize_file_test_styles(&mut facts)?;
     assert_eq!(test_names(&facts), ["plain"]);
     Ok(())
+}
+
+#[test]
+fn proof_harness_attribute_paths_are_exact_and_never_tests() {
+    for attribute in [
+        "#[kani::proof]",
+        "#[::kani::proof]",
+        "#[kani :: proof]",
+        "#[kani::proof_for_contract(limit)]",
+        "#[cfg_attr(kani, kani::proof)]",
+        "#[cfg_attr(kani, kani::proof, kani::unwind(3))]",
+        "#[cfg_attr(kani, kani::unwind(3), kani::proof)]",
+    ] {
+        assert!(
+            attributes_define_proof_harness([attribute]),
+            "should be a proof harness: {attribute}"
+        );
+        assert!(
+            !attributes_define_test([attribute]),
+            "a proof harness is never a test: {attribute}"
+        );
+    }
+    for attribute in [
+        "#[my::kani::proof]",
+        "#[proof]",
+        "#[kani::proofs]",
+        "#[kani::unwind(3)]",
+        "#[kani::proof_for_contract_extra]",
+        "#[cfg_attr(kani, kani::unwind(3))]",
+        "#[cfg_attr(kani, doc = \"kani::proof\")]",
+        "#[cfg_attr(kani::proof, derive(Debug))]",
+        "#[cfg(kani)]",
+        "#[test]",
+    ] {
+        assert!(
+            !attributes_define_proof_harness([attribute]),
+            "should not be a proof harness: {attribute}"
+        );
+    }
+    assert!(
+        BUILT_IN_TEST_ATTRIBUTE_PATHS
+            .iter()
+            .all(|path| !PROOF_HARNESS_ATTRIBUTE_PATHS.contains(path)),
+        "proof-harness paths must stay out of the executable-test list"
+    );
 }

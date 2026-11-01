@@ -76,7 +76,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `call includes "msgs: 5"`
+  Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `call includes "msgs: 5"`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast probe:audit.py:python_preview:a2e6d4a7
   ripr context --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast --at probe:audit.py:python_preview:a2e6d4a7

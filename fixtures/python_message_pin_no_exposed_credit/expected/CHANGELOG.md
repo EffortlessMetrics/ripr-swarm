@@ -95,7 +95,7 @@ Updated:
 ## Pending — python_message_pin_no_exposed_credit (8)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
 
 Command:
 `cargo xtask goldens bless python_message_pin_no_exposed_credit --reason "..."`
@@ -106,6 +106,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — python_message_pin_no_exposed_credit (9)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless python_message_pin_no_exposed_credit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_message_pin_no_exposed_credit (10)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

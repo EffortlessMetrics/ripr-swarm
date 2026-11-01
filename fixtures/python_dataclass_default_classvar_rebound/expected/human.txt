@@ -22,12 +22,12 @@ Start here:
   Analyzer limit: Static limit `decorator_indirection`: owner `Invoice` is decorated with
     `dataclass`; syntax-first preview evidence does not resolve decorator-modified call behavior
   Related test: tests/test_models.py:4 test_total
-  Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -40,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_dataclass_default_classvar_rebound/input --diff <cwd>/fixtures/python_dataclass_default_classvar_rebound/diff.patch --mode fast probe:models.py:python_preview:ce25b095
   ripr context --root <cwd>/fixtures/python_dataclass_default_classvar_rebound/input --diff <cwd>/fixtures/python_dataclass_default_classvar_rebound/diff.patch --mode fast --at probe:models.py:python_preview:ce25b095
-  no repair start offered: this finding has no gap ID, so there is nothing to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

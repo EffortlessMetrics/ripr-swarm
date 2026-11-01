@@ -495,7 +495,7 @@ Updated:
 ## Pending — strong_boundary_oracle (22)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
 
 Command:
 `cargo xtask goldens bless strong_boundary_oracle --reason "..."`
@@ -505,6 +505,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — strong_boundary_oracle (23)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless strong_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — strong_boundary_oracle (24)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

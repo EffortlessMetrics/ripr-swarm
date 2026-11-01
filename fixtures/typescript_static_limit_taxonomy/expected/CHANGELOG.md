@@ -796,7 +796,7 @@ Updated:
 ## Pending — typescript_static_limit_taxonomy (31)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
 
 Command:
 `cargo xtask goldens bless typescript_static_limit_taxonomy --reason "..."`
@@ -806,6 +806,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — typescript_static_limit_taxonomy (32)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_static_limit_taxonomy --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_static_limit_taxonomy (33)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

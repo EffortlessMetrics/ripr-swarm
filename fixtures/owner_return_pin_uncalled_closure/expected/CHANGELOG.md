@@ -341,7 +341,7 @@ Updated:
 ## Pending — owner_return_pin_uncalled_closure (27)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
 
 Command:
 `cargo xtask goldens bless owner_return_pin_uncalled_closure --reason "..."`
@@ -352,6 +352,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — owner_return_pin_uncalled_closure (28)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless owner_return_pin_uncalled_closure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_uncalled_closure (29)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

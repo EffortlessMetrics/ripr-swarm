@@ -840,7 +840,7 @@ Updated:
 ## Pending — typescript_strong_oracle (34)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0088: related-test selection ties keep the first row, matching the check headline (#11228)
 
 Command:
 `cargo xtask goldens bless typescript_strong_oracle --reason "..."`
@@ -851,6 +851,32 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — typescript_strong_oracle (35)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless typescript_strong_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_strong_oracle (36)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_strong_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_strong_oracle (37)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

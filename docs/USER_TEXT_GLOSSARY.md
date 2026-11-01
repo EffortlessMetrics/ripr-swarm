@@ -68,6 +68,24 @@ binary and runs about 25 commands, so locally a change that touches nothing unde
 and its baseline scans the goldens only (`precommit`). Hosted CI (`ci-policy`,
 `check-pr`), `--full`, `--ripr` and `--ratchet` always run both halves.
 
+## Refusals name a next step
+
+Wording is not the only rule: every error, refusal and abstention says why and
+what to do next (a flag to pass, a command to run, a file to create). The
+`refusal_next_step` integration test enforces a floor:
+
+- a string literal feeding `CommandError`, `Err(..)`, `map_err(..)` or
+  `ok_or(_else)(..)` that names a failure but no action fails the test;
+- a table of real bad invocations of the built binary must exit with its
+  documented code and carry a next step on stderr.
+
+The cue is a clause that starts with an action (`pass ...`, `run ...`, `set
+...`), or a named command, flag or `--help`. It proves the message offers
+something to do, not that it is the right thing. Existing messages without a
+cue are listed per source file in `policy/refusal-next-step.d/`; fixing one
+means deleting its line (`RIPR_PRUNE_REFUSAL_BASELINE=1` drops fixed lines and
+never adds any). Tracking: #11539.
+
 ## Baseline ceilings
 
 `main` still contains some banned terms in default output. They are recorded by
@@ -121,10 +139,10 @@ most lines any single golden may hold).
   An unreadable base list fails under CI and is noted locally; a base with no
   matcher file pins nothing.
 - Limits to know when reviewing: the pin covers terms the base banned in
-  those four shapes. A PR that adds exemptions for other shapes (as
-  `--seam-id` and `probe:<id>` are exempted), edits the baseline, or changes
-  anything else about the gate is still visible only in the diff and needs
-  explicit reviewer attention. A renamed or copied golden that keeps banned
+  those four shapes, and the merge-base judgment covers the goldens only. A PR
+  that edits the baseline, the workflow step that runs the merge-base judgment,
+  or the live-output half is still visible only in the diff and needs explicit
+  reviewer attention. A renamed or copied golden that keeps banned
   lines counts as a new path; the reviewer's remedy is to reword those lines.
 - To restore the delta gate after an unreadable base, run
   `git fetch --deepen=200 origin main` (or `git fetch origin main`).
@@ -135,8 +153,18 @@ most lines any single golden may hold).
   (for example a `push` to `main`) has no PR delta, so there the per-file golden
   ceilings fail instead of warning. A breach there means a PR got past the
   gate.
-- Known gap, tracked in #11385: a base-built copy of the gate that judges the PR
-  tree with the unmodified matcher (it needs a tree-root override first).
+- Merge-base judgment (#11385). Hosted `pull_request` and `merge_group` runs
+  also build the merge-base's own xtask in a separate worktree and run it as
+  `cargo xtask check-user-text --tree <PR checkout>`. That binary scans the PR's
+  committed goldens with the matcher the PR could not have changed, and applies
+  the same per-file delta, so a weakened matcher, a new exemption or a changed
+  gate cannot qualify itself. `--tree` judges goldens only (the live half needs
+  a binary built from that tree) and does not combine with `--ratchet`, `--full`
+  or `--ripr`. A merge-base that predates `--tree` is skipped with a notice, so
+  the first PR after this lands is still covered by the matcher pin alone.
+- Push runs. A push to `main` runs the same Rust gates, including the full
+  check, so the per-file ceilings fail there. Superseded pushes are cancelled by
+  GitHub before they finish, so the backstop runs only for pushes that complete.
 - Ceilings only go down. After fixing wording, run
   `cargo xtask check-user-text --ratchet` to lower them; it never raises or
   adds a row, and it does not rewrite while any count is above its ceiling. A

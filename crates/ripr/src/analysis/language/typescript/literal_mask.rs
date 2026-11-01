@@ -1,6 +1,7 @@
 //! Parser-owned regex and JSX spans for the shared literal masker (#9936).
 
-use super::{Allocator, GetSpan, Parser, SourceType};
+use super::parse::parse_on_worker;
+use super::{GetSpan, Parser, SourceType};
 use oxc_ast::ast::{
     JSXAttributeItem, JSXAttributeValue, JSXClosingElement, JSXElement, JSXFragment,
     JSXOpeningElement, JSXText, RegExpLiteral,
@@ -8,6 +9,7 @@ use oxc_ast::ast::{
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::Span;
 use std::collections::BTreeSet;
+use std::path::Path;
 
 pub(super) struct Prepared {
     pub(super) code: String,
@@ -89,26 +91,38 @@ impl<'a> Visit<'a> for Plan {
 
 fn parse_plan(text: &str, source_type: SourceType, prefix: &str, suffix: &str) -> Option<Plan> {
     let source = format!("{prefix}{text}{suffix}");
-    let allocator = Allocator::default();
-    let parsed = Parser::new(&allocator, &source, source_type).parse();
-    if !parsed.errors.is_empty() {
-        return None;
-    }
-    let mut plan = Plan {
-        blank: vec![false; source.len()],
-        operand_ends: BTreeSet::new(),
-    };
-    plan.visit_program(&parsed.program);
-    let start = prefix.len();
-    let end = start + text.len();
-    Some(Plan {
-        blank: plan.blank[start..end].to_vec(),
-        operand_ends: plan
-            .operand_ends
-            .range(start..end)
-            .map(|at| at - start)
-            .collect(),
+    // Parse on the large-stack worker behind the nesting budget: this scan
+    // runs on the analysis thread, where a deep JSX or template tree
+    // overflowed the stack (hostile-input hardening). A refused or failed
+    // parse leaves the text unmodeled, like a syntax error.
+    let file = Path::new(if source_type.is_jsx() {
+        "literal_mask.tsx"
+    } else {
+        "literal_mask.ts"
+    });
+    let (start, text_len) = (prefix.len(), text.len());
+    parse_on_worker(file, &source, move |_, source, allocator| {
+        let parsed = Parser::new(allocator, source, source_type).parse();
+        if !parsed.errors.is_empty() {
+            return None;
+        }
+        let mut plan = Plan {
+            blank: vec![false; source.len()],
+            operand_ends: BTreeSet::new(),
+        };
+        plan.visit_program(&parsed.program);
+        let end = start + text_len;
+        Some(Plan {
+            blank: plan.blank[start..end].to_vec(),
+            operand_ends: plan
+                .operand_ends
+                .range(start..end)
+                .map(|at| at - start)
+                .collect(),
+        })
     })
+    .ok()
+    .flatten()
 }
 
 fn plan_for(text: &str, source_type: Option<SourceType>) -> Option<Plan> {

@@ -39,7 +39,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// `11`: each file records `<module>.<attr>` writes so a test-module
 /// constant another file rebinds is not credited (#11424). `10` entries
 /// lack that fact.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "11";
+/// `12`: each assertion records the outer callee of an independent nested
+/// call equality for per-finding exact reading (#9814). `11` entries lack it.
+/// `13`: each file records pytest collection-config facts for uncollected tests (#11527). `12` entries lack them.
+/// `14`: a nested function owner records whether its enclosing body calls it
+/// (`nested_called_by_parent`, #12141). `13` entries lack the fact.
+/// `15`: each file records its fixture-substitution scope (#11542). `14`
+/// entries lack it.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "15";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the
@@ -309,7 +316,7 @@ impl PythonFileFactEnvelope {
         if self.payload_digest.as_deref() == Some(expected.as_str()) {
             Ok(())
         } else {
-            Err("missing or mismatching semantic payload digest".to_owned())
+            Err("missing or mismatching semantic payload digest; delete the cache entry and rerun `ripr check` to rebuild it".to_owned())
         }
     }
 }

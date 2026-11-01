@@ -24,12 +24,12 @@ Start here:
     `%`-formatted message arguments or the `caplog` level filter, so it cannot tell whether the edit
     changes the logged text the test reads
   Related test: tests/test_audit.py:6 test_low_balance
-  Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -42,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_caplog_aliased_fixture_import/input --diff <cwd>/fixtures/python_caplog_aliased_fixture_import/diff.patch --mode fast probe:audit.py:python_preview:e21f54bb
   ripr context --root <cwd>/fixtures/python_caplog_aliased_fixture_import/input --diff <cwd>/fixtures/python_caplog_aliased_fixture_import/diff.patch --mode fast --at probe:audit.py:python_preview:e21f54bb
-  no repair start offered: this finding has no gap ID, so there is nothing to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

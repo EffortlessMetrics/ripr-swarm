@@ -1,0 +1,1 @@
+crates/ripr/tests/ripr_check_action.rs|curl|23|ci/ripr-check|#11659: a stand-in curl script is written into a temp bin directory; the Action's download path is exercised without any real network call.

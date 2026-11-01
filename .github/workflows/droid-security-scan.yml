@@ -9,6 +9,10 @@ concurrency:
   group: droid-security-scan-${{ github.repository }}
   cancel-in-progress: false
 
+# Job-level permissions below grant the writes; nothing is inherited.
+permissions:
+  contents: read
+
 jobs:
   droid-security-scan:
     runs-on:

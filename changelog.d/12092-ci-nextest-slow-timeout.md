@@ -1,0 +1,2 @@
+<!-- section: Internal / CI -->
+- The `ci` nextest profile now has a `slow-timeout`: a test running past two minutes prints a SLOW row naming it, and one running past twenty minutes fails as a TIMEOUT row. A hang that starts after the first twenty minutes of the 40-minute shard step is still named by its SLOW row but ends at the job cap. The twenty-minute figure is not measured against the slowest legitimate test (#12092).

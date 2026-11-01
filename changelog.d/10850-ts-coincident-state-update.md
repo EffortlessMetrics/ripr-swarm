@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- TypeScript preview: an exact assertion on a changed compound assignment to returned state (`this.total += amount` to `+= amount * 2`, then `return this.total`) no longer reads `exposed` when every observed call's literal input makes the old and new operand agree (`cart.add(0)` pinned to `0`). The finding reads `weakly_exposed`; a separating input such as `cart.add(5)` pinned to `10` stays `exposed`. Works for test-local, file-level and fixture receivers (#10850).

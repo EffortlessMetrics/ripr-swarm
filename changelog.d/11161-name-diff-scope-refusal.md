@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The PR job summary and `ripr review-comments --check-output` now name a producer refusal (for example `diff_scope_oversized`, with the producer's message and repair route) instead of showing `blocked` / `missing analysis_outcome`: `ripr reports ci-summary` opens First-run status with `#### PR analysis did not run`, and docs/CI.md gains a Large pull requests section. Gate semantics are unchanged — a refusal still fails a blocking gate closed (#11161).

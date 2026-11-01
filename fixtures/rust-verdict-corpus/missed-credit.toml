@@ -97,10 +97,6 @@ case = "hex-decode-slice-odd"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
-case = "idiom-fixture-builder-total"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
 case = "idiom-result-test-sum-accumulate"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -169,8 +165,24 @@ case = "loop-accumulator-bound-input"
 reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
 
 [[entry]]
-case = "method-hop-field-read-nonliteral"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+case = "macro-export-crate-call"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-crate-call. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-export-group-import"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-group-import. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-export-path-boundary"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-export-path-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-module-child-boundary"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-module-child-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
+
+[[entry]]
+case = "macro-module-import-boundary"
+reason = "Discriminated at runtime, abstained on purpose after #10046 (PR #10240): the owner is called by a bare name inside a `#[macro_export]` generator defined in another module, so the call has no placeable call identity at the definition site and the owner reads unresolved (infection_unknown) rather than credited; case macro-module-import-boundary. Delete this entry if macro-defined bare calls regain a resolvable identity."
 
 [[entry]]
 case = "method-hop-field-read-rebound"
@@ -197,6 +209,10 @@ case = "mined-debug-assert-only-oracle"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
+case = "mined-feature-v4-stamp-run-with-feature"
+reason = "Discriminated at runtime by `cargo test --features v4`, abstained on purpose: the test sits under the same unevaluated `cfg(feature = \"v4\")` gate as the owner, and which feature set a run enables is not known statically. Crediting it would also credit the default-features twin mined-feature-v7-stamp-default-features-run, whose test is never compiled (#9643). Delete this entry if a run's feature set becomes an analyzer input."
+
+[[entry]]
 case = "mined-hex-table-tested-row"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
@@ -207,6 +223,10 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "mined-snapshot-helper-document-separator"
 reason = "Tests discriminate the change but ripr abstains (#9619). Delete this entry when the row credits."
+
+[[entry]]
+case = "mined-snapshot-helper-negative-zero"
+reason = "Discriminated at runtime, abstained on purpose: the exact inline snapshot is compared through a local assert_data_eq!/snap_str! helper macro whose expansion ripr does not evaluate, so it names the macro limitation instead of a gap or a credit (#9644, RIPR-SPEC-0120). Delete this entry when the helper macro is evaluated and the row credits."
 
 [[entry]]
 case = "mined-token-table-pinned-range"
@@ -230,10 +250,6 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 
 [[entry]]
 case = "old-ratio-assert-only-owner"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
-
-[[entry]]
-case = "old-title-through-format-macro"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
@@ -303,6 +319,14 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "semver-tilde-pre-ge"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
+
+[[entry]]
+case = "serde-derive-rename-field-upper"
+reason = "Tests discriminate the change; the row reads limited (RIPR-SPEC-0352) because serde_core mounts generated code through an unresolved include!, so macro trust cannot be established. On main it read credited; the identity gate alone would read a false gap."
+
+[[entry]]
+case = "serde-derive-rename-variant-lower"
+reason = "Tests discriminate the change; the row reads limited (RIPR-SPEC-0352) because serde_core mounts generated code through an unresolved include!, so macro trust cannot be established. On main it read credited; the identity gate alone would read a false gap."
 
 [[entry]]
 case = "serde-format-u8-hundreds"
@@ -607,10 +631,6 @@ reason = "Tests discriminate the change but ripr abstains; accepted baseline car
 [[entry]]
 case = "strsim-sorensen-dice-equal"
 reason = "Compares a local rebound from the parameter (`let a = a.chars()..collect()`), so the name-only credit is withheld and the row abstains; fail-closed by design (#9197)."
-
-[[entry]]
-case = "tokens-add-fee-integration-api"
-reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 
 [[entry]]
 case = "tokens-base-six-hop-chain"

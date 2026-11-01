@@ -585,7 +585,7 @@ Updated:
 ## Pending — all_no_path_disclosure (32)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
 
 Command:
 `cargo xtask goldens bless all_no_path_disclosure --reason "..."`
@@ -595,6 +595,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — all_no_path_disclosure (33)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless all_no_path_disclosure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — all_no_path_disclosure (34)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

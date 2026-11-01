@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- The Python foreign-write index counts each write set from one parallel sort instead of merging per-file maps, records word ownership in a hash map, and gives the reflective files of one import component a single shared reach instead of a copy each. Against main ecdb8cbe, the warm check's wall median goes from 1.82–1.89 s to 1.59–1.67 s and peak RSS from 305 to 281 MiB on Django (5c13b5a), and from 1.85–1.96 s to 1.60–1.66 s and 439 to 412 MiB on pandas (ecdb4258). Findings are byte-identical (#10914).

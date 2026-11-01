@@ -25,15 +25,15 @@ Start here:
     a repair packet
   Related test: tests/owners.test.ts:7 cart total smoke (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: replace or augment the smoke-only assertion with an
-    exact-value assertion for missing discriminator `return value == this.items.length + 1`; no
+    exact-value assertion for the missing check `return value == this.items.length + 1`; no
     actionable repair packet is emitted until verify, receipt, and edit-boundary fields are
     available
-  Evidence: reach yes · infection unknown · propagation unknown · observation weak · assertion weak
+  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -46,11 +46,11 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_owner_kinds/input --diff <cwd>/fixtures/typescript_owner_kinds/diff.patch --mode fast probe:src_owners.ts:typescript_preview:bd728bcd
   ripr context --root <cwd>/fixtures/typescript_owner_kinds/input --diff <cwd>/fixtures/typescript_owner_kinds/diff.patch --mode fast --at probe:src_owners.ts:typescript_preview:bd728bcd
-  no repair start offered: this finding has no gap ID, so there is nothing to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (TypeScript preview: 3).
-    - src/owners.ts:2 (exposed); kind: return_value; reason: Related test reaches `formatPrice` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+    - src/owners.ts:2 (exposed); kind: return_value; reason: Related test reaches `formatPrice` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
     - src/owners.ts:11 (weak); kind: return_value; reason: Related test reaches `build` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a repair…
     - src/owners.ts:15 (weak); kind: return_value; reason: Related test reaches `DEFAULT_RATE` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or…
   Hidden classes:

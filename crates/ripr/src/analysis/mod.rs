@@ -14,12 +14,25 @@ pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
 };
 pub(crate) mod harness_projection;
+mod input_facts;
+#[cfg(test)]
+pub(crate) use input_facts::PublishedInputFacts;
+pub(crate) use input_facts::{
+    CapturedInputFacts, InputFactsSlot, InputSource,
+    publish_input_source as publish_input_source_fact,
+    publish_loaded_diff as publish_loaded_input_facts,
+    publish_scoped_intake as publish_scoped_intake_facts, published as published_input_facts,
+    with_input_facts_capture,
+};
 pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
+// Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
+// consumers outside `analysis` ask it instead of matching attribute text.
+pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
@@ -56,6 +69,11 @@ pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
 pub(crate) use diff_scope_filter::DiffIntake;
 pub use diff_scope_filter::DiffScopeFilter;
 
+/// Test-only construction handle for the deadline-refusal input-facts
+/// publisher (RIPR-SPEC-0241 #10796); production publishers run inside the
+/// analysis tree and name the type through inference.
+#[cfg(test)]
+pub(crate) use diff::LoadedDiff;
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
@@ -143,6 +161,7 @@ pub(crate) use seam_inventory::{
     seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
     workspace_cache_key_at_with_config,
 };
+pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
     owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
@@ -876,8 +895,19 @@ impl PreviewLanguageAdvisory {
     /// [`crate::domain::LanguageId::unavailable_adapter_recovery`] so every
     /// renderer tells the same story.
     pub(crate) fn unavailable_adapter_recovery(&self) -> Option<String> {
+        use crate::domain::language_availability::{
+            LanguageAvailabilityInput, resolve_language_availability, unavailable_recovery,
+        };
         let language = crate::domain::LanguageId::from_wire(&self.language)?;
-        (!self.enabled && !language.is_available()).then(|| language.unavailable_adapter_recovery())
+        if self.enabled {
+            return None;
+        }
+        let report = resolve_language_availability(&LanguageAvailabilityInput {
+            project_detected: true,
+            file_count: self.file_count,
+            ..LanguageAvailabilityInput::for_language(language)
+        });
+        unavailable_recovery(&report).map(str::to_owned)
     }
 
     /// Single-line `why` for a not-enabled advisory, shared by the JSON check

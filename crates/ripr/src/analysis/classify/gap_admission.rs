@@ -65,6 +65,38 @@ pub(in crate::analysis) fn withhold_unsupported_gap(finding: &mut Finding) -> bo
     true
 }
 
+/// #11767: a TypeScript finding that says no test reaches the change rests on
+/// the workspace walk having read the tests. When discovery stopped at its
+/// a limit (the candidate-source cap or the total directory-entry backstop),
+/// the missing test may be one the walk never reached, so the finding is
+/// withheld as `static_unknown` under a limit that names both bounds.
+/// Findings that have a related test, and findings another limit already
+/// withheld, are untouched. Returns `true` when rewritten.
+pub(in crate::analysis) fn withhold_truncated_discovery_gap(
+    finding: &mut Finding,
+    source_cap: usize,
+    entry_backstop: usize,
+    cap_env: &str,
+) -> bool {
+    if finding.class != ExposureClass::NoStaticPath || finding.static_limit_kind.is_some() {
+        return false;
+    }
+    let first_unresolved_edge = format!(
+        "whether a test past the workspace discovery limits ({source_cap} TypeScript/JavaScript source files, {entry_backstop} directory entries) reaches the changed code"
+    );
+    let next_step = format!(
+        "Workspace discovery stopped at its limit of {source_cap} TypeScript/JavaScript source files or {entry_backstop} directory entries in total, so tests past it were never read and ripr cannot say no test reaches this change. Raise {cap_env} (and RIPR_TS_MAX_WORKSPACE_READ_BYTES if the run then reports a read budget), or run ripr from a narrower root, then check again."
+    );
+    withhold_gap(
+        finding,
+        StaticLimitKind::TypescriptWorkspaceDiscoveryTruncated,
+        &first_unresolved_edge,
+        next_step,
+        &[],
+    );
+    true
+}
+
 /// #5431: a `weakly_exposed` gap asks for a stronger assertion, but a refused
 /// `assert_eq!` on the owner may already be that assertion. Withhold the gap
 /// when the refusal rests on an analyzer limit. Returns `true` when the

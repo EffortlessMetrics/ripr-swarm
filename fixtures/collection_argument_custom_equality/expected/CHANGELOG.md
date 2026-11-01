@@ -249,7 +249,7 @@ Updated:
 ## Pending — collection_argument_custom_equality (19)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
 
 Command:
 `cargo xtask goldens bless collection_argument_custom_equality --reason "..."`
@@ -262,7 +262,7 @@ Updated:
 ## Pending — collection_argument_custom_equality (20)
 
 Reason:
-RIPR-SPEC-0122: explain missing input or assertion honestly
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
 `cargo xtask goldens bless collection_argument_custom_equality --reason "..."`
@@ -273,6 +273,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — collection_argument_custom_equality (21)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless collection_argument_custom_equality --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — collection_argument_custom_equality (22)
 
 Reason:
 RIPR-SPEC-0122: render the missing check in plain language

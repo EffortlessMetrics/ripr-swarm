@@ -6,6 +6,7 @@
 //! consumes native selection and complete qualification acceptance, never
 //! changes either caller checkout, and never creates the source join.
 
+use super::path_inventory::{PathInventory, path_inventory};
 use super::release::candidate_harness::{AdmittedHandoff, HandoffInput, HandoffReceipt};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -16,6 +17,9 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const SCHEMA: &str = "ripr.source_promotion_preflight.v2";
+const CHANGED_SOURCE: &str = "git diff --name-only -z MERGE_BASE..SOURCE_PARENT";
+const CHANGED_PARENT: &str = "git diff --name-only -z MERGE_BASE..SWARM_PARENT";
+const SWARM_ONLY: &str = "git diff --name-only -z MERGE_BASE..SWARM_PARENT, minus paths in git diff --name-only -z MERGE_BASE..SOURCE_PARENT";
 const REPORT_JSON: &str = "source-promotion-preflight.json";
 const REPORT_MD: &str = "source-promotion-preflight.md";
 const DEFAULT_OUT: &str = "target/ripr/source-promotion";
@@ -58,18 +62,6 @@ pub(crate) struct CommitRange {
     pub(crate) first_parent_ordered_sha256: String,
     all_reachable_ordered_recipe: String,
     first_parent_ordered_recipe: String,
-}
-
-/// Count and digest of one raw Git path-record inventory (#4006 item 6).
-///
-/// The digest is over NUL-terminated decoded path bytes, not LF-joined text:
-/// a Git path may contain a newline but never a NUL, so the record grammar
-/// stays unambiguous for names such as `a\nb`.
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct PathInventory {
-    pub(crate) path_record_count: usize,
-    pub(crate) path_record_sha256: String,
-    path_record_recipe: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -384,9 +376,9 @@ fn build_receipt(options: &Options) -> Result<GeometryReceipt, String> {
         .collect::<Vec<_>>();
     swarm_authority_resolution_candidates.sort();
     let path_inventories = PathInventories {
-        source_changed: path_inventory(&source_paths),
-        swarm_changed: path_inventory(&swarm_paths),
-        swarm_only: path_inventory(&swarm_only_paths),
+        source_changed: path_inventory(&source_paths, CHANGED_SOURCE),
+        swarm_changed: path_inventory(&swarm_paths, CHANGED_PARENT),
+        swarm_only: path_inventory(&swarm_only_paths, SWARM_ONLY),
     };
     Ok(GeometryReceipt {
         schema: SCHEMA.to_string(),
@@ -701,23 +693,6 @@ fn digest_lines(lines: &[String]) -> String {
         hasher.update(b"\n");
     }
     format!("sha256:{:x}", hasher.finalize())
-}
-
-const PATH_RECORD_RECIPE: &str = "git diff --name-only -z MERGE_BASE..PARENT; decoded UTF-8 paths sorted bytewise and deduplicated; each path followed by one NUL byte; SHA-256";
-
-/// Count and digest a sorted, deduplicated decoded path inventory. Omitting,
-/// adding or splitting one path changes the digest and count.
-fn path_inventory(paths: &[String]) -> PathInventory {
-    let mut hasher = Sha256::new();
-    for path in paths {
-        hasher.update(path.as_bytes());
-        hasher.update(b"\0");
-    }
-    PathInventory {
-        path_record_count: paths.len(),
-        path_record_sha256: format!("sha256:{:x}", hasher.finalize()),
-        path_record_recipe: PATH_RECORD_RECIPE.to_string(),
-    }
 }
 
 fn changed_paths(repo: &Path, base: &str, head: &str) -> Result<Vec<String>, String> {
@@ -1411,8 +1386,8 @@ mod tests {
     fn path_inventory_digest_is_unambiguous_for_embedded_newlines() {
         // LF-joined digests collide on these two inventories; NUL-terminated
         // records must not.
-        let joined = path_inventory(&["a\nb".to_string(), "c".to_string()]);
-        let split = path_inventory(&["a".to_string(), "b\nc".to_string()]);
+        let joined = path_inventory(&["a\nb".to_string(), "c".to_string()], "test");
+        let split = path_inventory(&["a".to_string(), "b\nc".to_string()], "test");
         assert_eq!(joined.path_record_count, split.path_record_count);
         assert_ne!(joined.path_record_sha256, split.path_record_sha256);
         assert_eq!(
@@ -1424,11 +1399,11 @@ mod tests {
 
     #[test]
     fn path_inventory_omission_changes_count_and_digest() {
-        let full = path_inventory(&["a".to_string(), "b".to_string()]);
-        let short = path_inventory(&["a".to_string()]);
+        let full = path_inventory(&["a".to_string(), "b".to_string()], "test");
+        let short = path_inventory(&["a".to_string()], "test");
         assert_ne!(full.path_record_count, short.path_record_count);
         assert_ne!(full.path_record_sha256, short.path_record_sha256);
-        let empty = path_inventory(&[]);
+        let empty = path_inventory(&[], "test");
         assert_eq!(empty.path_record_count, 0);
         assert_ne!(empty.path_record_sha256, short.path_record_sha256);
     }
@@ -1447,18 +1422,29 @@ mod tests {
         write_repo_file(&repo, "base.txt", "base\n")?;
         fixture_git(&repo, &["add", "."])?;
         fixture_git(&repo, &["commit", "--no-gpg-sign", "-m", "initial"])?;
-        write_repo_file(&repo, "a\nb", "one\n")?;
-        write_repo_file(&repo, "c", "two\n")?;
-        fixture_git(&repo, &["add", "-A"])?;
-        fixture_git(&repo, &["commit", "--no-gpg-sign", "-m", "newline"])?;
-        let paths = changed_paths(&repo, "HEAD~1", "HEAD");
-        fs::remove_dir_all(&repo).map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
-        let paths = paths?;
+        let paths = if cfg!(windows) {
+            // Windows git refuses a newline in a tracked path (index and
+            // checkout both reject it), so the end-to-end read from real git
+            // runs on Unix hosts; here the inventory contract is checked on
+            // the same record list.
+            fs::remove_dir_all(&repo)
+                .map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+            vec!["a\nb".to_string(), "c".to_string()]
+        } else {
+            write_repo_file(&repo, "a\nb", "one\n")?;
+            write_repo_file(&repo, "c", "two\n")?;
+            fixture_git(&repo, &["add", "-A"])?;
+            fixture_git(&repo, &["commit", "--no-gpg-sign", "-m", "newline"])?;
+            let paths = changed_paths(&repo, "HEAD~1", "HEAD");
+            fs::remove_dir_all(&repo)
+                .map_err(|err| format!("cleanup {}: {err}", repo.display()))?;
+            paths?
+        };
         if paths != vec!["a\nb".to_string(), "c".to_string()] {
             return Err(format!("newline name was split or rewritten: {paths:?}"));
         }
-        let inventory = path_inventory(&paths);
-        let split = path_inventory(&["a".to_string(), "b\nc".to_string()]);
+        let inventory = path_inventory(&paths, "test");
+        let split = path_inventory(&["a".to_string(), "b\nc".to_string()], "test");
         if inventory.path_record_count != 2
             || inventory.path_record_sha256 == split.path_record_sha256
         {

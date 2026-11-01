@@ -24,15 +24,15 @@ Start here:
     `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`)
     assertion or a `toThrow` form with an exact payload (string, object, or class reference)
   Related test: tests/lib.test.ts:3 price (assertion too weak to tell the old behavior from the new)
-  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
-    discriminator `return value == amount - 20`; no actionable repair packet is emitted until
-    verify, receipt, and edit-boundary fields are available
-  Evidence: reach yes · infection unknown · propagation unknown · observation weak · assertion weak
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
+    check `return value == amount - 20`; no actionable repair packet is emitted until verify,
+    receipt, and edit-boundary fields are available
+  Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;

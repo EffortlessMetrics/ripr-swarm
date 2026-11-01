@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-testexception-interest-lives-ok.json",
-    "sha256": "69ec316e1d7858b6995dc0d9d6c7eafbd7b4c98cdc679171187393fec73adf31",
+    "sha256": "1261184cdd4b81856c490b13f3b25f19d54b503cce07ac58f28d80e9016e2ff4",
     "provenance": "producer"
   }
 }

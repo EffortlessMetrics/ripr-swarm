@@ -22,7 +22,24 @@ fn strip_check_json_canonical_next_action(bytes: &[u8]) -> Vec<u8> {
         stripped.pop();
     }
     stripped.push_str(&rest[end..]);
-    stripped.into_bytes()
+    strip_language_completeness_member(&stripped).into_bytes()
+}
+
+/// The per-language completeness projection (#11272) is also additive to these
+/// historical captures. After the canonical next action is removed it is the
+/// last member: one compact line that follows the findings array's own newline.
+fn strip_language_completeness_member(value: &str) -> String {
+    const MARKER: &str = ",\n  \"language_completeness\": ";
+    let Some(start) = value.rfind(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let Some(end) = rest.find('\n') else {
+        return value.to_string();
+    };
+    let head = &value[..start];
+    let head = head.strip_suffix('\n').unwrap_or(head);
+    format!("{head}{}", &rest[end..])
 }
 
 // Independent literal oracle for the current presentation contract (#9373).
@@ -339,16 +356,10 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
             let digits = rest.chars().take_while(char::is_ascii_digit).count();
             let after = &rest[digits..];
             digits > 0
-                && [
-                    " seam",
-                    " seams",
-                    " repairable spot",
-                    " repairable spots",
-                    " spot",
-                    " spots",
-                ]
-                .iter()
-                .any(|noun| after.starts_with(&format!("{noun}{COUNTED_REST}")))
+                && (after.starts_with(&format!(" seam{COUNTED_REST}"))
+                    || after.starts_with(&format!(" seams{COUNTED_REST}"))
+                    || after.starts_with(&format!(" spot{COUNTED_REST}"))
+                    || after.starts_with(&format!(" spots{COUNTED_REST}")))
         })
     };
     const OLD_NOT_READY: &str =

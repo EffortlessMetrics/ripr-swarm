@@ -19,16 +19,16 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:src/labels.py:labels:return_value:return_value:[1_2]
   Changed behavior: return [1, 2]
-  Assertion (observed, advisory): Related Python test reaches `labels` with an `exact_value` oracle.
-    Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  Check (observed, advisory): Related Python test reaches `labels` with an `exact_value` oracle.
+    Static evidence suggests the changed behavior is observed under an exact-value check
   Related test: tests/test_labels.py:6 test_labels
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;

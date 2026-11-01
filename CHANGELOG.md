@@ -336,21 +336,8 @@ are scoped or reviewed.
   and `docs/IMPLEMENTATION_PLAN.md` (#3817)
   ([#3830](https://github.com/EffortlessMetrics/ripr-swarm/issues/3830)).
 
-- `cargo xtask cache report` / `gc` honor `RIPR_CACHE_DIR` instead of always
-  scanning `target/ripr/cache`. Relocated roots must be absolute, must not
-  traverse `..`, and must look like a ripr cache before any walk or delete.
-  `ripr cache status` prints a cleanup hint that exports the same
-  `RIPR_CACHE_DIR` the status process used
-  ([#3808](https://github.com/EffortlessMetrics/ripr-swarm/issues/3808)).
 
-- `policy/clippy-exceptions.toml` and `docs/CLIPPY_POLICY.md` no longer say
-  the exceptions ledger is empty by default. The commented example no
-  longer reuses a real id or a past `expires` date
-  ([#3820](https://github.com/EffortlessMetrics/ripr-swarm/issues/3820)).
 
-- `policy/clippy-lints.toml` no longer says planned lints wait for MSRV
-  and a matching xtask gate. The values are not verified available-since
-  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
 
 - Live entry docs no longer name the deleted `.ripr/goals/active.toml` file as
   current selection authority. `docs/IMPLEMENTATION_PLAN.md`,
@@ -361,19 +348,7 @@ are scoped or reviewed.
   tracking model
   ([#3780](https://github.com/EffortlessMetrics/ripr-swarm/issues/3780)).
 
-- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask
-  check-allow-attributes` matches `policy/clippy-exceptions.toml`. That
-  gate still counts source suppressions against `.ripr/allow-attributes.txt`
-  only; the TOML receipts remain advisory until a follow-up wires them
-  ([#3800](https://github.com/EffortlessMetrics/ripr-swarm/issues/3800)).
 
-- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
-  consumes `policy/clippy-debt.toml`; the gate reads it since
-  [#3833](https://github.com/EffortlessMetrics/ripr-swarm/issues/3833).
-  `clippy::let_underscore_must_use`
-  is now a real `[[debt]]` row (`clippy-debt-0001`, target 2027-03-31)
-  instead of a commented example whose target had already passed
-  ([#3782](https://github.com/EffortlessMetrics/ripr-swarm/issues/3782)).
 
 - Reviewer-facing architecture copies in `docs/ENGINEERING.md` and
   `.factory/skills/review-guidelines/SKILL.md` now name `agent`, `config`,
@@ -386,16 +361,6 @@ are scoped or reviewed.
   the required module tokens in `AGENTS.md`, `CLAUDE.md`, and
   `docs/ARCHITECTURE.md` so the `#1943` drift class cannot recur silently
   ([#3774](https://github.com/EffortlessMetrics/ripr-swarm/issues/3774)).
-- `AGENTS.md` local validation now leads with `cargo xtask precommit` and
-  names `ci-full` as the complete pass. The 40-command block is labeled
-  targeted-rerun inventory, not sequential required work
-  ([#3775](https://github.com/EffortlessMetrics/ripr-swarm/issues/3775)).
-- `docs/IMPLEMENTATION_PLAN.md` Required Gates now leads with
-  `cargo xtask precommit` and names `ci-full` as the complete local pass.
-  The cargo command block is labeled targeted-rerun inventory, matching
-  `AGENTS.md` (#3775). Extension compile/package remains required for
-  `editors/vscode` changes; neither `precommit` nor `ci-full` covers it
-  ([#3817](https://github.com/EffortlessMetrics/ripr-swarm/issues/3817)).
 - `docs/handoffs/README.md` labels retained campaign closeouts as historical.
   `docs/agent-context/repo-map.md` no longer names the retired active-goal
   manifest as a live selector
@@ -489,9 +454,6 @@ are scoped or reviewed.
   `language_adapter_unavailable` and `language_scope_unsupported` limitations
   name JavaScript files and the TypeScript/JavaScript adapter when JS files
   are present. TypeScript-only and other-language texts are unchanged (#4908).
-- `cargo xtask check-file-policy` reuses successful invocation-local Cargo
-  preparation across runtime test filters while preserving distinct native
-  listings and every selector observation (#5073).
 - Reuse identical successful test-listing argv within one file-policy invocation,
   while retaining each ledger line's validation and host applicability disclosure (#5090).
 - Local gate reports retain bounded child-command argv, native outcomes, elapsed observations and available Cargo progress counts without changing gate selection or granting compilation or cache-reuse authority (#5090).
@@ -609,21 +571,6 @@ are scoped or reviewed.
   `format!` temporaries, and string escaping reuses the buffer. Median warm
   rerun on the 10k-seam perf target drops from 2.53 s to 2.05 s (-19%), with
   the seam prerender span down 35%. Output bytes are unchanged (#6898).
-- `cargo xtask release-readiness` adds a required `init-pin-version` check on
-  `LATEST_RELEASED_VERSION`, the version `ripr init --ci github` pins. At the
-  release commit (CHANGELOG.md has the version's heading) it fails until the
-  constant equals the release version. Before the cut a lagging constant only
-  warns, and one already at or past the version fails. A release candidate
-  fails unless the constant names a release older than its stable target
-  (#6921).
-- `cargo xtask first-run` reads each verdict against the pinned crate's own
-  tests: every case records the tests that fail with its edit applied, and the
-  report marks `reachable_unrevealed` or `no_static_path` on a caught edit as a
-  `false gap`, `weakly_exposed` there as understating the tests, and an unknown
-  as `unresolved`. On the pinned crates, 0.10.0's `reachable_unrevealed`
-  (semver) is a false gap and its `weakly_exposed` (bytesize) understates the
-  tests; 0.11's `infection_unknown` on all three is unresolved, not a
-  regression (#6922).
 - `ripr doctor`'s "Safe next action" line family (missing root, invalid
   config, failed prerequisites, runnable first command) is now selected by
   the canonical next-action decision instead of two duplicated state
@@ -778,7 +725,6 @@ are scoped or reviewed.
   was not graded against the changed probe, now reads `uses an unclassified
   oracle, not graded against this probe` instead of `uses unknown unknown
   oracle`; a row with no selected assertion reads `uses no oracle` (#8388).
-- `cargo xtask precommit` now runs `goldens check` when the diff touches output-surface code or fixture goldens, so stale `human.txt`/`check.json` goldens fail locally instead of turning main red. Other diffs skip it, and fixtures that only lack prepared dependencies are reported as an environment gap rather than a pass or drift (#8421).
 - With no analysis scope, `ripr check` human triage and note, the JSON `why`,
   the GitHub warning and the default-base failure now name the same pair: `ripr
   check --base BASE` for a diff and `ripr pilot --root .` for whole-repository
@@ -886,10 +832,6 @@ are scoped or reviewed.
   refused and now runs in 2.5 s cold and 1.7 s warm at 141 MB.
   The editor sidecar uses the same limits, so LSP refreshes on 1,200 to
   10,000-file packages now produce diagnostics instead of a refusal (#6629).
-- `cargo xtask dx-scoreboard` compares a mutation spot-check rate only against
-  a baseline measured over the same repositories, revisions, cargo-mutants
-  runs and mutant timeout, and names both populations when it refuses. A run
-  with an unrecorded cargo-mutants version is never compared (#6311).
 - Performance (`ripr pilot`): the evidence context builds its import and owner-name
   tables once and derives its three target-affinity helper tables from one
   pass, instead of rescanning every source's `use` statements up to four
@@ -947,14 +889,6 @@ are scoped or reviewed.
   source for each owner and invoked macro name. Cold pilot on
   rust-analyzer takes 14.3s instead of 22.5s, with byte-identical output
   (#6339).
-- `cargo xtask mutation-spot-check` now writes `ripr-mutation-spot-check-v2`.
-  It scores only `canonical_precise` records: operator mutants that
-  `ripr calibrate cargo-mutants` joined by `seam_id` or span containment to a
-  predicate or return seam. Every other record carries a named exclusion
-  (`file_line_only`, `ambiguous_span_overlap`, `unmatched_<reason>`,
-  `unsupported_genre`, ...). The v1 operator-text match survives only as a
-  diagnostic. On atuin `90f590b9`, 7 of 27 mutants score instead of 1. The DX
-  scoreboard reads v2 and refuses v1 receipts (#5487).
 - Keep the published rendered-help test target portable in an extracted Cargo
   source package. Move live repository-guide audits into unpublished `xtask`,
   retain shared flag validation, and check the real archive with a missing-helper
@@ -1059,8 +993,6 @@ are scoped or reviewed.
 - The first-run walk now records each case's `verdict_reading` and the dx-scoreboard counts the crates whose verdict is decisive and agrees with what the tests catch as `first_run.decisive_verdicts` (higher is better, target 2 of 3, any drop regresses). An `*_unknown` verdict never counts (#9276).
 - A boundary compared against a local chosen by a flag (`let unit = if si { KIB } else { KB };`) now resolves when a related test passes both the flag and the compared value as literals: `exposed` on the boundary input, a weak gap when the inputs sit on the other arm's boundary, and still `infection_unknown` when the compared argument is not a plain integer. Six authored corpus cases pin the outcomes, including a flag rebound or scoped away before the local reads it and a shadowing local const, which stay unresolved (#9276).
 - An unresolved boundary now says why and what would settle it: when a compared operand is a local or computed value the message ends with the input that would let ripr decide (literal test inputs on each side of the boundary), the opaque-input fallback says a test input exactly on the boundary would settle it if an input drives the value, and when neither side of a plain comparison is a literal or readable constant the message names both operands (`val > surrogate_start`) instead of reporting that no literal boundary was visible (#9276).
-- A helper chain can now cross a receiver call on a typed parameter (`b.to_string_as(si)` into a unique inherent `&self` method) and read a tuple-struct field of the receiver (`self.0`) from a test argument written as `Type(<literals>)` or a `const fn` constructor over literals and same-file constants, so the boundary row is read (infection `yes`) instead of `infection_unknown`; the verdict abstains at propagation because the test helper's assertion is not paired with the owner. A receiver that is not a typed parameter, is rebound, or is built any other way keeps the earlier stop (#9329).
-- A helper chain whose callee has several direct callers now binds through the one caller a test reaches instead of stopping at "N callers"; it still declines when no caller or two callers are reached, when a test calls the callee directly, or when there are more than eight callers. A caller that only makes receiver calls (`x.name()`) no longer counts as a caller of a free function (#9329).
 - Sharded classified-cache publication writes shards with up to four workers
   instead of one at a time. On a cold pilot of this repository the cache store
   phase measured 25.5 s before and 17.0 s after (one run each, 4-core
@@ -1155,7 +1087,6 @@ are scoped or reviewed.
 - Python diffs that change many files no longer rebuild the whole workspace's write sets once per changed file. The module-value index counts the sources behind each write once and subtracts the excluded file. On Django 5c13b5a with a 20-commit diff (138 changed `.py` files), a release build at b6ec552 took 16 s where main at 51c542e took 86 to 93 s, and the two JSON reports were byte-identical (#10857).
 - The DX scoreboard pins `destr-typescript`, a small TypeScript library edit that completes under `--mode draft`, as another TypeScript row (#10871).
 - A partial-scope result now names, beside the smallest budgets that admit the next file, the budget that selects the whole diff whenever the analysis-cost limits and the index guard allow it, so one re-run can complete. On a 20-commit Django diff the hint read "at least 1015", which stayed partial; it now reads "at least 1015 (1041 to select the whole diff)", and 1041 completes (#10894).
-- `cargo xtask dx-scoreboard --gate` honours per-repository `ceilings` in `benchmarks/dx_scoreboard/scoreboards.toml`: a sample above its ceiling, a ceilinged row that ran without a value, or a row the run selected with no sample of its ceilinged metric fails the gate whatever the baseline holds, including a baseline from another runner class or none. The `pandas-python` and `django-python` rows carry a 2 s warm-check time ceiling and a 512 MiB warm-check peak-memory ceiling (#10914).
 - Python: the sink-alignment index (the test-name lookup plus the owner's import aliases across every test) is built once per changed owner per run instead of once per changed line. Measured warm on 4 cores against main 387f96eb, with byte-identical output: pandas ecdb4258 went from 4.0–4.4 s to 3.2–3.5 s; Django 5c13b5a is unchanged at 2.5–2.9 s (#10914).
 - Python fact-store envelopes intern the module-level rebinding lists, owner foreign writes and module objects that every test or owner of a file repeated (schema 8). On pandas at ecdb4258 the warm check's peak RSS falls from 500 to 443 MiB and the envelopes from 142 to 125 MB, with byte-identical findings (#10914).
 - The Python foreign-write index counts each write set from one parallel sort instead of merging per-file maps, records word ownership in a hash map, and gives the reflective files of one import component a single shared reach instead of a copy each. Against main ecdb8cbe, the warm check's wall median goes from 1.82–1.89 s to 1.59–1.67 s and peak RSS from 305 to 281 MiB on Django (5c13b5a), and from 1.85–1.96 s to 1.60–1.66 s and 439 to 412 MiB on pandas (ecdb4258). Findings are byte-identical (#10914).
@@ -1200,7 +1131,7 @@ are scoped or reviewed.
   `summary`, `canonical_next_action` and
   `ripr context --at <finding-id> --json --quiet` as the lean way to read the
   large report (#11139).
-- `ripr check` no longer re-runs the rust-analyzer syntax validation pass (`Parse::errors`) every time it asks whether an already-parsed Rust file is clean: the error count is computed once per distinct parse and kept with the per-thread parse memo, so memo hits and the file-fact summarizer reuse it. Findings and JSON output are unchanged (#11205).
+- `ripr check` no longer re-runs the rust-analyzer syntax validation pass (`Parse::errors`) every time it asks whether an already-parsed Rust file is clean: the error count is computed once per distinct parse and kept with the per-thread parse memo, so memo hits and the file-fact summarizer reuse it. Findings and JSON output are unchanged (#10925).
 - MCP: an empty committed `ripr_refresh` now carries `empty_scope_hint` (why, and
   the `base`/`source` to pass); not-ready repair cards and `ripr_prepare_repair`
   refusals carry `finding_guidance` (`missing`, `recommended_next_step`); and a
@@ -1333,8 +1264,15 @@ are scoped or reviewed.
   without cycling. Python keeps its terminal reason. Static evidence only
   (#9103, RIPR-SPEC-0210).
 - Numbered the acceptance examples of RIPR-SPEC-0168, 0171 and 0172 and mapped them in the Rust verdict corpus: four new runtime-labeled cases (loop body in `unsafe {}`, custom `[lib] path` dependent, import with the call only in a comment and string, nested-package owner), four existing cases cited, five examples waived with reasons; the custom `[lib] path` row reads as a gap and is tracked as known false (#10101).
+- Python reach admission no longer copies the whole needle set for every pytest fixture host it scans. On Home Assistant (about 20,000 Python files, 3-file diff) a warm draft check drops from 17.95 s to 3.50 s wall and from 65.9 s to 8.6 s CPU at the same 487 MiB peak, with byte-identical findings (#11348).
+- The source-promotion preflight receipt now retains `path_record_count` and a NUL-terminated `path_record_sha256` for the source-changed, swarm-changed and swarm-only path inventories, so an omitted, added or newline-split path changes the retained denominator (#4006).
+- Reach widening looks up callers from a per-index inverted call-name map
+  instead of scanning every function and test at each depth. Closures and
+  findings are unchanged (#9212).
 
 ### Added
+
+- **Perl is an opt-in, advisory preview in this release, not a supported language.** It needs a `lang-perl` build and an external fact-packet producer; the `perl-ripr-facts` exporter is not published, so no released build and exporter combination is usable yet. Repo config cannot choose the Perl executable without `RIPR_ALLOW_REPO_PERL_EXECUTABLE=1`. Rows where the tests discriminate but `ripr` cannot show it read `static_unknown` or `limited`, which costs missed credit rather than a wrong verdict, and Perl findings carry the generic next action instead of a Perl-specific repair (#2766, #1409, #4438).
 
 - Bounded repair states its inline-test boundary as permanent scope:
   repositories whose only tests are inline `#[cfg(test)]` modules in
@@ -1757,27 +1695,6 @@ are scoped or reviewed.
   of assumed to match
   ([#2923](https://github.com/EffortlessMetrics/ripr-swarm/issues/2923)).
 
-- `policy/release-targets.toml` records the committed release-candidate
-  membership graph, and `cargo xtask check-release-targets` validates it
-  offline. The manifest distinguishes the release goal, claim blockers,
-  qualification/proof blockers, release companions, conditional candidates, and
-  release-referenced rolling work, and records umbrella parents with an explicit
-  `counted_in` and justification so parent/leaf double counting cannot be
-  silent. Eight rules are enforced — schema, release identity, role uniqueness,
-  committed disjointness, conditional/rolling exclusion, prerequisite ordering,
-  parent accounting, and referential closure — each with a fixture that violates
-  exactly that rule. Reports land at
-  `target/ripr/reports/release-targets.{json,md}`, and the check runs inside
-  `cargo xtask precommit` and the CI policy-check pass.
-
-  The checker deliberately does not parse release-goal issue prose. Those bodies
-  write some membership as en-dash ranges (`#2665 / #2968-#2970`), so a prose
-  parser would silently miss the members inside a range and then report a clean
-  graph over issues it never saw. The manifest is the parsed authority; the goal
-  bodies remain human-validated documentation. This check is network-free and
-  does not compare against live GitHub milestones, does not qualify a candidate,
-  and does not represent publication
-  ([#3013](https://github.com/EffortlessMetrics/ripr-swarm/issues/3013)).
 
 - `[profile.dev]` now uses `debug = "line-tables-only"` instead of the cargo
   default (`debug = "full"`). Line tables give backtraces with file:line
@@ -1798,63 +1715,6 @@ are scoped or reviewed.
   existing `route-quality.json`, listing receipts that match no row instead of
   inventing movement. Recording changes no diagnostic, classification,
   baseline, suppression, gate, or gap closure (#4684).
-- `cargo xtask work burndown check` validates committed burn-down rows
-  against the compiled work-portfolio basis: every burn-down binds the
-  repository, portfolio-snapshot identity, basis head and the
-  selected-work identity it tracks, reusing the RIPR-SPEC-0244 selection
-  law engine; completion derives from issue/spec acceptance,
-  implementation slices, PRs and exact-head review/proof evidence rows,
-  campaign and work-item records are plan context only and a `complete`
-  burn-down over an open or stale row fails with the reconcile route, and
-  legacy goal/work-item refs resolve read-only with no authority (#1706).
-- `cargo xtask work adapter check` validates committed Codex delegation
-  rows against the compiled work-portfolio basis: every delegation binds
-  the repository, portfolio-snapshot identity, basis head and the full
-  selected-work identity it delegates, one closed project role and one
-  closed flow stage, the subagent consumes the selected-work context
-  packet plus relevant overflow and never re-reads the portfolio,
-  write-capable builder delegations require a prepared claim or isolated
-  worktree, subagents never claim, and a wrong repository, snapshot, basis
-  or legacy authority attempt fails with exact recompile/reconcile routes
-  (#1706).
-- `cargo xtask work context check` validates committed context/work-item
-  packet rows against the compiled work-portfolio basis: every packet binds
-  the repository, portfolio-snapshot identity, basis head and the
-  selected-work identity it compiles context for, reusing the
-  RIPR-SPEC-0244 selection law engine; the delegation scope is a closed
-  bounded vocabulary and every carried context/overflow reference must stay
-  relevant to the bound selection (campaign references are context, never
-  permission), a standalone issue with no campaign placement still
-  compiles a valid packet, and an unresolvable legacy ref, an irrelevant
-  reference, unbounded overflow, an evidence-free packet, a wrong
-  repository or a stale basis fails with exact recompile/reconcile routes
-  (#1706).
-- `cargo xtask work claim check` validates committed durable-claim rows
-  against the compiled work-portfolio basis: every claim binds one selected
-  issue/action and the exact basis, a stale basis keeps the claim recorded
-  for reconcile (never release or takeover), one worktree cannot serve two
-  selections and one selection cannot be double-claimed, and legacy
-  goal/work-item references resolve read-only with no authority (#1706).
-- `cargo xtask work intake check` validates committed issue-intake rows
-  against the compiled work-portfolio basis: every intake binds the
-  repository, portfolio-snapshot identity, basis head, current main and
-  one issue the captured portfolio records; campaign placement and
-  relevant campaigns must be recorded campaigns, but an out-of-campaign
-  issue may still qualify because placement stays a later root/planning
-  decision, open overlapping PRs and claims stay visible before any
-  mutation, and an empty contract set, an unknown issue, a wrong
-  repository or a legacy authority attempt fails with exact
-  recompile/reconcile routes (#1706).
-- `cargo xtask work plan check` validates committed plan rows against the
-  compiled work-portfolio basis: every plan binds the repository,
-  portfolio-snapshot identity, basis head and the full selected-work
-  identity it plans for, planning emits one closed disposition and is
-  read-only so a row that would replace or reorder the whole portfolio
-  fails visibly, campaign-targeting dispositions must name a recorded
-  campaign, a blocked disposition must name its blocker, a plan derived
-  from nothing is a claim, and a wrong repository, snapshot, basis or
-  legacy authority attempt fails with exact recompile/reconcile routes
-  (#1706).
 - RIPR-SPEC-0244 records the legacy compatibility migration posture: the
   `legacy_active_goal_ref` / `legacy_current_work_item_ref` fields stay
   read-only, resolve one way into `historical` campaign references, grant no
@@ -1871,33 +1731,6 @@ are scoped or reviewed.
   `work_selection_identity_fresh_root_receipt` tests re-run all ten domain
   checks in a fresh process against the receipt, including negative
   controls for digest drift and a dropped domain (#1706).
-- `cargo xtask work synthesis check` validates committed root-synthesis
-  rows against the compiled work-portfolio basis: every synthesis binds
-  the repository, portfolio-snapshot identity, basis head and the
-  selected-work identity it reports on, reusing the RIPR-SPEC-0244
-  selection law engine; the reported transition must match the selected
-  action, every uncovered or contradicted acceptance row must be named in
-  the contradictions list so a synthesis can never hide a gap, a reported
-  campaign ref outside the bound selection's campaign refs is a silent
-  switch that fails, the schema has no field that could create another
-  selected issue, and legacy goal/work-item refs resolve read-only with no
-  authority (#1706).
-- `cargo xtask work result check` validates committed task-result rows
-  against the compiled work-portfolio basis: every result must bind the
-  repository, portfolio-snapshot identity, basis head and the selected-work
-  identity it extends, reusing the RIPR-SPEC-0244 selection law engine;
-  wrong repository, snapshot, issue/action, basis, worktree or head fails
-  stale/wrong-input with exact recompile/reconcile routes, evidence-free
-  results fail as claims, and legacy goal/work-item references resolve
-  read-only with no authority (#1706).
-- `cargo xtask work wave check` validates committed wave plans against the
-  compiled work-portfolio basis: every plan consumes the complete selected
-  candidate set and partitions it into waves over explicit resources
-  (`campaign-record:<id>`, `portfolio-schema`, `spec-ledger`,
-  `output-contract:<id>`, `issue:<n>`, `pr:<n>`, `worktree:<path>`); the
-  retired generic `active-goal` resource fails closed, shared exclusive
-  resources and over-capacity waves fail with exact reconcile routes, and
-  disjoint cross-campaign waves are admitted (#1706).
 - Retain source-bound test, callsite and plain inherent receiver identities beside
   partial returned-ledger witnesses. Qualified calls with unresolved imports,
   shadowing, deferred code or multiple selected sites remain refused; these
@@ -1905,7 +1738,6 @@ are scoped or reviewed.
 - `fixtures/issue_lifecycle_real_rows/` admits the first two real (`synthetic: false`) issue-lifecycle rows through the unchanged RIPR-SPEC-0218 counting law (#4932, RIPR-SPEC-0278): Row A binds the complete issue #7795 -> PR #8285 -> squash merge `f3fa41d265` -> issue closed -> current-head verified -> closeout completed journey, and Row B binds the live negative control of merged PR #8325 staying `merged_pending_closeout` while parent issue #1706 remains open with ten uncovered acceptance rows. Every identity is verified with read-only `gh` commands recorded in `provenance.json`, snapshot digests recompute fail-closed over LF bytes in `check-fixture-contracts`, gaps GitHub does not record (no formal claim, no base orchestration attempt receipt, no human review on Row A) stay recorded as limitations instead of being invented, and adapter tests pin identity-rejection, zero-subject verification, stale-receipt, duplicate-import and synthetic-denominator controls (#4932). Review follow-up: the provenance `captured_at` timezone label was corrected to the true UTC capture instant and `check-fixture-contracts` now fail-closed rejects any `captured_at` predating the latest bound merge/close event, with an adapter test pinning that rejection (#4932).
 - Retain bounded profile metadata, limited malformed bytes and LLVM merge
   diagnostics after Coverage fails, without altering its failed result (#4978).
-- `cargo xtask check-policy-all` collects errors from all nine independent local source/Git policy scans in one run, retaining individual diagnostics and a failing status when any check fails (#5073).
 - `ripr check` now has a wall-clock budget: `--timeout SECS` or
   `RIPR_CHECK_TIMEOUT=<seconds>`, default 600, `0` disables it, for diff and
   worktree analysis (the repo-exposure and repo seam formats are not yet
@@ -1951,13 +1783,6 @@ are scoped or reviewed.
   as the advanced `ripr agent repair` / `ripr agent status` spellings, which
   stay supported with unchanged behavior.
 - TypeScript and JavaScript repo-mode analysis is no longer an empty stub: `analyze_repo` selects production sources under the shared `RIPR_MAX_REPO_INDEX_FILES` cap, reuses the diff-mode owner, test and oracle producers, and keeps `typescript`/`javascript` identity on preview findings without fabricating Rust seams. Capped, truncated, unreadable, unparseable or partially indexed runs disclose a `typescript_repo_*` partial reason and never back an all-clear (#5545, #6395).
-- `cargo xtask work selection check` validates committed selected-work
-  identity packets against the compiled work-portfolio basis: repository,
-  subject, pull-request linkage, scope-reference, action, selection-id,
-  basis, head, worktree, campaign-reference, legacy-compatibility and
-  overlap-visibility laws fail closed with exact recompile/reconcile
-  routes, and legacy goal/work-item references resolve read-only with
-  migration posture (#1706).
 - `ripr doctor --json` now carries an optional `canonical_next_action` when
   setup needs a precise recovery (missing root, unloadable `ripr.toml`, or
   failed prerequisite checks). It is the same decision the human
@@ -1980,9 +1805,6 @@ are scoped or reviewed.
   controls for a later clearing publish and a foreign-URI publish, so a
   finding the editor no longer displays cannot pass (#7189 review). Fixture
   git runs through the shared deadline-bounded helper. No behavior change.
-- `cargo xtask check-text-encoding` fails `precommit` when a tracked text file
-  starts with a UTF-8 BOM, naming the file with POSIX and PowerShell strip
-  one-liners (#7091).
 - Compiling trait-shadow fixture pairs now pin test-local trait implementations,
   out-of-line parent traits, and trait default methods in the independent
   evidence-promotion honesty corpus. Matched runtime controls distinguish a
@@ -2053,36 +1875,11 @@ are scoped or reviewed.
   counts the structured fields when present and falls back to the prose match
   for receipts written before this field existed, so the committed first-run
   receipts keep rendering until the next walk refresh (#8722).
-- `cargo xtask first-run --install-archive VERSION` walks the prebuilt release
-  archive: it downloads the host's server archive, verifies its SHA-256
-  sidecar, extracts `ripr` into the walk's own directory and runs that
-  executable, recording the route, asset, digest and acquisition time apart
-  from the source-install sample (#5311).
 - The Perl verdict corpus gains 24 cases that edit a producer packet to carry
   the facts each RIPR-SPEC-0235 acceptance example names, and a spec-example
   ledger that counts them: all 31 examples are now covered, with ripr's class
   matching the spec's on every case but example 16 (#6654).
-- `cargo xtask pilot-ranking`: a checked-in answer key for `ripr pilot`'s top
-  picks. Five small crates are pinned to exact commits with the cargo-mutants
-  outcome of each of their 1,647 viable mutants, so `score` reports top-5 and
-  top-10 precision, scored share and distinct functions in seconds without
-  rerunning cargo-mutants. A new advisory `ranking` scoreboard lane compares
-  the pooled numbers, the confirmed and refuted counts and the pick count with
-  a committed baseline nightly, on demand, and when a pull request that
-  touches pilot ranking or seam grading leaves draft. Labels must
-  come from a full cargo-mutants run, checked against an unfiltered
-  `cargo mutants --list` (#6608).
 - The generated GitHub workflow (`ripr init --ci github`) now posts one summary comment on same-repository pull requests and updates it on every push, so reviewers see the changed-behavior findings in the conversation instead of only on the Actions run page. The new `ripr pr-comments summary` renders it and only ever updates the comment `github-actions[bot]` posted. Set the repository variable `RIPR_SUMMARY_COMMENT` to `false` to turn it off; fork and Dependabot pull requests are skipped (#8402).
-- `.github/workflows/first-run-archive.yml` (on demand) runs the documented
-  prebuilt-archive install snippets on Linux, macOS and Windows hosted runners
-  and walks the first-run path with the released archive. QUICKSTART gains
-  macOS and PowerShell snippets (#5311).
-- `.github/workflows/public-proof.yml` runs `cargo xtask public-proof --check`
-  nightly, on demand and when a scoreboard, corpus, receipt or the page changes.
-  It is advisory, so a corpus or scoreboard PR does not fail required CI. When a
-  receipt has drifted from its source, `--check` now lists the page lines a
-  refresh would change, so whoever bumps a scoreboard sees which published
-  numbers move before committing. (#5494)
 - `docs/PUBLIC_PROOF.md`, generated by `cargo xtask public-proof` from committed
   receipts in `metrics/public-proof/`: scoreboard bars with trends, mutation
   agreement per verdict class, verdict-corpus rates, speed and memory on the
@@ -2098,10 +1895,6 @@ are scoped or reviewed.
   limitation (RIPR-SPEC-0201 examples 1 to 6). Both specs now carry numbered
   examples, so spec-example coverage rises from 40 to 51 of 51 and the ledger
   floor with it. No case scores a false verdict (#6654).
-- `cargo xtask real-crate-dogfood`: 21 pinned recent commits of 14 popular Rust crates
-  (`benchmarks/real_crate_dogfood`), analyzed with `ripr check`, so related-test naming,
-  duplicate test rows, findings on deleted lines and wall time on real diffs can be measured
-  before and after an analyzer change. Fetching is opt-in network; counts are not verdicts (#8473).
 - The TypeScript verdict corpus gains nine runtime-labeled cases for the
   acceptance examples that had none: strict identity matchers and the
   dropped-field forms (RIPR-SPEC-0246 examples 11 to 14), a `jest.spyOn` on an
@@ -2112,9 +1905,6 @@ are scoped or reviewed.
   with it (#6654).
 - `release-ledger` re-reads the recorded audit file at validation and rejects a ledger whose audit bytes no longer match the recorded sha256 (#9557).
 - Release ledger rule v1 gives `xtask` paths their own `automation` class and theme. They keep the same accepted control disposition, so no row changes disposition, but the ledger no longer reports repository automation as packaging (#2768).
-- `cargo xtask release-ledger --input <ledger.json>` validates a direct-main release ledger: the closed eleven-value disposition vocabulary, a separate final-tree-effect axis, the exact first-parent and reachable range, and one digest set shared by the JSON, Markdown and manifest projections. Dispositions are `rule_derived`; the ledger does not claim per-commit review. This is the contract and validator piece; Git capture and the derivation rule follow (#2768).
-- `cargo xtask release-ledger capture --base <sha>` reads local Git only and records the exact `base..cut` first-parent and reachable ranges, each commit's changed paths and its final tree effect: the last first-parent toucher of a live path, then a bounded parallel `git blame` for the rest. An unknown effect fails the capture instead of defaulting (#2768).
-- `cargo xtask release-ledger derive` applies the published disposition rule v1 (final tree effect, then the strongest path class) to captured Git facts and `policy/release-selection.json`, resolves rows the rule cannot judge from the reviewed `policy/release-ledger-overrides.json`, and validates the result. Dispositions are `rule_derived` (#2768).
 - Release ledger rule v1 counts a product `.rs` path as evidence when every hunk of the commit sits inside a `#[cfg(test)]` item (detected per hunk from `git diff -U0`), so a commit that only edits inline tests is `included_test_or_evidence` instead of product. A commit that also edits product code in the same file stays product. On the 0.11 dry-run range this moves 44 rows (35 to evidence, 9 to control) (#2768).
 - Release-ledger commands read at most 64 MiB per JSON, Markdown or audit input and fail with a named error beyond that (#9556).
 - The release ledger Markdown report shows each record's `theme` and a theme count table, matching the JSON ledger (#9536).
@@ -5692,7 +5482,6 @@ are scoped or reviewed.
 - **Python:** Python protocol-entry receivers rebound by `(r) += ...`, `(r): list = ...`, `if c: r += ...`, a `case` pattern capture, `import r`, `nonlocal r`, a comment or backslash continuation in or before a bracketed target, `for (r)in ...`, a split walrus or a header holding a `'''it's'''` string are no longer credited `exposed` through `protocol_entry_call`, while a bracketed membership read after a quoted or commented `for` keeps its credit (multi-line tuple targets remain a known limit); a block header that opens a multi-line string and is written with a tab, no space or a parenthesized condition is recognized as a header. Python field assertion helpers retain literal expectations, executable receiver identity and per-receiver call order, withholding credit for replacement, copies, deferred calls and overwritten fields. (#9992, #9207, #9919, #9704)
 - **Python:** Python edits credit more exact shapes: an exact assertion on `obj.attr` observes a changed `obj.attr = ...` write on a module-scope object bound once to a call result (`response = SimpleNamespace(...)`) that the test imports from the owner's module; a star import no longer credits a public function when its module rewrites the name dynamically (`globals()`, `exec`, `vars()`, `setattr`) or star-imports another module that may rebind it; and replacing a predicate with another single-operand test of the same parameter (`x is None` to `not x`) reads `weakly_exposed` naming a falsy non-None input when every strong call passes an input where both tests agree. (#9877, #9415, #9186)
 - **Perl:** Perl ordering comparisons (`<`, `>`, `<=`, `>=`, `lt`, `gt`, `le`, `ge`, `<=>`, `cmp`) read `exposed` only when the assertion's owner call passes the threshold literal and otherwise `static_unknown` with no repair gap (bounded lexical read, not a parser; it withholds around regex, heredoc, backtick, quote-like constructs and doubled owner calls); a changed regex or split pattern does not read as exposed because an assertion's sink text equals it; a code-reference oracle (`$code->()`) beside an unlinked owner call reads `static_unknown`; and an added top-level line in a file with an owner-less dynamic boundary reads `static_unknown` with that limit (RIPR-SPEC-0235 rules 19-21). (#8979, #9418, #9416, #9420)
-- **Perl:** Perl ordering comparisons (`<`, `>`, `<=`, `>=`, `lt`, `gt`, `le`, `ge`, `<=>`, `cmp`) read `exposed` only when the assertion's owner call passes the threshold literal and otherwise `static_unknown` with no repair gap (RIPR-SPEC-0235; a bounded lexical read that withholds around regex, heredoc, backtick and quote-like constructs and doubled owner calls); a changed regex or split pattern does not read as exposed because an assertion's sink text equals it; a code-reference oracle (`$code->()`) beside an unlinked owner call reads `static_unknown`; and an added top-level line in a file with an owner-less dynamic boundary reads `static_unknown` with that limit. (#8979, #9418, #9416, #9420)
 - **MCP and agent surfaces:** The MCP workspace status document carries the "ready means only that a repository root was discovered" limitation in its own `limitations`; tool descriptions were trimmed back to purpose, routing and failure codes (15,913 to 15,115 bytes) with a "call this when…" trigger added to `ripr_prepare_repair`, `ripr_get_repair_attempt` and `ripr_get_receipt_status`. `ripr_prepare_repair` and `ripr_get_repair_card` refuse with the same typed cause as `ripr repair` and `ripr agent card`. Gap-overflow and failed-refresh recovery retain the captured or requested input source instead of silently switching saved worktree edits to committed history, and refuse overlong routes instead of truncating commands. (#10540, #10541, #10718, #10799, #7357)
 - **MCP and agent surfaces:** A panic inside any MCP tool handler, and in the glue of `ripr_refresh`, `tools/list` and `resources/read`, is contained as a typed `analysis_failed` failure naming the tool and a next step, so the `ripr mcp` stdio session keeps serving; `ripr_prepare_repair` records `superseded` tombstones before evicting stale transactions, so an old attempt never turns into `attempt_not_found` after a contained panic. (#11116)
 - **MCP and agent surfaces:** `ripr_prepare_repair` prepares the inline `#[cfg(test)]` seam the CLI before phase already accepts, stating the module confinement, instead of refusing it as `fix_site_not_test_surface`; `ripr_get_repair_card` refuses with the typed `incomplete_inventory` code, like `ripr agent card`, when the seam limit truncates the repo-wide inventory or its completeness cannot be established, instead of reporting `readiness.repair_ready` true. The repair loop credits natural `assert!(predicate(boundary))` tests and their negated form for simple boolean integer boundaries, so a receipt can move from weak to exposed without rewriting the test as `assert_eq!(.., true)`. (#5516, #9231, #8610)
@@ -5710,6 +5499,13 @@ are scoped or reviewed.
 - **Other:** The untracked-Rust worktree currentness test pins a nested source under a spaced path so a root-only pathspec regression fails it, and the evidence-promotion honesty corpus pins a self-computed `const` expectation (must stay `weakly_exposed`) with a literal-const control. (#6817, #7260)
 - **Other:** The `merge-ready conflict` status clears when a re-applied `merge-ready` label finds the conflict gone, and a small `pull_request_target` workflow (which checks out no PR code) comments once and posts a failing `merge-ready conflict` status when a `merge-ready` request lands on a PR that conflicts with its base, since GitHub creates no `pull_request` run for it. On Windows, `ripr` and `xtask` place themselves in one kill-on-close Job Object at startup so a force-terminated owner no longer leaks long-running descendants such as `cargo test`. (#9842, #9250, #9564, #9323)
 - **Other:** The DX scoreboard's `trust.self_contradictions` rule R1 asks the analyzer's own `RelationReason::establishes_reach` rule instead of counting a `reach: no` seam that lists only proximity-related tests as self-contradictory (ripgrep reads 0 again instead of 4), and the measured warm `ripr check` renders the full findings set (`RIPR_CHECK_FINDINGS_BYTES=0`) so a large diff such as the 131-finding `ripr-swarm-2026-10` row is no longer reported `incomplete`. (#10809)
+- **CLI and output:** `ripr repair` names the `ripr agent stub` route for a comparison whose only blocker is that the file has no test module yet and for a boundary seam no test calls at all (the skeleton's call to the owner is the missing test input), instead of stopping at "route not ready" (#11466, #11460). `ripr agent card` no longer prints "Ready to repair." beside "no ready command" for a weak-test gap with an uncommitted test module: it says why (commit or stash the file) and names the same next command, and the MCP gap list gives the same cause (#11397, #11381). A manual gap-bound `ripr agent repair --phase before` start refuses, before writing the before-snapshot, when the fresh analysis is incomplete, naming the limitation and keeping the quoted root and base in its recovery command (#11403). `ripr outcome` and `ripr calibrate` usage lines list every accepted `--format` value, `ripr agent start`, `packet` and `repair` help say a refusal exits `3`, `ripr check --help` labels the badge group "for PR/CI status", and `ripr agent packet --json` refusals go through the terminal-safe stdout writer (control and bidi characters spelled, trailing newline kept) (#11431, #6180, #9127). `ripr feedback export` skips unreadable or malformed local receipts, naming each skipped file on stderr (#9376). Gap ledgers retain the original check's source subject and revision selectors as unvalidated provenance (#7452).
+- **CLI and output:** `ripr check` no longer reports a finding at `file:0` when a diff deletes lines from the top of a file (the anchor is line 1), retains both rename identities when a valid Git diff path contains an embedded ` b/` separator, no longer aborts with a stack overflow on thousands of chained `let _ =`, `a = b = ..` or `for x in for y in ..` links (the nesting budget counts right-associative `=` and `in` and refuses with `rust_nesting_budget`), no longer walks a package's whole production module tree when the only changed file is under `tests/`, `benches/` or `examples/`, and no longer builds a full-workspace evidence inventory solely to ask for predicate advice on a non-predicate stub route (#11486, #11404, #11410, #9215, #8547). A Rust workspace macro-scan unwind is contained and affected findings are reported as incomplete (#11116). MCP `ripr_refresh` over a committed diff no longer serves repair cards or repair readiness from checkout Rust files the committed findings never saw: uncommitted or untracked Rust source or test files withhold (`incomplete_inventory`, `worktree_source_not_committed`), while dirty non-Rust and gitignored files do not (#7357). Repo-mode probe inventory keeps a production fn that shares a physical line with a `#[test]` fn (#9119).
+- **LSP and editors:** `ripr lsp --stdio` no longer waits out an in-flight analysis when the editor closes: an `exit` notification (including one right behind `shutdown`) and the end of stdin cancel the active and pending refresh, and probe seeding checks cancellation every 256 changed lines; opening a very large unsaved Rust buffer indexes type-bound declaration lines once per file (about 30% less analysis time on a 6,000-line buffer). The non-Git-work-tree `window/showMessage` warning leads with its remedy so a long root is the part shortened, and the VS Code extension restarts the language server automatically after a mid-session crash (up to four times in three minutes), then stops with one plain-words message and a Restart Server action and no longer reports a stopped client as running. (#11439, #11408, #9370)
+- **Rust analysis and verdicts:** A changed comparison bound by a `let` whose name nothing else in the owner reads (`let _flag = n == 5; 7`) has no returned-value sink and reads a propagation limit (the clamp half of #10875 is unchanged); named Rust operator calls are judged using admitted related tests before the display limit; the seam-side related-test relation no longer credits a trait default method call as a direct owner call when the test's own module declares a same-named trait; and observed offline Cargo metadata failures for supported property invocations are explained in Rust findings with manual same-root recovery guidance and no new test credit. (#10875, #10625, #11469, #10864)
+- **TypeScript and JavaScript:** Partial-extraction notices resolve skipped suites through runner bindings and immutable aliases, preserving notices for shadowed helpers and evaluated registration arguments (#10169). Clause-level predicate boundary selection on compound `&&` / `||` conditions is pinned with regression tests, and RIPR-SPEC-0027 now says a named clause is not claimed to be independently steerable (#11196).
+- **Python:** A literal zero-argument `patch` is no longer credited when the test module rebinds `patch` (or `mock` for `mock.patch`) or the patch target's module prefix is not the owner's module (RIPR-SPEC-0238 rule 8, #10267); hidden `.pytest.toml` import-path settings are recognized for call-chain credit (#10969); a test-module constant is not credited as a boundary input when another workspace file writes that module's name (`conftest.py`, `setattr`, `monkeypatch.setattr`) (#11424); and a message-only change to a local message the owner raises through (`msg = "..."` then `raise Exc(msg)`) reads `weakly_exposed` when every strong error assertion pins a literal `match=` or `assertRaisesRegex` pattern matching the old and new message alike (#9185).
+- **Other:** The verdict-corpus harness no longer scores a live case from output that does not establish the measurement: it requires the producer's scoreable `analysis_outcome`, the digest of the case's own diff, and the expected language (from the case's anchor file) routed exactly once, so empty findings, another language's output, a stale digest and `no_scope`/`unsupported_input`/`analysis_failed` outcomes fail the case as unestablished. All 1613 live cases in the four corpora still pass. (#11272, #9430)
 
 ### Docs
 
@@ -5740,10 +5536,6 @@ are scoped or reviewed.
   separate observations
   ([#3747](https://github.com/EffortlessMetrics/ripr-swarm/issues/3747)).
 
-- `AGENTS.md` and `CLAUDE.md` gate inventories now list
-  `cargo xtask check-agent-skills`, which routed Rust CI already
-  requires, and name the formatter check as `cargo fmt --check`
-  ([#3826](https://github.com/EffortlessMetrics/ripr-swarm/pull/3826)).
 
 - The local VSIX steps in `docs/EDITOR_EXTENSION.md` now run `npm ci` and
   `npm run compile` before `npm run package`. Run alone in a fresh checkout,
@@ -5791,7 +5583,6 @@ are scoped or reviewed.
   macro identity, error forwarding and inverted-oracle refusal
   controls specified before implementation; accepted helper admission and
   analyzer behavior remain unchanged (#4478).
-- `docs/CI.md` adds a table from PR state (candidate, qualification requested, qualifying, qualified, not qualified) to the next action under the `merge-ready` request flow (#4984).
 - Move Ready qualification after independent review, composed repairs and
   available applicable local proof; share one PR-native handoff with dependency ownership
   and an explicit resume condition across provider skills (#4985).
@@ -5810,11 +5601,6 @@ are scoped or reviewed.
   recovery copies `ripr plus` keeps when a bad input fails a run
   (`docs/BADGE_POLICY.md`), and `changelog.d/` fragments (`CONTRIBUTING.md`,
   #5342).
-- `cargo xtask check-changelog-fragments`, run by `precommit`, rejects a
-  `changelog.d/` fragment with no or an unknown section line, an entry that is
-  not a `- ` bullet, no issue or PR reference, or a name that is not a
-  lowercase kebab slug. `--release-cut` also fails on any unfolded fragment
-  (#6341).
 - Document explicit package, integration-test target, and language-feature
   selection for focused contributor feedback, with measured preparation limits
   and the existing broad qualification requirements retained (#6510).
@@ -5949,7 +5735,6 @@ are scoped or reviewed.
   match-arm selection (#5432). Each records its product decisions
   and why.
 - SPEC-0301 records the `release-ledger finalize` rehearsal against the 0.11 range and how the audit path is recorded and re-read (#2768).
-- `docs/CI.md` Merge-ready label flow now says to mark the PR Ready before adding `merge-ready`, because admission refuses a Draft PR (#4984).
 - Specify the guarded native merge-queue cutover and the installed label route in the merge-flow guide (#4984).
 - The 0.11 release notes open their upgrade section with a link to the 0.10 to 0.11 upgrade guide, and the cut checklist and release copy checklist now require the published GitHub Release body to be read back non-empty and to point to that guide, because the v0.9.0 and v0.10.0 bodies were published empty and the notes now cover `ripr check --path` / `--exclude`, declined Rust files reading as limited, and the unresolved-boundary message (#7454, #7474, #9277, #9308, #9276).
 - Review conversation inventories require the reviewed candidate SHA and retain
@@ -6036,6 +5821,14 @@ are scoped or reviewed.
   skips every file (#1693).
 - Add static release website source with a checked boundary example, versioned
   installation links, and existing documentation entry points (#9957).
+- The release transaction runbook now says that `publish-npm.yml` and `publish-pypi.yml` admit prereleases only and are outside the stable channel order, so a stable 0.11.0 claims no npm or PyPI route (#3921).
+- Release docs now show the current `publish-extension.yml` dispatch inputs (`source_sha`, `manifest_sha256`, `vsix_sha256`), drop the claim of a tag trigger and dual-registry publish, and correct the generated-CI install row in the channel table (#5114).
+- Add a read-only Windows packaged dispatch checklist for the 0.11.0 candidate run: exact inputs, expected steps, the untrusted trust-boundary journey to watch, and how to read the receipt (#9274).
+- Documentation: `docs/OUTPUT_SCHEMA.md` check examples now carry the always-emitted
+  `analysis_outcome.outcome.identity` keys and finding `source_currentness`, and the
+  Context Packet prose states that `witness` is `null` (not omitted) when an exposed
+  finding has no unresolved discriminator (#5082).
+- Release docs now name the publish environments `vs-marketplace-publish` and `open-vsx-publish`, describe `VSCE_PAT` and `OVSX_PAT` as environment secrets, and record the tag-only deployment rule and the single-channel dispatch contract (#9303).
 
 ### Internal / CI
 
@@ -6129,6 +5922,247 @@ are scoped or reviewed.
 - **Analyzer internals.** Complete-source declaration, lexical-scope, item-nesting and module-shadow facts are computed once per immutable source snapshot (a same-named function pair on one line no longer borrows the first declaration's name scope), `ripr` memoizes the macro-rebound scan per requested name set, related-test rows carry an explicit optional `role` (`contributing` by default, `examined_only` for retained examined tests; older artifacts read every row as `contributing`), `check-allow-attributes` reads char literals in attribute text so a quoted paren no longer hides a later suppression, the agent-brief and baseline fallback identity builders share one stored-string owner (not migrated to the host-dependent `path_identity_key`), the Python fact-store byte reservations use the Rust 1.95-compatible `try_update` spelling, and the serde_json registry receipt reader moved into its own internal module. The bounded offline Cargo metadata probe preserves typed operational outcomes (user-facing provider diagnosis remains unfinished). Re-blessed `inherent_receiver_*` golden fixtures in two #7415 slices, plus the `private_inherent_receiver` integration tests and `test_grip_evidence` inherent-owner identity matrix, move `macro_discard`, `local_wrapper`, `module_type_shadow`, `async_operand`, `dormant_body` and `operand_item_shadow` from `weakly_exposed` to `reachable_unrevealed` (less credit, never more). (#8004, #10977, #5563, #9635, #9666, #10993, #10868, #10864, #7415, #9342, #9169, #9969, #5352, #8954, #10886, #10887)
 - **Test fixtures and hosts.** Integration-test fixture Git commands are isolated from inherited Git environment variables, global and system configuration, system attributes and translated diagnostics; the fallible owner-return fixture tests name `cargo xtask goldens prepare`; host-explicit command-root rendering tests and a hostile-repository CLI replay protect literal percent signs and Windows separators; the Linux deleted-executable recovery test uses a private lifetime-bound link; VS Code descendant-cleanup tests treat a zombie descendant as terminated; the VS Code downloader fallback test packages a small shell script instead of a renamed `/bin/echo`; VS Code matrix failures retain the selected host's sanitized logs, bounded acceptance receipt and original code-action observations; the installed Python journey has a refused-variant control for the gap-bound start; the zero-Git-timeout LSP test synchronizes on its matching progress Begin; and the `check_pr_failure_report_replaces_stale_success_report` test retries scratch removal after a Windows lock violation. Main's strict Clippy gate failed on an unused `parent_dir_follows_symlink` helper in the `xtask` build, now moved beside its only caller; the Windows-only workflow-backup read-only cleanup is receipted for strict Clippy. (#10102, #10116, #10168, #10256, #9917, #1873, #10432, #10631, #10344, #3742, #10624, #11282)
 - **Repo ops.** Legacy handoff premise checks route through the root resume and `deliver-pr` procedures instead of the retired local goal scheduler; `pr-ready` and `cockpit` consume typed outcomes from the current invocation instead of interpreting retained Markdown status text; the redundant assistant-loop-health validator re-export is removed; the TypeScript verdict-corpus ledger test no longer pins the exact RIPR-SPEC-0243 example count; and the Windows run of the agent-status replay rows expects the host's printed quoting form. (#1701, #4984, #10994, #9859, #9659)
+- `check-user-text` pins its own matcher against the merge-base: under CI it fails a PR whose matcher no longer detects a banned term the base listed, and a run that is not a pull request or merge group (a push to `main`) now fails on a golden over its per-file ceiling instead of warning, so a gate weakened in a PR is visible on `main` too (#11385).
+- Record bounded, sanitized document/process ordering and real code-action
+  middleware cancellation observations in the multi-root acceptance receipt,
+  requiring a matching real-client invocation and settlement after a successful
+  original code-action command without replacing its rejection;
+  local observation IDs do not identify LSP requests or establish the cause
+  of historical cancellations (#1873).
+- `cargo xtask schema-producer-sweep --live-replay` replays the exact-cut schema packet in one command: it runs `doctor`, `pr-evidence`, `review-comments`, `ripr agent repair` and `verify-execute` from a binary that must report the replayed commit, and validates each against its published schema (#3920).
+- `cargo xtask release-ledger capture` and `finalize` now refuse a shallow clone with a "full clone required" error that names `git fetch --unshallow`, instead of writing truncated facts that later fail `derive` (#5114).
+- The release-readiness `github-workflow-defaults` row now looks for the
+  `start-here.md` artifact wording the first-run `reports ci-summary` prints
+  since the job summary began naming the artifact, instead of the old
+  `target/ripr/reports/start-here.md` path (#5114).
+- `verdict-corpus relabel` accepts leading `KEY=value` assignments on a case's
+  test command and applies them under the existing replay env scrub (#6790).
+- `cargo xtask cache report` / `gc` honor `RIPR_CACHE_DIR` instead of always
+  scanning `target/ripr/cache`. Relocated roots must be absolute, must not
+  traverse `..`, and must look like a ripr cache before any walk or delete.
+  `ripr cache status` prints a cleanup hint that exports the same
+  `RIPR_CACHE_DIR` the status process used
+  ([#3808](https://github.com/EffortlessMetrics/ripr-swarm/issues/3808)).
+- `policy/clippy-exceptions.toml` and `docs/CLIPPY_POLICY.md` no longer say
+  the exceptions ledger is empty by default. The commented example no
+  longer reuses a real id or a past `expires` date
+  ([#3820](https://github.com/EffortlessMetrics/ripr-swarm/issues/3820)).
+- `policy/clippy-lints.toml` no longer says planned lints wait for MSRV
+  and a matching xtask gate. The values are not verified available-since
+  ([#3809](https://github.com/EffortlessMetrics/ripr-swarm/issues/3809)).
+- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask
+  check-allow-attributes` matches `policy/clippy-exceptions.toml`. That
+  gate still counts source suppressions against `.ripr/allow-attributes.txt`
+  only; the TOML receipts remain advisory until a follow-up wires them
+  ([#3800](https://github.com/EffortlessMetrics/ripr-swarm/issues/3800)).
+- `docs/POLICY_ALLOWLISTS.md` no longer claims `cargo xtask check-lint-policy`
+  consumes `policy/clippy-debt.toml`; the gate reads it since
+  [#3833](https://github.com/EffortlessMetrics/ripr-swarm/issues/3833).
+  `clippy::let_underscore_must_use`
+  is now a real `[[debt]]` row (`clippy-debt-0001`, target 2027-03-31)
+  instead of a commented example whose target had already passed
+  ([#3782](https://github.com/EffortlessMetrics/ripr-swarm/issues/3782)).
+- `AGENTS.md` local validation now leads with `cargo xtask precommit` and
+  names `ci-full` as the complete pass. The 40-command block is labeled
+  targeted-rerun inventory, not sequential required work
+  ([#3775](https://github.com/EffortlessMetrics/ripr-swarm/issues/3775)).
+- `docs/IMPLEMENTATION_PLAN.md` Required Gates now leads with
+  `cargo xtask precommit` and names `ci-full` as the complete local pass.
+  The cargo command block is labeled targeted-rerun inventory, matching
+  `AGENTS.md` (#3775). Extension compile/package remains required for
+  `editors/vscode` changes; neither `precommit` nor `ci-full` covers it
+  ([#3817](https://github.com/EffortlessMetrics/ripr-swarm/issues/3817)).
+- `cargo xtask check-file-policy` reuses successful invocation-local Cargo
+  preparation across runtime test filters while preserving distinct native
+  listings and every selector observation (#5073).
+- `cargo xtask release-readiness` adds a required `init-pin-version` check on
+  `LATEST_RELEASED_VERSION`, the version `ripr init --ci github` pins. At the
+  release commit (CHANGELOG.md has the version's heading) it fails until the
+  constant equals the release version. Before the cut a lagging constant only
+  warns, and one already at or past the version fails. A release candidate
+  fails unless the constant names a release older than its stable target
+  (#6921).
+- `cargo xtask first-run` reads each verdict against the pinned crate's own
+  tests: every case records the tests that fail with its edit applied, and the
+  report marks `reachable_unrevealed` or `no_static_path` on a caught edit as a
+  `false gap`, `weakly_exposed` there as understating the tests, and an unknown
+  as `unresolved`. On the pinned crates, 0.10.0's `reachable_unrevealed`
+  (semver) is a false gap and its `weakly_exposed` (bytesize) understates the
+  tests; 0.11's `infection_unknown` on all three is unresolved, not a
+  regression (#6922).
+- `cargo xtask precommit` now runs `goldens check` when the diff touches output-surface code or fixture goldens, so stale `human.txt`/`check.json` goldens fail locally instead of turning main red. Other diffs skip it, and fixtures that only lack prepared dependencies are reported as an environment gap rather than a pass or drift (#8421).
+- `cargo xtask dx-scoreboard` compares a mutation spot-check rate only against
+  a baseline measured over the same repositories, revisions, cargo-mutants
+  runs and mutant timeout, and names both populations when it refuses. A run
+  with an unrecorded cargo-mutants version is never compared (#6311).
+- `cargo xtask mutation-spot-check` now writes `ripr-mutation-spot-check-v2`.
+  It scores only `canonical_precise` records: operator mutants that
+  `ripr calibrate cargo-mutants` joined by `seam_id` or span containment to a
+  predicate or return seam. Every other record carries a named exclusion
+  (`file_line_only`, `ambiguous_span_overlap`, `unmatched_<reason>`,
+  `unsupported_genre`, ...). The v1 operator-text match survives only as a
+  diagnostic. On atuin `90f590b9`, 7 of 27 mutants score instead of 1. The DX
+  scoreboard reads v2 and refuses v1 receipts (#5487).
+- `cargo xtask dx-scoreboard --gate` honours per-repository `ceilings` in `benchmarks/dx_scoreboard/scoreboards.toml`: a sample above its ceiling, a ceilinged row that ran without a value, or a row the run selected with no sample of its ceilinged metric fails the gate whatever the baseline holds, including a baseline from another runner class or none. The `pandas-python` and `django-python` rows carry a 2 s warm-check time ceiling and a 512 MiB warm-check peak-memory ceiling (#10914).
+- `policy/release-targets.toml` records the committed release-candidate
+  membership graph, and `cargo xtask check-release-targets` validates it
+  offline. The manifest distinguishes the release goal, claim blockers,
+  qualification/proof blockers, release companions, conditional candidates, and
+  release-referenced rolling work, and records umbrella parents with an explicit
+  `counted_in` and justification so parent/leaf double counting cannot be
+  silent. Eight rules are enforced — schema, release identity, role uniqueness,
+  committed disjointness, conditional/rolling exclusion, prerequisite ordering,
+  parent accounting, and referential closure — each with a fixture that violates
+  exactly that rule. Reports land at
+  `target/ripr/reports/release-targets.{json,md}`, and the check runs inside
+  `cargo xtask precommit` and the CI policy-check pass.
+
+  The checker deliberately does not parse release-goal issue prose. Those bodies
+  write some membership as en-dash ranges (`#2665 / #2968-#2970`), so a prose
+  parser would silently miss the members inside a range and then report a clean
+  graph over issues it never saw. The manifest is the parsed authority; the goal
+  bodies remain human-validated documentation. This check is network-free and
+  does not compare against live GitHub milestones, does not qualify a candidate,
+  and does not represent publication
+  ([#3013](https://github.com/EffortlessMetrics/ripr-swarm/issues/3013)).
+- `cargo xtask work burndown check` validates committed burn-down rows
+  against the compiled work-portfolio basis: every burn-down binds the
+  repository, portfolio-snapshot identity, basis head and the
+  selected-work identity it tracks, reusing the RIPR-SPEC-0244 selection
+  law engine; completion derives from issue/spec acceptance,
+  implementation slices, PRs and exact-head review/proof evidence rows,
+  campaign and work-item records are plan context only and a `complete`
+  burn-down over an open or stale row fails with the reconcile route, and
+  legacy goal/work-item refs resolve read-only with no authority (#1706).
+- `cargo xtask work adapter check` validates committed Codex delegation
+  rows against the compiled work-portfolio basis: every delegation binds
+  the repository, portfolio-snapshot identity, basis head and the full
+  selected-work identity it delegates, one closed project role and one
+  closed flow stage, the subagent consumes the selected-work context
+  packet plus relevant overflow and never re-reads the portfolio,
+  write-capable builder delegations require a prepared claim or isolated
+  worktree, subagents never claim, and a wrong repository, snapshot, basis
+  or legacy authority attempt fails with exact recompile/reconcile routes
+  (#1706).
+- `cargo xtask work context check` validates committed context/work-item
+  packet rows against the compiled work-portfolio basis: every packet binds
+  the repository, portfolio-snapshot identity, basis head and the
+  selected-work identity it compiles context for, reusing the
+  RIPR-SPEC-0244 selection law engine; the delegation scope is a closed
+  bounded vocabulary and every carried context/overflow reference must stay
+  relevant to the bound selection (campaign references are context, never
+  permission), a standalone issue with no campaign placement still
+  compiles a valid packet, and an unresolvable legacy ref, an irrelevant
+  reference, unbounded overflow, an evidence-free packet, a wrong
+  repository or a stale basis fails with exact recompile/reconcile routes
+  (#1706).
+- `cargo xtask work claim check` validates committed durable-claim rows
+  against the compiled work-portfolio basis: every claim binds one selected
+  issue/action and the exact basis, a stale basis keeps the claim recorded
+  for reconcile (never release or takeover), one worktree cannot serve two
+  selections and one selection cannot be double-claimed, and legacy
+  goal/work-item references resolve read-only with no authority (#1706).
+- `cargo xtask work intake check` validates committed issue-intake rows
+  against the compiled work-portfolio basis: every intake binds the
+  repository, portfolio-snapshot identity, basis head, current main and
+  one issue the captured portfolio records; campaign placement and
+  relevant campaigns must be recorded campaigns, but an out-of-campaign
+  issue may still qualify because placement stays a later root/planning
+  decision, open overlapping PRs and claims stay visible before any
+  mutation, and an empty contract set, an unknown issue, a wrong
+  repository or a legacy authority attempt fails with exact
+  recompile/reconcile routes (#1706).
+- `cargo xtask work plan check` validates committed plan rows against the
+  compiled work-portfolio basis: every plan binds the repository,
+  portfolio-snapshot identity, basis head and the full selected-work
+  identity it plans for, planning emits one closed disposition and is
+  read-only so a row that would replace or reorder the whole portfolio
+  fails visibly, campaign-targeting dispositions must name a recorded
+  campaign, a blocked disposition must name its blocker, a plan derived
+  from nothing is a claim, and a wrong repository, snapshot, basis or
+  legacy authority attempt fails with exact recompile/reconcile routes
+  (#1706).
+- `cargo xtask work synthesis check` validates committed root-synthesis
+  rows against the compiled work-portfolio basis: every synthesis binds
+  the repository, portfolio-snapshot identity, basis head and the
+  selected-work identity it reports on, reusing the RIPR-SPEC-0244
+  selection law engine; the reported transition must match the selected
+  action, every uncovered or contradicted acceptance row must be named in
+  the contradictions list so a synthesis can never hide a gap, a reported
+  campaign ref outside the bound selection's campaign refs is a silent
+  switch that fails, the schema has no field that could create another
+  selected issue, and legacy goal/work-item refs resolve read-only with no
+  authority (#1706).
+- `cargo xtask work result check` validates committed task-result rows
+  against the compiled work-portfolio basis: every result must bind the
+  repository, portfolio-snapshot identity, basis head and the selected-work
+  identity it extends, reusing the RIPR-SPEC-0244 selection law engine;
+  wrong repository, snapshot, issue/action, basis, worktree or head fails
+  stale/wrong-input with exact recompile/reconcile routes, evidence-free
+  results fail as claims, and legacy goal/work-item references resolve
+  read-only with no authority (#1706).
+- `cargo xtask work wave check` validates committed wave plans against the
+  compiled work-portfolio basis: every plan consumes the complete selected
+  candidate set and partitions it into waves over explicit resources
+  (`campaign-record:<id>`, `portfolio-schema`, `spec-ledger`,
+  `output-contract:<id>`, `issue:<n>`, `pr:<n>`, `worktree:<path>`); the
+  retired generic `active-goal` resource fails closed, shared exclusive
+  resources and over-capacity waves fail with exact reconcile routes, and
+  disjoint cross-campaign waves are admitted (#1706).
+- `cargo xtask check-policy-all` collects errors from all nine independent local source/Git policy scans in one run, retaining individual diagnostics and a failing status when any check fails (#5073).
+- `cargo xtask work selection check` validates committed selected-work
+  identity packets against the compiled work-portfolio basis: repository,
+  subject, pull-request linkage, scope-reference, action, selection-id,
+  basis, head, worktree, campaign-reference, legacy-compatibility and
+  overlap-visibility laws fail closed with exact recompile/reconcile
+  routes, and legacy goal/work-item references resolve read-only with
+  migration posture (#1706).
+- `cargo xtask check-text-encoding` fails `precommit` when a tracked text file
+  starts with a UTF-8 BOM, naming the file with POSIX and PowerShell strip
+  one-liners (#7091).
+- `cargo xtask first-run --install-archive VERSION` walks the prebuilt release
+  archive: it downloads the host's server archive, verifies its SHA-256
+  sidecar, extracts `ripr` into the walk's own directory and runs that
+  executable, recording the route, asset, digest and acquisition time apart
+  from the source-install sample (#5311).
+- `cargo xtask pilot-ranking`: a checked-in answer key for `ripr pilot`'s top
+  picks. Five small crates are pinned to exact commits with the cargo-mutants
+  outcome of each of their 1,647 viable mutants, so `score` reports top-5 and
+  top-10 precision, scored share and distinct functions in seconds without
+  rerunning cargo-mutants. A new advisory `ranking` scoreboard lane compares
+  the pooled numbers, the confirmed and refuted counts and the pick count with
+  a committed baseline nightly, on demand, and when a pull request that
+  touches pilot ranking or seam grading leaves draft. Labels must
+  come from a full cargo-mutants run, checked against an unfiltered
+  `cargo mutants --list` (#6608).
+- `.github/workflows/first-run-archive.yml` (on demand) runs the documented
+  prebuilt-archive install snippets on Linux, macOS and Windows hosted runners
+  and walks the first-run path with the released archive. QUICKSTART gains
+  macOS and PowerShell snippets (#5311).
+- `.github/workflows/public-proof.yml` runs `cargo xtask public-proof --check`
+  nightly, on demand and when a scoreboard, corpus, receipt or the page changes.
+  It is advisory, so a corpus or scoreboard PR does not fail required CI. When a
+  receipt has drifted from its source, `--check` now lists the page lines a
+  refresh would change, so whoever bumps a scoreboard sees which published
+  numbers move before committing. (#5494)
+- `cargo xtask real-crate-dogfood`: 21 pinned recent commits of 14 popular Rust crates
+  (`benchmarks/real_crate_dogfood`), analyzed with `ripr check`, so related-test naming,
+  duplicate test rows, findings on deleted lines and wall time on real diffs can be measured
+  before and after an analyzer change. Fetching is opt-in network; counts are not verdicts (#8473).
+- `cargo xtask release-ledger --input <ledger.json>` validates a direct-main release ledger: the closed eleven-value disposition vocabulary, a separate final-tree-effect axis, the exact first-parent and reachable range, and one digest set shared by the JSON, Markdown and manifest projections. Dispositions are `rule_derived`; the ledger does not claim per-commit review. This is the contract and validator piece; Git capture and the derivation rule follow (#2768).
+- `cargo xtask release-ledger capture --base <sha>` reads local Git only and records the exact `base..cut` first-parent and reachable ranges, each commit's changed paths and its final tree effect: the last first-parent toucher of a live path, then a bounded parallel `git blame` for the rest. An unknown effect fails the capture instead of defaulting (#2768).
+- `cargo xtask release-ledger derive` applies the published disposition rule v1 (final tree effect, then the strongest path class) to captured Git facts and `policy/release-selection.json`, resolves rows the rule cannot judge from the reviewed `policy/release-ledger-overrides.json`, and validates the result. Dispositions are `rule_derived` (#2768).
+- `AGENTS.md` and `CLAUDE.md` gate inventories now list
+  `cargo xtask check-agent-skills`, which routed Rust CI already
+  requires, and name the formatter check as `cargo fmt --check`
+  ([#3826](https://github.com/EffortlessMetrics/ripr-swarm/pull/3826)).
+- `docs/CI.md` adds a table from PR state (candidate, qualification requested, qualifying, qualified, not qualified) to the next action under the `merge-ready` request flow (#4984).
+- `cargo xtask check-changelog-fragments`, run by `precommit`, rejects a
+  `changelog.d/` fragment with no or an unknown section line, an entry that is
+  not a `- ` bullet, no issue or PR reference, or a name that is not a
+  lowercase kebab slug. `--release-cut` also fails on any unfolded fragment
+  (#6341).
+- `docs/CI.md` Merge-ready label flow now says to mark the PR Ready before adding `merge-ready`, because admission refuses a Draft PR (#4984).
 
 ### Removed
 

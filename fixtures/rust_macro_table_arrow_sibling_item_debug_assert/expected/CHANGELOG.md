@@ -92,7 +92,7 @@ Updated:
 ## Pending — rust_macro_table_arrow_sibling_item_debug_assert (8)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
 
 Command:
 `cargo xtask goldens bless rust_macro_table_arrow_sibling_item_debug_assert --reason "..."`
@@ -103,6 +103,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — rust_macro_table_arrow_sibling_item_debug_assert (9)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless rust_macro_table_arrow_sibling_item_debug_assert --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_macro_table_arrow_sibling_item_debug_assert (10)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

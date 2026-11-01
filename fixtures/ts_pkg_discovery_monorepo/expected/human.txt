@@ -19,17 +19,17 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
   Changed behavior: return `tok-${userId}`;
-  Assertion (observed, advisory): Related test reaches `createToken` with an `exact_value` oracle.
+  Check (observed, advisory): Related test reaches `createToken` with an `exact_value` oracle.
     Static evidence suggests the changed behavior is observed under an exact-value or
-    exact-error-variant discriminator
+    exact-error-variant check
   Related test: packages/auth/tests/token.test.ts:3 createToken returns prefixed token
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
-  Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion yes
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;

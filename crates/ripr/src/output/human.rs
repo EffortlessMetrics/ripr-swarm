@@ -691,9 +691,10 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
     // a partial run with findings gets the scope caveat instead. #4952: the
     // EOL-only churn disclosure does not scope the analysis down, so the
     // incomplete-scope hedges stay off when it is the only limitation.
-    let scoped_down = outcome.limitations.iter().any(|limitation| {
-        limitation.kind != crate::analysis_outcome::AnalysisLimitationKind::EolOnlyChurn
-    });
+    let scoped_down = outcome
+        .limitations
+        .iter()
+        .any(|limitation| !limitation.kind.is_advisory_disclosure());
     if scoped_down {
         if output.findings.is_empty() {
             out.push_str(
@@ -1288,7 +1289,8 @@ pub fn render_finding(finding: &Finding) -> String {
 }
 
 /// Render one finding with the bounded context follow-up for the selected
-/// finding.
+/// finding. Production routes (`explain`) call the `_and_files` form directly.
+#[cfg(test)]
 pub(crate) fn render_finding_with_context_command(
     finding: &Finding,
     config: &RiprConfig,
@@ -1356,6 +1358,9 @@ fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
     }
 }
 
+mod agent;
+#[cfg(test)]
+mod agent_tests;
 mod evidence_lines;
 mod explain;
 #[cfg(test)]
@@ -1363,6 +1368,33 @@ mod hidden_locations_tests;
 mod sections;
 mod shared;
 mod triage;
+
+/// `ripr check --format agent` (#11580): the compact agent projection of the
+/// human triage. Library callers without navigation get bare finding ids.
+pub(crate) fn render_agent_with_config_and_navigation(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> String {
+    agent::render(output, config, drill_in, provenance)
+}
+
+/// `ripr explain --format agent` (#12104): the compact agent projection of one
+/// selected finding, with an explicit `done=` / `open=` / `stop=` terminal line.
+pub(crate) fn render_finding_agent(
+    finding: &Finding,
+    root: &Path,
+    context_command: &str,
+    suppressed: bool,
+) -> String {
+    terminal_safe(agent::render_finding(
+        finding,
+        root,
+        context_command,
+        suppressed,
+    ))
+}
 
 pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
 pub(crate) use sections::HUMAN_EVIDENCE_LEGEND;
@@ -2694,10 +2726,15 @@ mod tests {
             ),
             "{with_route}"
         );
+        // `--base` is quoted for the host shell (single quotes on Unix,
+        // double quotes on the Windows console).
+        let base = crate::agent::loop_commands::shell_arg("HEAD~1");
+        #[cfg(unix)]
+        assert_eq!(base, "'HEAD~1'");
         assert!(
-            with_route.contains(
-                "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base 'HEAD~1' --phase before"
-            ),
+            with_route.contains(&format!(
+                "Recommended follow-through (start the repair):\n  ripr agent repair --gap-id gap:typescript:typescript_preview:abcd1234 --base {base} --phase before"
+            )),
             "{with_route}"
         );
         assert_eq!(with_route.matches("Recommended").count(), 2, "{with_route}");
@@ -4578,13 +4615,16 @@ mod tests {
         );
 
         assert!(
-            digest
-                .contains("  Assertion (observed, advisory): Related test reaches `applyDiscount`"),
+            digest.contains("  Check (observed, advisory): Related test reaches `applyDiscount`"),
             "expected observed-advisory label in digest; got:\n{digest}"
         );
         assert!(
             !digest.contains("Missing check:"),
             "exposed digest must not claim a missing discriminator; got:\n{digest}"
+        );
+        assert!(
+            !digest.contains("Discriminator (observed"),
+            "the observed-evidence label must use plain words; got:\n{digest}"
         );
     }
 
@@ -4764,7 +4804,7 @@ mod tests {
             &crate::config::RiprConfig::default(),
             Path::new("."),
         );
-        if !digest.contains("  Missing check (1 of 2): No strong check was detected") {
+        if !digest.contains("  Missing check (1 of 2): No strong assertion was detected") {
             return Err(format!(
                 "a finding with a real missing discriminator keeps its label:
 {digest}"
@@ -4841,7 +4881,7 @@ mod tests {
                 finding.class
             );
             assert!(
-                !digest.contains("Assertion (observed, advisory)"),
+                !digest.contains("Check (observed, advisory)"),
                 "non-exposed digest must not use the observed-advisory label; got:\n{digest}"
             );
         }
@@ -4891,9 +4931,36 @@ mod tests {
         );
 
         assert!(
-            digest.contains("  Missing check (1 of 2): No strong check was detected\n"),
+            digest.contains("  Missing check (1 of 2): No strong assertion was detected\n"),
             "prose entries must render unchanged; got:\n{digest}"
         );
+    }
+
+    /// #10691: the default text names the classifier's "nothing strong notices
+    /// this" entry and the catch-all change type in plain words, while the
+    /// producer's wording stays in `missing` (JSON, `human-full`) and every
+    /// other change type keeps its stable token.
+    #[test]
+    fn default_text_plain_words_cover_only_the_two_fixed_forms() {
+        use crate::domain::ProbeFamily;
+        assert_eq!(
+            super::evidence_lines::plain_default_missing("No strong discriminator was detected"),
+            "No strong assertion was detected"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_default_missing("Missing discriminator value: 100"),
+            "Missing discriminator value: 100",
+            "other entries are not this fixed form"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_probe_family(&ProbeFamily::StaticUnknown),
+            "unclear"
+        );
+        assert_eq!(
+            super::evidence_lines::plain_probe_family(&ProbeFamily::ReturnValue),
+            "return_value"
+        );
+        assert_eq!(ProbeFamily::StaticUnknown.as_str(), "static_unknown");
     }
 
     /// A prose entry past the line budget used to hard-cut at 180 characters
@@ -5230,7 +5297,7 @@ mod tests {
         // command instead of a bare "verify independently" with no route.
         assert!(
             rendered.contains(
-                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`\n"
+                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing check `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`\n"
             ),
             "{rendered}"
         );
@@ -5477,7 +5544,7 @@ mod tests {
         finding.probe.location = SourceLocation::new("src/lib.ts", 2, 1);
         finding.evidence = vec![
             "owner: applyDiscount".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -7322,7 +7389,7 @@ mod tests {
         finding.owner_kind = Some(crate::domain::OwnerKind::Function);
         finding.evidence = vec![
             "owner: discountedTotal".to_string(),
-            "gap_state: advisory".to_string(),
+            "gap_state: unknown".to_string(),
             "actionability_category: incomplete_repair_packet".to_string(),
             "why_not_actionable: TypeScript preview lacks a complete repair packet contract"
                 .to_string(),
@@ -7332,19 +7399,19 @@ mod tests {
             "raw_evidence_ref: file=src/lib.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_lib.ts:2:typescript_preview;owner=discountedTotal".to_string(),
         ];
         finding.missing = vec![
-            "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: duplicate summary".to_string(),
+            "TypeScript preview actionability `unknown` / `incomplete_repair_packet`: duplicate summary".to_string(),
         ];
 
         let rendered = render_finding(&finding);
 
         assert!(rendered.contains("Preview actionability\n"));
         assert!(rendered.contains("  authority: preview_advisory_only\n"));
-        assert!(rendered.contains("  gap state: advisory\n"));
+        assert!(rendered.contains("  gap state: unknown\n"));
         assert!(rendered.contains("  category: incomplete_repair_packet\n"));
         assert!(rendered.contains("  repair packet ready: false\n"));
         assert!(rendered.contains("  raw evidence: src/lib.ts:2 (typescript_preview_probe)"));
         assert!(rendered.contains("  - owner: discountedTotal\n"));
-        assert!(!rendered.contains("  - gap_state: advisory\n"));
+        assert!(!rendered.contains("  - gap_state: unknown\n"));
         assert!(!rendered.contains("duplicate summary"));
     }
 
@@ -7675,7 +7742,7 @@ mod tests {
 
         assert!(
             flattened.ends_with(
-                "add a co-located test that reaches and observes the changed behavior so a discriminator exists"
+                "add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong"
             ),
             "digest must keep the remedy; got:\n{digest}"
         );

@@ -1158,6 +1158,7 @@ fn backend_code_lens_handler_delegates_to_lens_helper() -> Result<(), String> {
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
 
     // Call the pure code_lens_response directly to verify the handler→helper path.
@@ -10197,6 +10198,7 @@ async fn did_open_matching_disk_bytes_with_stale_committed_snapshot_keeps_refres
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     backend
         .refresh_plan(WorkspaceDiagnostics {
@@ -15554,6 +15556,7 @@ fn sample_analysis_snapshot(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     }
 }
 
@@ -16479,7 +16482,7 @@ fn sample_typescript_preview_actionability_finding() -> Finding {
     finding.language_status = Some(LanguageStatus::Preview);
     finding.owner_kind = Some(OwnerKind::Function);
     finding.evidence = vec![
-        "gap_state: advisory".to_string(),
+        "gap_state: unknown".to_string(),
         "actionability_category: missing_context".to_string(),
         "why_not_actionable: verify command and receipt command are not inferred for TypeScript preview".to_string(),
         "repair_route: add strict TypeScript repair-packet actionability proof".to_string(),
@@ -16894,7 +16897,7 @@ fn typescript_preview_finding_diagnostic_carries_actionability_context() -> Resu
         actionability
             .get("gap_state")
             .and_then(|value| value.as_str()),
-        Some("advisory")
+        Some("unknown")
     );
     assert_eq!(
         actionability
@@ -17373,7 +17376,7 @@ fn typescript_preview_finding_hover_shows_actionability_before_evidence() -> Res
                 "Language: typescript",
                 "Status: preview",
                 "Repair instructions for an AI agent: not ready",
-                "State: advisory",
+                "State: unknown",
                 "Category: missing_context",
                 "Why not actionable: verify command and receipt command are not inferred for TypeScript preview",
                 "Repair route: add strict TypeScript repair-packet actionability proof",
@@ -20750,6 +20753,109 @@ fn execute_command_collect_repair_packet_stale_snapshot_returns_sentinel() -> Re
 }
 
 #[test]
+fn execute_command_collect_repair_packet_distinguishes_in_flight_from_terminal()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        for (state, refresh_state, attempt_state) in [
+            (AnalysisAttemptState::Queued, "in_flight", "queued"),
+            (AnalysisAttemptState::Running, "in_flight", "running"),
+            (AnalysisAttemptState::Failed, "terminal", "failed"),
+            (AnalysisAttemptState::Cancelled, "terminal", "cancelled"),
+            (AnalysisAttemptState::Superseded, "terminal", "superseded"),
+            (AnalysisAttemptState::Stopped, "stale_snapshot", "stopped"),
+        ] {
+            backend.set_analysis_attempt_state_for_test(state);
+            let result = backend
+                .execute_command(ExecuteCommandParams {
+                    command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                    arguments: vec![],
+                    work_done_progress_params: Default::default(),
+                })
+                .await
+                .map_err(|err| format!("execute_command failed: {err}"))?
+                .ok_or_else(|| "expected sentinel".to_string())?;
+            // Both still fail closed with the original reason.
+            assert_eq!(result["status"], "not_actionable_or_incomplete");
+            assert_eq!(result["reason"], "analysis_snapshot_stale");
+            assert_eq!(result["refresh_state"], refresh_state, "{attempt_state}");
+            assert_eq!(result["attempt_state"], attempt_state);
+            let recovery = result["recovery"].as_str().unwrap_or_default();
+            assert!(!recovery.is_empty(), "{attempt_state} needs guidance");
+            assert_eq!(
+                recovery.contains("in progress"),
+                refresh_state == "in_flight"
+            );
+        }
+        Ok(())
+    })
+}
+
+async fn repair_packet_sentinel_for(backend: &Backend) -> Result<serde_json::Value, String> {
+    backend
+        .execute_command(ExecuteCommandParams {
+            command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+            arguments: vec![],
+            work_done_progress_params: Default::default(),
+        })
+        .await
+        .map_err(|err| format!("execute_command failed: {err}"))?
+        .ok_or_else(|| "expected sentinel".to_string())
+}
+
+#[test]
+fn execute_command_collect_repair_packet_guidance_covers_stale_no_snapshot_and_pending()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        // Default state: Stopped with no snapshot and nothing failed.
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["reason"], "analysis_snapshot_stale");
+        assert_eq!(result["refresh_state"], "no_snapshot");
+        assert_eq!(result["attempt_state"], "stopped");
+        let no_snapshot = result["recovery"].as_str().unwrap_or_default().to_string();
+        assert!(
+            no_snapshot.contains("No analysis snapshot"),
+            "{no_snapshot}"
+        );
+
+        // Succeeded but the retained snapshot is stale.
+        let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        backend.set_snapshot_run_status_for_test("stale");
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["reason"], "analysis_snapshot_stale");
+        assert_eq!(result["refresh_state"], "stale_snapshot");
+        assert_eq!(result["attempt_state"], "succeeded");
+        assert_ne!(result["recovery"].as_str().unwrap_or_default(), no_snapshot);
+
+        // Succeeded with a refresh pending, or inside the debounce window.
+        backend.set_pending_attempt_for_test(Some(7));
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["refresh_state"], "in_flight");
+        assert_eq!(result["attempt_state"], "succeeded");
+        backend.set_pending_attempt_for_test(None);
+        backend.set_interactive_debounce_open_for_test(true);
+        let result = repair_packet_sentinel_for(backend).await?;
+        assert_eq!(result["refresh_state"], "in_flight");
+        assert_eq!(result["reason"], "analysis_snapshot_stale");
+        Ok(())
+    })
+}
+
+#[test]
 fn execute_command_collect_repair_packet_registered_in_capabilities() -> Result<(), String> {
     let Some(provider) = initialize_result().capabilities.execute_command_provider else {
         return Err("expected execute command provider".to_string());
@@ -22802,6 +22908,7 @@ fn quarantine_workspace_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -23383,13 +23490,139 @@ async fn hover_without_evidence_routes_an_unanalyzed_file_to_refresh() -> Result
         Some(HoverContents::Markup(markup)) => markup.value,
         other => return Err(format!("expected a markdown hover, got {other:?}")),
     };
-    if !text.contains("has not analyzed this file's saved content")
-        || !text.contains("ripr.refresh")
+    if !text.contains("is not on disk")
+        || !text.contains("save it, then refresh (`ripr.refresh`)")
         || text.contains("save the file to refresh")
+        || text.contains("in this session")
     {
         return Err(format!(
-            "unanalyzed file hover must route to refresh, not the divergent-buffer text: {text}"
+            "unanalyzed new file hover must name the observed cause, not the divergent-buffer text: {text}"
         ));
+    }
+    Ok(())
+}
+
+/// Hover text for `c.rs` (on disk, never analyzed) opened under a fresh server whose
+/// analysis health is `state` (or untouched when `None`) and, when
+/// `commit_snapshot`, a committed snapshot that records only `a.rs`.
+async fn unanalyzed_hover_text(
+    name: &str,
+    state: Option<AnalysisAttemptState>,
+    commit_snapshot: bool,
+) -> Result<String, String> {
+    let fixture = quarantine_fixture(name)?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .initialize(initialize_params(
+            None,
+            Some(
+                file_uri_for_path(&fixture.root)
+                    .map_err(|err| format!("root URI failed: {err}"))?,
+            ),
+        ))
+        .await
+        .map_err(|err| format!("initialize failed: {err}"))?;
+    // The first open starts the session's real refresh; let it settle so a
+    // later open schedules nothing and the cause under test is pinned below.
+    backend
+        .did_open(quarantine_open_params(&fixture.uri_a, QUARANTINE_TEXT_A))
+        .await;
+    let mut settled = false;
+    for _ in 0..200 {
+        if !matches!(
+            backend.analysis_attempt_state_for_test(),
+            AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+        ) {
+            settled = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    if !settled {
+        return Err("the opening refresh did not settle".to_string());
+    }
+    // `c.rs` is on disk but no analysis read it.
+    let path_c = fixture.root.join("src").join("c.rs");
+    std::fs::write(&path_c, QUARANTINE_TEXT_B)
+        .map_err(|err| format!("write c.rs failed: {err}"))?;
+    let uri_c = file_uri_for_path(&path_c).map_err(|err| format!("c.rs URI failed: {err}"))?;
+    backend
+        .did_open(quarantine_open_params(&uri_c, QUARANTINE_TEXT_B))
+        .await;
+    if commit_snapshot {
+        commit_quarantine_snapshot(backend, &fixture, QUARANTINE_TEXT_A)?;
+    } else {
+        backend.clear_latest_analysis_for_test();
+    }
+    if let Some(state) = state {
+        backend.set_analysis_attempt_state_for_test(state);
+    }
+    match backend.document_quarantine(&uri_c) {
+        Some((_, DocumentStalenessReason::NoAnalyzedSavedContent)) => {}
+        other => {
+            return Err(format!(
+                "fixture must quarantine c.rs without an analyzed baseline, got {other:?}"
+            ));
+        }
+    }
+    let hover = backend
+        .hover(hover_params(uri_c.clone(), 0, 4))
+        .await
+        .map_err(|err| format!("hover failed: {err}"))?;
+    match hover.map(|hover| hover.contents) {
+        Some(HoverContents::Markup(markup)) => Ok(markup.value),
+        other => Err(format!("expected a markdown hover, got {other:?}")),
+    }
+}
+
+#[tokio::test]
+async fn unanalyzed_file_hover_names_only_the_observed_cause() -> Result<(), String> {
+    // #11452: one fixed text used to cover several different causes. Each
+    // observed cause gets its own wording; none may assert an unobserved
+    // cause, and none may use the false "in this session" claim.
+    let none = unanalyzed_hover_text("unanalyzed-none", None, false).await?;
+    let running = unanalyzed_hover_text(
+        "unanalyzed-running",
+        Some(AnalysisAttemptState::Running),
+        false,
+    )
+    .await?;
+    let failed = unanalyzed_hover_text(
+        "unanalyzed-failed",
+        Some(AnalysisAttemptState::Failed),
+        false,
+    )
+    .await?;
+    let unrecorded = unanalyzed_hover_text("unanalyzed-unrecorded", None, true).await?;
+
+    if !none.contains("no analysis has committed") || none.contains("already queued") {
+        return Err(format!("no-analysis cause misworded: {none}"));
+    }
+    if !running.contains("already queued or running") || running.contains("failed") {
+        return Err(format!("in-progress cause misworded: {running}"));
+    }
+    if !failed.contains("latest analysis attempt failed") || failed.contains("already queued") {
+        return Err(format!("failed cause misworded: {failed}"));
+    }
+    if !unrecorded.contains("did not record this file's saved content")
+        || unrecorded.contains("no analysis has committed")
+    {
+        return Err(format!(
+            "unrecorded-by-snapshot cause misworded: {unrecorded}"
+        ));
+    }
+    let all = [&none, &running, &failed, &unrecorded];
+    for (index, text) in all.iter().enumerate() {
+        if text.contains("in this session") || text.contains("save the file to refresh") {
+            return Err(format!("unobserved or divergent-buffer claim: {text}"));
+        }
+        for other in &all[index + 1..] {
+            if text == other {
+                return Err("distinct causes must not share one text".to_string());
+            }
+        }
     }
     Ok(())
 }
@@ -23606,6 +23839,7 @@ fn partition_workspace_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
+        rust_diagnostic_origins: Default::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -23964,6 +24198,7 @@ fn disabled_language_workspace_diagnostics(
         out_of_scope_test_file_findings: 0,
         unavailable_adapter,
         language_view: Some(not_selected_language_view("python")),
+        rust_diagnostic_origins: Default::default(),
     };
     Ok(WorkspaceDiagnostics {
         snapshot,
@@ -24300,6 +24535,7 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
             },
         ]),
         language_view: Some(not_selected_language_view("perl")),
+        rust_diagnostic_origins: Default::default(),
     };
     backend
         .refresh_plan(WorkspaceDiagnostics {
@@ -24491,7 +24727,7 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
             QUARANTINE_TEXT_A_DIRTY,
         ))
         .await;
-    // A rejected incremental change (position past the line end) disowns the
+    // A rejected incremental change (reversed range) disowns the
     // retained buffer and enters the fail-closed quarantine.
     backend
         .did_change(DidChangeTextDocumentParams {
@@ -24500,11 +24736,11 @@ async fn did_save_without_text_during_unknown_buffer_authority_holds_the_quarant
                 range: Some(Range {
                     start: Position {
                         line: 0,
-                        character: 500,
+                        character: 20,
                     },
                     end: Position {
                         line: 0,
-                        character: 501,
+                        character: 5,
                     },
                 }),
                 range_length: None,
@@ -26582,9 +26818,8 @@ fn framed_rejected_edit_binds_no_version_to_served_content() -> Result<(), Strin
         )
         .await?;
 
-        // A ranged edit past the line end is rejected: the version moves
-        // to 9 but the buffer stays frozen at the version-8 text with
-        // unknown authority.
+        // A reversed ranged edit is rejected: the version moves to 9 but the
+        // buffer stays frozen at the version-8 text with unknown authority.
         write_lsp_message(
             &mut client_write,
             serde_json::json!({
@@ -26594,8 +26829,8 @@ fn framed_rejected_edit_binds_no_version_to_served_content() -> Result<(), Strin
                     "textDocument": { "uri": text_uri, "version": 9 },
                     "contentChanges": [{
                         "range": {
-                            "start": { "line": 0, "character": 500 },
-                            "end": { "line": 0, "character": 501 }
+                            "start": { "line": 0, "character": 20 },
+                            "end": { "line": 0, "character": 5 }
                         },
                         "text": "X"
                     }]
@@ -28867,6 +29102,34 @@ fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), Strin
 }
 
 #[test]
+fn hover_discloses_base_side_currentness_with_the_cli_wording() -> Result<(), String> {
+    // #11905: hover took no part in the base-side disclosure the CLI prints.
+    let mut finding = fix_route_rust_finding();
+    finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+    let disclosure = finding
+        .source_currentness_disclosure()
+        .ok_or("base_deleted must carry a disclosure")?;
+    let markdown = finding_hover_markdown_for(&finding)?;
+    assert!(
+        markdown.contains(&format!("**Source:** {disclosure}")),
+        "{markdown}"
+    );
+    // Negative control: a candidate-current finding keeps hover unchanged.
+    finding.source_currentness = crate::domain::SourceCurrentness::CandidateCurrent;
+    let markdown = finding_hover_markdown_for(&finding)?;
+    assert!(!markdown.contains("**Source:**"), "{markdown}");
+    assert_eq!(finding.source_currentness_disclosure(), None);
+    // The producer-unknown state is not described as base-side evidence.
+    finding.source_currentness = crate::domain::SourceCurrentness::UnresolvedSubject;
+    let unknown = finding
+        .source_currentness_disclosure()
+        .ok_or("unresolved_subject must carry a disclosure")?;
+    assert!(unknown.starts_with("unresolved_subject"), "{unknown}");
+    assert!(!unknown.contains("base-side"), "{unknown}");
+    Ok(())
+}
+
+#[test]
 fn hover_discriminator_row_keeps_yes_for_exposed_findings() -> Result<(), String> {
     // Negative control: an exposed finding keeps the producer's stage line.
     let mut finding = fix_route_rust_finding();
@@ -30641,6 +30904,173 @@ fn python_preview_edit_discloses_withheld_marker_only_under_actionable_profile()
         .any(is_marker)
     {
         return Err("reverted edit: the marker must disappear with its finding".to_string());
+    }
+    Ok(())
+}
+
+/// A committed single-crate Rust repo with no tests at all and one
+/// working-tree edit to a function nothing calls (#11798).
+fn untested_rust_edit_fixture(name: &str) -> Result<TempLspRoot, String> {
+    let root = unique_lsp_test_root(name)?;
+    std::fs::create_dir_all(root.path().join("src"))
+        .map_err(|err| format!("create src failed: {err}"))?;
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[package]\nname = \"lonely\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml failed: {err}"))?;
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn lonely(x: i32) -> i32 {\n    x * 2\n}\n",
+    )
+    .map_err(|err| format!("write lib.rs failed: {err}"))?;
+    run_lsp_scope_git(root.path(), &["init", "-q"])?;
+    run_lsp_scope_git(root.path(), &["add", "-A"])?;
+    run_lsp_scope_git(
+        root.path(),
+        &[
+            "-c",
+            "user.email=ripr-test@example.com",
+            "-c",
+            "user.name=ripr-test",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-qm",
+            "baseline",
+        ],
+    )?;
+    std::fs::write(
+        root.path().join("src/lib.rs"),
+        "pub fn lonely(x: i32) -> i32 {\n    x * 3\n}\n",
+    )
+    .map_err(|err| format!("edit lib.rs failed: {err}"))?;
+    Ok(root)
+}
+
+/// #11798 through the real workspace entry point and the status projection:
+/// a changed function no test calls yields a live `no_static_path` finding
+/// the actionable profile withholds. `ripr/analysisStatus` must reconcile
+/// (`withheld_findings.count == live findings - published findings`), the
+/// editor must carry one passive Hint naming the `full` route, and the
+/// full profile must publish the findings with no marker.
+#[test]
+fn untested_rust_edit_discloses_withheld_findings_and_reconciles_status() -> Result<(), String> {
+    use crate::lsp::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE;
+    let root = untested_rust_edit_fixture("withheld-live-entry")?;
+    let analyze = |profile| {
+        let config = LspAnalysisConfig {
+            base_ref: Some("HEAD".to_string()),
+            mode: Mode::Instant,
+            diagnostic_profile: profile,
+            ..LspAnalysisConfig::default()
+        };
+        workspace_diagnostics_with_config(root.path(), &config, true)
+    };
+    let is_marker = |diagnostic: &Diagnostic| {
+        diagnostic.code
+            == Some(NumberOrString::String(
+                DIAGNOSTIC_PREVIEW_WITHHELD_CODE.to_string(),
+            ))
+    };
+
+    let actionable = analyze(crate::config::LspDiagnosticProfile::Actionable)?;
+    // `finding_count` counts every finding; only the candidate-current ones
+    // are live obligations (a base-side twin is historical context that the
+    // full profile alone shows), so the withheld share is the live subset.
+    let finding_count = actionable.snapshot.findings.len();
+    let live_count = actionable
+        .snapshot
+        .findings
+        .iter()
+        .filter(|finding| finding.is_candidate_actionable())
+        .count();
+    if live_count == 0
+        || !actionable
+            .snapshot
+            .findings
+            .iter()
+            .any(|finding| finding.class == ExposureClass::NoStaticPath)
+    {
+        return Err(format!(
+            "fixture must produce a live no_static_path finding: {:?}",
+            actionable.snapshot.findings
+        ));
+    }
+    let diagnostics = actionable
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    let (markers, published): (Vec<_>, Vec<_>) =
+        diagnostics.iter().copied().partition(|d| is_marker(d));
+    if !published.is_empty() {
+        return Err(format!(
+            "fixture: the profile must withhold every finding: {published:?}"
+        ));
+    }
+    let [marker] = markers.as_slice() else {
+        return Err(format!("exactly one marker expected: {diagnostics:?}"));
+    };
+    if marker.severity != Some(DiagnosticSeverity::HINT)
+        || !marker.message.contains("no static test path found")
+        || !marker
+            .message
+            .contains(&format!("{live_count} changed-behavior finding(s)"))
+        || !marker.message.contains("diagnosticProfile: full")
+    {
+        return Err(format!(
+            "marker must name count and escape hatch: {marker:?}"
+        ));
+    }
+    if marker.data.as_ref().is_some_and(|data| {
+        data.get("delivery_eligible").is_some() || data.get("finding_id").is_some()
+    }) {
+        return Err(format!("marker must carry no finding data: {marker:?}"));
+    }
+    if !actionable.snapshot.is_consistent() {
+        return Err("actionable: snapshot with the marker must be consistent".to_string());
+    }
+
+    // Status projection: commit the real snapshot and read analysisStatus.
+    let (service, socket) =
+        LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+    drop(socket);
+    let backend = service.inner();
+    let published_findings = published.len();
+    backend
+        .refresh_plan(actionable)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    let status = backend.analysis_status_payload_for_health(&AnalysisHealth::default());
+    let reported = status["analysis_outcome"]["counts"]["finding_count"]
+        .as_u64()
+        .ok_or_else(|| format!("status carries finding_count: {status:#}"))?;
+    let withheld = status["withheld_findings"]["count"]
+        .as_u64()
+        .ok_or_else(|| format!("status carries withheld count: {status:#}"))?;
+    if reported as usize != finding_count
+        || withheld as usize != live_count - published_findings
+        || withheld == 0
+        || status["withheld_findings"]["gap_count"] != withheld
+        || status["withheld_findings"]["classes"] != serde_json::json!(["no_static_path"])
+        || !status["withheld_findings"]["recovery_route"].is_string()
+    {
+        return Err(format!("withheld_findings must reconcile: {status:#}"));
+    }
+
+    let full = analyze(crate::config::LspDiagnosticProfile::Full)?;
+    let full_diagnostics = full
+        .batches
+        .iter()
+        .flat_map(|batch| batch.diagnostics.iter())
+        .collect::<Vec<_>>();
+    if full_diagnostics.is_empty() || full_diagnostics.iter().copied().any(is_marker) {
+        return Err(format!(
+            "full: findings published and no marker expected: {full_diagnostics:?}"
+        ));
+    }
+    if !full.snapshot.is_consistent() {
+        return Err("full: snapshot must be consistent".to_string());
     }
     Ok(())
 }

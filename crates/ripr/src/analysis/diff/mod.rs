@@ -11,7 +11,7 @@ pub mod records;
 #[cfg(test)]
 pub(crate) use load::not_a_work_tree_message;
 pub(crate) use load::{
-    AnalyzedRevisions, HeadRefState, probe_head_ref_state, resolve_analyzed_revisions,
+    AnalyzedRevisions, HeadRefState, LoadedDiff, probe_head_ref_state, resolve_analyzed_revisions,
     working_tree_has_uncommitted_changes,
 };
 pub(crate) use load::{
@@ -37,7 +37,9 @@ pub use parse::parse_unified_diff;
 pub(crate) use parse::{
     parse_unified_diff_bounded_scoped, parse_unified_diff_bounded_with_metadata,
 };
+#[cfg(test)]
+pub(crate) use path::diff_path_identity_key_with;
 pub(crate) use path::{
-    artifact_root_gitignore_entry, artifact_root_pathspec, is_ripr_artifact_path_under,
-    ripr_artifact_roots,
+    artifact_root_gitignore_entry, artifact_root_pathspec, diff_path_identity_key,
+    is_ripr_artifact_path_under, ripr_artifact_roots,
 };

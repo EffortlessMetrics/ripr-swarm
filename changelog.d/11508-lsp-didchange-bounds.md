@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr lsp --stdio` now bounds a `didChange` notification: more than 1,024 content changes, a retained buffer past 16 MiB, or ranged edits whose position lookups would scan more than 256 MiB are refused through the existing invalid-incremental-change path (buffer untouched, document quarantined until a full replacement) instead of stalling the handler. Repo `Cargo.toml` and `rust-toolchain` probes during config discovery also use the bounded reader (#11508).

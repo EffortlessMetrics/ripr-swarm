@@ -41,6 +41,28 @@ review artifacts described here. Machine-readable receipts record which gates
 and report commands ran so agents and reviewers can inspect evidence without
 reading raw logs.
 
+## PR body admission contract
+
+Agent-authored bodies must also include, verbatim and with real values
+(not empty, `TBD`, or `<...>` placeholders), every
+`.github/pull_request_template.md` Source-of-truth Links line
+(`Proposal:`, `Spec:`, `ADR:`, `Plan item:`,
+`Governing issue or accepted claim:`,
+`Acceptance delta (one sentence):`) and Candidate Relationships line
+(`Candidate branch (GitHub PR head is authoritative after publication):`,
+`Stack parent or prerequisite PR (if any):`,
+`Proposed replacement of PR (if any; not yet accepted):`,
+`Acceptance retained from a replaced candidate (if any):`,
+`Accepted winner and losing candidate disposition (when decided):`)
+before first Ready. Where a line does not apply, state that explicitly
+(for example `none`) instead of deleting or leaving it blank; the two
+admission-gated lines (`Governing issue or accepted claim:` and
+`Acceptance delta (one sentence):`) always need a real value. Before
+first Ready, validate the body offline and fix every line it names:
+`gh pr view <number> --json body > pr-body.json` then
+`cargo xtask check-pr-shape --body-file pr-body.json` (or
+`--body-env <var>` holding the raw body or that JSON).
+
 ## Draft to Ready handoff
 
 Publish a coherent candidate as Draft. The review, repair and evidence boundaries
@@ -93,8 +115,9 @@ route, the delivery owner completes this order before spending the
    `REVIEW_INCOMPLETE` may retain that evidence gap and merge-ready-requested proof;
    unavailable proof is not a pass. It cannot excuse an executable but unrun
    applicable local check, unfinished review or repair, a known-red test, or
-   missing claim-essential native proof. After Ready, the `merge-ready` label (applied last, or removed and re-added for a new head) requests
-   qualification for the exact head; Ready alone requests nothing;
+   missing claim-essential native proof. After Ready, inspect the existing label, request and runs for the exact head
+   and subject before acting. The `merge-ready` label requests qualification;
+   Ready alone requests nothing;
    `REVIEW_READY` and required proof still govern merge under `finish-pr`.
 
 After Ready, inspect the actual job checkout commit, parents and tree against
@@ -105,9 +128,22 @@ or subject is verified; do not relabel that run as proof for the local tree or
 re-apply `merge-ready` merely to refresh it.
 
 A new head or material finding returns the candidate to Draft for one joined
-repair/proof/review wave before the next `merge-ready` request (remove and re-add the label on the exact new
-head). Preserve unaffected evidence. Do not re-apply the label on an unchanged
-head with a queued or running required run: it cancels it. Retain its run link and yield the remote wait.
+repair/proof/review wave. Preserve unaffected evidence. Before any label request,
+read the current head, label and admitted run state, including the run subject:
+
+- Preserve a queued or running current-subject run and its link; reapplying the
+  label cancels it. Yield the remote wait.
+- A retained label and conflict notice with no admitted run is not qualification.
+  Once the conflict and prerequisites are resolved, remove and re-add the label
+  to request the current subject. Confirm admission.
+- A terminal infrastructure failure requires diagnosis and the supported retry
+  route; do not relabel it as a pass or blindly reapply the label.
+- A success on a stale head or different subject does not qualify the current
+  subject. After affected proof and review, request the current subject only when
+  no current-subject run is already admitted.
+- Unknown required-check membership remains unknown; a visible green run alone
+  does not establish complete required checks. If request or run state cannot be
+  read, record the limit and do not guess or duplicate a request.
 
 ### PR-native continuation record
 
@@ -287,7 +323,7 @@ cargo xtask fix-pr
 cargo xtask fixtures [name]
 cargo xtask gh-pr-status --pr <number>
 cargo xtask golden-drift
-cargo xtask goldens bless <name> --reason <reason>
+cargo xtask goldens bless <name> --reason "RIPR-SPEC-NNNN: <reviewed change>"
 cargo xtask goldens check
 cargo xtask impacted-evidence [--pr-evidence <path>] [--label <label>] [--labels <csv>] [--check]
 cargo xtask install-hooks
@@ -618,7 +654,7 @@ Set `RIPR_TEST_GH` to a real supported CLI binary and run
 `cargo test -p xtask --bin xtask gh_pr_status_real_cli_schema -- --ignored`
 to check the production view fields against its actual offline field registry;
 this opt-in capability test needs the tool but no credentials or network.
-It reads the full PR snapshot again after required-context lookup. Both reads
+It reads the full PR snapshot again before reporting. Both reads
 must identify the requested PR and the same full head/base commits and target
 branch. Movement or unavailable identity returns an error before publishing a
 new readiness packet; existing report files remain historical and must not be
@@ -628,28 +664,32 @@ unchanged-head proof/review and requires integration judgment, not blanket
 reruns. When identities match, the final response supplies checks and review
 facts. The warning list records the exact observed commits. This separate read
 is not atomic with a later merge and supplies no merge authority. It reads
-GitHub CLI PR status, branch-protection required contexts when available,
-latest reviews, and Droid-related checks, then writes
+GitHub CLI PR status, latest reviews, and Droid-related checks without reading
+branch-protection or ruleset settings, then writes
 `target/ripr/reports/gh-pr-status.md` and
 `target/ripr/reports/gh-pr-status.json` with the merge state, outstanding
-checks, failed checks, behind-main state, review status, Droid status, and a
-safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
+rollup checks, failed checks, behind-main state, review status, Droid status, and a
+safe next action: `wait`, `inspect integration`, `inspect failure`, or `inspect final merge gates`. The last action requests the independent final judgment and normal server-enforced merge path; it is not merge authority or an instruction to wait for administrative settings. The advisory JSON `safe_next_action` value changed from `merge`; external consumers must handle the new value.
 `BEHIND` requests integration judgment after Draft, review-required and pending
 waits; it does not establish that a branch update is needed. The packet retains the current head commit and each latest review's original
 commit, with `current_head`, `stale_for_head`, or `subject_unavailable` attribution.
 An `APPROVED` aggregate without an exact-head latest approval recommends `wait`.
 The CLI's `latestReviews` summaries are joined by author, submission time, and
 state to the full `reviews` subjects; missing or ambiguous identity stays unknown.
-This attribution does not establish review substance, independence, approval
-quotas, integration qualification, or protection satisfaction. It is advisory and
+Required-context completeness is unknown from the rollup; an empty pending list
+does not establish that all required checks passed. GitHub enforces applicable
+requirements on a normal merge request. This attribution does not establish review
+substance, independence, approval quotas, integration qualification, or protection satisfaction. It is advisory and
 never updates the branch, comments, approves, or merges.
 The provider-response section retains known quota notices and unknown substance
 from returned reviews/comments without treating either as review completion.
 Historical response subjects remain unattributed; the packet head is collection
 context only. This does not add a provider gate or change the advisory action.
 See [provider observation fields](OUTPUT_SCHEMA.md#github-pr-status-provider-observations).
+### Review conversation inventory
+
 For unresolved inline conversations and their next actions, use the read-only
-[finish-pr conversation inventory](../.agents/skills/finish-pr/references/review-conversations.md).
+[finish-pr conversation inventory](agent-context/review-conversations.md).
 It paginates threads and keeps outdated unresolved findings visible; it does not
 replace substantive review or change merge protections.
 Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) for polling
@@ -706,28 +746,24 @@ fixture directories exist yet.
 outputs without mutating checked-in files. It also writes
 `target/ripr/reports/golden-drift.md` and
 `target/ripr/reports/golden-drift.json` so reviewers can inspect semantic drift
-before any blessing. `goldens bless <fixture> --reason <reason>` requires the
-reason to cite an existing `RIPR-SPEC-NNNN` under `docs/specs/`, then records
+before any blessing. `goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"` requires both placeholders filled with the fixture name, a governing spec id from `docs/specs/`, and a short reviewed change description; the reason must cite an existing `RIPR-SPEC-NNNN`, then records
 the explicit blessing reason, updates expected JSON and human outputs, and
 appends the fixture expected-output changelog. Bless from the Linux arbiter
 platform, never from a Windows host; the sanctioned route is documented in
 [Validation commands](agent-context/validation.md#golden-fixtures-and-the-blessing-platform).
 
-Human goldens (`human.txt`, `human-full.txt`) mask only the explanatory prose
-of the line `no repair start offered: <reason>`. Pinned: the line's presence and
-position, the fixed opening that identifies the refusal variant (no gap ID, no seam or no binding seam, several binding seams, Rust files only, seam
-budget, unreadable config, classification failure, static evidence incomplete,
-still missing, related test already reaches the boundary), and the
-`still missing:` / `It is also still missing:` evidence lists. Masked as
-`<reason>`: the wording around those pins, such as the trailing "follow the Next
-step" advice, the Rust-files-only explanation and the boundary-variant
-explanation. A reason that matches no known variant opening is compared
-verbatim, so a new or heavily reworded variant is drift to re-bless and add to
-`REPAIR_REFUSAL_RULES` in `xtask/src/reports/fixtures.rs`. `check.json` is never
-masked. The prose has focused tests of its own, and comparing it verbatim turned
-every rewording into one re-blessed line in hundreds of fixtures (#10702). A
-repair start that flips to a refusal, a refusal that appears or disappears, and
-a change of variant or missing-evidence list are still drift.
+Human goldens (`human.txt`, `human-full.txt`) compare the line
+`no repair start offered: <reason>` verbatim, including its fixed wording,
+advice and `still missing:` / `It is also still missing:` evidence lists, so
+rewording a refusal arm is drift to re-bless (#12003). Only values that move
+with unrelated code are masked as `<reason>`: everything after the opening of
+the seam-inventory arm (language and file) and of the classification-failure
+arm (the bound command), and the seam count of the "found N seams ... could not
+tie one" arm. An arm joins `REPAIR_REFUSAL_RULES` in
+`xtask/src/reports/fixtures.rs` only when its sentence embeds such a value. A
+reason that matches no rule is compared verbatim. `check.json` is never
+masked. A repair start that flips to a refusal, a refusal that appears or
+disappears, and a change of variant or wording are drift.
 
 Transitional (#10702): `xtask/src/reports/fixtures/transitional.rs` lists the
 exact `fixture/surface` human goldens (253) whose expected refusal opening is
@@ -921,8 +957,12 @@ Current:
 ```bash
 cargo xtask shape
 cargo xtask fix-pr
-cargo xtask goldens bless <fixture> --reason "..."
+cargo xtask goldens bless <fixture> --reason "RIPR-SPEC-NNNN: <reviewed change>"
 ```
+
+Replace `<fixture>`, `RIPR-SPEC-NNNN`, and `<reviewed change>` with the fixture
+you blessed, its governing spec under `docs/specs/`, and what you reviewed.
+Ellipsis or a description without a spec id is rejected before fixture execution.
 
 There are no `--write` variants of `metrics`, `docs-index`, or
 `capability-matrix`; earlier revisions of this section listed them as future

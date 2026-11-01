@@ -9,7 +9,10 @@ mod commands_numeric;
 mod commands_options;
 mod commands_timestamps;
 mod execute;
+#[cfg(kani)]
+mod exit_kani;
 pub(crate) mod help;
+mod help_flags;
 mod help_json;
 pub(crate) mod interrupt;
 mod parse;
@@ -144,7 +147,7 @@ fn run_command(mut args: Vec<String>, interrupt_handling: bool) -> Result<(), Co
             && args.get(2).is_some_and(|arg| arg == "--json")
         {
             return Err(CommandError::from(
-                "usage: ripr help --json (this route accepts no other arguments)".to_string(),
+                "usage: ripr help --json (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands".to_string(),
             ));
         }
         eprintln!("ripr: verbose mode enabled");
@@ -222,10 +225,18 @@ fn gap_binding_from_snapshot(
     base: &str,
     snapshot: &std::path::Path,
 ) -> Result<crate::app::repair_attempt::RepairAttemptGapBinding, String> {
-    let raw = std::fs::read_to_string(snapshot)
-        .map_err(|error| format!("read {} failed: {error}", snapshot.display()))?;
-    let document: serde_json::Value = serde_json::from_str(&raw)
-        .map_err(|error| format!("parse {} failed: {error}", snapshot.display()))?;
+    let raw = std::fs::read_to_string(snapshot).map_err(|error| {
+        format!(
+            "read {} failed: {error}; check the file exists and you can read it, then rerun",
+            snapshot.display()
+        )
+    })?;
+    let document: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
+        format!(
+            "parse {} failed: {error}; regenerate it with `ripr check --json`, then rerun",
+            snapshot.display()
+        )
+    })?;
     let base_commit = document
         .pointer("/artifact/analysis/base_revision")
         .and_then(serde_json::Value::as_str)
@@ -274,7 +285,7 @@ fn drive_before_phase_inner(
     let seam_id = options
         .seam_id
         .as_deref()
-        .ok_or_else(|| "before-phase repair attempt is missing its seam identity".to_string())?;
+        .ok_or_else(|| "before-phase repair attempt is missing its seam identity; report this as a ripr bug with the command you ran".to_string())?;
     let identity =
         crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&options.root, seam_id)?;
     // #9103: remember the shared gap-bound workflow artifacts as this
@@ -301,7 +312,7 @@ fn drive_before_phase_inner(
                     BeforePhaseError::Other(error) => error.message().to_owned(),
                 };
                 return Err(BeforePhaseError::Other(CommandError::Failure(format!(
-                    "{original}; failed to restore prior workflow artifacts: {restore_error}"
+                    "{original}; failed to restore prior workflow artifacts: {restore_error}; remove target/ripr/workflow by hand, then rerun the repair command"
                 ))));
             }
             return Err(error);
@@ -385,13 +396,20 @@ fn lock_repair_workflow(root: &Path) -> Result<File, String> {
     let git_dir = crate::agent::artifact::git_output(root, &["rev-parse", "--absolute-git-dir"])?;
     let git_dir = Path::new(git_dir.trim());
     let lock_path = git_dir.join("ripr-repair-workflow.lock");
-    let lock = crate::output::file_write::open_lock(&lock_path)
-        .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
+    let lock = crate::output::file_write::open_lock(&lock_path).map_err(|error| {
+        format!(
+            "create {} failed: {error}; check you can write under the git directory, then rerun",
+            lock_path.display()
+        )
+    })?;
     if let Err(error) = lock.try_lock() {
         if matches!(error, std::fs::TryLockError::WouldBlock) {
             return Err("another repair phase is using the shared workflow artifacts; retry after it finishes".to_string());
         }
-        return Err(format!("lock {} failed: {error}", lock_path.display()));
+        return Err(format!(
+            "lock {} failed: {error}; wait for any other ripr repair to finish, then rerun",
+            lock_path.display()
+        ));
     }
     Ok(lock)
 }
@@ -405,20 +423,33 @@ fn lock_repair_workflow(root: &Path) -> Result<File, String> {
 /// process exit and cannot go stale.
 fn lock_before_repair_attempt(root: &Path) -> Result<File, String> {
     let directory = root.join(crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY);
-    std::fs::create_dir_all(&directory)
-        .map_err(|error| format!("create {} failed: {error}", directory.display()))?;
+    std::fs::create_dir_all(&directory).map_err(|error| {
+        format!(
+            "create {} failed: {error}; check you can write under target/ripr, then rerun",
+            directory.display()
+        )
+    })?;
     let lock_path = directory.join(".before.lock");
     // Refuse a planted symlink or other non-file, and never truncate: the
     // no-follow writer's Windows share mode would turn a held lock into a
     // sharing violation before `try_lock` could name it.
-    crate::output::file_write::validate_destination(&lock_path)
-        .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
+    crate::output::file_write::validate_destination(&lock_path).map_err(|error| {
+        format!(
+            "create {} failed: {error}; remove that path if it is not a plain file, then rerun",
+            lock_path.display()
+        )
+    })?;
     let lock = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(false)
         .open(&lock_path)
-        .map_err(|error| format!("create {} failed: {error}", lock_path.display()))?;
+        .map_err(|error| {
+            format!(
+                "create {} failed: {error}; check you can write under target/ripr, then rerun",
+                lock_path.display()
+            )
+        })?;
     if let Err(error) = lock.try_lock() {
         if matches!(error, std::fs::TryLockError::WouldBlock) {
             return Err(
@@ -426,7 +457,10 @@ fn lock_before_repair_attempt(root: &Path) -> Result<File, String> {
                     .to_string(),
             );
         }
-        return Err(format!("lock {} failed: {error}", lock_path.display()));
+        return Err(format!(
+            "lock {} failed: {error}; wait for any other ripr repair to finish, then rerun",
+            lock_path.display()
+        ));
     }
     Ok(lock)
 }
@@ -481,7 +515,7 @@ fn persist_before_repair_attempt(
     let seam_id = options
         .seam_id
         .as_deref()
-        .ok_or_else(|| "before-phase repair attempt is missing its seam identity".to_string())?;
+        .ok_or_else(|| "before-phase repair attempt is missing its seam identity; report this as a ripr bug with the command you ran".to_string())?;
     let workflow_manifest = root.join(WORKFLOW_MANIFEST_ARTIFACT);
     let commands_markdown = root.join(WORKFLOW_COMMANDS_MARKDOWN_ARTIFACT);
     let agent_brief = root.join(WORKFLOW_AGENT_BRIEF_ARTIFACT);
@@ -491,10 +525,17 @@ fn persist_before_repair_attempt(
     } else {
         root.join(WORKFLOW_AGENT_PACKET_ARTIFACT)
     };
-    let packet_bytes = crate::bounded_input::read(&agent_packet)
-        .map_err(|error| format!("read {} failed: {error}", agent_packet.display()))?;
-    let packet_text = String::from_utf8(packet_bytes.clone())
-        .map_err(|error| format!("agent packet is not UTF-8: {error}"))?;
+    let packet_bytes = crate::bounded_input::read(&agent_packet).map_err(|error| {
+        format!(
+            "read {} failed: {error}; rerun the before phase to regenerate the packet",
+            agent_packet.display()
+        )
+    })?;
+    let packet_text = String::from_utf8(packet_bytes.clone()).map_err(|error| {
+        format!(
+            "agent packet is not UTF-8: {error}; rerun the before phase to regenerate the packet"
+        )
+    })?;
     let mut policy =
         crate::app::repair_attempt::edit_cage_policy_from_packet(&packet_text, seam_id)?;
     crate::app::repair_attempt::include_explicit_store_operational_write(
@@ -505,7 +546,7 @@ fn persist_before_repair_attempt(
     // Recheck immediately before baseline capture so ignore-rule drift observed
     // during preparation refuses attempt publication.
     crate::edit_cage::validate_build_output_precondition(root, &policy)
-        .map_err(|error| format!("{error} No repair attempt was started."))?;
+        .map_err(|error| format!("{error} No repair attempt was started. Fix the cause above and rerun the repair command."))?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
     crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
 
@@ -1063,7 +1104,7 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "doctor", "--root"])),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
     }
@@ -1073,7 +1114,7 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "init", "--root"])),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
     }
@@ -1110,26 +1151,26 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "agent", "brief", "--diff", "change.diff"])),
             Err(CommandError::Failure(
-                "agent brief requires --json (the supported output for this subcommand)"
+                "agent brief requires --json (the supported output for this subcommand); add --json to the command"
                     .to_string()
             ))
         );
         assert_eq!(
             run(args(&["ripr", "first-pr", "--gap-ledger"])),
             Err(CommandError::Failure(
-                "missing value for --gap-ledger".to_string()
+                "missing value for --gap-ledger; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             run(args(&["ripr", "start-here", "--gap-ledger"])),
             Err(CommandError::Failure(
-                "missing value for --gap-ledger".to_string()
+                "missing value for --gap-ledger; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             run(args(&["ripr", "first-action", "--assistant-proof"])),
             Err(CommandError::Failure(
-                "missing value for --assistant-proof".to_string()
+                "missing value for --assistant-proof; pass a value right after it".to_string()
             ))
         );
     }
@@ -1158,7 +1199,7 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "check", "--base", "-v"])),
             Err(CommandError::Failure(
-                "missing value for --base".to_string()
+                "missing value for --base; pass a value right after it".to_string()
             ))
         );
     }
@@ -1176,7 +1217,7 @@ mod tests {
             assert_eq!(
                 run(argv),
                 Err(CommandError::Failure(
-                    "usage: ripr help --json (this route accepts no other arguments)".to_string()
+                    "usage: ripr help --json (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands".to_string()
                 ))
             );
         }

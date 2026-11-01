@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview found related test evidence but cannot name a safe target check or observer shape); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/ambiguous.ts:4
   Language: typescript
   Language status: preview
@@ -24,12 +24,12 @@ Start here:
     suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion
   Related test: tests/ambiguous.test.ts:1 summarize smoke
   Next step — TypeScript preview advisory: related-test proximity is heuristic only; add a direct owner call before treating this as an actionable repair target
-  Evidence: reach weak · infection unknown · propagation unknown · observation weak · assertion weak
+  Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -42,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_probe_facts/input --diff <cwd>/fixtures/typescript_probe_facts/diff.patch --mode fast probe:src_ambiguous.ts:typescript_preview:ba5968cd
   ripr context --root <cwd>/fixtures/typescript_probe_facts/input --diff <cwd>/fixtures/typescript_probe_facts/diff.patch --mode fast --at probe:src_ambiguous.ts:typescript_preview:ba5968cd
-  no repair start offered: this finding has no gap ID, so there is nothing to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 Hidden:
   9 lower-priority finding(s) omitted from default human output (TypeScript preview: 7, JavaScript preview: 2).

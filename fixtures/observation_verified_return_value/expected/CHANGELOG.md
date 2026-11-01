@@ -495,7 +495,7 @@ Updated:
 ## Pending — observation_verified_return_value (41)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
 
 Command:
 `cargo xtask goldens bless observation_verified_return_value --reason "..."`
@@ -505,6 +505,30 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — observation_verified_return_value (42)
+
+Reason:
+RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
+
+Command:
+`cargo xtask goldens bless observation_verified_return_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_verified_return_value (43)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless observation_verified_return_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_verified_return_value (44)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

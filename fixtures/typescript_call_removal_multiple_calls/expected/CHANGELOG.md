@@ -121,7 +121,7 @@ Updated:
 ## Pending — typescript_call_removal_multiple_calls (10)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0246: plain wording for TypeScript preview check text (#11619)
 
 Command:
 `cargo xtask goldens bless typescript_call_removal_multiple_calls --reason "..."`
@@ -132,6 +132,45 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — typescript_call_removal_multiple_calls (11)
+
+Reason:
+RIPR-SPEC-0246: re-render after merging main; plain wording for TypeScript preview check text (#11619)
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_multiple_calls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_call_removal_multiple_calls (12)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_multiple_calls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_call_removal_multiple_calls (13)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_call_removal_multiple_calls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_call_removal_multiple_calls (14)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

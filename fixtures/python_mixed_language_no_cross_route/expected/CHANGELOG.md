@@ -629,7 +629,7 @@ Updated:
 ## Pending — python_mixed_language_no_cross_route (26)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
 
 Command:
 `cargo xtask goldens bless python_mixed_language_no_cross_route --reason "..."`
@@ -639,6 +639,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — python_mixed_language_no_cross_route (27)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless python_mixed_language_no_cross_route --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_mixed_language_no_cross_route (28)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

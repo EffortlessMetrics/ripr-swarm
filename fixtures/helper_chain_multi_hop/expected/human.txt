@@ -15,18 +15,18 @@ Start here:
   Why unknown: the analysis could not determine a static exposure state
   Gap ID (for scripts): gap:rust:src/lib.rs:first_char:static_unknown:static_unknown:let_head=input.chars_.next_.map_or_lit3f_c_c
   Changed behavior: let head = input.chars().next().map_or('?', |c| c);
-  Analyzer limit: No strong check was detected
+  Analyzer limit: No strong assertion was detected
   Related test: tests/classify.rs:4 leading_space_classifies_other
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and
     changed implementations with a focused run using the project's configured test runner (`cargo
     test` for ordinary Cargo tests). Static classification may remain unknown
-  Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;

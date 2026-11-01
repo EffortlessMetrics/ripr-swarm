@@ -1,0 +1,74 @@
+{
+  "schema_version": "0.3",
+  "tool": "ripr",
+  "mode": "draft",
+  "root": "fixtures/timeout-refusal/input",
+  "base": "origin/main",
+  "summary": {
+    "changed_rust_files": 0,
+    "probes": 0,
+    "findings": 0,
+    "exposed": 0,
+    "weakly_exposed": 0,
+    "reachable_unrevealed": 0,
+    "no_static_path": 0,
+    "infection_unknown": 0,
+    "propagation_unknown": 0,
+    "static_unknown": 0,
+    "changed_files_by_language": []
+  },
+  "findings": [],
+  "analysis_scope": {
+    "scope": "diff",
+    "run_status": "analysis_timeout",
+    "basis": "analysis_timeout",
+    "downstream_consumable": false,
+    "limitation": "analysis_timeout",
+    "repair_route": "analysis/timeout"
+  },
+  "run_limitations": [
+    {
+      "category": "analysis_timeout",
+      "run_status": "analysis_timeout",
+      "basis": "analysis_timeout",
+      "downstream_consumable": false,
+      "message": "analysis_timeout: ripr check exceeded its 1s wall-clock budget",
+      "repair_route": "analysis/timeout"
+    }
+  ],
+  "input_context": {
+    "requested": {
+      "root": "fixtures/timeout-refusal/input",
+      "source": "committed",
+      "base": "origin/main",
+      "diff_file": null,
+      "analysis_mode": "draft",
+      "scope": {
+        "include": [],
+        "exclude": []
+      }
+    },
+    "resolved": {
+      "effective_base": { "available": true, "value": "origin/main" },
+      "base_commit": { "available": true, "value": "06e6aea" },
+      "merge_base": { "available": false, "reason": "not_computed_for_source" },
+      "scoped_changed_files": {
+        "available": true,
+        "value": 6,
+        "producer": "scoped-diff-intake"
+      },
+      "out_of_scope_files": {
+        "available": true,
+        "value": 0,
+        "producer": "scoped-diff-intake"
+      }
+    },
+    "recovery": {
+      "kind": "retry_with_larger_budget",
+      "command": "ripr check --root fixtures/timeout-refusal/input --base origin/main --mode draft --json --timeout 2",
+      "budget_seconds": 2,
+      "rereads": ["base-ref", "head-ref"],
+      "note": "the retry re-reads live refs and/or worktree bytes; it is not pinned to the timed-out run's snapshot"
+    }
+  }
+}

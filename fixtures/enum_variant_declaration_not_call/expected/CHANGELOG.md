@@ -429,7 +429,7 @@ Updated:
 ## Pending — enum_variant_declaration_not_call (35)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
 
 Command:
 `cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
@@ -439,6 +439,30 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — enum_variant_declaration_not_call (36)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+
+Command:
+`cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — enum_variant_declaration_not_call (37)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless enum_variant_declaration_not_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — enum_variant_declaration_not_call (38)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

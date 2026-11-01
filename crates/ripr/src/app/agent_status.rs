@@ -1266,7 +1266,7 @@ fn select_next_command(
         .filter(|attempt| attempt.disposition == "resumable")
         .collect::<Vec<_>>();
     let resumable_decision = if resumable.is_empty() {
-        Err("no resumable attempt".to_string())
+        Err("no resumable attempt; start one with `ripr agent start`".to_string())
     } else {
         canonical_next_action_for_inventory(root_display, &store, &resumable, &[])
     };
@@ -1350,7 +1350,7 @@ fn select_next_command(
     }
     let open_seam_ids = open.keys().copied().collect::<Vec<_>>();
     let open_decision = if open_seam_ids.is_empty() {
-        Err("no open seam".to_string())
+        Err("no open gap in the attempt inventory; start one with `ripr agent start`".to_string())
     } else {
         canonical_next_action_for_inventory(root_display, &store, &[], &open_seam_ids)
     };
@@ -1577,7 +1577,7 @@ fn pilot_python_repair_card_message(
 ) -> String {
     let mut message = "the last complete `ripr pilot` run ranked no gap but produced a Python preview repair card".to_string();
     if let Some(discriminator) = &card.missing_discriminator {
-        message.push_str(&format!(" for missing discriminator `{discriminator}`"));
+        message.push_str(&format!(" for the missing check `{discriminator}`"));
     }
     // `ripr check` admits a gap-bound start for its selected Python finding
     // (#10373), so the warning must not say `agent repair` cannot run.
@@ -1604,7 +1604,7 @@ fn pilot_python_repair_card_message(
         message.push_str(&format!(" (`{verify}`)"));
     }
     message.push_str(&format!(
-        ", then rerun `ripr check --root {}` to see whether static evidence now finds the discriminator",
+        ", then rerun `ripr check --root {}` to see whether static evidence now finds the check",
         shell_arg(root_display)
     ));
     message.push_str(&format!(
@@ -2007,7 +2007,7 @@ fn pilot_routed_to_check_message(
             Some(start) => {
                 let start = start.rendered();
                 message.push_str(&format!(
-                ": it routed {code} to {commands}, which reviews changes diff-first and prints the gap-bound start {start} for its selected finding, and running pilot again unchanged routes there again. Run {commands} and that start, or add or strengthen a test for the changed behavior by hand and rerun {commands} to see whether static evidence now finds a discriminator"
+                ": it routed {code} to {commands}, which reviews changes diff-first and prints the gap-bound start {start} for its selected finding, and running pilot again unchanged routes there again. Run {commands} and that start, or add or strengthen a test for the changed behavior by hand and rerun {commands} to see whether static evidence now finds a check"
                 ))
             }
             None => message.push_str(&format!(
@@ -2432,7 +2432,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
             rendered.push('\n');
             rendered
         })
-        .map_err(|err| format!("failed to render agent status JSON: {err}"))
+        .map_err(|err| format!("failed to render agent status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String {
@@ -3443,7 +3443,7 @@ pub(crate) fn render_agent_attempt_status_json(
             rendered.push('\n');
             rendered
         })
-        .map_err(|err| format!("failed to render agent attempt status JSON: {err}"))
+        .map_err(|err| format!("failed to render agent attempt status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusReport) -> String {
@@ -3902,13 +3902,13 @@ mod tests {
         assert!(
             warning.message.contains(&format!(
                 "`ripr doctor --root {}`",
-                shell_arg(&spaced_display)
+                shell_arg(&crate::agent::loop_commands::bound_root(&spaced_display))
             )),
             "{}",
             warning.message
         );
         assert!(
-            shell_arg(&spaced_display).starts_with('\''),
+            shell_arg(&spaced_display).starts_with(['\'', '"']),
             "the spaced root must be quoted: {spaced_display}"
         );
         std::fs::remove_dir_all(&spaced).map_err(|err| format!("remove: {err}"))?;
@@ -6814,7 +6814,7 @@ mod tests {
             .ok_or_else(|| format!("expected a Python card warning: {:?}", report.warnings))?;
         assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
         for expected in [
-            "produced a Python preview repair card for missing discriminator `amount == DISCOUNT_THRESHOLD`",
+            "produced a Python preview repair card for the missing check `amount == DISCOUNT_THRESHOLD`",
             "running pilot again unchanged records the same card",
             "`ripr first-pr --root",
             "(`pytest tests/test_pricing.py::test_discount`)",
@@ -6823,6 +6823,12 @@ mod tests {
         ] {
             assert!(warning.message.contains(expected), "{}", warning.message);
         }
+        // The card names the gap as "the missing check", never the internal term.
+        assert!(
+            !warning.message.contains("discriminator"),
+            "{}",
+            warning.message
+        );
         let rendered = render_agent_status_markdown(&report);
         assert!(
             !rendered.contains("```bash\nripr pilot --root"),

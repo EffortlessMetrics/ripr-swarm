@@ -100,7 +100,7 @@ fn validate<'a, T: 'a>(
         }
         if id.offset >= arena.len() {
             return Err(format!(
-                "invalid {kind} fact membership: {} >= {}",
+                "invalid {kind} fact membership: {} >= {}; report this as a ripr bug with the command and workspace shape",
                 id.offset,
                 arena.len()
             ));
@@ -508,6 +508,15 @@ impl RustIndex {
     ) -> Option<std::sync::Arc<crate::analysis::syntax::NameScopes>> {
         self.proptest_receipt(test)
             .map(|receipt| std::sync::Arc::clone(&receipt.name_scopes))
+    }
+
+    /// One proved singleton input, supplied only with the exact live property
+    /// receipt. This does not rewrite its String or shared-borrow type.
+    pub(crate) fn proptest_singleton_value(&self, test: &TestFact) -> Option<(&str, &str)> {
+        self.proptest_receipt(test)?
+            .singleton_value
+            .as_ref()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
     }
 
     fn proptest_receipt(&self, test: &TestFact) -> Option<&super::proptest::ProptestReceipt> {

@@ -16,12 +16,15 @@ mod git_candidate;
 mod identity;
 mod intervention_study;
 mod language;
+#[doc(hidden)]
+pub mod language_availability;
 pub(crate) mod language_capability;
 #[cfg(test)]
 mod language_capability_drift;
 mod limit_guidance;
 mod next_action;
 mod probe;
+mod refusal_remedy;
 mod repair_card;
 mod summary;
 mod support;
@@ -125,6 +128,7 @@ pub use probe::{
     RelatedTest, RelatedTestMiss, RelatedTestMissSupport, RelatedTestRole,
     SOURCE_CURRENTNESS_VALUES, SourceCurrentness, StopReason, ValueContext, ValueFact,
 };
+pub(crate) use refusal_remedy::RefusalRemedy;
 pub use repair_card::{
     AgentCardRefusalKind, CardCurrentnessGoal, DEFAULT_REPAIR_CARD_MAX_DETAIL_ITEMS,
     DEFAULT_REPAIR_CARD_MAX_INLINE_DETAIL_BYTES, DEFAULT_REPAIR_CARD_MAX_SERIALIZED_BYTES,

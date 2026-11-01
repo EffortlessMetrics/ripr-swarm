@@ -1,6 +1,41 @@
 name: CI
 
 on:
+  workflow_call:
+    inputs:
+      proof_profile:
+        type: string
+        required: true
+      request_id:
+        type: string
+        required: true
+      head_sha:
+        type: string
+        required: true
+      base_sha:
+        type: string
+        required: true
+      subject_sha:
+        type: string
+        required: true
+      subject_tree:
+        type: string
+        required: true
+      workflow_generation:
+        type: string
+        required: true
+      run_rust_only:
+        type: boolean
+        required: true
+      run_release_proof:
+        type: boolean
+        required: true
+      run_msrv:
+        type: boolean
+        required: true
+      run_vscode:
+        type: boolean
+        required: true
   pull_request:
     types: [opened, synchronize, reopened, labeled]
   push:
@@ -15,18 +50,68 @@ permissions:
 # (opened, synchronize, reopened, other labels) gets a unique group: its jobs
 # are skipped and it can neither cancel nor replace a pending merge-ready run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
-  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
+  group: ${{ github.workflow }}-${{ inputs.request_id || github.event.pull_request.number || github.ref }}-${{ inputs.subject_sha || ((github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run') }}
+  cancel-in-progress: ${{ !contains(toJSON(inputs), '"subject_sha"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
 
+# Staged #4987 leaf: the trusted caller owns fresh review/admission and selection.
+# Production triggers remain until caller/result integration is qualified.
+# full-ci/release-check are legacy guards only; callable runs consume frozen intent.
 jobs:
+  source-identity:
+    if: contains(toJSON(inputs), '"subject_sha"')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.subject_sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify exact admitted source
+        env:
+          PROFILE: ${{ inputs.proof_profile }}
+          REQUEST: ${{ inputs.request_id }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          BASE_SHA: ${{ inputs.base_sha }}
+          SUBJECT: ${{ inputs.subject_sha }}
+          TREE: ${{ inputs.subject_tree }}
+          GENERATION: ${{ inputs.workflow_generation }}
+          SELECT_RUST: ${{ inputs.run_rust_only }}
+          SELECT_RELEASE: ${{ inputs.run_release_proof }}
+          SELECT_MSRV: ${{ inputs.run_msrv }}
+          SELECT_VSCODE: ${{ inputs.run_vscode }}
+        run: |
+          set -euo pipefail
+          fail() { echo "$1" >&2; exit 1; }
+          [[ "$PROFILE" == qualification ]] || fail 'Unknown admitted profile'
+          [[ "$REQUEST" =~ ^[0-9]+-[0-9]+$ ]] || fail 'Malformed request identity'
+          for value in "$HEAD_SHA" "$BASE_SHA" "$SUBJECT" "$TREE" "$GENERATION"; do
+            [[ "$value" =~ ^[0-9a-f]{40}$ ]] || fail 'Malformed admission identity'
+          done
+          selected=false
+          for value in "$SELECT_RUST" "$SELECT_RELEASE" "$SELECT_MSRV" "$SELECT_VSCODE"; do
+            case "$value" in true) selected=true ;; false) ;; *) fail 'Incomplete selection' ;; esac
+          done
+          [[ "$selected" == true ]] || fail 'Empty CI selection'
+          [[ "$GITHUB_WORKFLOW_SHA" == "$GENERATION" ]] || fail 'Wrong workflow generation'
+          [[ "$(git rev-parse HEAD)" == "$SUBJECT" ]] || fail 'Wrong source checkout'
+          [[ "$(git rev-parse 'HEAD^{tree}')" == "$TREE" ]] || fail 'Wrong integration tree'
+          [[ "$(git show -s --format=%P HEAD)" == "$BASE_SHA $HEAD_SHA" ]] || fail 'Wrong integration parents'
+
   release-proof:
     name: Perl and release proof
-    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    needs: source-identity
+    if: >-
+      always() && !cancelled() &&
+      ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_release_proof) ||
+      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci'))))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ inputs.subject_sha || github.sha }}
+          persist-credentials: false
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
 
@@ -41,18 +126,21 @@ jobs:
         run: cargo check -p ripr --features lang-perl
       - name: Test Perl language analysis
         run: cargo test -p ripr --features lang-perl --lib analysis::language::perl
+      - name: Test SARIF identity producer-to-policy controls
+        run: cargo test -p xtask --features perl-identity reports::sarif::identity_tests
 
       - name: Package list (release surface)
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+        if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: cargo package -p ripr --list
       - name: Publish dry-run (release surface)
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+        if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: cargo publish -p ripr --dry-run
       # `cargo install ripr` without `--locked` ignores Cargo.lock and resolves
       # fresh, so a lock-only pin never reaches it (#3787). Build the packaged
       # crate the way that command does: drop its lockfile and re-resolve.
       - name: Unlocked install resolution (release surface)
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+        shell: bash
+        if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: |
           cargo package -p ripr --no-verify
           package_id="$(cargo pkgid -p ripr)"
@@ -64,13 +152,14 @@ jobs:
           cargo generate-lockfile
           cargo check --target-dir "$RUNNER_TEMP/unlocked-target"
       - name: Release readiness (release surface)
-        if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
+        shell: bash
+        if: contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci')
         run: |
           release_version="$(cargo pkgid -p ripr | sed 's/.*#//')"
           cargo xtask release-readiness --version "$release_version"
       - name: Upload release-readiness receipts
-        if: always() && ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
-        uses: actions/upload-artifact@v7
+        if: always() && (contains(toJSON(inputs), '"subject_sha"') || (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) || contains(github.event.pull_request.labels.*.name, 'release-check') || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-readiness-${{ github.run_id }}
           path: |
@@ -94,22 +183,30 @@ jobs:
     # fixtures, or Cargo manifests, and on every push to main; on PRs the merge-ready label
     # starts it, and docs-only PRs skip the compile.
     name: Rust-only feature lane
-    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')))
+    needs: source-identity
+    if: >-
+      always() && !cancelled() &&
+      ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_rust_only) ||
+      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')))))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ inputs.subject_sha || github.sha }}
+          persist-credentials: false
           fetch-depth: 0
       - name: Detect Rust surface change
         id: surface
         env:
           EVENT_NAME: ${{ github.event_name }}
+          CALLED: ${{ contains(toJSON(inputs), '"subject_sha"') }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           rust=true reason=not_pull_request
           classify() {
+            [ "${CALLED:-false}" != true ] || return 0
             [ "$EVENT_NAME" = "pull_request" ] || return 0
             reason=missing_identity
             [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ] || return 0
@@ -174,11 +271,18 @@ jobs:
     # Routed Rust already runs the declared 1.95.0 toolchain on every ordinary
     # PR and main push. Keep the duplicate named proof only for explicit full
     # CI and manual investigation.
-    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci')))
+    needs: source-identity
+    if: >-
+      always() && !cancelled() &&
+      ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_msrv) ||
+      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'full-ci')))))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.subject_sha || github.sha }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
@@ -187,16 +291,92 @@ jobs:
           save-if: false
       - run: cargo check --workspace --all-targets
 
+  vscode-selection:
+    # #12122: a pull request that changes the extension must run the extension
+    # e2e under the same `merge-ready` request. Without this the job was skipped
+    # unless `full-ci` was present, so a changed test never ran (#12068 merged
+    # with its own test red). Legacy trigger only; the callable path takes its
+    # selection from `inputs.run_vscode`, which the trusted caller owns.
+    # Every classification failure selects the job: an unknown diff must run
+    # the proof, not skip it. The `vscode` condition therefore selects unless
+    # this job affirmatively outputs `false`, so a failed or timed-out
+    # selection job (empty output) also runs the e2e. This job runs whenever
+    # the legacy `merge-ready` request does, so an empty output means failure.
+    name: vscode surface
+    if: >-
+      !contains(toJSON(inputs), '"subject_sha"') &&
+      github.event_name == 'pull_request' &&
+      contains(github.event.pull_request.labels.*.name, 'merge-ready') &&
+      github.event.action == 'labeled' && github.event.label.name == 'merge-ready'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      selected: ${{ steps.surface.outputs.selected }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Detect extension surface change
+        id: surface
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          selected=true reason=unclassified
+          classify() {
+            reason=missing_identity
+            [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ] || return 0
+            reason=invalid_identity
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || return 0
+            reason=unavailable_history
+            if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || return 0
+            fi
+            # A three-dot diff picks one merge base. With several (criss-cross
+            # history) it can miss an extension change, so select instead.
+            reason=unavailable_merge_base
+            merge_bases="$(git merge-base --all "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)" || return 0
+            [ -n "$merge_bases" ] || return 0
+            reason=ambiguous_merge_base
+            [[ "$merge_bases" != *$'\n'* ]] || return 0
+            reason=diff_failed
+            changed="$(mktemp)" || return 0
+            trap 'rm -f "$changed"' EXIT
+            # NUL records keep odd filenames intact; no rename collapsing hides a removed extension path.
+            git diff --no-renames --name-only -z "$BASE_SHA"..."$HEAD_SHA" > "$changed" 2>/dev/null || return 0
+            reason=empty_diff
+            [ -s "$changed" ] || return 0
+            reason=extension_surface
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                editors/vscode/*|.github/workflows/ci.yml) return 0 ;;
+              esac
+            done < "$changed"
+            selected=false reason=no_extension_surface
+          }
+          classify
+          echo "selected=$selected" >> "$GITHUB_OUTPUT"
+          { echo "### VS Code Surface Detection"; echo ""; echo "- selected: \`$selected\`"; echo "- reason: \`$reason\`"; } >> "$GITHUB_STEP_SUMMARY"
+
   vscode:
-    if: (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci'))
+    needs: [source-identity, vscode-selection]
+    if: >-
+      always() && !cancelled() &&
+      ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_vscode) ||
+      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') || contains(github.event.pull_request.labels.*.name, 'vscode') || needs.vscode-selection.outputs.selected != 'false')))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
       run:
         working-directory: editors/vscode
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.subject_sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 24
           cache: npm
@@ -213,9 +393,40 @@ jobs:
       # Collection cannot change the original test exit status.
       - name: Upload VS Code test host diagnostics
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vscode-test-host-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
           path: target/ripr/vscode-test-host-diagnostics/
           if-no-files-found: ignore
           retention-days: 5
+
+  ci-result:
+    if: always() && contains(toJSON(inputs), '"subject_sha"')
+    needs: [source-identity, rust-only-features, release-proof, msrv, vscode]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every selected child
+        env:
+          IDENTITY_RESULT: ${{ needs.source-identity.result }}
+          SELECT_RUST: ${{ inputs.run_rust_only }}
+          SELECT_RELEASE: ${{ inputs.run_release_proof }}
+          SELECT_MSRV: ${{ inputs.run_msrv }}
+          SELECT_VSCODE: ${{ inputs.run_vscode }}
+          RUST_RESULT: ${{ needs.rust-only-features.result }}
+          RELEASE_RESULT: ${{ needs.release-proof.result }}
+          MSRV_RESULT: ${{ needs.msrv.result }}
+          VSCODE_RESULT: ${{ needs.vscode.result }}
+        run: |
+          set -euo pipefail
+          [[ "$IDENTITY_RESULT" == success ]] || exit 1
+          require() {
+            case "$1:$2" in true:success|false:skipped) ;; *) echo 'Missing/failed or unexpected CI child' >&2; exit 1 ;; esac
+          }
+          require "$SELECT_RUST" "$RUST_RESULT"
+          require "$SELECT_RELEASE" "$RELEASE_RESULT"
+          require "$SELECT_MSRV" "$MSRV_RESULT"
+          require "$SELECT_VSCODE" "$VSCODE_RESULT"
+      - name: Reject workflow cancellation
+        if: always() && cancelled()
+        run: exit 1

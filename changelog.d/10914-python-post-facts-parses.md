@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- Python: the literal-param fixture pass no longer parses a test body unless the test requests an isolated literal-param fixture, and the known-equality pass parses each helper-using test file once, in parallel. Measured warm on 4 cores against main 8eefdbb, with byte-identical output: pandas ecdb4258 went from 5.0–5.5 s to 4.5–4.8 s; Django 5c13b5a is unchanged at about 3.1 s (#10914).

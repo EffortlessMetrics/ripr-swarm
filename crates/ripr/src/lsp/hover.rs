@@ -57,6 +57,69 @@ pub(super) enum NoEvidenceState {
     Analyzed,
 }
 
+/// What the server observed about a file quarantined as
+/// `no_analyzed_saved_content` (#11452). Each variant states only a fact the
+/// server read; anything it cannot distinguish falls to
+/// [`UnanalyzedFileCause::NoCommittedAnalysis`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum UnanalyzedFileCause {
+    /// The file is not on disk, so no analysis can read its saved content.
+    NotOnDisk,
+    /// An analysis attempt is queued or running.
+    AttemptInProgress,
+    /// A snapshot committed, yet it recorded no saved content for this file.
+    SnapshotDidNotRecordFile,
+    /// No snapshot committed and the latest attempt failed.
+    LatestAttemptFailed,
+    /// No snapshot has committed (no attempt observed, or it ended without one).
+    NoCommittedAnalysis,
+}
+
+/// Classify an unanalyzed file from observed state. Order is fail-closed: a
+/// route is only offered when the server observed the fact it rests on.
+pub(super) fn classify_unanalyzed_file(
+    file_on_disk: bool,
+    state: AnalysisAttemptState,
+    snapshot_committed: bool,
+) -> UnanalyzedFileCause {
+    if !file_on_disk {
+        UnanalyzedFileCause::NotOnDisk
+    } else if matches!(
+        state,
+        AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+    ) {
+        UnanalyzedFileCause::AttemptInProgress
+    } else if snapshot_committed {
+        UnanalyzedFileCause::SnapshotDidNotRecordFile
+    } else if state == AnalysisAttemptState::Failed {
+        UnanalyzedFileCause::LatestAttemptFailed
+    } else {
+        UnanalyzedFileCause::NoCommittedAnalysis
+    }
+}
+
+/// The hover sentence for an unanalyzed file: the observed cause and the
+/// recovery that cause honors. Static-only; it claims no finding.
+pub(super) fn unanalyzed_file_hover_route(cause: UnanalyzedFileCause) -> &'static str {
+    match cause {
+        UnanalyzedFileCause::NotOnDisk => {
+            "this file is not on disk, so ripr has no saved content to analyze; save it, then refresh (`ripr.refresh`)."
+        }
+        UnanalyzedFileCause::AttemptInProgress => {
+            "an analysis attempt is already queued or running; whether it covers this file is not yet known."
+        }
+        UnanalyzedFileCause::SnapshotDidNotRecordFile => {
+            "the latest committed analysis did not record this file's saved content; refresh (`ripr.refresh`) to ask again. ripr does not know why it was not recorded."
+        }
+        UnanalyzedFileCause::LatestAttemptFailed => {
+            "the latest analysis attempt failed and no analysis has committed; resolve the reported failure, then refresh (`ripr.refresh`)."
+        }
+        UnanalyzedFileCause::NoCommittedAnalysis => {
+            "no analysis has committed for this workspace, so ripr has not analyzed this file's saved content; refresh (`ripr.refresh`)."
+        }
+    }
+}
+
 /// The no-evidence hover, aware of whether any analysis has committed or is
 /// running, and which languages the workspace analyzes (#9604 finding 32).
 /// Before the first successful analysis the generic "run the CLI" pointer
@@ -628,6 +691,10 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
     let mut lines = vec![hover_header(&classification), String::new()];
     push_preview_boundary(&mut lines, finding);
     push_preview_actionability(&mut lines, finding);
+    if let Some(disclosure) = finding.source_currentness_disclosure() {
+        lines.push(format!("**Source:** {disclosure}"));
+        lines.push(String::new());
+    }
     lines.extend([
         diagnostic.message.clone(),
         String::new(),
@@ -1691,6 +1758,7 @@ mod seam_hover_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
     }
 
@@ -2464,5 +2532,260 @@ mod root_identity_tests {
         let root = Path::new("/w/sub/proj");
         assert!(root_matches_report(root, Some("/w/sub/proj")));
         assert!(!root_matches_report(root, Some("/w\\sub\\proj")));
+    }
+}
+
+#[cfg(test)]
+mod unanalyzed_file_cause_tests {
+    use super::*;
+
+    #[test]
+    fn classification_follows_observed_state_in_order() {
+        use AnalysisAttemptState::{Cancelled, Failed, Queued, Running, Stopped, Succeeded};
+        assert_eq!(
+            classify_unanalyzed_file(false, Running, true),
+            UnanalyzedFileCause::NotOnDisk
+        );
+        for state in [Queued, Running] {
+            assert_eq!(
+                classify_unanalyzed_file(true, state, true),
+                UnanalyzedFileCause::AttemptInProgress
+            );
+        }
+        for state in [Failed, Succeeded, Stopped] {
+            assert_eq!(
+                classify_unanalyzed_file(true, state, true),
+                UnanalyzedFileCause::SnapshotDidNotRecordFile
+            );
+        }
+        assert_eq!(
+            classify_unanalyzed_file(true, Failed, false),
+            UnanalyzedFileCause::LatestAttemptFailed
+        );
+        // Negative control: an attempt that ended without a snapshot and
+        // without a failure is neither reported as a failure nor in progress.
+        for state in [Cancelled, Stopped, Succeeded] {
+            assert_eq!(
+                classify_unanalyzed_file(true, state, false),
+                UnanalyzedFileCause::NoCommittedAnalysis
+            );
+        }
+    }
+
+    #[test]
+    fn every_cause_has_distinct_static_wording_without_unobserved_claims() {
+        let causes = [
+            UnanalyzedFileCause::NotOnDisk,
+            UnanalyzedFileCause::AttemptInProgress,
+            UnanalyzedFileCause::SnapshotDidNotRecordFile,
+            UnanalyzedFileCause::LatestAttemptFailed,
+            UnanalyzedFileCause::NoCommittedAnalysis,
+        ];
+        let texts: Vec<&str> = causes
+            .iter()
+            .map(|cause| unanalyzed_file_hover_route(*cause))
+            .collect();
+        for (index, text) in texts.iter().enumerate() {
+            assert!(!text.contains("in this session"), "{text}");
+            assert!(!text.contains("evidence appears"), "{text}");
+            assert!(!text.contains("exposed"), "{text}");
+            for other in &texts[index + 1..] {
+                assert_ne!(text, other);
+            }
+        }
+    }
+}
+
+/// #11821: the top limitation of one finding reads the same on every surface
+/// the shared owner feeds — MCP `ripr_get_top_limitation`, the LSP hover and
+/// the CLI explanation — and none renders a stronger claim than the MCP result.
+#[cfg(test)]
+mod top_limitation_parity_tests {
+    use super::*;
+    use crate::domain::{ProbeFamily, StaticLimitKind};
+    use crate::mcp::gaps::{GapItem, test_finding};
+    use tower_lsp_server::ls_types::{Position, Range};
+
+    fn hover_text(finding: &Finding) -> String {
+        let diagnostic = Diagnostic {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 1,
+                },
+            },
+            source: Some("ripr".to_string()),
+            message: "limited".to_string(),
+            ..Diagnostic::default()
+        };
+        match finding_hover_response(finding, &diagnostic).contents {
+            HoverContents::Markup(markup) => markup.value,
+            HoverContents::Scalar(_) | HoverContents::Array(_) => String::new(),
+        }
+    }
+
+    fn limitation_field(finding: &Finding, field: &str) -> Result<String, String> {
+        let item = GapItem::from_finding(finding, Path::new("."))?;
+        let document = item.limitation_document("snap");
+        document
+            .pointer(&format!("/limitation/{field}"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("limitation document has no {field}: {document}"))
+    }
+
+    #[test]
+    fn one_limitation_reads_the_same_on_mcp_hover_and_cli() -> Result<(), String> {
+        // `RustAssertionContextUnresolved` on a match arm is the one kind whose
+        // wording depends on the probe family, so it catches a surface that
+        // describes the kind without the family.
+        for (family, kind) in [
+            (
+                ProbeFamily::MatchArm,
+                StaticLimitKind::RustAssertionContextUnresolved,
+            ),
+            (
+                ProbeFamily::Predicate,
+                StaticLimitKind::RustAssertionContextUnresolved,
+            ),
+            (ProbeFamily::Predicate, StaticLimitKind::UnsupportedSyntax),
+        ] {
+            let mut finding = test_finding()?;
+            finding.probe.family = family.clone();
+            finding.static_limit_kind = Some(kind);
+
+            let mcp_kind = limitation_field(&finding, "kind")?;
+            let mcp_reason = limitation_field(&finding, "reason")?;
+            let mcp_recovery = limitation_field(&finding, "recovery")?;
+            let mcp_stage = limitation_field(&finding, "stage")?;
+            assert_eq!(mcp_stage, "producer_static_limit");
+            assert_eq!(mcp_kind, kind.as_str());
+
+            let hover = hover_text(&finding);
+            let hover_line = format!("Static limit: {mcp_kind} \u{2014} {mcp_reason}");
+            assert!(
+                hover.contains(&hover_line),
+                "hover must carry the MCP kind and reason for {family:?}/{kind:?}\nexpected line: {hover_line}\nhover:\n{hover}"
+            );
+
+            let cli = crate::output::human::render_finding(&finding);
+            let cli_line = format!("  {mcp_kind} \u{2014} {mcp_reason}\n");
+            assert!(
+                cli.contains(&cli_line),
+                "CLI must carry the MCP kind and reason for {family:?}/{kind:?}\nexpected: {cli_line}\ncli:\n{cli}"
+            );
+            assert!(
+                cli.contains(&format!("  Next: {mcp_recovery}\n")),
+                "CLI next step must equal the MCP recovery for {family:?}/{kind:?}\n{cli}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_base_side_finding_is_never_offered_as_a_repair_route_on_any_surface() -> Result<(), String>
+    {
+        // #11821: a finding whose source is not a candidate edit target
+        // (`base_deleted`) must not become a stronger route on any surface.
+        let mut finding = test_finding()?;
+        finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+
+        let item = GapItem::from_finding(&finding, Path::new("."))?;
+        let document = item.limitation_document("snap");
+        let kind = document
+            .pointer("/limitation/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("no limitation kind: {document}"))?;
+        assert_eq!(kind, "not_candidate_actionable");
+        assert_ne!(
+            document
+                .pointer("/limitation/stage")
+                .and_then(Value::as_str),
+            Some("none"),
+            "a base-side item must carry a limitation on MCP"
+        );
+
+        let cli = crate::output::human::render_finding(&finding);
+        assert!(
+            cli.contains("base_deleted \u{2014} base-side evidence, not a candidate edit target"),
+            "the CLI must say the source is not a candidate edit target:\n{cli}"
+        );
+
+        let hover = hover_text(&finding);
+        assert!(
+            hover.contains("no bounded repair instruction available"),
+            "hover must not offer a repair instruction for a base-side item:\n{hover}"
+        );
+        assert!(
+            !hover.contains("ripr repair"),
+            "hover must not offer a repair command for a base-side item:\n{hover}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_limited_finding_never_reads_as_repair_ready_on_any_surface() -> Result<(), String> {
+        let mut finding = test_finding()?;
+        finding.static_limit_kind = Some(StaticLimitKind::UnsupportedSyntax);
+        let item = GapItem::from_finding(&finding, Path::new("."))?;
+        assert_ne!(
+            item.limitation_document("snap")
+                .pointer("/limitation/kind")
+                .and_then(Value::as_str),
+            Some("no_limitation_established"),
+            "a producer static limit must outrank the absence of a limitation"
+        );
+        let hover = hover_text(&finding);
+        assert!(
+            hover.contains("Static limit: unsupported_syntax"),
+            "hover must disclose the same limit the MCP result names:\n{hover}"
+        );
+        Ok(())
+    }
+
+    /// A ledger-derived limitation item (no repair route, analyzer limitation)
+    /// reaches the editor through two stored-field readers: hover and the
+    /// code-action note. They must name the same kind and detail, and neither
+    /// may turn the limitation into a repair offer.
+    #[test]
+    fn a_ledger_limitation_reads_the_same_in_hover_and_the_code_action_note() {
+        let data = serde_json::json!({
+            "source": "gap_decision_ledger",
+            "gap_state": "static_limitation",
+            "repairability": "analyzer_limitation",
+            "static_limit_kind": "rust_assertion_context_unresolved",
+            "static_limit_detail": "The assertion macro could not be read.",
+            "repair_route": Value::Null,
+        });
+        let diagnostic = Diagnostic {
+            source: Some("ripr".to_string()),
+            message: "limited".to_string(),
+            data: Some(data.clone()),
+            ..Diagnostic::default()
+        };
+        let hover = gap_diagnostic_hover_markdown(&diagnostic, &data);
+        let note = crate::lsp::actions::static_limit_note(&data).unwrap_or_default();
+        for surface in [&hover, &note] {
+            assert!(
+                surface.contains("Static limit: rust_assertion_context_unresolved"),
+                "kind missing:\n{surface}"
+            );
+            assert!(
+                surface.contains("The assertion macro could not be read."),
+                "stored detail missing:\n{surface}"
+            );
+            assert!(
+                !surface.contains("ripr repair"),
+                "a limitation must not offer a repair command:\n{surface}"
+            );
+        }
+        assert!(
+            note.contains("Boundary: static evidence only; advisory action."),
+            "the code-action note keeps its advisory boundary:\n{note}"
+        );
     }
 }

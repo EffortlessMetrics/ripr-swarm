@@ -1,0 +1,1 @@
+editors/vscode/test/suite/download_hardening.test.ts|child_process|1|lsp/editor-test|#11477 item 5: one bounded openssl spawn generates the localhost TLS fixture certificate for HTTPS download-cap tests; test module only.

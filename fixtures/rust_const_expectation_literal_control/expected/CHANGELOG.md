@@ -47,7 +47,7 @@ Updated:
 ## Pending — rust_const_expectation_literal_control (4)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
 
 Command:
 `cargo xtask goldens bless rust_const_expectation_literal_control --reason "..."`
@@ -58,6 +58,32 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — rust_const_expectation_literal_control (5)
+
+Reason:
+RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
+
+Command:
+`cargo xtask goldens bless rust_const_expectation_literal_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_const_expectation_literal_control (6)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless rust_const_expectation_literal_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_const_expectation_literal_control (7)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

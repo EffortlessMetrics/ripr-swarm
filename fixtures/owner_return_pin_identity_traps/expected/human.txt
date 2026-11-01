@@ -15,18 +15,18 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:next_word:return_value:return_value:self.base*3
   Changed behavior: self.base() * 3
-  Missing check: No strong check was detected
+  Missing check: No strong assertion was detected
   Related test: tests/trap_tests.rs:9 fixed_reader_overrides_next_word (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `fixed_reader_overrides_next_word` already has an exact assertion;
     this does not establish observation of the returned value. Check whether the change can affect
     the returned value. If it can, add a separating input and assert the exact returned value. If it
     cannot, test the changed effect separately; another input cannot distinguish unchanged returns
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -39,16 +39,16 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast probe:src_lib.rs:return_value:22c1d265
   ripr context --root <cwd>/fixtures/owner_return_pin_identity_traps/input --diff <cwd>/fixtures/owner_return_pin_identity_traps/diff.patch --mode fast --at probe:src_lib.rs:return_value:22c1d265
-  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the whole spot and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the whole spot) and ripr does not start a repair on conflicting evidence; follow the Next step above
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
 No test stub here: the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver
 
 Hidden:
   5 finding(s) omitted: 3 lower-priority, 2 base-side evidence (not candidate edit targets).
     - ./src/lib.rs:7 (unrevealed, lower-priority candidate); kind: return_value; reason: No detected assertion observes the changed value, error, field, or effect
-    - ./src/lib.rs:7 (unknown: static analysis limited, base-side); kind: static_unknown; reason: No relevant oracle was detected
-    - ./src/lib.rs:50 (weak, lower-priority candidate); kind: return_value; reason: No strong discriminator was detected
-    - ./src/lib.rs:55 (weak, lower-priority candidate); kind: return_value; reason: No strong discriminator was detected
-    - ./src/lib.rs:55 (unknown: static analysis limited, base-side); kind: static_unknown; reason: No strong discriminator was detected
+    - ./src/lib.rs:7 (unknown: static analysis limited, base-side); kind: unclear; reason: No relevant oracle was detected
+    - ./src/lib.rs:50 (weak, lower-priority candidate); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:55 (weak, lower-priority candidate); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:55 (unknown: static analysis limited, base-side); kind: unclear; reason: No strong assertion was detected
   Hidden classes:
     weak = tests reach it but check it only loosely
     unrevealed = tests reach it but nothing appears to notice a change

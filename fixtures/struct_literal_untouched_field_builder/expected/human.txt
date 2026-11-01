@@ -15,15 +15,15 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:impl RequestBuilder::build:call_deletion:call_deletion:request_url_self.url_timeout_ms_self.timeout_ms.unwrap_or_3_000
   Changed behavior: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }
-  Missing check: No strong check was detected
+  Missing check: No strong assertion was detected
   Related test (1 of 2 matched rows): tests/builder.rs:4 url_is_kept (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Strengthen the related assertion so it discriminates the changed behavior
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -41,8 +41,8 @@ Next: drill into the top finding:
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:22 (weak); kind: field_construction; reason: Missing discriminator value: Request { url: self.url, timeout_ms: self.timeout_ms.unwrap_or(3_000) }
-      Choose a test-stub seam for probe:src_lib.rs:field_construction:dcc39302: src/lib.rs:23 holds more than one field_construction seam, so --at cannot pick one
-        Each command below produces a stub, but ripr could not tell which seam your change touches.
+      Choose a test-stub spot for probe:src_lib.rs:field_construction:dcc39302: src/lib.rs:23 holds more than one field_construction spot, so --at cannot pick one
+        Each command below produces a stub, but ripr could not tell which spot your change touches.
         They do not establish a repair binding or close a static limitation.
         ripr agent stub --root <cwd>/fixtures/struct_literal_untouched_field_builder/input --seam-id 2de10479eb3ce440
   Hidden classes:

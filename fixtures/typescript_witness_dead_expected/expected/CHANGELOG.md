@@ -414,7 +414,7 @@ Updated:
 ## Pending — typescript_witness_dead_expected (35)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
 
 Command:
 `cargo xtask goldens bless typescript_witness_dead_expected --reason "..."`
@@ -424,6 +424,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — typescript_witness_dead_expected (36)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_witness_dead_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_witness_dead_expected (37)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

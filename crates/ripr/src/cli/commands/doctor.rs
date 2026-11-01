@@ -46,7 +46,7 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     }
                     None => {
                         return Err(CommandError::from(
-                            "missing value for --profile".to_string(),
+                            "missing value for --profile; pass a value right after it".to_string(),
                         ));
                     }
                 };
@@ -59,10 +59,16 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
                     Some("--help" | "-h" | "--json" | "--timings" | "--profile" | "--root") => {
-                        return Err(CommandError::from("missing value for --root".to_string()));
+                        return Err(CommandError::from(
+                            "missing value for --root; pass a value right after it".to_string(),
+                        ));
                     }
                     Some(value) => value,
-                    None => return Err(CommandError::from("missing value for --root".to_string())),
+                    None => {
+                        return Err(CommandError::from(
+                            "missing value for --root; pass a value right after it".to_string(),
+                        ));
+                    }
                 };
                 // #4318: a repeated documented flag is a usage mistake with a
                 // name of its own; accusing `--root` of being unknown sends
@@ -284,6 +290,7 @@ impl DoctorEnvironment {
                 detected_languages: detected_language_entries(
                     detected,
                     loaded.map(|config| config.languages().enabled()),
+                    loaded.is_some_and(|config| config.source_text().is_none()),
                 ),
                 unanalyzed_source_languages,
                 preview_language_gaps: preview_language_gaps(preview_enablement.as_ref()),
@@ -298,22 +305,64 @@ impl DoctorEnvironment {
     }
 }
 
+/// `auto_defaulted` is true when no `ripr.toml` was loaded, so the enabled list
+/// is the built-in default plus project-marker detection. Python and TypeScript
+/// are the languages that detection can enable; reporting them as explicitly
+/// configured would hide that origin, so they resolve with an unspecified
+/// intent and the when-detected policy (`auto_detected_enabled`).
 fn detected_language_entries(
     detected: &[LanguageId],
     enabled: Option<&[LanguageId]>,
+    auto_defaulted: bool,
 ) -> Vec<output::doctor::DoctorDetectedLanguage> {
+    use crate::domain::language_availability::{
+        AutoDetectionPolicy, ConfiguredIntent, LanguageAvailabilityInput,
+        resolve_language_availability,
+    };
     detected
         .iter()
-        .map(|id| output::doctor::DoctorDetectedLanguage {
-            language: id.as_str().to_string(),
-            status: language_status(*id),
-            adapter_available: id.is_available(),
+        .map(|id| {
             // JavaScript is analyzed by the `typescript` entry (and
             // `javascript` is accepted as its alias), so enablement is read
             // through the same
             // mapping the gaps path uses. `None` (no loaded configuration)
             // stays unknown rather than reading as disabled.
-            enabled: enabled.map(|list| list.contains(&config_entry(*id))),
+            let enabled = enabled.map(|list| list.contains(&config_entry(*id)));
+            let auto_enabled = auto_defaulted
+                && enabled == Some(true)
+                && matches!(
+                    config_entry(*id),
+                    LanguageId::Python | LanguageId::TypeScript
+                );
+            let report = resolve_language_availability(&LanguageAvailabilityInput {
+                project_detected: true,
+                configured: match enabled {
+                    Some(true) if !auto_enabled => ConfiguredIntent::Enabled,
+                    Some(false) => ConfiguredIntent::Disabled,
+                    _ => ConfiguredIntent::Unspecified,
+                },
+                auto_policy: if auto_enabled {
+                    AutoDetectionPolicy::WhenDetected
+                } else {
+                    AutoDetectionPolicy::Never
+                },
+                ..LanguageAvailabilityInput::for_language(*id)
+            });
+            output::doctor::DoctorDetectedLanguage {
+                language: id.as_str().to_string(),
+                status: language_status(*id),
+                adapter_available: id.is_available(),
+                enabled,
+                // Unloaded configuration leaves enablement unknown; the resolver
+                // has no unknown state, so publish none rather than a definite
+                // `not_enabled` plus an enable step the config may already satisfy.
+                availability_state: enabled.map(|_| report.state.as_str()),
+                remediation: if enabled.is_some() {
+                    report.remediation
+                } else {
+                    Vec::new()
+                },
+            }
         })
         .collect()
 }
@@ -3002,6 +3051,25 @@ fn preemptive_artifact_ignore(
     }
 }
 
+/// #11879: the same ignore verdict `ripr doctor` gives, for the first `ripr
+/// check` in a project. A newcomer who runs `check` before `doctor` otherwise
+/// meets `?? target/` in `git status` with no hint. Returns the warning only
+/// when git positively reports the artifact root unignored; a covered root,
+/// a missing repository or an unavailable git yield `None`. The default root
+/// is probed; a relocated cache dir is `doctor`'s to report.
+pub(crate) fn first_check_artifact_ignore_note(root: &Path) -> Option<String> {
+    use output::doctor::DoctorArtifactIgnore;
+    let roots = analysis::ripr_artifact_roots(root, &root.join("target/ripr/cache"), None);
+    let verdict = match ripr_artifact_ignore(root, &roots) {
+        DoctorArtifactIgnore::NoArtifacts => preemptive_artifact_ignore(root, &roots),
+        verdict => verdict,
+    };
+    match verdict {
+        DoctorArtifactIgnore::Unignored { warning } => Some(warning),
+        _ => None,
+    }
+}
+
 /// The typed evidence on whether git's index tracks files under ripr's
 /// artifact roots (#8276, relocated bases #8751). An ignore rule never
 /// untracks files committed earlier, so a repository can cover
@@ -5458,6 +5526,37 @@ mod tests {
     }
 
     #[test]
+    fn first_check_note_names_the_entry_only_while_unignored() -> Result<(), String> {
+        let root = unique_command_test_dir("artifact-first-check");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        let note = first_check_artifact_ignore_note(&root).ok_or("expected a note")?;
+        assert!(note.contains("/target/ripr/"), "{note}");
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(first_check_artifact_ignore_note(&root), None);
+        // Outside a repository nothing is established, so nothing is said.
+        let bare = unique_command_test_dir("artifact-first-check-bare");
+        std::fs::create_dir_all(&bare).map_err(|error| error.to_string())?;
+        assert_eq!(first_check_artifact_ignore_note(&bare), None);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&bare);
+        Ok(())
+    }
+
+    #[test]
     fn preemptive_artifact_ignore_warns_before_the_first_write() -> Result<(), String> {
         use output::doctor::DoctorArtifactIgnore;
         let root = unique_command_test_dir("artifact-preemptive");
@@ -6465,13 +6564,97 @@ mod tests {
             status: language_status(language),
             adapter_available,
             enabled: Some(true),
+            availability_state: Some("detected_compiled_enabled"),
+            remediation: Vec::new(),
         }
+    }
+
+    /// The doctor entry carries the shared availability state and its ordered
+    /// remediation, so a detected-but-disabled language names the enable step
+    /// and an unconfigured one stays unknown instead of reading as disabled.
+    #[test]
+    fn detected_entries_carry_the_shared_availability_state() {
+        // Rust is always compiled in, so the disabled branch is exercised on
+        // every feature set rather than only where the Python adapter exists.
+        let disabled =
+            detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Python]), false);
+        assert_eq!(
+            disabled[0].availability_state,
+            Some("detected_compiled_disabled")
+        );
+        assert!(
+            disabled[0]
+                .remediation
+                .iter()
+                .any(|step| step.contains("[languages]")),
+            "{:?}",
+            disabled[0].remediation
+        );
+        // JavaScript reads enablement through its `typescript` entry, so the
+        // availability state follows the same mapping as `enabled`.
+        if LanguageId::JavaScript.is_available() {
+            let js = detected_language_entries(
+                &[LanguageId::JavaScript],
+                Some(&[LanguageId::TypeScript]),
+                false,
+            );
+            assert_eq!(js[0].enabled, Some(true));
+            assert_eq!(js[0].availability_state, Some("detected_compiled_enabled"));
+        }
+        let enabled =
+            detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]), false);
+        assert_eq!(
+            enabled[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
+        assert!(enabled[0].remediation.is_empty());
+        let unknown = detected_language_entries(&[LanguageId::Rust], None, false);
+        assert_eq!(unknown[0].enabled, None);
+        // Unknown enablement publishes no state and no enable step.
+        assert_eq!(unknown[0].availability_state, None);
+        assert!(unknown[0].remediation.is_empty());
+    }
+
+    /// Without a loaded `ripr.toml` the enabled list is the built-in default plus
+    /// marker detection, so an enabled Python or TypeScript reads as
+    /// `auto_detected_enabled`. The same list from a real `ripr.toml` is explicit.
+    #[test]
+    fn auto_defaulted_python_reads_as_auto_detected_not_configured() {
+        if !LanguageId::Python.is_available() {
+            return;
+        }
+        let auto =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Python]), true);
+        assert_eq!(auto[0].enabled, Some(true));
+        assert_eq!(auto[0].availability_state, Some("auto_detected_enabled"));
+        let configured =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Python]), false);
+        assert_eq!(
+            configured[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
+        // Rust is enabled by the built-in default, not by detection.
+        let rust = detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]), true);
+        assert_eq!(
+            rust[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
+        // A disabled entry stays disabled whatever the origin.
+        let disabled =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Rust]), true);
+        assert_eq!(
+            disabled[0].availability_state,
+            Some("detected_compiled_disabled")
+        );
     }
 
     #[test]
     fn detected_entries_map_javascript_to_its_typescript_entry() {
-        let entries =
-            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::TypeScript]));
+        let entries = detected_language_entries(
+            &[LanguageId::JavaScript],
+            Some(&[LanguageId::TypeScript]),
+            false,
+        );
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].language, "javascript");
         assert_eq!(
@@ -6480,7 +6663,7 @@ mod tests {
             "the typescript entry analyzes javascript, so it reads as enabled"
         );
         let entries =
-            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::Rust]));
+            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::Rust]), false);
         assert_eq!(
             entries[0].enabled,
             Some(false),
@@ -6490,7 +6673,8 @@ mod tests {
 
     #[test]
     fn detected_entries_stay_unknown_without_a_loaded_configuration() {
-        let entries = detected_language_entries(&[LanguageId::Rust, LanguageId::Python], None);
+        let entries =
+            detected_language_entries(&[LanguageId::Rust, LanguageId::Python], None, false);
         assert!(
             entries.iter().all(|entry| entry.enabled.is_none()),
             "an unloadable config must not read as disabled: {entries:?}"
@@ -6544,7 +6728,7 @@ mod tests {
         // same line; the typed `adapter_available` field is what says it in JSON.
         // The expectation follows the compiled features: `--all-features`
         // builds (like CI's JUnit job) compile the Perl adapter (#7137).
-        let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]));
+        let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]), false);
         let first = &detected_languages_lines(&unavailable, &[])[0];
         if cfg!(feature = "lang-perl") {
             assert!(unavailable[0].adapter_available);
@@ -7449,7 +7633,7 @@ mod tests {
         assert_eq!(
             doctor(&args(&["--root"])),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
     }
@@ -7683,7 +7867,7 @@ mod tests {
             assert_eq!(
                 doctor(&args(&["--root", flag])),
                 Err(CommandError::Failure(
-                    "missing value for --root".to_string()
+                    "missing value for --root; pass a value right after it".to_string()
                 )),
                 "a known flag cannot be the --root value: {flag}"
             );
@@ -8290,6 +8474,13 @@ mod tests {
         assert_eq!(format_bytes(1_048_575), "1.00 MB");
         assert_eq!(format_bytes(1_073_741_823), "1.00 GB");
         assert_eq!(format_bytes(1_048_000), "1023.44 KB");
+        // The promotion threshold is where two-decimal rounding reaches
+        // 1024.00: 1_048_570 B is 1023.994 KB, 1_048_571 B is 1023.995 KB.
+        assert_eq!(format_bytes(1_048_570), "1023.99 KB");
+        assert_eq!(format_bytes(1_048_571), "1.00 MB");
+        // The same threshold one unit up: 1023.995 MB is 1_073_736_581.12 B.
+        assert_eq!(format_bytes(1_073_736_581), "1023.99 MB");
+        assert_eq!(format_bytes(1_073_736_582), "1.00 GB");
     }
 
     #[test]

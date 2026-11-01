@@ -620,3 +620,233 @@ fn a_decoded_test_file_shares_its_file_wide_lists_again() -> Result<(), String> 
     assert!(first.mocks_in_file.same_list(&second.mocks_in_file));
     Ok(())
 }
+
+/// A test file's source with `count` tests that all see the same imports and
+/// the same top-level fixture bindings.
+fn many_tests_source(count: usize) -> String {
+    let mut source = String::new();
+    for index in 0..count {
+        source.push_str(&format!(
+            "import {{ helper{index} }} from \"../src/helpers{index}\";\n"
+        ));
+    }
+    source.push_str("import { greet } from \"../src/small\";\n\n");
+    for index in 0..count {
+        source.push_str(&format!(
+            "test(\"case {index}\", () => {{\n  expect(greet(\"A{index}\")).toBe(\"Hello, A{index}\");\n}});\n\n"
+        ));
+    }
+    source
+}
+
+/// A production source with `count` exported functions under the same imports.
+fn many_owners_source(count: usize) -> String {
+    let mut source = String::new();
+    for index in 0..count {
+        source.push_str(&format!(
+            "import {{ helper{index} }} from \"./helpers{index}\";\n"
+        ));
+    }
+    source.push('\n');
+    for index in 0..count {
+        source.push_str(&format!(
+            "export function owner{index}(value: number): number {{\n  return helper0(value) + {index};\n}}\n\n"
+        ));
+    }
+    source
+}
+
+/// Size of the envelope a cold run persists for `relative`.
+fn envelope_len(root: &Path, relative: &Path, source: &str) -> Result<u64, String> {
+    let store = TypeScriptFileFactStore::at(root);
+    std::fs::metadata(store.entry_path(relative, source))
+        .map(|meta| meta.len())
+        .map_err(|err| format!("the envelope for {} exists: {err}", relative.display()))
+}
+
+/// An envelope that wrote each test's copy of the file-wide lists and each
+/// owner's copy of the file's imports grew with the square of the file (a
+/// 267 MB envelope for one VS Code test file). Doubling the entries must
+/// about double the envelope, and the decoded file still shares one list.
+#[test]
+fn a_persisted_envelope_grows_linearly_with_the_entries_of_one_file() -> Result<(), String> {
+    let root = build_fixture("fact-store-linear")?;
+    let tests_small = Path::new("tests/few.test.ts");
+    let tests_large = Path::new("tests/many.test.ts");
+    let owners_small = Path::new("src/few_owners.ts");
+    let owners_large = Path::new("src/many_owners.ts");
+    let (few_tests, many_tests) = (many_tests_source(60), many_tests_source(120));
+    let (few_owners, many_owners) = (many_owners_source(60), many_owners_source(120));
+    ts_write_file(&root.join(tests_small), &few_tests)?;
+    ts_write_file(&root.join(tests_large), &many_tests)?;
+    ts_write_file(&root.join(owners_small), &few_owners)?;
+    ts_write_file(&root.join(owners_large), &many_owners)?;
+    let cold = run_adapter(&root, &[small_changed_file()]);
+    let lengths = (
+        envelope_len(&root, tests_small, &few_tests),
+        envelope_len(&root, tests_large, &many_tests),
+        envelope_len(&root, owners_small, &few_owners),
+        envelope_len(&root, owners_large, &many_owners),
+    );
+    let store = TypeScriptFileFactStore::at(&root);
+    let loaded_owners = store.load(&super::fact_store::TypeScriptFileFactKey::new(
+        owners_large,
+        &many_owners,
+        &root,
+        None,
+    ));
+    let loaded_tests = store.load(&super::fact_store::TypeScriptFileFactKey::new(
+        tests_large,
+        &many_tests,
+        &root,
+        None,
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    cold?;
+
+    let (few_t, many_t, few_o, many_o) = (lengths.0?, lengths.1?, lengths.2?, lengths.3?);
+    // Linear growth doubles the size; a quadratic envelope quadruples it.
+    assert!(
+        many_t * 10 < few_t * 25,
+        "test envelope grew {few_t} -> {many_t} bytes for twice the tests"
+    );
+    assert!(
+        many_o * 10 < few_o * 25,
+        "owner envelope grew {few_o} -> {many_o} bytes for twice the owners"
+    );
+
+    let crate::analysis::seam_cache::CacheLoad::Hit(persisted) = loaded_owners else {
+        return Err("the owner file's envelope loads".to_string());
+    };
+    let owners = &persisted.file_facts.owners;
+    let [first, .., last] = owners.as_slice() else {
+        return Err(format!("many owners, got {}", owners.len()));
+    };
+    assert!(!first.imports.is_empty());
+    assert!(first.imports.same_list(&last.imports));
+    let crate::analysis::seam_cache::CacheLoad::Hit(persisted) = loaded_tests else {
+        return Err("the test file's envelope loads".to_string());
+    };
+    let (tests, _, _) = persisted
+        .test_extraction
+        .ok_or("the envelope holds the extraction")?;
+    let [first, .., last] = tests.as_slice() else {
+        return Err(format!("many tests, got {}", tests.len()));
+    };
+    assert!(first.imports_in_file.same_list(&last.imports_in_file));
+    Ok(())
+}
+
+/// A persisted envelope is untrusted input: a shared-list reference that
+/// names no earlier list, or one read outside a wire scope, must fail the
+/// decode (so the store recomputes) rather than yield an empty or wrong list.
+#[test]
+fn a_malformed_shared_list_reference_fails_to_decode() {
+    use super::types::{Shared, SharedWireScope};
+
+    // `assert!(x.is_err())` trips clippy::assertions_on_result_states; the
+    // helper keeps the intent without an `unwrap_err` on an opaque payload.
+    fn fails<T>(result: Result<T, serde_json::Error>) -> bool {
+        result.is_err()
+    }
+
+    let decode = |json: &str| {
+        let _scope = SharedWireScope::open();
+        serde_json::from_str::<Vec<Shared<u32>>>(json)
+    };
+
+    // Control: the first sight defines the list, later sights reference it.
+    let ok = decode(r#"[{"shared":1,"items":[7,8]},{"shared":1}]"#);
+    assert!(ok.is_ok_and(|lists| lists.len() == 2 && lists[0].same_list(&lists[1])));
+
+    // A forward or unknown reference.
+    assert!(fails(decode(r#"[{"shared":1}]"#)));
+    assert!(fails(decode(r#"[{"shared":2},{"shared":2,"items":[1]}]"#)));
+    // An unexpected field, and a map without the `shared` key.
+    assert!(fails(decode(r#"[{"shared":1,"other":[1]}]"#)));
+    assert!(fails(decode(r#"[{"items":[1]}]"#)));
+    // The wire form is refused outside a scope.
+    assert!(fails(serde_json::from_str::<Vec<Shared<u32>>>(
+        r#"[{"shared":1,"items":[1]}]"#
+    )));
+}
+
+/// Imports the changed module so the disclosure is in reach of the diff (a
+/// gap in a test file no finding relates to is deliberately not reported).
+const HELPER_TITLE_TEST_SOURCE: &str = "import { greet } from \"../src/small\";\n\nfunction register() {\n  it(`adds ${greet(\"a\")}`, () => {\n    expect(greet(\"a\")).toBe(\"Hello, a\");\n  });\n}\n";
+
+/// A test file whose registrations the extractor drops is disclosed on every
+/// run. The verdict is a function of the file's bytes, so a warm run serves the
+/// one recorded beside the extraction instead of parsing the file again, and
+/// the disclosure is identical to the cold run's.
+#[test]
+fn a_warm_run_discloses_the_recorded_partial_extraction_like_the_cold_run() -> Result<(), String> {
+    let root = build_fixture("fact-store-partial-gap")?;
+    ts_write_file(&root.join("tests/tmpl.test.ts"), HELPER_TITLE_TEST_SOURCE)?;
+
+    let cold = run_adapter(&root, &[small_changed_file()]);
+    let warm = run_adapter(&root, &[small_changed_file()]);
+    let _ = std::fs::remove_dir_all(&root);
+    let (cold, warm) = (cold?, warm?);
+
+    let cold_limits = format!("{:?}", cold.limitations);
+    assert!(
+        cold_limits.contains("template-literal title"),
+        "control: the cold run must disclose the dropped registration, got {cold_limits}"
+    );
+    assert_eq!(
+        warm.preview_fact_cache.misses, 0,
+        "the warm run must be served from the store, got {:?}",
+        warm.preview_fact_cache
+    );
+    assert_eq!(
+        format!("{:?}", warm.limitations),
+        cold_limits,
+        "the recorded verdict must disclose exactly what the check disclosed"
+    );
+    Ok(())
+}
+
+/// The recorded verdict restores to the check's own value, and a shape this
+/// build does not produce is not trusted (the caller recomputes).
+#[test]
+fn a_recorded_partial_extraction_restores_only_known_shapes() {
+    use super::types::{PersistedPartialExtraction, TypeScriptTestExtractionGap};
+    let file = Path::new("tests/x.test.ts");
+    // Every shape `UnextractedTestFinder` can emit must round-trip, or a warm
+    // run silently re-parses that file (the runner-kind mismatch was missed once).
+    for shape in [
+        "template-literal title",
+        "tagged-template .each",
+        "test/it call in loop/callback/nested body",
+        "runner registration kind mismatch",
+    ] {
+        let gap = TypeScriptTestExtractionGap {
+            file: file.to_path_buf(),
+            sample_line: 7,
+            shape,
+            snippet: "test.each`t`".to_string(),
+        };
+        assert_eq!(
+            PersistedPartialExtraction::of(Some(&gap)).restore(file),
+            Some(Some(gap)),
+            "a recorded `{shape}` gap restores to the same gap"
+        );
+    }
+    assert_eq!(
+        PersistedPartialExtraction::of(None).restore(file),
+        Some(None),
+        "a recorded clean verdict restores as clean, not as unknown"
+    );
+    let mut unknown = PersistedPartialExtraction::of(None);
+    unknown.gap = Some(super::types::PersistedExtractionGap {
+        sample_line: 1,
+        shape: "a shape from another build".to_string(),
+        snippet: String::new(),
+    });
+    assert_eq!(
+        unknown.restore(file),
+        None,
+        "an unrecognized shape is recomputed, never trusted"
+    );
+}

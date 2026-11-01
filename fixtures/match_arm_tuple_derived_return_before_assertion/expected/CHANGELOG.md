@@ -438,7 +438,7 @@ Updated:
 ## Pending — match_arm_tuple_derived_return_before_assertion (33)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
 
 Command:
 `cargo xtask goldens bless match_arm_tuple_derived_return_before_assertion --reason "..."`
@@ -451,7 +451,8 @@ Updated:
 ## Pending — match_arm_tuple_derived_return_before_assertion (34)
 
 Reason:
-RIPR-SPEC-0122: explain missing input or assertion honestly
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
 
 Command:
 `cargo xtask goldens bless match_arm_tuple_derived_return_before_assertion --reason "..."`
@@ -462,6 +463,32 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — match_arm_tuple_derived_return_before_assertion (35)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_derived_return_before_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_tuple_derived_return_before_assertion (36)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless match_arm_tuple_derived_return_before_assertion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_tuple_derived_return_before_assertion (37)
 
 Reason:
 RIPR-SPEC-0122: render the missing check in plain language

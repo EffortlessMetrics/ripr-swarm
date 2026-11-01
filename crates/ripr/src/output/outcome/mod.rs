@@ -47,6 +47,11 @@ pub(crate) const AGENT_VERIFY_SCHEMA_VERSION: &str = "0.3";
 pub(crate) struct AgentVerifyArtifactBinding {
     pub(crate) before_content_sha256: String,
     pub(crate) after_content_sha256: String,
+    /// #3056: the before/after artifact is `Historical` and was produced from
+    /// a dirty worktree. Rendered only when true (additive, byte-stable
+    /// otherwise).
+    pub(crate) before_produced_from_dirty: bool,
+    pub(crate) after_produced_from_dirty: bool,
 }
 
 /// The one gap an `agent verify --gap-id` run bound its result to: open in
@@ -468,6 +473,15 @@ fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>,
     let value: Value = serde_json::from_str(json)
         .map_err(|err| format!("failed to parse repo exposure JSON: {err}"))?;
     if let Some(seams) = value.get("seams").and_then(Value::as_array) {
+        // #12108: a pilot file whose seams[] the byte budget cut lists only
+        // some seams, so a seam missing from it would read as removed or
+        // fixed. Refuse it rather than compare.
+        if crate::output::repo_exposure::is_byte_bounded_repo_exposure(&value) {
+            return Err(
+                "static snapshot is a byte-bounded repo-exposure file (`ripr pilot` cut its seams[] to RIPR_PILOT_REPO_EXPOSURE_BYTES, so a missing seam cannot be read as removed; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0, or produce the snapshot with `ripr check --format repo-exposure-json`, then compare)"
+                    .to_string(),
+            );
+        }
         return parse_repo_exposure_seams(seams);
     }
     if let Some(findings) = value.get("findings").and_then(Value::as_array) {
@@ -3473,6 +3487,85 @@ mod tests {
     }
 
     #[test]
+    fn outcome_refuses_a_byte_bounded_repo_exposure_snapshot() -> Result<(), String> {
+        // #12108: the cut file lists only some seams; comparing it would read
+        // every cut seam as removed.
+        let snapshot = |run_status: &str| {
+            serde_json::json!({
+                "schema_version": "0.5",
+                "scope": "repo",
+                "run_status": run_status,
+                "seams": [{
+                    "seam_id": "seam:src/a.rs:1",
+                    "kind": "return_value",
+                    "file": "src/a.rs",
+                    "line": 1,
+                    "grip_class": "ungripped"
+                }]
+            })
+            .to_string()
+        };
+        let bounded = snapshot("limited_repo_exposure_bytes");
+        let complete = snapshot("complete");
+        for (before, after) in [(&bounded, &complete), (&complete, &bounded)] {
+            let Err(refusal) = targeted_test_outcome_report_from_json(
+                before,
+                after,
+                "before.json".to_string(),
+                "after.json".to_string(),
+            ) else {
+                return Err("a byte-bounded snapshot must not be compared".to_string());
+            };
+            assert!(refusal.contains("byte-bounded"), "{refusal}");
+            assert!(
+                refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+                "{refusal}"
+            );
+        }
+        // Both limits applied: a seam cap owns run_status, so the byte cut is
+        // only a limitations[] entry, and it must still be refused.
+        let both = serde_json::from_str::<serde_json::Value>(&snapshot("seam_limit_applied"))
+            .map_err(|err| err.to_string())
+            .map(|mut document| {
+                document["limitations"] = serde_json::json!([
+                    {"category": "pilot_seam_budget_applied"},
+                    {"category": "pilot_repo_exposure_byte_bound_applied"}
+                ]);
+                document.to_string()
+            })?;
+        for (before, after) in [(&both, &complete), (&complete, &both)] {
+            let refused = targeted_test_outcome_report_from_json(
+                before,
+                after,
+                "before.json".to_string(),
+                "after.json".to_string(),
+            );
+            assert!(
+                refused.is_err_and(|error| error.contains("byte-bounded")),
+                "seam cap plus byte bound must be refused"
+            );
+        }
+        // Negative: a seam cap alone is not a byte bound; this refusal is
+        // specific to the byte-bound category.
+        let seam_cap_only = snapshot("seam_limit_applied");
+        targeted_test_outcome_report_from_json(
+            &seam_cap_only,
+            &complete,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        // Discriminating negative: the same documents with a complete status
+        // compare, so the refusal is the status, not the shape.
+        targeted_test_outcome_report_from_json(
+            &complete,
+            &complete,
+            "before.json".to_string(),
+            "after.json".to_string(),
+        )?;
+        Ok(())
+    }
+
+    #[test]
     fn targeted_rerun_movement_names_same_rank_change_as_limited() -> Result<(), String> {
         let current = vec![TargetedRerunStaticSeam {
             seam_id: "seam:price".to_string(),
@@ -3538,10 +3631,72 @@ mod tests {
         }
     }
 
+    #[test]
+    fn agent_verify_json_discloses_produced_from_dirty_only_when_set() -> Result<(), String> {
+        let report = build_targeted_test_outcome_report(
+            &[],
+            &[],
+            "before.json".to_string(),
+            "after.json".to_string(),
+            OutcomeHeadIdentity::default(),
+        )?;
+        let render = |before: bool, after: bool| -> Result<Value, String> {
+            let mut binding = test_agent_verify_binding();
+            binding.before_produced_from_dirty = before;
+            binding.after_produced_from_dirty = after;
+            let json = render_json::render_agent_verify_json_with_currentness(
+                &report,
+                Some("historical_before_current_after"),
+                &binding,
+            )?;
+            serde_json::from_str(&json).map_err(|err| err.to_string())
+        };
+        let clean = render(false, false)?;
+        assert!(clean.get("before_produced_from_dirty").is_none());
+        assert!(clean.get("after_produced_from_dirty").is_none());
+        let dirty = render(true, false)?;
+        assert_eq!(dirty["before_produced_from_dirty"], true);
+        assert!(dirty.get("after_produced_from_dirty").is_none());
+        // The pair token is untouched by the additive field.
+        assert_eq!(dirty["artifact_currentness"], clean["artifact_currentness"]);
+        Ok(())
+    }
+
+    #[test]
+    fn agent_verify_json_discloses_after_produced_from_dirty_independently() -> Result<(), String> {
+        let report = build_targeted_test_outcome_report(
+            &[],
+            &[],
+            "before.json".to_string(),
+            "after.json".to_string(),
+            OutcomeHeadIdentity::default(),
+        )?;
+        let render = |before: bool, after: bool| -> Result<Value, String> {
+            let mut binding = test_agent_verify_binding();
+            binding.before_produced_from_dirty = before;
+            binding.after_produced_from_dirty = after;
+            let json = render_json::render_agent_verify_json_with_currentness(
+                &report,
+                Some("historical_noncurrent"),
+                &binding,
+            )?;
+            serde_json::from_str(&json).map_err(|err| err.to_string())
+        };
+        let after_only = render(false, true)?;
+        assert_eq!(after_only["after_produced_from_dirty"], true);
+        assert!(after_only.get("before_produced_from_dirty").is_none());
+        let both = render(true, true)?;
+        assert_eq!(both["before_produced_from_dirty"], true);
+        assert_eq!(both["after_produced_from_dirty"], true);
+        Ok(())
+    }
+
     fn test_agent_verify_binding() -> AgentVerifyArtifactBinding {
         AgentVerifyArtifactBinding {
             before_content_sha256: format!("sha256:{}", "b".repeat(64)),
             after_content_sha256: format!("sha256:{}", "c".repeat(64)),
+            before_produced_from_dirty: false,
+            after_produced_from_dirty: false,
         }
     }
     // --- #6031: the JSON receipt carries the pair's head/repository identity

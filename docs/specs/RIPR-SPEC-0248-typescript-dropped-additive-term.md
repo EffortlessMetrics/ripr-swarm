@@ -81,7 +81,8 @@ class only when some strong value assertion (`exact_value`,
 observes the whole result of an owner call (`owner(...)`, `ns.owner(...)`,
 the `local(...)` of an `import { owner as local }` rename, optionally
 awaited, or a local bound once to that call; not `owner(...).field` or
-`f(owner(...))`; in `owner(owner(a, b), c)` the outer call's arguments) for
+`f(owner(...))`; in `owner(owner(a, b), c)`, or a local bound to it, the outer
+call's arguments) for
 which `t` folds to a number of magnitude at least `1e-6`. A double sum
 absorbs an addend below 2^-52 of its own magnitude (`6499 + 1e-13 ===
 6499`), and a term of at least `1e-6` changes every sum below about

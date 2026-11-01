@@ -190,6 +190,8 @@ fn measure_corpus_entry(
         "speed.warm_check_peak_rss_mb",
         "speed.editor_refresh_ms",
         "speed.editor_refresh_unanswered_progress_ms",
+        "speed.editor_refresh_peak_rss_mb",
+        "trust.editor_resilience_failures",
         "trust.self_contradictions",
     ];
     let checkout = match prepare_checkout(entry, options) {
@@ -374,36 +376,106 @@ fn measure_corpus_entry(
             editor_refresh::ProgressReply::Withhold,
         ),
     ] {
-        samples.push(
-            match editor_refresh::measure_editor_refresh(
-                binary,
-                &checkout,
-                &editor_base,
-                &envs,
-                reply,
-                timeout,
-            ) {
-                Ok(Some(refresh)) => sample(
-                    metric,
-                    if refresh.complete() {
-                        SampleOutcome::Value(refresh.ms)
-                    } else {
-                        SampleOutcome::Incomplete(refresh.ms)
-                    },
-                    format!(
-                        "edited save of `{}` against {editor_base}, terminal state `{}`",
-                        refresh.file, refresh.state
-                    ),
+        let refresh = editor_refresh::measure_editor_refresh(
+            binary,
+            &checkout,
+            &editor_base,
+            &envs,
+            reply,
+            timeout,
+        );
+        samples.push(match &refresh {
+            Ok(Some(refresh)) => sample(
+                metric,
+                if refresh.complete() {
+                    SampleOutcome::Value(refresh.ms)
+                } else {
+                    SampleOutcome::Incomplete(refresh.ms)
+                },
+                format!(
+                    "edited save of `{}` against {editor_base}, terminal state `{}`",
+                    refresh.file, refresh.state
                 ),
+            ),
+            Ok(None) => sample(
+                metric,
+                SampleOutcome::NotMeasured,
+                format!("{editor_base}..HEAD changes no Rust file to open in the editor"),
+            ),
+            Err(err) => sample(metric, SampleOutcome::Failed, err.clone()),
+        });
+        // The server's memory after the ordinary edited save: a long-lived
+        // editor process is judged on residency, not only on latency.
+        if reply == editor_refresh::ProgressReply::Answer {
+            samples.push(match &refresh {
+                Ok(Some(refresh)) => match refresh.peak_rss_bytes {
+                    Some(bytes) => {
+                        let mb = bytes as f64 / (1024.0 * 1024.0);
+                        sample(
+                            "speed.editor_refresh_peak_rss_mb",
+                            if refresh.complete() {
+                                SampleOutcome::Value(mb)
+                            } else {
+                                SampleOutcome::Incomplete(mb)
+                            },
+                            format!(
+                                "VmHWM of `ripr lsp --stdio` after the edited save of `{}`",
+                                refresh.file
+                            ),
+                        )
+                    }
+                    None => sample(
+                        "speed.editor_refresh_peak_rss_mb",
+                        SampleOutcome::NotMeasured,
+                        "peak memory sampling needs Linux /proc".to_string(),
+                    ),
+                },
                 Ok(None) => sample(
-                    metric,
+                    "speed.editor_refresh_peak_rss_mb",
                     SampleOutcome::NotMeasured,
                     format!("{editor_base}..HEAD changes no Rust file to open in the editor"),
                 ),
-                Err(err) => sample(metric, SampleOutcome::Failed, err),
-            },
-        );
+                Err(err) => sample(
+                    "speed.editor_refresh_peak_rss_mb",
+                    SampleOutcome::Failed,
+                    err.clone(),
+                ),
+            });
+        }
     }
+
+    samples.push(
+        match editor_refresh::measure_editor_resilience(
+            binary,
+            &checkout,
+            &editor_base,
+            &envs,
+            timeout,
+        ) {
+            Ok(Some(resilience)) => sample(
+                "trust.editor_resilience_failures",
+                SampleOutcome::Value(resilience.failures.len() as f64),
+                if resilience.failures.is_empty() {
+                    format!(
+                        "a burst of saves settled and a terminated server restarted cleanly on `{}`",
+                        resilience.file
+                    )
+                } else {
+                    resilience.failures.join("; ")
+                },
+            ),
+            Ok(None) => sample(
+                "trust.editor_resilience_failures",
+                SampleOutcome::NotMeasured,
+                format!("{editor_base}..HEAD changes no Rust file to open in the editor"),
+            ),
+            Err(err) => sample(
+                "trust.editor_resilience_failures",
+                SampleOutcome::Failed,
+                err,
+            ),
+        },
+    );
 
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));

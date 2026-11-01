@@ -42,8 +42,8 @@
       "flow_sinks": [
         {"kind":"return_value","text":"return 1;","line":3}
       ],
-      "evidence": ["owner: total", "gap_state: advisory", "actionability_category: missing_context", "why_not_actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route", "repair_route: add trusted related-test matching for this owner shape before emitting a repair packet", "missing_actionability_fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/cart.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_cart.ts:typescript_preview:3b511579;owner=total", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: mocha", "typescript_test_runner: mocha", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved"],
-      "missing": ["No trusted TypeScript method receiver relation for `total`. Direct `new ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked modules, prototype aliases, and dynamic property access stay ambiguous in preview.", "TypeScript preview actionability `advisory` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet"],
+      "evidence": ["owner: total", "gap_state: unknown", "actionability_category: missing_context", "why_not_actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route", "repair_route: add trusted related-test matching for this owner shape before emitting a repair packet", "missing_actionability_fields: related_test_or_observer, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: trusted related test or observer, target shape, verify command, receipt command, and edit boundaries", "raw_evidence_ref: file=src/cart.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_cart.ts:typescript_preview:3b511579;owner=total", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: mocha", "typescript_test_runner: mocha", "typescript_package_confidence: medium", "typescript_package_limitation: typescript_package_manager_unresolved"],
+      "missing": ["No trusted TypeScript method receiver relation for `total`. Direct `new ClassName(...)` receiver calls are supported, but factories, dependency injection, mocked modules, prototype aliases, and dynamic property access stay ambiguous in preview.", "TypeScript preview actionability `unknown` / `missing_context`: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route. Repair route: add trusted related-test matching for this owner shape before emitting a repair packet"],
       "assertion_texts": {
       },
       "activation": {
@@ -92,7 +92,7 @@
         "actionability_category": "missing_context",
         "authority_boundary": "preview_advisory_only",
         "evidence_needed_to_promote": "trusted related test or observer, target shape, verify command, receipt command, and edit boundaries",
-        "gap_state": "advisory",
+        "gap_state": "unknown",
         "missing_actionability_fields": [
           "related_test_or_observer",
           "target_test_shape",

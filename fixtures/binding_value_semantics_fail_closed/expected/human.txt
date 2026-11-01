@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/binding_value_semantics_fail_closed/input
 
-Summary: 6 changed behaviors checked: 3 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 3 unclear. 6 found, 0 suppressed by your settings
+Summary: 6 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 6 unclear. 6 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 6 changed line(s), 3 candidate line(s), 6 changed behavior(s) checked, 6 finding(s)
@@ -51,13 +51,12 @@ Write a test for it:
 
 Hidden:
   5 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:3 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:3 (unknown: infection unclear); kind: return_value; reason: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary…
     - ./src/lib.rs:8 (unknown: infection unclear); kind: predicate; reason: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary…
-    - ./src/lib.rs:8 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:8 (unknown: infection unclear); kind: return_value; reason: Changed boundary input is unresolved: boundary operand `k` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary…
     - ./src/lib.rs:16 (unknown: infection unclear); kind: predicate; reason: Changed boundary input is unresolved: boundary operand `(n + 100) / 2` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of…
-    - ./src/lib.rs:16 (exposed); kind: return_value; reason: Strong oracle found: exact value or pattern assertion
+    - ./src/lib.rs:16 (unknown: infection unclear); kind: return_value; reason: Changed boundary input is unresolved: boundary operand `(n + 100) / 2` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of…
   Hidden classes:
-    exposed = tests appear to notice the change
     unknown: infection unclear = ripr could not tell what input makes the change take effect
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

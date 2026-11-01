@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0367"
+scope = "out"
+reason = "Kani proof-harness role is a Rust source-role contract; not a perl verdict example"

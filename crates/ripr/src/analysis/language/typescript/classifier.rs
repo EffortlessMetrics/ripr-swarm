@@ -1019,6 +1019,9 @@ fn ts_mask_lexically(
     // it is division (`i++ / 2`), never a regex start.
     let mut postfix_op = false;
     let mut op_after_operand = false;
+    // A `!` that directly follows an operand is a non-null assertion
+    // (`n! / 2`), so a `/` after it is division too (#7483).
+    let mut postfix_not = false;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
@@ -1058,6 +1061,7 @@ fn ts_mask_lexically(
                     }
                     '/' if regex_allowed
                         && !postfix_op
+                        && !postfix_not
                         && operand_expected(prev, &word, word_after_dot) =>
                     {
                         mode = Mode::Regex { in_class: false };
@@ -1087,6 +1091,12 @@ fn ts_mask_lexically(
                 if matches!(mode, Mode::LineComment | Mode::BlockComment) {
                     after_space = true;
                     continue;
+                }
+                if c == '!' {
+                    postfix_not = (postfix_not && prev == Some('!'))
+                        || !operand_expected(prev, &word, word_after_dot);
+                } else if !c.is_whitespace() {
+                    postfix_not = false;
                 }
                 if (c == '+' || c == '-') && !after_space && prev == Some(c) {
                     postfix_op = op_after_operand && !postfix_op;
@@ -1202,6 +1212,7 @@ fn ts_mask_lexically(
             dots = 0;
             postfix_op = false;
             op_after_operand = false;
+            postfix_not = false;
         }
     }
     out
@@ -3566,9 +3577,12 @@ fn ts_observed_local_owner_call_arguments(
         .strip_prefix("await ")
         .map(str::trim)
         .unwrap_or(initializer.trim());
-    // The initializer must be one owner call spanning the whole text.
+    // The initializer must be one owner call spanning the whole text. A call
+    // nested in its arguments (`price(price(6000, 0), 7)`, #7470) is allowed:
+    // the matches come back in text order and the span check below pins the
+    // first one as the outermost call, whose arguments the assertion observes.
     let argument_lists = owner_call_arguments(stripped, owner_name, owner_receivers);
-    if argument_lists.len() != 1 {
+    if argument_lists.is_empty() {
         return None;
     }
     let after_name = if let Some(rest) = stripped.strip_prefix(owner_name) {
@@ -5788,42 +5802,75 @@ fn unresolved_assertions_only(
 /// marker in either never counts. An unrelated callback, and other
 /// `Unresolved` causes (a shadowed `expect`, a no-op helper), stay actionable
 /// gaps.
+///
+/// A third shape is a floating `expect(<owner call>).resolves|rejects...`
+/// (#11535, RIPR-SPEC-0246 rule 4): jest-derived and conservative for vitest,
+/// where an un-awaited, un-returned assertion may not fail the test. Known
+/// over-demotions toward `static_unknown`: `expect.assertions(n)` tests, an
+/// expression-bodied subtest, and a function-reference callback.
 pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -> bool {
     let masked = mask_comments_and_strings(body);
-    let calls_owner = |text: &str| {
-        text.match_indices(owner_name).any(|(at, _)| {
-            let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
-            let mut before = text[..at].chars().rev().peekable();
-            // A member call (`this.owner(`, `ns.owner(`, `a?.owner(`) ties the
-            // same way a bare call does when its whole receiver is an
-            // identifier chain; a call or index step anywhere in it
-            // (`f().owner(`, `a[0].b.owner(`, `f().a.owner(`) is some other
-            // receiver.
-            let boundary = match before.next() {
-                None => true,
-                Some('.') => {
-                    before.next_if_eq(&'?');
-                    loop {
-                        if before.next_if(|c| word(*c)).is_none() {
-                            break false;
-                        }
-                        while before.next_if(|c| word(*c)).is_some() {}
-                        match before.peek() {
-                            Some('.') => {
-                                before.next();
-                                before.next_if_eq(&'?');
-                            }
-                            Some(')' | ']') => break false,
-                            _ => break true,
-                        }
-                    }
-                }
-                Some(c) => !word(c),
-            };
-            let after = &text[at + owner_name.len()..];
-            boundary && (after.starts_with('(') || generic_call_args(after))
-        })
-    };
+    floating_promise_assertion_on_owner(&masked, owner_name)
+        || body_asserts_in_then_callback(&masked, owner_name)
+}
+
+/// A floating `expect(<owner call>).resolves...` / `.rejects...` with no
+/// `await` or `return` before it: the promise settles after the test body
+/// ends, so the extractor withholds its credit (it cannot fail the test) and
+/// the test reads `static_unknown` rather than an actionable gap, like the
+/// `.then` shapes. `masked` has comments and strings blanked.
+fn floating_promise_assertion_on_owner(masked: &str, owner_name: &str) -> bool {
+    masked.match_indices("expect").any(|(at, _)| {
+        // `expect(` or `expect.soft(`.
+        let after = &masked[at + "expect".len()..];
+        let callee_len = if after.starts_with('(') {
+            "expect".len()
+        } else if after.starts_with(".soft(") {
+            "expect.soft".len()
+        } else {
+            return false;
+        };
+        if masked[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+        {
+            return false;
+        }
+        // An awaited, returned or arrow-returned assertion is not floating.
+        let before = masked[..at].trim_end();
+        if before.ends_with("=>")
+            || ["await", "return"].iter().any(|word| {
+                before.strip_suffix(word).is_some_and(|rest| {
+                    !rest
+                        .chars()
+                        .next_back()
+                        .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+                })
+            })
+        {
+            return false;
+        }
+        let open = at + callee_len;
+        let Some(close) = balanced_close_offset(&masked[open + 1..]).map(|c| open + 1 + c) else {
+            return false;
+        };
+        let chain = masked[close + 1..].trim_start();
+        // `expect(x).not.resolves...` keeps the async modifier after `.not`.
+        let after_dot = chain.strip_prefix('.').map(str::trim_start);
+        let async_chain = after_dot
+            .map(|rest| {
+                rest.strip_prefix("not")
+                    .and_then(|tail| tail.trim_start().strip_prefix('.'))
+                    .map_or(rest, str::trim_start)
+            })
+            .is_some_and(|rest| rest.starts_with("resolves") || rest.starts_with("rejects"));
+        async_chain && text_calls_owner(&masked[open..=close], owner_name)
+    })
+}
+
+fn body_asserts_in_then_callback(masked: &str, owner_name: &str) -> bool {
+    let calls_owner = |text: &str| text_calls_owner(text, owner_name);
     [".then(", "forEach(async"].iter().any(|marker| {
         masked.match_indices(marker).any(|(start, _)| {
             let Some(offset) = marker.find('(') else {
@@ -5845,7 +5892,7 @@ pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -
                     _ => {}
                 }
             }
-            let tied_to_owner = calls_owner(&masked[receiver_start(&masked, start)..start])
+            let tied_to_owner = calls_owner(&masked[receiver_start(masked, start)..start])
                 || masked.get(open..end).is_some_and(calls_owner);
             tied_to_owner
                 && masked.get(open..end).is_some_and(|span| {
@@ -5861,6 +5908,43 @@ pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -
                     })
                 })
         })
+    })
+}
+
+/// Whether `text` calls `owner_name` directly or through an identifier
+/// receiver chain (see [`body_asserts_in_unmodeled_callback`]).
+fn text_calls_owner(text: &str, owner_name: &str) -> bool {
+    text.match_indices(owner_name).any(|(at, _)| {
+        let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
+        let mut before = text[..at].chars().rev().peekable();
+        // A member call (`this.owner(`, `ns.owner(`, `a?.owner(`) ties the
+        // same way a bare call does when its whole receiver is an
+        // identifier chain; a call or index step anywhere in it
+        // (`f().owner(`, `a[0].b.owner(`, `f().a.owner(`) is some other
+        // receiver.
+        let boundary = match before.next() {
+            None => true,
+            Some('.') => {
+                before.next_if_eq(&'?');
+                loop {
+                    if before.next_if(|c| word(*c)).is_none() {
+                        break false;
+                    }
+                    while before.next_if(|c| word(*c)).is_some() {}
+                    match before.peek() {
+                        Some('.') => {
+                            before.next();
+                            before.next_if_eq(&'?');
+                        }
+                        Some(')' | ']') => break false,
+                        _ => break true,
+                    }
+                }
+            }
+            Some(c) => !word(c),
+        };
+        let after = &text[at + owner_name.len()..];
+        boundary && (after.starts_with('(') || generic_call_args(after))
     })
 }
 
@@ -6092,7 +6176,13 @@ pub(crate) fn strongest_family_matching_oracle(
         if !candidate_observes_owner_call(candidate) {
             continue;
         }
-        for assertion in &candidate.test.assertions {
+        let mock_counts =
+            if matches!(probe_family, ProbeFamily::SideEffect) && !mock_facts.line_added() {
+                mock_call_count_assertions(candidate.test)
+            } else {
+                Vec::new()
+            };
+        for (assertion_index, assertion) in candidate.test.assertions.iter().enumerate() {
             let (kind, strength) = match (&assertion.error_payload, &assertion.mock_payload) {
                 (Some(payload), _)
                     if matches!(assertion.oracle_kind, OracleKind::ExactErrorVariant)
@@ -6127,7 +6217,7 @@ pub(crate) fn strongest_family_matching_oracle(
                 // changes the count, so it keeps the exact reading.
                 _ if matches!(probe_family, ProbeFamily::SideEffect)
                     && !mock_facts.line_added()
-                    && mock_call_count_assertion(assertion) =>
+                    && mock_counts.get(assertion_index).copied().unwrap_or(false) =>
                 {
                     (OracleKind::MockExpectation, OracleStrength::Weak)
                 }
@@ -6731,7 +6821,16 @@ pub(crate) fn classify_resolved_owner(
     // #11250: the AST-derived shape for this line wins when the single
     // parse produced one; absent facts (old-side lines, parse errors,
     // test-only paths) keep the line-text classification.
-    let probe_shape = ast_shape.unwrap_or_else(|| classify_probe_shape_detail(line_text));
+    // #11487: a function opened and closed on the changed line carries several
+    // statements on it, so the AST fact keeps only the last one (a trailing
+    // `return`). Read such a line by its first statement, as the same code
+    // formatted over several lines would be read.
+    let one_line_function = one_line_function_body(line_text).len() != line_text.len();
+    let probe_shape = if one_line_function {
+        classify_probe_shape_detail(line_text)
+    } else {
+        ast_shape.unwrap_or_else(|| classify_probe_shape_detail(line_text))
+    };
     // A one-line guard whose condition is unchanged was edited in its
     // statement (`if (n > 100) return n - 20;`), so the guard's boundary is not
     // the changed behavior; the shape stays unrecognised rather than crediting
@@ -7185,7 +7284,23 @@ pub(crate) fn classify_resolved_owner(
                 },
             ));
 
-    let (class, reach_state, observe_state, discriminate_state, missing) = if related.is_empty() {
+    let (class, reach_state, observe_state, discriminate_state, missing) = if related.is_empty()
+        && is_private_member_owner(owner)
+    {
+        // #10440: a `#private` member cannot be named by a test, so an empty
+        // relation set says nothing about whether a public caller reaches it.
+        // Unknown, not the confident negative `no_static_path` would be.
+        (
+            ExposureClass::StaticUnknown,
+            StageState::Unknown,
+            StageState::Unknown,
+            StageState::Unknown,
+            vec![format!(
+                "`{}` is a `#private` class member, so no test can call it by name; whether a test reaches it through a public method of the class is not established either way.",
+                owner.name
+            )],
+        )
+    } else if related.is_empty() {
         (
             ExposureClass::NoStaticPath,
             StageState::No,
@@ -7271,7 +7386,7 @@ pub(crate) fn classify_resolved_owner(
             StageState::Yes,
             vec![format!(
                 // #7752: the article follows the oracle-kind label ("an `exact_value`").
-                "Related test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.",
+                "Related test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.",
                 owner.name,
                 crate::domain::indefinite_article(strongest_kind.as_str()),
                 strongest_kind.as_str()
@@ -7348,7 +7463,7 @@ pub(crate) fn classify_resolved_owner(
             StageState::Unknown,
             StageState::Unknown,
             vec![format!(
-                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); the discriminator is not established either way.",
+                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); whether a test checks the changed behavior is not established either way.",
                 owner.name
             )],
         )
@@ -7383,8 +7498,10 @@ pub(crate) fn classify_resolved_owner(
         matches!(verdict.class, ExposureClass::StaticUnknown) && !ladder_entry_unknown;
     // Same unknown arm, different cause: the registration, not an assertion
     // callback, is what static analysis cannot resolve (#10438, #10501).
-    let conditional_registration_unknown =
-        ladder_unresolved_unknown && only_conditionally_registered_tests(related_candidates);
+    let private_member_unknown = ladder_unresolved_unknown && is_private_member_owner(owner);
+    let conditional_registration_unknown = ladder_unresolved_unknown
+        && !private_member_unknown
+        && only_conditionally_registered_tests(related_candidates);
     let post_ladder_context = TsPostLadderContext {
         all_tests,
         line,
@@ -7517,7 +7634,12 @@ pub(crate) fn classify_resolved_owner(
         && !ladder_entry_unknown
         && !hook_owner_unknown
         && !loop_count_unknown;
+    // #10440: a `#private` owner's unknown is unmodeled reach through a public
+    // caller, not an assertion in an unresolved callback.
+    let private_reach_unknown =
+        matches!(class, ExposureClass::StaticUnknown) && private_member_unknown;
     let unresolved_callback_unknown = matches!(class, ExposureClass::StaticUnknown)
+        && !private_member_unknown
         && (ladder_unresolved_unknown || hook_owner_unknown);
     let entry_reach_unknown = matches!(class, ExposureClass::StaticUnknown) && ladder_entry_unknown;
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
@@ -7592,6 +7714,7 @@ pub(crate) fn classify_resolved_owner(
         has_owner_call_evidence,
         &missing_discriminators,
         observed_evidence_label(&related),
+        private_member_unknown,
     );
     missing.push(actionability.missing_summary());
 
@@ -7659,6 +7782,8 @@ pub(crate) fn classify_resolved_owner(
         "TypeScript preview adapter: the related tests reach the changed owner only through a same-module caller; discriminate unknown (RIPR-SPEC-0027).".to_string()
     } else if hook_owner_unknown {
         "TypeScript preview adapter: a synchronous mocha setup hook calls the changed owner outside every test body; discriminate unknown (RIPR-SPEC-0246 rule 7).".to_string()
+    } else if private_member_unknown {
+        "TypeScript preview adapter: the changed owner is a `#private` class member no test can call by name; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if conditional_registration_unknown {
         "TypeScript preview adapter: every related test is registered under a condition or loop static analysis cannot evaluate; discriminate unknown (RIPR-SPEC-0243).".to_string()
     } else if ladder_unresolved_unknown {
@@ -7744,6 +7869,9 @@ pub(crate) fn classify_resolved_owner(
         }
         ExposureClass::StaticUnknown if hook_owner_unknown => {
             "TypeScript preview advisory: a mocha setup hook calls the changed owner outside every test body, so a test may observe the state it set; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
+        }
+        ExposureClass::StaticUnknown if private_member_unknown => {
+            "TypeScript preview advisory: the changed owner is a `#private` class member, so no test can reference it directly and reach through a public method is not established; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
         }
         ExposureClass::StaticUnknown if conditional_registration_unknown => {
             "TypeScript preview advisory: every related test is registered under a condition or loop static analysis cannot evaluate, so whether it runs is not established; no new assertion is needed on that evidence, and no repair packet is emitted.".to_string()
@@ -7943,6 +8071,8 @@ pub(crate) fn classify_resolved_owner(
             vec![StopReason::InfectionEvidenceUnknown]
         } else if static_unknown_by_mock {
             vec![StopReason::StaticProbeUnknown]
+        } else if private_reach_unknown {
+            vec![StopReason::TransitiveReachUnresolved]
         } else if unresolved_callback_unknown || loop_count_unknown {
             vec![StopReason::GapEvidenceUnresolved]
         } else if entry_reach_unknown {
@@ -9585,7 +9715,7 @@ fn module_entry_reach_summary(
     };
     if discriminator_unknown {
         return format!(
-            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so the discriminator is not established either way.",
+            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so whether a test checks the changed behavior is not established either way.",
             owner.name, entries
         );
     }

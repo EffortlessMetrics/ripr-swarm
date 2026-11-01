@@ -38,7 +38,9 @@ fn run_record(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json) = parse_record_options(args)?;
-    crate::atomic_file::ensure_default_output_contained(&options.root)?;
+    // Feedback records land under `target/ripr/feedback`, never the cache, so
+    // an explicit `RIPR_CACHE_DIR` must not waive the link check (#11477).
+    crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let recorded = record_feedback(&options)?;
     if json {
         print!("{}", record_result_json(&recorded)?);
@@ -62,7 +64,9 @@ fn run_export(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let (options, json, out) = parse_export_options(args)?;
-    crate::atomic_file::ensure_default_output_contained(&options.root)?;
+    // Feedback records land under `target/ripr/feedback`, never the cache, so
+    // an explicit `RIPR_CACHE_DIR` must not waive the link check (#11477).
+    crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let (rendered, _) = export_feedback_join(&options)?;
     if let Some(path) = out {
         crate::atomic_file::write(&path, rendered.as_bytes(), "usefulness-feedback join")?;
@@ -160,7 +164,7 @@ pub(in crate::cli) fn parse_record_options(
             "--json" => json = true,
             "--file" | "--line" => {
                 return Err(
-                    "feedback identity is --snapshot and optional --item, not file/line; a current file/line cannot attach an old judgment to a new result"
+                    "feedback identity is --snapshot and optional --item, not file/line; a current file/line cannot attach an old judgment to a new result; pass `--snapshot <id>` (and `--item <id>` if needed) instead"
                         .to_string(),
                 );
             }
@@ -171,7 +175,9 @@ pub(in crate::cli) fn parse_record_options(
     let snapshot_id = snapshot_id.ok_or_else(|| {
         "feedback record requires --snapshot; file and line are not a result identity".to_string()
     })?;
-    let reason = reason.ok_or_else(|| "feedback record requires --reason".to_string())?;
+    let reason = reason.ok_or_else(|| {
+        "feedback record requires --reason; add `--reason` to the command".to_string()
+    })?;
     let payload = FeedbackPayload {
         identity: ResultIdentity {
             snapshot_id,

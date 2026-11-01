@@ -63,7 +63,7 @@ Updated:
 ## Pending — out_parameter_named_empty_no_promote (6)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
 
 Command:
 `cargo xtask goldens bless out_parameter_named_empty_no_promote --reason "..."`
@@ -75,7 +75,7 @@ Updated:
 ## Pending — out_parameter_named_empty_no_promote (7)
 
 Reason:
-RIPR-SPEC-0122: explain missing input or assertion honestly
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
 `cargo xtask goldens bless out_parameter_named_empty_no_promote --reason "..."`
@@ -85,6 +85,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — out_parameter_named_empty_no_promote (8)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless out_parameter_named_empty_no_promote --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — out_parameter_named_empty_no_promote (9)
 
 Reason:
 RIPR-SPEC-0122: render the missing check in plain language

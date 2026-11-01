@@ -15,19 +15,19 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:weight:return_value:return_value:x*3
   Changed behavior: x * 3
-  Missing check: No strong check was detected
+  Missing check: No strong assertion was detected
   Related test (1 of 3 matched rows): src/lib.rs:31 braced_tuple_element_ref_mut_alias_is_not_independent (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `tuple_ref_mut_alias_is_not_independent` already has an exact
     assertion; this does not establish observation of the returned value. Check whether the change
     can affect the returned value. If it can, add a separating input and assert the exact returned
     value. If it cannot, test the changed effect separately; another input cannot distinguish
     unchanged returns
-  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      assertion = a test assertion tells intended from wrong behavior
+      discriminator = assertion distinguishes intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -40,13 +40,13 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_pin_written_alias_not_a_pin/input --diff <cwd>/fixtures/owner_pin_written_alias_not_a_pin/diff.patch --mode fast probe:src_lib.rs:return_value:c70c15c1
   ripr context --root <cwd>/fixtures/owner_pin_written_alias_not_a_pin/input --diff <cwd>/fixtures/owner_pin_written_alias_not_a_pin/diff.patch --mode fast --at probe:src_lib.rs:return_value:c70c15c1
-  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the whole spot and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the whole spot) and ripr does not start a repair on conflicting evidence; follow the Next step above
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/owner_pin_written_alias_not_a_pin/input --at src/lib.rs:2 --kind return_value
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:2 (unknown: static analysis limited); kind: static_unknown; reason: No strong discriminator was detected
+    - ./src/lib.rs:2 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
   Hidden classes:
     unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
