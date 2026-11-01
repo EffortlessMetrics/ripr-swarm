@@ -440,7 +440,11 @@ or any `/` outside a comment (a division or a regex literal is refused outright;
 array-table `for...of` form (#9533) also ban `eval`, `with` and `\u` anywhere
 in their statement list (one shared helper). A destructured
 scalar local is a copy of the cell, so it is exempt from the lone-`expect`
-rule that every `row.key` read obeys. A pattern that repeats a row key
+rule that every `row.key` read obeys. A destructured container local is not a
+copy: it references the row's array or object. It is safe only because the
+callback is a single `expect(..).matcher(..)` statement, the local is read at
+most once as one direct argument with no trailing member, and the local is not
+reassigned. A pattern that repeats a row key
 (`({ input: a, input: b })`) refuses the table, and in the `for...of` form
 the loop parameter may not appear in the registration's callee or in any
 registration argument other than the callback, except a title that is

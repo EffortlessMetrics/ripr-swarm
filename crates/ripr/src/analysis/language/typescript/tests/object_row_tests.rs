@@ -427,6 +427,24 @@ fn a_reassignable_or_outer_or_exported_table_is_never_resolved() -> Result<(), S
                 "{PREAMBLE}describe(\"e\", () => {{\n  const tests = {TABLE};\n  eval(\"tests.pop()\");\n{loop_and_registration}}});\n"
             ),
         ),
+        (
+            "an eval with a split table name",
+            format!(
+                "{PREAMBLE}describe(\"e\", () => {{\n  const tests = {TABLE};\n  eval(\"te\" + \"sts[0].out = 'X'\");\n{loop_and_registration}}});\n"
+            ),
+        ),
+        (
+            "a with statement in a sibling statement",
+            format!(
+                "{PREAMBLE}describe(\"e\", () => {{\n  const tests = {TABLE};\n  with ({{}}) {{ }}\n{loop_and_registration}}});\n"
+            ),
+        ),
+        (
+            "a unicode escape in a sibling statement",
+            format!(
+                "{PREAMBLE}describe(\"e\", () => {{\n  const tests = {TABLE};\n  const \\u0078 = 1;\n{loop_and_registration}}});\n"
+            ),
+        ),
     ] {
         let assertions = assertions_of(&source)?;
         if !all_dynamic(&assertions) {

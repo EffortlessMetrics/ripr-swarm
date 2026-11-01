@@ -336,8 +336,10 @@ pub(crate) fn substitute_row(body: &str, params: &[String], row: &[String]) -> O
 }
 
 /// [`substitute_row`], optionally accepting a spread of a container cell
-/// (`f(...cell)`): only the destructured object-row route does, because its
-/// locals are copies of the row cells.
+/// (`f(...cell)`): only the destructured object-row route does. A scalar
+/// local is a copy of its cell; a container local references the row's array
+/// or object and is safe only because the callback is one `expect(..)`
+/// statement that reads the local at most once as a direct argument.
 pub(crate) fn substitute_row_with(
     body: &str,
     params: &[String],
