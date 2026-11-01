@@ -1092,6 +1092,7 @@ fn extension_e2e_step_classifies_check_runs_by_the_requests_own_suite() -> TestR
     let earlier_only = [(100, earlier_title.as_str())];
     let ordinary = [(100, "CI")];
     let earlier_then_own = [(100, earlier_title.as_str()), (200, own_title.as_str())];
+    let same_title_pair = [(100, own_title.as_str()), (200, own_title.as_str())];
     let own_then_earlier = [(100, own_title.as_str()), (200, earlier_title.as_str())];
     let surface_ok = || vec![check_json(10, ga, "completed", "success", 100, 100)];
     let cases: Vec<NamedCase> = vec![
@@ -1323,6 +1324,65 @@ fn extension_e2e_step_classifies_check_runs_by_the_requests_own_suite() -> TestR
             },
             true,
             "runs/100",
+        ),
+        (
+            "two distinct runs with the identical request title fail closed whichever suite is green (#12236 review)",
+            VscodeCase {
+                runs: &same_title_pair,
+                surface: vec![
+                    check_json(10, ga, "completed", "success", 100, 100),
+                    check_json(20, ga, "completed", "success", 200, 200),
+                ],
+                vscode: vec![
+                    check_json(11, ga, "completed", "failure", 100, 100),
+                    check_json(21, ga, "completed", "success", 200, 200),
+                ],
+                api_failures: 0,
+            },
+            false,
+            "more than one ci.yml run",
+        ),
+        (
+            "identical request titles with one suite skipped cannot make the other request look not selected (#12236 review)",
+            VscodeCase {
+                runs: &same_title_pair,
+                surface: vec![
+                    check_json(10, ga, "completed", "success", 100, 100),
+                    check_json(20, ga, "completed", "success", 200, 200),
+                ],
+                vscode: vec![check_json(11, ga, "completed", "skipped", 100, 100)],
+                api_failures: 0,
+            },
+            false,
+            "more than one ci.yml run",
+        ),
+        (
+            "a cancelled run with the identical request title and a green one fail closed",
+            VscodeCase {
+                runs: &same_title_pair,
+                surface: vec![
+                    check_json(10, ga, "completed", "cancelled", 100, 100),
+                    check_json(20, ga, "completed", "success", 200, 200),
+                ],
+                vscode: vec![check_json(21, ga, "completed", "success", 200, 200)],
+                api_failures: 0,
+            },
+            false,
+            "more than one ci.yml run",
+        ),
+        (
+            "a re-run of one run keeps one run id and still passes",
+            VscodeCase {
+                runs: &mine,
+                surface: vec![
+                    check_json(10, ga, "completed", "success", 100, 100),
+                    check_json(12, ga, "completed", "success", 100, 100),
+                ],
+                vscode: vec![check_json(11, ga, "completed", "success", 100, 100)],
+                api_failures: 0,
+            },
+            true,
+            "vscode check succeeded",
         ),
         (
             "transient API failures are retried",

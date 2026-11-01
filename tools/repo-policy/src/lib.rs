@@ -1374,6 +1374,10 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             "[ \"$candidate_title\" = \"$request_title\" ]",
         ),
         (
+            "refuse distinct ci.yml runs that carry the identical request title instead of choosing between their suites (#12236)",
+            "more than one ci.yml run",
+        ),
+        (
             "fail the Result when the selected extension e2e did not succeed (#12122)",
             "[ \"$VSCODE_CHECK_RESULT\" != success ]",
         ),

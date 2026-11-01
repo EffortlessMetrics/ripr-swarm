@@ -1419,6 +1419,12 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "bind the `vscode surface` to the ci.yml run that names this request's head and request time",
         ),
         (
+            "the identical-title ambiguity refusal",
+            "more than one ci.yml run",
+            "more than one ci.yml rub",
+            "refuse distinct ci.yml runs that carry the identical request title",
+        ),
+        (
             "the skipped-check exclusion from the verdict",
             "[.[] | select(.conclusion != \"skipped\")] | last // {}",
             "[.[]] | last // {}",
