@@ -27,6 +27,9 @@ pub(super) struct FoldScope<'a> {
     /// The line the test starts on: a declaration folds only when that
     /// position can see it.
     test_line: usize,
+    /// Exact input owned by a current registered property receipt. Ordinary
+    /// `String::new()` calls never establish this value on their own.
+    property_singleton: Option<(&'a str, &'a str)>,
 }
 
 impl<'a> FoldScope<'a> {
@@ -38,6 +41,7 @@ impl<'a> FoldScope<'a> {
                 .get(&test.file)
                 .map(|facts| facts.data().source.as_ref()),
             test_line: test.start_line,
+            property_singleton: index.proptest_singleton_value(test),
         }
     }
 
@@ -46,7 +50,15 @@ impl<'a> FoldScope<'a> {
         Self {
             file_source: Some(file_source),
             test_line,
+            property_singleton: None,
         }
+    }
+
+    /// The closed empty-string profile passes its typed singleton by shared
+    /// borrow. No constructor, cast, dereference, or other expression folds.
+    pub(super) fn property_argument(self, argument: &str) -> Option<String> {
+        let (name, value) = self.property_singleton?;
+        (argument.trim().strip_prefix('&').map(str::trim) == Some(name)).then(|| value.to_owned())
     }
 
     /// The decimal value of the one `const`/`static` the file declares as

@@ -527,7 +527,9 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             RerunSelector::ChangedTest { file, node }
         }
         (Some(_), None, Some(_)) => {
-            return Err("rerun --gap-ledger requires --gap".to_string());
+            return Err(
+                "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string(),
+            );
         }
         (None, Some(canonical_gap_id), Some(gap_ledger)) => RerunSelector::Gap {
             canonical_gap_id,
@@ -545,10 +547,12 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             ));
         }
         (None, None, Some(_)) => {
-            return Err("rerun --gap-ledger requires --gap".to_string());
+            return Err(
+                "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string(),
+            );
         }
         (None, None, None) => {
-            return Err("rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>".to_string());
+            return Err("rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>; pass one selector, for example `--changed-test tests/a.rs`".to_string());
         }
         (Some(_), Some(_), _) => return Err("rerun accepts exactly one selector".to_string()),
     };
@@ -1949,14 +1953,17 @@ fn parse_changed_test_selector(selector: &str) -> Result<(PathBuf, Option<String
         .split_once("::")
         .map_or((selector, None), |(file, node)| (file, Some(node)));
     if file.trim().is_empty() {
-        return Err("rerun --changed-test requires a file path".to_string());
+        return Err(
+            "rerun --changed-test requires a file path; pass the path right after --changed-test"
+                .to_string(),
+        );
     }
     let node = node
         .map(str::trim)
         .filter(|node| !node.is_empty())
         .map(str::to_string);
     if selector.contains("::") && node.is_none() {
-        return Err("rerun --changed-test test node must not be empty".to_string());
+        return Err("rerun --changed-test test node must not be empty; pass `--changed-test <file>::<test-name>`, or `--changed-test <file>` alone".to_string());
     }
     Ok((PathBuf::from(file), node))
 }
@@ -1979,10 +1986,14 @@ fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {
         .filter(|parent| !parent.as_os_str().is_empty())
     {
         std::fs::create_dir_all(parent)
-            .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+            .map_err(|err| format!("create {} failed: {err}; check you can create directories there, or pass a different `--out`", parent.display()))?;
     }
-    crate::output::file_write::write(path, rendered.as_bytes())
-        .map_err(|err| format!("write {} failed: {err}", path.display()))
+    crate::output::file_write::write(path, rendered.as_bytes()).map_err(|err| {
+        format!(
+            "write {} failed: {err}; check you can write there, or pass a different `--out`",
+            path.display()
+        )
+    })
 }
 
 fn render_human(report: &TargetedRerunReport) -> String {
@@ -2667,7 +2678,7 @@ mod tests {
         assert_eq!(
             parse_options(&[]),
             Err(
-                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>"
+                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>; pass one selector, for example `--changed-test tests/a.rs`"
                     .to_string()
             )
         );
@@ -4038,7 +4049,9 @@ mod tests {
         ] {
             assert_eq!(
                 parse_options(&args(&[flag])),
-                Err(format!("missing value for {flag}")),
+                Err(format!(
+                    "missing value for {flag}; pass a value right after it"
+                )),
                 "{flag} without a value must name the flag"
             );
         }
@@ -4074,7 +4087,7 @@ mod tests {
             Err(conflict)
         );
         // A ledger needs a gap, with or without a changed-test selector.
-        let orphan = "rerun --gap-ledger requires --gap".to_string();
+        let orphan = "rerun --gap-ledger requires --gap; add `--gap` to the command".to_string();
         assert_eq!(
             parse_options(&args(&["--gap-ledger", "ledger.json"])),
             Err(orphan.clone())
@@ -4105,16 +4118,16 @@ mod tests {
     fn rerun_changed_test_selector_requires_a_file_and_trims_the_node() -> Result<(), String> {
         assert_eq!(
             parse_options(&args(&["--changed-test", "  "])),
-            Err("rerun --changed-test requires a file path".to_string())
+            Err("rerun --changed-test requires a file path; pass the path right after --changed-test".to_string())
         );
         assert_eq!(
             parse_options(&args(&["--changed-test", "::case"])),
-            Err("rerun --changed-test requires a file path".to_string())
+            Err("rerun --changed-test requires a file path; pass the path right after --changed-test".to_string())
         );
         // A whitespace-only node is empty, like no node after the separator.
         assert_eq!(
             parse_options(&args(&["--changed-test", "tests/a.rs::  "])),
-            Err("rerun --changed-test test node must not be empty".to_string())
+            Err("rerun --changed-test test node must not be empty; pass `--changed-test <file>::<test-name>`, or `--changed-test <file>` alone".to_string())
         );
         let options = parse_options(&args(&["--changed-test", "tests/a.rs:: case "]))?;
         if options.selector
