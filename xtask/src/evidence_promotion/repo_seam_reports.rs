@@ -33,6 +33,11 @@ const REGENERATION_ARGS: [&str; 5] = [
     "--root",
 ];
 
+/// Assertion types that judge a repo-exposure report's seams. A case using any
+/// of them reads a stored capture, so each must be regenerable (#12188).
+const REPO_SEAM_ASSERTIONS: [&str; 2] =
+    ["expected_repo_seam_grip", "expected_repo_seam_related_test"];
+
 /// A seam's identity within one report: file, line, column and kind. The
 /// `seam_id` hash is deliberately not the key, so a change to how ids are
 /// derived does not read as a different seam set.
@@ -184,7 +189,8 @@ pub(super) fn compare_reports(
     violations
 }
 
-/// The cases that must be regenerable: every case that pins a repo seam. A
+/// The cases that must be regenerable: every case that pins a repo seam, by
+/// grip or by related test. A
 /// case without `report_subject` would be judged from a stored file nothing
 /// can refresh, which is the gap this guard closes, so it fails rather than
 /// being skipped.
@@ -203,7 +209,10 @@ pub(super) fn repo_seam_cases(
             .and_then(Value::as_array)
             .is_some_and(|assertions| {
                 assertions.iter().any(|assertion| {
-                    assertion.get("type").and_then(Value::as_str) == Some("expected_repo_seam_grip")
+                    matches!(
+                        assertion.get("type").and_then(Value::as_str),
+                        Some(kind) if REPO_SEAM_ASSERTIONS.contains(&kind)
+                    )
                 })
             });
         if !pins_repo_seam {
@@ -216,7 +225,7 @@ pub(super) fn repo_seam_cases(
                 regenerable.push((id.to_string(), report.to_string(), subject.to_string()));
             }
             _ => violations.push(format!(
-                "evidence promotion case `{id}`: a case with `expected_repo_seam_grip` needs `source_report` and `report_subject` (the Cargo subject the report was captured from), so the report can be regenerated and checked for staleness (#12144)"
+                "evidence promotion case `{id}`: a case with `expected_repo_seam_grip` or `expected_repo_seam_related_test` needs `source_report` and `report_subject` (the Cargo subject the report was captured from), so the report can be regenerated and checked for staleness (#12144)"
             )),
         }
     }
@@ -425,6 +434,21 @@ mod tests {
         );
         assert!(violations.is_empty(), "{violations:?}");
         assert_eq!(found.len(), 1);
+
+        // A related-test-only case reads the same stored capture, so it needs a
+        // subject too (#12188).
+        let related_only = json!({
+            "id": "r",
+            "source_report": "fixtures/x/report.json",
+            "assertions": [{"type": "expected_repo_seam_related_test"}]
+        });
+        let mut violations = Vec::new();
+        assert!(repo_seam_cases(&[related_only], &mut violations).is_empty());
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("expected_repo_seam_related_test"),
+            "{violations:?}"
+        );
 
         // A case that pins no repo seam is not subject to the rule.
         let other = json!({"id": "o", "assertions": [{"type": "must_not_promote"}]});

@@ -289,7 +289,7 @@ fn finding_matches_uri(finding: &Finding, uri: &Uri, root: &Path) -> bool {
 /// - N > 0 + discriminating class (`Exposed`):
 ///   `ripr: N related test(s) (exposed) · static, cached`
 /// - N > 0 + non-discriminating class (anything except `Exposed`):
-///   `ripr: N related test(s), no static discriminator (PLAIN) · static, cached`
+///   `ripr: N related test(s), no static check of this change (PLAIN) · static, cached`
 /// - N == 0 (non-`NoStaticPath`): `ripr: no related tests found (PLAIN) · static, cached`
 ///   where `PLAIN` is the same plain vocabulary word (`exposed`, `weak`,
 ///   `unrevealed`, `no path`, `unknown`) the `ripr check` summary uses, not
@@ -336,7 +336,7 @@ pub(super) fn related_test_lens_title(finding: &Finding, age: Option<Duration>) 
                 related_tests_phrase(n)
             ),
             n => format!(
-                "ripr: {}, no static discriminator ({class_label}) · static, cached",
+                "ripr: {}, no static check of this change ({class_label}) · static, cached",
                 related_tests_phrase(n)
             ),
         }
@@ -970,9 +970,9 @@ mod tests {
             .ok_or("expected command in lens")?
             .title
             .clone();
-        if !title.contains("no static discriminator") {
+        if !title.contains("no static check of this change") {
             return Err(format!(
-                "uncertain class must state 'no static discriminator', got: {title}"
+                "uncertain class must state 'no static check of this change', got: {title}"
             ));
         }
         if !title.contains("unrevealed") {

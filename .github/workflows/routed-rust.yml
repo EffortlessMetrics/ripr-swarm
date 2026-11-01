@@ -654,9 +654,10 @@ jobs:
           # only when the request's own `vscode surface` succeeded and the skip
           # is in its suite: a skipped check from an earlier nonrequest event is
           # in another suite and can never stand in for it. The surface check
-          # must also belong to a ci.yml run created within 90s of this run's
-          # creation or later (run creation is the event time, not the runner
-          # queue), so an older request's suite is not read. No such check yet means
+          # must also belong to the ci.yml run for this same label event: created
+          # within 30s of this run's creation on either side, newest wins (both
+          # runs are created at the event time, not the runner queue), so an
+          # earlier request's suite is not read. No such check yet means
           # ci.yml has not got that far: wait, then fail closed. In the suite,
           # the newest executed check (highest id) decides, so a passing re-run
           # clears an earlier infrastructure failure; a running one is awaited.
@@ -672,7 +673,7 @@ jobs:
             return 1
           }
           run_created=$(api "repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at) || { echo "::error::could not read this run's creation time"; exit 1; }
-          since=$(date -u -d "$run_created - 90 seconds" +%Y-%m-%dT%H:%M:%SZ) || { echo "::error::could not compute the request window from $run_created"; exit 1; }
+          run_epoch=$(date -u -d "$run_created" +%s) || { echo "::error::could not parse this run's creation time $run_created"; exit 1; }
           deadline=$((SECONDS + 1200))
           while :; do
             surface_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode%20surface&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode surface check runs for $EXPECTED_HEAD"; exit 1; }
@@ -683,7 +684,9 @@ jobs:
               candidate_run=$(jq -r '(.html_url // "") | try (capture("/runs/(?<r>[0-9]+)/") | .r) catch empty' <<<"$candidate")
               [ -n "$candidate_run" ] || continue
               candidate_created=$(api "repos/$REPOSITORY/actions/runs/$candidate_run" --jq .created_at) || { echo "::error::could not read the creation time of run $candidate_run"; exit 1; }
-              if [[ ! "$candidate_created" < "$since" ]]; then surface=$candidate; break; fi
+              candidate_epoch=$(date -u -d "$candidate_created" +%s) || { echo "::error::could not parse creation time $candidate_created of run $candidate_run"; exit 1; }
+              delta=$((candidate_epoch - run_epoch)); [ "$delta" -ge 0 ] || delta=$((-delta))
+              if [ "$delta" -le 30 ]; then surface=$candidate; break; fi
             done < <(jq -s -c '[.[] | select(.app.slug == "github-actions" and .conclusion != "skipped")] | sort_by(.id) | reverse | .[0:5][]' <<<"$surface_raw")
             state=$(jq -r '.status // "none"' <<<"$surface")
             if [ "$state" = completed ]; then

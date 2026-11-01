@@ -770,13 +770,13 @@ fn precommit_goldens_for_output_changes() -> Result<(), String> {
     changed.extend(git_changed_files(Path::new("."), "HEAD")?);
     let Some(trigger) = golden_staleness_trigger(&changed) else {
         println!("goldens check: skipped, no output-surface or golden file changed vs origin/main");
-        return Ok(());
+        return schema_producer_sweep::precommit_schema_sweep(&changed);
     };
     println!("goldens check: running because `{trigger}` changed vs origin/main");
     match goldens_check_for_precommit()? {
         PrecommitGoldens::Verified => {
             println!("goldens check: pass");
-            Ok(())
+            schema_producer_sweep::precommit_schema_sweep(&changed)
         }
         PrecommitGoldens::EnvironmentGap(gaps) => {
             println!(
@@ -786,7 +786,7 @@ fn precommit_goldens_for_output_changes() -> Result<(), String> {
             for gap in gaps {
                 println!("  {gap}");
             }
-            Ok(())
+            schema_producer_sweep::precommit_schema_sweep(&changed)
         }
     }
 }

@@ -476,11 +476,30 @@ fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>,
         // #12108: a pilot file whose seams[] the byte budget cut lists only
         // some seams, so a seam missing from it would read as removed or
         // fixed. Refuse it rather than compare.
+        let cut = crate::output::repo_exposure::seam_limit_cut_controls(&value);
         if crate::output::repo_exposure::is_byte_bounded_repo_exposure(&value) {
+            if !cut.is_empty() {
+                // #12226: cut both ways; name every control in this first refusal.
+                let controls = crate::output::repo_exposure::byte_and_seam_cut_controls(&cut);
+                return Err(format!(
+                    "static snapshot is a byte-bounded and seam-limited repo-exposure file (`ripr pilot` cut its seams[] by {}, so a missing seam cannot be read as removed; {})",
+                    controls.join(" and "),
+                    crate::output::repo_exposure::seam_limit_cut_repair(&controls)
+                ));
+            }
             return Err(
                 "static snapshot is a byte-bounded repo-exposure file (`ripr pilot` cut its seams[] to RIPR_PILOT_REPO_EXPOSURE_BYTES, so a missing seam cannot be read as removed; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0, or produce the snapshot with `ripr check --format repo-exposure-json`, then compare)"
                     .to_string(),
             );
+        }
+        // #12150: a seam-capped file is a prefix of the inventory, so a seam
+        // missing from it is unobserved, not removed. Same shared owner.
+        if !cut.is_empty() {
+            return Err(format!(
+                "static snapshot is a seam-limited repo-exposure file (its seams[] is a prefix of the inventory cut by {}, so a missing seam cannot be read as removed; {})",
+                cut.join(" and "),
+                crate::output::repo_exposure::seam_limit_cut_repair(&cut)
+            ));
         }
         return parse_repo_exposure_seams(seams);
     }
@@ -3486,6 +3505,44 @@ mod tests {
         );
     }
 
+    /// #12226: a snapshot the writer cut by bytes AND by the pilot seam budget
+    /// is refused once, naming both controls; single-cut files keep one.
+    #[test]
+    fn outcome_both_cuts_refusal_names_every_control() -> Result<(), String> {
+        let refuse = |json: &str| -> Result<String, String> {
+            targeted_test_outcome_report_from_json(
+                json,
+                json,
+                "before.json".to_string(),
+                "after.json".to_string(),
+            )
+            .err()
+            .ok_or_else(|| "a cut snapshot must not be compared".to_string())
+        };
+        let both = crate::output::repo_exposure::tests::both_cuts_document_from_writer()?;
+        let refusal = refuse(&both)?;
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        let byte_only = r#"{"run_status":"limited_repo_exposure_bytes","seams":[]}"#;
+        let refusal = refuse(byte_only)?;
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("RIPR_PILOT_SEAM_BUDGET"), "{refusal}");
+        let seam_only = r#"{"run_status":"seam_limit_applied","limitations":[{"category":"pilot_seam_budget_applied"}],"seams":[]}"#;
+        let refusal = refuse(seam_only)?;
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        assert!(
+            !refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn outcome_refuses_a_byte_bounded_repo_exposure_snapshot() -> Result<(), String> {
         // #12108: the cut file lists only some seams; comparing it would read
@@ -3545,11 +3602,44 @@ mod tests {
                 "seam cap plus byte bound must be refused"
             );
         }
-        // Negative: a seam cap alone is not a byte bound; this refusal is
-        // specific to the byte-bound category.
-        let seam_cap_only = snapshot("seam_limit_applied");
+        // #12150: a seam cap alone keeps a prefix of the inventory, so it is
+        // refused too, by its own name and control, not as a byte bound.
+        for (category, control) in [
+            ("repo_seam_limit_applied", "RIPR_REPO_EXPOSURE_SEAM_LIMIT"),
+            ("pilot_seam_budget_applied", "RIPR_PILOT_SEAM_BUDGET"),
+        ] {
+            let capped = serde_json::from_str::<serde_json::Value>(&snapshot("seam_limit_applied"))
+                .map_err(|err| err.to_string())
+                .map(|mut document| {
+                    document["limitations"] = serde_json::json!([{"category": category}]);
+                    document.to_string()
+                })?;
+            for (before, after) in [(&capped, &complete), (&complete, &capped)] {
+                let Err(refusal) = targeted_test_outcome_report_from_json(
+                    before,
+                    after,
+                    "before.json".to_string(),
+                    "after.json".to_string(),
+                ) else {
+                    return Err(format!("a {category} snapshot must not be compared"));
+                };
+                assert!(refusal.contains("seam-limited"), "{refusal}");
+                assert!(!refusal.contains("byte-bounded"), "{refusal}");
+                assert!(refusal.contains(&format!("{control}=0")), "{refusal}");
+            }
+        }
+        // Negative: a declined-files limitation is not a seam cut, so a
+        // snapshot with it still compares.
+        let declined =
+            serde_json::from_str::<serde_json::Value>(&snapshot("limited_declined_files"))
+                .map_err(|err| err.to_string())
+                .map(|mut document| {
+                    document["limitations"] =
+                        serde_json::json!([{"category": "rust_files_declined"}]);
+                    document.to_string()
+                })?;
         targeted_test_outcome_report_from_json(
-            &seam_cap_only,
+            &declined,
             &complete,
             "before.json".to_string(),
             "after.json".to_string(),
