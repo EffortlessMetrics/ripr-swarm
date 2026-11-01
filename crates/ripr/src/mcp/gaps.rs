@@ -224,13 +224,13 @@ impl RepairReadiness {
     pub(crate) fn reason(&self) -> &'static str {
         match self.ineligibility {
             Some("not_candidate_actionable") => {
-                "the producer did not establish the changed source as candidate-current, so no repair target is actionable (#3281)"
+                "the producer did not establish the changed source as candidate-current, so no repair target is actionable"
             }
             Some("missing_discriminator") => {
                 "the producer did not establish a discriminator for the changed behavior (no normalized discriminator, or a producer-named missing discriminator on a finding that is not weakly exposed)"
             }
             Some("discriminator_not_populated_for_language") => {
-                "the producer named no missing discriminator but has not populated a normalized discriminator for this language's findings yet, so the discriminator gate cannot be established from available producer facts; repair stays unavailable until the language producer populates canonical gaps (#5268)"
+                "the producer named no missing discriminator but has not populated a normalized discriminator for this language's findings yet, so the discriminator gate cannot be established from available producer facts; repair stays unavailable until the language producer populates canonical gaps"
             }
             Some("static_limitation") => {
                 "the producer withheld this finding's canonical gap behind a typed static limitation on the finding itself; the limitation, not the language, explains why no normalized discriminator is established"
@@ -513,7 +513,7 @@ impl GapItem {
                         "snapshot": format!("ripr://snapshot/{snapshot_id}"),
                         "gap": format!("ripr://gap/{}", self.canonical_id),
                         "repair_attempt": Value::Null,
-                        "repair_attempt_note": "ripr://repair-attempt/{attempt_id} binds once ripr_prepare_repair creates the session transaction for this item (#3090)",
+                        "repair_attempt_note": "ripr://repair-attempt/{attempt_id} binds once ripr_prepare_repair creates the session transaction for this item",
                     }),
                 );
                 object

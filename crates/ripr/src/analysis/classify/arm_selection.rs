@@ -1696,22 +1696,45 @@ fn catch_all_binding(alternative: &str) -> Option<&str> {
 /// bring in any name. A glob of an enum's variants (`use Rule::*`) does
 /// not count: Rust variants are CamelCase.
 pub(in crate::analysis) fn may_name_constant(source: &str, name: &str) -> bool {
+    use ra_ap_syntax::AstNode;
     let masked = mask_comments_and_strings(source);
     let declared = whole_word_offsets(&masked, name).into_iter().any(|offset| {
         let before = masked[..offset].trim_end();
         let before = before.strip_suffix("mut").map_or(before, str::trim_end);
         before.ends_with("const") || before.ends_with("static")
     });
-    declared
-        || flattened_use_paths(source).iter().any(|import| {
-            let mut segments = import.path.rsplit("::");
-            let last = segments.next().unwrap_or("");
-            match &import.alias {
-                Some(alias) => alias == name,
-                None if last == "*" => !segments.next().is_some_and(is_variant_name),
-                None => last == name,
+    if declared {
+        return true;
+    }
+    let may_rebind = flattened_use_paths(source).iter().any(|import| {
+        let mut segments = import.path.rsplit("::");
+        let last = segments.next().unwrap_or("");
+        match &import.alias {
+            Some(alias) => alias == name,
+            // `super::*` is judged on the parse below.
+            None if last == "*" => {
+                import.path != "super::*" && !segments.next().is_some_and(is_variant_name)
             }
-        })
+            None => last == name,
+        }
+    });
+    if may_rebind {
+        return true;
+    }
+    if !flattened_use_paths(source)
+        .iter()
+        .any(|import| import.path == "super::*")
+    {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .any(|node| parent_glob_outside_this_file(&node))
 }
 
 /// The variant names of the one enum named `type_name` that `source`
@@ -3632,6 +3655,47 @@ mod tests {
         // An owner file that was not read may declare anything.
         assert_eq!(judged(None), Some(ArmSelection::Unknown));
         Ok(())
+    }
+
+    #[test]
+    fn may_name_constant_ignores_inline_test_module_super_glob() {
+        let label = concat!(
+            "pub fn label(n: u8) -> &'static str {\n",
+            "    match n {\n",
+            "        0 => \"zero\",\n",
+            "        other => \"many\",\n",
+            "    }\n",
+            "}\n",
+        );
+        let inline_tests = concat!(
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    use super::*;\n",
+            "    #[test]\n",
+            "    fn t() {\n",
+            "        assert_eq!(label(5), \"many\");\n",
+            "    }\n",
+            "}\n",
+        );
+        assert!(
+            !may_name_constant(&format!("{label}{inline_tests}"), "other"),
+            "inline mod use super::* must not demote a binding arm"
+        );
+        assert!(
+            may_name_constant(&format!("use super::*;\n{label}"), "other"),
+            "file-root use super::* may still rebind"
+        );
+        assert!(
+            may_name_constant(
+                &format!("const other: u8 = 1;\n{label}{inline_tests}"),
+                "other"
+            ),
+            "declared const still counts"
+        );
+        assert!(
+            may_name_constant(&format!("use some_mod::*;\n{label}"), "other"),
+            "non-super module globs unchanged"
+        );
     }
 
     fn resolve_with(selector: &ArmSelector, source: Option<&str>) -> ArmSelector {

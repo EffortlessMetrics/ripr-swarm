@@ -558,10 +558,11 @@ fn gated_lanes_admit_pull_requests_only_on_the_merge_ready_labeled_event() {
             const REQUEST: &str = "github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready'";
             // Staged callable leaves key the group by admitted request/subject
             // first; direct events fall through to the merge-ready group rule.
-            let callable_leaf = name == "ci.yml";
+            let callable_leaf = matches!(name, "ci.yml" | "printed-command-paste.yml");
             let prefix = match name {
                 "pilot-ranking.yml" => "pilot-ranking",
                 "public-proof.yml" => "public-proof",
+                "printed-command-paste.yml" => "printed-command-paste",
                 _ => "${{ github.workflow }}",
             };
             let cancels_non_pr = matches!(name, "pilot-ranking.yml" | "public-proof.yml");
