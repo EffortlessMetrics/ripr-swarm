@@ -251,6 +251,28 @@ pub(crate) fn run(options: &Options, plan: &Plan) -> Result<(), String> {
     result
 }
 
+/// Clone one external pin, check out its commit and write the pinned diff.
+fn prepare_external(external: &ExternalPin, scratch: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let tree = scratch.join(format!("ext-{}", external.id));
+    let tree_text = tree.to_string_lossy().into_owned();
+    git(
+        &[
+            "clone",
+            "--quiet",
+            "--filter=blob:none",
+            &external.url,
+            &tree_text,
+        ],
+        scratch,
+    )?;
+    git(&["checkout", "--quiet", "--detach", &external.sha], &tree)?;
+    let diff = git(&["diff", &external.base, &external.sha], &tree)?;
+    let diff_path = scratch.join(format!("ext-{}.diff", external.id));
+    fs::write(&diff_path, diff + "\n")
+        .map_err(|error| format!("failed to write {}: {error}", diff_path.display()))?;
+    Ok((tree, diff_path))
+}
+
 fn run_in(
     options: &Options,
     plan: &Plan,
@@ -296,27 +318,12 @@ fn run_in(
     if !plan.external_ids.is_empty() {
         let corpus = crate::reports::dx_scoreboard::load_config(Path::new(SCOREBOARD_CONFIG))?;
         for external in resolve_external(&plan.external_ids, &corpus.corpus)? {
-            let tree = scratch.join(format!("ext-{}", external.id));
-            let (tree_arg, tree_text) = (tree.clone(), tree.to_string_lossy().into_owned());
-            git(
-                &[
-                    "clone",
-                    "--quiet",
-                    "--filter=blob:none",
-                    &external.url,
-                    &tree_text,
-                ],
-                scratch,
-            )?;
-            git(
-                &["checkout", "--quiet", "--detach", &external.sha],
-                &tree_arg,
-            )?;
-            let diff = git(&["diff", &external.base, &external.sha], &tree_arg)?;
-            let diff_path = scratch.join(format!("ext-{}.diff", external.id));
-            fs::write(&diff_path, diff + "\n")
-                .map_err(|error| format!("failed to write {}: {error}", diff_path.display()))?;
-            if let Err(error) = report(&pair(&external.id, tree_arg, diff_path)) {
+            // A clone, checkout or diff that fails costs this pin its verdict,
+            // not the pins after it.
+            let prepared = prepare_external(&external, scratch);
+            let outcome =
+                prepared.and_then(|(tree, diff_path)| report(&pair(&external.id, tree, diff_path)));
+            if let Err(error) = outcome {
                 eprintln!("{error}");
                 failed.push(external.id.clone());
             }
