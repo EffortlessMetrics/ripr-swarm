@@ -314,7 +314,7 @@ mod python_identity_review_controls {
     }
 
     #[test]
-    fn a_statement_repeated_on_one_line_normalizes_when_every_reading_agrees() -> Result<(), String> {
+    fn a_statement_repeated_on_one_line_normalizes_when_readings_agree() -> Result<(), String> {
         let source = "def f(x):\n    return x; return x\n";
         let context = PythonIdentityContext::new(source).ok_or("source did not lex")?;
         assert_eq!(
