@@ -587,16 +587,18 @@ pub(in crate::analysis) fn withhold_property_macro_no_path_as_unknown(finding: &
         &ripr.reveal.discriminate,
         &finding.class,
     ));
-    // `macro_reach_unresolved` says the class stays `no_static_path`; the
-    // named limitation and its evidence pointer stay, the reason does not.
+    // Keep `macro_reach_unresolved`: its human gloss ("a test may reach this
+    // through a macro ripr does not expand") is the accurate reason for an
+    // unknown, while `static_probe_unknown` would claim the change itself
+    // could not be modeled and invite an add-a-test step.
     finding
         .stop_reasons
-        .retain(|reason| !matches!(reason, StopReason::MacroReachUnresolved));
+        .retain(|reason| *reason != StopReason::StaticProbeUnknown);
     if !finding
         .stop_reasons
-        .contains(&StopReason::StaticProbeUnknown)
+        .contains(&StopReason::MacroReachUnresolved)
     {
-        finding.stop_reasons.push(StopReason::StaticProbeUnknown);
+        finding.stop_reasons.push(StopReason::MacroReachUnresolved);
     }
     finding.missing = vec![
         "property-macro reach abstains: ripr does not expand the macro or collect its tests"
@@ -3803,10 +3805,10 @@ fn far_above_threshold_discounts() {
         assert!(
             finding
                 .stop_reasons
-                .contains(&StopReason::StaticProbeUnknown)
+                .contains(&StopReason::MacroReachUnresolved)
                 && !finding
                     .stop_reasons
-                    .contains(&StopReason::MacroReachUnresolved),
+                    .contains(&StopReason::StaticProbeUnknown),
             "{:?}",
             finding.stop_reasons
         );

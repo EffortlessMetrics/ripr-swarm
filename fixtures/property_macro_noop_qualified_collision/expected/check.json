@@ -50,7 +50,7 @@
       "related_tests_total": 0,
       "related_tests": [
       ],
-      "stop_reasons": ["static_probe_unknown"],
+      "stop_reasons": ["macro_reach_unresolved"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
       "recommended_next_step": "Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test.",
