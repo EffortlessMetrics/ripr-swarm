@@ -16882,14 +16882,28 @@ Field contract:
 - Pilot byte bound (#12108) — the `ripr pilot` copy of this document
   (`target/ripr/pilot/repo-exposure.json`) keeps its `seams[]` entries within
   `RIPR_PILOT_REPO_EXPOSURE_BYTES` bytes (default 8,000,000; `0` writes all).
-  Current-change seams are kept first, then inventory order, each group
-  stopping at its first entry that does not fit. A cut adds a `limitations[]`
+  Selection runs in three priority groups: current-change seams, then the
+  remaining seams in pilot ranking order (#12152), then every other seam in
+  inventory order. A seam that does not fit the remaining budget is skipped
+  (#12151), so later seams of the same group are still kept, and one skipped
+  while a later seam of its group was kept is counted in
+  `seams_skipped_over_budget`, which counts holes only (rejected seams
+  followed by a later fitting seam), so final rejections are visible as
+  `seams_total - seams_rendered`; once
+  a group has skipped a seam, no later group is started. The kept seams are
+  written in inventory order (`selection_order` names the priority, not the
+  `seams[]` order). A cut adds a `limitations[]`
   object `{category: "pilot_repo_exposure_byte_bound_applied", seams_rendered,
-  seams_total, seam_bytes_rendered, byte_budget, limit_source, control:
+  seams_total, seams_skipped_over_budget, selection_order, seam_bytes_rendered, byte_budget, limit_source, control:
   "RIPR_PILOT_REPO_EXPOSURE_BYTES", repair_route}`. When no seam cap and no
   declined file already owns `run_status`, a cut sets it to
   `"limited_repo_exposure_bytes"`; otherwise that status is kept and the bound
-  is an additional entry. `metrics` describe the entries the file carries.
+  is an additional entry. `metrics` describe the entries the file carries, and
+  a bounded document says so itself (#12153): `metrics.population` is
+  `"byte_bound_kept_seams"` and `metrics.population_seams_total` is the full
+  seam count beside the kept `metrics.seams_total`. Each kept seam's
+  `canonical_gap_group_size` is still computed over the full set, so it can
+  exceed the number of that group's seams in the file.
   A bounded document carries no `artifact` identity, so `ripr outcome` and
   `ripr agent verify` refuse it by name rather than comparing it. Entries that
   fit the budget change nothing. `pilot-summary.json` carries

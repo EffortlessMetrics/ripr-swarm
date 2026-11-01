@@ -419,10 +419,18 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // `seams[]` entries of repo-exposure.json to the byte budget, disclosed in
     // the file and pilot-summary.json. Markdown, packets and the summary keep
     // the full classified population.
+    // The cut keeps the current change first, then the pilot ranking (#12152),
+    // so the ranked list is only built when a byte budget applies.
+    let ranked_for_byte_bound = if repo_exposure_byte_budget.is_some() {
+        output::pilot::top_actionable_seams(&classified, usize::MAX, Some(&current_change))
+    } else {
+        Vec::new()
+    };
     let repo_exposure_byte_bound = output::repo_exposure::bound_repo_exposure_seams(
         &classified,
         repo_exposure_byte_budget,
         |entry| current_change.keeps_past_budget(entry),
+        &ranked_for_byte_bound,
     );
     // The summary's disclosure counts from the outermost population: when
     // both caps fired, the pilot budget's total is the already-capped
