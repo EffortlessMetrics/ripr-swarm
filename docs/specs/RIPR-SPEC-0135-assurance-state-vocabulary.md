@@ -188,24 +188,13 @@ vocabulary and does not import those terms into normal static output.
 
 ### External Kani observation import
 
-`ripr reports kani --input PATH --binding PATH [--root PATH]` imports Kani
-schema `0.1.0` without execution. Its `ripr_kani_report.v1` always records
-`external_unattested` provenance and `listed_files_match` source binding.
-Matching bytes establish neither producer authenticity, complete dependencies,
-fresh execution nor consumption of the supplied context.
+`ripr reports kani --input PATH --binding PATH [--root PATH]` imports Kani schema `0.1.0` without execution. Its `ripr_kani_report.v1` always records
+`external_unattested` provenance and `listed_files_match` source binding. Matching bytes establish neither producer authenticity, complete dependencies, fresh execution nor consumption of the supplied context.
 
 The `ripr_kani_binding.v1` reuses `RiprRepositorySnapshotV1` with
-`captured_source_set`, binding native bytes, implementation/harness files,
-selected identities and descriptive context. Regular files must be inside the
-root without symlinks or traversal; source, artifact, inventory, target or
-selection disagreement refuses import. Undeclared dependencies remain unknown.
+`captured_source_set`, binding native bytes, implementation/harness files, selected identities and descriptive context. Regular files must be inside the root without symlinks or traversal; source, artifact, inventory, target or selection disagreement refuses import. Undeclared dependencies remain unknown.
 
-Native JSON, outcomes, counts, bounds, stubs and expected-panic polarity are
-preserved. Successful counts cannot invent property identities or functional
-coverage. Empty, partial, unreachable or expected-panic results grant no
-functional assurance, static promotion, receipt issuance or gate authority.
-See [the input/output contract](../OUTPUT_SCHEMA.md#imported-kani-observation-ripr_kani_reportv1)
-for fields and the explicit adapter-qualification limit.
+Native JSON, outcomes, counts, bounds, stubs and expected-panic polarity are preserved. Successful counts cannot invent property identities or functional coverage. Empty, partial, unreachable or expected-panic results grant no functional assurance, static promotion, receipt issuance or gate authority. See [the input/output contract](../OUTPUT_SCHEMA.md#imported-kani-observation-ripr_kani_reportv1) for fields and the explicit adapter-qualification limit.
 
 ## Compatibility and migration
 

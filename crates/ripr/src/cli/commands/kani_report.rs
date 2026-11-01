@@ -81,19 +81,25 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             other => return Err(unknown_argument("reports kani", other)),
         };
         if slot.is_some() {
-            return Err(format!("reports kani does not accept duplicate {flag}"));
+            return Err(format!(
+                "reports kani does not accept duplicate {flag}; see `ripr help`"
+            ));
         }
         index += 1;
         let value = expect_value(args, index, flag)?;
         if value.trim().is_empty() {
-            return Err(format!("reports kani {flag} requires a non-empty path"));
+            return Err(format!(
+                "reports kani {flag} requires a non-empty path; see `ripr help`"
+            ));
         }
         *slot = Some(PathBuf::from(value));
         index += 1;
     }
 
-    let input = input.ok_or_else(|| "reports kani requires --input PATH".to_string())?;
-    let binding = binding.ok_or_else(|| "reports kani requires --binding PATH".to_string())?;
+    let input =
+        input.ok_or_else(|| "reports kani requires --input PATH; see `ripr help`".to_string())?;
+    let binding = binding
+        .ok_or_else(|| "reports kani requires --binding PATH; see `ripr help`".to_string())?;
     let root = root.unwrap_or_else(|| PathBuf::from("."));
     let uses_default_output = out.is_none() || out_md.is_none();
     let out = out.unwrap_or_else(|| root.join(DEFAULT_JSON));
@@ -122,7 +128,9 @@ fn validate_output_paths(options: &Options, checked_sources: &[PathBuf]) -> Resu
     let out = output_identity(&options.out)?;
     let out_md = output_identity(&options.out_md)?;
     if paths_alias(&out, &out_md) {
-        return Err("reports kani requires distinct --out and --out-md paths".to_string());
+        return Err(
+            "reports kani requires distinct --out and --out-md paths; see `ripr help`".to_string(),
+        );
     }
     for (flag, input) in [("--input", &options.input), ("--binding", &options.binding)] {
         let identity = std::fs::canonicalize(input).map_err(|error| {
@@ -133,7 +141,7 @@ fn validate_output_paths(options: &Options, checked_sources: &[PathBuf]) -> Resu
         })?;
         if paths_alias(&identity, &out) || paths_alias(&identity, &out_md) {
             return Err(format!(
-                "reports kani output must not replace the {flag} artifact"
+                "reports kani output must not replace the {flag} artifact; see `ripr help`"
             ));
         }
     }
@@ -141,7 +149,10 @@ fn validate_output_paths(options: &Options, checked_sources: &[PathBuf]) -> Resu
         .iter()
         .any(|source| paths_alias(source, &out) || paths_alias(source, &out_md))
     {
-        return Err("reports kani output must not replace a checked source file".to_string());
+        return Err(
+            "reports kani output must not replace a checked source file; see `ripr help`"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -165,7 +176,7 @@ fn paths_alias(left: &Path, right: &Path) -> bool {
 fn output_identity(path: &Path) -> Result<PathBuf, String> {
     let absolute = std::path::absolute(path).map_err(|error| {
         format!(
-            "reports kani resolve output {} failed: {error}",
+            "reports kani resolve output {} failed: {error}; see `ripr help`",
             path.display()
         )
     })?;
@@ -236,11 +247,11 @@ mod tests {
     fn required_artifacts_are_enforced_through_reports_dispatch() {
         assert_eq!(
             super::super::reports(&args(&["kani"])),
-            Err("reports kani requires --input PATH".to_string())
+            Err("reports kani requires --input PATH; see `ripr help`".to_string())
         );
         assert_eq!(
             super::super::reports(&args(&["kani", "--input", "native.json"])),
-            Err("reports kani requires --binding PATH".to_string())
+            Err("reports kani requires --binding PATH; see `ripr help`".to_string())
         );
     }
 
@@ -249,15 +260,21 @@ mod tests {
         for flag in ["--input", "--binding", "--root", "--out", "--out-md"] {
             assert_eq!(
                 parse_options(&args(&[flag, "first", flag, "second"])),
-                Err(format!("reports kani does not accept duplicate {flag}"))
+                Err(format!(
+                    "reports kani does not accept duplicate {flag}; see `ripr help`"
+                ))
             );
             assert_eq!(
                 parse_options(&args(&[flag, " "])),
-                Err(format!("reports kani {flag} requires a non-empty path"))
+                Err(format!(
+                    "reports kani {flag} requires a non-empty path; see `ripr help`"
+                ))
             );
             assert_eq!(
                 parse_options(&args(&[flag])),
-                Err(format!("missing value for {flag}"))
+                Err(format!(
+                    "missing value for {flag}; pass a value right after it"
+                ))
             );
         }
         let error = parse_options(&args(&["--run-kani"]))
@@ -329,7 +346,9 @@ mod tests {
                 arguments.extend(args(&[flag, text(&alias)?]));
                 assert_eq!(
                     super::super::reports(&arguments),
-                    Err(format!("reports kani output must not replace {reason}"))
+                    Err(format!(
+                        "reports kani output must not replace {reason}; see `ripr help`"
+                    ))
                 );
                 assert_eq!(
                     std::fs::read(&path).map_err(|error| error.to_string())?,
@@ -342,7 +361,7 @@ mod tests {
         arguments.extend(args(&["--out", text(&output)?, "--out-md", text(&output)?]));
         assert_eq!(
             super::super::reports(&arguments),
-            Err("reports kani requires distinct --out and --out-md paths".into())
+            Err("reports kani requires distinct --out and --out-md paths; see `ripr help`".into())
         );
         assert!(!root.join(DEFAULT_JSON).exists());
         assert!(!root.join(DEFAULT_MARKDOWN).exists());

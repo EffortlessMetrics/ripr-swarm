@@ -179,13 +179,7 @@ that family's version only.
 
 ## Imported Kani observation (`ripr_kani_report.v1`)
 
-`ripr reports kani --input PATH --binding PATH [--root PATH] [--out PATH] [--out-md PATH]`
-reads a Kani schema `0.1.0` export and an explicit source binding. It executes
-no Kani command. `--out` writes JSON and `--out-md` writes Markdown from the same
-validated report. Full qualification of this development adapter profile remains
-outstanding. Its checked-in Kani examples are upstream contract fixtures.
-Each report replacement is atomic; the pair is not transactional. An output
-failure can leave the JSON report present without a Markdown report.
+`ripr reports kani --input PATH --binding PATH [--root PATH] [--out PATH] [--out-md PATH]` reads a Kani schema `0.1.0` export and an explicit source binding. It executes no Kani command. `--out` writes JSON and `--out-md` writes Markdown from the same validated report. Full qualification of this development adapter profile remains outstanding. Its checked-in Kani examples are upstream contract fixtures. Each report replacement is atomic; the pair is not transactional. An output failure can leave the JSON report present without a Markdown report.
 
 | Report field | Contract |
 | --- | --- |
@@ -201,36 +195,15 @@ failure can leave the JSON report present without a Markdown report.
 
 The binding uses `schema_version: "ripr_kani_binding.v1"` and these required fields:
 
-- `repository`: existing `RiprRepositorySnapshotV1` with `repository_id`,
-  `snapshot_id`, `source_view: "captured_source_set"` and `source_digest`.
-- `run_id` and `artifact_sha256`: a caller-supplied run label and exact native-byte
-  commitment. The label does not prove freshness or process identity.
-- `source_files[]`: unique portable relative `path`, `sha256` and nonempty unique
-  `roles` from `configuration|dependency|harness|implementation|lockfile|specification|toolchain`.
-  At least one implementation role and one harness role must be listed.
-- `context`: `target`, `cargo_features[]`, `default_features`, `toolchain`,
-  `environment_sha256` and ordered `invocation[]` tokens.
-- `selected_harnesses[]`: unique `{crate_name, name}` identities. Its size must
-  match the native selected count; every returned harness must belong to it.
+- `repository`: existing `RiprRepositorySnapshotV1` with `repository_id`, `snapshot_id`, `source_view: "captured_source_set"` and `source_digest`.
+- `run_id` and `artifact_sha256`: a caller-supplied run label and exact native-byte commitment. The label does not prove freshness or process identity.
+- `source_files[]`: unique portable relative `path`, `sha256` and nonempty unique `roles` from `configuration|dependency|harness|implementation|lockfile|specification|toolchain`. At least one implementation role and one harness role must be listed.
+- `context`: `target`, `cargo_features[]`, `default_features`, `toolchain`, `environment_sha256` and ordered `invocation[]` tokens.
+- `selected_harnesses[]`: unique `{crate_name, name}` identities. Its size must match the native selected count; every returned harness must belong to it.
 
-Digests use `sha256:<64 lowercase hex>`. To derive `repository.source_digest`,
-sort source files by path and hash the UTF-8 concatenation of each
-`path\tsha256:<filehex>\n` record. The snapshot identity is
-`captured:<source_digest>`. Each returned harness file must be listed with the
-harness role. Files are checked individually inside the selected root; symlinks,
-traversal, duplicate paths, malformed bindings and mismatched hashes are refused.
-Native input is bounded to 16 MiB, binding input to 2 MiB, source inventory to
-4096 files, each source file to 16 MiB and total source bytes to 256 MiB.
+Digests use `sha256:<64 lowercase hex>`. To derive `repository.source_digest`, sort source files by path and hash the UTF-8 concatenation of each `path\tsha256:<filehex>\n` record. The snapshot identity is `captured:<source_digest>`. Each returned harness file must be listed with the harness role. Files are checked individually inside the selected root; symlinks, traversal, duplicate paths, malformed bindings and mismatched hashes are refused. Native input is bounded to 16 MiB, binding input to 2 MiB, source inventory to 4096 files, each source file to 16 MiB and total source bytes to 256 MiB.
 
-Target and selected identities are checked against native results. Other context
-fields are retained declarations, not evidence that the verifier used them.
-Partial runs retain missing selected scope. Native success, safety checks,
-unreachable checks and expected-panic results keep their native meaning;
-successful-property identities and functional coverage are not synthesized from
-counts. This report establishes no source-inventory completeness, authentic or
-fresh execution, non-vacuity, specification adequacy, discharged stub contracts,
-static exposure improvement, repair receipt or merge approval.
-See [the assurance contract](specs/RIPR-SPEC-0135-assurance-state-vocabulary.md#external-kani-observation-import).
+Target and selected identities are checked against native results. Other context fields are retained declarations, not evidence that the verifier used them. Partial runs retain missing selected scope. Native success, safety checks, unreachable checks and expected-panic results keep their native meaning; successful-property identities and functional coverage are not synthesized from counts. This report establishes no source-inventory completeness, authentic or fresh execution, non-vacuity, specification adequacy, discharged stub contracts, static exposure improvement, repair receipt or merge approval. See [the assurance contract](specs/RIPR-SPEC-0135-assurance-state-vocabulary.md#external-kani-observation-import).
 
 ## Repair card (`RepairCardV1`, schema `repair_card.v1`)
 

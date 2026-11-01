@@ -45,7 +45,7 @@ pub(super) fn parse_native(json: &str) -> Result<NativeDocument, String> {
     )?;
     let mut decoder = serde_json::Deserializer::from_str(json);
     let document = UniqueValue::deserialize(&mut decoder)
-        .map_err(|error| format!("invalid native JSON: {error}"))?
+        .map_err(|error| format!("invalid native JSON: {error}; see `ripr help`"))?
         .0;
     decoder
         .end()
@@ -124,7 +124,7 @@ pub(super) fn parse_native(json: &str) -> Result<NativeDocument, String> {
             matched_count,
             missing_count: matched_count
                 .checked_sub(imported)
-                .ok_or("invalid selected count")?,
+                .ok_or("invalid selected count; see `ripr help`")?,
             harnesses,
         },
         document,
@@ -261,8 +261,12 @@ fn validate_harness(value: &Value) -> Result<NativeHarness, String> {
                 "verdict contradicts failure_kind and should_panic",
             )?;
             let total = sum([
-                checks.total.ok_or("missing checks.total")?,
-                covers.total.ok_or("missing covers.total")?,
+                checks
+                    .total
+                    .ok_or("missing checks.total; see `ripr help`")?,
+                covers
+                    .total
+                    .ok_or("missing covers.total; see `ripr help`")?,
             ])?;
             require(
                 properties == Some(total),
@@ -330,7 +334,7 @@ fn validate_harness(value: &Value) -> Result<NativeHarness, String> {
                     Some(
                         i32::try_from(
                             code.as_i64()
-                                .ok_or("crash code must be an integer or null")?,
+                                .ok_or("crash code must be an integer or null; see `ripr help`")?,
                         )
                         .map_err(|error| format!("crash code is outside i32: {error}"))?,
                     )
@@ -350,7 +354,11 @@ fn validate_harness(value: &Value) -> Result<NativeHarness, String> {
                 }
             }
         }
-        _ => return Err(format!("unsupported native outcome.kind: {kind:?}")),
+        _ => {
+            return Err(format!(
+                "unsupported native outcome.kind: {kind:?}; see `ripr help`"
+            ));
+        }
     };
     Ok(NativeHarness {
         crate_name: crate_name.to_owned(),
@@ -532,7 +540,7 @@ fn validate_properties(
             if status == "FAILURE" {
                 let failed_record = records
                     .get(id)
-                    .ok_or("unsupported failure missing from failed_properties")?;
+                    .ok_or("unsupported failure missing from failed_properties; see `ripr help`")?;
                 for key in [
                     "id",
                     "status",
@@ -551,7 +559,10 @@ fn validate_properties(
         }
     }
     require(
-        successes <= checks.success.ok_or("missing successful check count")?,
+        successes
+            <= checks
+                .success
+                .ok_or("missing successful check count; see `ripr help`")?,
         "unsupported successes exceed checks.success",
     )?;
     require(
@@ -638,11 +649,11 @@ fn require(condition: bool, message: &str) -> Result<(), String> {
 }
 fn object<'a>(v: &'a Value, path: &str) -> Result<&'a Map<String, Value>, String> {
     v.as_object()
-        .ok_or_else(|| format!("{path} must be an object"))
+        .ok_or_else(|| format!("{path} must be an object; see `ripr help`"))
 }
 fn field<'a>(v: &'a Map<String, Value>, key: &str) -> Result<&'a Value, String> {
     v.get(key)
-        .ok_or_else(|| format!("missing required field {key}"))
+        .ok_or_else(|| format!("missing required field {key}; see `ripr help`"))
 }
 fn absent(v: &Map<String, Value>, key: &str) -> Result<(), String> {
     require(
@@ -651,7 +662,8 @@ fn absent(v: &Map<String, Value>, key: &str) -> Result<(), String> {
     )
 }
 fn string<'a>(v: &'a Value, path: &str) -> Result<&'a str, String> {
-    v.as_str().ok_or_else(|| format!("{path} must be a string"))
+    v.as_str()
+        .ok_or_else(|| format!("{path} must be a string; see `ripr help`"))
 }
 fn nullable_string<'a>(v: &'a Value, path: &str) -> Result<Option<&'a str>, String> {
     if v.is_null() {
@@ -662,7 +674,7 @@ fn nullable_string<'a>(v: &'a Value, path: &str) -> Result<Option<&'a str>, Stri
 }
 fn count(v: &Value, path: &str) -> Result<u64, String> {
     v.as_u64()
-        .ok_or_else(|| format!("{path} must be a nonnegative integer"))
+        .ok_or_else(|| format!("{path} must be a nonnegative integer; see `ripr help`"))
 }
 fn nullable_count(v: &Value, path: &str) -> Result<Option<u64>, String> {
     if v.is_null() {
@@ -673,11 +685,11 @@ fn nullable_count(v: &Value, path: &str) -> Result<Option<u64>, String> {
 }
 fn boolean(v: &Value, path: &str) -> Result<bool, String> {
     v.as_bool()
-        .ok_or_else(|| format!("{path} must be a boolean"))
+        .ok_or_else(|| format!("{path} must be a boolean; see `ripr help`"))
 }
 fn array<'a>(v: &'a Value, path: &str) -> Result<&'a Vec<Value>, String> {
     v.as_array()
-        .ok_or_else(|| format!("{path} must be an array"))
+        .ok_or_else(|| format!("{path} must be an array; see `ripr help`"))
 }
 fn strings<'a>(v: &'a Value, path: &str) -> Result<Vec<&'a str>, String> {
     array(v, path)?.iter().map(|v| string(v, path)).collect()
@@ -699,7 +711,7 @@ fn duration(v: &Value, nullable: bool, path: &str) -> Result<(), String> {
     }
     let n = v
         .as_f64()
-        .ok_or_else(|| format!("{path} must be a number"))?;
+        .ok_or_else(|| format!("{path} must be a number; see `ripr help`"))?;
     require(
         n.is_finite() && n >= 0.0,
         &format!("{path} must be nonnegative and finite"),
@@ -727,7 +739,7 @@ fn validate_timestamp(value: &str) -> Result<(), String> {
     let n = |a: usize, z: usize| {
         value[a..z]
             .parse::<u32>()
-            .map_err(|error| format!("invalid started_at: {error}"))
+            .map_err(|error| format!("invalid started_at: {error}; see `ripr help`"))
     };
     let (year, month, day) = (n(0, 4)?, n(5, 7)?, n(8, 10)?);
     let leap_year = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);

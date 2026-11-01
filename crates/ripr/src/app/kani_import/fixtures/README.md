@@ -1,13 +1,8 @@
 # Kani native export contract fixtures
 
-The two JSON files are byte-identical published schema `0.1.0` contract fixtures.
-They are not claimed to be captured verifier runs or evidence of proof validity.
+The two JSON files are byte-identical published schema `0.1.0` contract fixtures. They are not claimed to be captured verifier runs or evidence of proof validity.
 
-The parser and failure fixture are pinned to
-[`model-checking/kani@744b3e84d6eb68fd5456826997568666791bd355`](https://github.com/model-checking/kani/tree/744b3e84d6eb68fd5456826997568666791bd355), especially `kani-driver/src/frontend/schema_utils.rs`.
-The success fixture comes from the export author's
-[`ivmat/kani@47c2b9921374a99091c0bd48a3e8e19e92f8d8dd`](https://github.com/ivmat/kani/tree/47c2b9921374a99091c0bd48a3e8e19e92f8d8dd).
-Both source files are in `tests/json-handler/schema-validation`; their Git blob identities were verified when vendoring.
+The parser and failure fixture are pinned to [`model-checking/kani@744b3e84d6eb68fd5456826997568666791bd355`](https://github.com/model-checking/kani/tree/744b3e84d6eb68fd5456826997568666791bd355), especially `kani-driver/src/frontend/schema_utils.rs`. The success fixture comes from the export author's [`ivmat/kani@47c2b9921374a99091c0bd48a3e8e19e92f8d8dd`](https://github.com/ivmat/kani/tree/47c2b9921374a99091c0bd48a3e8e19e92f8d8dd). Both source files are in `tests/json-handler/schema-validation`; their Git blob identities were verified when vendoring.
 
 | Vendored file | Source filename | Git blob SHA |
 | --- | --- | --- |
@@ -20,6 +15,4 @@ Both source files are in `tests/json-handler/schema-validation`; their Git blob 
 
 The published `kani-0.68.0` release predates this export profile and uses a different JSON shape. Its version string alone does not select the profile. Native qualification still requires archived runs of the pinned exporter, commands/process outcomes and bound source/configuration; these fixtures do not establish it.
 
-Original fixture copyright: Kani Contributors; upstream license: `Apache-2.0 OR MIT`.
-See [`LICENSE-APACHE`](https://github.com/model-checking/kani/blob/744b3e84d6eb68fd5456826997568666791bd355/LICENSE-APACHE)
-and [`LICENSE-MIT`](https://github.com/model-checking/kani/blob/744b3e84d6eb68fd5456826997568666791bd355/LICENSE-MIT).
+Original fixture copyright: Kani Contributors; upstream license: `Apache-2.0 OR MIT`. See [`LICENSE-APACHE`](https://github.com/model-checking/kani/blob/744b3e84d6eb68fd5456826997568666791bd355/LICENSE-APACHE) and [`LICENSE-MIT`](https://github.com/model-checking/kani/blob/744b3e84d6eb68fd5456826997568666791bd355/LICENSE-MIT).
