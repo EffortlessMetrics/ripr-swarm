@@ -1,5 +1,4 @@
 //! CLI projection of an explicitly supplied Kani result and its source binding.
-//!
 //! Import and native-result decisions belong to the app/domain owners; this command only reads bounded artifacts, writes reports, and never runs Kani.
 
 use crate::cli::parse::expect_value;
@@ -44,6 +43,7 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         crate::atomic_file::ensure_report_output_contained(&options.root)?;
     }
     for path in [&options.out, &options.out_md] {
+        crate::atomic_file::ensure_relative_output_contained(path)?;
         output::file_write::validate_destination(path).map_err(|error| {
             format!(
                 "reports kani output {} is unavailable: {error}",

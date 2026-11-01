@@ -105,7 +105,7 @@ pub(crate) fn import_kani_report(
         adapter_profile: "kani-export-0.1.0@744b3e84d6eb68fd5456826997568666791bd355".into(),
         provenance: "external_unattested",
         source_binding_state: "listed_files_match",
-        checked_root: root.to_string_lossy().into_owned(),
+        checked_root: root.to_str().ok_or("Kani source root is not UTF-8")?.to_owned(),
         checked_source_paths,
         artifact_sha256: binding.artifact_sha256.clone(),
         binding_sha256: sha256(binding_json.as_bytes()),
