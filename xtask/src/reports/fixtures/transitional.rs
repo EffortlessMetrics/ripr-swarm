@@ -14,7 +14,7 @@ pub(super) const STILL_MISSING: &str =
 /// New openings (after the seam count is masked).
 pub(super) const EXPOSED: &str = "nothing to repair here";
 pub(super) const SEAM_GRIPPED: &str = "`ripr check` reads a gap or limit for this change";
-pub(super) const SEAMS_UNTIED: &str = "ripr found <n> seams in this finding's file, but could not tie one to this finding's changed line";
+pub(super) const SEAMS_UNTIED: &str = "ripr found <n> spots in this finding's file, but could not tie one to this finding's changed line";
 
 /// One approved migration: `fixture/surface` entries whose expected golden
 /// opens with `old` and whose actual output now opens with `new`.

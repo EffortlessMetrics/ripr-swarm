@@ -1,4 +1,4 @@
-<!-- section: Fixed -->
+<!-- section: Internal / CI -->
 - The sharded Windows advisory lane builds `ripr` once before nextest, so tests
   that spawn a nested `cargo build` (the public-guide contract, the fixture and
   dogfood runners, the policy cargo spawns) find the build already done instead

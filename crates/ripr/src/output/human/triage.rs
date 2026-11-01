@@ -769,6 +769,16 @@ fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
     )
 }
 
+/// The default screen says "spot" for the stub chooser's reason; the shared
+/// reason (`app::test_stub`, also printed by `ripr agent stub`) keeps its own
+/// wording, so only this render swaps the noun (#11619).
+fn plain_stub_reason(reason: &str) -> String {
+    reason.replace(
+        " seam, so --at cannot pick one",
+        " spot, so --at cannot pick one",
+    )
+}
+
 fn push_ambiguous_stub_choices(
     out: &mut String,
     navigation: &crate::app::FindingNavigation,
@@ -778,10 +788,11 @@ fn push_ambiguous_stub_choices(
     indent: &str,
 ) {
     out.push_str(&format!(
-        "{indent}Choose a test-stub seam for {finding_id}: {reason}\n"
+        "{indent}Choose a test-stub spot for {finding_id}: {}\n",
+        plain_stub_reason(reason)
     ));
     let child = format!("{indent}  ");
-    out.push_str(&format!("{child}Each command below produces a stub, but ripr could not tell which seam your change touches.\n"));
+    out.push_str(&format!("{child}Each command below produces a stub, but ripr could not tell which spot your change touches.\n"));
     out.push_str(&format!(
         "{child}They do not establish a repair binding or close a static limitation.\n"
     ));
@@ -1906,11 +1917,18 @@ mod tests {
                 "fedcba9876543210".to_string(),
             ],
         });
-        assert!(ambiguous.contains("Choose a test-stub seam for finding:hidden-unique:"));
+        assert!(ambiguous.contains("Choose a test-stub spot for finding:hidden-unique:"));
         assert!(ambiguous.contains("--seam-id 0123456789abcdef"));
         assert!(ambiguous.contains("--seam-id fedcba9876543210"));
         assert!(ambiguous.contains("Each command below produces a stub"));
         assert!(!ambiguous.contains("may refuse"));
+        // The shared stub reason keeps `seam`; only this render swaps the noun.
+        assert_eq!(
+            plain_stub_reason(
+                "a.rs:3 holds more than one predicate_boundary seam, so --at cannot pick one"
+            ),
+            "a.rs:3 holds more than one predicate_boundary spot, so --at cannot pick one"
+        );
     }
 
     /// #10710 review: the hand-written step must not ask for something the

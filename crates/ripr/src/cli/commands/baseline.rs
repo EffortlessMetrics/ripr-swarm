@@ -30,7 +30,7 @@ const GATE_DECISION_RECOVERY: &str = "Run `ripr gate evaluate --gap-ledger <gap-
 /// gate-decision file: create adopts it, update consumes the adoption.
 /// Recovery route for a missing `--from-check` artifact (#11206 item 3): the
 /// whole-repository producer is `ripr check` over the candidate tree.
-const CHECK_ARTIFACT_RECOVERY: &str = "Run `ripr check --candidate-tree HEAD^{tree} --format json > <check.json>` first, or pass the correct path";
+const CHECK_ARTIFACT_RECOVERY: &str = "Run `ripr check --candidate-tree $(git rev-parse HEAD^{tree}) --format json > <check.json>` first, or pass the correct path";
 
 type BaselineBuilder =
     fn(&str, &str, &str) -> Result<output::baseline::BaselineCreateReport, String>;

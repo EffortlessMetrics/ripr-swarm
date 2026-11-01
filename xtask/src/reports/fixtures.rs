@@ -1796,7 +1796,9 @@ fn normalize_seam_count(body: &str) -> Option<String> {
     }
     let after = &rest[digits..];
     let after = after
-        .strip_prefix(" seams")
+        .strip_prefix(" spots")
+        .or_else(|| after.strip_prefix(" spot"))
+        .or_else(|| after.strip_prefix(" seams"))
         .or_else(|| after.strip_prefix(" seam"))?;
     after.strip_prefix(
         " in this finding's file, but could not tie one to this finding's changed line",
@@ -3844,8 +3846,8 @@ mod tests {
         };
         let exposed_line =
             "nothing to repair here; the related tests already notice this change (exposed)";
-        let untied_line = "ripr found 4 seams in this finding's file, but could not tie one to this finding's changed line, so y";
-        let one_seam_line = "ripr found 1 seam in this finding's file, but could not tie one to this finding's changed line, so z";
+        let untied_line = "ripr found 4 spots in this finding's file, but could not tie one to this finding's changed line, so y";
+        let one_seam_line = "ripr found 1 spot in this finding's file, but could not tie one to this finding's changed line, so z";
         let old_no_seam = write_exposed(
             "old_no_seam.txt",
             "ripr found no seam in this finding's file to bind it to, so x",

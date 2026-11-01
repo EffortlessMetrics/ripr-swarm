@@ -2564,7 +2564,7 @@ impl Backend {
         self.analysis_status_payload_for_health(&health)
     }
 
-    fn analysis_status_payload_for_health(&self, health: &AnalysisHealth) -> LSPAny {
+    pub(super) fn analysis_status_payload_for_health(&self, health: &AnalysisHealth) -> LSPAny {
         let root = self.workspace_root_authority();
         let config = self.analysis_config();
         let configuration_failure = self.configuration_failure();
@@ -5123,6 +5123,7 @@ pub(super) struct RefreshLogSummary {
     gap_artifact_rejection_kinds: Vec<&'static str>,
     withheld_unknown: usize,
     withheld_preview: usize,
+    withheld_gap: usize,
     enabled_languages: usize,
     enabled_language_names: Vec<&'static str>,
 }
@@ -5186,6 +5187,7 @@ impl RefreshLogSummary {
                 .collect(),
             withheld_unknown: withheld_unknown_summary(snapshot).map_or(0, |(count, _)| count),
             withheld_preview: withheld_preview_summary(snapshot).0,
+            withheld_gap: withheld_static_gap_summary(snapshot).0,
             enabled_languages: 1,
             enabled_language_names: vec!["rust"],
         }
@@ -5346,7 +5348,7 @@ fn refresh_completed_log_message_with_telemetry(
 ) -> String {
     let duration = format_duration(summary.duration);
     format!(
-        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, withheld_preview={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
+        "ripr analysis refresh completed in {duration}: generation={}, diagnostics={}, files={}, findings={}, preview_findings={}, static_limits={}, seam_diagnostics={}, gap_artifacts={}, actionable_gap_artifacts={}, preview_gap_artifacts={}, no_action_gap_artifacts={}, gap_static_limits={}, gap_artifact_rejections={}, gap_artifact_rejection_kinds={}, withheld_unknown={}, withheld_preview={}, withheld_gap={}, enabled_languages={}, enabled_language_names={}, computed_files={}, published_files={}, unchanged_files={}, cleared_files={}, published_payload_bytes={}, suppressed_payload_bytes={}",
         summary.generation,
         summary.diagnostics,
         summary.files,
@@ -5363,6 +5365,7 @@ fn refresh_completed_log_message_with_telemetry(
         summary.gap_artifact_rejection_kinds.join("|"),
         summary.withheld_unknown,
         summary.withheld_preview,
+        summary.withheld_gap,
         summary.enabled_languages,
         summary.enabled_language_names.join("|"),
         summary.files,
@@ -8095,53 +8098,106 @@ fn withheld_preview_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'static
     (withheld.len(), classes.into_iter().collect())
 }
 
-/// Combined disclosure summary (#5276, #11296): `*_unknown` plus preview gap
-/// findings withheld by the actionable profile, with the preview share kept
-/// separate so a client can say "preview" without re-deriving it.
-fn withheld_findings_summary(
-    snapshot: &AnalysisSnapshot,
-) -> Option<(usize, Vec<&'static str>, usize)> {
+/// Count/class summary of the non-preview candidate-actionable gap findings
+/// (`no_static_path`, `weakly_exposed`, `reachable_unrevealed`) the
+/// actionable profile withholds because they carry no fix route (#11798): the
+/// headline "I changed a function nothing tests" case. Disjoint from the
+/// `*_unknown` and preview sets.
+fn withheld_static_gap_summary(snapshot: &AnalysisSnapshot) -> (usize, Vec<&'static str>) {
+    let withheld =
+        super::diagnostics::withheld_gap_findings(snapshot.diagnostic_profile, &snapshot.findings)
+            .into_iter()
+            .filter(|finding| !super::diagnostics::finding_is_withheld_preview_gap(finding))
+            .collect::<Vec<_>>();
+    let classes = withheld
+        .iter()
+        .map(|finding| finding.class.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    (withheld.len(), classes.into_iter().collect())
+}
+
+/// Combined disclosure summary (#5276, #11296, #11798): every
+/// candidate-actionable finding the active profile does not publish, split
+/// into its disjoint `*_unknown`, preview-language and static-gap shares.
+struct WithheldSummary {
+    /// Total withheld findings; reconciles `finding_count` with the
+    /// published diagnostics.
+    count: usize,
+    classes: Vec<&'static str>,
+    /// Preview-language share of `count` (#11296).
+    preview: usize,
+    /// Non-preview gap-class share of `count` (#11798).
+    gap: usize,
+}
+
+fn withheld_findings_summary(snapshot: &AnalysisSnapshot) -> Option<WithheldSummary> {
     let (unknown, mut classes) = withheld_unknown_summary(snapshot)?;
     let (preview, preview_classes) = withheld_preview_summary(snapshot);
+    let (gap, gap_classes) = withheld_static_gap_summary(snapshot);
     classes.extend(preview_classes);
+    classes.extend(gap_classes);
     classes.sort_unstable();
     classes.dedup();
-    Some((unknown + preview, classes, preview))
+    Some(WithheldSummary {
+        count: unknown + preview + gap,
+        classes,
+        preview,
+        gap,
+    })
 }
 
 /// The status-surface payload for profile withholding (#5276): present with
 /// a zero count when nothing is withheld, and `null` only when no snapshot
-/// exists. `preview_count` (#11296) is the preview-language share of `count`.
-fn withheld_findings_status_payload(summary: Option<(usize, Vec<&'static str>, usize)>) -> LSPAny {
+/// exists. `preview_count` (#11296) and `gap_count` (#11798) are the
+/// preview-language and static-gap shares of `count`.
+fn withheld_findings_status_payload(summary: Option<WithheldSummary>) -> LSPAny {
     match summary {
         None => serde_json::Value::Null,
-        Some((0, _, _)) => {
-            serde_json::json!({ "count": 0, "preview_count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
+        Some(WithheldSummary { count: 0, .. }) => {
+            serde_json::json!({ "count": 0, "preview_count": 0, "gap_count": 0, "classes": [], "recovery_route": serde_json::Value::Null })
         }
-        Some((count, classes, preview_count)) => serde_json::json!({
-            "count": count,
-            "preview_count": preview_count,
-            "classes": classes,
+        Some(summary) => serde_json::json!({
+            "count": summary.count,
+            "preview_count": summary.preview,
+            "gap_count": summary.gap,
+            "classes": summary.classes,
             "recovery_route": diagnostic_profile_full_recovery_route(),
         }),
     }
 }
 
-/// Pull-side disclosure naming the profile-withheld `*_unknown` findings
-/// (#5276). A pull that serves zero items must not read as "no findings":
+/// Pull-side disclosure naming the profile-withheld findings (#5276,
+/// #11798). A pull that serves zero items must not read as "no findings":
 /// the same one-line disclosure the status and listing surfaces carry names
 /// the withholding and the `full` escape hatch here too.
 fn profile_withholding_pull_disclosure(snapshot: &AnalysisSnapshot) -> Option<String> {
-    let (count, _, preview) = withheld_findings_summary(snapshot)?;
+    let summary = withheld_findings_summary(snapshot)?;
+    let count = summary.count;
     (count > 0).then(|| {
-        // The `*_unknown` wording is unchanged when no preview finding is
-        // withheld; the preview share is named only when it exists.
-        let subject = match (count - preview, preview) {
-            (_, 0) => format!("{count} finding(s) of the *_unknown classes"),
-            (0, _) => format!("{count} preview-language finding(s)"),
-            (unknown, preview) => format!(
-                "{count} finding(s) ({unknown} of the *_unknown classes, {preview} preview-language)"
-            ),
+        // The `*_unknown` wording is unchanged when nothing else is
+        // withheld; other shares are named only when they exist.
+        let unknown = count - summary.preview - summary.gap;
+        let subject = match (unknown, summary.preview, summary.gap) {
+            (_, 0, 0) => format!("{count} finding(s) of the *_unknown classes"),
+            (0, _, 0) => format!("{count} preview-language finding(s)"),
+            (0, 0, _) => {
+                format!("{count} finding(s) with no static test path found or weak static evidence")
+            }
+            (unknown, preview, gap) => {
+                let mut parts = Vec::new();
+                if unknown > 0 {
+                    parts.push(format!("{unknown} of the *_unknown classes"));
+                }
+                if preview > 0 {
+                    parts.push(format!("{preview} preview-language"));
+                }
+                if gap > 0 {
+                    parts.push(format!(
+                        "{gap} with no static test path found or weak static evidence"
+                    ));
+                }
+                format!("{count} finding(s) ({})", parts.join(", "))
+            }
         };
         format!(
             "ripr withheld {subject} from diagnostics (actionable profile, RIPR-SPEC-0069); {}",
@@ -12989,11 +13045,15 @@ mod list_actionable_items_tests {
                     && disclosure.contains("diagnosticProfile"),
                 "{file}: {disclosure}"
             );
-            let (count, classes, preview) =
+            let summary =
                 super::withheld_findings_summary(&snapshot).ok_or("a snapshot yields a summary")?;
-            assert_eq!((count, preview), (1, 1), "{file}");
-            assert_eq!(classes, vec!["weakly_exposed"], "{file}");
-            let status = super::withheld_findings_status_payload(Some((count, classes, preview)));
+            assert_eq!(
+                (summary.count, summary.preview, summary.gap),
+                (1, 1, 0),
+                "{file}"
+            );
+            assert_eq!(summary.classes, vec!["weakly_exposed"], "{file}");
+            let status = super::withheld_findings_status_payload(Some(summary));
             assert_eq!(status["count"], 1, "{status}");
             assert_eq!(status["preview_count"], 1, "{status}");
             assert!(status["recovery_route"].is_string(), "{status}");
@@ -13006,22 +13066,50 @@ mod list_actionable_items_tests {
         Ok(())
     }
 
-    /// #11296 negative control: a withheld non-preview (Rust) gap-class
-    /// finding is already named by `hidden_gaps`; it must not be counted as
-    /// a preview withholding, and a preview finding that is not candidate
-    /// current stays silent.
+    /// #11798: a withheld non-preview (Rust) gap-class finding is counted as
+    /// a static-gap withholding, never as a preview one, and the pull
+    /// disclosure names the count, static vocabulary and the `full` route. A
+    /// finding that is not candidate-current stays silent.
     #[test]
-    fn preview_withholding_disclosure_ignores_non_preview_and_non_current_findings()
-    -> Result<(), String> {
+    fn static_gap_withholding_is_counted_apart_from_preview() -> Result<(), String> {
         let mut snapshot = snapshot_with_selection(Some(applied_selection()?));
         snapshot.diagnostic_profile = LspDiagnosticProfile::Actionable;
-        snapshot.findings = vec![crate::lsp::tests::sample_finding()];
-        assert_eq!(
-            super::profile_withholding_pull_disclosure(&snapshot),
-            None,
-            "a non-preview hidden gap is not a preview withholding"
-        );
+        let mut rust = crate::lsp::tests::sample_finding();
+        rust.class = crate::domain::ExposureClass::NoStaticPath;
+        rust.language_status = None;
+        snapshot.findings = vec![rust];
         assert_eq!(super::withheld_preview_summary(&snapshot).0, 0);
+        let summary =
+            super::withheld_findings_summary(&snapshot).ok_or("a snapshot yields a summary")?;
+        assert_eq!((summary.count, summary.preview, summary.gap), (1, 0, 1));
+        assert_eq!(summary.classes, vec!["no_static_path"]);
+        let disclosure = super::profile_withholding_pull_disclosure(&snapshot)
+            .ok_or("a withheld static gap must disclose")?;
+        assert!(
+            disclosure.contains("1 finding(s) with no static test path found")
+                && disclosure.contains("diagnosticProfile"),
+            "{disclosure}"
+        );
+        let status = super::withheld_findings_status_payload(Some(summary));
+        assert_eq!(status["count"], 1, "{status}");
+        assert_eq!(status["gap_count"], 1, "{status}");
+        assert_eq!(status["preview_count"], 0, "{status}");
+
+        // Mixed unknown + static gap keeps both shares named.
+        let mut unknown = crate::lsp::tests::sample_finding();
+        unknown.id = "probe:unknown".to_string();
+        unknown.class = crate::domain::ExposureClass::StaticUnknown;
+        snapshot.findings.push(unknown);
+        let disclosure = super::profile_withholding_pull_disclosure(&snapshot)
+            .ok_or("mixed withholding must disclose")?;
+        assert!(
+            disclosure.contains("2 finding(s) (1 of the *_unknown classes, 1 with no static"),
+            "{disclosure}"
+        );
+
+        // Negative controls: full profile withholds nothing.
+        snapshot.diagnostic_profile = LspDiagnosticProfile::Full;
+        assert_eq!(super::profile_withholding_pull_disclosure(&snapshot), None);
         Ok(())
     }
 
