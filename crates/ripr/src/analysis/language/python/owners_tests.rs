@@ -545,8 +545,9 @@ pub(super) fn collect_tests_from_statements(
     } else {
         Vec::new()
     };
-    for stmt in statements {
+    for (index, stmt) in statements.iter().enumerate() {
         apply_definition_import(file, stmt, &mut definition_imports);
+        let first_pushed = out.len();
         match stmt {
             Stmt::FunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
@@ -960,6 +961,26 @@ pub(super) fn collect_tests_from_statements(
             }
             _ => {}
         }
+        // Pytest and unittest collect the last binding of a name in a scope:
+        // an earlier definition (or one later replaced by `name = None`) never
+        // runs.
+        let defined = match stmt {
+            Stmt::FunctionDef(function) => Some(function.name.as_str()),
+            Stmt::AsyncFunctionDef(function) => Some(function.name.as_str()),
+            Stmt::ClassDef(class) => Some(class.name.as_str()),
+            _ => None,
+        };
+        if let Some(defined) = defined
+            && super::test_activation::rebound_later(statements, index, defined, source)
+        {
+            for test in &mut out[first_pushed..] {
+                test.activation_controls.push(
+                    super::test_activation::shadowed_by_later_binding_control(
+                        super::test_activation::DeclarationSite::Function,
+                    ),
+                );
+            }
+        }
     }
 }
 
@@ -1355,6 +1376,11 @@ impl<'a> LocalTestClasses<'a> {
                         super::test_activation::DeclarationSite::Class,
                     )
                 }))
+                .chain(class_switched_off(&scope, name).then(|| {
+                    super::test_activation::test_switch_control(
+                        super::test_activation::DeclarationSite::Class,
+                    )
+                }))
                 .collect();
             found.class_activation_controls.insert(name, controls);
             let Some(mro) = scope.mro(name, &mut Vec::new()) else {
@@ -1528,6 +1554,43 @@ impl<'a> ScopeClasses<'a> {
             }
         }
         None
+    }
+}
+
+/// Whether `__test__ = False` (or an unevaluable binding) reaches `name`:
+/// pytest reads the attribute through the class hierarchy, so the first class
+/// along the MRO that binds it decides, and an intermediate literal `True`
+/// re-enables collection for its subclasses. When the MRO is unavailable or an
+/// external base precedes any binding, any ancestor that is not provably
+/// `True` counts (fail-closed).
+fn class_switched_off<'a>(scope: &ScopeClasses<'a>, name: &'a str) -> bool {
+    use super::test_activation::{TestSwitch, test_switch};
+    let switch_of = |key: &str| {
+        scope
+            .defs
+            .get(key)
+            .map(|(_, class)| test_switch(&class.body))
+    };
+    if let Some(mro) = scope.mro(name, &mut Vec::new()) {
+        for entry in &mro {
+            let MroEntry::Local(key) = entry else {
+                break;
+            };
+            match switch_of(key) {
+                Some(TestSwitch::Enabled) => return false,
+                Some(TestSwitch::Disabled) => return true,
+                _ => {}
+            }
+        }
+    }
+    let switches: Vec<TestSwitch> = scope
+        .ancestors_or_self(name)
+        .iter()
+        .filter_map(|ancestor| switch_of(ancestor))
+        .collect();
+    match switches.first() {
+        Some(TestSwitch::Enabled) => false,
+        _ => switches.contains(&TestSwitch::Disabled),
     }
 }
 

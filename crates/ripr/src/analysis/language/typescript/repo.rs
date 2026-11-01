@@ -76,7 +76,8 @@ pub(super) struct RepoInput {
     /// Production files beyond the working-set limit. Test files are the
     /// evidence index and are not capped here; the read bounds govern them.
     pub(super) capped: usize,
-    /// The discovery walk hit its entry cap, so source may be unseen.
+    /// The discovery walk hit its candidate-source cap or total-entry backstop,
+    /// so source may be unseen.
     pub(super) discovery_truncated: bool,
     /// Symlink/junction entries the walk did not follow.
     pub(super) links_skipped: usize,
@@ -236,7 +237,7 @@ fn select_and_analyze(
     }
     if input.discovery_truncated {
         reasons.push(
-            "typescript_repo_discovery_truncated: workspace discovery hit its entry cap, so TypeScript/JavaScript source may have been missed (raise RIPR_TS_MAX_WORKSPACE_FILES)".to_string(),
+            "typescript_repo_discovery_truncated: workspace discovery hit its source-file limit or its total directory-entry limit, so TypeScript/JavaScript source may have been missed (raise RIPR_TS_MAX_WORKSPACE_FILES)".to_string(),
         );
     }
     if input.links_skipped > 0 {

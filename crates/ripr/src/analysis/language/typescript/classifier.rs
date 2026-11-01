@@ -5802,42 +5802,75 @@ fn unresolved_assertions_only(
 /// marker in either never counts. An unrelated callback, and other
 /// `Unresolved` causes (a shadowed `expect`, a no-op helper), stay actionable
 /// gaps.
+///
+/// A third shape is a floating `expect(<owner call>).resolves|rejects...`
+/// (#11535, RIPR-SPEC-0246 rule 4): jest-derived and conservative for vitest,
+/// where an un-awaited, un-returned assertion may not fail the test. Known
+/// over-demotions toward `static_unknown`: `expect.assertions(n)` tests, an
+/// expression-bodied subtest, and a function-reference callback.
 pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -> bool {
     let masked = mask_comments_and_strings(body);
-    let calls_owner = |text: &str| {
-        text.match_indices(owner_name).any(|(at, _)| {
-            let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
-            let mut before = text[..at].chars().rev().peekable();
-            // A member call (`this.owner(`, `ns.owner(`, `a?.owner(`) ties the
-            // same way a bare call does when its whole receiver is an
-            // identifier chain; a call or index step anywhere in it
-            // (`f().owner(`, `a[0].b.owner(`, `f().a.owner(`) is some other
-            // receiver.
-            let boundary = match before.next() {
-                None => true,
-                Some('.') => {
-                    before.next_if_eq(&'?');
-                    loop {
-                        if before.next_if(|c| word(*c)).is_none() {
-                            break false;
-                        }
-                        while before.next_if(|c| word(*c)).is_some() {}
-                        match before.peek() {
-                            Some('.') => {
-                                before.next();
-                                before.next_if_eq(&'?');
-                            }
-                            Some(')' | ']') => break false,
-                            _ => break true,
-                        }
-                    }
-                }
-                Some(c) => !word(c),
-            };
-            let after = &text[at + owner_name.len()..];
-            boundary && (after.starts_with('(') || generic_call_args(after))
-        })
-    };
+    floating_promise_assertion_on_owner(&masked, owner_name)
+        || body_asserts_in_then_callback(&masked, owner_name)
+}
+
+/// A floating `expect(<owner call>).resolves...` / `.rejects...` with no
+/// `await` or `return` before it: the promise settles after the test body
+/// ends, so the extractor withholds its credit (it cannot fail the test) and
+/// the test reads `static_unknown` rather than an actionable gap, like the
+/// `.then` shapes. `masked` has comments and strings blanked.
+fn floating_promise_assertion_on_owner(masked: &str, owner_name: &str) -> bool {
+    masked.match_indices("expect").any(|(at, _)| {
+        // `expect(` or `expect.soft(`.
+        let after = &masked[at + "expect".len()..];
+        let callee_len = if after.starts_with('(') {
+            "expect".len()
+        } else if after.starts_with(".soft(") {
+            "expect.soft".len()
+        } else {
+            return false;
+        };
+        if masked[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+        {
+            return false;
+        }
+        // An awaited, returned or arrow-returned assertion is not floating.
+        let before = masked[..at].trim_end();
+        if before.ends_with("=>")
+            || ["await", "return"].iter().any(|word| {
+                before.strip_suffix(word).is_some_and(|rest| {
+                    !rest
+                        .chars()
+                        .next_back()
+                        .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+                })
+            })
+        {
+            return false;
+        }
+        let open = at + callee_len;
+        let Some(close) = balanced_close_offset(&masked[open + 1..]).map(|c| open + 1 + c) else {
+            return false;
+        };
+        let chain = masked[close + 1..].trim_start();
+        // `expect(x).not.resolves...` keeps the async modifier after `.not`.
+        let after_dot = chain.strip_prefix('.').map(str::trim_start);
+        let async_chain = after_dot
+            .map(|rest| {
+                rest.strip_prefix("not")
+                    .and_then(|tail| tail.trim_start().strip_prefix('.'))
+                    .map_or(rest, str::trim_start)
+            })
+            .is_some_and(|rest| rest.starts_with("resolves") || rest.starts_with("rejects"));
+        async_chain && text_calls_owner(&masked[open..=close], owner_name)
+    })
+}
+
+fn body_asserts_in_then_callback(masked: &str, owner_name: &str) -> bool {
+    let calls_owner = |text: &str| text_calls_owner(text, owner_name);
     [".then(", "forEach(async"].iter().any(|marker| {
         masked.match_indices(marker).any(|(start, _)| {
             let Some(offset) = marker.find('(') else {
@@ -5859,7 +5892,7 @@ pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -
                     _ => {}
                 }
             }
-            let tied_to_owner = calls_owner(&masked[receiver_start(&masked, start)..start])
+            let tied_to_owner = calls_owner(&masked[receiver_start(masked, start)..start])
                 || masked.get(open..end).is_some_and(calls_owner);
             tied_to_owner
                 && masked.get(open..end).is_some_and(|span| {
@@ -5875,6 +5908,43 @@ pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -
                     })
                 })
         })
+    })
+}
+
+/// Whether `text` calls `owner_name` directly or through an identifier
+/// receiver chain (see [`body_asserts_in_unmodeled_callback`]).
+fn text_calls_owner(text: &str, owner_name: &str) -> bool {
+    text.match_indices(owner_name).any(|(at, _)| {
+        let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '$');
+        let mut before = text[..at].chars().rev().peekable();
+        // A member call (`this.owner(`, `ns.owner(`, `a?.owner(`) ties the
+        // same way a bare call does when its whole receiver is an
+        // identifier chain; a call or index step anywhere in it
+        // (`f().owner(`, `a[0].b.owner(`, `f().a.owner(`) is some other
+        // receiver.
+        let boundary = match before.next() {
+            None => true,
+            Some('.') => {
+                before.next_if_eq(&'?');
+                loop {
+                    if before.next_if(|c| word(*c)).is_none() {
+                        break false;
+                    }
+                    while before.next_if(|c| word(*c)).is_some() {}
+                    match before.peek() {
+                        Some('.') => {
+                            before.next();
+                            before.next_if_eq(&'?');
+                        }
+                        Some(')' | ']') => break false,
+                        _ => break true,
+                    }
+                }
+            }
+            Some(c) => !word(c),
+        };
+        let after = &text[at + owner_name.len()..];
+        boundary && (after.starts_with('(') || generic_call_args(after))
     })
 }
 
