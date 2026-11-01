@@ -17403,11 +17403,16 @@ tests = [
   "crates/ripr/tests/field_write_seam.rs::builder_field_write_names_the_receiver_not_a_wrapper",
   "crates/ripr/tests/field_write_seam.rs::copy_builder_read_of_the_unmoved_binding_is_not_a_check",
   "crates/ripr/tests/field_write_seam.rs::borrowed_receiver_read_of_the_written_field_is_still_a_check",
+  "crates/ripr/tests/field_write_seam.rs::setter_field_write_names_the_value_it_was_called_on",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::inventory_field_write_seams_record_whether_the_owner_borrows_its_receiver",
+  "crates/ripr/src/lsp/hover.rs::seam_hover_tests::field_write_next_step_follows_the_receiver_mode",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::field_write_oracle_shape_follows_the_receiver_mode",
   "crates/ripr/src/analysis/test_stub/tests.rs::field_write_in_a_method_names_the_receiver_not_a_struct_literal",
   "crates/ripr/src/analysis/classify/activation.rs::tests::only_a_borrowed_receiver_writes_the_binding_the_test_reads",
 ]
 fixtures = [
   "fixtures/rust_map_overwrite_count",
+  "fixtures/rust_copy_builder_field_write",
   "fixtures/rust_map_insert_count_empty",
   "fixtures/rust_preseeded_first_element",
   "fixtures/rust_pushed_element_last",

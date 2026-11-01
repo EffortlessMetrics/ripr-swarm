@@ -3917,6 +3917,16 @@ fn build_seam_from_shape(
     )
     .with_owner_call(owner_call)
     .with_source_lines(shape.source_lines);
+    // #12061: a field write is read back from the receiver only when the
+    // owner borrows it; record which so every surface words the read alike.
+    let seam = if kind == SeamKind::FieldConstruction
+        && crate::analysis::classify::field_assignment_target(seam.expression()).is_some()
+    {
+        let borrows = crate::analysis::classify::owner_borrows_receiver(owner_fact.body.as_str());
+        seam.with_owner_borrows_receiver(Some(borrows))
+    } else {
+        seam
+    };
     // Span geometry is additional precision: when derivation fails (stale or
     // mismatched source), the seam keeps line-only behavior rather than
     // carrying wrong coordinates. An arm's token range is its identity,
@@ -4393,6 +4403,45 @@ marker = "libtest_mimic::Trial"
         assert_eq!(shape_of("::raw", "self.0 > 7"), method("ByteSize"));
         // A blanket impl's self type is not a plain named path.
         assert_eq!(shape_of("::raw", "2 > 1"), Some(OwnerCallShape::Unknown));
+        Ok(())
+    }
+
+    /// #12061: the production inventory records whether a field write's owner
+    /// borrows its receiver, and only for field writes, so the hover, packet
+    /// and human step can word the read from one fact.
+    #[test]
+    fn inventory_field_write_seams_record_whether_the_owner_borrows_its_receiver()
+    -> Result<(), String> {
+        let source = concat!(
+            "#[derive(Clone, Copy)]\n",
+            "pub struct Opts { pub retries: u32 }\n",
+            "impl Opts {\n",
+            "    pub fn bump(&mut self) { self.retries += 2; }\n",
+            "    pub fn with_retries(mut self, n: u32) -> Self {\n",
+            "        self.retries = n * 2;\n",
+            "        self\n",
+            "    }\n",
+            "    pub fn big(&self) -> bool { self.retries > 7 }\n",
+            "}\n",
+        );
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let fact = |owner_suffix: &str, expression: &str| {
+            seams
+                .iter()
+                .find(|seam| {
+                    seam.owner().ends_with(owner_suffix) && seam.expression().contains(expression)
+                })
+                .map(|seam| seam.owner_borrows_receiver())
+        };
+        assert_eq!(fact("::bump", "self.retries += 2"), Some(Some(true)));
+        assert_eq!(
+            fact("::with_retries", "self.retries = n * 2"),
+            Some(Some(false))
+        );
+        // Not a field write: nothing recorded.
+        assert_eq!(fact("::big", "self.retries > 7"), Some(None));
         Ok(())
     }
 

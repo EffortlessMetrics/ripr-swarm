@@ -4263,7 +4263,7 @@ pub(in crate::analysis) fn assigned_field_read_confirms(
 /// reference: `&self`, `&mut self`, `&'a mut self`, `self: &Self` or
 /// `self: &mut Self`. Anything else, including a signature that cannot be
 /// read, is not a borrow (fail closed).
-fn owner_borrows_receiver(body: &str) -> bool {
+pub(in crate::analysis) fn owner_borrows_receiver(body: &str) -> bool {
     // Attributes (`#[inline(always)]`) may precede the item: read the
     // parameter list after the `fn` keyword.
     let Some(open) = body
@@ -4290,7 +4290,11 @@ fn owner_borrows_receiver(body: &str) -> bool {
                 .trim_start_matches(|c: char| c.is_alphanumeric() || c == '_')
                 .trim_start()
         });
-        let after = after.strip_prefix("mut ").map_or(after, str::trim_start);
+        // `mut` is a token followed by any Rust whitespace, newlines included.
+        let after = after
+            .strip_prefix("mut")
+            .filter(|rest| rest.starts_with(char::is_whitespace))
+            .map_or(after, str::trim_start);
         after == "self"
     }
 }
@@ -7598,6 +7602,8 @@ mod tests {
             "pub fn bump(&self) -> u32 {",
             "fn bump(&'a mut self, n: u32) {",
             "fn bump( & mut self ) {",
+            "fn bump(&mut\n    self) {",
+            "fn bump(&\n    mut\tself, n: u32) {",
             "fn bump(self: &mut Self, n: u32) {",
             "fn bump(self: &Self) {",
             "#[inline(always)]\nfn bump(&mut self) {",
@@ -7611,6 +7617,7 @@ mod tests {
             "fn retries(self: Box<Self>) -> Self {",
             "fn new(n: u32) -> Self {",
             "fn wrap(selfish: &mut Opts) {",
+            "fn wrap(&mutself) {",
             "no signature",
         ] {
             assert!(!super::owner_borrows_receiver(body), "{body}");

@@ -2578,7 +2578,7 @@ fn push_packet_json(
         json_escape(&missing_oracle_shape_for(
             seam.kind(),
             seam.expected_sink(),
-            crate::analysis::is_field_write_seam(seam),
+            crate::analysis::field_write_read(seam),
         ))
     ));
 
@@ -3530,12 +3530,26 @@ pub(crate) fn missing_discriminator_records_for(entry: &ClassifiedSeam) -> Vec<M
 /// seam's kind and expected sink. The returned string is human-facing
 /// guidance — the suggested-assertion list carries the literal
 /// templates.
-fn missing_oracle_shape_for(kind: SeamKind, sink: ExpectedSink, field_write: bool) -> String {
+fn missing_oracle_shape_for(
+    kind: SeamKind,
+    sink: ExpectedSink,
+    field_write: Option<crate::analysis::FieldWriteRead>,
+) -> String {
     match kind {
         // #11398: a field write in a method is read back from the value the
         // method was called on, not from a returned struct.
-        SeamKind::FieldConstruction if field_write => {
-            "exact assertion on the changed field of the value the method was called on".to_string()
+        SeamKind::FieldConstruction if field_write.is_some() => {
+            use crate::analysis::FieldWriteRead;
+            match field_write {
+                Some(FieldWriteRead::CallResult) => {
+                    "exact assertion on the changed field of the value the call returns".to_string()
+                }
+                Some(FieldWriteRead::Unspecified) => {
+                    "exact assertion on the changed field after the call".to_string()
+                }
+                _ => "exact assertion on the changed field of the value the method was called on"
+                    .to_string(),
+            }
         }
         SeamKind::PredicateBoundary => {
             "exact returned value assertion at the equality boundary".to_string()
@@ -8417,5 +8431,48 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    /// #12061: the packet's missing-oracle shape follows the receiver mode the
+    /// seam records, through the same `field_write_read` the hover and the
+    /// human step read.
+    #[test]
+    fn field_write_oracle_shape_follows_the_receiver_mode() {
+        let shape = |borrows: Option<bool>| {
+            let seam = RepoSeam::new(
+                "src/req.rs",
+                "req::Req::timeout",
+                SeamKind::FieldConstruction,
+                10,
+                11,
+                "self.timeout = t * 2",
+                RequiredDiscriminator::FieldValue {
+                    field: "self.timeout = t * 2".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+            .with_owner_borrows_receiver(borrows);
+            missing_oracle_shape_for(
+                seam.kind(),
+                seam.expected_sink(),
+                crate::analysis::field_write_read(&seam),
+            )
+        };
+        assert!(shape(Some(true)).contains("the value the method was called on"));
+        let by_value = shape(Some(false));
+        assert!(
+            by_value.contains("the value the call returns") && !by_value.contains("called on"),
+            "{by_value}"
+        );
+        let unrecorded = shape(None);
+        assert!(
+            !unrecorded.contains("called on") && !unrecorded.contains("call returns"),
+            "{unrecorded}"
+        );
+        // A struct-literal field keeps its own wording.
+        assert!(
+            missing_oracle_shape_for(SeamKind::FieldConstruction, ExpectedSink::ReturnValue, None)
+                != by_value
+        );
     }
 }

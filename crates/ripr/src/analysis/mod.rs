@@ -558,6 +558,32 @@ pub(crate) fn is_field_write_seam(seam: &seams::RepoSeam) -> bool {
         && classify::field_assignment_target(seam.expression()).is_some()
 }
 
+/// Where a field write is read back (#12061).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FieldWriteRead {
+    /// The owner borrows its receiver: read the field on the value the
+    /// method was called on.
+    Receiver,
+    /// The owner takes `self` by value and writes a moved copy: the caller's
+    /// binding never sees the write, so read the field on the value the call
+    /// returns.
+    CallResult,
+    /// The receiver mode is not recorded (a cache entry from before the
+    /// fact): word the read without naming a value.
+    Unspecified,
+}
+
+/// How `seam`'s field write is read back, or `None` when it is not a field
+/// write. The one place the receiver mode becomes wording, so the hover, the
+/// agent packet and the human step agree.
+pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead> {
+    is_field_write_seam(seam).then(|| match seam.owner_borrows_receiver() {
+        Some(true) => FieldWriteRead::Receiver,
+        Some(false) => FieldWriteRead::CallResult,
+        None => FieldWriteRead::Unspecified,
+    })
+}
+
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
 /// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.

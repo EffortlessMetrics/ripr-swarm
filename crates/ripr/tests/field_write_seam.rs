@@ -254,11 +254,34 @@ fn builder_field_write_names_the_receiver_not_a_wrapper() -> Result<(), String> 
         "use fw::Req;\n\n#[test]\nfn sets_url() {\n    let r = Req::new().timeout(5);\n    assert_eq!(r.url, 0);\n}\n",
     )?;
     let check = repo.check_text()?;
+    // #12061: a `mut self` builder writes a moved copy, so the step sends the
+    // reader to the value the call returns, never to the binding it was
+    // called on.
+    assert!(
+        check.contains("by-value `self`")
+            && check.contains("on the value the call returns")
+            && !check.contains("the value you called it on")
+            && !check.contains("match the wrapper"),
+        "check must send a by-value builder to the call's result:\n{check}"
+    );
+    Ok(())
+}
+
+/// The borrowed-receiver twin: a `&mut self` setter is written in place, so
+/// the step names the value it was called on.
+#[test]
+fn setter_field_write_names_the_value_it_was_called_on() -> Result<(), String> {
+    let repo = Repo::create(
+        COUNTER_OLD,
+        COUNTER_NEW,
+        "use fw::Counter;\n\n#[test]\nfn bumps() {\n    let mut c = Counter::default();\n    c.bump();\n}\n",
+    )?;
+    let check = repo.check_text()?;
     assert!(
         check.contains("sets a field of `self` inside a method")
             && check.contains("the value you called it on")
-            && !check.contains("match the wrapper"),
-        "check must name the field write, not a wrapper:\n{check}"
+            && !check.contains("on the value the call returns"),
+        "check must name the receiver for a borrowed setter:\n{check}"
     );
     Ok(())
 }

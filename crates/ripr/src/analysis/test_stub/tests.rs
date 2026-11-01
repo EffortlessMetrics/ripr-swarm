@@ -1266,8 +1266,33 @@ fn field_write_in_a_method_names_the_receiver_not_a_struct_literal() -> Result<(
         SeamKind::FieldConstruction,
         field("self.timeout = t * 2"),
     )?;
+    // #12061: `mut self` writes a moved copy, so the refusal is the by-value
+    // one; only a borrowed receiver keeps the in-place wording.
     assert_eq!(
         rust_test_stub(&write, None, BUILDER),
+        Err(TestStubRefusal::FieldWrittenByValue)
+    );
+    assert!(
+        TestStubRefusal::FieldWrittenByValue
+            .reason()
+            .contains("by-value `self`")
+    );
+    let borrowed_source = "pub struct Req { pub timeout: u32 }
+impl Req {
+    pub fn set_timeout(&mut self, t: u32) {
+        self.timeout = t * 2;
+    }
+}
+";
+    let borrowed = seam_at(
+        "src/lib.rs",
+        borrowed_source,
+        "self.timeout = t * 2",
+        SeamKind::FieldConstruction,
+        field("self.timeout = t * 2"),
+    )?;
+    assert_eq!(
+        rust_test_stub(&borrowed, None, borrowed_source),
         Err(TestStubRefusal::FieldWrittenInMethod)
     );
     assert!(

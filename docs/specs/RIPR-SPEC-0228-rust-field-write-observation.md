@@ -278,7 +278,14 @@ rejected alternative. Any can be reversed later without touching the rest.
    (`self`, `mut self`, a builder's `fn retries(mut self, n) -> Self`) writes a
    moved copy, and for a `Copy` type the test's binding keeps its old field,
    so no read of that binding confirms the write. Such a write stays unjudged;
-   ripr cannot yet confirm it through the value the call chain returns. Repository
+   ripr cannot yet confirm it through the value the call chain returns. `fixtures/rust_copy_builder_field_write`
+   pins this in the RIPR-SPEC-0108 honesty corpus. The guidance follows the receiver: for a borrowed
+   receiver the hover, the agent packet's `missing_oracle_shape` and the
+   hand-written step say to assert the field on the value the method was called
+   on; for a by-value receiver they say to assert it on the value the call
+   returns (the stub refusal is `field_written_by_value`, not
+   `field_written_in_method`); when the receiver mode is not recorded they name
+   neither value. Repository
    scope resolves no `self` methods, so a later `self.m()` call counts as a
    possible write and the write gets no seam. Only a field this file declares
    plain `pub` gets the seam: a private or `pub(crate)` field is observed

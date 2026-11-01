@@ -706,6 +706,11 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         // value to check is the receiver after the call, not a struct
         // literal. A by-value receiver cannot be confirmed yet (#11398
         // review), so the step says so instead of promising credit.
+        // #12061: a by-value receiver writes a moved copy, so the value to
+        // check is what the call returns.
+        _ if stub_refusal == TestStubRefusal::FieldWrittenByValue.reason() => {
+            "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value the call returns; a by-value method writes a moved copy, so a read of the binding you called it on sees nothing"
+        }
         _ if stub_refusal == TestStubRefusal::FieldWrittenInMethod.reason() => {
             "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value you called it on. If the method takes `self` by value (a builder), ripr cannot yet confirm that check, so it will still report this change as unclear"
         }
@@ -1979,6 +1984,19 @@ mod tests {
         assert!(
             written.contains("the value you called it on") && !written.contains("`Err`"),
             "{written}"
+        );
+        // #12061: a by-value receiver writes a moved copy, so the step reads
+        // the call's result and never promises the called-on binding.
+        let by_value = hand_written_test_step(
+            &finding,
+            TestStubRefusal::FieldWrittenByValue.reason(),
+            true,
+        );
+        assert!(
+            by_value.contains("on the value the call returns")
+                && by_value.contains("moved copy")
+                && !by_value.contains("the value you called it on"),
+            "{by_value}"
         );
 
         finding.probe.family = ProbeFamily::Predicate;
