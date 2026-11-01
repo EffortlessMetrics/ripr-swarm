@@ -218,18 +218,29 @@ fn invoke_artifacts(
     if let Some(name) = missing {
         fs::remove_file(root.0.join(name)).map_err(|e| e.to_string())?;
     }
-    Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .arg("windows-advisory-summary")
-        .arg("--run1")
-        .arg(root.0.join("run1.log"))
-        .arg("--run1-status")
-        .arg(root.0.join("run1.status"))
-        .arg("--run2")
-        .arg(root.0.join("run2.log"))
-        .arg("--run2-status")
-        .arg(root.0.join("run2.status"))
-        .output()
-        .map_err(|e| format!("launch summarizer: {e}"))
+    // On Windows a sibling test that rebuilds the binary can leave it briefly
+    // missing, which surfaces as NotFound at launch; retry only that case.
+    let mut attempt = 0;
+    loop {
+        let launched = Command::new(env!("CARGO_BIN_EXE_xtask"))
+            .arg("windows-advisory-summary")
+            .arg("--run1")
+            .arg(root.0.join("run1.log"))
+            .arg("--run1-status")
+            .arg(root.0.join("run1.status"))
+            .arg("--run2")
+            .arg(root.0.join("run2.log"))
+            .arg("--run2-status")
+            .arg(root.0.join("run2.status"))
+            .output();
+        match launched {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && attempt < 20 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            other => return other.map_err(|e| format!("launch summarizer: {e}")),
+        }
+    }
 }
 
 fn verify(

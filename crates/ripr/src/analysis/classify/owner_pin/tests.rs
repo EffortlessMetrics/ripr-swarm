@@ -66,6 +66,7 @@ fn module_shadow_exempts_only_the_owners_nearest_module() -> Result<(), String> 
     Ok(())
 }
 
+mod shared_macro_scan;
 mod shared_target_context;
 #[test]
 fn module_shadow_snapshot_shares_facts_and_complete_answers() -> Result<(), String> {
@@ -12995,6 +12996,301 @@ fn a_standard_crate_glob_does_not_rebind_the_standard_assertion_macros() -> Resu
     Ok(())
 }
 
+const REGISTRY: &str = "registry+https://github.com/rust-lang/crates.io-index";
+
+/// A `Cargo.lock` locking each `(name, version, source)`; an empty source is
+/// a workspace-local package, as Cargo writes it.
+fn lock_of(packages: &[(&str, &str, &str)]) -> String {
+    let mut lock = String::from("version = 4\n");
+    for (name, version, source) in packages {
+        lock.push_str(&format!(
+            "\n[[package]]\nname = \"{name}\"\nversion = \"{version}\"\n"
+        ));
+        if !source.is_empty() {
+            lock.push_str(&format!("source = \"{source}\"\n"));
+        }
+    }
+    lock
+}
+
+/// The refusal of the `weighs` assertion with `sibling` in the same crate,
+/// the manifest `dependencies` and, when given, a `Cargo.lock` beside it.
+fn prelude_refusal(
+    label: &str,
+    dependencies: &str,
+    lock: Option<&str>,
+    sibling: &str,
+) -> Result<Option<AssertionRefusal>, String> {
+    let manifest = format!(
+        "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\n{dependencies}"
+    );
+    let tests = "use demo::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    let mut files = vec![("Cargo.toml", manifest.as_str())];
+    if let Some(lock) = lock {
+        files.push(("Cargo.lock", lock));
+    }
+    let root = crate::analysis::facts::drop_in::temp_workspace(label, &files)?;
+    let mut index = index(&[
+        (LIB, WEIGHT_LIB),
+        ("src/prelude_user.rs", sibling),
+        (TESTS, tests),
+    ]);
+    index.drop_in_manifests = crate::analysis::facts::drop_in::DropInManifests::new(&root);
+    let test = index
+        .tests()
+        .iter()
+        .find(|test| test.file == Path::new(TESTS))
+        .ok_or("the fixture test must be indexed")?;
+    let assertion = test
+        .assertions
+        .iter()
+        .find(|assertion| assertion.text.starts_with("assert_eq!(weight(4)"))
+        .ok_or("the fixture assertion must be indexed")?;
+    Ok(OwnerPinSyntax::default().refusal(test, assertion, &index))
+}
+
+fn prelude_rebound(refusal: Option<AssertionRefusal>) -> bool {
+    matches!(
+        refusal,
+        Some(AssertionRefusal::Syntax(
+            AssertionContextRefusal::MacroBinding(_)
+        ))
+    )
+}
+
+/// RIPR-SPEC-0369 (audited versions only): the glob keeps assertion credit
+/// only when the lockfile locks the crate exactly once, from the registry, at
+/// an audited version. Every other lock state keeps the pre-#11703 refusal.
+#[test]
+fn verification_prelude_globs_credit_only_audited_locked_versions() -> Result<(), String> {
+    let audited = [
+        (
+            "creusot-std",
+            "0.14.0",
+            "creusot_std",
+            "creusot-std = \"0.14\"\n",
+            "use creusot_std::prelude::*;\n",
+        ),
+        (
+            "vstd",
+            "0.0.0-2026-10-25-0158",
+            "vstd",
+            "vstd = \"0.0.0-2026-10-25-0158\"\n",
+            "use vstd::prelude::*;\n",
+        ),
+        (
+            "prusti-contracts",
+            "0.3.3",
+            "prusti",
+            "prusti-contracts = \"0.3\"\n",
+            "use prusti_contracts::*;\n",
+        ),
+    ];
+    for (name, version, label, dependencies, glob) in audited {
+        let at = |label: &str, lock: Option<String>| {
+            prelude_refusal(
+                &format!("audit-{label}"),
+                dependencies,
+                lock.as_deref(),
+                glob,
+            )
+        };
+        let locked = |version: &str, source: &str| lock_of(&[(name, version, source)]);
+        // Audited version from the registry credits.
+        assert_eq!(
+            at(&format!("{label}-ok"), Some(locked(version, REGISTRY)))?,
+            None,
+            "{name}"
+        );
+        // Workspace member of the same name (no registry source) refuses.
+        assert!(
+            prelude_rebound(at(&format!("{label}-member"), Some(locked(version, "")))?),
+            "{name} member"
+        );
+        // Git source refuses.
+        assert!(
+            prelude_rebound(at(
+                &format!("{label}-git"),
+                Some(locked(version, "git+https://example.invalid/p#abc"))
+            )?),
+            "{name} git"
+        );
+        // Newer, older and unknown versions refuse.
+        for other in ["99.0.0", "0.0.1", "0.14.1-alpha"] {
+            assert!(
+                prelude_rebound(at(
+                    &format!("{label}-{other}"),
+                    Some(locked(other, REGISTRY))
+                )?),
+                "{name} {other}"
+            );
+        }
+        // No lockfile, and a lockfile that does not lock the crate, refuse.
+        assert!(
+            prelude_rebound(at(&format!("{label}-nolock"), None)?),
+            "{name} no lock"
+        );
+        assert!(
+            prelude_rebound(at(
+                &format!("{label}-unlocked"),
+                Some(lock_of(&[("other", "1.0.0", REGISTRY)]))
+            )?),
+            "{name} unlocked"
+        );
+        // Several locked versions of the crate refuse, even with the audited one present.
+        let both = lock_of(&[(name, version, REGISTRY), (name, "99.0.0", REGISTRY)]);
+        assert!(
+            prelude_rebound(at(&format!("{label}-multi"), Some(both))?),
+            "{name} multiple"
+        );
+    }
+    Ok(())
+}
+
+/// RIPR-SPEC-0369: the verification preludes of creusot-std, vstd and
+/// prusti-contracts export no assertion macro, so an exact glob of one, beside a
+/// plain registry dependency on it, keeps the standard assertion's meaning. The
+/// credit is only as strong as the ordinary assertion's; every substitution,
+/// shadow, sibling glob and non-allowlisted spelling keeps refusing.
+#[test]
+fn verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crates()
+-> Result<(), String> {
+    let lock = lock_of(&[
+        ("creusot-std", "0.14.0", REGISTRY),
+        ("vstd", "0.0.0-2026-10-25-0158", REGISTRY),
+        ("prusti-contracts", "0.3.3", REGISTRY),
+    ]);
+    let refusal_under = |label: &str, dependencies: &str, sibling: &str| {
+        prelude_refusal(label, dependencies, Some(&lock), sibling)
+    };
+    let rebound = prelude_rebound;
+    let creusot = "creusot-std = \"0.14\"\n";
+    let vstd = "vstd = \"0.0.0-2026-10-25-0158\"\n";
+    let prusti = "prusti-contracts = \"0.3\"\n";
+    // Fixture premise: a rebinding sibling does refuse this exact test.
+    assert!(rebound(refusal_under(
+        "owner-pin-prelude-premise",
+        prusti,
+        "macro_rules! assert_eq { ($($tokens:tt)*) => {} }\n"
+    )?));
+    // Credited: each exact glob beside its plain registry dependency.
+    for (label, dependencies, sibling) in [
+        (
+            "owner-pin-prelude-creusot",
+            creusot,
+            "use creusot_std::prelude::*;\n",
+        ),
+        ("owner-pin-prelude-vstd", vstd, "use vstd::prelude::*;\n"),
+        (
+            "owner-pin-prelude-prusti",
+            prusti,
+            "use prusti_contracts::*;\n",
+        ),
+        (
+            "owner-pin-prelude-nested",
+            creusot,
+            "use creusot_std::{prelude::*, ghost::Ghost};\n",
+        ),
+        (
+            "owner-pin-prelude-external",
+            vstd,
+            "use ::vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-workspace-dep",
+            "creusot-std = { version = \"0.14\", features = [\"std\"] }\n",
+            "use creusot_std::prelude::*;\n",
+        ),
+    ] {
+        assert_eq!(
+            refusal_under(label, dependencies, sibling)?,
+            None,
+            "{sibling}"
+        );
+    }
+    // Still refused: the dependency is not the plain registry package, or is
+    // not declared at all.
+    for (label, dependencies, sibling) in [
+        (
+            "owner-pin-prelude-path",
+            "creusot-std = { path = \"../creusot-std\" }\n",
+            "use creusot_std::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-package",
+            "vstd = { package = \"other\", version = \"1\" }\n",
+            "use vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-git",
+            "prusti-contracts = { git = \"https://example.invalid/p\" }\n",
+            "use prusti_contracts::*;\n",
+        ),
+        (
+            "owner-pin-prelude-undeclared",
+            "",
+            "use prusti_contracts::*;\n",
+        ),
+        (
+            "owner-pin-prelude-wrong-crate",
+            prusti,
+            "use vstd::prelude::*;\n",
+        ),
+    ] {
+        assert!(
+            rebound(refusal_under(label, dependencies, sibling)?),
+            "{sibling} under {dependencies}"
+        );
+    }
+    // Still refused: spellings outside the checked export lists, an older
+    // crate name, and a sibling that may rebind the macro.
+    for (label, dependencies, sibling) in [
+        ("owner-pin-prelude-root", creusot, "use creusot_std::*;\n"),
+        ("owner-pin-prelude-vstd-root", vstd, "use vstd::*;\n"),
+        (
+            "owner-pin-prelude-prusti-prelude",
+            prusti,
+            "use prusti_contracts::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-old-name",
+            "creusot-contracts = \"0.5\"\n",
+            "use creusot_contracts::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-macro",
+            prusti,
+            "use prusti_contracts::*;\nmacro_rules! assert_eq { ($($tokens:tt)*) => {} }\n",
+        ),
+        (
+            "owner-pin-prelude-sibling-glob",
+            prusti,
+            "use prusti_contracts::*;\nuse rayon::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-import",
+            prusti,
+            "use prusti_contracts::*;\nuse other::assert_eq;\n",
+        ),
+        (
+            "owner-pin-prelude-module",
+            vstd,
+            "mod vstd {}\nuse vstd::prelude::*;\n",
+        ),
+        (
+            "owner-pin-prelude-rename",
+            vstd,
+            "extern crate other as vstd;\nuse vstd::prelude::*;\n",
+        ),
+    ] {
+        assert!(
+            rebound(refusal_under(label, dependencies, sibling)?),
+            "{sibling} under {dependencies}"
+        );
+    }
+    Ok(())
+}
+
 /// #8797: a workspace macro-site scan reached from classification must run in
 /// line on a pool worker. A worker blocked in a nested `par_iter` steals
 /// sibling probes onto its own stack while it may hold a memo lock they need.
@@ -13043,11 +13339,14 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
         .num_threads(2)
         .build()
         .map_err(|e| e.to_string())?;
+    // The scan is shared per index (#11509), so the control and the primed
+    // run each get their own index to pay their own scan.
     let index = convergence_index();
-    let lookup_all = |syntax: &OwnerPinSyntax| {
+    let primed_index = convergence_index();
+    let lookup_all = |syntax: &OwnerPinSyntax, index: &RustIndex| {
         for name in assertion_context_macros() {
             for test_root in [None, Some(Path::new(TESTS))] {
-                let _ = syntax.workspace_macro_site(name, test_root, &index);
+                let _ = syntax.workspace_macro_site(name, test_root, index);
             }
         }
     };
@@ -13056,7 +13355,7 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     let unprimed = OwnerPinSyntax::default();
     let in_line = pool.install(|| {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        lookup_all(&unprimed);
+        lookup_all(&unprimed, &index);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     });
     assert_eq!(in_line, Some(false), "an unprimed worker scans in line");
@@ -13064,7 +13363,7 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     let primed = OwnerPinSyntax::default();
     let fanned_out = pool.install(|| {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        primed.prime_workspace_macro_scan(&index);
+        primed.prime_workspace_macro_scan(&primed_index);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     });
     assert_eq!(fanned_out, Some(true), "priming fans out over its pool");
@@ -13082,7 +13381,7 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     // After priming no worker scans again, and the guard did not leak.
     let after = pool.install(|| {
         LAST_SCAN_FAN_OUT.with(|last| last.set(None));
-        lookup_all(&primed);
+        lookup_all(&primed, &primed_index);
         LAST_SCAN_FAN_OUT.with(std::cell::Cell::get)
     });
     assert_eq!(after, None, "lookups after priming must not scan");
@@ -13094,8 +13393,8 @@ fn priming_fans_the_workspace_macro_scan_out_once_and_lookups_only_read_it() -> 
     for name in assertion_context_macros() {
         for test_root in [None, Some(Path::new(TESTS))] {
             assert_eq!(
-                primed.workspace_macro_site(name, test_root, &index),
-                unprimed.workspace_macro_site(name, test_root, &index),
+                primed.workspace_macro_site(name, test_root, &primed_index),
+                unprimed.workspace_macro_site(name, test_root, &primed_index),
                 "{name} {test_root:?}"
             );
         }

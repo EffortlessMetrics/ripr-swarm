@@ -1,5 +1,35 @@
 use std::path::{Component, Path, PathBuf};
 
+use crate::output::path::{host_paths_case_insensitive, path_identity_key_on};
+
+/// Equality key for matching a git-spelled [`ChangedFile`](super::ChangedFile)
+/// path against a walked or indexed workspace path (#8419).
+///
+/// Display and `ChangedFile.path` keep git's byte spelling (#7937). This key
+/// is membership only: on macOS it folds NFC/NFD through the shared owner
+/// [`path_identity_key_on`]; Linux and Windows keep byte-distinct names
+/// distinct.
+pub(crate) fn diff_path_identity_key(path: &Path) -> String {
+    path_identity_key_on(path, cfg!(windows), host_paths_case_insensitive())
+}
+
+/// [`diff_path_identity_key`] with host rules explicit so the macOS
+/// normalization fold is testable on every host (#8419).
+#[cfg(test)]
+pub(crate) fn diff_path_identity_key_with(
+    path: &Path,
+    backslash_is_separator: bool,
+    case_insensitive: bool,
+    normalization_insensitive: bool,
+) -> String {
+    crate::output::path::path_identity_key_with(
+        path,
+        backslash_is_separator,
+        case_insensitive,
+        normalization_insensitive,
+    )
+}
+
 /// Deepest accepted diff path, in components. Real repositories sit far below
 /// this; a crafted header with tens of thousands of `a/` components made
 /// ancestor walks and path comparisons quadratic in time and memory (hang or
@@ -675,6 +705,53 @@ pub(crate) fn is_ripr_artifact_path_under(path: &Path, roots: &[PathBuf]) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::path::path_identity_key_with;
+
+    #[test]
+    fn nfc_diff_path_matches_nfd_walk_path_only_when_normalization_insensitive() {
+        // #8419: Linux-runnable macOS rule. NFC git spelling vs NFD walk
+        // spelling of café.rs share an identity key only when the fold is on.
+        let nfc = Path::new("caf\u{e9}.rs");
+        let nfd = Path::new("cafe\u{301}.rs");
+        assert_eq!(
+            path_identity_key_with(nfc, false, true, true),
+            path_identity_key_with(nfd, false, true, true),
+            "NFC and NFD café.rs must match when normalization is injected"
+        );
+        assert_eq!(
+            diff_path_identity_key_with(nfc, false, true, true),
+            diff_path_identity_key_with(nfd, false, true, true)
+        );
+        assert_ne!(
+            path_identity_key_with(nfc, false, true, false),
+            path_identity_key_with(nfd, false, true, false),
+            "NFC and NFD café.rs must stay distinct when the fold is off"
+        );
+        assert_ne!(
+            diff_path_identity_key_with(nfc, false, true, false),
+            diff_path_identity_key_with(nfd, false, true, false)
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn host_diff_path_identity_key_keeps_nfc_and_nfd_distinct_off_macos() {
+        assert_ne!(
+            diff_path_identity_key(Path::new("caf\u{e9}.rs")),
+            diff_path_identity_key(Path::new("cafe\u{301}.rs")),
+            "Linux/Windows host keys must not fold NFC/NFD (#8419)"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn host_diff_path_identity_key_folds_nfc_and_nfd_on_macos() {
+        assert_eq!(
+            diff_path_identity_key(Path::new("caf\u{e9}.rs")),
+            diff_path_identity_key(Path::new("cafe\u{301}.rs")),
+            "macOS host keys fold NFC/NFD café.rs (#8419)"
+        );
+    }
 
     #[test]
     fn artifact_root_gitignore_entry_escapes_patterns_separately_from_paths() {

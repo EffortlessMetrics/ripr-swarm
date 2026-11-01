@@ -128,7 +128,7 @@ map is:
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr_list_gaps` success and refusal | `schema_version` | `ripr-mcp-gap-list-v4`; strict v1 readers migrate via `tools/list` (see [MCP gap filters](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
-| `ripr help --json` | `schema_version` | `3` |
+| `ripr help --json` | `schema_version` | `4` |
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stdout envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
@@ -141,8 +141,10 @@ with `result_too_large` instead of shipping a success without
 `structuredContent` (#7768; details in
 [MCP workspace status server](interop/mcp.md)). `content[0].text` is the
 compact JSON copy by default; `RIPR_MCP_TEXT_CONTENT=summary` opts a server
-process into a digest instead while `structuredContent` stays the one
-complete result (#9360).
+process into a digest instead (`brief` gives one line per gap) while
+`structuredContent` stays the one complete result (#9360, #11621). Argument
+errors on a known tool are `invalid_argument` tool failures (`isError: true`),
+not JSON-RPC errors (#11621).
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -823,6 +825,14 @@ next=COMMAND
   `--root` and the diff or base selectors, because a finding id does not
   resolve outside its run). It is absent when no gap is listed unless the
   shared canonical next action has an executable command.
+- `open=` replaces `stop=` when no gap is listed but a candidate-current
+  `weakly_exposed` or `reachable_unrevealed` finding is held only by the
+  reach-only `rust_transitive_reach_unresolved` limitation and still carries a
+  contributing related test with a `weak` or `smoke` oracle (#11825). It is not a
+  confirmed gap, so `gaps=` does not count it; the finding is listed in the gap
+  line shape (with `missing=-`), the weak test in its `tK` row, `limits=` still
+  counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
+  row, or any other limit kind, keeps `stop=`.
 - Terminal states are one explicit line: `done=` (no weak or unobserved gap is
   left to fix from the test side, or no changed behavior was found in scope) or
   `stop=` (every finding is base-side or unresolved, all are suppressed by
@@ -997,6 +1007,29 @@ count. `summary.changed_rust_files` stays Rust-adapter-only (#2103):
 preview-language files never inflate it, so it is `0` for a Python-only diff
 by design; read `changed_files_by_language` for other languages.
 
+`language_completeness` (additive, no `schema_version` bump, #11272) is the
+per-language projection of the shared completeness view that the editor, MCP
+and SARIF surfaces already read. It is emitted on every `check --json` run
+that built the view, as one compact member after the other optional members:
+
+```json
+"language_completeness": {"schema_version":"language_completeness.v1","mode":"diff","completeness":"complete","total_findings":0,"languages":[{"language":"rust","status":"complete_zero","findings":0,"limitations":[],"disclosure":"silent"}]}
+```
+
+- `mode` is `diff` or `repo`; `completeness` is the aggregate's `complete` or
+  `incomplete` (fail closed when no language evidenced anything).
+- `languages[].status` is the sealed child status: `complete`, `complete_zero`
+  (the adapter ran and found nothing), `partial`, `unavailable`, `invalid`,
+  `failed`, `unsupported`, `not_selected` or `no_current_scope`. An empty
+  `findings` array alone cannot tell `complete_zero` from `not_selected`; this
+  row can.
+- `languages[].disclosure` says where else the row is public: `silent`,
+  `language_run` (a non-success `language_runs` row), `typed_limitation` or
+  `advisory_only`.
+- The projection never strengthens a child. It reads the same rows the
+  `language_runs` compatibility projection is derived from, and it carries no
+  correctness, test-adequacy or mutation claim.
+
 `canonical_next_action` (additive, no `schema_version` bump, #7258) is the
 same DTO RepairCard and agent-status JSON already embed. Check JSON carries
 it only when the CLI render path has a declared diff provenance.
@@ -1040,6 +1073,17 @@ positions, so the churn is line-ending-only and probes treat the text as
 unchanged. It is the one limitation kind that may ride on a complete outcome
 (`complete_with_findings` / `complete_no_findings`); every other kind marks the
 outcome incomplete. Human output renders it without the incomplete-scope hedge.
+
+`verification_only_change` (RIPR-SPEC-0368, #10749) is the second change-shape
+disclosure that may ride on a complete outcome. Changed lines that are
+verifier-only text (contract attributes such as `#[requires]`/`#[ensures]`,
+Creusot `#[logic]` items, `proof_assert!`/`snapshot!`/`ghost!`/`pearlite!` and
+Prusti `prusti_assert!`/`body_invariant!`) seed no probe, so they never become
+a finding or an actionable repair start. One aggregate limitation at
+`probe_generation` (human output: "change point detection") reports the changed-line count, the file count and the files
+(bounded), with the recovery to re-run the verifier. A contract-only diff stays
+`no_behavioral_candidates` but no longer reports an empty `limitations` list.
+ripr does not evaluate contracts, proofs or ghost code.
 
 `unevaluated_condition` (#8714) discloses conditional assertion credit: a
 credited test assertion sits under a branch condition static analysis cannot
@@ -1538,7 +1582,26 @@ Envelope (`schema_version = "ripr-check-artifact-v1"`):
 
 ## Finding
 
-The `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display. For Rust expressions, formatting whitespace is collapsed outside literal contents, except that an actual line-comment terminator remains one LF; literal whitespace is part of the value. CRLF, trailing comment whitespace and following indentation normalize to that same boundary. Comment text otherwise remains part of the source identity. Older IDs that collapsed literal whitespace or a significant line-comment boundary become stale and must be reviewed rather than automatically retargeted (#8832). The existing fail-closed compatibility procedure applies: an unmatched selector remains unapplied with a visible warning; review the current finding before recording its current ID. An ambiguous old ID is never an alias for either new value. The fingerprint format and output schema are unchanged. When distinct expressions at one owner share an `<fp8>`, the `.<n>` suffix is assigned by a full-width digest of each payload, so the same pair gets the same two IDs in either diff order; repeated copies of one expression keep encounter-order suffixes (#8838). A single changed expression whose `<fp8>` equals that of a different earlier expression at the same owner (a 32-bit collision with no sibling in the run to disambiguate it) still keeps the shared ID; that remainder of #8838 is a known violation of the material-input identity requirement, not a waiver of it.
+For Rust, Python and TypeScript findings, the `id` field is content-addressed: `probe:<sanitized_path>:<family>:<fp8>[.<n>]` where `<fp8>` is the first 8 hex chars of SHA-256 over `path\0family\0owner\0expression\0`. This means a suppression tracks the code, not the line — the same expression moved to a new line keeps its id (suppression follows it), while changed code at a spot gets a new id (stale suppression invalidates). The `line` field in the `probe` object still gives locality for display. For Rust expressions, formatting whitespace is collapsed outside literal contents, except that an actual line-comment terminator remains one LF; literal whitespace is part of the value. CRLF, trailing comment whitespace and following indentation normalize to that same boundary. Comment text otherwise remains part of the source identity. Older IDs that collapsed literal whitespace or a significant line-comment boundary become stale and must be reviewed rather than automatically retargeted (#8832). The existing fail-closed compatibility procedure applies: an unmatched selector remains unapplied with a visible warning; review the current finding before recording its current ID. An ambiguous old ID is never an alias for either new value. The fingerprint format and output schema are unchanged. When distinct expressions at one owner share an `<fp8>`, the `.<n>` suffix is assigned by a full-width digest of each payload, so the same pair gets the same two IDs in either diff order; repeated copies of one expression keep encounter-order suffixes (#8838). A single changed expression whose `<fp8>` equals that of a different earlier expression at the same owner (a 32-bit collision with no sibling in the run to disambiguate it) still keeps the shared ID; that remainder of #8838 is a known violation of the material-input identity requirement, not a waiver of it.
+
+Perl packet findings use a separate native identity contract:
+`probe:perl:<sha256>[.<n>]` frames normalized file, a unique named owner's kind,
+package and name, behavior hint, opaque changed-text digest, and observable
+state/value. The named owner must have a known kind, nonblank package/name and
+a file reference matching the change. Preserving those facts across a line
+move preserves the base ID; the display line is not a hash input. Identical
+payload copies receive source-order ordinals, so changing the set or order of indistinguishable copies
+can reassign them. Missing/ambiguous owner facts, mismatched file references or
+blank digests use an explicitly location-bound `probe:perl-location:<sha256>`
+fallback. Full SHA-256 does not remove an upstream producer digest's
+collision/trust limits. The old Perl ID
+based on owner declaration line becomes stale: native suppressions still match
+exact finding IDs, and an unmatched old selector remains unapplied with a
+visible warning. Review each intended replacement; ambiguous selectors are
+never automatically aliased. Canonical Perl gap identity is unchanged. See
+[SPEC-0064](specs/RIPR-SPEC-0064-perl-fact-packet-contract.md#ripr-derived-identities).
+Unowned top-level Perl findings keep their existing line-based `perl-unowned`
+IDs and do not gain line-move stability.
 
 A finding contains:
 
@@ -1982,6 +2045,9 @@ The evidence-first fields are additive in schema `0.2`:
   `[]`, and `authority_boundary` stays `"preview_advisory_only"` (TypeScript
   remains preview). Only `incomplete_repair_packet` is eligible to flip; all
   other categories stay non-actionable. `schema_version` is unchanged.
+  `private_member_reach_unknown` names unmodeled reach through public callers
+  into a TypeScript private method. It infers neither a related test nor a
+  missing assertion; its preview card retains the reach investigation route.
   When flipped, the actionability fields are rewritten to read as actionable
   (RIPR-SPEC-0088 §PR8) so they do not contradict the complete packet:
   `repair_route` names the actual repair action (the suggested assertion shape
@@ -2278,7 +2344,7 @@ JSON fields:
       "risk_class": "mock interaction payload gap",
       "evidence_kind": "mock_interaction",
       "disposition": "candidate_future_support",
-      "gap_state": "advisory",
+      "gap_state": "unknown",
       "actionability_category": "incomplete_repair_packet",
       "repair_packet_ready": false,
       "must_remain_non_actionable": true,
@@ -3292,6 +3358,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `macro_reach_unresolved`
 - `gap_evidence_unresolved`
 - `helper_identity_unresolved`
+- `compile_time_invariant`
 - `transitive_reach_unresolved`
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
@@ -3657,6 +3724,18 @@ repo-scoped classified seam SARIF surface. Both use SARIF 2.1.0:
 ```
 
 Rule IDs are stable public integration strings.
+
+Finding SARIF fingerprint strings contain rule, finding ID, probe ID and raw
+normalized file, with the display line omitted. Both full and partial
+`riprFingerprintV1` fields agree. Supported native identities therefore follow
+pure line moves while physical locations update. Changes to the normalized
+file segment or rule ID remain distinct; this does not establish that every
+native filename has a unique normalized segment. Removing the line changes old
+finding fingerprints once, even at an unchanged location. Baseline policy compares opaque strings without aliases,
+so review and refresh old baselines rather than silently treating them as
+equivalent. Repo seam fingerprints retain their prior trailing line: their
+native IDs also include normalized byte offsets, so seam line moves are not
+stable. No universal collision freedom or live viewer migration is established.
 
 Finding and repo-seam runs declare `columnKind: "unicodeCodePoints"`, matching
 the producers' 1-based Unicode scalar-value columns. A non-BMP character counts
@@ -8947,7 +9026,7 @@ Field contract:
     "attempt_id": "<repair-attempt-id>",
     "attempt_state": "failed",
     "edit_cage_verdict": "violated",
-    "error": "repair attempt `<id>` is not receipt-ready: state `failed`, current true, verdict `violated`",
+    "error": "repair attempt `<id>` is not receipt-ready: state `failed`, current true, verdict `violated`; run `ripr agent status` to see why, then start a new attempt with `ripr agent repair`",
     "narration": ["<named cause>", "<recovery>"]
   }
   ```
@@ -13907,8 +13986,12 @@ stale reviews stay visible; they are not silently attributed to the new head.
 
 This attribution is advisory. It does not establish substantive or independent
 review, required approval counts, protection satisfaction, integration proof,
-or permission to merge. The retained current-head control preserves the
-existing advisory action; the command performs no PR mutation.
+or permission to merge. A CLEAN packet's `safe_next_action` is now
+`inspect final merge gates`, not `merge`; external consumers of schema `0.1`
+must handle the changed value. An empty rollup still leaves required-context
+completeness unknown. The action calls for final judgment and the normal
+server-enforced merge route when eligible, not settings discovery or an endless
+wait. The command performs no PR mutation.
 
 ## Report Packet Index
 
@@ -14180,6 +14263,12 @@ Report packet index field contract:
 
 Field contract:
 
+- `open_prs[].checks_rollup_available` is true only when GitHub returned an
+  array, including a valid empty array. A missing, null, or non-array rollup
+  is unknown, not evidence that no checks exist. `checks_summary` distinguishes
+  passed, neutral/skipped, pending, failed, and unknown entries. An unknown
+  rollup or check calls for inspection; this advisory packet does not establish
+  required-check completeness or authorize a merge.
 - `queue_disposition[].disposition` is advisory. It may be
   `merge_candidate`, `needs_integration_review`, `needs_review`, `close_duplicate`,
   `superseded`, `needs_fresh_validation`, `needs_owner_decision`, or
@@ -16651,6 +16740,24 @@ Field contract:
   reports the outer inventory total, and each entry names its own recovery
   control. Full recovery requires lifting every active cap. Uncapped output
   has no stale cap limitation.
+- Pilot packet bound (#11951) — the `ripr pilot` copy of this document
+  (`target/ripr/pilot/agent-seam-packets.json`) carries at most
+  `RIPR_PILOT_PACKET_BUDGET` packets (default 3; `0` writes all). The kept
+  packets are the first `write_targeted_test` packets followed by
+  `inspect_static_limitation` packets, each group in its existing order, and
+  every kept packet is the packet the uncut document carries for that seam. A
+  cut adds a `limitations[]` object `{category: "pilot_packet_bound_applied",
+  packets_emitted, packets_eligible, limit_source, control:
+  "RIPR_PILOT_PACKET_BUDGET", repair_route}`. When no seam cap and no
+  declined file already owns `run_status`, a cut sets it to
+  `"packet_bound_applied"`; otherwise `seam_limit_applied` or
+  `limited_declined_files` is kept and the bound is an additional
+  `limitations[]` entry. A bound at or above the eligible count changes
+  nothing, and the document is the unbounded one. `packets_total` stays the
+  rendered `packets` length; `packets_eligible` is the packet-eligible count.
+  The `next` block, packet eligibility, `task` and classification are
+  unchanged by the bound. `ripr check --format agent-seam-packets-json` is
+  not bounded.
 - `analysis_outcome_status` — the producer outcome projection state. It is
   `"complete"` or `"incomplete"` when a typed diff outcome is present,
   `"missing"` or `"invalid"` when a required producer artifact cannot be
@@ -16669,10 +16776,12 @@ Field contract:
 - `inputs.gap_ledger` - optional. Present with gap-ledger packet mode so
   reviewers and agents can trace the packet back to the artifact that owned
   projection eligibility.
-- `packets_total` — number of actionable packets emitted. Equals the
-  count of headline-eligible seams plus opaque seams (which emit
-  `inspect_static_limitation`). Strongly-gripped, intentional, and
-  suppressed seams produce no packet.
+- `packets_total` — number of packets in `packets[]` (the rendered array
+  length). Unbounded, that is the count of headline-eligible seams plus
+  opaque seams (which emit `inspect_static_limitation`); strongly-gripped,
+  intentional, and suppressed seams produce no packet. In a bounded pilot
+  document it is the number written, which is smaller than the eligible
+  count that `limitations[].packets_eligible` reports.
 - `packets[].task` — `"write_targeted_test"` for headline-eligible
   seams; `"inspect_static_limitation"` for opaque seams. Future
   versions may add tasks like `"strengthen_oracle"` or
@@ -19112,7 +19221,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.124",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.127",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -19897,7 +20006,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.124",
+      "schema_version": "1.127",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

@@ -1,6 +1,6 @@
 pub(super) const INIT_HELP: &str = r#"Write an optional repo policy file (ripr.toml) and, with --ci github, a non-blocking advisory workflow.
 
-Usage: ripr init [--root PATH] [--ci github] [--mcp] [--dry-run] [--force]
+Usage: ripr init [--root PATH] [--ci github] [--mcp] [--agents claude|codex|cursor|all] [--dry-run] [--force]
 
 `ripr init` is optional. It writes the built-in defaults to a repo-local
 ripr.toml so teams can commit, review, and tune policy. Missing ripr.toml is
@@ -18,14 +18,24 @@ Options:
                    ripr.toml and --force does not reset it. Codex config is
                    user-global and is never written: init prints the
                    `codex mcp add` command.
-  --dry-run        Show the plan and the file bodies without writing anything.
+  --agents TARGET  Also add a short ripr loop (find a gap, write a test, verify,
+                   explicit done and stop rules) for your coding agent: claude
+                   -> CLAUDE.md, codex -> AGENTS.md, cursor ->
+                   .cursor/rules/ripr.mdc, all -> all three. Repeatable. The
+                   text goes in a marked section appended to your file; your
+                   other content is never touched, a rerun changes nothing,
+                   and an edited section is kept unless --force refreshes it.
+                   A symlink, an unreadable file or an unterminated marker is
+                   refused. With cursor, --mcp also writes .cursor/mcp.json.
+                   Guide: docs/AGENT_QUICKSTART.md.
+  --dry-run       Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root
                    that is not a directory) instead of reporting success.
   --force          Replace what init would otherwise refuse or keep. Plain `ripr init --force`
-                   resets an existing ripr.toml. With --ci or --mcp, ripr.toml is
-                   always kept; --force then only replaces the generated workflow
-                   or the `ripr` entry in .mcp.json.
+                   resets an existing ripr.toml. With --ci, --mcp or --agents, ripr.toml is
+                   always kept; --force then only replaces the generated workflow,
+                   the `ripr` entry in .mcp.json, or the marked agent section.
 
 Generated config:
   - uses draft analysis mode and includes unchanged tests
@@ -91,6 +101,12 @@ Environment variables:
                                  the budget and write all seams (may produce very large files).
                                  When the budget is applied, both artifacts include a
                                  limitations[] disclosure naming the env var and a repair route.
+  RIPR_PILOT_PACKET_BUDGET      Maximum packets in the pilot packet file. Default: 3, with
+                                 actionable packets first, so the file stays small enough to
+                                 read. Set to 0 to write every packet (often 2-4 MB). When the
+                                 bound cuts, limitations[] reports packets_emitted and
+                                 packets_eligible. The `ripr check` packet format is unaffected
+                                 and writes the full set.
   RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum gaps analyzed and ranked in one pilot run.
                                  Default: the pilot seam budget (2000), so pilot does not
                                  classify seams it would not rank; `ripr check` keeps 10000.

@@ -41,6 +41,10 @@ pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
+/// A call argument the model can correct (unknown name, wrong type, out of
+/// range, bad enum token). Returned as an `isError: true` tool result
+/// instead of a JSON-RPC `-32602`, which many hosts flatten (#11621).
+pub(crate) const CODE_INVALID_ARGUMENT: &str = "invalid_argument";
 /// #8736 review follow-up: one raw resource-id segment can resolve both as
 /// captured (legacy raw URI for a literal-`%` file) and as its percent-
 /// decoded form (a URI-emitting client addressing the decoded file) when
@@ -1794,7 +1798,7 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
         "claim_boundary": "One bounded static analysis attempt over the workspace diff. The server never edits source, executes verification or mutation commands, or loads project-local provider configuration.",
         "limitations": [
             "an attempt runs to a terminal state; MCP cancellation of the request does not roll back a running attempt and never manufactures a snapshot",
-            "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits (#5254 item 2)",
+            "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits",
         ],
     });
     // Top-level currentness so an agent need not parse `scope`: `true` only
@@ -2893,6 +2897,37 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[test]
+    fn a_missing_stale_or_unknown_limitation_read_never_yields_a_limitation_document()
+    -> Result<(), String> {
+        // #11821: the limitation read is committed-facts only. Every state in
+        // which the item's limitation cannot be established answers with a
+        // typed failure (and its recovery), never with a limitation document a
+        // client could read as "no limitation, so a repair route".
+        expect_code(
+            WorkspaceSession::default().get_limitation("gap:any", None),
+            CODE_NO_SNAPSHOT,
+        )?;
+        expect_code(
+            WorkspaceSession {
+                in_flight: true,
+                ..Default::default()
+            }
+            .get_limitation("gap:any", None),
+            CODE_ANALYSIS_IN_FLIGHT,
+        )?;
+        let session = session_with_findings(1)?;
+        expect_code(
+            session.get_limitation("gap:any", Some("snapshot:sha256:old")),
+            CODE_STALE_SNAPSHOT,
+        )?;
+        expect_code(
+            session.get_limitation("gap:does-not-exist", None),
+            CODE_ITEM_NOT_FOUND,
+        )?;
+        Ok(())
     }
 
     /// A snapshot carrying `count` distinct canonical items, built from the
@@ -4546,6 +4581,19 @@ mod tests {
             return Err(format!("false never-committed claim remained: {text}"));
         }
         Ok(())
+    }
+
+    #[test]
+    fn refresh_limitations_contain_no_internal_issue_references() -> Result<(), String> {
+        use crate::mcp::agent_facing_text_tests::assert_agent_text_has_no_internal_issue_or_adr_references;
+        let session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let document = refresh_document(&session);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "refresh document lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        assert_agent_text_has_no_internal_issue_or_adr_references(&text)
     }
 
     #[test]

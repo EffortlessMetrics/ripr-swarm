@@ -29,9 +29,31 @@ mod hunk_kani;
 const DEFAULT_DIFF_FILE_LIMIT: usize = 10_000;
 const DIFF_FILE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_INDEX_FILES";
 
+/// Default language-neutral ceiling on the added plus removed source lines the
+/// parser retains as `ChangedLine` payloads (#2398). The file-count bound
+/// cannot stop one accepted file from accumulating unbounded payloads, and the
+/// per-language guards only run after the whole `ParsedDiff` exists. This is a
+/// parser memory bound well above the stricter per-adapter analysis-cost guards
+/// (`RIPR_MAX_DIFF_CHANGED_{RUST,PYTHON,TYPESCRIPT}_LINES`, 2,000 by default),
+/// which stay independently in force.
+pub(crate) const DEFAULT_DIFF_CHANGED_LINE_LIMIT: usize = 100_000;
+pub(crate) const DIFF_CHANGED_LINE_LIMIT_ENV: &str = "RIPR_MAX_DIFF_CHANGED_LINES";
+
+/// The effective changed-line ceiling. An invalid value (non-numeric, zero,
+/// non-UTF-8) is an error through the shared positive-limit policy, never an
+/// unbounded parse.
+pub(crate) fn diff_changed_line_limit_from_env() -> Result<usize, String> {
+    crate::analysis::language::positive_limit_from_env(
+        DIFF_CHANGED_LINE_LIMIT_ENV,
+        DEFAULT_DIFF_CHANGED_LINE_LIMIT,
+        crate::analysis::language::diff_limit_env(DIFF_CHANGED_LINE_LIMIT_ENV),
+    )
+}
+
 pub(crate) fn parse_unified_diff_bounded_with_metadata(input: &str) -> Result<ParsedDiff, String> {
     let limit = diff_file_limit_from_env();
-    parse_unified_diff_with_metadata_and_limit(input, limit)
+    let line_limit = diff_changed_line_limit_from_env()?;
+    stream::parse_bounded_lines_scoped(input.lines(), limit, line_limit, |_| true)
 }
 
 /// #9331: the bounded parse with the operator's scope applied at path
@@ -40,7 +62,12 @@ pub(crate) fn parse_unified_diff_bounded_scoped(
     input: &str,
     keep: impl Fn(&Path) -> bool,
 ) -> Result<ParsedDiff, String> {
-    stream::parse_bounded_lines_scoped(input.lines(), diff_file_limit_from_env(), keep)
+    stream::parse_bounded_lines_scoped(
+        input.lines(),
+        diff_file_limit_from_env(),
+        diff_changed_line_limit_from_env()?,
+        keep,
+    )
 }
 
 /// Parse with an explicit file-count limit. Exposed for testing (#2398).
@@ -52,6 +79,7 @@ pub(crate) fn parse_unified_diff_with_limit(
     Ok(parse_unified_diff_with_metadata_and_limit(input, limit)?.changed_files)
 }
 
+#[cfg(test)]
 fn parse_unified_diff_with_metadata_and_limit(
     input: &str,
     limit: usize,
@@ -213,6 +241,10 @@ mod parser_state {
 
     #[derive(Default)]
     pub(super) struct ParserState {
+        /// Ordinary added/removed `ChangedLine` payloads recorded so far
+        /// (#2398). Quarantined, context, scope-dropped and unregistered
+        /// lines never count.
+        changed_line_count: usize,
         current_path: Option<PathBuf>,
         old_line: usize,
         new_line: usize,
@@ -336,6 +368,11 @@ mod parser_state {
 
         pub(super) fn pure_rename_paths(&self) -> Vec<PathBuf> {
             self.pure_rename_paths.clone()
+        }
+
+        /// Ordinary changed-line payloads recorded so far (#2398).
+        pub(super) fn changed_line_count(&self) -> usize {
+            self.changed_line_count
         }
 
         /// Paths whose raw line-1 diff text carried a UTF-8 BOM (#4959).
@@ -992,6 +1029,7 @@ mod parser_state {
                     new_side_line: self.new_line,
                     text,
                 });
+                self.changed_line_count = self.changed_line_count.saturating_add(1);
                 self.new_line = next;
             } else if let Some(text) = raw.strip_prefix('-') {
                 let Some(next) = self.old_line.checked_add(1) else {
@@ -1017,6 +1055,7 @@ mod parser_state {
                     new_side_line: self.new_line.max(1),
                     text,
                 });
+                self.changed_line_count = self.changed_line_count.saturating_add(1);
                 self.old_line = next;
             } else if raw.starts_with(' ') || raw.is_empty() {
                 if let (Some(o), Some(n)) =
