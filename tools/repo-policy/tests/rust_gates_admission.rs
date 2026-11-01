@@ -51,6 +51,20 @@ fn admitted_subject_is_verified_before_any_proof_step() -> TestResult {
     assert!(checkout < verify && verify < first_gate);
     let step = &WORKFLOW[verify..first_gate];
     assert!(step.contains("id: admitted"));
+    assert!(step.contains("set -euo pipefail"));
+    for (var, input) in [
+        ("PROFILE", "proof-profile"),
+        ("SUBJECT_JSON", "subject-json"),
+        ("ADMITTED_HEAD", "head-sha"),
+        ("ADMITTED_BASE", "base-sha"),
+        ("ADMITTED_MERGE", "subject-sha"),
+        ("ADMITTED_TREE", "subject-tree"),
+        ("GENERATION", "workflow-generation"),
+        ("IDENTITY", "subject-identity"),
+    ] {
+        let line = format!("          {var}: ${{{{ inputs.{input} }}}}\n");
+        assert!(step.contains(&line), "{var} must map to inputs.{input}");
+    }
     // Partial qualification cannot ride the legacy profile.
     assert!(step.contains("Partial qualification cannot use legacy profile"));
     // Qualification binds subject JSON, digest, generation, commit, tree and parents.
