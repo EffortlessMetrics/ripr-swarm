@@ -691,7 +691,11 @@ identity_unnameable    budget_overflow     incomplete_inventory
 Before the first successful refresh the evidence tools fail with
 `no_snapshot` and the repair-attempt / receipt reads fail with
 `attempt_not_found`; `superseded` is reachable for a session transaction
-bound to a snapshot that is no longer current, while superseded tombstones
+bound to a snapshot that is no longer current (a transaction still held in
+memory carries `data.canonical_id`, `data.item_in_current_snapshot` and a
+`data.next` route: `prepare_again` through `ripr_prepare_repair` while the item
+is in the current snapshot, `item_no_longer_listed` through `ripr_list_gaps`
+otherwise), while superseded tombstones
 older than the 64-entry session bound read `attempt_not_found` instead
 (oldest-first eviction); `attempt_invalid` reports a
 durable manifest that fails canonical validation; `seam_not_found`,
