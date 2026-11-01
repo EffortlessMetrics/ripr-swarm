@@ -179,6 +179,45 @@ pub(crate) fn collect_assertions_in_statements_with_bindings(
     )
 }
 
+/// A registered test's expression-bodied arrow returns the whole expression.
+/// Keep that AST fact distinct from an expression statement in a block, whose
+/// promise is discarded. The existing callback reader still admits only its
+/// supported returned/awaited forms; this does not walk arbitrary expressions.
+pub(crate) fn collect_test_arrow_expression_assertions(
+    arrow: &ArrowFunctionExpression<'_>,
+    source: &SourceText<'_>,
+    receiver: Option<&str>,
+    bindings: &TypeScriptAssertionBindings,
+) -> Option<Vec<TypeScriptAssertion>> {
+    if !arrow.expression {
+        return None;
+    }
+    let [Statement::ExpressionStatement(statement)] = arrow.body.statements.as_slice() else {
+        return None;
+    };
+    // The statement path reads AVA `t.throws`/`t.throwsAsync` payloads only
+    // when the receiver is used solely as `t.method(...)`; a concise arrow is
+    // the same body, so it gets the same fact.
+    let text = statements_text(&arrow.body.statements, source);
+    let context = AssertionContext {
+        receiver,
+        bindings,
+        returns_to_runner: true,
+        literal_consts: &[],
+        match_object_consts: &[],
+        receiver_named_once: false,
+        receiver_only_called: receiver.is_some_and(|name| {
+            identifier_occurrences(text, name) == receiver_method_call_occurrences(text, name)
+        }),
+        returned_to_runner: true,
+        expression_body: true,
+        table_consts: &[],
+    };
+    let mut out = Vec::new();
+    collect_assertions_in_expression(&statement.expression, true, source, &context, &mut out);
+    Some(out)
+}
+
 /// Like [`collect_assertions_in_statements_with_bindings`] for a callback
 /// body; `returns_to_runner` is `false` when the callback's return value is
 /// discarded (a `forEach` callback), so a `return p.then(...)` inside it
@@ -473,6 +512,21 @@ fn assertion_from_expression_any(
         })
 }
 
+fn collect_assertions_in_expression(
+    expression: &Expression<'_>,
+    returned: bool,
+    source: &SourceText<'_>,
+    context: &AssertionContext<'_>,
+    out: &mut Vec<TypeScriptAssertion>,
+) {
+    if let Some(mut assertion) = assertion_from_expression_any(expression, source, context) {
+        attach_match_object_const(&mut assertion, expression, context);
+        out.push(assertion);
+    } else {
+        collect_nested_callback_assertions(expression, returned, source, context, out);
+    }
+}
+
 pub(crate) fn collect_expect_assertions_in_statement(
     stmt: &Statement<'_>,
     source: &SourceText<'_>,
@@ -492,20 +546,7 @@ pub(crate) fn collect_expect_assertions_in_statement(
             if !context.expression_body && is_floating_promise_assertion(&expr_stmt.expression) {
                 return;
             }
-            if let Some(mut assertion) =
-                assertion_from_expression_any(&expr_stmt.expression, source, context)
-            {
-                attach_match_object_const(&mut assertion, &expr_stmt.expression, context);
-                out.push(assertion);
-            } else {
-                collect_nested_callback_assertions(
-                    &expr_stmt.expression,
-                    false,
-                    source,
-                    context,
-                    out,
-                );
-            }
+            collect_assertions_in_expression(&expr_stmt.expression, false, source, context, out);
         }
         Statement::ReturnStatement(return_stmt) => {
             if let Some(argument) = &return_stmt.argument {
@@ -910,11 +951,55 @@ fn collect_nested_callback_assertions(
             {
                 return;
             }
-            if let Some(body) = callback_body_text(callback, text)
-                && receiver_identifiers(receiver)
-                    .any(|name| !scan_body_lexical_facts(body, name).declarations.is_empty())
+            if let Some(statements) = function_body_statements_from_argument(callback) {
+                // `var` escapes nested blocks to the callback's function
+                // scope. The lexical block intervals below cannot prove it
+                // independent. Reuse the AST hoist walk, which skips nested
+                // function bodies; block functions keep their existing rules.
+                let mut hoisted = Vec::new();
+                for statement in statements {
+                    super::tests_extract::collect_hoisted_names(
+                        statement,
+                        &mut hoisted,
+                        context.bindings.block_functions_are_lexical,
+                    );
+                }
+                if receiver_identifiers(receiver)
+                    .any(|name| hoisted.iter().any(|binding| binding == name))
+                {
+                    return;
+                }
+            }
+            // A named function expression binds its own name inside its body,
+            // so `.then(function total() { ... })` rebinds a receiver that
+            // calls `total` to the callback itself, not the owner.
+            if let Some(name) = callback_function_expression_name(callback)
+                && receiver_identifiers(receiver).any(|identifier| identifier == name)
             {
                 return;
+            }
+            if let Some(body) = callback_body_text(callback, text) {
+                // Substitution happens at parameter uses. A receiver binding
+                // in an independent nested block cannot capture those uses,
+                // nor a direct receiver reference outside that block.
+                let parameter_uses = first_plain_parameter(callback)
+                    .map(|name| scan_body_lexical_facts(body, name).uses)
+                    .unwrap_or_default();
+                if receiver_identifiers(receiver).any(|name| {
+                    let scan = scan_body_lexical_facts(body, name);
+                    scan.uses.iter().chain(&parameter_uses).any(|offset| {
+                        scan.declarations.iter().any(|declaration| {
+                            declaration_scope_binds(
+                                declaration
+                                    .scope
+                                    .and_then(|frame| scan.scopes.get(frame).copied()),
+                                *offset,
+                            )
+                        })
+                    })
+                }) {
+                    return;
+                }
             }
             if callback_parameter_count(callback) == Some(0) {
                 if let Some(statements) = function_body_statements_from_argument(callback) {
@@ -1195,6 +1280,18 @@ fn callback_is_generator(callback: &oxc_ast::ast::Argument<'_>) -> bool {
     )
 }
 
+/// The name a function-expression callback binds inside its own body.
+fn callback_function_expression_name<'a>(
+    callback: &'a oxc_ast::ast::Argument<'a>,
+) -> Option<&'a str> {
+    match callback {
+        oxc_ast::ast::Argument::FunctionExpression(function) => {
+            function.id.as_ref().map(|id| id.name.as_str())
+        }
+        _ => None,
+    }
+}
+
 /// The source text of an arrow or function callback's body.
 fn callback_body_text<'s>(callback: &oxc_ast::ast::Argument<'_>, text: &'s str) -> Option<&'s str> {
     let span = match callback {
@@ -1206,7 +1303,7 @@ fn callback_body_text<'s>(callback: &oxc_ast::ast::Argument<'_>, text: &'s str) 
 }
 
 /// The identifiers a `.then` receiver reads, so a body that re-declares one
-/// of them refuses the substitution.
+/// of them at a substitution or direct-reference site refuses the substitution.
 fn receiver_identifiers(receiver: &str) -> impl Iterator<Item = &str> {
     receiver
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
@@ -1393,6 +1490,34 @@ pub(crate) fn expect_assertion_from_expression(
         && has_dynamic_matcher_arg
         && matches!(matcher, "toBe" | "toEqual" | "toStrictEqual")
         && self_comparing_matcher_argument(outer_call, source, observed_expression.as_deref())
+    {
+        oracle_kind = OracleKind::RelationalCheck;
+        oracle_strength = OracleStrength::Weak;
+    }
+
+    // A top-level asymmetric matcher (`expect.any(String)`, `expect.anything()`,
+    // `expect.stringMatching(..)`, `expect.not.*`, `expect.objectContaining(..)`)
+    // matches a family of values, not the one the changed behavior produces, so
+    // the equality matcher that carries it is a partial check, not `exact_value`.
+    if !negated
+        && matches!(matcher, "toBe" | "toEqual" | "toStrictEqual")
+        && outer_call
+            .arguments
+            .first()
+            .is_some_and(is_top_level_asymmetric_matcher_argument)
+    {
+        oracle_kind = OracleKind::RelationalCheck;
+        oracle_strength = OracleStrength::Weak;
+    }
+    // An equality on a derived property of the changed value (`typeof f(x)`,
+    // `[f(x)].length`) observes the value's kind or a constant container size,
+    // which the changed behavior need not move; it is not an exact value check.
+    if !negated
+        && matches!(matcher, "toBe" | "toEqual" | "toStrictEqual")
+        && expect_call
+            .arguments
+            .first()
+            .is_some_and(is_derived_property_observation)
     {
         oracle_kind = OracleKind::RelationalCheck;
         oracle_strength = OracleStrength::Weak;
@@ -1713,6 +1838,10 @@ pub(crate) struct TypeScriptAssertionBindings {
     /// Custom matchers the file registers with `expect.extend` that pass
     /// only on strict equality (RIPR-SPEC-0262).
     strict_matchers: Vec<String>,
+    /// Whether the file is a module or a strict script, so a block-level
+    /// function declaration stays inside its block. A sloppy script (`.cjs`)
+    /// hoists it to the enclosing function scope (Annex B).
+    block_functions_are_lexical: bool,
 }
 
 /// What the identifier `expect` names in a test body (RIPR-SPEC-0243 rule 3).
@@ -1927,7 +2056,15 @@ impl TypeScriptAssertionBindings {
                 .collect(),
             ava_runner: self.ava_runner,
             strict_matchers: self.strict_matchers.clone(),
+            block_functions_are_lexical: self.block_functions_are_lexical,
         }
+    }
+
+    /// These bindings for a file whose block-function scoping is `lexical`
+    /// (a module or strict script) or hoisting (a sloppy script).
+    pub(crate) fn with_block_function_scope(mut self, lexical: bool) -> Self {
+        self.block_functions_are_lexical = lexical;
+        self
     }
 
     /// These bindings for a test registered through a callee whose root
@@ -2875,6 +3012,57 @@ fn bigint_zero_is_falsy(literal: &str) -> bool {
         (literal, 10)
     };
     u128::from_str_radix(digits, radix) != Ok(0)
+}
+
+/// True when the argument is a call rooted at the runner's `expect` namespace
+/// (`expect.any(..)`, `expect.not.stringContaining(..)`, ...): a Jest/Vitest
+/// asymmetric matcher. Parentheses and TS wrappers do not hide it.
+pub(crate) fn is_top_level_asymmetric_matcher_argument(arg: &Argument<'_>) -> bool {
+    let Some(expression) = arg.as_expression() else {
+        return false;
+    };
+    let mut current = expression.get_inner_expression();
+    let mut descended = false;
+    loop {
+        match current {
+            Expression::CallExpression(call) => {
+                descended = true;
+                current = call.callee.get_inner_expression();
+            }
+            Expression::StaticMemberExpression(member) => {
+                descended = true;
+                current = member.object.get_inner_expression();
+            }
+            Expression::Identifier(ident) => {
+                return descended && ident.name.as_str() == "expect";
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// `typeof <expr>` or `<array literal>.length`: the asserted value is the
+/// kind of the changed value or the size of a literal wrapper around it, not
+/// the value itself. A spread element makes the length data-dependent, so only
+/// a spread-free literal counts as constant.
+pub(crate) fn is_derived_property_observation(arg: &Argument<'_>) -> bool {
+    let Some(expression) = arg.as_expression() else {
+        return false;
+    };
+    match expression.get_inner_expression() {
+        Expression::UnaryExpression(unary) => unary.operator == oxc_ast::ast::UnaryOperator::Typeof,
+        Expression::StaticMemberExpression(member) => {
+            member.property.name.as_str() == "length"
+                && matches!(
+                    member.object.get_inner_expression(),
+                    Expression::ArrayExpression(array)
+                        if array.elements.iter().all(|element| {
+                            !matches!(element, oxc_ast::ast::ArrayExpressionElement::SpreadElement(_))
+                        })
+                )
+        }
+        _ => false,
+    }
 }
 
 /// RIPR-SPEC-0243 rule 9 (#8713): true when the matcher's single argument is

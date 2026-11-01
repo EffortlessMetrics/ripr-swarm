@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- The default `ripr check` screen says "spot list", "no spot to start a repair from" and "the missing check" in the non-Rust and no-spot "no repair start offered" lines, and the Python preview Next step reads "for the missing check `x`" instead of "for missing discriminator `x`" (#11619). `ripr repair`, `ripr agent` and JSON keep the shared terminal reason; the Python Next step string is shared by every surface.

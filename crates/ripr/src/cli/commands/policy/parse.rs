@@ -235,7 +235,7 @@ pub(crate) fn parse_policy_operations_options(
     }
 
     let policy_readiness = policy_readiness
-        .ok_or_else(|| "policy operations requires --policy-readiness <path>".to_string())?;
+        .ok_or_else(|| "policy operations requires --policy-readiness <path>; add `--policy-readiness <path>` to the command".to_string())?;
 
     Ok(PolicyOperationsOptions {
         root,
@@ -314,7 +314,10 @@ pub(crate) fn parse_policy_history_options(
         i += 1;
     }
 
-    let current = current.ok_or_else(|| "policy history requires --current <path>".to_string())?;
+    let current = current.ok_or_else(|| {
+        "policy history requires --current <path>; add `--current <path>` to the command"
+            .to_string()
+    })?;
     if let Some(jsonl) = out_jsonl.as_ref()
         && (crate::output::path::same_output_leaf(jsonl, &out)
             || crate::output::path::same_output_leaf(jsonl, &out_md)
@@ -385,8 +388,9 @@ pub(crate) fn parse_policy_promotion_options(
         i += 1;
     }
 
-    let target_mode =
-        target_mode.ok_or_else(|| "policy promote requires --to <mode>".to_string())?;
+    let target_mode = target_mode.ok_or_else(|| {
+        "policy promote requires --to <mode>; add `--to <mode>` to the command".to_string()
+    })?;
     if !output::policy_promotion::is_supported_target_mode(&target_mode) {
         return Err(unknown_value(
             "policy promotion target",
@@ -399,8 +403,10 @@ pub(crate) fn parse_policy_promotion_options(
             ],
         ));
     }
-    let operations =
-        operations.ok_or_else(|| "policy promote requires --operations <path>".to_string())?;
+    let operations = operations.ok_or_else(|| {
+        "policy promote requires --operations <path>; add `--operations <path>` to the command"
+            .to_string()
+    })?;
     let out = out.unwrap_or_else(|| {
         PathBuf::from(output::policy_promotion::default_policy_promotion_out(
             &target_mode,
@@ -492,7 +498,7 @@ pub(crate) fn parse_policy_preview_promotion_options(
     }
 
     let language = language
-        .ok_or_else(|| "policy preview-promote requires --language <language>".to_string())?;
+        .ok_or_else(|| "policy preview-promote requires --language <language>; add `--language <language>` to the command".to_string())?;
     if !output::policy_preview_promotion::is_supported_language(&language) {
         return Err(unknown_value(
             "preview promotion language",
@@ -500,8 +506,10 @@ pub(crate) fn parse_policy_preview_promotion_options(
             &["typescript", "python"],
         ));
     }
-    let candidate_class = candidate_class
-        .ok_or_else(|| "policy preview-promote requires --class <class>".to_string())?;
+    let candidate_class = candidate_class.ok_or_else(|| {
+        "policy preview-promote requires --class <class>; add `--class <class>` to the command"
+            .to_string()
+    })?;
     let out = out.unwrap_or_else(|| {
         PathBuf::from(
             output::policy_preview_promotion::default_preview_promotion_out(

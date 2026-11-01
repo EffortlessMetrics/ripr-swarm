@@ -1019,6 +1019,9 @@ fn ts_mask_lexically(
     // it is division (`i++ / 2`), never a regex start.
     let mut postfix_op = false;
     let mut op_after_operand = false;
+    // A `!` that directly follows an operand is a non-null assertion
+    // (`n! / 2`), so a `/` after it is division too (#7483).
+    let mut postfix_not = false;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
@@ -1058,6 +1061,7 @@ fn ts_mask_lexically(
                     }
                     '/' if regex_allowed
                         && !postfix_op
+                        && !postfix_not
                         && operand_expected(prev, &word, word_after_dot) =>
                     {
                         mode = Mode::Regex { in_class: false };
@@ -1087,6 +1091,12 @@ fn ts_mask_lexically(
                 if matches!(mode, Mode::LineComment | Mode::BlockComment) {
                     after_space = true;
                     continue;
+                }
+                if c == '!' {
+                    postfix_not = (postfix_not && prev == Some('!'))
+                        || !operand_expected(prev, &word, word_after_dot);
+                } else if !c.is_whitespace() {
+                    postfix_not = false;
                 }
                 if (c == '+' || c == '-') && !after_space && prev == Some(c) {
                     postfix_op = op_after_operand && !postfix_op;
@@ -1202,6 +1212,7 @@ fn ts_mask_lexically(
             dots = 0;
             postfix_op = false;
             op_after_operand = false;
+            postfix_not = false;
         }
     }
     out
@@ -3566,9 +3577,12 @@ fn ts_observed_local_owner_call_arguments(
         .strip_prefix("await ")
         .map(str::trim)
         .unwrap_or(initializer.trim());
-    // The initializer must be one owner call spanning the whole text.
+    // The initializer must be one owner call spanning the whole text. A call
+    // nested in its arguments (`price(price(6000, 0), 7)`, #7470) is allowed:
+    // the matches come back in text order and the span check below pins the
+    // first one as the outermost call, whose arguments the assertion observes.
     let argument_lists = owner_call_arguments(stripped, owner_name, owner_receivers);
-    if argument_lists.len() != 1 {
+    if argument_lists.is_empty() {
         return None;
     }
     let after_name = if let Some(rest) = stripped.strip_prefix(owner_name) {
@@ -7449,7 +7463,7 @@ pub(crate) fn classify_resolved_owner(
             StageState::Unknown,
             StageState::Unknown,
             vec![format!(
-                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); the discriminator is not established either way.",
+                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); whether a test checks the changed behavior is not established either way.",
                 owner.name
             )],
         )
@@ -9701,7 +9715,7 @@ fn module_entry_reach_summary(
     };
     if discriminator_unknown {
         return format!(
-            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so the discriminator is not established either way.",
+            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so whether a test checks the changed behavior is not established either way.",
             owner.name, entries
         );
     }

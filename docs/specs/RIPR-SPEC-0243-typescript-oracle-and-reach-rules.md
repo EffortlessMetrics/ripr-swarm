@@ -610,6 +610,26 @@ stays strong at extraction and the observation guard refuses it credit.
 Whitespace inside a string literal is significant, so
 `expect("ab").toBe("a b")` is not self-comparing.
 
+**Rule 9a. Partial-value equality is not exact (#11522).** A `toBe`,
+`toEqual` or `toStrictEqual` reads `relational_check` / weak, not
+`exact_value` / strong, when either (a) its matcher argument is a
+top-level asymmetric matcher, a call chain rooted at an identifier named
+`expect` (`expect.any(String)`, `expect.anything()`,
+`expect.stringMatching(/B/)`, `expect.objectContaining({ a: 1 })`), or
+(b) its asserted subject is a derived property of the value: any
+`typeof <expr>` or the `.length` of a spread-free array literal
+(`expect([f(100)]).toEqual([false])` stays strong). The matcher then
+accepts a family of values, or observes a kind or constant size the
+changed behavior need not move. Both checks are shape-only: they do not
+test whether the expression names the changed owner, so
+`expect(typeof owner(x)).toBe("boolean")` loses credit it could earn.
+That is the deliberate fail-closed direction. The asymmetric-matcher
+check does not restrict the namespace (`expect.soft` is also demoted); it
+relies on rule 3, under which a non-runner `expect` yields no assertion
+before this rule is reached. The demotion runs before the `.not` cap and
+the `rejects` exact-error override, so neither re-raises it. Owner:
+`expect_assertion_from_expression` in `typescript/oracle.rs`.
+
 ### Other assertion tables
 
 - Execution-context receiver (AVA, tape, node:test `t`): the table in

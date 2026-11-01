@@ -48,6 +48,14 @@ fn run_ripr(args: &[&str], trace: Option<&str>) -> Result<Run, String> {
     })
 }
 
+/// The progress reporter's elapsed-time heartbeat (`ripr progress: <phase>
+/// still active after <class>`) depends on how long a run takes, not on the
+/// trace switch. A slow run can emit it while a fast one does not, so the
+/// stderr comparison must not treat its presence as a difference (#12114).
+fn is_timing_heartbeat(line: &str) -> bool {
+    line.starts_with("ripr progress: ") && line.contains(" still active after ")
+}
+
 fn receipts(stderr: &str) -> Vec<&str> {
     stderr
         .lines()
@@ -149,9 +157,14 @@ fn tracing_off_leaves_stdout_and_stderr_byte_identical() -> Result<(), String> {
             !line.starts_with(RECEIPT_PREFIX)
                 && !line.starts_with(FAMILY_RECEIPT_PREFIX)
                 && !line.starts_with(phase_prefix)
+                && !is_timing_heartbeat(line)
         })
         .collect();
-    let untraced_other: Vec<&str> = untraced.stderr.lines().collect();
+    let untraced_other: Vec<&str> = untraced
+        .stderr
+        .lines()
+        .filter(|line| !is_timing_heartbeat(line))
+        .collect();
     if traced_other != untraced_other {
         return Err(format!(
             "stderr gained a line outside the trace family\nuntraced:\n{}\ntraced:\n{}",
@@ -352,4 +365,19 @@ fn assert_stdout_is_the_document(traced: &Run) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[test]
+fn the_heartbeat_filter_ignores_only_the_timing_heartbeat() {
+    assert!(is_timing_heartbeat(
+        "ripr progress: building_output still active after 2s"
+    ));
+    // An unrelated extra diagnostic must still be caught by the comparison.
+    assert!(!is_timing_heartbeat(
+        "ripr progress: building_output [repo]"
+    ));
+    assert!(!is_timing_heartbeat("ripr: unrelated diagnostic"));
+    assert!(!is_timing_heartbeat(
+        "warning: still active after 2s in some other family"
+    ));
 }

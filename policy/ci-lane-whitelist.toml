@@ -50,6 +50,10 @@ id = "pilot-ranking"
 paths = ["target/ripr/reports/pilot-ranking.json", "target/ripr/reports/pilot-ranking.md", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
 [[artifact_family]]
+id = "pilot-measure"
+paths = ["pilot-self/", "pilot-humantime/"]
+
+[[artifact_family]]
 id = "first-run-install"
 paths = ["target/ripr/first-run/first-run.json", "target/ripr/first-run/first-run-rows.jsonl", "target/ripr/first-run/first-run.md", "target/ripr/first-run/install_published.stderr.log", "target/ripr/reports/dx-scoreboard.json", "target/ripr/reports/dx-scoreboard.md"]
 
@@ -216,6 +220,16 @@ artifact_families = ["pilot-ranking"]
 description = "Pilot ranking answer key: nightly, on demand, and at draft-to-ready on pilot ranking or seam grading changes; fails only when pooled top-5 or top-10 precision, scored share or function diversity regresses past its margin against the committed baseline, or a pinned crate cannot be fetched."
 
 [[lane]]
+id = "pilot-measure"
+posture = "advisory"
+workflow = ".github/workflows/pilot-measure.yml"
+jobs = ["measure"]
+commands = ["cargo build --release --locked -p ripr", "target/release/ripr pilot --root \"$GITHUB_WORKSPACE\" --out \"$RUNNER_TEMP/pilot-self\" --quiet", "cargo xtask pilot-ranking fetch --allow-network --repo humantime --root \"$RUNNER_TEMP/pilot-ranking\"", "target/release/ripr check --root \"$RUNNER_TEMP/pilot-ranking/humantime\" --base \"$pin\" --committed --format agent"]
+estimated_lem = 15
+artifact_families = ["pilot-measure"]
+description = "On-demand hosted measurement of a current-main release ripr (#11951, #12058): reports pilot artifact byte sizes, exit code and run_status for this repository and the agent-format open=/stop= state on the pinned humantime fortnight gap commit; reports only, never asserts."
+
+[[lane]]
 id = "first-run-install"
 posture = "advisory"
 workflow = ".github/workflows/first-run-install.yml"
@@ -364,6 +378,16 @@ commands = ["cargo test -p ripr --test printed_command_paste"]
 estimated_lem = 18
 artifact_families = []
 description = "Advisory paste lane: runs every command ripr prints through bash, sh, zsh, PowerShell 7 and Windows PowerShell on Linux, macOS and Windows from a foreign directory against hostile root and file names, with argv recorders standing in for ripr and git. Nightly, on pull requests touching ripr source or the harness, and on dispatch. A shell the platform should provide but lacks fails the job."
+
+[[lane]]
+id = "kani"
+posture = "advisory"
+workflow = ".github/workflows/kani.yml"
+jobs = ["kani"]
+commands = ["cargo xtask kani"]
+estimated_lem = 25
+artifact_families = []
+description = "Advisory Kani bounded-model-checking lane (RIPR-SPEC-0371): runs cargo kani -p ripr over every #[kani::proof] harness and reports VERIFIED, FAILED or NOT-ESTABLISHED per harness. Nightly, on dispatch, and on merge-ready for pull requests touching ripr source. A missing tool, missing verdict, unreachable cover! or zero harnesses fails the job; a proof is bounded to its documented assumptions and is not a full-program or runtime-mutation claim."
 
 [[lane]]
 id = "future-clippy"

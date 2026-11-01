@@ -77,7 +77,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `not (x > 0)`
+  Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `not (x > 0)`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_else_arm_no_exposed_credit/input --diff <cwd>/fixtures/python_else_arm_no_exposed_credit/diff.patch --mode fast probe:src_sign.py:python_preview:6169374f
   ripr context --root <cwd>/fixtures/python_else_arm_no_exposed_credit/input --diff <cwd>/fixtures/python_else_arm_no_exposed_credit/diff.patch --mode fast --at probe:src_sign.py:python_preview:6169374f
