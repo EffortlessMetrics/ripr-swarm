@@ -26,7 +26,7 @@ Start here:
   Suggested test: test_century_index_smoke
   Test node: tests/test_memo.py::test_century_index_smoke
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_functools_memoization_not_indirection/input && python -m pytest tests/test_memo.py::test_century_index_smoke) (high)
-  Next step — Python preview: strengthen the existing related test with an exact return-value assertion for missing discriminator `return value == <expected value>`
+  Next step — Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `return value == <expected value>`
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -45,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_functools_memoization_not_indirection/input --diff <cwd>/fixtures/python_functools_memoization_not_indirection/diff.patch --mode fast probe:src_memo.py:python_preview:7684d8ca
   ripr context --root <cwd>/fixtures/python_functools_memoization_not_indirection/input --diff <cwd>/fixtures/python_functools_memoization_not_indirection/diff.patch --mode fast --at probe:src_memo.py:python_preview:7684d8ca
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/memo.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/memo.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).

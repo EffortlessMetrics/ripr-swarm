@@ -197,7 +197,7 @@ impl RepairRouteRefusal {
             ),
             Self::NoSeamInventory { language, file } => format!(
                 "no repair start offered: {}",
-                super::task_first::no_seam_inventory_reason(language, file)
+                super::task_first::no_seam_inventory_reason_plain(language, file)
             ),
             Self::ConfigUnreadable => "no repair start offered: the root's config could not be \
                  read; fix the ripr.toml error at the root, then rerun `ripr check`"
@@ -213,8 +213,8 @@ impl RepairRouteRefusal {
                 )
             }
             Self::NoBindingSeam { seams_in_file: 0 } => {
-                "no repair start offered: ripr found no seam in this \
-                 finding's file to bind it to, so there is no seam to start a repair from; \
+                "no repair start offered: ripr found no spot in this \
+                 finding's file to bind it to, so there is no spot to start a repair from; \
                  follow the Next step above"
                     .to_string()
             }
@@ -956,8 +956,8 @@ mod tests {
         let unbound = RepairRouteRefusal::NoBindingSeam { seams_in_file: 0 }.advisory(gate);
         assert_eq!(
             unbound,
-            "no repair start offered: ripr found no seam in this finding's file to bind it \
-             to, so there is no seam to start a repair from; follow the Next step above"
+            "no repair start offered: ripr found no spot in this finding's file to bind it \
+             to, so there is no spot to start a repair from; follow the Next step above"
         );
         assert!(
             !unbound.contains("ripr repair") && !unbound.contains("full gate's answer"),
@@ -1028,6 +1028,10 @@ mod tests {
                 && terminal.contains("covers Rust files only")
                 && terminal.contains("Python finding in `pricing/core.py`")
                 && terminal.contains("manual route")
+                && terminal.contains("no spot to start a repair from")
+                && terminal.contains("add the missing check to that test")
+                && !terminal.contains("seam")
+                && !terminal.contains("discriminator")
                 && !terminal.contains("ripr repair probe:one"),
             "terminal reason must name language, file and manual route: {terminal}"
         );
