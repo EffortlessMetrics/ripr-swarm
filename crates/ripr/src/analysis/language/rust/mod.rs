@@ -1555,6 +1555,8 @@ fn apply_rust_no_static_path_limit(
         property_macro_mentions,
     ) {
         replace_witnessed_no_path_infection_summary(finding);
+        // #11544: unresolved macro reach is not a ruled-out path.
+        classifier::withhold_property_macro_no_path_as_unknown(finding);
     } else if let Some(witness) = transitive_reach.deep_transitive_witness(&owner_name) {
         // Last: a chain past five hops never displaces a shallower or more
         // specific witness (#8047).

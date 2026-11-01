@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/property_macro_lexical_fallback/input
 
-Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 1 no test path. 1 found, 0 suppressed by your settings
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 1 unclear. 1 found, 0 suppressed by your settings
 
 Analysis outcome: limitations below (analysis incomplete)
   The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
@@ -12,12 +12,12 @@ Start here:
   State: ripr cannot tell from reading the code whether tests would notice this
   Safe next action: look at the reason below before adding a test
   File: ./src/lib.rs:2
-  Static exposure: no path (severity: warning, confidence 0.48)
-  Why no path: no static path from a related test to this change was found
+  Static exposure: unknown (severity: note, confidence 0.35)
+  Why unknown: the analysis could not determine a static exposure state
   Changed behavior: amount >= discount_threshold
-  Missing check (1 of 2): No detected boundary input for the changed predicate
+  Analyzer limit: property-macro reach abstains: ripr does not expand the macro or collect its tests
   Next step: Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test
-  Evidence: reach unknown · infection unknown · propagation unknown · observation no · discriminator no
+  Evidence: reach unknown · infection unknown · propagation unknown · observation unknown · discriminator unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
       discriminator = assertion distinguishes intended from wrong behavior
@@ -44,8 +44,8 @@ More:
   Machine data: rerun with --format json
 
 
-Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
-  analyzed: 1 changed Rust file(s), 1 changed expression(s), and 0 statically linked related
-  test(s). This is not a coverage assessment. A test may already exercise these changes through
-  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
-  none does, add co-located tests that observe the changed behavior.
+Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed Rust file(s), 1 changed expression(s), and
+  0 statically linked related test(s). This is not a coverage assessment. A test may already
+  exercise these changes through macros, helper-call chains, or integration tests that ripr's static
+  model does not yet trace; if none does, add co-located tests that observe the changed behavior.

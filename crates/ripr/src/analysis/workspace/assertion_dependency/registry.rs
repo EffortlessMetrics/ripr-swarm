@@ -207,6 +207,100 @@ fn proptest_configuration_allowed(root: &Path) -> bool {
 }
 
 impl RegistryIdentity {
+    /// The empty-String profile depends on the consumer's standard crate
+    /// names as well as the provider identity: provider macro expansions use
+    /// `extern crate alloc` and `::core`. Reuse the resolved consumer metadata;
+    /// a canonical proptest edge cannot authorize a substituted standard root.
+    pub(crate) fn proptest_standard_crates_unshadowed(&self, root: &Path, file: &Path) -> bool {
+        let Ok(file) = root.join(file).canonicalize() else {
+            return false;
+        };
+        let Some(packages) = self
+            .metadata
+            .get("packages")
+            .and_then(serde_json::Value::as_array)
+        else {
+            return false;
+        };
+        let owners = packages
+            .iter()
+            .filter(|package| {
+                package
+                    .get("targets")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|targets| {
+                        targets.iter().any(|target| {
+                            target
+                                .get("src_path")
+                                .and_then(serde_json::Value::as_str)
+                                .and_then(|path| Path::new(path).canonicalize().ok())
+                                .as_ref()
+                                == Some(&file)
+                        })
+                    })
+            })
+            .collect::<Vec<_>>();
+        let [owner] = owners.as_slice() else {
+            return false;
+        };
+        let ordinary_name = |name: &serde_json::Value| {
+            name.as_str().is_some_and(|name| {
+                !matches!(name.replace('-', "_").as_str(), "std" | "core" | "alloc")
+            })
+        };
+        // Declarations catch renamed, optional and inactive dependencies;
+        // resolved edge names additionally catch a dependency's [lib] name.
+        if !owner
+            .get("dependencies")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|dependencies| {
+                dependencies.iter().all(|dependency| {
+                    dependency
+                        .get("rename")
+                        .filter(|rename| !rename.is_null())
+                        .or_else(|| dependency.get("name"))
+                        .is_some_and(ordinary_name)
+                })
+            })
+            || !owner
+                .get("targets")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|targets| {
+                    // An integration test also receives its own package's library as
+                    // an extern crate, even though it is absent from resolve.deps.
+                    targets
+                        .iter()
+                        .all(|target| target.get("name").is_some_and(ordinary_name))
+                })
+        {
+            return false;
+        }
+        let Some(owner_id) = owner.get("id").and_then(serde_json::Value::as_str) else {
+            return false;
+        };
+        let Some(nodes) = self
+            .metadata
+            .pointer("/resolve/nodes")
+            .and_then(serde_json::Value::as_array)
+        else {
+            return false;
+        };
+        let nodes = nodes
+            .iter()
+            .filter(|node| node.get("id").and_then(serde_json::Value::as_str) == Some(owner_id))
+            .collect::<Vec<_>>();
+        let [node] = nodes.as_slice() else {
+            return false;
+        };
+        node.get("deps")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|edges| {
+                edges
+                    .iter()
+                    .all(|edge| edge.get("name").is_some_and(ordinary_name))
+            })
+    }
+
     /// This first property profile covers a real lib/test target root, not a
     /// file that merely looks like a test or a configured harness subject.
     pub(crate) fn admits_proptest_target(&self, root: &Path, file: &Path) -> bool {
