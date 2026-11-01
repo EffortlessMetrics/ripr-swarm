@@ -1737,10 +1737,11 @@ fn document_position_byte_offset(
     let line = text.get(line_start..line_end)?;
 
     let relative = if *encoding == PositionEncodingKind::UTF8 {
-        if target_units > line.len() || !line.is_char_boundary(target_units) {
+        let clamped = target_units.min(line.len());
+        if !line.is_char_boundary(clamped) {
             return None;
         }
-        target_units
+        clamped
     } else if *encoding == PositionEncodingKind::UTF32 {
         encoded_units_to_byte_offset(line, target_units, |character| {
             let _ = character;
@@ -1772,7 +1773,8 @@ fn encoded_units_to_byte_offset(
             return None;
         }
     }
-    (units == target_units).then_some(line.len())
+    // LSP 3.17: a character offset past the line end is treated as the line end.
+    (target_units >= units).then_some(line.len())
 }
 
 /// Bounds on one `didChange` notification (#11508).
@@ -2773,25 +2775,8 @@ mod tests {
         assert_eq!(edit("ab\rcd", 1, 1)?, "ab\rcXd");
         assert_eq!(edit("ab\r", 1, 0)?, "ab\rX");
         assert_eq!(edit("ab\r", 0, 2)?, "abX\r");
-        // A CR is not addressable as a character of its line.
-        let mut buffer = "ab\r".to_string();
-        let beyond = Position {
-            line: 0,
-            character: 3,
-        };
-        let refused = apply_document_content_changes(
-            &mut buffer,
-            vec![TextDocumentContentChangeEvent {
-                range: Some(tower_lsp_server::ls_types::Range {
-                    start: beyond,
-                    end: beyond,
-                }),
-                range_length: None,
-                text: "X".to_string(),
-            }],
-            &PositionEncodingKind::UTF16,
-        );
-        assert!(refused.is_err());
+        // An offset past the line end clamps to the line end (LSP 3.17).
+        assert_eq!(edit("ab\r", 0, 3)?, "abX\r");
         // Lines past the final terminator do not exist.
         assert_eq!(
             edit("ab\r", 2, 0),
@@ -4443,5 +4428,119 @@ mod tests {
             WorkspaceRootResolution::Unavailable("no folders".to_string()),
         );
         assert_eq!(unavailable.detail.as_deref(), Some("no folders"));
+    }
+
+    /// Overlong LSP character offsets clamp to the line end for every negotiated
+    /// encoding (#7316). Mid-character and absent-line positions stay refused.
+    #[test]
+    fn overlong_incremental_character_offsets_clamp_to_line_end() -> Result<(), String> {
+        let line = "abc";
+        let past_end = 99u32;
+
+        for encoding in [
+            PositionEncodingKind::UTF8,
+            PositionEncodingKind::UTF16,
+            PositionEncodingKind::UTF32,
+        ] {
+            let end_units = if encoding == PositionEncodingKind::UTF8 {
+                line.len() as u32
+            } else if encoding == PositionEncodingKind::UTF16 {
+                line.chars().map(|c| c.len_utf16()).sum::<usize>() as u32
+            } else {
+                line.chars().count() as u32
+            };
+
+            let apply_range = |start: u32, end: u32, insert: &str| -> Result<String, String> {
+                let mut buffer = line.to_string();
+                apply_document_content_changes(
+                    &mut buffer,
+                    vec![TextDocumentContentChangeEvent {
+                        range: Some(tower_lsp_server::ls_types::Range {
+                            start: Position {
+                                line: 0,
+                                character: start,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: end,
+                            },
+                        }),
+                        range_length: None,
+                        text: insert.to_string(),
+                    }],
+                    &encoding,
+                )
+                .map_err(|()| format!("refused for {encoding:?} range {start}..{end}"))?;
+                Ok(buffer)
+            };
+
+            // Overlong start only: insert at line end.
+            assert_eq!(
+                apply_range(past_end, end_units, "X")?,
+                "abcX",
+                "overlong start, {encoding:?}"
+            );
+            // Overlong end only: replace suffix from true start to clamped end.
+            assert_eq!(
+                apply_range(1, past_end, "X")?,
+                "aX",
+                "overlong end, {encoding:?}"
+            );
+            // Both overlong: zero-width insert at line end.
+            assert_eq!(
+                apply_range(past_end, past_end, "X")?,
+                "abcX",
+                "both overlong, {encoding:?}"
+            );
+        }
+
+        // Absent line is still refused.
+        let mut buffer = line.to_string();
+        let absent = apply_document_content_changes(
+            &mut buffer,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 9,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 9,
+                        character: 0,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(absent.is_err());
+        assert_eq!(buffer, line);
+
+        // Mid-surrogate (UTF-16 code unit inside emoji) is still refused.
+        let mut emoji = "a🎉b".to_string();
+        let original = emoji.clone();
+        let mid = apply_document_content_changes(
+            &mut emoji,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 0,
+                        character: 2,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 3,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(mid.is_err());
+        assert_eq!(emoji, original);
+
+        Ok(())
     }
 }
