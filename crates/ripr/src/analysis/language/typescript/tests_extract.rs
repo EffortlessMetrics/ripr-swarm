@@ -1215,14 +1215,17 @@ pub(crate) fn collect_tests_from_statements<'s, 'a>(
         // re-declares an imported assertion binding shadows it for every test
         // inside (#4638 review). `levels[0]` is the file's own top level,
         // where the import itself lives.
-        let assertion_bindings = scope.assertion_bindings.without_shadowed(|name| {
-            scope
-                .levels
-                .iter()
-                .skip(1)
-                .flatten()
-                .any(|(bound, _, _)| bound == name)
-        });
+        let assertion_bindings = scope
+            .assertion_bindings
+            .without_shadowed(|name| {
+                scope
+                    .levels
+                    .iter()
+                    .skip(1)
+                    .flatten()
+                    .any(|(bound, _, _)| bound == name)
+            })
+            .with_block_function_scope(scope.admission.block_functions_are_lexical);
         let resolved = registration_scope
             .get_or_insert_with(|| RegistrationScope::of(scope, unshadowed_undefined));
         if let Some(mut test) = test_from_statement(
@@ -3054,7 +3057,7 @@ pub(super) fn collect_registration_scope_names(
     }
 }
 
-fn collect_hoisted_names(
+pub(super) fn collect_hoisted_names(
     statement: &Statement<'_>,
     out: &mut Vec<String>,
     block_functions_are_lexical: bool,
@@ -3844,6 +3847,12 @@ fn test_name_and_assertions_from_registration(
     // row; any other table keeps the row-parameter assertions.
     if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
         && let Some(assertions) = table_row_assertions(call, callback, source, bindings)
+    {
+        return Some((name, assertions));
+    }
+    if let Argument::ArrowFunctionExpression(arrow) = callback
+        && let Some(assertions) =
+            collect_test_arrow_expression_assertions(arrow, source, receiver.as_deref(), bindings)
     {
         return Some((name, assertions));
     }
