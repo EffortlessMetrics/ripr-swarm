@@ -2247,6 +2247,9 @@ mod unreachable_assertion_tests;
 mod arm_activation_tests;
 
 #[cfg(test)]
+mod nested_result_tests;
+
+#[cfg(test)]
 mod guard_atoms_tests;
 
 #[cfg(test)]

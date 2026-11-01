@@ -20,8 +20,17 @@ use crate::domain::OwnerKind;
 /// different binding, so it keeps today's reading.
 pub(super) fn python_nested_result_gap(
     owner: &PythonOwner,
+    line_text: &str,
+    old_line_text: Option<&str>,
     related_candidates: &[PythonRelatedCandidate<'_>],
 ) -> Option<UnvariedTableOperand> {
+    // Discarding a call's result does not discard its side effects: a
+    // `return values.append(2)` changes what the enclosing function returns
+    // through `values`. Only a plain `return` expression with no call, walrus,
+    // `await` or `yield` is known to affect nothing but its own result.
+    if !is_effect_free_return(line_text) || !old_line_text.is_none_or(is_effect_free_return) {
+        return None;
+    }
     if !owner.nested_result_discarded
         || owner.owner_kind != Some(OwnerKind::Function)
         || owner.qualified_name == owner.name
@@ -46,6 +55,22 @@ pub(super) fn python_nested_result_gap(
             owner.qualified_name
         ),
     })
+}
+
+/// A `return <expr>` line whose expression reads values without calling,
+/// binding, suspending or yielding anything. Any `(` is treated as a possible
+/// call, so `return f"@{m}"` and `return m + 1` qualify and `return g(m)` does
+/// not.
+pub(super) fn is_effect_free_return(line: &str) -> bool {
+    let line = line.trim();
+    let Some(expr) = line.strip_prefix("return") else {
+        return false;
+    };
+    expr.starts_with([' ', '\t'])
+        && !expr.contains(['(', ':'])
+        && !expr
+            .split(|ch: char| !(ch == '_' || ch.is_alphanumeric()))
+            .any(|word| matches!(word, "await" | "yield" | "lambda"))
 }
 
 fn test_calls_name(test: &PythonTest, name: &str) -> bool {

@@ -16381,6 +16381,21 @@
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "no_static_path" }
       ]
+    },
+    {
+      "id": "python_nested_result_discarded",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_nested_result_discarded",
+      "vector": "nested_function_result_discarded_by_enclosing_body_cannot_credit_a_changed_nested_return",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "exact_value", "strength": "strong" }
+      ]
     }
   ]
 }

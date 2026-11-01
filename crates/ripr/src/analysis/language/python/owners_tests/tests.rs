@@ -310,7 +310,9 @@ fn nested_owner_records_when_the_enclosing_body_discards_the_result() -> Result<
             "def passed_on(n):\n    def a6(m):\n        return m\n    print(a6(n))\n    return 2\n\n",
             "def never_called(n):\n    def a7(m):\n        return m\n    return 2\n\n",
             "def returns_the_def(n):\n    def a8(m):\n        return m\n    a8(n)\n    return a8\n\n",
-            "def registers_the_def(n):\n    def a9(m):\n        return m\n    a9(n)\n    register(a9)\n    return 2\n",
+            "def registers_the_def(n):\n    def a9(m):\n        return m\n    a9(n)\n    register(a9)\n    return 2\n\n",
+            "def in_lambda(n):\n    def b1(m):\n        return m\n    b1(n)\n    f = lambda: b1(4)\n    return f() - 1\n\n",
+            "def in_sibling_def(n):\n    def b2(m):\n        return m\n    b2(n)\n    def helper():\n        return b2(4)\n    return helper() - 1\n",
         ),
     );
     let discarded = |qualified: &str| -> Result<bool, String> {
@@ -336,6 +338,11 @@ fn nested_owner_records_when_the_enclosing_body_discards_the_result() -> Result<
         ("never_called.a7", "no call at all"),
         ("returns_the_def.a8", "a returned def that a caller can run"),
         ("registers_the_def.a9", "a def handed to another call"),
+        ("in_lambda.b1", "a call inside a lambda that returns it"),
+        (
+            "in_sibling_def.b2",
+            "a call inside a sibling def that returns it",
+        ),
     ] {
         assert!(
             !discarded(qualified)?,

@@ -294,12 +294,45 @@ fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> Neste
     // any other way. A call whose value may be
     // returned, bound, passed or asserted leaves the result path open, so the
     // fact stays false and today's reading is kept.
-    let result_discarded =
-        called && references == 0 && calls == discarded_statement_calls(statements, name);
+    // A mention in a deferred region (a lambda, a sibling def, the nested body
+    // itself) is blanked above, so count every bounded occurrence in the raw
+    // text too: a deferred call may hand the result on.
+    let result_discarded = called
+        && references == 0
+        && calls == discarded_statement_calls(statements, name)
+        && calls == raw_name_uses(source, statements, name);
     NestedCallReading {
         called,
         result_discarded,
     }
+}
+
+/// Bounded occurrences of `name` anywhere in the enclosing statements' source,
+/// deferred regions included, other than the `def name` header itself.
+fn raw_name_uses(source: &str, statements: &[Stmt], name: &str) -> usize {
+    let ident = |ch: char| ch == '_' || ch.is_alphanumeric();
+    let mut uses = 0usize;
+    for stmt in statements {
+        let range = stmt.range();
+        let Some(text) = source.get(usize::from(range.start())..usize::from(range.end())) else {
+            // Unreadable region: report enough uses to keep the fact false.
+            return usize::MAX;
+        };
+        for (idx, _) in text.match_indices(name) {
+            let end = idx + name.len();
+            let before_ok = text[..idx].chars().next_back().is_none_or(|ch| !ident(ch));
+            let after_ok = text[end..].chars().next().is_none_or(|ch| !ident(ch));
+            if !(before_ok && after_ok) {
+                continue;
+            }
+            let head = text[..idx].trim_end_matches([' ', '\t']);
+            if head.ends_with("def") && !head[..head.len() - 3].ends_with(ident) {
+                continue;
+            }
+            uses += 1;
+        }
+    }
+    uses
 }
 
 /// What the enclosing body does with a nested def (#12141, #12182).

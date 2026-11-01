@@ -916,7 +916,14 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             // A nested function whose result the enclosing body discards is
             // reached by a call, not observed by a result (#12182).
             matches!(family, ProbeFamily::ReturnValue)
-                .then(|| super::nested_result::python_nested_result_gap(owner, &related_candidates))
+                .then(|| {
+                    super::nested_result::python_nested_result_gap(
+                        owner,
+                        line_text,
+                        old_line_text,
+                        &related_candidates,
+                    )
+                })
                 .flatten()
         })
     })

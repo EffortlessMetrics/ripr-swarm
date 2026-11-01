@@ -1358,8 +1358,12 @@ mutant calibrates the rule; ripr reports only the static shape.
     call the enclosing body makes is an expression statement of its own
     (`inner()` on a line by itself) and the name is never referenced any
     other way (`return inner`, `register(inner)` and `x = inner` let a caller
-    run it later), the nested function's result reaches
-    nothing the enclosing function returns, so a strong assertion on the
+    run it later) anywhere in the enclosing body, deferred lambda and
+    sibling-def bodies included, the nested function's result reaches
+    nothing the enclosing function returns. The downgrade also needs the
+    changed `return` line, and the line it replaced, to be free of calls,
+    `await`, `yield` and `lambda`, since a call in
+    the returned expression can have an effect a test observes. So a strong assertion on the
     enclosing function's result gives a changed `return` in the nested body no
     direct return-value credit: the finding is `weakly_exposed` with the
     missing discriminator "an assertion on a value computed from the result of

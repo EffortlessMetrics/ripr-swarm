@@ -1,0 +1,149 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_nested_result_discarded/input",
+  "config_path": "<cwd>/fixtures/python_nested_result_discarded/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:6865f76b1f82dc2a","base_revision":null,"input_identity":"sha256:7024a1619d9e8db9ee4a3c6a9054762f20a6f8f699abade33478d56b1a1dd4ef","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_tally.py:python_preview:24c935dc",
+      "canonical_gap_id": "gap:python:src/tally.py:tally.inner:return_value:return_value:m+2",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/tally.py:tally.inner:return_value:return_value:m+2",
+        "language": "python",
+        "file": "src/tally.py",
+        "owner": "tally.inner",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "m+2"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_tally.py:python_preview:24c935dc",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/tally.py",
+        "line": 3,
+        "expression": "        return m + 2",
+        "owner": "python:src/tally.py::tally.inner"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `inner`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed operand, but the enclosing function calls `inner` only as a statement of its own, so its result reaches nothing the test asserts."},
+        "propagate": {"state":"yes","confidence":"low","summary":"Changed Python return value is already at the owner output boundary."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `inner`", "infection weak: Related tests reach the changed operand, but the enclosing function calls `inner` only as a statement of its own, so its result reaches nothing the test asserts.", "propagation yes: Changed Python return value is already at the owner output boundary.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches returned value: return m + 2 (line 3)", "related test tests/test_tally.py:4 test_tally uses strong exact value oracle: assert tally() == 2", "missing discriminator an assertion on a value computed from the result of `tally.inner`: the enclosing function calls `inner` only as a statement of its own, so its result reaches nothing the test asserts"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return m + 2","line":3}
+      ],
+      "evidence": ["owner: tally.inner", "owner_kind: function", "missing_discriminator: an assertion on a value computed from the result of `tally.inner`", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_tally.py", "suggested_test_name: test_tally", "suggested_test_node_id: tests/test_tally.py::test_tally", "suggested_verify_command: python -m pytest tests/test_tally.py::test_tally", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_tally)", "test_verify_command: python -m pytest tests/test_tally.py::test_tally (test_tally)", "related_test_relation: syntactic_call (test_tally)", "test_oracle: exact_value strong (test_tally)"],
+      "missing": ["A strong Python oracle reaches `inner`, but the enclosing function calls `inner` only as a statement of its own, so its result reaches nothing the test asserts; static evidence cannot confirm the changed operand is discriminated. Assert on a value that depends on the result of `tally.inner`."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "an assertion on a value computed from the result of `tally.inner`",
+            "reason": "the enclosing function calls `inner` only as a statement of its own, so its result reaches nothing the test asserts",
+            "flow_sink": {"kind":"return_value","text":"return m + 2","line":3}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "an assertion on a value computed from the result of `tally.inner`",
+          "reason": "the enclosing function calls `inner` only as a statement of its own, so its result reaches nothing the test asserts",
+          "flow_sink": {"kind":"return_value","text":"return m + 2","line":3}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_tally",
+          "file": "tests/test_tally.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert tally() == 2"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_tally.py",
+        "suggested_test_name": "test_tally",
+        "suggested_test_node_id": "tests/test_tally.py::test_tally",
+        "verify_command": "python -m pytest tests/test_tally.py::test_tally",
+        "verify_command_confidence": "high"
+       },
+      "python_repair_card": {
+        "card_version": "python_repair_card.v1",
+        "source": "check_python_preview",
+        "canonical_gap_id": "gap:python:src/tally.py:tally.inner:return_value:return_value:m+2",
+        "language": "python",
+        "language_status": "preview",
+        "authority_boundary": "preview_advisory_only",
+        "repair_action": "strengthen_existing_test",
+        "changed_owner": "tally.inner",
+        "changed_behavior": "return_value changed at src/tally.py:3: `return m + 2`",
+        "current_test_evidence": "tests/test_tally.py:4 test_tally currently has oracle_strength=strong, oracle_kind=exact_value: assert tally() == 2",
+        "missing_discriminator": "an assertion on a value computed from the result of `tally.inner`",
+        "recommended_test_shape": "Strengthen the existing pytest exact return-value assertion for `an assertion on a value computed from the result of `tally.inner``.",
+        "suggested_assertion": "Assert the returned value equals the expected value for the changed inputs.",
+        "suggested_location": {
+          "test_file": "tests/test_tally.py",
+          "test_name": "test_tally",
+          "pytest_node_id": "tests/test_tally.py::test_tally"
+         },
+        "verify": {
+          "command": "python -m pytest tests/test_tally.py::test_tally",
+          "confidence": "high"
+         },
+        "receipt": {
+          "command": null,
+          "status": "unavailable_until_python_gap_ledger",
+          "guidance": "Save this `ripr check --format json` report, then run `ripr first-pr --check-output <check.json>` or `ripr reports gap-ledger --check-output <check.json>` to materialize a gap ledger with a concrete receipt command."
+         },
+        "stop_conditions": ["Stop if imports, fixtures, or test setup cannot call the changed owner.", "Stop if the expected value for the missing discriminator is ambiguous.", "Stop if adding the test appears to require a production-code edit."],
+        "limits": ["Syntax-first Python preview evidence only.", "No source edits, generated tests, mutation execution, provider calls, or gate authority.", "Verify success alone is not a gap-closure receipt."]
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `an assertion on a value computed from the result of `tally.inner``.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an exact return-value assertion for the missing check `an assertion on a value computed from the result of `tally.inner``.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "observed_sink": "assert tally() == 2",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/tally.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/tally.py","digest":"sha256:bc99a0849683d82e9defee46e8913c7416174f536baa83fa7af8901afdb2e862"},{"path":"tests/test_tally.py","digest":"sha256:a3aad1649d7c6f37c93df68476a3929d1301623d9002e9c14514a2bb0ef09a2d"}]}
+}
