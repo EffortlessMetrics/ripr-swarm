@@ -34,9 +34,10 @@ JSON/Markdown receipt. The machine-readable receipt records the exact swarm
 SHA, version, each target archive digest and resolved Rust/Cargo toolchain,
 plus the Cargo.lock, workflow, manifest, and `SHA256SUMS` digests for the
 source-repo handoff. Actions artifacts expire and are not public release
-assets. The prospective URLs in the rehearsal manifest name the swarm repo;
-the source release must generate its own manifest for its selected source
-commit and independently verify the promoted assets. Public release creation
+assets. The rehearsal manifest is schema 2 and placement-independent: it
+carries relative subject names and receipt digests, not URLs. The source
+release must generate its own manifest for its selected source commit and
+independently verify the promoted assets. Public release creation
 and asset upload belong only to `EffortlessMetrics/ripr`.
 
 ### Final native payload identity
@@ -106,9 +107,15 @@ SHA, builds the existing five-target server matrix, verifies the archive
 checksum, extracts the flat package, and checks both the archive label and the
 candidate-built binary's `--version` command, including that the requested
 qualification version matches the candidate package version and that the
-binary names the candidate commit. The manifest job verifies
-`SHA256SUMS` and emits a
-machine-readable and Markdown qualification receipt.
+binary names the candidate commit. Each build job also stages its
+per-archive `ripr-server-v<VERSION>-<target>.receipt.json` (schema `0.2`) beside
+the archive so the manifest job can validate it. The manifest job asserts the
+exact `dist` inventory (five archives, five `.sha256` sidecars, five target
+receipts, the manifest, the assembly receipt and `SHA256SUMS`), asserts the
+schema 2 manifest shape (`schema_version` `"2"`, `product_version`,
+placement-independent `subject` and receipt binding per target, no `version`
+or `url` fields), verifies `SHA256SUMS`, and emits a machine-readable and
+Markdown qualification receipt.
 
 Dispatch with the already selected candidate identity:
 
@@ -300,8 +307,9 @@ publish workflow: `publish-extension.yml` runs
 `cargo xtask release-bind-server-descriptor --version <V> --manifest <file>
 --manifest-sha256 <receipted digest>` before compiling, so the packaged
 extension embeds the digest of the manifest actually published (the command
-refuses bytes that do not match the digest, a wrong generation, non-https
-asset URLs and malformed archive digests). The committed descriptor stays
+refuses bytes that do not match the digest, a wrong generation, anything but
+a schema 2 manifest keyed by `product_version`, legacy `version` or `url`
+fields, non-relative or mismatched subjects and malformed archive digests). The committed descriptor stays
 empty on `main`; the digest is not derivable before the server run because
 archive digests depend on the commit that would contain the descriptor.
 A generation without an embedded descriptor has no fallback row: a
@@ -425,15 +433,17 @@ malformed inventory, upload failure, or verification failure stops the command.
 The command requires explicit release approval and is never part of a local
 validation recipe. Unit tests use a fake transport and make no GitHub requests.
 
-The workflow passes the tag through `RIPR_RELEASE_TAG` as argument data and
-builds the helper before supplying the publication token to the execution step.
+In the `EffortlessMetrics/ripr` source repository, its `release-server-binaries.yml`
+publication workflow (not present in swarm) passes the tag through
+`RIPR_RELEASE_TAG` as argument data and builds the helper before supplying the publication token to the execution step.
 Downloaded verification bytes remain in a uniquely named temporary directory.
 This transport does not admit the final release candidate, authorize a channel,
 or replace the publication-convergence work in #1489/#1646.
 
 ## Verifying release provenance
 
-`release-server-binaries.yml` attests the twelve public files (five archives,
+This section describes the `EffortlessMetrics/ripr` source repository only.
+Its `release-server-binaries.yml` attests the twelve public files (five archives,
 five `.sha256` sidecars, the manifest and `SHA256SUMS`) with GitHub build
 provenance in a job that has `id-token: write` and no release write, verifies
 each attestation, and only then runs the upload job. To check a downloaded file:

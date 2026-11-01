@@ -1064,6 +1064,11 @@ fn clear_fixture_cache(dir: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
+    // #3054: discard the fixture's cached facts before anything else, including
+    // the binary build. The clear is the runner's first owned effect, so a
+    // process blocked on Cargo's artifact lock has already cleared a stale
+    // cache and cannot later serve it to a binary built elsewhere.
+    clear_fixture_cache(&fixture_cache_dir(&fixture_name(path)?)?)?;
     let binary = ripr_fixture_binary()?;
     let mut workspace = fixture_workspace::FixtureWorkspace::create(path)?;
     let result = run_fixture_outputs_isolated(path, &binary, workspace.root());
@@ -1116,11 +1121,9 @@ fn run_fixture_outputs_isolated(
     let root = normalize_path(&input);
     let diff_file = normalize_path(&diff);
 
-    // #3054: clear before the first surface, then let all three share the warm
-    // entry. The clear must happen here, next to the runs it governs, so no
-    // command entry point can reach the fixture corpus without it.
+    // #3054: `run_fixture_outputs` cleared this cache before the binary build;
+    // all three surfaces now share the warm entry.
     let cache_dir = fixture_cache_dir(&name)?;
-    clear_fixture_cache(&cache_dir)?;
 
     let json = normalize_fixture_json_output(&run_fixture_check_with_context(
         binary,

@@ -35,6 +35,7 @@ const DEFAULT_HEAD: &str = "HEAD";
 const PR_EVIDENCE_JSON: &str = "target/ripr/pr/repo-exposure.json";
 const PR_EVIDENCE_MD: &str = "target/ripr/pr/repo-exposure.md";
 const PR_CHECK_JSON: &str = "target/ripr/pr/check.json";
+const PR_CHECK_SUBJECT_SCHEMA_VERSION: &str = "ripr.pr_check_subject.v1";
 const PR_CHECK_SUBJECT_JSON: &str = "target/ripr/pr/check.subject.json";
 const PR_REVIEW_INPUT_JSON: &str = "target/ripr/pr/review-input.json";
 const PR_DIFF: &str = "target/ripr/pr/pr.diff";
@@ -261,7 +262,7 @@ fn write_pr_evidence_packet(
         entries,
     };
     let mut subject = json!({
-        "schema_version": "ripr.pr_check_subject.v1",
+        "schema_version": PR_CHECK_SUBJECT_SCHEMA_VERSION,
         "root_identity": canonical_root_identity(&root),
         "base_sha": resolve_revision(repo, &options.base, "commit")?,
         "head_sha": resolve_revision(repo, &options.head, "commit")?,
@@ -506,7 +507,9 @@ fn validate_producer_artifacts(repo: &Path, options: &PrEvidenceOptions) -> Resu
         .map_err(|error| format!("{PR_CHECK_SUBJECT_JSON} is not valid JSON: {error}"))?;
     let review_input: ReviewInputV1 = serde_json::from_slice(&review_input_bytes)
         .map_err(|error| format!("{PR_REVIEW_INPUT_JSON} is not valid ReviewInputV1: {error}"))?;
-    if subject.get("schema_version").and_then(Value::as_str) != Some("ripr.pr_check_subject.v1") {
+    if subject.get("schema_version").and_then(Value::as_str)
+        != Some(PR_CHECK_SUBJECT_SCHEMA_VERSION)
+    {
         return Err(format!(
             "{PR_CHECK_SUBJECT_JSON} schema_version is unsupported"
         ));

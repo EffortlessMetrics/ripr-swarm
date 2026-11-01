@@ -1828,13 +1828,26 @@ mod tests {
                     "HEAD".into(),
                     "--version".into(),
                     "0.11.0".into(),
+                    // Handoff arguments satisfy the public grammar only; the
+                    // geometry-only producer never admits them.
+                    "--controller-root".into(),
+                    root.display().to_string(),
+                    "--candidate-manifest".into(),
+                    "unused.json".into(),
+                    "--selection-decision".into(),
+                    "unused".into(),
+                    "--qualification-bundle".into(),
+                    "unused.json".into(),
+                    "--qualification-decision".into(),
+                    "unused".into(),
                     "--out".into(),
                     out.display().to_string(),
                 ];
                 if let Some(tree) = reviewed {
                     args.extend(["--resolved-tree".into(), tree.to_string()]);
                 }
-                let emitted = super::super::source_promotion::source_promotion(&args);
+                let emitted =
+                    super::super::source_promotion::geometry_preflight_without_admission(&args);
                 let path = out.join("source-promotion-preflight.json");
                 if expected_mode == "reject" {
                     if emitted.is_ok() || path.exists() {
@@ -1843,6 +1856,18 @@ mod tests {
                     continue;
                 }
                 emitted?;
+                // The producer's geometry is stamped v2 but carries no native
+                // acceptance, so restamp it as the retained v1 geometry the
+                // geometry verifier admits; the live verifier must still refuse it.
+                let mut geometry: Value =
+                    serde_json::from_slice(&fs::read(&path).map_err(|error| error.to_string())?)
+                        .map_err(|error| error.to_string())?;
+                geometry["schema"] = Value::String(PREFLIGHT_SCHEMA.into());
+                fs::write(
+                    &path,
+                    serde_json::to_vec_pretty(&geometry).map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| error.to_string())?;
                 let bytes = fs::read(&path).map_err(|error| error.to_string())?;
                 let receipt: Value =
                     serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
@@ -1918,8 +1943,9 @@ mod tests {
                     "retained verifier lost resolved tree or ancestor-first parents".into(),
                 );
             }
-            // Geometry is not live native handoff authority. The actual producer
-            // still emits v1, and no fixture may promote it by editing its mode/schema.
+            // Geometry is not live native handoff authority. The geometry-only
+            // producer carries no native acceptance, and no fixture may promote it
+            // by editing its mode/schema.
             if !verify(&options).is_err_and(|error| error.contains("requires preflight v2")) {
                 return Err(
                     "historical producer geometry bypassed current native admission".into(),

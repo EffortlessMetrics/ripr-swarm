@@ -693,9 +693,9 @@ owner = "release"
 standalone_reason = "Exact-J graph/tree verifier and deterministic reviewed-resolution manifest contract for ripr#1493."
 
 [[artifact]]
-id = "RIPR-SPEC-0368"
+id = "RIPR-SPEC-0372"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0368-source-promotion-ci-contract.md"
+path = "docs/specs/RIPR-SPEC-0372-source-promotion-ci-contract.md"
 status = "proposed"
 owner = "release"
 standalone_reason = "Exact PR-head verification and permanent read-only source-promotion admission transport: exact provenance locators, normalized upload-before-enforcement receipts, terminal-red semantics, bounded constructor dry-run, zero publication authority, and manual post-merge trust split for ripr#1494/#1610."

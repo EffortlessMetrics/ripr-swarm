@@ -5619,6 +5619,47 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
             &dist.join("ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip.sha256"),
             "windows-sha\n",
         );
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+        for (target, executable, archive) in [
+            ("x86_64-pc-windows-msvc", "ripr.exe", "zip"),
+            ("x86_64-unknown-linux-gnu", "ripr", "tar.gz"),
+            ("aarch64-unknown-linux-gnu", "ripr", "tar.gz"),
+            ("x86_64-apple-darwin", "ripr", "tar.gz"),
+            ("aarch64-apple-darwin", "ripr", "tar.gz"),
+        ] {
+            write(
+                &root
+                    .join("target")
+                    .join(target)
+                    .join("release")
+                    .join(executable),
+                target,
+            );
+            let archive_args = vec![
+                "--version".to_string(),
+                "1.2.3".to_string(),
+                "--target".to_string(),
+                target.to_string(),
+                "--executable".to_string(),
+                executable.to_string(),
+                "--archive".to_string(),
+                archive.to_string(),
+            ];
+            release_server_archive_prebuilt(&archive_args)?;
+        }
+        let linux_sha =
+            super::sha256_file(&dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"))?;
+        let windows_sha =
+            super::sha256_file(&dist.join("ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip"))?;
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+            &format!("{linux_sha}\n"),
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip.sha256"),
+            &format!("{windows_sha}\n"),
+        );
         // Simulate a reused `dist/` from a pre-rename run: a stale legacy
         // `checksums.txt` must be cleaned up, never hashed into the new
         // sidecar, and never surfaced in the manifest.
@@ -5632,20 +5673,90 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
         ];
 
         super::release_server_manifest(&args)?;
+        super::release_server_manifest(&args)?;
 
         let manifest_path = dist.join("ripr-server-manifest-v1.2.3.json");
         let manifest_text = fs::read_to_string(&manifest_path)
             .map_err(|err| format!("read release manifest: {err}"))?;
         let manifest: Value = serde_json::from_str(&manifest_text)
             .map_err(|err| format!("parse release manifest: {err}"))?;
-        assert_eq!(manifest["version"], "1.2.3");
+        assert_eq!(manifest["product_version"], "1.2.3");
+        let assembly_receipt: Value = serde_json::from_str(
+            &fs::read_to_string(dist.join("ripr-server-assembly-v1.2.3.receipt.json"))
+                .map_err(|err| format!("read assembly receipt: {err}"))?,
+        )
+        .map_err(|err| format!("parse assembly receipt: {err}"))?;
+        assert_eq!(assembly_receipt["schema_version"], "0.2");
+        assert_eq!(assembly_receipt["version"], "1.2.3");
+        assert_eq!(assembly_receipt["disposition"], "assembled");
+        assert_eq!(assembly_receipt["publication_mutation_attempted"], false);
+        assert_eq!(assembly_receipt["placement_independent"], true);
+        assert_eq!(assembly_receipt["inputs"]["receipt_count"], 5);
+        assert_eq!(assembly_receipt["accepted_subject_count"], 5);
+        assert_eq!(manifest["schema_version"], "2");
+        assert_eq!(manifest["source_repository"], "EffortlessMetrics/ripr");
+        assert!(manifest["build_identity"]["repository"].is_string());
+        assert!(manifest["build_identity"]["candidate_sha"].is_string());
+        assert!(manifest["build_identity"]["candidate_tree"].is_string());
+        let generation = manifest["distribution_generation"]
+            .as_str()
+            .ok_or("manifest distribution_generation is not a string")?;
+        assert_eq!(generation.len(), 64);
+        assert!(
+            generation
+                .chars()
+                .all(|character| character.is_ascii_hexdigit()),
+            "distribution generation must be lowercase hex"
+        );
+        assert_eq!(assembly_receipt["distribution_generation"], generation);
+        let target_set = manifest["target_set"]["targets"]
+            .as_array()
+            .ok_or("manifest target_set.targets is not an array")?;
+        assert_eq!(target_set.len(), 5);
+        assert!(manifest["target_set"]["digest"].is_string());
+        assert_eq!(manifest["producer"]["schema"], "server-manifest/2");
+        // Placement independence: no absolute URL may enter manifest bytes.
+        assert!(
+            !manifest_text.contains("https://") && !manifest_text.contains("http://"),
+            "manifest bytes must not select a network origin"
+        );
         assert_eq!(
-            manifest["assets"]["x86_64-unknown-linux-gnu"]["url"],
-            "https://github.com/EffortlessMetrics/ripr/releases/download/v1.2.3/ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["receipt"]["schema_version"],
+            "0.2"
+        );
+        assert_eq!(
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["receipt"]["target"],
+            "x86_64-unknown-linux-gnu"
+        );
+        assert_eq!(
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["subject"],
+            "ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"
+        );
+        assert_eq!(
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["archive_format"],
+            "tar.gz"
+        );
+        assert!(manifest["assets"]["x86_64-unknown-linux-gnu"]["archive_size"].is_number());
+        assert_eq!(
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["sha256"],
+            linux_sha
+        );
+        assert_eq!(
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["executable"]["path"],
+            "ripr"
+        );
+        assert!(manifest["assets"]["x86_64-unknown-linux-gnu"]["executable"]["sha256"].is_string());
+        assert_eq!(
+            manifest["assets"]["x86_64-pc-windows-msvc"]["subject"],
+            "ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip"
+        );
+        assert_eq!(
+            manifest["assets"]["x86_64-pc-windows-msvc"]["archive_format"],
+            "zip"
         );
         assert_eq!(
             manifest["assets"]["x86_64-pc-windows-msvc"]["sha256"],
-            "windows-sha"
+            windows_sha
         );
 
         let checksums = fs::read_to_string(dist.join("SHA256SUMS"))
@@ -5653,7 +5764,23 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
         assert!(checksums.contains("  ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"));
         assert!(checksums.contains("  ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip"));
         assert!(checksums.contains("  ripr-server-manifest-v1.2.3.json"));
+        for line in checksums.lines() {
+            let (digest, _) = line
+                .split_once("  ")
+                .ok_or_else(|| format!("invalid SHA256SUMS line: {line}"))?;
+            assert_eq!(digest.len(), 64, "digest must be 64 hex characters: {line}");
+            assert!(
+                digest
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit()),
+                "digest must contain only hexadecimal characters: {line}"
+            );
+        }
         assert!(!checksums.contains(".sha256"));
+        assert!(
+            !checksums.contains(".receipt.json"),
+            "internal receipt evidence must not be published in SHA256SUMS"
+        );
         // Neither sidecar hashes itself or the stale legacy file.
         assert!(
             !checksums.contains("SHA256SUMS"),
@@ -5674,8 +5801,8 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
             .ok_or("manifest assets is not an object")?;
         assert_eq!(
             assets.len(),
-            2,
-            "only the two server targets are manifested"
+            5,
+            "all configured server targets are manifested"
         );
         assert!(!assets.contains_key("SHA256SUMS"));
         assert!(!assets.contains_key("checksums.txt"));
@@ -5684,44 +5811,61 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
 }
 
 #[test]
-fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result<(), String> {
+fn release_server_manifest_does_not_write_the_editor_distribution_descriptor() -> Result<(), String>
+{
+    // The placement-independent manifest carries product identity only, so it
+    // cannot supply the generation/URL rows the editor descriptor admits. The
+    // descriptor is bound exclusively by `release-bind-server-descriptor`
+    // against the receipted manifest digest; a manifest run must never write it.
     with_temp_cwd("release-server-descriptor", |root| {
         let dist = root.join("dist");
-        write(
-            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
-            "linux",
-        );
-        write(
-            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
-            "linux-sha\n",
-        );
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+        for target in super::release_server_target_set() {
+            let (executable, archive) = if target.contains("windows") {
+                ("ripr.exe", "zip")
+            } else {
+                ("ripr", "tar.gz")
+            };
+            write(
+                &root
+                    .join("target")
+                    .join(target)
+                    .join("release")
+                    .join(executable),
+                target,
+            );
+            release_server_archive_prebuilt(&[
+                "--version".to_string(),
+                "1.2.3".to_string(),
+                "--target".to_string(),
+                target.to_string(),
+                "--executable".to_string(),
+                executable.to_string(),
+                "--archive".to_string(),
+                archive.to_string(),
+            ])?;
+        }
 
-        let args = vec![
+        super::release_server_manifest(&[
             "--version".to_string(),
             "v1.2.3".to_string(),
             "--repository".to_string(),
             "EffortlessMetrics/ripr".to_string(),
-        ];
+        ])?;
 
-        super::release_server_manifest(&args)?;
-
+        assert!(
+            dist.join("ripr-server-manifest-v1.2.3.json").is_file(),
+            "the manifest run must have completed"
+        );
         let descriptor_path = root
             .join("editors")
             .join("vscode")
             .join("src")
             .join("serverDescriptor.ts");
-        let descriptor = fs::read_to_string(&descriptor_path)
-            .map_err(|err| format!("read editor distribution descriptor: {err}"))?;
-        let manifest_sha256 = super::sha256_file(&dist.join("ripr-server-manifest-v1.2.3.json"))?;
         assert!(
-            descriptor.contains(&format!(
-                "{{ generation: \"1.2.3\", manifestSha256: \"{manifest_sha256}\" }}"
-            )),
-            "the descriptor must embed the exact generation and the manifest's raw-byte digest"
-        );
-        assert!(
-            descriptor.contains("SERVER_DISTRIBUTION_DESCRIPTORS"),
-            "the descriptor must declare the editor's admitted-descriptor list"
+            !descriptor_path.exists(),
+            "release-server-manifest must not write the editor descriptor"
         );
         Ok(())
     })
@@ -5730,7 +5874,7 @@ fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result
 #[test]
 fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), String> {
     use sha2::{Digest, Sha256};
-    let manifest = br#"{"version":"1.2.3","assets":{"x86_64-unknown-linux-gnu":{"url":"https://github.com/o/r/releases/download/v1.2.3/a.tar.gz","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let manifest = br#"{"schema_version":"2","product_version":"1.2.3","assets":{"x86_64-unknown-linux-gnu":{"subject":"ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
     let digest = format!("{:x}", Sha256::digest(manifest));
     let source = super::bound_descriptor_source("1.2.3", manifest, &digest)?;
     assert!(source.contains(&format!(
@@ -5763,8 +5907,13 @@ fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), Strin
     }
     for body in [
         &b"not json"[..],
-        br#"{"version":"1.2.3","assets":{}}"#,
-        br#"{"version":"1.2.3","assets":{"t":{"url":"https://x/a","sha256":"zz"}}}"#,
+        br#"{"schema_version":"2","product_version":"1.2.3","assets":{}}"#,
+        br#"{"schema_version":"2","product_version":"1.2.3","assets":{"t":{"subject":"ripr-server-v1.2.3-t.zip","sha256":"zz"}}}"#,
+        // Legacy v1 shape and a v1/v2 mixture must not bind.
+        br#"{"version":"1.2.3","assets":{"t":{"url":"https://x/ripr-server-v1.2.3-t.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#,
+        br#"{"schema_version":"2","version":"1.2.3","product_version":"1.2.3","assets":{"t":{"subject":"ripr-server-v1.2.3-t.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#,
+        br#"{"schema_version":"1","product_version":"1.2.3","assets":{"t":{"subject":"ripr-server-v1.2.3-t.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#,
+        br#"{"schema_version":"2","product_version":"1.2.3","assets":{"t":{"subject":"ripr-server-v1.2.3-other.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#,
     ] {
         let body_digest = format!("{:x}", Sha256::digest(body));
         if super::bound_descriptor_source("1.2.3", body, &body_digest).is_ok() {
@@ -5775,68 +5924,67 @@ fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), Strin
         return Err("a malformed digest must be refused".to_string());
     };
     assert!(err.contains("64 lowercase hex"), "{err}");
-    let http = br#"{"version":"1.2.3","assets":{"t":{"url":"http://x/a","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
-    let http_digest = format!("{:x}", Sha256::digest(http));
-    let Err(err) = super::bound_descriptor_source("1.2.3", http, &http_digest) else {
-        return Err("a non-https asset url must be refused".to_string());
+    let with_url = br#"{"schema_version":"2","product_version":"1.2.3","assets":{"t":{"subject":"ripr-server-v1.2.3-t.zip","url":"https://x/a","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let url_digest = format!("{:x}", Sha256::digest(with_url));
+    let Err(err) = super::bound_descriptor_source("1.2.3", with_url, &url_digest) else {
+        return Err("a placement url in a schema 2 asset must be refused".to_string());
     };
-    assert!(err.contains("non-https"), "{err}");
+    assert!(err.contains("placement url"), "{err}");
+    let nested = br#"{"schema_version":"2","product_version":"1.2.3","assets":{"t":{"subject":"a/ripr-server-v1.2.3-t.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let nested_digest = format!("{:x}", Sha256::digest(nested));
+    let Err(err) = super::bound_descriptor_source("1.2.3", nested, &nested_digest) else {
+        return Err("a path-bearing subject must be refused".to_string());
+    };
+    assert!(err.contains("relative subject"), "{err}");
     Ok(())
 }
 
 #[test]
 fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Result<(), String> {
-    // The editor descriptor admits a distribution generation
-    // (MAJOR.MINOR.PATCH) and the downloader only ever looks the generation
-    // up, so a prerelease or build-metadata version would embed a descriptor
-    // row no request can match and silently leave the packaged RC extension
-    // without a fallback.
-    // A four-component version can never match the downloader's
-    // three-component generation lookup either.
-    for version in ["1.2.3-rc.1", "1.2.3+meta", "1.2.3.4"] {
-        with_temp_cwd("release-server-descriptor-prerelease", |root| {
-            let dist = root.join("dist");
-            let asset_name = format!("ripr-server-v{version}-x86_64-unknown-linux-gnu.tar.gz");
-            write(&dist.join(&asset_name), "linux");
-            write(&dist.join(format!("{asset_name}.sha256")), "linux-sha\n");
+    // Server subjects are product identity: a channel-suffixed version is
+    // refused by the shared product-version admission before any manifest or
+    // editor descriptor can be written, so an RC placement can never embed a
+    // generation row no downloader request could match.
+    with_temp_cwd("release-server-descriptor-prerelease", |root| {
+        let dist = root.join("dist");
+        let version = "1.2.3-rc.1";
+        let asset_name = format!("ripr-server-v{version}-x86_64-unknown-linux-gnu.tar.gz");
+        write(&dist.join(&asset_name), "linux");
+        write(&dist.join(format!("{asset_name}.sha256")), "linux-sha\n");
 
-            let args = vec![
-                "--version".to_string(),
-                format!("v{version}"),
-                "--repository".to_string(),
-                "EffortlessMetrics/ripr".to_string(),
-            ];
+        let args = vec![
+            "--version".to_string(),
+            format!("v{version}"),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
 
-            let Err(err) = super::release_server_manifest(&args) else {
-                return Err(format!(
-                    "prerelease/build-metadata version `{version}` must not write the descriptor"
-                ));
-            };
-            assert!(
-                err.contains("MAJOR.MINOR.PATCH"),
-                "the error must name the required distribution generation form; got: {err}"
-            );
-
-            // The guard sits exactly at the descriptor boundary: the
-            // generation-keyed run artifacts exist, the descriptor does not.
-            assert!(
-                dist.join(format!("ripr-server-manifest-v{version}.json"))
-                    .exists(),
-                "the manifest write precedes the refused descriptor write"
-            );
-            let descriptor_path = root
-                .join("editors")
-                .join("vscode")
-                .join("src")
-                .join("serverDescriptor.ts");
-            assert!(
-                !descriptor_path.exists(),
-                "a prerelease/build-metadata version must never write the editor descriptor"
-            );
-            Ok(())
-        })?;
-    }
-    Ok(())
+        let Err(err) = super::release_server_manifest(&args) else {
+            return Err(format!(
+                "prerelease version `{version}` must not write a manifest or descriptor"
+            ));
+        };
+        assert!(
+            err.contains("must not carry a release-channel suffix"),
+            "the error must name the product-identity guard; got: {err}"
+        );
+        assert!(
+            !dist
+                .join(format!("ripr-server-manifest-v{version}.json"))
+                .exists(),
+            "a refused version must not write a manifest"
+        );
+        let descriptor_path = root
+            .join("editors")
+            .join("vscode")
+            .join("src")
+            .join("serverDescriptor.ts");
+        assert!(
+            !descriptor_path.exists(),
+            "a prerelease version must never write the editor descriptor"
+        );
+        Ok(())
+    })
 }
 
 /// The `ripr` binary this test run was built against, as an absolute path.
@@ -55781,84 +55929,73 @@ fn pr_triage_mixed_rollup_keeps_unknown_visible_alongside_other_results() -> Res
 
 #[test]
 fn release_server_build_uses_canonical_locked_toolchain() -> Result<(), String> {
+    // In this repository the five-target build lives in the reusable
+    // qualification workflow that `release-server-binaries.yml` delegates to;
+    // the locked cargo build itself runs inside the archive producer.
     let workflow = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
-            .join(".github/workflows/release-server-binaries.yml"),
+            .join(".github/workflows/server-archive-qualification.yml"),
     )
-    .map_err(|error| format!("failed to read release-server workflow: {error}"))?;
+    .map_err(|error| format!("failed to read server archive qualification workflow: {error}"))?;
     let build = workflow
-        .split_once("\n  manifest:")
+        .split_once("\n  build:")
+        .and_then(|(_, rest)| rest.split_once("\n  manifest:"))
         .map(|(build, _)| build)
-        .ok_or_else(|| "release workflow is missing manifest job".to_string())?;
-    if build.contains("dtolnay/rust-toolchain@stable")
+        .ok_or_else(|| "qualification workflow is missing the build or manifest job".to_string())?;
+    if workflow.contains("dtolnay/rust-toolchain@stable")
         || !build.contains("dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4")
         || !build.contains("toolchain: 1.95.0")
-        || !build.contains("permissions:\n      contents: read")
-        || !build.contains("cargo build -p ripr --release --locked --target")
-        || !build.contains("cargo run --locked -p xtask -- release-server-archive")
-        || !build.contains("RIPR_RELEASE_VERSION:")
-        || !build.contains("--release-version \"$RIPR_RELEASE_VERSION\"")
-        || build.contains("github.event.inputs.version || github.ref_name }}\"")
-        || build.contains("cargo generate-lockfile")
+        || !workflow.contains("permissions:\n  contents: read")
+        || workflow.contains("contents: write")
+        || !build
+            .contains("cargo xtask release-server-archive --version \"$QUALIFICATION_VERSION\"")
+        || workflow.contains("cargo generate-lockfile")
     {
         return Err("release target build is not pinned, locked, and read-only".to_string());
+    }
+    let producer = include_str!("reports/release_server/producer.rs");
+    if !producer.contains("\"--locked\".to_string()")
+        || !producer.contains("\"--release\".to_string()")
+    {
+        return Err(
+            "the archive producer must build the release profile with --locked".to_string(),
+        );
     }
     Ok(())
 }
 
 #[test]
 fn release_server_workflow_isolates_attestation_from_upload() -> Result<(), String> {
-    let workflow = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join(".github/workflows/release-server-binaries.yml"),
-    )
-    .map_err(|error| format!("failed to read release-server workflow: {error}"))?;
-    let job = |name: &str, next: Option<&str>| -> Result<String, String> {
-        let start = workflow
-            .find(&format!("\n  {name}:"))
-            .ok_or_else(|| format!("release workflow is missing the {name} job"))?;
-        let rest = &workflow[start + 1..];
-        let end = next
-            .and_then(|next| rest.find(&format!("\n  {next}:")))
-            .unwrap_or(rest.len());
-        Ok(rest[..end].to_string())
-    };
-    let build = job("build", Some("manifest"))?;
-    let manifest = job("manifest", Some("attest"))?;
-    let attest = job("attest", Some("upload"))?;
-    let upload = job("upload", None)?;
-    let privileged =
-        |text: &str| text.contains("id-token: write") || text.contains("attestations: write");
-    // Only the attest job may hold OIDC/attestation scopes; it must not write contents.
-    if privileged(&build) || privileged(&manifest) || privileged(&upload) {
-        return Err("OIDC or attestation scope leaked outside the attest job".to_string());
-    }
-    if !(attest.contains("id-token: write")
-        && attest.contains("attestations: write")
-        && !attest.contains("contents: write"))
-    {
-        return Err(
-            "attest job must hold id-token and attestations write, not contents write".to_string(),
-        );
-    }
-    // Release write belongs to the upload job alone, and only after verification.
-    if build.contains("contents: write") || manifest.contains("contents: write") {
-        return Err("contents: write leaked into build or manifest".to_string());
-    }
-    if !upload.contains("contents: write") || !upload.contains("needs: attest") {
-        return Err("upload must be the contents:write job and depend on attest".to_string());
-    }
-    if workflow.contains("release-upload-assets") != upload.contains("release-upload-assets") {
-        return Err("release-upload-assets must appear only in the upload job".to_string());
-    }
-    // Attestation must be pinned by full SHA and verified for every file before upload.
-    if !attest.contains("actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8")
-        || !attest.contains("gh attestation verify")
-        || !attest.contains("--signer-workflow")
-    {
-        return Err("attest job must use the pinned action and verify every subject".to_string());
+    // This repository's server workflows are nonpublishing rehearsals:
+    // attestation and release upload belong to the source repository's
+    // release workflow. Isolation here means no job in either workflow can
+    // hold an OIDC, attestation or release-write scope, and neither carries an
+    // upload path.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    for name in [
+        "release-server-binaries.yml",
+        "server-archive-qualification.yml",
+    ] {
+        let workflow = std::fs::read_to_string(root.join(".github/workflows").join(name))
+            .map_err(|error| format!("failed to read {name}: {error}"))?;
+        for forbidden in [
+            "id-token: write",
+            "attestations: write",
+            "contents: write",
+            "release-upload-assets",
+            "gh release",
+            "actions/attest-build-provenance",
+        ] {
+            if workflow.contains(forbidden) {
+                return Err(format!(
+                    "{name} must stay a nonpublishing rehearsal but contains `{forbidden}`"
+                ));
+            }
+        }
+        if !workflow.contains("permissions:\n  contents: read") {
+            return Err(format!("{name} must declare read-only contents permission"));
+        }
     }
     Ok(())
 }
@@ -56013,7 +56150,7 @@ fn release_server_manifest_rejects_archive_checksum_mismatch() -> Result<(), Str
                 "--archive".to_string(),
                 archive.to_string(),
             ];
-            super::release_server_archive(&archive_args)?;
+            release_server_archive_prebuilt(&archive_args)?;
         }
         write(
             &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
@@ -56075,7 +56212,7 @@ fn release_server_receipt_set_rejects_mixed_candidate_identity() -> Result<(), S
                 "--archive".to_string(),
                 "tar.gz".to_string(),
             ];
-            super::release_server_archive(&args)?;
+            release_server_archive_prebuilt(&args)?;
         }
 
         let receipt_path = root
@@ -56117,7 +56254,7 @@ fn release_server_receipt_set_accepts_different_runner_hosts() -> Result<(), Str
             );
             write(&root.join("LICENSE-MIT"), "mit");
             write(&root.join("LICENSE-APACHE"), "apache");
-            super::release_server_archive(&[
+            release_server_archive_prebuilt(&[
                 "--version".to_string(),
                 "1.2.3".to_string(),
                 "--target".to_string(),
@@ -56172,7 +56309,7 @@ fn release_server_receipt_set_rejects_unsupported_schema() -> Result<(), String>
         );
         write(&root.join("LICENSE-MIT"), "mit");
         write(&root.join("LICENSE-APACHE"), "apache");
-        super::release_server_archive(&[
+        release_server_archive_prebuilt(&[
             "--version".to_string(),
             "1.2.3".to_string(),
             "--target".to_string(),
@@ -56227,7 +56364,7 @@ fn release_server_receipt_set_rejects_archive_mapping_mismatch() -> Result<(), S
             "--archive".to_string(),
             "tar.gz".to_string(),
         ];
-        super::release_server_archive(&args)?;
+        release_server_archive_prebuilt(&args)?;
 
         let receipt_path = root
             .join("dist")
@@ -56266,7 +56403,7 @@ fn release_server_receipt_set_rejects_unsafe_paths() -> Result<(), String> {
         );
         write(&root.join("LICENSE-MIT"), "mit");
         write(&root.join("LICENSE-APACHE"), "apache");
-        super::release_server_archive(&[
+        release_server_archive_prebuilt(&[
             "--version".to_string(),
             "1.2.3".to_string(),
             "--target".to_string(),
@@ -56318,7 +56455,7 @@ fn release_server_receipt_set_rejects_member_inventory_mismatch() -> Result<(), 
             "--archive".to_string(),
             "tar.gz".to_string(),
         ];
-        super::release_server_archive(&args)?;
+        release_server_archive_prebuilt(&args)?;
 
         let receipt_path = root
             .join("dist")
@@ -56416,6 +56553,48 @@ fn release_server_transaction_preserves_existing_outputs_when_staging_fails() ->
     Ok(())
 }
 
+/// Archives a prebuilt `target/<triple>/release/<executable>` the way the
+/// swarm archive producer does after its payload staging step: it prepares the
+/// flat `package/` directory (executable, licenses, README), then hands it to
+/// the shared archive and receipt writer. The cargo build and payload identity
+/// steps belong to the producer and are covered by its own tests; this keeps
+/// receipt, manifest and assembler fixtures runnable in an isolated cwd.
+pub(crate) fn release_server_archive_prebuilt(args: &[String]) -> Result<(), String> {
+    let version = super::required_release_arg(args, "version", "RAW_VERSION")?;
+    let target = super::required_release_arg(args, "target", "TARGET")?;
+    let executable = super::required_release_arg(args, "executable", "EXECUTABLE")?;
+    let archive = super::required_release_arg(args, "archive", "ARCHIVE")?;
+    let version = super::normalize_product_version(&version)?;
+    let package_dir = Path::new("package");
+    if package_dir.exists() {
+        fs::remove_dir_all(package_dir).map_err(|err| format!("remove package dir: {err}"))?;
+    }
+    fs::create_dir_all(package_dir).map_err(|err| format!("create package dir: {err}"))?;
+    fs::create_dir_all("dist").map_err(|err| format!("create dist dir: {err}"))?;
+    let built = Path::new("target")
+        .join(&target)
+        .join("release")
+        .join(&executable);
+    fs::copy(&built, package_dir.join(&executable))
+        .map_err(|err| format!("copy {} into package: {err}", built.display()))?;
+    for license in ["LICENSE-MIT", "LICENSE-APACHE"] {
+        fs::copy(license, package_dir.join(license))
+            .map_err(|err| format!("copy {license} into package: {err}"))?;
+    }
+    fs::write(
+        package_dir.join("README-server.txt"),
+        super::release_server_readme(&version),
+    )
+    .map_err(|err| format!("write package README: {err}"))?;
+    crate::reports::release_server::write_server_archive(
+        &version,
+        &target,
+        &executable,
+        &archive,
+        package_dir,
+    )
+}
+
 #[test]
 fn release_server_archive_prepares_package_before_format_validation() -> Result<(), String> {
     with_temp_cwd("release-server-archive", |root| {
@@ -56442,7 +56621,7 @@ fn release_server_archive_prepares_package_before_format_validation() -> Result<
             "bad-format".to_string(),
         ];
 
-        let Err(err) = super::release_server_archive(&args) else {
+        let Err(err) = release_server_archive_prebuilt(&args) else {
             return Err("unsupported archive format should fail".to_string());
         };
         assert!(err.contains("unsupported release server archive format"));
@@ -56486,11 +56665,11 @@ fn release_server_archive_writes_bounded_receipt_and_deterministic_tar() -> Resu
             "tar.gz".to_string(),
         ];
 
-        super::release_server_archive(&args)?;
+        release_server_archive_prebuilt(&args)?;
         let archive = root.join("dist/ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz");
         let first_archive =
             fs::read(&archive).map_err(|err| format!("read first archive: {err}"))?;
-        super::release_server_archive(&args)?;
+        release_server_archive_prebuilt(&args)?;
         let second_archive =
             fs::read(&archive).map_err(|err| format!("read second archive: {err}"))?;
         assert_eq!(
@@ -56566,7 +56745,7 @@ fn release_server_manifest_is_byte_identical_across_runs() -> Result<(), String>
                 "--archive".to_string(),
                 archive.to_string(),
             ];
-            super::release_server_archive(&archive_args)?;
+            release_server_archive_prebuilt(&archive_args)?;
         }
         let args = vec![
             "--version".to_string(),
@@ -56648,7 +56827,7 @@ fn release_server_subjects_reject_channel_suffixed_version() -> Result<(), Strin
             "--archive".to_string(),
             "tar.gz".to_string(),
         ];
-        let Err(error) = super::release_server_archive(&archive_args) else {
+        let Err(error) = release_server_archive_prebuilt(&archive_args) else {
             return Err(
                 "channel-suffixed product version must reject archive assembly".to_string(),
             );
@@ -57361,10 +57540,10 @@ fn vscode_package_verify_binds_vsix_catalog_to_admission_digest() -> Result<(), 
 fn review_comments_cross_check_covers_every_live_consumer() -> Result<(), String> {
     let root = repo_root()?;
     let workflows = [
-        // ci.yml carries two review-comments producers: the merged
-        // release-proof job and the restored source-side rust job (J5).
-        (".github/workflows/ci.yml", 4usize),
-        (".github/workflows/routed-rust.yml", 4usize),
+        // ripr-swarm delegates the routed Rust implementation to the reusable
+        // rust-gates.yml, which carries the only review-comments producer pair
+        // (generate-and-check, then the paired --check run).
+        (".github/workflows/rust-gates.yml", 2usize),
     ];
     let mut consumers = 0usize;
     for (path, expected) in workflows {
@@ -57385,9 +57564,9 @@ fn review_comments_cross_check_covers_every_live_consumer() -> Result<(), String
         }
         consumers += found;
     }
-    if consumers != 8 {
+    if consumers != 2 {
         return Err(format!(
-            "expected eight live consumer commands, found {consumers}"
+            "expected two live consumer commands, found {consumers}"
         ));
     }
     Ok(())

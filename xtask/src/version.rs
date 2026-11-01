@@ -892,7 +892,20 @@ mod tests {
             )
             .map_err(|error| error.to_string())?;
 
+            let descriptor =
+                include_str!("../../editors/vscode/distribution.json").replace("0.11.0", "0.10.0");
+            fs::write(root.join(super::EXTENSION_DISTRIBUTION), descriptor)
+                .map_err(|error| error.to_string())?;
+
             bump_version(&["0.11.0".to_string()])?;
+            let descriptor = fs::read_to_string(root.join(super::EXTENSION_DISTRIBUTION))
+                .map_err(|error| error.to_string())?;
+            if descriptor.matches("0.11.0").count() != 4 || descriptor.contains("0.10.0") {
+                return Err(
+                    "the development descriptor did not move productVersion, manifestFile, releaseTag and releaseRef together"
+                        .to_string(),
+                );
+            }
             let workspace = fs::read_to_string(root.join(WORKSPACE_MANIFEST))
                 .map_err(|error| error.to_string())?;
             let extension = fs::read_to_string(root.join(EXTENSION_MANIFEST))

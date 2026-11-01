@@ -502,12 +502,15 @@ mod tests {
     fn retained_manual_workflow_keeps_its_safeguards() {
         let source = include_str!("../../../.github/workflows/droid.yml");
         let mut violations = Vec::new();
-        super::check_droid_common(&mut violations, "droid.yml", source, true, true);
+        // The trusted-entrypoint droid.yml gates on default-branch bytes and
+        // admission, not a same-repo PR guard, so it is checked the way
+        // `check_droid_review_config` checks it (`require_same_repo_guard` off).
+        super::check_droid_common(&mut violations, "droid.yml", source, false, true);
         assert!(violations.is_empty(), "{violations:?}");
 
         let changed = source.replace("contents: read", "contents: write");
         assert_ne!(changed, source, "permission mutation must engage");
-        super::check_droid_common(&mut violations, "droid.yml", &changed, true, true);
+        super::check_droid_common(&mut violations, "droid.yml", &changed, false, true);
         assert!(
             violations
                 .iter()

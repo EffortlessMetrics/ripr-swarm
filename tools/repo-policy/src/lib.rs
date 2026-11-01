@@ -1874,6 +1874,14 @@ pub fn deprecated_workflow_action_refs() -> &'static [(&'static str, &'static st
             "actions/download-artifact@v4",
             "actions/download-artifact@v8",
         ),
+        (
+            "actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809",
+            "actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25",
+        ),
+        (
+            "actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809",
+            "actions/cache/save@caa296126883cff596d87d8935842f9db880ef25",
+        ),
         ("codecov/codecov-action@v4", "codecov/codecov-action@v6"),
     ]
 }

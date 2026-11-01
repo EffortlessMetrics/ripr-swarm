@@ -268,7 +268,10 @@ fn given_rc_workflow_input_when_real_producers_run_then_subjects_keep_product_id
             // Archive-content fixture, deliberately not an executable qualification subject.
             fs::write(binary_dir.join(executable), b"synthetic archive subject\n")
                 .map_err(|error| error.to_string())?;
-            execute(XtaskCommand::ReleaseServerArchive(arguments(&[
+            // The archive producer's cargo build and payload identity belong to
+            // its own tests; this fixture needs the product-bound arguments
+            // reaching the shared package, receipt and archive writer.
+            crate::tests::release_server_archive_prebuilt(&producer_args(&arguments(&[
                 "--release-version",
                 "v0.11.0-rc.2",
                 "--target",
@@ -277,7 +280,7 @@ fn given_rc_workflow_input_when_real_producers_run_then_subjects_keep_product_id
                 executable,
                 "--archive",
                 format,
-            ])))?;
+            ]))?)?;
             assert!(
                 root.join("dist")
                     .join(format!("ripr-server-v0.11.0-{target}.{format}"))
@@ -317,27 +320,28 @@ fn given_rc_workflow_input_when_real_producers_run_then_subjects_keep_product_id
 #[test]
 fn given_legacy_workflow_then_archive_and_manifest_transport_separate_placement()
 -> Result<(), String> {
+    // The server producers run in the reusable qualification workflow that
+    // `release-server-binaries.yml` delegates to. It qualifies one candidate
+    // whose product version it checks against the package, so it transports the
+    // product version and never a channel placement into the producers.
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../.github/workflows/release-server-binaries.yml");
+        .join("../.github/workflows/server-archive-qualification.yml");
     let workflow = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let producers: Vec<_> = workflow
         .lines()
         .filter(|line| {
             line.contains("run:")
-                && (line.contains("release-server-archive ")
-                    || line.contains("release-server-manifest "))
+                && (line.contains("release-server-archive --version")
+                    || line.contains("release-server-manifest --version"))
         })
         .collect();
     assert_eq!(producers.len(), 2);
     for invocation in producers {
         assert!(
-            invocation.contains("--release-version \"$RIPR_RELEASE_VERSION\""),
+            invocation.contains("--version \"$QUALIFICATION_VERSION\""),
             "{invocation}"
         );
-        assert!(
-            !invocation.contains("--version \"$RIPR_RELEASE_VERSION\""),
-            "{invocation}"
-        );
+        assert!(!invocation.contains("--release-version"), "{invocation}");
     }
     Ok(())
 }

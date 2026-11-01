@@ -77,9 +77,12 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
     let target = required_release_arg(args, "target", "TARGET")?;
     let executable = required_release_arg(args, "executable", "EXECUTABLE")?;
     let archive = required_release_arg(args, "archive", "ARCHIVE")?;
+    if !matches!(archive.as_str(), "zip" | "tar.gz") {
+        return Err(format!(
+            "unsupported release server archive format `{archive}`"
+        ));
+    }
     let version = normalize_product_version(&version)?;
-    let asset_name = format!("ripr-server-v{version}-{target}.{archive}");
-    let package_dir = Path::new("package");
     let dist_dir = Path::new("dist");
     fs::create_dir_all(dist_dir)
         .map_err(|err| format!("failed to create {}: {err}", dist_dir.display()))?;
@@ -95,41 +98,13 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
     let producer_receipt_sha256 = sha256_file(&producer_receipt)?;
     let identity_sha256 = payload::payload_identity_sha256(&staged)?;
 
-    let asset_path = dist_dir.join(&asset_name);
-    if asset_path.exists() {
-        fs::remove_file(&asset_path)
-            .map_err(|err| format!("failed to remove {}: {err}", asset_path.display()))?;
-    }
-    match archive.as_str() {
-        "zip" => create_zip_archive(&staged.payload_dir, &asset_path)?,
-        "tar.gz" => create_tar_gz_archive(&staged.payload_dir, &asset_path)?,
-        other => {
-            return Err(format!(
-                "unsupported release server archive format `{other}`"
-            ));
-        }
-    }
-
-    let sha = sha256_file(&asset_path)?;
-    write_release_server_receipt(
+    write_server_archive(
         &version,
         &target,
         &executable,
         &archive,
-        package_dir,
-        &asset_path,
+        &staged.payload_dir,
     )?;
-    fs::write(
-        dist_dir.join(format!("{asset_name}.sha256")),
-        format!("{sha}\n"),
-    )
-    .map_err(|err| {
-        format!(
-            "failed to write {}: {err}",
-            dist_dir.join(format!("{asset_name}.sha256")).display()
-        )
-    })?;
-    eprintln!("wrote {}", asset_path.display());
     eprintln!("wrote {}", staged.identity_json.display());
     eprintln!("wrote {}", staged.identity_markdown.display());
     eprintln!("wrote {}", producer_receipt.display());
@@ -139,6 +114,53 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
     );
     eprintln!("final native payload identity SHA-256: {identity_sha256}");
     eprintln!("producer build receipt SHA-256: {producer_receipt_sha256}");
+    Ok(())
+}
+
+/// Archives an already staged package directory into `dist/`, then writes the
+/// bounded build receipt and the archive checksum sidecar the server-manifest
+/// assembler consumes. The archive producer stages a verified native payload
+/// before calling this; the receipt, member inventory and byte determinism
+/// contracts are owned here.
+pub(crate) fn write_server_archive(
+    version: &str,
+    target: &str,
+    executable: &str,
+    archive: &str,
+    package_dir: &Path,
+) -> Result<(), String> {
+    let asset_name = format!("ripr-server-v{version}-{target}.{archive}");
+    let dist_dir = Path::new("dist");
+    fs::create_dir_all(dist_dir)
+        .map_err(|err| format!("failed to create {}: {err}", dist_dir.display()))?;
+    let asset_path = dist_dir.join(&asset_name);
+    if asset_path.exists() {
+        fs::remove_file(&asset_path)
+            .map_err(|err| format!("failed to remove {}: {err}", asset_path.display()))?;
+    }
+    match archive {
+        "zip" => create_zip_archive(package_dir, &asset_path)?,
+        "tar.gz" => create_tar_gz_archive(package_dir, &asset_path)?,
+        other => {
+            return Err(format!(
+                "unsupported release server archive format `{other}`"
+            ));
+        }
+    }
+
+    let sha = sha256_file(&asset_path)?;
+    write_release_server_receipt(
+        version,
+        target,
+        executable,
+        archive,
+        package_dir,
+        &asset_path,
+    )?;
+    let sha_path = dist_dir.join(format!("{asset_name}.sha256"));
+    fs::write(&sha_path, format!("{sha}\n"))
+        .map_err(|err| format!("failed to write {}: {err}", sha_path.display()))?;
+    eprintln!("wrote {}", asset_path.display());
     Ok(())
 }
 
@@ -378,8 +400,8 @@ pub(crate) fn render_release_server_assembly(
 
 /// The editor module that embeds the admitted raw-byte manifest digest for a
 /// distribution generation (#3798). Written relative to the repository root
-/// by `release-bind-server-descriptor` when the extension is packaged (and by
-/// `release-server-manifest` for local rehearsals); the committed module stays
+/// by `release-bind-server-descriptor` when the extension is packaged;
+/// `release-server-manifest` never writes it. The committed module stays
 /// empty, so only a packaged extension admits a generation's placements.
 fn editor_distribution_descriptor_path() -> PathBuf {
     Path::new("editors")
@@ -482,10 +504,22 @@ pub(crate) fn bound_descriptor_source(
     }
     let manifest: serde_json::Value = serde_json::from_slice(manifest_bytes)
         .map_err(|err| format!("manifest is not valid JSON: {err}"))?;
-    if manifest["version"].as_str() != Some(generation) {
+    // Manifest schema 2 is the only bindable shape: it names the product in
+    // `product_version` and carries placement-independent subjects. A legacy
+    // v1 `version`/`url` manifest, or a mixed document, is refused.
+    if manifest["schema_version"].as_str() != Some("2") {
+        return Err(format!(
+            "manifest schema_version {} is not the supported `2`",
+            manifest["schema_version"]
+        ));
+    }
+    if manifest.get("version").is_some() {
+        return Err("manifest mixes legacy `version` with schema 2 identity".to_string());
+    }
+    if manifest["product_version"].as_str() != Some(generation) {
         return Err(format!(
             "manifest version {} does not match generation {generation}",
-            manifest["version"]
+            manifest["product_version"]
         ));
     }
     let assets = manifest["assets"]
@@ -493,9 +527,20 @@ pub(crate) fn bound_descriptor_source(
         .filter(|assets| !assets.is_empty())
         .ok_or_else(|| "manifest has no assets".to_string())?;
     for (target, asset) in assets {
-        let url = asset["url"].as_str().unwrap_or_default();
-        if !url.starts_with("https://") {
-            return Err(format!("manifest asset {target} has a non-https url"));
+        if asset.get("url").is_some() {
+            return Err(format!(
+                "manifest asset {target} carries a placement url; schema 2 subjects are placement-independent"
+            ));
+        }
+        let subject = asset["subject"].as_str().unwrap_or_default();
+        if subject.is_empty()
+            || subject.contains('/')
+            || subject.contains('\\')
+            || !subject.starts_with(&format!("ripr-server-v{generation}-{target}."))
+        {
+            return Err(format!(
+                "manifest asset {target} has no valid relative subject"
+            ));
         }
         if !is_sha256_hex(asset["sha256"].as_str().unwrap_or_default()) {
             return Err(format!("manifest asset {target} has no valid sha256"));
@@ -728,16 +773,6 @@ pub(crate) fn release_distribution_generation(
         )
         .as_bytes(),
     )
-}
-
-fn copy_release_file(file_name: &str, package_dir: &Path) -> Result<(), String> {
-    fs::copy(file_name, package_dir.join(file_name)).map_err(|err| {
-        format!(
-            "failed to copy {file_name} into {}: {err}",
-            package_dir.display()
-        )
-    })?;
-    Ok(())
 }
 
 pub(crate) fn release_server_readme(version: &str) -> String {

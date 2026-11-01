@@ -9408,9 +9408,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0368"
+id = "RIPR-SPEC-0372"
 name = "source-promotion exact-head CI contract"
-spec = "docs/specs/RIPR-SPEC-0368-source-promotion-ci-contract.md"
+spec = "docs/specs/RIPR-SPEC-0372-source-promotion-ci-contract.md"
 tests = [
   "xtask/src/command.rs::tests::source_promotion_workflow_is_exact_head_and_read_only",
   "xtask/src/command.rs::tests::source_promotion_workflow_binds_trusted_source_parent",

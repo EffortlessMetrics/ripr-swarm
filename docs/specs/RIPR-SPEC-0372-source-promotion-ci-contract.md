@@ -1,4 +1,4 @@
-# RIPR-SPEC-0368: Source-promotion CI contract
+# RIPR-SPEC-0372: Source-promotion CI contract
 
 Status: proposed
 

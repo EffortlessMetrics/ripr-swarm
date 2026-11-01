@@ -196,23 +196,52 @@ mod tests {
             .collect()
     }
 
+    /// The publish-extension workflow in this repository attaches the VSIX with
+    /// an inline no-clobber release step (the release version is a dispatch
+    /// input, and the attach job holds no checkout to build the helper from),
+    /// so the prebuilt-helper transport is not a CI-enforced invocation here.
+    /// This pins that boundary: the helper stays dispatchable, and the
+    /// workflow's attachment never reaches it implicitly or bypasses the
+    /// no-replacement rule.
     #[test]
     fn release_vsix_prebuilt_helper_is_cataloged_as_enforced() {
         let workflow = include_str!("../../../.github/workflows/publish-extension.yml");
+        assert!(matches!(
+            crate::command::XtaskCommand::parse(
+                ["release-upload-vsix", "--tag", "v0.11.0"].map(str::to_string)
+            ),
+            crate::command::XtaskCommand::ReleaseUploadVsix(args)
+                if args == ["--tag".to_string(), "v0.11.0".to_string()]
+        ));
         assert!(
-            crate::ci_enforced_xtask_invocations(workflow)
-                .contains(&("release-upload-vsix".to_string(), String::new()))
+            !crate::ci_enforced_xtask_invocations(workflow)
+                .contains(&("release-upload-vsix".to_string(), String::new())),
+            "the helper is not wired into this workflow; update the docs and this test together if it becomes so"
         );
+        let attachment = workflow
+            .split("  attach-release-asset:")
+            .nth(1)
+            .and_then(|rest| rest.split("\n  publish-vs-marketplace:").next());
+        assert!(attachment.is_some());
+        if let Some(attachment) = attachment {
+            assert!(attachment.contains("gh release upload \"$release_tag\" \"$vsix\""));
+            assert!(!attachment.contains("--clobber"));
+        }
     }
 
     #[test]
     fn release_vsix_workflow_passes_tag_as_data() {
         let workflow = include_str!("../../../.github/workflows/publish-extension.yml");
-        let attachment = workflow.split("  attach-release-asset:").nth(1);
+        let attachment = workflow
+            .split("  attach-release-asset:")
+            .nth(1)
+            .and_then(|rest| rest.split("\n  publish-vs-marketplace:").next());
         assert!(attachment.is_some());
         if let Some(attachment) = attachment {
-            assert!(attachment.contains("RIPR_RELEASE_TAG: ${{ github.ref_name }}"));
-            assert!(attachment.contains("release-upload-vsix --tag \"$RIPR_RELEASE_TAG\""));
+            // The dispatch input reaches the script through env, never through
+            // template expansion inside the script text.
+            assert!(attachment.contains("RAW_VERSION: ${{ github.event.inputs.version }}"));
+            assert!(attachment.contains("release_tag=\"v${RAW_VERSION#v}\""));
             assert!(!attachment.contains("tag=\"${{"));
             assert!(!attachment.contains("--clobber"));
             assert!(!attachment.contains("gh release create"));

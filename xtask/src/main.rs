@@ -2073,7 +2073,7 @@ fn check_vsix_inventory(
             entries.len()
         ));
     }
-    let uncompressed: u64 = entries.iter().map(|entry| entry.size).sum();
+    let (uncompressed, _) = vsix_size_totals(entries)?;
     if uncompressed > max_uncompressed_bytes {
         return Err(format!(
             "unpacks to {uncompressed} bytes, above the {max_uncompressed_bytes}-byte bound"
