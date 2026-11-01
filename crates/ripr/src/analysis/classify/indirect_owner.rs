@@ -292,6 +292,11 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
     }
     // The assertion fact's text is a trimmed statement of the body; locate it
     // (or its first line) to read the mentions in their real lexical scope.
+    // The fact carries the statement's text, not its position: identical text in
+    // two lexical scopes cannot be told apart, so neither scope is established.
+    if source.matches(anchor).nth(1).is_some() {
+        return None;
+    }
     let (at, len, partial) = match source.find(anchor) {
         Some(at) => (at, anchor.len(), false),
         None => {
@@ -305,6 +310,11 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
     let span = source.get(at..at.checked_add(len)?)?;
     let mut mentions = 0usize;
     for offset in identifier_offsets(span, name) {
+        // A spelling inside a string literal (an assertion message) is text, not a
+        // reference; the scan cannot say what the executable call resolves to.
+        if inside_string_literal(span, offset) {
+            return None;
+        }
         let at = at + offset;
         let before = source[..at].trim_end();
         mentions += 1;
@@ -322,6 +332,29 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
         return None;
     }
     Some(true)
+}
+
+/// Whether `offset` falls inside a `"` string literal of `code`. Raw strings and
+/// character literals can misread; a misread only withholds a conclusion.
+fn inside_string_literal(code: &str, offset: usize) -> bool {
+    let (mut inside, mut escaped) = (false, false);
+    for (at, ch) in code.char_indices() {
+        if at >= offset {
+            break;
+        }
+        if inside {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                inside = false;
+            }
+        } else if ch == '"' {
+            inside = true;
+        }
+    }
+    inside
 }
 
 fn is_path(text: &str) -> bool {
