@@ -32,7 +32,7 @@
     "seam_id": "67fc764ba37d77bd",
     "verify_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
-      "sha256": "sha256:f52c387d71d190dabb81a5d99726d50a84fc011cb1842a08bc2e6a601e5aa091"
+      "sha256": "sha256:63737b4a2809ebf00d2d1e7969f73fd84fb262821b3890a0ad13066added0722"
     },
     "workflow_artifact": null
   },
