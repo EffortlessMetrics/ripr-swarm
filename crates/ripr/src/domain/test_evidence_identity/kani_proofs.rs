@@ -4,8 +4,12 @@
 //! Run with `cargo kani -p ripr --harness <name>`.
 //!
 //! Strings are built from a small symbolic alphabet that contains the
-//! characters the framing treats specially (digits and `:`), so collisions
-//! through delimiters are in scope while the state space stays tractable.
+//! characters the framing treats specially (digits and `:`). The bounds are
+//! small to stay tractable: the injectivity proof covers lists of exactly two
+//! items, each at most one character, so every frame is a single-digit length
+//! plus a body of at most one character. A body that itself looks like a frame
+//! (for example `1:a`), a multi-digit length, and lists of other lengths are
+//! NOT covered; this is a bounded check, not a general collision-freedom proof.
 
 use super::encode_missing_discriminators;
 
