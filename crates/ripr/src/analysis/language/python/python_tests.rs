@@ -1249,6 +1249,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1293,6 +1294,23 @@ fn body_calls_owner_reaches_nested_function_through_enclosing_call() -> Result<(
     assert!(
         !body_calls_owner("    assert other(3) == '#3'\n", nested),
         "a test calling an unrelated function does not reach the nested function"
+    );
+    Ok(())
+}
+
+#[test]
+fn body_calls_owner_refuses_nested_function_the_enclosing_body_never_calls() -> Result<(), String> {
+    let owners = extract_owners(
+        std::path::Path::new("hostile/nested_uncalled.py"),
+        "def outer():\n    def inner():\n        return 3\n    return 2\n",
+    );
+    let nested = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "outer.inner")
+        .ok_or_else(|| "nested owner missing".to_string())?;
+    assert!(
+        !body_calls_owner("    assert outer() == 2\n", nested),
+        "a test calling an enclosing function that never calls the nested def does not reach it"
     );
     Ok(())
 }
@@ -1781,6 +1799,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1848,6 +1867,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1937,6 +1957,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -1993,6 +2014,7 @@ fn same_stem_related_handles_missing_stems() {
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
@@ -4452,6 +4474,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -4536,6 +4559,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -4624,6 +4648,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 

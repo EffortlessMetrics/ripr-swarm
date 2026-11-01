@@ -64,11 +64,13 @@ pub(super) fn collect_owners_from_statements(
         match stmt {
             Stmt::FunctionDef(function) => {
                 push_function_owner(stmt, owner_context, out);
-                if let Some(parent) = function_context
-                    && let Some(owner) = out.last_mut()
-                {
-                    owner.qualified_name = format!("{parent}.{}", function.name);
-                    owner.owner_kind = Some(OwnerKind::Function);
+                if let Some(parent) = function_context {
+                    let called = nested_called_by_parent(source, out, parent);
+                    if let Some(owner) = out.last_mut() {
+                        owner.qualified_name = format!("{parent}.{}", function.name);
+                        owner.owner_kind = Some(OwnerKind::Function);
+                        owner.nested_called_by_parent = called;
+                    }
                 }
                 let parent_qualified = out
                     .last()
@@ -87,11 +89,13 @@ pub(super) fn collect_owners_from_statements(
             }
             Stmt::AsyncFunctionDef(function) => {
                 push_function_owner(stmt, owner_context, out);
-                if let Some(parent) = function_context
-                    && let Some(owner) = out.last_mut()
-                {
-                    owner.qualified_name = format!("{parent}.{}", function.name);
-                    owner.owner_kind = Some(OwnerKind::Function);
+                if let Some(parent) = function_context {
+                    let called = nested_called_by_parent(source, out, parent);
+                    if let Some(owner) = out.last_mut() {
+                        owner.qualified_name = format!("{parent}.{}", function.name);
+                        owner.owner_kind = Some(OwnerKind::Function);
+                        owner.nested_called_by_parent = called;
+                    }
                 }
                 let parent_qualified = out
                     .last()
@@ -197,6 +201,39 @@ struct PythonOwnerContext<'a> {
     class_context: Option<&'a str>,
     imports: &'a [PythonImport],
     module_constants: &'a [PythonModuleConstant],
+}
+
+/// Whether the enclosing function's body, outside the nested def just pushed
+/// as `out.last()`, calls that nested function by name (#12141). A test that
+/// calls only the enclosing function reaches the nested body only through such
+/// a call; a parent that merely defines it, or whose call sits inside the
+/// nested body itself, gives no path. Fail-closed: an unfound parent, an
+/// unreadable range or a non-call mention (returning or passing `inner`) is
+/// `false`.
+fn nested_called_by_parent(source: &str, out: &[PythonOwner], parent_qualified: &str) -> bool {
+    let Some((nested, earlier)) = out.split_last() else {
+        return false;
+    };
+    let Some(parent) = earlier
+        .iter()
+        .rev()
+        .find(|owner| owner.qualified_name == parent_qualified && owner.file == nested.file)
+    else {
+        return false;
+    };
+    let outside_nested = source
+        .lines()
+        .enumerate()
+        .filter(|(index, _)| {
+            let line = index + 1;
+            line >= parent.start_line
+                && line <= parent.end_line
+                && !(line >= nested.start_line && line <= nested.end_line)
+        })
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    super::related_tests::contains_call_name(&outside_nested, &nested.name)
 }
 
 fn owner_from_function(
@@ -338,6 +375,7 @@ fn owner_from_function(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 
@@ -442,6 +480,7 @@ fn owner_from_class(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 
@@ -481,6 +520,7 @@ pub(super) fn module_owner(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 

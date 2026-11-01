@@ -237,6 +237,47 @@ fn nested_function_owners_get_qualified_names() -> Result<(), String> {
 }
 
 #[test]
+fn nested_owner_records_whether_the_enclosing_body_calls_it() -> Result<(), String> {
+    let owners = extract_owners(
+        Path::new("src/nested.py"),
+        concat!(
+            "def calls(n):\n    def inner(m):\n        return m\n    return inner(n)\n\n",
+            "def defines_only(n):\n    def inner2(m):\n        return m\n    return n\n\n",
+            "def recursion_only(n):\n    def inner3(m):\n        return inner3(m - 1) if m else m\n    return n\n\n",
+            "def returns_callable(n):\n    def inner4(m):\n        return m\n    return inner4\n",
+        ),
+    );
+    let flag = |qualified: &str| -> Result<bool, String> {
+        owners
+            .iter()
+            .find(|owner| owner.qualified_name == qualified)
+            .map(|owner| owner.nested_called_by_parent)
+            .ok_or_else(|| format!("owner {qualified} missing"))
+    };
+    assert!(
+        flag("calls.inner")?,
+        "an enclosing body that calls the nested def reaches it"
+    );
+    assert!(
+        !flag("defines_only.inner2")?,
+        "an enclosing body that only defines the nested def gives no path"
+    );
+    assert!(
+        !flag("recursion_only.inner3")?,
+        "a call inside the nested body itself is not a call from the enclosing body"
+    );
+    assert!(
+        !flag("returns_callable.inner4")?,
+        "returning the nested def without calling it stays fail-closed"
+    );
+    assert!(
+        !flag("calls")?,
+        "a top-level owner is never a nested-called owner"
+    );
+    Ok(())
+}
+
+#[test]
 fn non_underscore_names_preserve_selectors_and_owner_relations() -> Result<(), String> {
     let tests = collect(
         RELATION_SOURCE,
