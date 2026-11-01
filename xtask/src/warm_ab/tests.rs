@@ -221,7 +221,8 @@ fn a_stalled_remote_times_out_at_its_deadline() {
 
 #[cfg(unix)]
 mod stub {
-    use super::super::{build_packet, parse_args};
+    use super::super::judge::Limits;
+    use super::super::{build_packet, control_delay_ms, control_refusal, parse_args};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
@@ -371,5 +372,43 @@ mod stub {
             .collect();
             assert!(parse_args(&args).is_err(), "{bad} must be refused");
         }
+    }
+
+    #[test]
+    fn the_control_targets_the_ratio_whatever_the_candidate_already_took() {
+        // 4 s baseline at 1.6x targets 6.4 s: a 1 s candidate waits 5.4 s, one at
+        // the baseline's speed waits 2.4 s, and one already past it waits nothing.
+        assert_eq!(control_delay_ms(4000, 1000, 1.6), 5400);
+        assert_eq!(control_delay_ms(4000, 4000, 1.6), 2400);
+        assert_eq!(control_delay_ms(4000, 9000, 1.6), 0);
+    }
+
+    #[test]
+    fn a_control_that_cannot_test_the_gate_is_refused() {
+        let limits = Limits::default();
+        let short = control_refusal(1900, 1.6, &limits);
+        assert!(
+            short.is_some_and(|reason| reason.contains("inconclusive")),
+            "a baseline whose control stays inside the noise floor must be refused"
+        );
+        let long = control_refusal(100_000, 10.0, &limits);
+        assert!(
+            long.is_some_and(|reason| reason.contains("ceiling")),
+            "a control past the ceiling must be refused"
+        );
+        assert!(control_refusal(4000, 1.6, &limits).is_none());
+    }
+
+    #[test]
+    fn a_fast_candidate_still_fails_the_control() -> TestResult {
+        const FAST: &str = "sleep 1\nprintf '%s' '{\"findings\":[{\"id\":1}]}'\nexit 0";
+        let control = packet_with("control-fast", SLOW, FAST, &["--control-slowdown", "1.6"])?;
+        assert!(!control.passed, "{}", control.detail);
+        assert!(
+            control.ratio.is_some_and(|ratio| ratio >= 1.55),
+            "{:?}",
+            control.ratio
+        );
+        Ok(())
     }
 }

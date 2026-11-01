@@ -374,12 +374,36 @@ fn check_once(
     })
 }
 
-/// The wait that makes a candidate run `ratio` times its paired baseline run.
-fn control_delay_ms(baseline_ms: u128, ratio: f64) -> u128 {
+/// The wait that makes a candidate's recorded time `ratio` times its paired
+/// baseline run, given what the candidate already took. A faster candidate needs
+/// a longer wait than a same-speed one; a slower one may need none.
+fn control_delay_ms(baseline_ms: u128, candidate_ms: u128, ratio: f64) -> u128 {
     // Round-trip through text: a float-to-integer cast trips the sign-loss lint,
     // and millisecond resolution is all the measurement has anyway.
-    let extra = ((ratio - 1.0) * baseline_ms as f64).max(0.0);
-    format!("{extra:.0}").parse().unwrap_or(0)
+    let target = (ratio * baseline_ms as f64).max(0.0);
+    let target: u128 = format!("{target:.0}").parse().unwrap_or(0);
+    target.saturating_sub(candidate_ms)
+}
+
+/// Why a control cannot be applied to this run, if it cannot: the control must
+/// stay inside the ceiling and must exceed the judge's noise floor, otherwise a
+/// pass would say nothing about the gate (#12244).
+fn control_refusal(baseline_ms: u128, ratio: f64, limits: &Limits) -> Option<String> {
+    let target = control_delay_ms(baseline_ms, 0, ratio);
+    if target > limits.ceiling_ms {
+        return Some(format!(
+            "the control needs {target} ms for a {baseline_ms} ms baseline, past the {} ms ceiling",
+            limits.ceiling_ms
+        ));
+    }
+    if target.saturating_sub(baseline_ms) <= limits.noise_floor_ms {
+        return Some(format!(
+            "inconclusive: a {ratio}x control on a {baseline_ms} ms baseline adds {} ms, within the {} ms noise floor, so a pass would not test the gate",
+            target.saturating_sub(baseline_ms),
+            limits.noise_floor_ms
+        ));
+    }
+    None
 }
 
 fn measure_pair(
@@ -407,7 +431,13 @@ fn measure_pair(
         let base = check_once(&baseline, tree, diff, &home, "baseline warm check")?;
         let mut cand = check_once(&candidate, tree, diff, &home, "candidate warm check")?;
         if let Some(ratio) = options.control_slowdown {
-            let extra = control_delay_ms(base.millis, ratio);
+            if let Some(reason) = control_refusal(base.millis, ratio, &options.limits) {
+                return Err(format!(
+                    "warm-ab {}: control refused: {reason}",
+                    options.pin
+                ));
+            }
+            let extra = control_delay_ms(base.millis, cand.millis, ratio);
             std::thread::sleep(Duration::from_millis(
                 u64::try_from(extra).unwrap_or(u64::MAX),
             ));
@@ -498,6 +528,11 @@ fn render_markdown(packet: &Packet) -> String {
         packet.verdict,
         packet.detail,
     );
+    if let Some(ratio) = packet.control_slowdown {
+        text.push_str(&format!(
+            "\n**Negative control: candidate times were injected at {ratio}x the baseline. This is not a measurement of the candidate.**\n\n"
+        ));
+    }
     for (name, side) in [
         ("baseline", &packet.baseline),
         ("candidate", &packet.candidate),
