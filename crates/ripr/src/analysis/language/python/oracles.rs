@@ -127,7 +127,7 @@ fn collect_assertions(
 }
 
 /// A loop over an empty literal never runs its body.
-fn iterates_nothing(iter: &Expr) -> bool {
+pub(super) fn iterates_nothing(iter: &Expr) -> bool {
     match iter {
         Expr::List(list) => list.elts.is_empty(),
         Expr::Tuple(tuple) => tuple.elts.is_empty(),

@@ -5,6 +5,8 @@
 //! except a condition that is itself a boolean literal and so provably inert
 //! (`skipif(False)`), and `importorskip` of a module every interpreter has.
 
+use super::oracles::iterates_nothing;
+use super::sink_alignment::blank_quoted_strings;
 use super::source_utils::{SourceText, text_for_range};
 use super::{PythonFramework, PythonImport, PythonTest, expr_full_name};
 use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
@@ -222,7 +224,9 @@ pub(super) fn rebound_later(
     name: &str,
     source: &SourceText<'_>,
 ) -> bool {
-    let reads_name = |range| mentions_identifier(&text_for_range(source, range), name);
+    // Quoted text (`factory('test_p')`) is not a read of the earlier definition.
+    let reads_name =
+        |range| mentions_identifier(&blank_quoted_strings(&text_for_range(source, range)), name);
     let targets_name = |target: &Expr| binds_name(target, name);
     statements[index + 1..].iter().any(|stmt| match stmt {
         Stmt::FunctionDef(def) => {
@@ -251,13 +255,27 @@ pub(super) fn rebound_later(
         // A loop or `with` target rebinds the name to a value that is not the
         // earlier definition (the iterable or context manager could read it,
         // so those stay credited).
+        // An empty literal iterable never binds the target, so the earlier
+        // definition survives.
         Stmt::For(for_stmt) => {
-            targets_name(for_stmt.target.as_ref()) && !reads_name(for_stmt.iter.range())
+            targets_name(for_stmt.target.as_ref())
+                && !reads_name(for_stmt.iter.range())
+                && !iterates_nothing(for_stmt.iter.as_ref())
         }
         Stmt::With(with) => with.items.iter().any(|item| {
             item.optional_vars.as_deref().is_some_and(targets_name)
                 && !reads_name(item.context_expr.range())
         }),
+        // `import name` / `import name.sub` (binds the root) / `import x as
+        // name` / `from m import name [as alias]` rebind the name in this scope.
+        Stmt::Import(import) => import.names.iter().any(|alias| match &alias.asname {
+            Some(asname) => asname.as_str() == name,
+            None => alias.name.as_str().split('.').next() == Some(name),
+        }),
+        Stmt::ImportFrom(import) => import
+            .names
+            .iter()
+            .any(|alias| alias.asname.as_ref().unwrap_or(&alias.name).as_str() == name),
         _ => false,
     })
 }
@@ -268,6 +286,7 @@ fn binds_name(target: &Expr, name: &str) -> bool {
         Expr::Name(bound) => bound.id.as_str() == name,
         Expr::Tuple(tuple) => tuple.elts.iter().any(|elt| binds_name(elt, name)),
         Expr::List(list) => list.elts.iter().any(|elt| binds_name(elt, name)),
+        Expr::Starred(starred) => binds_name(starred.value.as_ref(), name),
         _ => false,
     }
 }
