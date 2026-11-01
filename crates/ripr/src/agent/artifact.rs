@@ -540,10 +540,12 @@ pub(crate) fn validate_repo_exposure_artifact(
         artifact: identity,
         seams,
         run_status,
+        limitations,
     } = document;
-    if run_status.as_deref()
-        == Some(crate::output::repo_exposure::REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS)
-    {
+    if crate::output::repo_exposure::byte_bounded_from_parts(
+        run_status.as_deref(),
+        limitations.as_ref(),
+    ) {
         return Err(byte_bounded_repo_exposure_refusal(&subject));
     }
     if schema_version != crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION {
@@ -1127,15 +1129,13 @@ fn validate_artifact_commitment(
 /// fixed or absent. Classify it after canonical parsing refused it.
 fn is_byte_bounded_repo_exposure(raw: &str) -> bool {
     serde_json::from_str::<Value>(raw).is_ok_and(|document| {
-        document.get("run_status").and_then(Value::as_str)
-            == Some(crate::output::repo_exposure::REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS)
+        crate::output::repo_exposure::is_byte_bounded_repo_exposure(&document)
     })
 }
 
 fn byte_bounded_repo_exposure_refusal(subject: &str) -> String {
     format!(
-        "{subject} is a byte-bounded repo-exposure file (run_status {}): `ripr pilot` cut its seams[] to RIPR_PILOT_REPO_EXPOSURE_BYTES, so a seam missing from it cannot be compared; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0, or produce the snapshot with `ripr check --format repo-exposure-json`, then compare",
-        crate::output::repo_exposure::REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS
+        "{subject} is a byte-bounded repo-exposure file (`ripr pilot` cut its seams[] to RIPR_PILOT_REPO_EXPOSURE_BYTES, so a seam missing from it cannot be compared; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0, or produce the snapshot with `ripr check --format repo-exposure-json`, then compare)"
     )
 }
 
@@ -1339,6 +1339,8 @@ struct RepoExposureDocument {
     seams: Vec<RepoExposureSeam>,
     #[serde(default)]
     run_status: Option<String>,
+    #[serde(default)]
+    limitations: Option<Vec<Value>>,
 }
 
 #[derive(serde::Deserialize)]
@@ -2128,6 +2130,28 @@ mod tests {
             refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
             "{refusal}"
         );
+        // Both limits applied: run_status is the seam cap's, the byte bound is a
+        // limitations[] entry, and the file is still refused by name.
+        let both = serde_json::json!({
+            "schema_version": "0.5",
+            "scope": "repo",
+            "run_status": "seam_limit_applied",
+            "limitations": [
+                {"category": "pilot_seam_budget_applied"},
+                {"category": "pilot_repo_exposure_byte_bound_applied"}
+            ],
+            "seams": []
+        })
+        .to_string();
+        let both_refusal = validate_repo_exposure_artifact(root, &both, "before")
+            .err()
+            .ok_or("a seam-capped and byte-bounded file must not validate")?;
+        assert!(both_refusal.contains("byte-bounded"), "{both_refusal}");
+        let seam_cap_only = both.replace("pilot_repo_exposure_byte_bound_applied", "other");
+        let capped = validate_repo_exposure_artifact(root, &seam_cap_only, "before")
+            .err()
+            .ok_or("a file without artifact identity must not validate")?;
+        assert!(!capped.contains("byte-bounded"), "{capped}");
         // Discriminating negative: the same shape with another status keeps the
         // generic malformed-artifact refusal, so the new branch is not a catch-all.
         let other = bounded.replace("limited_repo_exposure_bytes", "complete");

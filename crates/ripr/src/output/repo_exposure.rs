@@ -369,6 +369,33 @@ impl RepoExposureByteBound {
     }
 }
 
+/// The one predicate for "this repo-exposure document's `seams[]` was cut by
+/// the pilot byte budget" (#12108). It reads the limitation category as well
+/// as `run_status`, because a seam cap that also fired keeps
+/// `run_status = seam_limit_applied` and the byte cut is then only a
+/// `limitations[]` entry. Every consumer that compares seams uses this.
+pub(crate) fn is_byte_bounded_repo_exposure(document: &Value) -> bool {
+    byte_bounded_from_parts(
+        document.get("run_status").and_then(Value::as_str),
+        document.get("limitations").and_then(Value::as_array),
+    )
+}
+
+/// The predicate over an already-parsed `run_status` and `limitations[]`, so a
+/// typed consumer does not parse the document a second time.
+pub(crate) fn byte_bounded_from_parts(
+    run_status: Option<&str>,
+    limitations: Option<&Vec<Value>>,
+) -> bool {
+    run_status == Some(REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS)
+        || limitations.is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                entry.get("category").and_then(Value::as_str)
+                    == Some(REPO_EXPOSURE_BYTE_BOUND_CATEGORY)
+            })
+        })
+}
+
 /// Choose the `seams[]` entries that fit `budget` bytes. Seams `keep` names
 /// (the current change) are chosen first, then the rest in inventory order;
 /// each group stops at its first entry that does not fit, so the cut is a
@@ -390,13 +417,16 @@ pub(crate) fn bound_repo_exposure_seams(
     }
     let mut used = 0usize;
     let mut chosen = vec![false; classified.len()];
-    for want_keep in [true, false] {
+    // The first entry that does not fit ends the selection for both groups:
+    // a smaller, lower-priority seam never fills budget a higher-priority one
+    // could not use.
+    'select: for want_keep in [true, false] {
         for (idx, entry) in classified.iter().enumerate() {
             if keep(entry) != want_keep {
                 continue;
             }
             if used.saturating_add(sizes[idx]) > budget {
-                break;
+                break 'select;
             }
             used += sizes[idx];
             chosen[idx] = true;
@@ -3099,6 +3129,48 @@ mod tests {
         assert_eq!(seam_files(&document), ["src/f0.rs", "src/f5.rs"]);
         assert_eq!(document["limitations"][0]["limit_source"], "default");
         Ok(())
+    }
+
+    #[test]
+    fn byte_bound_overflow_in_the_keep_group_ends_selection_for_both_groups() -> Result<(), String>
+    {
+        // f0, f1 are kept-group seams; f2.. are the rest. The budget fits one
+        // kept seam but not both. The first overflow stops everything: the
+        // smaller-or-equal rest seams must not fill leftover budget.
+        let classified = byte_bound_corpus();
+        let canonical_gaps = canonical_gap_identities(&classified);
+        let one = render_seam_json(&classified[0], &canonical_gaps).len();
+        let bound = bound_repo_exposure_seams(
+            &classified,
+            Some((one * 3 / 2, SeamLimitSource::Configured)),
+            |entry| {
+                let file = entry.seam.file();
+                file.ends_with("f0.rs") || file.ends_with("f1.rs")
+            },
+        )
+        .ok_or("must be cut")?;
+        let document = render_bounded(&classified, None, Some(&bound))?;
+        assert_eq!(seam_files(&document), ["src/f0.rs"]);
+        Ok(())
+    }
+
+    #[test]
+    fn byte_bounded_predicate_reads_status_or_category_and_nothing_else() {
+        use serde_json::json;
+        assert!(is_byte_bounded_repo_exposure(
+            &json!({"run_status": "limited_repo_exposure_bytes"})
+        ));
+        assert!(is_byte_bounded_repo_exposure(&json!({
+            "run_status": "seam_limit_applied",
+            "limitations": [{"category": "pilot_repo_exposure_byte_bound_applied"}]
+        })));
+        assert!(!is_byte_bounded_repo_exposure(&json!({
+            "run_status": "seam_limit_applied",
+            "limitations": [{"category": "pilot_seam_budget_applied"}]
+        })));
+        assert!(!is_byte_bounded_repo_exposure(
+            &json!({"run_status": "complete"})
+        ));
     }
 
     #[test]
