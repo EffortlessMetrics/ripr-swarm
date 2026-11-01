@@ -27,6 +27,8 @@ mod blind_journey;
 mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
+#[cfg(test)]
+mod cargo_driver_tests;
 mod check_fast_cli;
 mod check_fast_selector;
 mod command;
@@ -34,6 +36,7 @@ pub mod convergence;
 mod dispatch;
 mod dogfood;
 mod driver;
+mod droid_admit;
 mod evidence_audit;
 mod evidence_promotion;
 mod evidence_quality;
@@ -68,6 +71,8 @@ mod repo_readiness;
 mod schema_pattern;
 mod size_scaling;
 mod termination_qualification;
+#[cfg(test)]
+mod test_binary;
 mod types;
 mod warm_ab;
 mod work_adapter_identity;
@@ -306,11 +311,17 @@ use repo_readiness::{
     pr_ready_status, run_readiness_step,
 };
 #[cfg(test)]
+pub(crate) use reports::distribution_catalog::release_distribution_catalog;
+#[cfg(test)]
 pub(crate) use reports::release_server::{
-    ReleaseServerAsset, bound_descriptor_source, normalize_release_version, release_server_archive,
-    release_server_assets, release_server_manifest, release_server_readme, required_release_arg,
+    ReleaseServerAsset, bound_descriptor_source, normalize_product_version,
+    normalize_release_version, release_distribution_generation, release_server_archive,
+    release_server_assets, release_server_manifest, release_server_readme,
+    release_server_target_set, release_server_target_set_digest, required_release_arg,
+    validate_configured_release_server_targets, validate_release_server_receipts,
+    validate_release_server_staging_inventory, write_release_server_outputs_transactional,
 };
-use reports::release_server::{create_zip_archive, sha256_file};
+use reports::release_server::{create_zip_archive, sha256_bytes, sha256_file};
 #[cfg(test)]
 pub(crate) use reports::{
     BADGE_ENDPOINT_FILES, BadgeArtifactJob, BadgeBasisReport, BadgeBasisSignal,
@@ -1790,15 +1801,53 @@ fn vscode_compile() -> Result<(), String> {
     run_cwd_command(&vscode_compile_command())
 }
 
-fn vscode_package() -> Result<(), String> {
+fn vscode_package(args: &[String]) -> Result<(), String> {
+    let staged_catalog = parse_vscode_package_args(args)?;
     let extension_dir = vscode_extension_dir();
     let dist = extension_dir.join("dist");
     fs::create_dir_all(&dist)
         .map_err(|err| format!("failed to create {}: {err}", dist.display()))?;
+    vscode_compile()?;
     let version = vscode_package_version(&extension_dir.join("package.json"))?;
-    let notices = load_repository_license_notices(&repo_root()?)?;
-    verify_source_vscode_license(&extension_dir.join("LICENSE"), &notices)?;
-    println!("{}", package_and_verify_vsix(&dist, &version, &notices)?);
+    let tracked_path = extension_dir.join("distribution.json");
+    let tracked_bytes = fs::read(&tracked_path)
+        .map_err(|err| format!("failed to read {}: {err}", tracked_path.display()))?;
+    if let Some(staged) = &staged_catalog {
+        let staged_bytes = fs::read(staged)
+            .map_err(|err| format!("failed to read staged catalog {}: {err}", staged.display()))?;
+        fs::write(&tracked_path, &staged_bytes).map_err(|err| {
+            format!(
+                "failed to stage catalog into {}: {err}",
+                tracked_path.display()
+            )
+        })?;
+    }
+    let outcome = vscode_package_admitted(&extension_dir, &version, staged_catalog.is_some());
+    if staged_catalog.is_some() {
+        fs::write(&tracked_path, &tracked_bytes).map_err(|err| {
+            format!(
+                "failed to restore {} after staged packaging: {err}",
+                tracked_path.display()
+            )
+        })?;
+        let restored = fs::read(&tracked_path).map_err(|err| {
+            format!(
+                "failed to re-read {} after restore: {err}",
+                tracked_path.display()
+            )
+        })?;
+        if restored != tracked_bytes {
+            return Err(format!(
+                "packaging left tracked {} changed after restore",
+                tracked_path.display()
+            ));
+        }
+    }
+    let receipt = outcome?;
+    let receipt_path = dist.join(format!("ripr-{version}.package.receipt.json"));
+    fs::write(&receipt_path, format!("{receipt}\n"))
+        .map_err(|err| format!("failed to write {}: {err}", receipt_path.display()))?;
+    eprintln!("wrote {}", receipt_path.display());
     Ok(())
 }
 
@@ -14942,6 +14991,36 @@ fn check_output_contracts() -> Result<(), String> {
     let mutation_calibration =
         read_text_lossy(Path::new("crates/ripr/src/output/mutation_calibration.rs"))?;
     let swarm_ingest = read_text_lossy(Path::new("crates/ripr/src/output/swarm_ingest.rs"))?;
+    let mut source_promotion_resolved_tree = String::new();
+    for path in [
+        "xtask/src/reports/source_promotion_validate_resolved_tree.rs",
+        "xtask/src/reports/source_promotion_validate_resolved_tree/core.rs",
+        "xtask/src/reports/source_promotion_validate_resolved_tree/validation.rs",
+        "xtask/src/reports/source_promotion_validate_resolved_tree/materialization.rs",
+        "xtask/src/reports/source_promotion_validate_resolved_tree/receipt.rs",
+        "xtask/src/reports/source_promotion_validate_resolved_tree/io.rs",
+    ] {
+        source_promotion_resolved_tree.push_str(&read_text_lossy(Path::new(path))?);
+        source_promotion_resolved_tree.push('\n');
+    }
+    let mut source_promotion_control = String::new();
+    for path in [
+        "xtask/src/reports/source_promotion_control.rs",
+        "xtask/src/reports/source_promotion_control/core.rs",
+        "xtask/src/reports/source_promotion_control/admission.rs",
+        "xtask/src/reports/source_promotion_control/construction.rs",
+        "xtask/src/reports/source_promotion_control/publication.rs",
+        "xtask/src/reports/source_promotion_control/io.rs",
+    ] {
+        source_promotion_control.push_str(&read_text_lossy(Path::new(path))?);
+        source_promotion_control.push('\n');
+    }
+    let source_promotion_admission_workflow = read_text_lossy(Path::new(
+        "xtask/src/reports/source_promotion_admission_workflow.rs",
+    ))?;
+    let source_promotion_network_policy_resolution = read_text_lossy(Path::new(
+        "xtask/src/reports/source_promotion_network_policy_resolution.rs",
+    ))?;
     let mut json_output = String::new();
     for path in [
         "crates/ripr/src/output/json/mod.rs",
@@ -15128,6 +15207,81 @@ fn check_output_contracts() -> Result<(), String> {
                 };
                 let source = read_text_lossy(Path::new(producer))?;
                 require_contract_value(producer, &source, value, kind, &mut violations);
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
+            "source_promotion_resolved_tree_schema"
+            | "source_promotion_resolved_tree_status"
+            | "source_promotion_command_state"
+            | "source_promotion_path_role" => {
+                require_contract_value(
+                    "xtask/src/reports/source_promotion_validate_resolved_tree/",
+                    &source_promotion_resolved_tree,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
+            "source_promotion_control_schema"
+            | "source_promotion_control_status"
+            | "source_promotion_attempt_field"
+            | "source_promotion_qualification_lane" => {
+                require_contract_value(
+                    "xtask/src/reports/source_promotion_control/",
+                    &source_promotion_control,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
+            "source_promotion_admission_workflow_schema"
+            | "source_promotion_admission_workflow_packet_schema"
+            | "source_promotion_admission_workflow_status"
+            | "source_promotion_admission_workflow_profile"
+            | "source_promotion_admission_workflow_mode"
+            | "source_promotion_admission_workflow_attempt_field" => {
+                require_contract_value(
+                    "xtask/src/reports/source_promotion_admission_workflow.rs",
+                    &source_promotion_admission_workflow,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+                require_contract_value(
+                    "docs/OUTPUT_SCHEMA.md",
+                    &schema,
+                    value,
+                    kind,
+                    &mut violations,
+                );
+            }
+            "source_promotion_network_policy_resolution_schema" => {
+                require_contract_value(
+                    "xtask/src/reports/source_promotion_network_policy_resolution.rs",
+                    &source_promotion_network_policy_resolution,
+                    value,
+                    kind,
+                    &mut violations,
+                );
                 require_contract_value(
                     "docs/OUTPUT_SCHEMA.md",
                     &schema,
@@ -23461,6 +23615,36 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 }
 
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
+    if matches!(
+        path,
+        ".github/scripts/python_consumer_evidence.py"
+            | ".github/scripts/test_python_consumer_evidence.py"
+    ) {
+        return Some(
+            "Checkout-free Python wheel consumers retain bounded diagnostic command states and output digests using the runner standard library; fixtures execute no installed package and diagnostics grant no admission.",
+        );
+    }
+
+    if matches!(
+        path,
+        ".github/scripts/pypi_admission.py" | ".github/scripts/test_pypi_admission.py"
+    ) {
+        return Some(
+            "Source-owned PyPI admission uses the runner's standard-library Python ZIP/metadata runtime without building or executing artifact code before OIDC; its tests exercise the same bounded controller.",
+        );
+    }
+
+    if matches!(
+        path,
+        ".github/scripts/npm_package.py"
+            | ".github/scripts/npm_consumer.py"
+            | ".github/scripts/test_npm_package.py"
+    ) {
+        return Some(
+            "Source-owned npm qualification uses runner standard-library ZIP/tar metadata inspection and isolated npm consumers; no Python runs during npm installation or native use.",
+        );
+    }
+
     if path == ".ci/contabo-result.sh" {
         return Some(
             "Pinned EM CI requires a Bash result script; this lightweight jq consumer accepts only centrally authenticated exact-subject product imports without compiling or executing product code (#4988).",
@@ -24224,4 +24408,2192 @@ mod inherited_failure_tests {
         assert!(report.contains("Inherited-failure comparison"));
         assert!(report.contains("Status: NOT_PROVEN"));
     }
+}
+
+// ---- ported from ripr main: items with no swarm equivalent (merge sync) ----
+
+/// Origin-main rooted selector for callers that run from the repository
+/// root — including the strict check-fast module, which binds this
+/// function as its discovery authority.
+fn changed_files_vs_origin_main() -> Result<Vec<String>, String> {
+    changed_files_vs_base(Path::new("."))
+}
+
+fn parse_vscode_package_args(args: &[String]) -> Result<Option<PathBuf>, String> {
+    if args.is_empty() {
+        return Ok(None);
+    }
+    if args.len() == 2 && args[0] == "--catalog" {
+        return Ok(Some(PathBuf::from(&args[1])));
+    }
+    if args.len() == 1
+        && let Some(path) = args[0].strip_prefix("--catalog=")
+    {
+        if path.is_empty() {
+            return Err("Usage: cargo xtask vscode-package [--catalog <path>]".to_string());
+        }
+        return Ok(Some(PathBuf::from(path)));
+    }
+    Err("Usage: cargo xtask vscode-package [--catalog <path>]".to_string())
+}
+
+/// Admits the staged catalog, packages the VSIX, and proves the catalog
+/// extracted from the VSIX hashes to the immutable catalogSha256 captured
+/// in the admission receipt. A post-admission mutation of distribution.json
+/// changes the packaged bytes without changing the receipt, so it fails
+/// closed instead of moving both sides of the comparison together.
+/// Every packaging path runs the same Node admission authority as the
+/// runtime parser.
+fn verify_packaged_catalog_against_admission(
+    packaged: &[u8],
+    admission: &Value,
+) -> Result<(), String> {
+    let admitted = admission
+        .get("catalogSha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            "admission receipt carries no catalogSha256 digest; refusing to trust the packaged catalog"
+                .to_string()
+        })?;
+    if sha256_bytes(packaged) != admitted {
+        return Err(
+            "packaged VSIX catalog bytes differ from the admission receipt catalogSha256"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn vscode_package_admitted(
+    extension_dir: &Path,
+    version: &str,
+    staged_release: bool,
+) -> Result<String, String> {
+    let catalog_path = extension_dir.join("distribution.json");
+    let admission =
+        admit_distribution_catalog(extension_dir, &catalog_path, version, !staged_release)?;
+    let admission_value: Value = serde_json::from_str(&admission)
+        .map_err(|err| format!("admission receipt is not valid JSON: {err}"))?;
+    run_cwd_command(&vscode_package_command(version))?;
+    let vsix_name = format!("ripr-{version}.vsix");
+    let vsix_path = extension_dir.join("dist").join(&vsix_name);
+    // Swarm's release-notice gate applies to the admitted-catalog flow too:
+    // the source license and the packaged complete notices must both verify.
+    let notices = load_repository_license_notices(&repo_root()?)?;
+    verify_source_vscode_license(&extension_dir.join("LICENSE"), &notices)?;
+    verify_packaged_vsix_license_notices(&vsix_path, &notices)?;
+    let packaged = read_vsix_catalog(&vsix_path)?;
+    verify_packaged_catalog_against_admission(&packaged, &admission_value)?;
+    let inventory = read_vsix_inventory(&vsix_path)?;
+    check_vsix_inventory(&inventory, VSIX_MAX_ENTRIES, VSIX_MAX_UNCOMPRESSED_BYTES)
+        .map_err(|err| format!("packaged VSIX {} {err}", vsix_path.display()))?;
+    let (inventory_uncompressed, inventory_compressed) = vsix_size_totals(&inventory)
+        .map_err(|err| format!("packaged VSIX {} {err}", vsix_path.display()))?;
+    let vsix_sha256 = sha256_file(&vsix_path)?;
+    let receipt = serde_json::json!({
+        "schema_version": "package-receipt/1",
+        "producer": "xtask vscode-package",
+        "package_version": version,
+        "vsix": {
+            "file": vsix_name,
+            "sha256": vsix_sha256,
+        },
+        "catalog": {
+            "file": "distribution.json",
+            "sha256": admission_value.get("catalogSha256").cloned().unwrap_or(Value::Null),
+        },
+        "admission": admission_value,
+        "inventory": {
+            "entries": inventory.len(),
+            "uncompressed_bytes": inventory_uncompressed,
+            "compressed_bytes": inventory_compressed,
+        },
+        "tracked_template_restored": staged_release,
+        "publication_mutation_attempted": false,
+    });
+    serde_json::to_string_pretty(&receipt)
+        .map_err(|err| format!("failed to render package receipt: {err}"))
+}
+
+fn admit_distribution_catalog(
+    extension_dir: &Path,
+    catalog_path: &Path,
+    package_version: &str,
+    allow_dev: bool,
+) -> Result<String, String> {
+    let script = extension_dir
+        .join("out")
+        .join("scripts")
+        .join("admit-distribution-catalog.js");
+    if !script.is_file() {
+        return Err(format!(
+            "admission script {} is missing; run cargo xtask vscode-compile first",
+            script.display()
+        ));
+    }
+    let mut command = std::process::Command::new("node");
+    command
+        .arg(&script)
+        .arg("--catalog")
+        .arg(catalog_path)
+        .arg("--package-version")
+        .arg(package_version)
+        .current_dir(extension_dir);
+    if allow_dev {
+        command.arg("--allow-dev");
+    }
+    let output = command
+        .output()
+        .map_err(|err| format!("failed to run distribution catalog admission: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "distribution catalog admission rejected {}: {}",
+            catalog_path.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map(|stdout| stdout.trim().to_string())
+        .map_err(|err| format!("admission receipt is not UTF-8: {err}"))
+}
+
+/// Checked totals for the packaged VSIX inventory. Wrapping or panicking
+/// sums would let hostile archive metadata slip past the fail-closed size
+/// bound, so both totals accumulate with u64 checked addition and reject
+/// the archive on overflow.
+fn vsix_size_totals(entries: &[VsixEntry]) -> Result<(u64, u64), String> {
+    let mut uncompressed: u64 = 0;
+    let mut compressed: u64 = 0;
+    for entry in entries {
+        uncompressed = uncompressed
+            .checked_add(entry.size)
+            .ok_or_else(|| format!("size total overflows u64 at entry {}", entry.name))?;
+        compressed = compressed
+            .checked_add(entry.compressed_size)
+            .ok_or_else(|| format!("size total overflows u64 at entry {}", entry.name))?;
+    }
+    Ok((uncompressed, compressed))
+}
+
+/// Reads the single packaged `extension/distribution.json` from a VSIX and
+/// rejects duplicate or shadow catalogs.
+fn read_vsix_catalog(vsix_path: &Path) -> Result<Vec<u8>, String> {
+    let file = fs::File::open(vsix_path)
+        .map_err(|err| format!("packaged VSIX {} is missing: {err}", vsix_path.display()))?;
+    let mut archive = zip::ZipArchive::new(file)
+        .map_err(|err| format!("packaged VSIX {} is not a zip: {err}", vsix_path.display()))?;
+    let mut found: Option<Vec<u8>> = None;
+    for index in 0..archive.len() {
+        let mut member = archive.by_index(index).map_err(|err| {
+            format!(
+                "failed to read {} member {index}: {err}",
+                vsix_path.display()
+            )
+        })?;
+        let name = member
+            .name()
+            .map_err(|err| format!("failed to read archive member name: {err}"))?
+            .into_owned();
+        if name == "extension/distribution.json" {
+            if found.is_some() {
+                return Err(format!(
+                    "packaged VSIX {} carries a duplicate catalog",
+                    vsix_path.display()
+                ));
+            }
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut member, &mut bytes).map_err(|err| {
+                format!(
+                    "failed to read packaged catalog from {}: {err}",
+                    vsix_path.display()
+                )
+            })?;
+            found = Some(bytes);
+        } else if name == "distribution.json" || name.ends_with("/distribution.json") {
+            return Err(format!(
+                "packaged VSIX {} carries a shadow catalog `{name}`",
+                vsix_path.display()
+            ));
+        }
+    }
+    found.ok_or_else(|| {
+        format!(
+            "packaged VSIX {} has no extension/distribution.json",
+            vsix_path.display()
+        )
+    })
+}
+
+/// Every live review-comments cross-check must consume a current producer from
+/// the same job path. This keeps workflow orchestration from silently dropping
+/// the producer, moving it after consumption, or checking a different subject.
+fn workflow_review_comments_cross_check_violations(path: &str, text: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    let mut job = "unknown";
+    let mut producer: Option<(String, String)> = None;
+    let mut producer_checked = false;
+    let lines = text.lines().collect::<Vec<_>>();
+
+    for (index, line) in lines.iter().copied().enumerate() {
+        if let Some(name) = workflow_job_name(line) {
+            job = name;
+            producer = None;
+            producer_checked = false;
+            continue;
+        }
+        let command = workflow_command_text(line);
+        if command.starts_with('#') {
+            continue;
+        }
+        if workflow_xtask_invocation(command, "ripr-pr") {
+            let identity = workflow_command_subject(command);
+            if workflow_step_disabled_or_shielded(&lines, index)
+                || workflow_command_failure_shielded(command)
+            {
+                violations.push(format!(
+                    "{path}:{} {job}: pr-evidence producer must not be failure-shielded",
+                    index + 1
+                ));
+                continue;
+            }
+            if command.split_whitespace().any(|token| token == "--check") {
+                if identity.is_none() || identity != producer {
+                    violations.push(format!(
+                        "{path}:{} {job}: pr-evidence check must follow the same base/head producer",
+                        index + 1
+                    ));
+                } else {
+                    producer_checked = true;
+                }
+            } else {
+                producer = identity;
+                producer_checked = false;
+            }
+            continue;
+        }
+        if !workflow_xtask_invocation(command, "ripr-review-comments") {
+            continue;
+        }
+        if workflow_step_disabled_or_shielded(&lines, index)
+            || workflow_command_failure_shielded(command)
+        {
+            violations.push(format!(
+                "{path}:{} {job}: review-comments consumer must not be failure-shielded",
+                index + 1
+            ));
+        }
+        if !command.contains("--check-output target/ripr/pr/check.json") {
+            violations.push(format!(
+                "{path}:{} {job}: review-comments consumer must use --check-output target/ripr/pr/check.json",
+                index + 1
+            ));
+        }
+        let consumer = workflow_command_subject(command);
+        if producer.is_none() || consumer.is_none() || consumer != producer || !producer_checked {
+            violations.push(format!(
+                "{path}:{} {job}: review-comments consumer requires a preceding checked pr-evidence producer for the same base/head",
+                index + 1
+            ));
+        }
+    }
+    violations
+}
+
+fn workflow_step_disabled_or_shielded(lines: &[&str], command_index: usize) -> bool {
+    let start = (0..=command_index)
+        .rev()
+        .find(|index| lines[*index].starts_with("      - "))
+        .unwrap_or(command_index);
+    let end = ((command_index + 1)..lines.len())
+        .find(|index| {
+            lines[*index].starts_with("      - ") || workflow_job_name(lines[*index]).is_some()
+        })
+        .unwrap_or(lines.len());
+    lines[start..end].iter().any(|line| {
+        let property = line.trim().strip_prefix("- ").unwrap_or(line.trim());
+        property == "continue-on-error: true"
+            || property == "if: false"
+            || property == "if: ${{ false }}"
+    })
+}
+
+fn workflow_command_failure_shielded(command: &str) -> bool {
+    command.contains("|| true") || command.contains("|| :")
+}
+
+fn workflow_command_text(line: &str) -> &str {
+    let command = line
+        .trim()
+        .strip_prefix("- run:")
+        .unwrap_or_else(|| line.trim())
+        .trim();
+    command
+        .split_once(" #")
+        .map_or(command, |(command, _)| command.trim_end())
+}
+
+fn workflow_xtask_invocation(command: &str, subcommand: &str) -> bool {
+    let invocation = format!("cargo xtask {subcommand} ");
+    if command.starts_with(&invocation) {
+        return true;
+    }
+    command.split_once(" -- ").is_some_and(|(recorder, tail)| {
+        recorder.trim_start().starts_with("$R ") && tail.starts_with(&invocation)
+    })
+}
+
+fn workflow_job_name(line: &str) -> Option<&str> {
+    if !line.starts_with("  ") || line.starts_with("   ") {
+        return None;
+    }
+    line.trim().strip_suffix(':')
+}
+
+fn workflow_command_subject(command: &str) -> Option<(String, String)> {
+    Some((
+        workflow_shell_flag_value(command, "--base")?,
+        workflow_shell_flag_value(command, "--head")?,
+    ))
+}
+
+fn workflow_shell_flag_value(command: &str, flag: &str) -> Option<String> {
+    let tail = command.split_once(&format!("{flag} "))?.1.trim_start();
+    if let Some(quoted) = tail.strip_prefix('"') {
+        return quoted.split_once('"').map(|(value, _)| value.to_string());
+    }
+    tail.split_whitespace().next().map(str::to_string)
+}
+
+fn review_thread_mutation_line(line: &str) -> bool {
+    let normalized = line
+        .chars()
+        .map(|character| character.to_ascii_lowercase())
+        .filter(|character| character.is_ascii_alphanumeric())
+        .collect::<String>();
+    normalized.contains(&review_thread_mutation_token())
+}
+
+fn review_thread_mutation_token() -> String {
+    [
+        'r', 'e', 's', 'o', 'l', 'v', 'e', 'r', 'e', 'v', 'i', 'e', 'w', 't', 'h', 'r', 'e', 'a',
+        'd',
+    ]
+    .into_iter()
+    .collect()
+}
+
+/// Flag a `run:` written as a plain YAML scalar that contains ` #`.
+///
+/// YAML treats ` #` in a plain scalar as the start of a comment, so the command
+/// is silently truncated at that point. When the truncated remainder holds an
+/// unterminated quote the shell fails with `unexpected EOF`, and when it does
+/// not the step runs a *different, shorter* command with no error at all — the
+/// worse outcome. A block scalar (`run: |`) has no comment rule and is immune.
+///
+/// This is enforced because it actually happened: a `printf` summary line
+/// containing an issue reference was cut mid-string, and nothing local caught it
+/// — `check-workflows` passed because it never parsed the YAML.
+fn workflow_plain_scalar_comment_violations(path: &str, text: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let Some((_, after)) = line.split_once("run:") else {
+            continue;
+        };
+        // Only plain scalars are affected; `run: |` and `run: >` are safe, and a
+        // fully quoted scalar carries its own delimiters.
+        let body = after.trim_start();
+        if body.starts_with('|') || body.starts_with('>') || body.is_empty() {
+            continue;
+        }
+        if body.starts_with('"') || body.starts_with('\'') {
+            continue;
+        }
+        if body.contains(" #") {
+            violations.push(format!(
+                "{path}:{} plain-scalar `run:` contains ` #`, which YAML reads as a comment and truncates the command; use a `run: |` block scalar",
+                index + 1
+            ));
+        }
+    }
+    violations
+}
+
+fn routed_rust_workflow_contract_violations_for_repo() -> Result<Vec<String>, String> {
+    let workflow_path = Path::new(".github/workflows/routed-rust.yml");
+    if !workflow_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let workflow = read_text_lossy(workflow_path)?;
+    let reusable_workflow = if workflow.contains(ROUTED_RUST_REUSABLE_WORKFLOW_REF) {
+        optional_policy_text(ROUTED_RUST_REUSABLE_WORKFLOW_PATH)?
+    } else {
+        None
+    };
+    let settings = optional_policy_text(".github/settings.yml")?;
+    let lane_whitelist = optional_policy_text("policy/ci-lane-whitelist.toml")?;
+
+    Ok(routed_rust_workflow_contract_violations_with_reusable(
+        &workflow,
+        reusable_workflow.as_deref(),
+        settings.as_deref(),
+        lane_whitelist.as_deref(),
+    ))
+}
+
+fn optional_policy_text(path: &str) -> Result<Option<String>, String> {
+    let path = Path::new(path);
+    if path.exists() {
+        read_text_lossy(path).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+/// Routed-rust jobs that must each carry an explicit `timeout-minutes`
+/// deadline (issue #2230).
+/// Release-facing paths that are markdown or otherwise documentation-shaped but
+/// still change what the product ships or how it is released.
+///
+/// `CHANGELOG.md` and `docs/OUTPUT_SCHEMA.md` end in `.md`, so a naive
+/// extension rule would route a release-metadata edit down the docs-only lane and
+/// skip the Rust proof entirely.
+const DOCS_ONLY_RELEASE_SURFACE: [&str; 5] = [
+    "CHANGELOG.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/ripr/Cargo.toml",
+    "docs/OUTPUT_SCHEMA.md",
+];
+
+/// Digest of the exact NUL-delimited changed-path inventory.
+///
+/// The digest covers the same bytes the predicate consumed, so a receipt can
+/// name the path set a decision was made from rather than a re-derivation of it.
+#[cfg(test)]
+pub(crate) fn changed_paths_digest(paths: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for path in paths {
+        hasher.update(path.as_bytes());
+        hasher.update([0u8]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn routed_rust_bytes_digest(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn routed_rust_decode_changed_paths(bytes: &[u8]) -> Result<Vec<String>, std::str::Utf8Error> {
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| std::str::from_utf8(path).map(str::to_string))
+        .collect()
+}
+
+const ROUTED_RUST_PROPOSITION_IDS: [&str; 22] = [
+    "cargo_fmt",
+    "cargo_check",
+    "cargo_clippy",
+    "cargo_nextest",
+    "precommit",
+    "check_evidence_promotion_honesty",
+    "check_agent_skills",
+    "check_dependencies",
+    "check_process_policy",
+    "check_network_policy",
+    "goldens_check",
+    "fixtures",
+    "ripr_pr",
+    "ripr_pr_check",
+    "ripr_review_comments",
+    "ripr_review_comments_check",
+    "impacted_evidence",
+    "impacted_evidence_check",
+    "ripr_pr_summary",
+    "ripr_pr_summary_check",
+    "ripr_annotations",
+    "ripr_annotations_check",
+];
+
+const ROUTED_RUST_DOCS_REQUIRED_IDS: [&str; 2] = ["precommit", "check_agent_skills"];
+
+const ROUTED_RUST_PR_REQUIRED_IDS: [&str; 10] = [
+    "ripr_pr",
+    "ripr_pr_check",
+    "ripr_review_comments",
+    "ripr_review_comments_check",
+    "impacted_evidence",
+    "impacted_evidence_check",
+    "ripr_pr_summary",
+    "ripr_pr_summary_check",
+    "ripr_annotations",
+    "ripr_annotations_check",
+];
+
+fn routed_rust_expected_command(id: &str, base: &str, pr_head: &str) -> Option<String> {
+    let command = match id {
+        "cargo_fmt" => "cargo fmt --check".to_string(),
+        "cargo_check" => "cargo check --workspace --all-targets".to_string(),
+        "cargo_clippy" => "cargo clippy --workspace --all-targets -- -D warnings".to_string(),
+        "cargo_nextest" => "cargo nextest run --workspace".to_string(),
+        "precommit" => "cargo xtask precommit".to_string(),
+        "check_evidence_promotion_honesty" => {
+            "cargo xtask check-evidence-promotion-honesty".to_string()
+        }
+        "check_agent_skills" => "cargo xtask check-agent-skills".to_string(),
+        "check_dependencies" => "cargo xtask check-dependencies".to_string(),
+        "check_process_policy" => "cargo xtask check-process-policy".to_string(),
+        "check_network_policy" => "cargo xtask check-network-policy".to_string(),
+        "goldens_check" => "cargo xtask goldens check".to_string(),
+        "fixtures" => "cargo xtask fixtures".to_string(),
+        "ripr_pr" => format!("cargo xtask ripr-pr --base {base} --head {pr_head}"),
+        "ripr_pr_check" => {
+            format!("cargo xtask ripr-pr --base {base} --head {pr_head} --check")
+        }
+        "ripr_review_comments" => {
+            format!(
+                "cargo xtask ripr-review-comments --base {base} --head {pr_head} --check-output target/ripr/pr/check.json"
+            )
+        }
+        "ripr_review_comments_check" => {
+            format!(
+                "cargo xtask ripr-review-comments --base {base} --head {pr_head} --check-output target/ripr/pr/check.json --check"
+            )
+        }
+        "impacted_evidence" => "cargo xtask impacted-evidence".to_string(),
+        "impacted_evidence_check" => "cargo xtask impacted-evidence --check".to_string(),
+        "ripr_pr_summary" => "cargo xtask ripr-pr-summary".to_string(),
+        "ripr_pr_summary_check" => "cargo xtask ripr-pr-summary --check".to_string(),
+        "ripr_annotations" => "cargo xtask ripr-annotations".to_string(),
+        "ripr_annotations_check" => "cargo xtask ripr-annotations --check".to_string(),
+        _ => return None,
+    };
+    Some(command)
+}
+
+fn routed_rust_required_ids(route: &str, event: &str) -> Vec<&'static str> {
+    let mut ids = if route == "docs_only" {
+        ROUTED_RUST_DOCS_REQUIRED_IDS.to_vec()
+    } else {
+        ROUTED_RUST_PROPOSITION_IDS[..12].to_vec()
+    };
+    if event == "pull_request" {
+        ids.extend(ROUTED_RUST_PR_REQUIRED_IDS);
+    }
+    ids
+}
+
+fn routed_rust_changed_subject<'a>(pr_head_sha: &'a str, subject_sha: &'a str) -> &'a str {
+    if pr_head_sha.is_empty() {
+        subject_sha
+    } else {
+        pr_head_sha
+    }
+}
+
+/// What the route planned for a subject.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlannedRoute {
+    GithubHostedRust,
+    DocsOnly,
+    PlanFailed,
+    UnsupportedSubject,
+}
+
+/// GitHub's conclusion for the child job that was supposed to prove the subject.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChildConclusion {
+    Success,
+    Failure,
+    Skipped,
+    Cancelled,
+}
+
+/// What the child's own execution receipt says, independent of GitHub's tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReceiptState {
+    Passed,
+    Failed,
+    NotRun,
+    Cancelled,
+    InstrumentFailure,
+    Missing,
+}
+
+/// The aggregate's normalized verdict.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AggregateVerdict {
+    Passed,
+    Failed,
+    NotProven,
+    StaleOrWrongSubject,
+    Cancelled,
+}
+
+impl AggregateVerdict {
+    /// Only `Passed` may publish a green required check.
+    pub(crate) fn is_green(self) -> bool {
+        matches!(self, AggregateVerdict::Passed)
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            AggregateVerdict::Passed => "passed",
+            AggregateVerdict::Failed => "failed",
+            AggregateVerdict::NotProven => "not_proven",
+            AggregateVerdict::StaleOrWrongSubject => "stale_or_wrong_subject",
+            AggregateVerdict::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// Decide the routed-Rust aggregate from planned work and observed evidence.
+///
+/// ripr#1446: the aggregate must decide from planned propositions and their
+/// normalized receipts, never from GitHub's scheduling artefacts alone. A child
+/// that was required and did not run is `not_proven`, not a pass, and a green
+/// tick that disagrees with its own receipt is contradictory evidence rather
+/// than a success.
+pub(crate) fn routed_rust_aggregate_verdict(
+    planned: PlannedRoute,
+    child: ChildConclusion,
+    receipt: ReceiptState,
+    subject_observed: bool,
+    subject_agrees: bool,
+    route_assertions_hold: bool,
+) -> AggregateVerdict {
+    // A plan that never produced a usable decision proves nothing about the
+    // subject, whatever the children happened to do.
+    if planned == PlannedRoute::PlanFailed {
+        return AggregateVerdict::NotProven;
+    }
+    // An unsupported subject needs an explicit approved disposition; silence is
+    // not approval.
+    if planned == PlannedRoute::UnsupportedSubject {
+        return AggregateVerdict::NotProven;
+    }
+    // The source route is GitHub-hosted by construction. Any attempted
+    // self-hosted selection, private runner secret, or organization runner
+    // query invalidates the plan before child evidence can be credited.
+    if !route_assertions_hold {
+        return AggregateVerdict::NotProven;
+    }
+
+    // Without a materialized object, no child conclusion can be attributed to
+    // the planned candidate. Checkout/instrument failure is therefore unproven,
+    // not product failure.
+    if matches!(
+        planned,
+        PlannedRoute::DocsOnly | PlannedRoute::GithubHostedRust
+    ) && !subject_observed
+    {
+        return AggregateVerdict::NotProven;
+    }
+
+    // A materialized object that differs from the planned object is not a
+    // product failure: the candidate was never tested. This must precede the
+    // child/receipt failure mapping because the binding step deliberately
+    // fails the job after publishing the observed identity.
+    if subject_observed && !subject_agrees {
+        return AggregateVerdict::StaleOrWrongSubject;
+    }
+
+    // Interruption is its own state. Reporting it as a product failure would
+    // blame the candidate for infrastructure, and reporting it as a pass would
+    // be worse.
+    if child == ChildConclusion::Cancelled || receipt == ReceiptState::Cancelled {
+        return AggregateVerdict::Cancelled;
+    }
+    // The receipt and the tick must agree. Either direction of disagreement is
+    // a contract violation: a fabricated pass, or a receipt that knows more than
+    // the tick does.
+    match (child, receipt) {
+        (ChildConclusion::Success, ReceiptState::Failed)
+        | (ChildConclusion::Failure, ReceiptState::Passed) => {
+            return AggregateVerdict::Failed;
+        }
+        _ => {}
+    }
+
+    if receipt == ReceiptState::InstrumentFailure {
+        return AggregateVerdict::NotProven;
+    }
+
+    match planned {
+        PlannedRoute::DocsOnly => match (child, receipt) {
+            // The docs gate is the applicable proof; the Rust lane is planned
+            // `not_applicable` and its absence is expected.
+            (ChildConclusion::Success, ReceiptState::Passed) => {
+                if subject_observed && subject_agrees {
+                    AggregateVerdict::Passed
+                } else {
+                    AggregateVerdict::NotProven
+                }
+            }
+            (ChildConclusion::Failure, _) => AggregateVerdict::Failed,
+            (_, ReceiptState::Failed) => AggregateVerdict::Failed,
+            // A docs lane that did not run, or produced no receipt, has proved
+            // nothing even though the Rust lane was legitimately skipped.
+            _ => AggregateVerdict::NotProven,
+        },
+        PlannedRoute::GithubHostedRust => {
+            if receipt == ReceiptState::Missing {
+                return AggregateVerdict::NotProven;
+            }
+            match (child, receipt) {
+                (ChildConclusion::Success, ReceiptState::Passed) => {
+                    // A pass is only about this subject if the child proved this
+                    // subject.
+                    if subject_observed && subject_agrees {
+                        AggregateVerdict::Passed
+                    } else {
+                        AggregateVerdict::NotProven
+                    }
+                }
+                (ChildConclusion::Failure, _) | (_, ReceiptState::Failed) => {
+                    AggregateVerdict::Failed
+                }
+                // Required work that was skipped is unproven, never green.
+                (ChildConclusion::Skipped, _) | (_, ReceiptState::NotRun) => {
+                    AggregateVerdict::NotProven
+                }
+                _ => AggregateVerdict::NotProven,
+            }
+        }
+        PlannedRoute::PlanFailed | PlannedRoute::UnsupportedSubject => AggregateVerdict::NotProven,
+    }
+}
+
+fn routed_rust_arg(args: &[String], name: &str) -> String {
+    let flag = format!("--{name}");
+    let inline = format!("--{name}=");
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == &flag {
+            return iter.next().cloned().unwrap_or_default();
+        }
+        if let Some(value) = arg.strip_prefix(&inline) {
+            return value.to_string();
+        }
+    }
+    String::new()
+}
+
+/// Publish the normalized routed-Rust verdict.
+///
+/// ripr#1446: the aggregate decides from planned propositions and normalized
+/// receipts, not from GitHub's scheduling artefacts. Keeping the transition
+/// table in Rust means the decision is exercised by
+/// `routed_rust_aggregate_transition_matrix` rather than being re-implemented in
+/// shell where it cannot be tested.
+pub(crate) fn ci_routed_rust_result(args: &[String]) -> Result<(), String> {
+    let root = std::env::current_dir()
+        .map_err(|err| format!("failed to resolve the working directory: {err}"))?;
+    let evidence_dir = child_receipt_dir(&root);
+    let plan_path_arg = routed_rust_arg(args, "plan-path");
+    let execution_path_arg = routed_rust_arg(args, "execution-path");
+    let plan_path = if plan_path_arg.is_empty() {
+        evidence_dir.join("routed-rust-plan.json")
+    } else {
+        PathBuf::from(plan_path_arg)
+    };
+    let execution_path = if execution_path_arg.is_empty() {
+        evidence_dir.join("routed-rust-execution.json")
+    } else {
+        PathBuf::from(execution_path_arg)
+    };
+    let result_path = evidence_dir.join("routed-rust-result.json");
+    fs::create_dir_all(&evidence_dir)
+        .map_err(|err| format!("failed to create {}: {err}", evidence_dir.display()))?;
+
+    let mut invalidations = Vec::new();
+    if routed_rust_arg(args, "download-outcome") != "success" {
+        invalidations.push("artifact_download_not_successful".to_string());
+    }
+    let plan_bytes = fs::read(&plan_path).map_err(|err| {
+        invalidations.push(format!("plan_unavailable: {err}"));
+    });
+    let execution_bytes = fs::read(&execution_path).map_err(|err| {
+        invalidations.push(format!("execution_unavailable: {err}"));
+    });
+    let plan: serde_json::Value = plan_bytes
+        .as_ref()
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(bytes).ok())
+        .unwrap_or_else(|| {
+            if plan_bytes.is_ok() {
+                invalidations.push("plan_malformed".to_string());
+            }
+            serde_json::json!({})
+        });
+    let execution: serde_json::Value = execution_bytes
+        .as_ref()
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(bytes).ok())
+        .unwrap_or_else(|| {
+            if execution_bytes.is_ok() {
+                invalidations.push("execution_malformed".to_string());
+            }
+            serde_json::json!({})
+        });
+
+    if plan["schema"] != "ripr.routed_rust_plan.v1" {
+        invalidations.push("plan_schema_mismatch".to_string());
+    }
+    if execution["schema"] != "ripr.routed_rust_execution.v1" {
+        invalidations.push("execution_schema_mismatch".to_string());
+    }
+    if plan["plan_version"] != 1 || plan["workflow_version"] != 1 {
+        invalidations.push("plan_version_mismatch".to_string());
+    }
+    for field in [
+        "repository",
+        "workflow",
+        "event",
+        "trust_class",
+        "subject_sha",
+        "subject_tree",
+        "changed_paths_sha256",
+        "scheduled_route",
+        "toolchain_identity",
+        "cargo_identity",
+        "cargo_lock_sha256",
+        "cache_identity",
+        "artifact_identity",
+    ] {
+        if plan[field].as_str().is_none_or(str::is_empty) {
+            invalidations.push(format!("plan_missing_{field}"));
+        }
+    }
+    if plan["changed_path_count"].as_u64().is_none() {
+        invalidations.push("plan_missing_changed_path_count".to_string());
+    }
+    if !matches!(
+        plan["authoritative_applicability"].as_str(),
+        Some("docs_only" | "github_hosted_rust")
+    ) || plan["conservative_overproof"].as_bool().is_none()
+        || plan["state"] != "planned"
+        || !plan["failure_reason"].is_null()
+        || plan["non_claims"].as_array().is_none_or(Vec::is_empty)
+    {
+        invalidations.push("plan_disposition_contract_mismatch".to_string());
+    }
+    if plan["event"] == "pull_request"
+        && (plan["base_sha"].as_str().is_none_or(str::is_empty)
+            || plan["pr_head_sha"].as_str().is_none_or(str::is_empty)
+            || plan["pr_head_tree"].as_str().is_none_or(str::is_empty))
+    {
+        invalidations.push("plan_missing_pull_request_identity".to_string());
+    }
+    for field in ["os", "arch", "image_os", "image_version"] {
+        if plan["runner_identity"][field]
+            .as_str()
+            .is_none_or(str::is_empty)
+        {
+            invalidations.push(format!("plan_missing_runner_{field}"));
+        }
+    }
+    for field in [
+        "repository_write",
+        "org_runner",
+        "release",
+        "registry",
+        "marketplace",
+        "signing",
+    ] {
+        if plan["credential_availability"][field] != false {
+            invalidations.push(format!("credential_available_{field}"));
+        }
+    }
+    if !plan["invalidations"].as_array().is_some_and(Vec::is_empty) {
+        invalidations.push("plan_contains_invalidations".to_string());
+    }
+    for (argument, field) in [
+        ("expected-repository", "repository"),
+        ("expected-workflow", "workflow"),
+        ("expected-event", "event"),
+        ("expected-base", "base_sha"),
+        ("expected-pr-head", "pr_head_sha"),
+    ] {
+        let expected = routed_rust_arg(args, argument);
+        if expected != plan[field].as_str().unwrap_or_default() {
+            invalidations.push(format!("plan_{field}_not_current"));
+        }
+    }
+    for (argument, field) in [
+        ("expected-trust-class", "trust_class"),
+        ("expected-pr-head-tree", "pr_head_tree"),
+        ("expected-toolchain-identity", "toolchain_identity"),
+        ("expected-cargo-identity", "cargo_identity"),
+        ("expected-cargo-lock-sha256", "cargo_lock_sha256"),
+        ("expected-cache-identity", "cache_identity"),
+        ("expected-artifact-identity", "artifact_identity"),
+    ] {
+        let expected = routed_rust_arg(args, argument);
+        if expected != plan[field].as_str().unwrap_or_default() {
+            invalidations.push(format!("plan_{field}_not_current"));
+        }
+    }
+    let expected_changed_path_count = routed_rust_arg(args, "expected-changed-path-count")
+        .parse::<u64>()
+        .ok();
+    if plan["changed_path_count"].as_u64() != expected_changed_path_count {
+        invalidations.push("plan_changed_path_count_not_current".to_string());
+    }
+    let expected_changed_paths_utf8 = routed_rust_arg(args, "expected-changed-paths-utf8");
+    if plan["changed_paths_utf8"].as_bool()
+        != match expected_changed_paths_utf8.as_str() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }
+    {
+        invalidations.push("plan_changed_paths_utf8_not_current".to_string());
+    }
+    let cache_identity = plan["cache_identity"].as_str().unwrap_or_default();
+    let cache_matched_identity = plan["cache_matched_identity"].as_str().unwrap_or_default();
+    let cache_hit = plan["cache_hit"].as_str();
+    if !matches!(cache_hit, Some("" | "true" | "false")) {
+        invalidations.push("plan_cache_hit_invalid".to_string());
+    }
+    if matches!(cache_hit, Some("true")) && cache_matched_identity != cache_identity {
+        invalidations.push("plan_cache_exact_hit_identity_mismatch".to_string());
+    }
+    if matches!(cache_hit, Some("false"))
+        && !cache_matched_identity.is_empty()
+        && cache_matched_identity == cache_identity
+    {
+        invalidations.push("plan_cache_partial_hit_identity_mismatch".to_string());
+    }
+    if matches!(cache_hit, Some("")) && !cache_matched_identity.is_empty() {
+        invalidations.push("plan_cache_miss_has_matched_identity".to_string());
+    }
+    for (argument, observed) in [
+        ("expected-cache-hit", cache_hit.unwrap_or_default()),
+        ("expected-cache-matched-identity", cache_matched_identity),
+        (
+            "expected-runner-os",
+            plan["runner_identity"]["os"].as_str().unwrap_or_default(),
+        ),
+        (
+            "expected-runner-arch",
+            plan["runner_identity"]["arch"].as_str().unwrap_or_default(),
+        ),
+        (
+            "expected-runner-image-os",
+            plan["runner_identity"]["image_os"]
+                .as_str()
+                .unwrap_or_default(),
+        ),
+        (
+            "expected-runner-image-version",
+            plan["runner_identity"]["image_version"]
+                .as_str()
+                .unwrap_or_default(),
+        ),
+    ] {
+        if routed_rust_arg(args, argument) != observed {
+            invalidations.push(format!("plan_{}_not_current", argument.replace('-', "_")));
+        }
+    }
+    let plan_sha256 = plan_bytes
+        .as_ref()
+        .ok()
+        .map(|bytes| routed_rust_bytes_digest(bytes))
+        .unwrap_or_default();
+    if execution["plan_sha256"].as_str() != Some(plan_sha256.as_str()) {
+        invalidations.push("execution_plan_digest_mismatch".to_string());
+    }
+
+    let planned_route = plan["scheduled_route"].as_str().unwrap_or_default();
+    let expected_route = routed_rust_arg(args, "expected-route");
+    if expected_route.is_empty() || expected_route != planned_route {
+        invalidations.push("plan_route_mismatch".to_string());
+    }
+    let planned = match planned_route {
+        "github_hosted_rust" => PlannedRoute::GithubHostedRust,
+        "docs_only" => PlannedRoute::DocsOnly,
+        "unsupported_subject" => PlannedRoute::UnsupportedSubject,
+        _ => PlannedRoute::PlanFailed,
+    };
+    let applicability_consistent = matches!(
+        (
+            planned_route,
+            plan["authoritative_applicability"].as_str(),
+            plan["conservative_overproof"].as_bool(),
+        ),
+        ("docs_only", Some("docs_only"), Some(false))
+            | (
+                "github_hosted_rust",
+                Some("github_hosted_rust"),
+                Some(false)
+            )
+            | ("github_hosted_rust", Some("docs_only"), Some(true))
+    );
+    if !applicability_consistent {
+        invalidations.push("plan_applicability_mismatch".to_string());
+    }
+    if routed_rust_arg(args, "expected-authoritative-applicability")
+        != plan["authoritative_applicability"]
+            .as_str()
+            .unwrap_or_default()
+    {
+        invalidations.push("plan_authoritative_applicability_not_current".to_string());
+    }
+    let child = match routed_rust_arg(args, "child-conclusion").as_str() {
+        "success" => ChildConclusion::Success,
+        "failure" => ChildConclusion::Failure,
+        "cancelled" => ChildConclusion::Cancelled,
+        _ => ChildConclusion::Skipped,
+    };
+    let receipt = match execution["state"].as_str().unwrap_or_default() {
+        "passed" => ReceiptState::Passed,
+        "failed" => ReceiptState::Failed,
+        "not_run" => ReceiptState::NotRun,
+        "cancelled" => ReceiptState::Cancelled,
+        "instrument_failure" => ReceiptState::InstrumentFailure,
+        _ => ReceiptState::Missing,
+    };
+
+    let planned_subject = plan["subject_sha"].as_str().unwrap_or_default();
+    let expected_subject = routed_rust_arg(args, "expected-subject");
+    if expected_subject.is_empty() || expected_subject != planned_subject {
+        invalidations.push("plan_subject_not_current".to_string());
+    }
+    let observed_subject = execution["subject_sha"].as_str().unwrap_or_default();
+    let subject_observed = !observed_subject.is_empty();
+    // A subject claim only agrees when both sides actually named one.
+    let subject_agrees = !planned_subject.is_empty()
+        && !observed_subject.is_empty()
+        && planned_subject == observed_subject
+        && expected_subject == planned_subject;
+    if !subject_agrees {
+        invalidations.push("execution_subject_sha_mismatch".to_string());
+    }
+    let planned_tree = plan["subject_tree"].as_str().unwrap_or_default();
+    let observed_tree = execution["subject_tree"].as_str().unwrap_or_default();
+    let expected_tree = routed_rust_arg(args, "expected-subject-tree");
+    if planned_tree.is_empty()
+        || observed_tree.is_empty()
+        || expected_tree.is_empty()
+        || planned_tree != observed_tree
+        || planned_tree != expected_tree
+    {
+        invalidations.push("execution_subject_tree_mismatch".to_string());
+    }
+    let expected_changed_paths_sha256 = routed_rust_arg(args, "expected-changed-paths-sha256");
+    if expected_changed_paths_sha256.is_empty()
+        || plan["changed_paths_sha256"].as_str() != Some(expected_changed_paths_sha256.as_str())
+    {
+        invalidations.push("plan_changed_paths_not_current".to_string());
+    }
+
+    let required_ids: Vec<&str> = plan["required_proposition_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let proposition_plan = plan["proposition_plan"].as_array();
+    let planned_proposition_ids: Vec<&str> = proposition_plan
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["proposition_id"].as_str())
+        .collect();
+    if planned_proposition_ids != ROUTED_RUST_PROPOSITION_IDS {
+        invalidations.push("plan_proposition_catalog_mismatch".to_string());
+    }
+    let plan_required_ids: Vec<&str> = proposition_plan
+        .into_iter()
+        .flatten()
+        .filter(|row| row["applicability"] == "required")
+        .filter_map(|row| row["proposition_id"].as_str())
+        .collect();
+    if plan_required_ids != required_ids
+        || proposition_plan.into_iter().flatten().any(|row| {
+            !matches!(
+                row["applicability"].as_str(),
+                Some("required" | "not_applicable")
+            )
+        })
+    {
+        invalidations.push("plan_proposition_applicability_mismatch".to_string());
+    }
+    let expected_required =
+        routed_rust_required_ids(planned_route, plan["event"].as_str().unwrap_or_default());
+    if required_ids != expected_required {
+        invalidations.push("route_required_proposition_mismatch".to_string());
+    }
+    let command_ids: Vec<&str> = execution["commands"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["command_id"].as_str())
+        .collect();
+    if required_ids.is_empty() || required_ids != command_ids {
+        invalidations.push("required_proposition_set_mismatch".to_string());
+    }
+    let mut failed_commands = 0usize;
+    let mut passed_commands = 0usize;
+    let mut observed_commands = 0usize;
+    for row in execution["commands"].as_array().into_iter().flatten() {
+        if row["state"] == "failed" {
+            failed_commands += 1;
+        }
+        if row["state"] == "passed" {
+            passed_commands += 1;
+        }
+        if matches!(row["state"].as_str(), Some("passed" | "failed")) {
+            observed_commands += 1;
+        }
+        if !matches!(
+            row["state"].as_str(),
+            Some("passed" | "failed" | "not_run" | "cancelled" | "unavailable" | "not_applicable")
+        ) {
+            invalidations.push("non_terminal_or_unknown_proposition_state".to_string());
+            break;
+        }
+        let command_id = row["command_id"].as_str().unwrap_or_default();
+        let expected_command = routed_rust_expected_command(
+            command_id,
+            plan["base_sha"].as_str().unwrap_or_default(),
+            plan["pr_head_sha"].as_str().unwrap_or_default(),
+        );
+        let evidence_path = format!("target/ripr/reports/routed-rust-command-{command_id}.log");
+        let evidence_digest = fs::read(root.join(&evidence_path))
+            .ok()
+            .map(|bytes| routed_rust_bytes_digest(&bytes));
+        let observed_shape = row["command"].as_str() == expected_command.as_deref()
+            && row["duration_ms"].as_u64().is_some()
+            && row["evidence_path"].as_str() == Some(evidence_path.as_str())
+            && row["evidence_sha256"].as_str() == evidence_digest.as_deref();
+        let row_shape_holds = match row["state"].as_str() {
+            Some("passed") => row["exit_code"] == 0 && observed_shape,
+            Some("failed") => {
+                row["exit_code"].as_i64().is_some_and(|code| code != 0) && observed_shape
+            }
+            Some("not_run") => {
+                row["command"].is_null()
+                    && row["exit_code"].is_null()
+                    && row["duration_ms"].is_null()
+                    && row["evidence_path"].is_null()
+                    && row["evidence_sha256"].is_null()
+            }
+            _ => true,
+        };
+        if !row_shape_holds {
+            invalidations.push("command_row_contract_mismatch".to_string());
+            break;
+        }
+    }
+    match execution["state"].as_str() {
+        Some("passed") if passed_commands != required_ids.len() => {
+            invalidations.push("execution_pass_without_complete_proof".to_string());
+        }
+        Some("failed") if failed_commands == 0 => {
+            invalidations.push("execution_failure_without_failed_proposition".to_string());
+        }
+        Some("instrument_failure" | "not_run" | "cancelled") if failed_commands != 0 => {
+            invalidations.push("non_product_state_contains_failed_proposition".to_string());
+        }
+        Some("passed" | "failed" | "instrument_failure" | "not_run" | "cancelled") => {}
+        _ => invalidations.push("unknown_execution_state".to_string()),
+    }
+    if execution["job_outcome"].as_str().is_none_or(str::is_empty)
+        || execution["planned_command_count"].as_u64() != Some(required_ids.len() as u64)
+        || execution["observed_command_count"].as_u64() != Some(observed_commands as u64)
+        || !execution["invalidations"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    {
+        invalidations.push("execution_contract_incomplete".to_string());
+    }
+    let expected_failure_class = match execution["state"].as_str() {
+        Some("failed") => Some("product"),
+        Some("instrument_failure") => Some("instrument"),
+        _ => None,
+    };
+    if execution["failure_class"].as_str() != expected_failure_class {
+        invalidations.push("execution_failure_class_mismatch".to_string());
+    }
+    let expected_job_outcome = match child {
+        ChildConclusion::Success => "success",
+        ChildConclusion::Failure => "failure",
+        ChildConclusion::Cancelled => "cancelled",
+        ChildConclusion::Skipped => "skipped",
+    };
+    let job_outcome_mismatch = execution["job_outcome"] != expected_job_outcome;
+
+    let self_hosted_selection_attempted = routed_rust_arg(args, "self-hosted-selection-attempted");
+    let private_runner_secret_requested = routed_rust_arg(args, "private-runner-secret-requested");
+    let org_runner_query_attempted = routed_rust_arg(args, "org-runner-query-attempted");
+    let route_assertions_hold = self_hosted_selection_attempted == "false"
+        && private_runner_secret_requested == "false"
+        && org_runner_query_attempted == "false"
+        && plan["self_hosted_selection_attempted"] == false
+        && plan["private_runner_secret_requested"] == false
+        && plan["org_runner_query_attempted"] == false;
+
+    if !route_assertions_hold {
+        invalidations.push("forbidden_route_attempt".to_string());
+    }
+    if execution["required_proposition_ids"] != plan["required_proposition_ids"] {
+        invalidations.push("execution_plan_proposition_mismatch".to_string());
+    }
+    let execution_propositions = execution["propositions"].as_array();
+    let execution_proposition_ids: Vec<&str> = execution_propositions
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["proposition_id"].as_str())
+        .collect();
+    if execution_proposition_ids != ROUTED_RUST_PROPOSITION_IDS {
+        invalidations.push("execution_proposition_catalog_mismatch".to_string());
+    }
+    for (index, row) in execution_propositions.into_iter().flatten().enumerate() {
+        let Some(plan_row) = proposition_plan.and_then(|rows| rows.get(index)) else {
+            invalidations.push("execution_proposition_without_plan".to_string());
+            break;
+        };
+        if row["applicability"] != plan_row["applicability"]
+            || (row["applicability"] == "not_applicable" && row["state"] != "not_applicable")
+        {
+            invalidations.push("execution_proposition_state_mismatch".to_string());
+            break;
+        }
+        if row["applicability"] == "required"
+            && !execution["commands"].as_array().is_some_and(|commands| {
+                commands.iter().any(|command| {
+                    command["command_id"] == row["proposition_id"]
+                        && command["state"] == row["state"]
+                })
+            })
+        {
+            invalidations.push("execution_proposition_command_mismatch".to_string());
+            break;
+        }
+    }
+
+    let stale_only_invalidations = !invalidations.is_empty()
+        && invalidations.iter().all(|invalidation| {
+            matches!(
+                invalidation.as_str(),
+                "plan_subject_not_current"
+                    | "execution_subject_sha_mismatch"
+                    | "execution_subject_tree_mismatch"
+            )
+        });
+    let evidence_invalid = !invalidations.is_empty();
+    let conclusion_mismatch = matches!(
+        (child, receipt),
+        (ChildConclusion::Success, ReceiptState::Failed)
+            | (ChildConclusion::Failure, ReceiptState::Passed)
+    );
+    if conclusion_mismatch {
+        invalidations.push("child_conclusion_receipt_mismatch".to_string());
+    }
+    if job_outcome_mismatch {
+        invalidations.push("child_conclusion_job_outcome_mismatch".to_string());
+    }
+    let mut verdict = routed_rust_aggregate_verdict(
+        planned,
+        child,
+        receipt,
+        subject_observed,
+        subject_agrees,
+        route_assertions_hold,
+    );
+    if evidence_invalid
+        && (verdict != AggregateVerdict::StaleOrWrongSubject || !stale_only_invalidations)
+    {
+        verdict = AggregateVerdict::NotProven;
+    }
+    if job_outcome_mismatch && verdict.is_green() {
+        verdict = AggregateVerdict::Failed;
+    }
+
+    let result = serde_json::json!({
+        "schema": "ripr.routed_rust_result.v1",
+        "plan_sha256": plan_sha256,
+        "execution_sha256": execution_bytes.as_ref().ok().map(|bytes| routed_rust_bytes_digest(bytes)),
+        "planned_route": planned_route,
+        "child_conclusion": routed_rust_arg(args, "child-conclusion"),
+        "receipt_state": execution["state"],
+        "planned_subject_sha": planned_subject,
+        "observed_subject_sha": observed_subject,
+        "planned_subject_tree": planned_tree,
+        "observed_subject_tree": observed_tree,
+        "required_proposition_ids": required_ids,
+        "self_hosted_selection_attempted": self_hosted_selection_attempted,
+        "private_runner_secret_requested": private_runner_secret_requested,
+        "org_runner_query_attempted": org_runner_query_attempted,
+        "verdict": verdict.as_str(),
+        "invalidations": invalidations,
+        "non_claims": ["release_readiness", "publication_authority", "self_hosted_capacity"],
+    });
+    fs::write(
+        &result_path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&result)
+                .map_err(|err| format!("render routed result: {err}"))?
+        ),
+    )
+    .map_err(|err| format!("failed to write {}: {err}", result_path.display()))?;
+
+    if let Ok(summary) = std::env::var("GITHUB_STEP_SUMMARY") {
+        use std::io::Write;
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&summary)
+        {
+            let _ = writeln!(file, "### Ripr Rust Small Result\n");
+            for (label, value) in [
+                ("verdict", verdict.as_str()),
+                ("planned route", &format!("{planned:?}")),
+                ("child conclusion", &format!("{child:?}")),
+                ("receipt state", &format!("{receipt:?}")),
+                ("planned subject", planned_subject),
+                ("observed subject", observed_subject),
+                (
+                    "self-hosted selection attempted",
+                    self_hosted_selection_attempted.as_str(),
+                ),
+                (
+                    "private runner secret requested",
+                    private_runner_secret_requested.as_str(),
+                ),
+                (
+                    "organization runner query attempted",
+                    org_runner_query_attempted.as_str(),
+                ),
+            ] {
+                let _ = writeln!(file, "- {label}: `{value}`");
+            }
+        }
+    }
+
+    println!("verdict={}", verdict.as_str());
+    if verdict.is_green() {
+        Ok(())
+    } else {
+        Err(format!(
+            "routed Rust aggregate resolved to `{}`, which is not a pass",
+            verdict.as_str()
+        ))
+    }
+}
+
+/// Directory holding one child job's execution evidence.
+fn child_receipt_dir(root: &Path) -> PathBuf {
+    root.join("target").join("ripr").join("reports")
+}
+
+/// Run one planned proof command and record its terminal state.
+///
+/// ripr#1446: the aggregate must be able to contradict GitHub's tick. That is
+/// only possible if the child writes its own per-command evidence as it goes,
+/// rather than the result being re-derived from the job conclusion afterwards.
+/// Each row is appended before the exit code propagates, so a job killed part way
+/// through still leaves the commands that did complete.
+pub(crate) fn ci_record_command(args: &[String]) -> Result<(), String> {
+    let id = routed_rust_arg(args, "id");
+    if id.is_empty() {
+        return Err("ci-record-command requires --id".to_string());
+    }
+    if !ROUTED_RUST_PROPOSITION_IDS.contains(&id.as_str()) {
+        return Err(format!(
+            "ci-record-command rejects unknown proposition id `{id}`"
+        ));
+    }
+    let separator = args
+        .iter()
+        .position(|arg| arg == "--")
+        .ok_or_else(|| "ci-record-command requires `--` before the command".to_string())?;
+    let command: Vec<&str> = args[separator + 1..].iter().map(String::as_str).collect();
+    if command.is_empty() {
+        return Err("ci-record-command requires a command after `--`".to_string());
+    }
+    let expected_command = routed_rust_expected_command(
+        &id,
+        &std::env::var("BASE_SHA").unwrap_or_default(),
+        &std::env::var("HEAD_SHA").unwrap_or_default(),
+    )
+    .ok_or_else(|| format!("no command contract exists for proposition `{id}`"))?;
+    if command.join(" ") != expected_command {
+        return Err(format!(
+            "proposition `{id}` must run `{expected_command}`, not `{}`",
+            command.join(" ")
+        ));
+    }
+
+    let root = std::env::current_dir()
+        .map_err(|err| format!("failed to resolve the working directory: {err}"))?;
+    let dir = child_receipt_dir(&root);
+    fs::create_dir_all(&dir).map_err(|err| format!("failed to create {}: {err}", dir.display()))?;
+
+    // Run through the repository's owning process helper rather than a raw
+    // `Command`, so this stays inside the single sanctioned spawn site that
+    // `check-process-policy` bounds.
+    let started = std::time::Instant::now();
+    let observed = crate::run::capture_output(command[0], &command[1..], &command.join(" "))?;
+    let duration_ms = started.elapsed().as_millis();
+    let exit_code = observed.status.code().unwrap_or(-1);
+    let state = if observed.status.success() {
+        "passed"
+    } else {
+        "failed"
+    };
+    // The wrapped command's own output still belongs in the job log.
+    print!("{}", observed.stdout);
+    eprint!("{}", observed.stderr);
+    let evidence_path = format!("target/ripr/reports/routed-rust-command-{id}.log");
+    let evidence_bytes = format!("stdout:\n{}\nstderr:\n{}", observed.stdout, observed.stderr);
+    fs::write(root.join(&evidence_path), evidence_bytes.as_bytes())
+        .map_err(|err| format!("failed to write command evidence for {id}: {err}"))?;
+
+    let row = serde_json::json!({
+        "command_id": id,
+        "command": command.join(" "),
+        "state": state,
+        "exit_code": exit_code,
+        "duration_ms": duration_ms,
+        "evidence_path": evidence_path,
+        "evidence_sha256": routed_rust_bytes_digest(evidence_bytes.as_bytes()),
+    });
+    let path = dir.join("commands.jsonl");
+    let mut existing = fs::read_to_string(&path).unwrap_or_default();
+    existing.push_str(&serde_json::to_string(&row).map_err(|err| format!("render row: {err}"))?);
+    existing.push('\n');
+    fs::write(&path, existing)
+        .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+
+    if observed.status.success() {
+        Ok(())
+    } else {
+        Err(format!("{} failed with exit code {exit_code}", id))
+    }
+}
+
+/// Finalize one child job's execution receipt.
+///
+/// Runs under `if: always()`, so it must describe an interrupted job honestly:
+/// commands that completed keep their observed state, and every remaining
+/// planned command is `not_run` rather than being reported as a failure or
+/// quietly dropped.
+pub(crate) fn ci_child_receipt(args: &[String]) -> Result<(), String> {
+    let root = std::env::current_dir()
+        .map_err(|err| format!("failed to resolve the working directory: {err}"))?;
+    ci_child_receipt_at(&root, args)
+}
+
+pub(crate) fn ci_child_receipt_at(root: &Path, args: &[String]) -> Result<(), String> {
+    let plan: Vec<String> = routed_rust_arg(args, "plan")
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .collect();
+    if plan.is_empty() {
+        return Err("ci-child-receipt requires --plan with at least one command id".to_string());
+    }
+    let job_outcome = routed_rust_arg(args, "job-outcome");
+    let subject_sha = routed_rust_arg(args, "subject-sha");
+    let subject_tree = routed_rust_arg(args, "subject-tree");
+
+    let dir = child_receipt_dir(root);
+    fs::create_dir_all(&dir).map_err(|err| format!("failed to create {}: {err}", dir.display()))?;
+
+    let plan_path_arg = routed_rust_arg(args, "plan-path");
+    let plan_path = if plan_path_arg.is_empty() {
+        dir.join("routed-rust-plan.json")
+    } else {
+        PathBuf::from(plan_path_arg)
+    };
+    let mut invalidations = Vec::new();
+    let plan_bytes = fs::read(&plan_path).map_err(|err| {
+        invalidations.push(format!("plan_unavailable: {err}"));
+    });
+    let plan_packet: serde_json::Value = plan_bytes
+        .as_ref()
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(bytes).ok())
+        .unwrap_or_else(|| {
+            if plan_bytes.is_ok() {
+                invalidations.push("plan_malformed".to_string());
+            }
+            serde_json::json!({})
+        });
+    let packet_ids: Vec<&str> = plan_packet["required_proposition_ids"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    if packet_ids != plan.iter().map(String::as_str).collect::<Vec<_>>() {
+        invalidations.push("plan_proposition_mismatch".to_string());
+    }
+    if plan_packet["subject_sha"].as_str() != Some(subject_sha.as_str())
+        || plan_packet["subject_tree"].as_str() != Some(subject_tree.as_str())
+    {
+        invalidations.push("plan_subject_mismatch".to_string());
+    }
+
+    let recorded = fs::read_to_string(dir.join("commands.jsonl")).unwrap_or_default();
+    let mut observed: Vec<serde_json::Value> = Vec::new();
+    for line in recorded.lines().filter(|line| !line.trim().is_empty()) {
+        observed.push(
+            serde_json::from_str(line)
+                .map_err(|err| format!("failed to parse a recorded command row: {err}"))?,
+        );
+    }
+
+    let mut commands = Vec::new();
+    let mut any_failed = false;
+    let mut any_not_run = false;
+    for id in &plan {
+        match observed
+            .iter()
+            .find(|row| row.get("command_id").and_then(|v| v.as_str()) == Some(id.as_str()))
+        {
+            Some(row) => {
+                if row.get("state").and_then(|v| v.as_str()) != Some("passed") {
+                    any_failed = true;
+                }
+                commands.push(row.clone());
+            }
+            None => {
+                any_not_run = true;
+                commands.push(serde_json::json!({
+                    "command_id": id,
+                    "command": serde_json::Value::Null,
+                    "state": "not_run",
+                    "exit_code": serde_json::Value::Null,
+                    "duration_ms": serde_json::Value::Null,
+                    "evidence_path": serde_json::Value::Null,
+                    "evidence_sha256": serde_json::Value::Null,
+                }));
+            }
+        }
+    }
+    let propositions: Vec<serde_json::Value> = ROUTED_RUST_PROPOSITION_IDS
+        .iter()
+        .map(|id| {
+            if let Some(command) = commands
+                .iter()
+                .find(|row| row["command_id"].as_str() == Some(id))
+            {
+                serde_json::json!({
+                    "proposition_id": id,
+                    "applicability": "required",
+                    "state": command["state"],
+                })
+            } else {
+                serde_json::json!({
+                    "proposition_id": id,
+                    "applicability": "not_applicable",
+                    "state": "not_applicable",
+                })
+            }
+        })
+        .collect();
+
+    // Interruption is not product failure, and an incomplete run is not a pass.
+    let state = match job_outcome.as_str() {
+        "cancelled" => "cancelled",
+        _ if subject_sha.is_empty() || subject_tree.is_empty() || !invalidations.is_empty() => {
+            "instrument_failure"
+        }
+        _ if any_failed => "failed",
+        "failure" => "instrument_failure",
+        _ if any_not_run => "not_run",
+        _ => "passed",
+    };
+
+    let receipt = serde_json::json!({
+        "schema": "ripr.routed_rust_execution.v1",
+        "plan_sha256": plan_bytes.as_ref().ok().map(|bytes| routed_rust_bytes_digest(bytes)),
+        "state": state,
+        "job_outcome": job_outcome,
+        "subject_sha": subject_sha,
+        "subject_tree": subject_tree,
+        "required_proposition_ids": plan,
+        "planned_command_count": plan.len(),
+        "observed_command_count": observed.len(),
+        "commands": commands,
+        "propositions": propositions,
+        "failure_class": match state {
+            "failed" => serde_json::Value::String("product".to_string()),
+            "instrument_failure" => serde_json::Value::String("instrument".to_string()),
+            _ => serde_json::Value::Null,
+        },
+        "invalidations": invalidations,
+    });
+    let path = dir.join("routed-rust-execution.json");
+    fs::write(
+        &path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&receipt)
+                .map_err(|err| format!("render child receipt: {err}"))?
+        ),
+    )
+    .map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+    eprintln!("wrote {}", path.display());
+    println!("child_receipt_state={state}");
+    Ok(())
+}
+
+/// Emit the durable routed-Rust plan packet.
+///
+/// ripr#1446: job outputs schedule work; receipt bytes prove it. The cheap route
+/// job cannot produce this because it has no toolchain, so the packet is written
+/// inside whichever job was selected — those already build Rust, so it costs
+/// nothing extra — and it independently rederives every identity rather than
+/// restating the scheduler's claims.
+pub(crate) fn ci_routed_rust_plan(args: &[String]) -> Result<(), String> {
+    let scheduled_route = routed_rust_arg(args, "scheduled-route");
+    let base_sha = routed_rust_arg(args, "base");
+    let pr_head_sha = routed_rust_arg(args, "pr-head");
+    let planned_subject = routed_rust_arg(args, "subject");
+    let event = routed_rust_arg(args, "event");
+    let trust_class = routed_rust_arg(args, "trust-class");
+    let repository = routed_rust_arg(args, "repository");
+    let workflow = routed_rust_arg(args, "workflow");
+
+    let root = std::env::current_dir()
+        .map_err(|err| format!("failed to resolve the working directory: {err}"))?;
+
+    // Rederive the subject from the checkout rather than trusting the plan.
+    let rev_parse = |args: &[&str]| -> Result<String, String> {
+        let out = crate::run::capture_output("git", args, "git rev-parse")?;
+        if !out.status.success() {
+            return Err(format!("git {args:?} failed: {}", out.stderr.trim()));
+        }
+        Ok(out.stdout.trim().to_string())
+    };
+    let subject_sha = rev_parse(&["rev-parse", "HEAD"])?;
+    let subject_tree = rev_parse(&["rev-parse", "HEAD^{tree}"])?;
+    let pr_head_tree = if pr_head_sha.is_empty() {
+        String::new()
+    } else {
+        rev_parse(&["rev-parse", &format!("{pr_head_sha}^{{tree}}")])?
+    };
+    if !planned_subject.is_empty() && planned_subject != subject_sha {
+        return Err(format!(
+            "planned subject {planned_subject} does not match the checked-out subject {subject_sha}"
+        ));
+    }
+
+    // Rederive the changed-path inventory NUL-delimited so path quoting stays
+    // outside the trust boundary.
+    let mut changed_path_bytes = Vec::new();
+    if !base_sha.is_empty() {
+        let changed_subject = routed_rust_changed_subject(&pr_head_sha, &subject_sha);
+        let range = format!("{base_sha}...{changed_subject}");
+        let observed = crate::run::capture_output_bytes(
+            "git",
+            &["diff", "--name-only", "-z", range.as_str()],
+            "git diff --name-only -z",
+        )?;
+        if !observed.status.success() {
+            return Err(format!(
+                "git diff --name-only -z failed: {}",
+                String::from_utf8_lossy(&observed.stderr).trim()
+            ));
+        }
+        changed_path_bytes = observed.stdout;
+    }
+    let changed_path_count = changed_path_bytes
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .count();
+    let changed_paths_utf8 = routed_rust_decode_changed_paths(&changed_path_bytes);
+    let changed_paths_sha256 = routed_rust_bytes_digest(&changed_path_bytes);
+    let authoritative_docs_only = changed_paths_utf8
+        .as_ref()
+        .is_ok_and(|paths| changed_paths_are_docs_only(paths));
+
+    // A change scheduled to the reduced lane that the typed rule refuses is a
+    // mis-schedule, not an over-proof, and must not stand.
+    if scheduled_route == "docs_only" && !authoritative_docs_only {
+        return Err("scheduled the docs-only lane for a change the typed rule refuses".to_string());
+    }
+    let conservative_overproof = scheduled_route == "github_hosted_rust" && authoritative_docs_only;
+    let required_proposition_ids = routed_rust_required_ids(&scheduled_route, &event);
+    let proposition_plan: Vec<serde_json::Value> = ROUTED_RUST_PROPOSITION_IDS
+        .iter()
+        .map(|id| {
+            serde_json::json!({
+                "proposition_id": id,
+                "applicability": if required_proposition_ids.contains(id) { "required" } else { "not_applicable" },
+            })
+        })
+        .collect();
+    let cargo_lock_sha256 = fs::read(root.join("Cargo.lock"))
+        .map(|bytes| routed_rust_bytes_digest(&bytes))
+        .map_err(|err| format!("read Cargo.lock: {err}"))?;
+    let observed_identity = |program: &str, args: &[&str]| -> Result<String, String> {
+        let output = crate::run::capture_output(program, args, program)?;
+        if !output.status.success() {
+            return Err(format!(
+                "{program} identity failed: {}",
+                output.stderr.trim()
+            ));
+        }
+        Ok(routed_rust_bytes_digest(output.stdout.as_bytes()))
+    };
+    let rustc_identity = observed_identity("rustc", &["-Vv"])?;
+    let cargo_identity = observed_identity("cargo", &["-Vv"])?;
+    let runner_os = std::env::var("RUNNER_OS").unwrap_or_else(|_| std::env::consts::OS.to_string());
+    let runner_arch =
+        std::env::var("RUNNER_ARCH").unwrap_or_else(|_| std::env::consts::ARCH.to_string());
+    let runner_image_os = std::env::var("ImageOS").unwrap_or_default();
+    let runner_image_version = std::env::var("ImageVersion").unwrap_or_default();
+    let cache_identity = std::env::var("CACHE_PRIMARY_KEY").map_err(|err| {
+        format!("CACHE_PRIMARY_KEY must identify the exact restore request: {err}")
+    })?;
+    if cache_identity.is_empty() {
+        return Err("CACHE_PRIMARY_KEY must not be empty".to_string());
+    }
+    let cache_matched_identity = std::env::var("CACHE_MATCHED_KEY").unwrap_or_default();
+    let cache_hit = std::env::var("CACHE_HIT").unwrap_or_default();
+    let artifact_identity = format!(
+        "ripr-routed-rust-evidence-{}-{}",
+        std::env::var("GITHUB_RUN_ID").unwrap_or_default(),
+        std::env::var("GITHUB_RUN_ATTEMPT").unwrap_or_default()
+    );
+
+    let plan = serde_json::json!({
+        "schema": "ripr.routed_rust_plan.v1",
+        "plan_version": 1,
+        "workflow_version": 1,
+        "repository": repository,
+        "workflow": workflow,
+        "event": event,
+        "trust_class": trust_class,
+        "base_sha": base_sha,
+        "pr_head_sha": pr_head_sha,
+        "pr_head_tree": pr_head_tree,
+        "subject_sha": subject_sha,
+        "subject_tree": subject_tree,
+        "changed_paths_sha256": changed_paths_sha256,
+        "changed_path_count": changed_path_count,
+        "changed_paths_utf8": changed_paths_utf8.is_ok(),
+        "scheduled_route": scheduled_route,
+        "authoritative_applicability": if authoritative_docs_only { "docs_only" } else { "github_hosted_rust" },
+        "required_proposition_ids": required_proposition_ids,
+        "proposition_plan": proposition_plan,
+        "conservative_overproof": conservative_overproof,
+        "credential_availability": {
+            "repository_write": false,
+            "org_runner": false,
+            "release": false,
+            "registry": false,
+            "marketplace": false,
+            "signing": false,
+        },
+        "runner_identity": {
+            "os": runner_os,
+            "arch": runner_arch,
+            "image_os": runner_image_os,
+            "image_version": runner_image_version,
+        },
+        "toolchain_identity": rustc_identity,
+        "cargo_identity": cargo_identity,
+        "cargo_lock_sha256": cargo_lock_sha256,
+        "cache_identity": cache_identity,
+        "cache_matched_identity": cache_matched_identity,
+        "cache_hit": cache_hit,
+        "artifact_identity": artifact_identity,
+        "self_hosted_selection_attempted": false,
+        "private_runner_secret_requested": false,
+        "org_runner_query_attempted": false,
+        "state": "planned",
+        "failure_reason": serde_json::Value::Null,
+        "invalidations": [],
+        "non_claims": ["release_readiness", "publication_authority", "self_hosted_capacity"],
+    });
+
+    let dir = child_receipt_dir(&root);
+    fs::create_dir_all(&dir).map_err(|err| format!("failed to create {}: {err}", dir.display()))?;
+    let json_path = dir.join("routed-rust-plan.json");
+    fs::write(
+        &json_path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&plan)
+                .map_err(|err| format!("render routed-rust plan: {err}"))?
+        ),
+    )
+    .map_err(|err| format!("failed to write {}: {err}", json_path.display()))?;
+
+    let md_path = dir.join("routed-rust-plan.md");
+    let markdown = format!(
+        "# Routed Rust plan\n\n- schema: `ripr.routed_rust_plan.v1`\n- plan/workflow version: `1/1`\n- repository: `{repository}`\n- workflow: `{workflow}`\n- event: `{event}`\n- trust class: `{trust_class}`\n- base: `{base_sha}`\n- pull-request head: `{pr_head_sha}`\n- pull-request head tree: `{pr_head_tree}`\n- tested subject: `{subject_sha}`\n- tested subject tree: `{subject_tree}`\n- changed paths: `{}` (sha256 `{changed_paths_sha256}`)\n- scheduled route: `{scheduled_route}`\n- authoritative applicability: `{}`\n- required propositions: `{}`\n- runner: `{runner_os}/{runner_arch}` (`{runner_image_os}` version `{runner_image_version}`)\n- rustc identity sha256: `{rustc_identity}`\n- Cargo identity sha256: `{cargo_identity}`\n- Cargo.lock sha256: `{cargo_lock_sha256}`\n- cache primary/matched/hit: `{cache_identity}` / `{cache_matched_identity}` / `{cache_hit}`\n- artifact identity: `{artifact_identity}`\n- conservative over-proof: `{conservative_overproof}`\n- forbidden route assertions: `false,false,false`\n",
+        changed_path_count,
+        if authoritative_docs_only {
+            "docs_only"
+        } else {
+            "github_hosted_rust"
+        },
+        required_proposition_ids.join(",")
+    );
+    fs::write(&md_path, markdown)
+        .map_err(|err| format!("failed to write {}: {err}", md_path.display()))?;
+
+    eprintln!("wrote {}", json_path.display());
+    eprintln!("wrote {}", md_path.display());
+    Ok(())
+}
+
+/// The cheap workflow scheduler's rule, mirrored in Rust so the implication
+/// `scheduler ⇒ authority` can be tested rather than argued.
+///
+/// The scheduler runs in a job with no toolchain and no Rust cache, so it cannot
+/// call the typed authority without adding a cold Rust build to every pull
+/// request. It is therefore deliberately a strict under-approximation: it accepts
+/// only `docs/**.md` with no control characters and never the reserved release
+/// surface. Anything else is scheduled as the full proof, which is safe.
+///
+/// This must stay byte-equivalent to the `grep -Ev` rule in
+/// `.github/workflows/routed-rust.yml`; `routed_rust_scheduler_rule_matches_workflow`
+/// pins that.
+pub(crate) fn scheduler_schedules_docs_only(paths: &[String]) -> bool {
+    let considered: Vec<&str> = paths
+        .iter()
+        .map(|path| path.trim())
+        .filter(|path| !path.is_empty())
+        .collect();
+    if considered.is_empty() {
+        return false;
+    }
+    considered.iter().all(|path| {
+        if path.chars().any(char::is_control) {
+            return false;
+        }
+        if !path.starts_with("docs/") || !path.ends_with(".md") {
+            return false;
+        }
+        // Reserved release surface never takes the reduced lane.
+        !matches!(*path, "CHANGELOG.md" | "docs/OUTPUT_SCHEMA.md")
+    })
+}
+
+/// Whether a changed-path set may take the docs-only route.
+///
+/// ripr#1446: the docs-only lane skips the Rust proof, so it is the easiest place
+/// for the routed workflow to become fail-open. This predicate is deliberately
+/// conservative:
+///
+/// - an empty observation is **not** docs-only, because "we saw no changes" and
+///   "the change is documentation" are different claims;
+/// - any path outside the documentation shapes forces the full route;
+/// - release-facing markdown is excluded by exact path even though it matches the
+///   markdown shape.
+pub(crate) fn changed_paths_are_docs_only(paths: &[String]) -> bool {
+    let considered: Vec<&str> = paths
+        .iter()
+        .map(|path| path.trim())
+        .filter(|path| !path.is_empty())
+        .collect();
+
+    // An unobserved or empty change set never earns the reduced route.
+    if considered.is_empty() {
+        return false;
+    }
+
+    considered.iter().all(|path| {
+        // A path is classified by suffix, so a control character inside a
+        // fork-controlled filename could hide a source file behind a trailing
+        // `.md` (for example `src/evil<newline>docs/x.md`). Such a name is never
+        // documentation; it forces the full proof.
+        if path.chars().any(char::is_control) {
+            return false;
+        }
+        let documentation_shaped = path.starts_with("docs/specs/")
+            || path.starts_with("docs/handoffs/")
+            || path.ends_with(".md");
+        let release_surface = DOCS_ONLY_RELEASE_SURFACE.contains(path);
+        documentation_shaped && !release_surface
+    })
+}
+
+fn routed_rust_changed_path_identity(bytes: &[u8]) -> (String, usize, bool) {
+    let digest = routed_rust_bytes_digest(bytes);
+    let count = bytes
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .count();
+    let utf8 = routed_rust_decode_changed_paths(bytes).is_ok();
+    (digest, count, utf8)
+}
+
+fn routed_rust_changed_path_outputs(
+    docs_only: bool,
+    changed_paths_sha256: &str,
+    changed_path_count: usize,
+    changed_paths_utf8: bool,
+) -> String {
+    format!(
+        "docs_only={docs_only}\nchanged_paths_sha256={changed_paths_sha256}\nchanged_path_count={changed_path_count}\nchanged_paths_utf8={changed_paths_utf8}\n"
+    )
+}
+
+/// Decide whether a pull request may take the reduced docs-only route.
+///
+/// The predicate lives in Rust and is exercised by hostile fixtures, so the
+/// workflow delegates rather than reimplementing the rule in shell where it
+/// cannot be tested. Emits the route decision and exact changed-path identity to
+/// `$GITHUB_OUTPUT` when present.
+pub(crate) fn ci_docs_only(args: &[String]) -> Result<(), String> {
+    let mut base = None;
+    let mut head = None;
+    let mut expect = None;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--base" => base = iter.next().cloned(),
+            other if other.starts_with("--base=") => {
+                base = Some(other.trim_start_matches("--base=").to_string());
+            }
+            "--head" => head = iter.next().cloned(),
+            other if other.starts_with("--head=") => {
+                head = Some(other.trim_start_matches("--head=").to_string());
+            }
+            "--expect" => expect = iter.next().cloned(),
+            other if other.starts_with("--expect=") => {
+                expect = Some(other.trim_start_matches("--expect=").to_string());
+            }
+            _ => {}
+        }
+    }
+
+    let (mut changed_paths_sha256, mut changed_path_count, mut changed_paths_utf8) =
+        routed_rust_changed_path_identity(&[]);
+
+    // No base means no observation. That is not a docs-only pass.
+    let docs_only = match base.as_deref().map(str::trim).filter(|b| !b.is_empty()) {
+        None => false,
+        Some(base) => {
+            let range_head = head
+                .as_deref()
+                .map(str::trim)
+                .filter(|h| !h.is_empty())
+                .unwrap_or("HEAD");
+            let range = format!("{base}...{range_head}");
+            // NUL-delimited so a fork-controlled filename containing a newline,
+            // quote, or non-ASCII byte cannot change how the path set is parsed.
+            // Git quotes such names in the default output, which would otherwise
+            // put path quoting inside the trust boundary.
+            let observed = crate::run::capture_output_bytes(
+                "git",
+                &["diff", "--name-only", "-z", range.as_str()],
+                "git diff --name-only -z",
+            )?;
+            if !observed.status.success() {
+                return Err(format!(
+                    "ci-docs-only: changed-path observation failed: {}",
+                    String::from_utf8_lossy(&observed.stderr).trim()
+                ));
+            } else {
+                (changed_paths_sha256, changed_path_count, changed_paths_utf8) =
+                    routed_rust_changed_path_identity(&observed.stdout);
+                match routed_rust_decode_changed_paths(&observed.stdout) {
+                    Err(_) => {
+                        eprintln!(
+                            "ci-docs-only: changed-path inventory is not UTF-8; routing the full proof"
+                        );
+                        false
+                    }
+                    Ok(paths) => {
+                        // Defence in depth: the cheap scheduler must be a strict
+                        // under-approximation of this rule. If it ever schedules
+                        // the docs lane for a change this rule refuses, say so
+                        // here rather than letting the reduced route stand.
+                        if scheduler_schedules_docs_only(&paths)
+                            && !changed_paths_are_docs_only(&paths)
+                        {
+                            return Err(
+                                "scheduler routed a change to the docs-only lane that the typed rule refuses"
+                                    .to_string(),
+                            );
+                        }
+                        eprintln!(
+                            "ci-docs-only: changed_paths_sha256={changed_paths_sha256} count={}",
+                            paths.len()
+                        );
+                        changed_paths_are_docs_only(&paths)
+                    }
+                }
+            }
+        }
+    };
+
+    // The cheap workflow scheduler decides which job to start; this command is
+    // the authority on whether that decision was right. A job that was scheduled
+    // as docs-only must fail if the typed rule disagrees, otherwise a wrong
+    // scheduling decision would silently skip the Rust proof.
+    if let Some(expected) = expect.as_deref() {
+        let expected_docs_only = match expected {
+            "docs_only" => true,
+            "full" => false,
+            other => {
+                return Err(format!(
+                    "unknown --expect value `{other}`; use `docs_only` or `full`"
+                ));
+            }
+        };
+        if expected_docs_only != docs_only {
+            return Err(format!(
+                "scheduled route expected docs_only={expected_docs_only} but the changed-path rule resolved docs_only={docs_only}"
+            ));
+        }
+    }
+
+    if let Ok(output) = std::env::var("GITHUB_OUTPUT") {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(&output)
+            .map_err(|err| format!("failed to open {output}: {err}"))?;
+        file.write_all(
+            routed_rust_changed_path_outputs(
+                docs_only,
+                &changed_paths_sha256,
+                changed_path_count,
+                changed_paths_utf8,
+            )
+            .as_bytes(),
+        )
+        .map_err(|err| format!("failed to write {output}: {err}"))?;
+    }
+    println!("docs_only={docs_only}");
+    Ok(())
+}
+
+const ROUTED_RUST_DEADLINE_JOBS: [&str; 5] = [
+    "route",
+    "detect-docs-only",
+    "rust-github",
+    "docs-gate",
+    "result",
+];
+
+const ROUTED_RUST_REUSABLE_WORKFLOW_PATH: &str = ".github/workflows/rust-gates.yml";
+
+const ROUTED_RUST_REUSABLE_WORKFLOW_REF: &str = "uses: ./.github/workflows/rust-gates.yml";
+
+/// Whether any line in the named job block satisfies `predicate`.
+/// Job keys are exactly two-space-indented `name:` lines under `jobs:`;
+/// anything deeper belongs to the current block.
+fn routed_rust_job_block_any(
+    workflow: &str,
+    job: &str,
+    mut predicate: impl FnMut(&str) -> bool,
+) -> bool {
+    let job_header = format!("{job}:");
+    let mut in_jobs = false;
+    let mut in_block = false;
+    for line in workflow.lines() {
+        if !line.is_empty() && !line.starts_with(' ') && !line.starts_with('#') {
+            in_jobs = line.trim() == "jobs:";
+            in_block = false;
+            continue;
+        }
+        let job_level_key = line.starts_with("  ")
+            && !line.starts_with("   ")
+            && line.trim_end().ends_with(':')
+            && !line.trim_start().starts_with('-');
+        if job_level_key {
+            in_block = in_jobs && line.trim() == job_header;
+            continue;
+        }
+        if in_block && !line.is_empty() && !line.starts_with(' ') {
+            break;
+        }
+        if in_block && line.starts_with("    ") && !line.starts_with("     ") && predicate(line) {
+            return true;
+        }
+    }
+    false
+}
+
+fn routed_rust_concurrency_group_has_isolation(workflow: &str, isolation: &str) -> bool {
+    let mut in_concurrency = false;
+    for line in workflow.lines() {
+        if !line.is_empty() && !line.starts_with(' ') && !line.starts_with('#') {
+            in_concurrency = line.trim() == "concurrency:";
+            continue;
+        }
+        if in_concurrency && let Some(value) = line.strip_prefix("  group: ") {
+            let value = value.trim_start();
+            // Only the workflow's plain scalar style is supported. Text in
+            // a YAML comment must never satisfy the isolation contract.
+            if value.starts_with(['\'', '"', '|', '>']) {
+                return false;
+            }
+            let comment = value.char_indices().find_map(|(index, character)| {
+                (character == '#'
+                    && (index == 0
+                        || value[..index]
+                            .chars()
+                            .next_back()
+                            .is_some_and(char::is_whitespace)))
+                .then_some(index)
+            });
+            let value = &value[..comment.unwrap_or(value.len())];
+            return value.trim_end().ends_with(isolation);
+        }
+    }
+    false
+}
+
+fn routed_rust_job_block_has_deadline(workflow: &str, job: &str) -> bool {
+    routed_rust_job_block_any(workflow, job, |line| {
+        !line.trim_start().starts_with('#') && line.contains("timeout-minutes:")
+    })
+}
+
+const SOURCE_RUST_EVENT_GUARD: &str = r#"github.event_name != 'pull_request' || contains(fromJSON('["opened", "synchronize", "reopened"]'), github.event.action) || (github.event.action == 'labeled' && github.event.label.name == 'full-ci')"#;
+
+const SOURCE_RUST_IGNORED_EVENT: &str = "github.event_name == 'pull_request' && (github.event.action == 'unlabeled' || (github.event.action == 'labeled' && github.event.label.name != 'full-ci'))";
+
+fn deprecated_workflow_action_refs() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("actions/checkout@v4", "actions/checkout@v6"),
+        ("actions/setup-node@v4", "actions/setup-node@v6"),
+        ("actions/upload-artifact@v4", "actions/upload-artifact@v7"),
+        (
+            "actions/download-artifact@v4",
+            "actions/download-artifact@v8",
+        ),
+        (
+            "actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809",
+            "actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25",
+        ),
+        (
+            "actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809",
+            "actions/cache/save@caa296126883cff596d87d8935842f9db880ef25",
+        ),
+        ("codecov/codecov-action@v4", "codecov/codecov-action@v6"),
+    ]
+}
+
+fn workflow_runtime_exception_patterns() -> &'static [&'static str] {
+    &["actions/dependency-review-action@v4"]
+}
+
+fn is_extension_node_workflow(path: &str) -> bool {
+    matches!(
+        path,
+        ".github/workflows/ci.yml" | ".github/workflows/publish-extension.yml"
+    )
 }

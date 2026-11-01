@@ -56,7 +56,7 @@ pub(in crate::analysis) use activation::{
     LocalBoundary, TestValueFacts, activation_and_boundary_input, call_parameter_names,
     chain_row_transfer_stop, comparison_operands, computed_input_parameters, literal_operand_value,
     local_boundary, macro_names_rebound, pushed_collection_compared_whole, pushed_literal_path,
-    signature_parameters, sort_value_facts,
+    signature_parameters, sort_value_facts, unresolved_guard_error_edge,
 };
 pub(in crate::analysis) use arm_selection::{ArmSelector, unresolved_parameter_field_selector};
 pub(in crate::analysis) use boundary_pairing::{
@@ -181,7 +181,7 @@ pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
 pub(in crate::analysis) use text::{
     changed_error_variant, enum_variant_values, error_constructor_call_paths,
     error_constructor_payloads, error_result_payload_literal_sets, exact_error_variant,
-    rust_string_literals,
+    is_wildcard_discard_binding, rust_string_literals,
 };
 // RIPR-SPEC-0114: bounded transitive-reach walk for Rust no_static_path findings.
 // RIPR-SPEC-0115: the walk now returns a witness so the limitation can name the

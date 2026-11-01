@@ -3353,6 +3353,115 @@ mod tests {
         Ok(())
     }
 
+    // #1429 paired control: a predicate over direct parameters with a
+    // genuinely missing equality row keeps the satisfiable bounded
+    // repair and carries no static limitation.
+    #[test]
+    fn parameter_boundary_keeps_repair_prescription() -> Result<(), String> {
+        use crate::analysis::facts::CallFact;
+        use crate::domain::ExposureClass;
+
+        let probe = Probe {
+            id: ProbeId("probe:fixture:parameter-boundary".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 1),
+            owner: Some(SymbolId("src/lib.rs::discounted_total".to_string())),
+            family: ProbeFamily::Predicate,
+            delta: DeltaKind::Control,
+            before: None,
+            after: Some("if amount >= discount_threshold {".to_string()),
+            expression: "if amount >= discount_threshold {".to_string(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let owner = FunctionSummary {
+            id: SymbolId("src/lib.rs::discounted_total".to_string()),
+            name: "discounted_total".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 7,
+            body: "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}"
+                .into(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        };
+        let threshold_test =
+            |name: &str, start: usize, line: usize, call: &str, body: &str| TestSummary {
+                name: name.to_string(),
+                file: PathBuf::from("tests/d.rs"),
+                start_line: start,
+                end_line: start + 2,
+                body: body.into(),
+                calls: vec![CallFact {
+                    name: "discounted_total".to_string(),
+                    line,
+                    text: call.to_string().into(),
+                }],
+                assertions: Vec::new(),
+                literals: Vec::new(),
+                attrs: Vec::new(),
+                nested_fn_names: Vec::new(),
+                let_bindings: Vec::new(),
+            };
+        let above = threshold_test(
+            "above_threshold",
+            4,
+            5,
+            "discounted_total(150, 100)",
+            "assert_eq!(discounted_total(150, 100), 140);",
+        );
+        let below = threshold_test(
+            "below_threshold",
+            8,
+            9,
+            "discounted_total(50, 100)",
+            "assert_eq!(discounted_total(50, 100), 50);",
+        );
+        let index = RustIndex::default();
+        let context = ProbeContext::new(
+            &probe,
+            Some(&owner),
+            vec![
+                (&above, RelationReason::DirectOwnerCall),
+                (&below, RelationReason::DirectOwnerCall),
+            ],
+            false,
+            &index,
+            true,
+        );
+        let evidence = ClassifiedProbeEvidence::gather(
+            &context,
+            "amount >= discount_threshold",
+            &crate::analysis::classify::TransitiveReachIndex::new(context.index),
+        );
+        let finding = build_finding(&context, ExposureClass::WeaklyExposed, evidence);
+
+        if finding.recommended_next_step.as_deref()
+            != Some(
+                "Add boundary tests for below, equal, and above the changed threshold with exact assertions.",
+            )
+        {
+            return Err(format!(
+                "the genuine gap must keep its bounded repair, got {:?}",
+                finding.recommended_next_step
+            ));
+        }
+        if finding.static_limit_kind.is_some() {
+            return Err(format!(
+                "no static limitation applies to observed parameters, got {:?}",
+                finding.static_limit_kind
+            ));
+        }
+        Ok(())
+    }
+
     #[test]
     fn trailing_path_segments_steps_past_a_multi_byte_separator() {
         assert_eq!(trailing_path_segments("x→Stack::new"), vec!["Stack", "new"]);

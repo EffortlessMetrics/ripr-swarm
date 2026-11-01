@@ -9495,6 +9495,20 @@ files, or generate tests. CI can use the JSON to write a job summary and emit
 check annotations by default. Inline PR review comments require a custom
 explicit opt-in publisher.
 
+Producer-backed output may also include a top-level `review_input` object.
+It is the compact renderer projection, not the complete analysis inventory.
+Its `ripr.review_input.v1` envelope binds projected findings to the producer
+through root, base/head/tree, canonical-diff identity, producer check digest,
+mode, completeness, producer outcome, and finding-count/limit fields. A truncated projection
+must disclose its selection policy and projected count; consumers validate the
+digest and exact subject before rendering.
+
+The nested `run_receipt` uses schema `0.2`. A receipt with `status = complete`
+and `last_completed_phase = artifact_io` must contain at least one
+`phase_evidence` record and no missing artifacts. Timeout, partial, and
+malformed producer states remain non-green even when rendered comment arrays
+are empty.
+
 JSON shape:
 
 ```json
@@ -9792,7 +9806,9 @@ Field contract:
   nearby test changes on non-headline-eligible seams. Nearby test changes do
   not hide unresolved headline-eligible recommendations or strengthen their
   evidence; `summary.unchanged_tests` still records that tests changed.
-- `warnings[]` - selection warnings from the agent brief selection path.
+- `warnings[]` - structured selection warnings from the agent brief selection
+  path. Each warning has a closed-vocabulary `kind`, a non-empty `message`, and
+  an optional `path`.
 - `limits_note` - static-evidence boundary text for downstream summaries.
 
 Default CI projection runs `ripr review-comments` on pull requests, writes
@@ -20590,3 +20606,277 @@ retains completion classification and configured-provider coverage follow-ups.
 
 Missing source URLs/timestamps remain empty strings; in particular the CLI
 latest-review summary does not supply a review URL. No identity is fabricated.
+
+## Source-promotion resolved-tree validation receipt
+
+`cargo xtask source-promotion validate-resolved-tree` writes a deterministic,
+source-trusted preconstruction receipt with schema
+`ripr.source_promotion_resolved_tree_validation.v1`.
+
+The top-level `status` is one of:
+
+- `rejected` — the reviewed tree is ineligible for direct-J construction;
+- `validated` — every required source-governed command passed for the exact
+  bound source parent, frozen swarm parent, reviewed tree, and sidecars.
+
+Each required command records one `state`:
+
+- `failed` — the governed command executed and failed;
+- `not_run` — execution stopped before the command and the receipt carries the
+  reason;
+- `passed` — the governed command executed successfully;
+- `unavailable` — the command or its retained evidence could not be produced.
+
+Receipt paths carry an explicit role rather than ambient authority:
+
+- `os_temp_disposable_checkout` — the reviewed tree was materialized in an
+  operating-system temporary checkout and no authoritative ref points to it;
+- `source_checkout_regular_file` — the bound sidecar is a non-symlink regular
+  file beneath the exact source checkout.
+
+This receipt proves only the named source-governed repository contracts for one
+exact reviewed tree. It does not construct J, qualify later product or editor
+surfaces, move source or swarm authority, or authorize release publication.
+
+## Source-promotion network-policy resolution receipt
+
+`cargo xtask source-promotion resolve-network-policy` writes the typed
+`ripr.source_promotion_network_policy_resolution.v1` receipt for one exact
+source/W7 preview tree. It binds the accepted P0 receipt and artifact digests,
+both parent policy blobs, explicit reviewer decisions, the complete live
+production-pattern inventory, the one-path policy tree delta, and a run of the
+source-owned production network-policy checker.
+
+The stable receipt names a companion
+`ripr.source_promotion_network_policy_checker_execution.v1` attestation. The
+attestation binds the stable receipt SHA-256 to the exact checker executable,
+Rust toolchain, isolated build controls, and execution-output digests. Its bytes
+are environment-specific and therefore do not participate in the stable
+resolution-receipt or manifest-fragment digest.
+
+The companion `ripr.source_promotion_resolution_manifest_fragment.v1` object
+describes only the integrated `policy/network_allowlist.txt` path and binds its
+resolved blob and subject tree. Its published sidecar additionally binds the
+resolution receipt bytes by SHA-256 so the fragment cannot stand alone as
+authority.
+
+The receipt proves semantic network-policy resolution for the frozen parent
+pair. It does not create the complete resolution manifest, construct or qualify
+the eventual join, move a ref, or authorize release or publication.
+
+## Source-promotion control packets
+
+The source-owned controller writes indexed JSON/Markdown packets using
+`ripr.source_promotion_control_packet.v1`. Its typed receipts are
+`ripr.source_promotion_trusted_builder.v1`,
+`ripr.source_promotion_resolved_tree_admission.v1`,
+`ripr.source_promotion_exact_join_construction.v1`, and
+`ripr.source_promotion_candidate_ref_publication.v1`. Admission consumes the
+producer-bound `ripr.source_promotion_integration_index.v1` schema; construction
+consumes the terminal `ripr.source_promotion_tree_qualification.v1` schema.
+
+Admission and construction final snapshots reread every indexed packet member
+and typed integration receipt. Matching index-file digests alone do not make
+changed member bytes current. Construction performs the complete final live
+snapshot immediately before its sole `commit-tree` attempt.
+
+Controller status values are `built`, `admitted`, `constructed`, `published`,
+`reserved_before_side_effects`, and `rejected`. `published` means
+machine-readable guarded-push status reported an actual update of the exact
+target ref, the exact join was observed there, and every bound post-push
+authority remained current. Publication additionally uses
+`published_but_invalidated` when the exact remote candidate ref moved but a
+bound input invalidated afterward or the post-push local candidate-ref
+observation was unavailable, and `publication_state_unknown` when a push was
+attempted but its final remote state could not be observed or the exact join
+was observed without a machine-readable actual target-update attribution. An
+exit-zero up-to-date/no-op push is not publication attribution.
+Neither status grants merge or release authority.
+
+Publication receipts report `push_process_succeeded` independently from
+`target_ref_updated`; an exit-zero up-to-date/no-op push records true and false
+respectively and cannot produce `published`. Exit-zero malformed or unparseable
+porcelain records true and null, respectively, and likewise cannot produce
+`published`. `atomic_push` and
+`expected_state_guard_passed` report the guarded operation independently from
+the final status: both are true for an attributed target update, null after an
+attempt without attribution, and false when no push was attempted. A later
+divergent remote observation may therefore produce `rejected` while retaining
+true values for those operation facts.
+
+Every receipt exposes numeric `commit_tree_attempts`, `local_ref_attempts`,
+`remote_push_attempts`, and `merge_command_attempts`. Admission and all
+pre-mutation rejection paths require zero forbidden attempts. This controller
+never emits a merge command, so `merge_command_attempts` remains zero.
+
+Before any construction or publication side effect, the controller exclusively
+creates the requested packet directory and syncs `control-attempt.json` with
+status `reserved_before_side_effects`. A complete packet indexes that journal
+and writes `packet-index.json` last. The journal's deterministic
+`reconciliation_context` binds the protected refs, expected ref state, and
+maximum per-operation attempt counters plus the admitted or constructed
+commit/tree and packet identities. A reserved directory without the index is
+an incomplete attempt with unknown final Git/remote state, not a rejection or
+success receipt, and must be reconciled before retry. This is a
+process-interruption ordering contract, not a portable power-loss durability
+claim for directory entries. Outputs equal to or beneath either Git
+administration directory, a consumed packet, or an indexed-receipt sidecar
+directory reject before any output path is created. This applies to rejection
+packets emitted for malformed commands as well as successful parses, and path
+comparison resolves filesystem aliases before testing containment.
+
+Qualification requires exactly these ordered lane names:
+
+- `editor_package_linux`;
+- `editor_package_windows`;
+- `rust_product`;
+- `source_governance`;
+- `source_survivors`;
+- `trusted_product_journeys`;
+- `untrusted_workspace_contract`;
+- `w7_product`.
+
+Construction and publication accept only `refs/heads/main` as source-main
+authority. Candidate-ref publication binds both source remote URLs to the exact
+source repository, rereads local and remote source/W7 refs and the full indexed
+construction packet before and after mutation, uses an exact expected-state
+lease, requires machine-readable proof that the push actually updated the
+exact target plus every post-push authority bit for `published`, and reconciles
+the remote after every push attempt. A rejected
+remote push, including one whose final remote observation already equals the
+constructed join, attempts to restore only the local candidate ref behind an
+exact-state guard; the controller never rolls a remote ref back. An observed
+join without an actual target-update status remains unattributed and produces
+`publication_state_unknown`, including after an exit-zero up-to-date/no-op
+push.
+An unavailable final remote observation immediately rolls back only the local
+candidate ref behind an exact-state guard, then records every mandatory
+post-push authority reread before returning `publication_state_unknown`;
+remote state remains unknown and is never rolled back.
+
+## Source-promotion admission workflow packet
+
+`cargo xtask source-promotion run-admission-workflow` writes a normalized
+runner-owned disposition with schema
+`ripr.source_promotion_admission_workflow.v1`. The complete directory is
+indexed by `packet-index.json` using packet schema
+`ripr.source_promotion_admission_workflow_packet.v1`; the human projection is
+`workflow-disposition.md`.
+
+Before producer execution, the workflow writes one exact
+`ripr.source_promotion_admission_request.v1` request and captures the SHA-256
+of those bytes. The producer compares every requested identity and locator to
+its CLI inputs before materialization, embeds the request at
+`evidence/requested-identity.json`, and binds its digest into the disposition.
+Downloaded and final verification require the original request bytes and
+pre-producer digest; a packet cannot replace its request and authorize itself.
+
+The disposition status is one of:
+
+- `admitted` — every exact input, source-trusted producer, required command,
+  final reread, packet member, and mode-specific attempt invariant passed; or
+- `rejected` — the packet records a terminal non-green disposition and the
+  available reason/evidence.
+
+The closed `execution_profile` values are `live`, `positive_synthetic`, and
+`j5_negative`. Synthetic packets include a deterministic `fixture_identity`;
+live packets bind every external sidecar to its producer repository, immutable
+commit/ref, regular-file path/mode, and SHA-256. The closed operation modes are
+`admit_only` and `constructor_dry_run`.
+`reviewed_tree_carrier_sha` names the exact source-repository commit that
+materializes `reviewed_tree_sha`; live execution requires its ordered parents
+to equal `source_parent_sha` and `w7_peeled_sha`.
+Synthetic profiles require `reviewed_tree_carrier_sha` to be `not_required`
+and make no live carrier-materialization claim.
+`controller_packets.*.path` names the stable location beneath the uploaded
+packet, and `packet-index.json` recursively binds the controller receipts and
+all materialized locator evidence beneath `evidence/`. Final verification
+rejects missing, extra, corrupt, symlinked, or summary-inconsistent members.
+For admitted packets it also replays the indexed validation, trusted-builder,
+integration, admission, qualification, and construction receipt contracts and
+derives the normalized attempt summary from those receipt bytes. Rebinding
+outer indexes or summary digests cannot make semantically invalid nested
+evidence admissible.
+An admitted constructor final packet requires a valid indexed construction
+receipt. A rejected final packet may report that receipt unavailable while
+still indexing all partial construction bytes; an absent output directory does
+not create placeholder evidence.
+
+`trusted_checker_identity` has the closed form
+`source-owned-xtask@<40-character-workflow-source-SHA>` and must name the same
+commit as `workflow_source_sha`. It binds source ownership while the workflow's
+internally produced trusted-builder evidence binds toolchain, lockfile,
+isolated external build, and executable digest.
+
+The normalized mutation-attempt fields are:
+
+- `constructor_commit_tree_attempts`;
+- `local_ref_attempts`;
+- `remote_push_attempts`;
+- `merge_command_attempts`; and
+- `release_or_publication_attempts`.
+
+`admit_only` requires all five values to be zero. `constructor_dry_run` permits
+at most one constructor commit-tree attempt after terminal admission, in an
+isolated synthetic repository, and requires the other four values to remain
+zero. Neither mode grants ref, publication, merge, qualification, or release
+authority.
+If a rejected constructor invocation produced no parseable construction
+receipt, its constructor, local-ref, remote-push, and merge-command attempt
+counts are `null` (unknown), not zero. Publication reachability remains a
+separately proven zero because the closed harness has no publication command.
+
+After the immutable admission packet is independently enforced,
+`cargo xtask source-promotion finalize-admission-workflow` writes the separate
+final packet for admit-only normalization or the guarded constructor dry-run.
+
+`cargo xtask source-promotion verify-admission-workflow --packet <dir>
+--requested-identity <file> --requested-identity-sha256 <digest>` rereads the
+index, nested receipt semantics, packet bytes, and original request authority
+independently. `cargo xtask source-promotion
+enforce-admission-workflow --packet <dir> --expected-status admitted` fails for
+`rejected`, missing, malformed, unsupported, `not_run`, `unavailable`, non-zero
+producer exit, stale identity, failed reread, or packet/conclusion
+disagreement. The immutable admission packet uploads first, is downloaded to a
+fresh runner-owned path, verified, and enforced before constructor dry-run is
+reachable. The available final normalized packet uploads separately, so a
+terminal-red state still retains all evidence produced before the stop.
+
+## Final server subject preparation
+
+`release-final-server-subjects` emits three versioned local preparation objects:
+
+- `ripr.release_final_server_subject_inventory.v1`: exact accepted build identity,
+  product version, target-set digest, assembly receipt digest, and canonically
+  ordered subjects with relative name, role, target where applicable, mode,
+  read-only state, size, SHA-256, and originating receipt identity
+- `ripr.release_final_server_provenance_inputs.v1`: inventory and external
+  subject-checksum-list digests, exact repository/candidate SHA/tree, and the
+  complete named SHA-256 subject set; `execution_state=not_requested`, no action
+  identity, and `verification_observed=false`
+- `ripr.release_final_server_subject_receipt.v1`: `inventoried | rejected`, expected
+  source identity and targets, bounded per-file observations and failure reasons,
+  and `inventory_sha256`, `provenance_inputs_sha256`, and
+  `subject_checksums_sha256` binding the exact raw bytes of all three preparation
+  files on success; all three fields are explicitly `null` on rejection
+
+All three objects retain `release_upload_eligible=false`. The receipt also
+retains `credential_requested=false`, `attestation_attempted=false`,
+`provenance_verified=false`, and `publication_mutation_attempted=false`.
+These are observations of a command with no signing or publication route, not
+owner authorization or verification results that another command may trust.
+
+An `inventoried` receipt means the observed directory snapshots agreed before
+and after the canonical assembler reads; the final comparison precedes local
+packet writes. It does not establish an atomic snapshot, resistance to hostile
+concurrent filesystem mutation, or custody of bytes after the final check.
+Staging must remain exclusively controlled and quiescent, and future consumers
+must independently bind the bytes they use.
+
+The subject-set contract is the existing uploader allowlist including its five
+archive checksum sidecars: twelve files for the configured five-target set.
+The preparation checksum list covers all twelve subjects, including the public
+`SHA256SUMS` file itself, and lives outside public staging. It does not alter the
+public checksum construction rule. See [Server Binary Release](RELEASE_BINARIES.md)
+for host/path bounds, rejected-state handling, and the remaining live-provenance
+transition under #1502.

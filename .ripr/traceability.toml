@@ -9340,6 +9340,179 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0148"
+name = "exact source-promotion preflight and verification receipt"
+spec = "docs/specs/RIPR-SPEC-0148-source-promotion-preflight.md"
+tests = [
+  "xtask/src/reports/source_promotion_acceptance/tests.rs::complete_v2_replays_and_refetches_all_three_native_owners",
+  "xtask/src/reports/source_promotion_acceptance/tests.rs::retained_raw_inputs_discriminate_complete_projection_tampering",
+  "xtask/src/reports/source_promotion_acceptance/tests.rs::fresh_native_response_cannot_substitute_body_issuer_location_or_author",
+  "xtask/src/reports/source_promotion_verify.rs::tests::synthetic_join_rejects_graph_and_tree_adversaries",
+  "xtask/src/reports/source_promotion_verify.rs::tests::producer_receipt_and_empty_ancestry_serialization_are_stable",
+  "xtask/src/reports/source_promotion.rs::tests::requires_an_immutable_swarm_ref",
+  "xtask/src/reports/source_promotion.rs::tests::rejects_a_branch_or_wrongly_named_swarm_ref",
+  "xtask/src/reports/source_promotion.rs::tests::version_observation_reads_exact_parent_not_checkout_files",
+  "xtask/src/reports/source_promotion.rs::tests::repository_identity_serialization_has_no_checkout_path",
+  "xtask/src/reports/source_promotion.rs::tests::disposable_repo_creation_rejects_existing_path",
+  "xtask/src/reports/source_promotion.rs::tests::swarm_parent_must_be_ancestor_of_declared_main",
+  "xtask/src/reports/source_promotion.rs::tests::moved_or_missing_swarm_ref_is_rejected",
+  "xtask/src/reports/source_promotion.rs::tests::remote_identity_normalizes_git_urls",
+  "xtask/src/reports/source_promotion.rs::tests::disposable_preflight_keeps_authoritative_checkouts_unchanged",
+  "xtask/src/reports/source_promotion.rs::tests::disposable_dry_merge_reports_clean_non_conflicting_history",
+  "xtask/src/reports/source_promotion.rs::tests::public_preflight_requires_complete_native_handoff_inputs",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_accepts_independently_selected_applicable_subset",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_parses_crlf_without_changing_raw_decision_identity",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_rereads_decisions_before_receipt_and_binds_source_identity",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_absent_decisions_and_generic_successful_ci",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_identity_roster_proof_and_decision_drift",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_omitted_failed_skipped_and_zero_qualification_rows",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_tampered_manifest_bundle_and_packets",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_stale_incomplete_or_unknown_qualification_acceptance",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_wrong_issue_comment_host_and_untrusted_issuer",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_preserves_explicitly_unselected_configured_subjects",
+  "xtask/src/reports/source_promotion.rs::tests::unfolded_changelog_fragments_are_reported_and_refused_in_reviewed_tree",
+]
+fixtures = [
+  "fixtures/benches_harness_evidence",
+  "fixtures/source_promotion_verification",
+  "fixtures/source_promotion/diverged-conflict.json",
+  "fixtures/source_promotion/SPEC.md",
+]
+code = [
+  "xtask/src/reports/source_promotion_acceptance.rs",
+  "xtask/src/reports/source_promotion_acceptance/native.rs",
+  "xtask/src/reports/source_promotion_acceptance/material.rs",
+  "xtask/src/reports/source_promotion_verify.rs",
+  "xtask/src/reports/source_promotion.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+  "xtask/src/reports/fixtures.rs",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff.rs",
+  "xtask/src/reports/release/candidate_harness/live_head/handoff/native.rs",
+]
+outputs = [
+  "fixtures/source_promotion_verification/expected/check.json",
+  "docs/specs/RIPR-SPEC-0148-source-promotion-preflight.md",
+  "docs/SOURCE_PROMOTION_PREFLIGHT.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+  "golden_fixture_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0368"
+name = "source-promotion exact-head CI contract"
+spec = "docs/specs/RIPR-SPEC-0368-source-promotion-ci-contract.md"
+tests = [
+  "xtask/src/command.rs::tests::source_promotion_workflow_is_exact_head_and_read_only",
+  "xtask/src/command.rs::tests::source_promotion_workflow_binds_trusted_source_parent",
+  "xtask/src/command.rs::tests::source_promotion_post_merge_receipt_binds_dispatch_input_on_rejection",
+  "xtask/src/command.rs::tests::source_promotion_workflow_rejects_symlink_and_path_escape_inputs",
+  "xtask/src/command.rs::tests::source_promotion_workflow_requires_external_fixed_sidecar",
+  "xtask/src/command.rs::tests::source_promotion_workflow_rejects_placeholder_and_wrong_repo_commands",
+  "xtask/src/command.rs::tests::source_promotion_workflow_rejects_candidate_verifier_bypass",
+  "xtask/src/command.rs::tests::source_promotion_workflow_rejects_mixed_merge_strategies",
+  "xtask/src/command.rs::tests::source_promotion_workflow_scans_all_bash_fences_for_merge_command",
+  "xtask/src/command.rs::tests::source_promotion_workflow_rejects_multiple_merge_fences",
+  "xtask/src/command.rs::tests::source_promotion_workflow_disables_checkout_credentials_before_code",
+  "xtask/src/command.rs::tests::source_promotion_workflow_refutes_crlf_rewrite_thread",
+  "xtask/src/reports/source_promotion_verify.rs::tests::range_and_main_reachability_fail_closed",
+  "xtask/src/reports/source_promotion_verify.rs::tests::synthetic_join_rejects_graph_and_tree_adversaries",
+  "xtask/src/reports/source_promotion_validate_resolved_tree.rs::tests::canonical_receipt_fixtures_are_byte_stable",
+  "xtask/src/reports/source_promotion_validate_resolved_tree.rs::tests::command_catalog_requires_exact_order_and_terminal_passes",
+  "xtask/src/reports/source_promotion_validate_resolved_tree.rs::tests::git_object_view_ignores_replacement_refs",
+  "xtask/src/reports/source_promotion_validate_resolved_tree.rs::tests::repository_observation_detects_ref_mutation",
+  "xtask/src/reports/source_promotion_control/tests.rs::source_promotion_control_tests::resolved_tree_admission_rejects_failed_unavailable_not_run_and_reordered_commands",
+  "xtask/src/reports/source_promotion_control/tests.rs::source_promotion_control_tests::qualification_rejects_zero_step_failed_and_reordered_lanes",
+  "xtask/src/reports/source_promotion_control/tests.rs::source_promotion_control_tests::source_promotion_constructor_preserves_parent_order_tree_and_refs",
+  "xtask/src/reports/source_promotion_control/tests.rs::source_promotion_control_tests::source_promotion_publication_uses_expected_absent_guard_without_merge_authority",
+  "xtask/src/reports/source_promotion_control/tests.rs::source_promotion_control_tests::source_promotion_publication_rolls_back_local_ref_on_remote_rejection",
+  "xtask/tests/source_promotion_resolved_tree.rs::j5_source_ledger_rejects_and_semantic_reconciliation_passes",
+  "xtask/tests/source_promotion_workflow_contract.rs::admission_workflow_has_closed_exact_transport_and_terminal_order",
+  "xtask/tests/source_promotion_workflow_contract.rs::admission_workflow_contract_rejects_security_and_order_mutations",
+  "xtask/tests/source_promotion_workflow_contract.rs::admission_workflow_does_not_accept_caller_selected_authority",
+  "xtask/src/reports/source_promotion_admission_workflow.rs::tests::j5_negative_is_fail_closed_before_constructor",
+  "xtask/src/reports/source_promotion_admission_workflow.rs::tests::j5_negative_rejects_constructor_attempt",
+  "xtask/src/reports/source_promotion_admission_workflow.rs::tests::admitted_constructor_requires_exactly_one_unreferenced_object",
+  "xtask/src/reports/source_promotion_admission_workflow.rs::tests::verifier_rejects_every_forbidden_attempt_counter",
+  "xtask/src/reports/source_promotion_admission_workflow.rs::tests::parser_closes_profile_and_mode_enums",
+  "xtask/src/reports/source_promotion_admission_workflow.rs::tests::exact_identity_binding_rejects_moved_ref_and_sidecar",
+  "xtask/src/reports/source_promotion_admission_workflow.rs::tests::synthetic_paths_are_root_independent",
+  "xtask/src/reports/source_promotion_admission_fixture.rs::tests::profile_names_are_closed_and_stable",
+  "xtask/src/reports/source_promotion_admission_fixture.rs::tests::qualification_denominator_is_exact_and_ordered",
+  "xtask/src/reports/source_promotion_admission_fixture.rs::tests::retained_j5_literals_have_exact_requested_cardinality",
+]
+fixtures = [
+  "fixtures/source_promotion_verification",
+  "fixtures/source_promotion_resolved_tree",
+  "xtask/tests/fixtures/source_promotion_control/impossible-validated.json",
+]
+code = [
+  ".github/workflows/source-promotion-contract.yml",
+  ".github/workflows/source-promotion-admission.yml",
+  "xtask/src/reports/source_promotion_admission_workflow.rs",
+  "xtask/src/reports/source_promotion_admission_fixture.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+  "xtask/src/reports/source_promotion_verify.rs",
+  "xtask/src/reports/source_promotion_validate_resolved_tree.rs",
+  "xtask/src/reports/source_promotion_control.rs",
+  "xtask/src/reports/source_promotion_control/admission.rs",
+  "xtask/src/reports/source_promotion_control/construction.rs",
+  "xtask/src/reports/source_promotion_control/core.rs",
+  "xtask/src/reports/source_promotion_control/io.rs",
+  "xtask/src/reports/source_promotion_control/publication.rs",
+  "xtask/src/reports/source_promotion_control/tests.rs",
+]
+outputs = [
+  "docs/SOURCE_PROMOTION.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "docs/release/0.11.0/source-promotion-controller-recovery-manifest.json",
+  ".github/workflows/source-promotion-contract.yml",
+  ".github/workflows/source-promotion-admission.yml",
+  "fixtures/source_promotion_resolved_tree/expected/rejected.json",
+  "fixtures/source_promotion_resolved_tree/expected/rejected.md",
+  "fixtures/source_promotion_resolved_tree/expected/validated.json",
+  "fixtures/source_promotion_resolved_tree/expected/validated.md",
+  "policy/output_contracts.txt",
+]
+metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
+id = "RIPR-SPEC-0371"
+name = "exact source-promotion graph and resolution verification"
+spec = "docs/specs/RIPR-SPEC-0371-source-promotion-verifier.md"
+tests = [
+  "xtask/src/reports/source_promotion_verify.rs::tests::identity_arguments_are_exact_and_lowercase",
+  "xtask/src/reports/source_promotion_verify.rs::tests::merge_base_selection_rejects_ambiguous_history",
+  "xtask/src/reports/source_promotion_verify.rs::tests::blank_output_directory_is_rejected",
+  "xtask/src/reports/source_promotion_verify.rs::tests::ordered_digest_is_not_commutative",
+  "xtask/src/reports/source_promotion_verify.rs::tests::producer_receipt_and_empty_ancestry_serialization_are_stable",
+  "xtask/src/reports/source_promotion_verify.rs::tests::manifest_rejects_duplicate_rows",
+  "xtask/src/reports/source_promotion_verify.rs::tests::manifest_accepts_only_canonical_v1_field_names",
+  "xtask/src/reports/source_promotion_verify.rs::tests::range_and_main_reachability_fail_closed",
+  "xtask/src/reports/source_promotion_verify.rs::tests::receipts_render_every_contract_field_and_rejections_are_structured",
+  "xtask/src/reports/source_promotion_verify.rs::tests::git_object_view_ignores_replacement_refs",
+  "xtask/src/reports/source_promotion_verify.rs::tests::metadata_main_and_caller_state_contracts_are_executable",
+  "xtask/src/reports/source_promotion_verify.rs::tests::synthetic_join_rejects_graph_and_tree_adversaries",
+  "xtask/src/reports/source_promotion_verify.rs::tests::parse_failures_write_rejection_receipts_when_output_is_known",
+  "xtask/src/command.rs::tests::source_promotion_verify_cli_entrypoint",
+]
+fixtures = ["fixtures/source_promotion_verification"]
+code = [
+  "xtask/src/reports/source_promotion_verify.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+  "xtask/src/reports/mod.rs",
+]
+outputs = [
+  "fixtures/source_promotion_verification/expected/check.json",
+  "fixtures/source_promotion_verification/expected/human.txt",
+]
+metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
 id = "RIPR-SPEC-0111"
 name = "gate new_unsuppressed receipt field"
 spec = "docs/specs/RIPR-SPEC-0111-gate-new-unsuppressed-receipt.md"
@@ -9421,6 +9594,27 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0149"
+name = "history-preserving back-sync verifier"
+spec = "docs/specs/RIPR-SPEC-0149-back-sync-verifier.md"
+tests = [
+  "xtask/src/reports/back_sync.rs::tests::abbreviated_inputs_are_rejected",
+  "xtask/src/reports/back_sync.rs::tests::synthetic_graph_adversarial_cases_invoke_verifier",
+  "xtask/src/reports/back_sync.rs::tests::unfolded_changelog_fragment_in_released_source_is_refused",
+]
+fixtures = []
+code = [
+  "xtask/src/reports/back_sync.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/BACK_SYNC_VERIFIER.md",
+  "docs/specs/RIPR-SPEC-0149-back-sync-verifier.md",
+]
+metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
 id = "RIPR-SPEC-0170"
 name = "Stable cross-platform path text"
 spec = "docs/specs/RIPR-SPEC-0170-stable-cross-platform-path-text.md"
@@ -9491,27 +9685,6 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0149"
-name = "history-preserving back-sync verifier"
-spec = "docs/specs/RIPR-SPEC-0149-back-sync-verifier.md"
-tests = [
-  "xtask/src/reports/back_sync.rs::tests::abbreviated_inputs_are_rejected",
-  "xtask/src/reports/back_sync.rs::tests::synthetic_graph_adversarial_cases_invoke_verifier",
-  "xtask/src/reports/back_sync.rs::tests::unfolded_changelog_fragment_in_released_source_is_refused",
-]
-fixtures = []
-code = [
-  "xtask/src/reports/back_sync.rs",
-  "xtask/src/command.rs",
-  "xtask/src/dispatch.rs",
-]
-outputs = [
-  "docs/BACK_SYNC_VERIFIER.md",
-  "docs/specs/RIPR-SPEC-0149-back-sync-verifier.md",
-]
-metrics = ["unit_test_pass_rate"]
-
-[[behavior]]
 id = "RIPR-SPEC-0266"
 name = "bounded coverage binary-ID diagnostics"
 spec = "docs/specs/RIPR-SPEC-0266-coverage-binary-id-diagnostics.md"
@@ -9534,56 +9707,6 @@ outputs = [
   "docs/ci/coverage.md",
 ]
 metrics = ["unit_test_pass_rate"]
-
-[[behavior]]
-id = "RIPR-SPEC-0148"
-name = "exact source-promotion preflight"
-spec = "docs/specs/RIPR-SPEC-0148-source-promotion-preflight.md"
-tests = [
-  "xtask/src/reports/source_promotion.rs::tests::public_preflight_requires_complete_native_handoff_inputs",
-  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_accepts_independently_selected_applicable_subset",
-  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_parses_crlf_without_changing_raw_decision_identity",
-  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_rereads_decisions_before_receipt_and_binds_source_identity",
-  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_absent_decisions_and_generic_successful_ci",
-  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_identity_roster_proof_and_decision_drift",
-  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_omitted_failed_skipped_and_zero_qualification_rows",
-  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_tampered_manifest_bundle_and_packets",
-  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_stale_incomplete_or_unknown_qualification_acceptance",
-  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_refuses_wrong_issue_comment_host_and_untrusted_issuer",
-  "xtask/src/reports/release/candidate_harness/live_head/handoff/tests.rs::native_handoff_preserves_explicitly_unselected_configured_subjects",
-  "xtask/src/reports/source_promotion.rs::tests::requires_an_immutable_swarm_ref",
-  "xtask/src/reports/source_promotion.rs::tests::rejects_a_branch_or_wrongly_named_swarm_ref",
-  "xtask/src/reports/source_promotion.rs::tests::version_observation_reads_exact_parent_not_checkout_files",
-  "xtask/src/reports/source_promotion.rs::tests::unfolded_changelog_fragments_are_reported_and_refused_in_reviewed_tree",
-  "xtask/src/reports/source_promotion.rs::tests::repository_identity_serialization_has_no_checkout_path",
-  "xtask/src/reports/source_promotion.rs::tests::disposable_repo_creation_rejects_existing_path",
-  "xtask/src/reports/source_promotion.rs::tests::swarm_parent_must_be_ancestor_of_declared_main",
-  "xtask/src/reports/source_promotion.rs::tests::moved_or_missing_swarm_ref_is_rejected",
-  "xtask/src/reports/source_promotion.rs::tests::remote_identity_normalizes_git_urls",
-  "xtask/src/reports/source_promotion.rs::tests::disposable_preflight_keeps_authoritative_checkouts_unchanged",
-  "xtask/src/reports/source_promotion.rs::tests::disposable_dry_merge_reports_clean_non_conflicting_history",
-]
-fixtures = [
-  "fixtures/benches_harness_evidence",
-  "fixtures/source_promotion/diverged-conflict.json",
-  "fixtures/source_promotion/SPEC.md",
-]
-code = [
-  "xtask/src/reports/release/candidate_harness/live_head/handoff.rs",
-  "xtask/src/reports/release/candidate_harness/live_head/handoff/native.rs",
-  "xtask/src/reports/source_promotion.rs",
-  "xtask/src/command.rs",
-  "xtask/src/dispatch.rs",
-  "xtask/src/reports/fixtures.rs",
-]
-outputs = [
-  "docs/specs/RIPR-SPEC-0148-source-promotion-preflight.md",
-  "docs/SOURCE_PROMOTION_PREFLIGHT.md",
-]
-metrics = [
-  "unit_test_pass_rate",
-  "golden_fixture_pass_rate",
-]
 
 [[behavior]]
 id = "RIPR-SPEC-0147"
@@ -11203,7 +11326,7 @@ outputs = [
   "docs/specs/RIPR-SPEC-0128-retired-active-goal-authority-audit.md",
   "docs/specs/README.md",
 ]
-metrics = []
+metrics = ["retired_spec_identifier_remains_reserved"]
 
 
 [[behavior]]
@@ -20741,3 +20864,30 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0370"
+name = "bounded native npm bootstrap"
+spec = "docs/specs/RIPR-SPEC-0370-npm-native-bootstrap.md"
+tests = [
+  ".github/scripts/test_npm_package.py::NpmPackageTests",
+  ".github/scripts/test_npm_package.py::NpmNativeEvidenceTests",
+  ".github/scripts/test_npm_package.py::NpmReleaseAdmissionTests",
+  ".github/scripts/test_npm_package.py::NpmStageCliTests",
+  ".github/scripts/npm_consumer.py::main",
+  "xtask/src/policy/file_policy.rs::tests::npm_qualification_retention_is_exactly_scoped",
+]
+fixtures = ["fixtures/python/basic"]
+code = [
+  ".github/scripts/npm_package.py",
+  ".github/workflows/npm-package-qualification.yml",
+  ".github/workflows/publish-npm.yml",
+  "packaging/npm/bootstrap-alpha1-native-source.json",
+  ".github/workflows/python-wheel-qualification.yml",
+  "packaging/npm/package.template.json",
+]
+outputs = [
+  "docs/NPM_BOOTSTRAP.md",
+  "packaging/npm/README.md",
+]
+metrics = ["selected_routes", "executed_routes", "failed_routes", "payload_sha256", "tarball_sha256", "stage_eligible", "selected_requests", "observed_requests"]

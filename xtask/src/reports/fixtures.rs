@@ -9,6 +9,7 @@
 //! existing call sites (`dispatch.rs`, `dogfood.rs`, `fixture_contracts`,
 //! `evidence_promotion`, and `tests.rs`) compile unchanged.
 
+use super::fixture_workspace;
 use crate::no_panic::contains_word;
 use crate::run::{run_output_bytes, run_output_optional, run_output_owned_with_envs};
 use crate::{
@@ -763,6 +764,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "release_denominator"
                     | "release_scope"
                     | "source_promotion"
+                    | "source_promotion_resolved_tree"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
                     | "work_portfolio"
@@ -862,6 +864,11 @@ pub(crate) struct FixtureRun {
 }
 
 impl FixtureRun {
+    #[cfg(test)]
+    pub(crate) fn check_json_path(&self) -> &Path {
+        &self.check_json
+    }
+
     #[cfg(test)]
     pub(crate) fn comparisons_all_match(&self) -> bool {
         self.comparisons.iter().all(|comparison| comparison.matches)
@@ -1057,6 +1064,22 @@ fn clear_fixture_cache(dir: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
+    let binary = ripr_fixture_binary()?;
+    let mut workspace = fixture_workspace::FixtureWorkspace::create(path)?;
+    let result = run_fixture_outputs_isolated(path, &binary, workspace.root());
+    let cleanup = workspace.cleanup();
+    match (result, cleanup) {
+        (Ok(run), Ok(())) => Ok(run),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(cleanup)) => Err(format!("{error}; {cleanup}")),
+    }
+}
+
+fn run_fixture_outputs_isolated(
+    path: &Path,
+    binary: &str,
+    cwd: &Path,
+) -> Result<FixtureRun, String> {
     let name = fixture_name(path)?;
     if name == observation_tail_return::FIXTURE {
         observation_tail_return::validate(path)?;
@@ -1099,11 +1122,13 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
     let cache_dir = fixture_cache_dir(&name)?;
     clear_fixture_cache(&cache_dir)?;
 
-    let json = normalize_fixture_json_output(&run_fixture_check(
+    let json = normalize_fixture_json_output(&run_fixture_check_with_context(
+        binary,
         &root,
         &diff_file,
         FixtureCheckFormat::Json,
         Some(&cache_dir),
+        Some(cwd),
     )?);
     fs::write(&check_json, json).map_err(|err| {
         format!(
@@ -1112,11 +1137,13 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
         )
     })?;
 
-    let human = normalize_fixture_human_output(&run_fixture_check(
+    let human = normalize_fixture_human_output(&run_fixture_check_with_context(
+        binary,
         &root,
         &diff_file,
         FixtureCheckFormat::Human,
         Some(&cache_dir),
+        Some(cwd),
     )?);
     fs::write(&human_txt, human).map_err(|err| {
         format!(
@@ -1125,11 +1152,13 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
         )
     })?;
 
-    let human_full = normalize_fixture_human_output(&run_fixture_check(
+    let human_full = normalize_fixture_human_output(&run_fixture_check_with_context(
+        binary,
         &root,
         &diff_file,
         FixtureCheckFormat::HumanFull,
         Some(&cache_dir),
+        Some(cwd),
     )?);
     fs::write(&human_full_txt, human_full).map_err(|err| {
         format!(
@@ -1364,6 +1393,17 @@ pub(crate) fn run_fixture_check(
     cache_dir: Option<&Path>,
 ) -> Result<String, String> {
     let binary = ripr_fixture_binary()?;
+    run_fixture_check_with_context(&binary, root, diff_file, format, cache_dir, None)
+}
+
+fn run_fixture_check_with_context(
+    binary: &str,
+    root: &str,
+    diff_file: &str,
+    format: FixtureCheckFormat,
+    cache_dir: Option<&Path>,
+    cwd: Option<&Path>,
+) -> Result<String, String> {
     let mut args = vec![
         "check".to_string(),
         "--root".to_string(),

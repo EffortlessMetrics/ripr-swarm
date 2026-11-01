@@ -37,6 +37,7 @@ pub(crate) mod repair_card_handoff;
 /// (#4669; RIPR-SPEC-0196): synthetic wire-size measurement and governed
 /// real-opportunity accounting that back the versioned decision receipt.
 pub mod repair_card_usability;
+pub(crate) mod review_comments;
 pub(crate) mod ripr_plus;
 mod running_binary;
 /// Task-first repair selection services behind `ripr repair` and

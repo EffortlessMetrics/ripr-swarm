@@ -3,6 +3,7 @@ import * as crypto from 'crypto';
 import * as https from 'https';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { extractAdmittedArchive } from './archiveInventory';
 import { RiprConfig } from './config';
 import {
   distributionGeneration,
@@ -102,7 +103,8 @@ export async function downloadServer(
   config: RiprConfig,
   platform: RiprPlatform,
   version: string,
-  output: vscode.OutputChannel
+  output: vscode.OutputChannel,
+  distribution?: ResolvedDistributionRequest
 ): Promise<ManagedServerInstallation> {
   const managedVersion = validateManagedServerVersion(version);
   const origin = downloadOriginLabel(config, managedVersion);
@@ -112,7 +114,8 @@ export async function downloadServer(
       title: `ripr: downloading server ${managedVersion} for ${platform.target} from ${origin}`,
       cancellable: false
     },
-    (progress) => downloadServerWithProgress(context, config, platform, managedVersion, output, progress)
+    (progress) =>
+      downloadServerWithProgress(context, config, platform, managedVersion, output, progress, distribution)
   );
 }
 
@@ -122,7 +125,8 @@ async function downloadServerWithProgress(
   platform: RiprPlatform,
   version: string,
   output: vscode.OutputChannel,
-  progress: vscode.Progress<{ message?: string; increment?: number }>
+  progress: vscode.Progress<{ message?: string; increment?: number }>,
+  distribution?: ResolvedDistributionRequest
 ): Promise<ManagedServerInstallation> {
   const requestedVersion = validateManagedServerVersion(version);
   const generation = distributionGeneration(requestedVersion);
@@ -131,6 +135,13 @@ async function downloadServerWithProgress(
   const request = installRequest(context, requestedVersion, platform);
   return installManagedServer(request, {
     resolveArchive: async () => {
+      // Descriptor-bound downloads never fetch or parse unadmitted bytes:
+      // branch before any manifest fetch so a replaced manifest cannot even
+      // be retrieved, let alone select its own asset host.
+      if (distribution?.manifestSha256 !== undefined) {
+        return downloadAdmittedAsset(config, distribution, platform, version, output, progress);
+      }
+
       progress.report({ message: 'Fetching release manifest…' });
       const selection = await resolveServerManifestPlacement(
         {
@@ -168,7 +179,15 @@ async function downloadServerWithProgress(
     },
     extractArchive: async (archivePath, destination) => {
       progress.report({ message: 'Extracting…' });
-      await extractArchive(archivePath, destination, platform);
+      // Inventory authority (#1641): checksum-verified bytes are decoded by
+      // the owned parser, policed, and budgeted before any file is created.
+      // No system extractor ever touches archive bytes on this path.
+      await extractAdmittedArchive(
+        await fs.promises.readFile(archivePath),
+        platform.archiveExtension,
+        destination,
+        platform.executableName
+      );
     },
     probeExecutable: (executablePath) => probeDownloadedExecutable(executablePath)
   });
@@ -267,9 +286,10 @@ export function placementArchiveUrl(manifestUrl: string, assetUrl: string): stri
 export function cachedServerInstallation(
   context: vscode.ExtensionContext,
   version: string,
-  platform: RiprPlatform
+  platform: RiprPlatform,
+  distribution?: ResolvedDistributionRequest
 ): Promise<ManagedServerInstallation | undefined> {
-  return readManagedServerInstallation(installRequest(context, version, platform));
+  return readManagedServerInstallation(installRequest(context, version, platform, distribution));
 }
 
 function admittedDescriptor(generation: string): ServerDistributionDescriptor | undefined {
@@ -288,7 +308,8 @@ function selectedArchiveUrl(selection: SelectedServerManifest, asset: ManifestAs
 function installRequest(
   context: vscode.ExtensionContext,
   version: string,
-  platform: RiprPlatform
+  platform: RiprPlatform,
+  distribution?: ResolvedDistributionRequest
 ): ManagedServerInstallRequest {
   const admittedManifestSha256 = admittedDescriptor(distributionGeneration(version))?.manifestSha256;
   return {
@@ -299,6 +320,193 @@ function installRequest(
     archiveExtension: platform.archiveExtension,
     ...(admittedManifestSha256 !== undefined ? { admittedManifestSha256 } : {})
   };
+}
+
+/**
+ * Descriptor-bound asset download. The manifest digest gates the raw bytes
+ * before any field is read; the asset URL composes from the accepted
+ * placement plus the admitted bare subject, so a replaced manifest cannot
+ * select its own host. The returned admission stamp flows into the install
+ * receipt, binding the cache entry to the exact descriptor/manifest tuple.
+ */
+async function downloadAdmittedAsset(
+  config: RiprConfig,
+  distribution: ResolvedDistributionRequest,
+  platform: RiprPlatform,
+  version: string,
+  output: vscode.OutputChannel,
+  progress: vscode.Progress<{ message?: string; increment?: number }>
+): Promise<ResolvedArchive> {
+  const expectedDigest = distribution.manifestSha256 as string;
+  const admitted = await fetchAdmittedManifestForDistribution(
+    config.downloadBaseUrl,
+    distribution,
+    version,
+    expectedDigest
+  );
+  if (admitted.manifest.productVersion !== version) {
+    throw new Error(
+      `Admitted manifest product version ${admitted.manifest.productVersion} does not match requested version ${version}.`
+    );
+  }
+  const asset = admitted.manifest.assets[platform.target];
+  if (!asset) {
+    throw new Error(`No ripr server asset is listed for ${platform.target} in the admitted manifest.`);
+  }
+  const placementBase = admitted.manifestUrl.slice(0, admitted.manifestUrl.lastIndexOf('/'));
+  const assetUrl = assetUrlForSubject(placementBase, asset.subject);
+  output.appendLine(`Downloading ripr server ${version} for ${platform.target} from admitted placement.`);
+  progress.report({ message: `Downloading ${platform.executableName}…` });
+  const { body: bytes } = await fetchBuffer(assetUrl, asset.archiveSize, fetchPolicyFor(assetUrl));
+  progress.report({ message: 'Verifying checksum…' });
+  return {
+    manifestVersion: admitted.manifest.productVersion,
+    expectedSha256: asset.sha256,
+    bytes,
+    admittedManifestSha256: expectedDigest,
+    selectedManifestUrl: admitted.manifestUrl,
+    manifestSelection: admitted.manifestSelection,
+    preferredManifestObservation: admitted.preferredManifestObservation,
+    fallbackManifestObservation: admitted.fallbackManifestObservation
+  };
+}
+
+export type FetchAdmittedManifest = (
+  url: string,
+  expectedDigest: string
+) => Promise<AdmittedServerManifest>;
+
+export interface AdmittedManifestSelection {
+  readonly manifest: AdmittedServerManifest;
+  readonly manifestUrl: string;
+  readonly manifestSelection: 'preferred_exact' | 'fallback_exact_after_preferred_absent';
+  readonly preferredManifestObservation: 'accepted' | 'direct_not_found';
+  readonly fallbackManifestObservation: 'not_requested' | 'accepted';
+}
+
+/**
+ * Fetches the descriptor-bound manifest from the preferred exact placement.
+ * Only an authoritative direct 404 may select the one predeclared fallback.
+ * Both placements are admitted against the same embedded manifest digest, so
+ * fallback changes the observed location without changing content authority.
+ */
+export async function fetchAdmittedManifestForDistribution(
+  baseUrl: string,
+  distribution: ResolvedDistributionRequest,
+  version: string,
+  expectedDigest: string,
+  fetchImpl: FetchAdmittedManifest = fetchAdmittedManifest
+): Promise<AdmittedManifestSelection> {
+  const [preferred, ...fallbacks] = manifestCandidatesForDistribution(baseUrl, distribution, version);
+  try {
+    return {
+      manifest: await fetchImpl(preferred, expectedDigest),
+      manifestUrl: preferred,
+      manifestSelection: 'preferred_exact',
+      preferredManifestObservation: 'accepted',
+      fallbackManifestObservation: 'not_requested'
+    };
+  } catch (error) {
+    const fallback = fallbacks[0];
+    if (fallback === undefined || !isDirectManifestNotFound(error)) {
+      throw error;
+    }
+    return {
+      manifest: await fetchImpl(fallback, expectedDigest),
+      manifestUrl: fallback,
+      manifestSelection: 'fallback_exact_after_preferred_absent',
+      preferredManifestObservation: 'direct_not_found',
+      fallbackManifestObservation: 'accepted'
+    };
+  }
+}
+
+export async function fetchAdmittedManifest(url: string, expectedDigest: string): Promise<AdmittedServerManifest> {
+  const { body } = await fetchBuffer(url, MAX_MANIFEST_BYTES, fetchPolicyFor(url));
+  return admitManifestBytes(body, expectedDigest);
+}
+
+export function fetchPolicyFor(url: string): RedirectPolicy {
+  let host = '';
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    throw new Error(`Release URL ${JSON.stringify(url)} is not a valid URL.`);
+  }
+  return { initialHost: host, admittedHosts: RELEASE_ASSET_HOSTS };
+}
+
+/**
+ * Ordered release-manifest URLs for one download: the preferred placement
+ * first, then the bounded predeclared fallbacks. A configured mirror is an
+ * explicit transport choice and serves the preferred placement only — it
+ * never falls through to RC. Without a descriptor the legacy
+ * version-pinned URL is the only candidate.
+ */
+export function manifestCandidatesForDistribution(
+  baseUrl: string,
+  distribution: ResolvedDistributionRequest | undefined,
+  version: string
+): string[] {
+  if (!distribution) {
+    return [manifestUrl(baseUrl, version)];
+  }
+  if (baseUrl.trim().length > 0) {
+    return [distributionManifestUrl(baseUrl, distribution, distribution.preferredPlacement)];
+  }
+  return distributionPlacements(distribution).map((placement) =>
+    distributionManifestUrl('', distribution, placement)
+  );
+}
+
+/**
+ * Failure of one manifest fetch that records whether the candidate is
+ * simply unpublished. Only a direct (non-redirected) initial HTTP 404
+ * means "this placement has no manifest"; every other failure —
+ * transport errors, timeouts, HTTP 5xx, redirect-chain failures, malformed
+ * bodies — propagates instead of selecting a different placement.
+ */
+export class ManifestFetchError extends Error {
+  readonly statusCode?: number;
+  readonly redirected: boolean;
+
+  constructor(message: string, options: { statusCode?: number; redirected: boolean }) {
+    super(message);
+    this.name = 'ManifestFetchError';
+    this.statusCode = options.statusCode;
+    this.redirected = options.redirected;
+  }
+}
+
+/** True when a manifest fetch failed because the candidate URL is unpublished. */
+export function isDirectManifestNotFound(error: unknown): boolean {
+  return error instanceof ManifestFetchError && error.statusCode === 404 && !error.redirected;
+}
+
+export type FetchManifest = (url: string) => Promise<ServerManifest>;
+
+export async function fetchManifestForDistribution(
+  baseUrl: string,
+  distribution: ResolvedDistributionRequest | undefined,
+  version: string,
+  fetchImpl: FetchManifest = fetchManifest
+): Promise<ServerManifest> {
+  // The candidate list holds the preferred placement first and at most one
+  // bounded predeclared fallback. Only the preferred placement may fall
+  // through to that fallback, and only when its own initial response is a
+  // direct 404. Every other failure propagates with its original error, and
+  // a fetched manifest is validated by the caller, which fails fast: a
+  // contradictory manifest must not be masked by a fallback.
+  const [preferred, ...fallbacks] = manifestCandidatesForDistribution(baseUrl, distribution, version);
+  try {
+    return await fetchImpl(preferred);
+  } catch (error) {
+    const fallback = fallbacks[0];
+    if (fallback === undefined || !isDirectManifestNotFound(error)) {
+      throw error;
+    }
+    return fetchImpl(fallback);
+  }
 }
 
 function downloadOriginLabel(config: RiprConfig, version: string): string {

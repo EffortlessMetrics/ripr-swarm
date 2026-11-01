@@ -1,0 +1,60 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_binding_status_wrong_owner_observer/input
+
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 1 reached but not noticed, 0 no test path, 1 unclear. 2 found, 0 suppressed by your settings (1 base-side evidence, not candidate edit targets)
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
+
+Start here:
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below before adding a test
+  File: ./src/lib.rs:19
+  Static exposure: unknown (severity: warning, confidence 0.38)
+  Why unknown: ripr could not tell which inputs would trigger the change, and could not follow it to something a test can check
+  Gap ID (for scripts): gap:rust:src/lib.rs:receipt_binding_matches:predicate_boundary:predicate:current.status==recorded.status_current.violations==recorded.violations
+  Changed behavior: current.status == recorded.status && current.violations == recorded.violations
+  Missing check (1 of 4): Changed boundary input is unresolved: the changed comparison's operands
+    are not ones ripr can map to the related tests' inputs, so it cannot tell which side of the
+    boundary a test reaches; activation/infection is unknown
+  Related test (1 of 4 matched rows): tests/driver.rs:6 binding_inputs_reach_the_changed_comparison (has no assertion)
+  Next step: Open the related test, check whether it reaches the changed code, and inspect other
+    existing tests. Trace their inputs through the local or computed operand (including default and
+    empty cases) to see which side of the changed condition they exercise, then name an input that
+    would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or
+    strengthen a test only if this inspection finds a gap. Compare the original and changed
+    implementations with a focused run using the project's configured test runner (`cargo test` for
+    ordinary Cargo tests). Static classification may remain unknown
+  Evidence: reach yes · infection unknown · propagation unknown · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach receipt_binding_matches: binding_inputs_reach_the_changed_comparison
+    - infection unknown: Changed boundary input is unresolved: the changed comparison's operands are not ones ripr can map to the related tests' inputs, so it cannot tell which side of…
+    - 13 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --diff <cwd>/fixtures/rust_binding_status_wrong_owner_observer/diff.patch --mode fast probe:src_lib.rs:predicate:1ce6138c
+  ripr context --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --diff <cwd>/fixtures/rust_binding_status_wrong_owner_observer/diff.patch --mode fast --at probe:src_lib.rs:predicate:1ce6138c
+  no repair start offered: ripr found 5 seams in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
+Choose a test-stub seam for probe:src_lib.rs:predicate:1ce6138c: src/lib.rs:18 holds more than one predicate_boundary seam, so --at cannot pick one
+  Each command below produces a stub, but ripr could not tell which seam your change touches.
+  They do not establish a repair binding or close a static limitation.
+  ripr agent stub --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --seam-id e4df2237f070660c
+  ripr agent stub --root <cwd>/fixtures/rust_binding_status_wrong_owner_observer/input --seam-id 20904e3811fb86d5
+
+Hidden:
+  All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
+    - ./src/lib.rs:19 (unrevealed); kind: call_deletion; reason: No detected assertion observes the changed value, error, field, or effect
+  Hidden classes:
+    unrevealed = tests reach it but nothing appears to notice a change
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

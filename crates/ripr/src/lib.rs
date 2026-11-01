@@ -137,6 +137,7 @@ pub mod mcp;
 pub mod output;
 /// Exact-snapshot, read-only provider DTOs for external proof orchestrators.
 pub mod provider_contract;
+pub mod review_input;
 mod terminal_text;
 mod workspace_status;
 

@@ -90,10 +90,18 @@ pub(crate) enum XtaskCommand {
     SourcePromotion(Vec<String>),
     BackSync(Vec<String>),
     ReleaseScope(Vec<String>),
+    CiDocsOnly(Vec<String>),
+    CiRoutedRustPlan(Vec<String>),
+    CiRecordCommand(Vec<String>),
+    CiChildReceipt(Vec<String>),
+    CiRoutedRustResult(Vec<String>),
     ReleaseServerArchive(Vec<String>),
     ReleaseServerManifest(Vec<String>),
     ReleaseBindServerDescriptor(Vec<String>),
+    ReleaseFinalServerSubjects(Vec<String>),
+    ReleaseDistributionCatalog(Vec<String>),
     ReleaseUploadAssets(Vec<String>),
+    ReleaseUploadVsix(Vec<String>),
     TargetedTestOutcome(Vec<String>),
     MutationCalibration(Vec<String>),
     BunUbCalibration(Vec<String>),
@@ -111,6 +119,8 @@ pub(crate) enum XtaskCommand {
     CheckBadgeEndpoints(Vec<String>),
     Dogfood,
     EvalSweep(Vec<String>),
+    FirstHour(Vec<String>),
+    FirstHourControls(Vec<String>),
     Critic,
     Reports(Vec<String>),
     Cache(Vec<String>),
@@ -181,10 +191,11 @@ pub(crate) enum XtaskCommand {
     TerminationRemovalBuilds(Vec<String>),
     QualifyPythonWheelhouse(Vec<String>),
     VscodeCompile,
-    VscodePackage,
+    VscodePackage(Vec<String>),
     VscodeVerifyVsix(Vec<String>),
     VscodeTest,
     VscodeTestE2e,
+    DroidAdmit(Vec<String>),
     Package,
     PublishDryRun,
     Help(Vec<String>),
@@ -236,6 +247,8 @@ impl XtaskCommand {
             "verify-test-shards" => Self::VerifyTestShards(rest),
             "windows-advisory-isolated-summary" => Self::WindowsAdvisoryIsolatedSummary(rest),
             "eval-sweep" => Self::EvalSweep(rest),
+            "first-hour" => Self::FirstHour(rest),
+            "first-hour-controls" => Self::FirstHourControls(rest),
             "suggested-fixes" => Self::SuggestedFixes,
             "precommit" => Self::Precommit,
             "ci-policy" if rest.is_empty() => Self::CiPolicy,
@@ -305,10 +318,18 @@ impl XtaskCommand {
             "source-promotion" => Self::SourcePromotion(rest),
             "back-sync" => Self::BackSync(rest),
             "release-scope" => Self::ReleaseScope(rest),
+            "ci-docs-only" => Self::CiDocsOnly(rest),
+            "ci-routed-rust-plan" => Self::CiRoutedRustPlan(rest),
+            "ci-record-command" => Self::CiRecordCommand(rest),
+            "ci-child-receipt" => Self::CiChildReceipt(rest),
+            "ci-routed-rust-result" => Self::CiRoutedRustResult(rest),
             "release-server-archive" => Self::ReleaseServerArchive(rest),
             "release-server-manifest" => Self::ReleaseServerManifest(rest),
             "release-bind-server-descriptor" => Self::ReleaseBindServerDescriptor(rest),
+            "release-final-server-subjects" => Self::ReleaseFinalServerSubjects(rest),
+            "release-distribution-catalog" => Self::ReleaseDistributionCatalog(rest),
             "release-upload-assets" => Self::ReleaseUploadAssets(rest),
+            "release-upload-vsix" => Self::ReleaseUploadVsix(rest),
             "targeted-test-outcome" => Self::TargetedTestOutcome(rest),
             "mutation-calibration" => Self::MutationCalibration(rest),
             "bun-ub-calibration" => Self::BunUbCalibration(rest),
@@ -400,10 +421,11 @@ impl XtaskCommand {
             "termination-removal-builds" => Self::TerminationRemovalBuilds(rest),
             "qualify-python-wheelhouse" => Self::QualifyPythonWheelhouse(rest),
             "vscode-compile" => Self::VscodeCompile,
-            "vscode-package" => Self::VscodePackage,
+            "vscode-package" => Self::VscodePackage(rest),
             "vscode-verify-vsix" => Self::VscodeVerifyVsix(rest),
             "vscode-test" => Self::VscodeTest,
             "vscode-test-e2e" => Self::VscodeTestE2e,
+            "droid-admit" => Self::DroidAdmit(rest.to_vec()),
             "package" => Self::Package,
             "publish-dry-run" => Self::PublishDryRun,
             "issue-intake" => Self::IssueIntake(rest),
@@ -652,10 +674,29 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "source-promotion preflight --source-parent <sha> --swarm-parent <sha> --swarm-ref <protected-tag-ref> --source-repo <path> --swarm-repo <path> --version <version> --controller-root <path> --candidate-manifest <relative-path> --selection-decision <native-1609-comment> --qualification-bundle <relative-path> --qualification-decision <native-2769-comment> [--resolved-tree <full-tree-sha>] [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",
         "back-sync verify --swarm-before <sha> --source-release-head <sha> --source-release-tag <tag> --join <sha> --tree <tree-sha> --swarm-repo <path> --source-repo <path> --version <version> --release-receipt <path> --policy-before <path> --policy-exception <path> --policy-after <path> [--swarm-main <rev>] [--source-main <rev>] [--out <dir>]",
         "release-scope --input <scope.json>",
-        "release-server-archive --version <version> --target <triple> --executable <name> --archive <zip|tar.gz>",
-        "release-server-manifest --version <version> --repository <owner/repo>",
         "release-bind-server-descriptor --version <version> --manifest <path> --manifest-sha256 <hex>",
+        "ci-docs-only --base <sha> [--head <sha>] --expect <docs_only|full>",
+        "ci-routed-rust-plan --scheduled-route <route> --base <sha> --pr-head <sha> --subject <sha> --event <event> --trust-class <class> --repository <owner/repo> --workflow <workflow-ref>",
+        "ci-record-command --id <id> -- <command...>",
+        "ci-child-receipt --plan <ids> --plan-path <plan.json> --job-outcome <outcome> --subject-sha <sha> --subject-tree <tree>",
+        "ci-routed-rust-result --plan-path <plan.json> --execution-path <execution.json> --download-outcome <outcome> --expected-repository <owner/repo> --expected-workflow <workflow-ref> --expected-event <event> --expected-base <sha> --expected-pr-head <sha> --expected-pr-head-tree <tree> --expected-trust-class <class> --expected-authoritative-applicability <route> --expected-route <route> --expected-subject <sha> --expected-subject-tree <tree> --expected-changed-paths-sha256 <digest> --expected-changed-path-count <count> --expected-changed-paths-utf8 <bool> --expected-toolchain-identity <digest> --expected-cargo-identity <digest> --expected-cargo-lock-sha256 <digest> --expected-cache-identity <identity> --expected-cache-hit <state> --expected-cache-matched-identity <identity> --expected-runner-os <os> --expected-runner-arch <arch> --expected-runner-image-os <image> --expected-runner-image-version <version> --expected-artifact-identity <identity> --child-conclusion <state> --self-hosted-selection-attempted <bool> --private-runner-secret-requested <bool> --org-runner-query-attempted <bool>",
+        "release-distribution-catalog --product-version <version> --channel <stable|rc> --stable-tag <tag> [--rc-tag <tag>] --manifest <path> --repository <owner/repo> [--out <path>]",
+        "release-server-archive (--version <product>|--release-version <placement>) --target <triple> --executable <name> --archive <zip|tar.gz>",
+        "release-server-manifest (--version <product>|--release-version <placement>) --repository <owner/repo>",
+        "release-final-server-subjects --version <version> --repository <owner/repo> --candidate-sha <sha> --candidate-tree <tree> --dist <directory> --out <fresh-directory>",
         "release-upload-assets --version <version>",
+        "release-upload-vsix --tag <tag>",
+        "source-promotion verify --preflight <receipt.json> --resolution-manifest <manifest.json> --join-head <sha> --source-main <sha> [--main-head <sha>] [--out <dir>]",
+        "source-promotion resolve-network-policy --preflight <receipt.json> --decisions <decisions.json> --preflight-sha256 <digest> --p0-artifact-sha256 <digest> --source <sha> --swarm <sha> --merge-base <sha> --preview-tree <tree> --rejected-j5 <sha> --rejected-j5-tree <tree> --output-dir <dir>",
+        "source-promotion validate-resolved-tree --source-parent <sha> --swarm-parent <sha> --reviewed-tree <tree> --preflight <receipt.json> --preflight-sha256 <digest> --resolution-manifest <manifest.json> --resolution-sha256 <digest> [--out <dir>]",
+        "source-promotion write-trusted-builder-receipt --source-parent <sha> --workflow-source-sha <sha> --executable <path> --cargo-target-dir <path> --locked-build --isolated-target-dir [--out <dir>]",
+        "source-promotion admit-resolved-tree --source-parent <sha> --swarm-parent <sha> --join-tree <tree> --preflight <path> --preflight-sha256 <digest> --resolution-manifest <path> --resolution-sha256 <digest> --validation-packet <dir> --builder-packet <dir> --integration-index <path> --integration-index-sha256 <digest> [--out <dir>]",
+        "source-promotion construct-exact-join --admission-packet <dir> --validation-packet <dir> --integration-index <path> --integration-index-sha256 <digest> --preflight <path> --resolution-manifest <path> --qualification-receipt <path> --qualification-receipt-sha256 <digest> --source-main-ref <ref> --swarm-ref <ref> --candidate-ref <ref> [--out <dir>]",
+        "source-promotion publish-candidate-ref --construction-packet <dir> --source-main-ref <ref> --remote origin --target-ref <refs/heads/promote/0.11.0-...> (--expected-absent | --expected-old <sha>) [--out <dir>]",
+        "source-promotion run-admission-workflow <exact identity and locator inputs> --requested-identity <file> --requested-identity-sha256 <digest> --workspace-root <dir> --out <dir>",
+        "source-promotion verify-admission-workflow --packet <dir> --requested-identity <file> --requested-identity-sha256 <digest>",
+        "source-promotion enforce-admission-workflow --packet <dir> --workspace-root <dir> --expected-status admitted",
+        "source-promotion finalize-admission-workflow --admission-packet <dir> --workspace-root <dir> --out <dir>",
         "targeted-test-outcome --before <path> --after <path>",
         "mutation-calibration [root] --mutants-json <path>",
         "bun-ub-calibration [--corpus <path>] [--out <path>] [--out-md <path>]",
@@ -756,6 +797,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "vscode-verify-vsix -- <vsix>",
         "vscode-test",
         "vscode-test-e2e",
+        "droid-admit",
         "package",
         "publish-dry-run",
         "issue-intake --issue <number>",
@@ -763,6 +805,8 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
         "work explain --candidate <id> [--captured <dir>] [--json]",
         "work selection check [--corpus <dir>] [--json]",
+        "first-hour --crate <path.crate> --prefix <clean-dir> --out <receipt-dir> --fixture-root <dir>",
+        "first-hour-controls --crate <path.crate> --prefix <clean-dir> --out <receipt-dir> --fixture-root <dir>",
     ]
 }
 
@@ -907,14 +951,6 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Walks crates/ripr/src/ and xtask/src/ for *.rs files, counts lines per file, and writes an advisory ranked report flagging files over the configurable line threshold (default 2000); always exits 0, never mutates source, and is never wired into CI gates.",
         ),
         command_entry(
-            "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path>",
-            "report_only",
-            "stdout only",
-            false,
-            true,
-            "Turns two `cargo test --workspace --no-fail-fast` logs plus their captured cargo exit statuses into a Markdown verdict on stdout. Classifies each failing test from a three-state observation per run (failed / observed pass / not observed) into repeated_failure, unstable, or masked_unknown, so a test absent from one run is never counted as having passed there. Derives run state from the real exit status rather than log prose. Exits non-zero when a log or status file is missing, because the lane's test outcomes are advisory but its evidence is not. Reads only the supplied files and writes none.",
-        ),
-        command_entry(
             "windows-advisory-run --timeout-minutes <n> --log <path> --status <path> -- <program> [args...]",
             "report_only",
             "the --log and --status paths",
@@ -1057,38 +1093,6 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Runs the committed scripted blind-journey corpus through the deterministic #4604 executor (stamping, per-kind digest presence, derived terminals) and validates the versioned executor decision receipt; synthetic success claims no installed usefulness.",
-        ),
-        command_entry(
-            "orchestration-scorecard",
-            "report_only",
-            "target/ripr/reports/orchestration-scorecard.{md,json}",
-            false,
-            false,
-            "Runs a committed orchestration corpus (fixture corpus with expectations, or a plain real corpus) through the typed counting-law validator (identity, disposition, denominator, verification and cleanup gates) and projects one deterministic JSON/Markdown scorecard; synthetic mechanics rows never enter real denominators and a corpus with zero real attempts reports an honest not-measured rate.",
-        ),
-        command_entry(
-            "issue-lifecycle-scorecard",
-            "report_only",
-            "target/ripr/reports/issue-lifecycle-scorecard.{md,json}",
-            false,
-            false,
-            "Runs a committed issue-lifecycle corpus (fixture corpus with expectations, or a plain real corpus) through the typed counting-law validator (base-attempt reference, intake questions, spec decision, progress suppression, merge-versus-closeout, current-main and burn-down gates) and projects one deterministic JSON/Markdown scorecard; synthetic mechanics rows never enter real denominators, merge never implies completed closeout, and a corpus with zero real lifecycles reports an honest not-measured rate.",
-        ),
-        command_entry(
-            "issue-lifecycle-intake-scorecard",
-            "report_only",
-            "target/ripr/reports/issue-lifecycle-scorecard.{md,json}",
-            false,
-            false,
-            "Runs the committed read-only intake pilot corpus (#4930) fail-closed (six real rows, closed categories, provenance, snapshot digest bindings, packet byte law, synthetic-only controls) and projects the embedded attempts through the unchanged issue-lifecycle counting law and scorecard, so intake results flow through #4929 without a parallel intake report.",
-        ),
-        command_entry(
-            "issue-lifecycle-contract-plan-scorecard",
-            "report_only",
-            "target/ripr/reports/issue-lifecycle-scorecard.{md,json}",
-            false,
-            false,
-            "Runs the committed read-only contract/plan decision-boundary pilot corpus (#4931) fail-closed (two real rows over the contract_required and narrow_accepted_contract_bug categories, author/adversary/root role separation, draft-spec and work-order laws, provenance, snapshot digest bindings, synthetic-only mechanics controls) and projects the embedded attempts through the unchanged issue-lifecycle counting law and scorecard, so contract/plan results flow through #4929 without a parallel report.",
         ),
         command_entry(
             "rust-judged-panel check",
@@ -1539,14 +1543,6 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Prints one bounded swarm repair packet for operator handoff without editing files, running tests, calling providers, or creating receipts.",
         ),
         command_entry(
-            "ripr-swarm attempt-ledger [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--previous-ledger <path>] [--real-repair-attempts <path>]",
-            "report_only",
-            "target/ripr/reports/swarm-attempt-ledger.{json,md}",
-            false,
-            false,
-            "Builds durable attempt history from swarm plan, outcome, prior ledger, and real repair attempt artifacts without executing repairs.",
-        ),
-        command_entry(
             "ripr-swarm readiness [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--attempt-ledger <path>]",
             "report_only",
             "target/ripr/reports/swarm-readiness.{json,md}",
@@ -1731,22 +1727,6 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Verifies a candidate-only 0.11 execution-surface disposition against the named commit and candidate parent; it never constructs, merges, or publishes a candidate.",
         ),
         command_entry(
-            "release-server-archive --version <version> --target <triple> --executable <name> --archive <zip|tar.gz>",
-            "mutating",
-            "target/release artifacts",
-            false,
-            true,
-            "Builds local release server archive artifacts.",
-        ),
-        command_entry(
-            "release-server-manifest --version <version> --repository <owner/repo>",
-            "mutating",
-            "target/release artifacts",
-            false,
-            true,
-            "Builds local release server manifest artifacts.",
-        ),
-        command_entry(
             "release-bind-server-descriptor --version <version> --manifest <path> --manifest-sha256 <hex>",
             "mutating",
             "editors/vscode/src/serverDescriptor.ts",
@@ -1755,12 +1735,184 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Verifies a published server manifest against its receipted digest and writes the editor descriptor at package time.",
         ),
         command_entry(
+            "ci-docs-only --base <sha> [--head <sha>] --expect <docs_only|full>",
+            "report_only",
+            "GITHUB_OUTPUT",
+            false,
+            false,
+            "Decides whether a pull request may take the reduced docs-only route; an unobserved or mixed change set takes the full proof.",
+        ),
+        command_entry(
+            "ci-routed-rust-plan --scheduled-route <route> --base <sha> --pr-head <sha> --subject <sha> --event <event> --trust-class <class> --repository <owner/repo> --workflow <workflow-ref>",
+            "report_only",
+            "target/ripr/reports/routed-rust-plan",
+            false,
+            false,
+            "Writes the durable routed-Rust plan packet, rederiving subject and changed-path identity instead of restating the scheduler's claims.",
+        ),
+        command_entry(
+            "ci-record-command --id <id> -- <command...>",
+            "argument_dependent",
+            "routed-rust child evidence",
+            false,
+            // The CI-invocation scan deliberately attributes a recorded line to
+            // the command being wrapped, so the gate keeps its own enforcement
+            // obligation. The wrapper is transport for that attribution rather
+            // than an independently enforced gate.
+            false,
+            "Runs one planned proof command and records its terminal state before the exit code propagates. Writes routed-rust child evidence on every invocation; whether anything else is written depends on the wrapped command, so mutability follows the wrapped command rather than a fixed default.",
+        ),
+        command_entry(
+            "ci-child-receipt --plan <ids> --plan-path <plan.json> --job-outcome <outcome> --subject-sha <sha> --subject-tree <tree>",
+            "report_only",
+            "routed-rust child evidence",
+            false,
+            false,
+            "Finalizes a child execution receipt, marking planned commands that never ran as not_run rather than dropping them.",
+        ),
+        command_entry(
+            "ci-routed-rust-result --plan-path <plan.json> --execution-path <execution.json> --download-outcome <outcome> --expected-repository <owner/repo> --expected-workflow <workflow-ref> --expected-event <event> --expected-base <sha> --expected-pr-head <sha> --expected-pr-head-tree <tree> --expected-trust-class <class> --expected-authoritative-applicability <route> --expected-route <route> --expected-subject <sha> --expected-subject-tree <tree> --expected-changed-paths-sha256 <digest> --expected-changed-path-count <count> --expected-changed-paths-utf8 <bool> --expected-toolchain-identity <digest> --expected-cargo-identity <digest> --expected-cargo-lock-sha256 <digest> --expected-cache-identity <identity> --expected-cache-hit <state> --expected-cache-matched-identity <identity> --expected-runner-os <os> --expected-runner-arch <arch> --expected-runner-image-os <image> --expected-runner-image-version <version> --expected-artifact-identity <identity> --child-conclusion <state> --self-hosted-selection-attempted <bool> --private-runner-secret-requested <bool> --org-runner-query-attempted <bool>",
+            "report_only",
+            "target/ripr/reports/routed-rust-result.json and GITHUB_STEP_SUMMARY",
+            false,
+            false,
+            "Publishes the normalized routed-Rust verdict from planned propositions and child receipts; only `passed` is green.",
+        ),
+        command_entry(
+            "release-distribution-catalog --product-version <version> --channel <stable|rc> --stable-tag <tag> [--rc-tag <tag>] --manifest <path> --repository <owner/repo> [--out <path>]",
+            "mutating",
+            "dist/ripr-distribution-catalog.json by default (--out or DISTRIBUTION_CATALOG_OUT overrides)",
+            false,
+            false,
+            "Builds the candidate release distribution catalog outside tracked source at dist/ripr-distribution-catalog.json by default; --out or DISTRIBUTION_CATALOG_OUT selects the output path.",
+        ),
+        command_entry(
+            "release-server-archive (--version <product>|--release-version <placement>) --target <triple> --executable <name> --archive <zip|tar.gz>",
+            "mutating",
+            "target/release artifacts",
+            false,
+            true,
+            "Builds local product-versioned server archives; --release-version binds placement to the checked-out source product without publication authority.",
+        ),
+        command_entry(
+            "release-server-manifest (--version <product>|--release-version <placement>) --repository <owner/repo>",
+            "mutating",
+            "target/release artifacts",
+            false,
+            true,
+            "Builds a local product-versioned server manifest; --release-version binds placement to the checked-out source product without publication authority.",
+        ),
+        command_entry(
+            "release-final-server-subjects --version <version> --repository <owner/repo> --candidate-sha <sha> --candidate-tree <tree> --dist <directory> --out <fresh-directory>",
+            "report_only",
+            "fresh --out directory: final server subject inventory, provenance inputs, checksums, and JSON/Markdown receipt",
+            false,
+            false,
+            "Prepares exact final server subjects without attestation, credentials, or publication authority; #1502 live provenance wiring remains separate.",
+        ),
+        command_entry(
             "release-upload-assets --version <version>",
             "external_state_mutating",
             "GitHub release assets",
             true,
             false,
-            "Source-repo release command; uploads assets only with explicit release approval.",
+            "Uploads legacy stable release assets; channel-suffixed inputs stop before transport. Exact RC authorization/transport remains separate.",
+        ),
+        command_entry(
+            "release-upload-vsix --tag <tag>",
+            "external_state_mutating",
+            "GitHub release VSIX asset and local verification download",
+            true,
+            false,
+            "Attaches one exact VSIX to an existing release without replacement; requires explicit release approval.",
+        ),
+        command_entry(
+            "source-promotion verify --preflight <receipt.json> --resolution-manifest <manifest.json> --join-head <sha> --source-main <sha> [--main-head <sha>] [--out <dir>]",
+            "report_only",
+            "target/ripr/source-promotion/source-promotion-verification.{json,md} or explicit --out <dir>",
+            false,
+            false,
+            "Verifies an exact history-preserving join, reviewed resolution manifest, ancestry digests, and metadata identity without constructing or mutating Git refs.",
+        ),
+        command_entry(
+            "source-promotion resolve-network-policy --preflight <receipt.json> --decisions <decisions.json> --preflight-sha256 <digest> --p0-artifact-sha256 <digest> --source <sha> --swarm <sha> --merge-base <sha> --preview-tree <tree> --rejected-j5 <sha> --rejected-j5-tree <tree> --output-dir <dir>",
+            "mutating",
+            "explicit --output-dir plus unreferenced immutable Git objects and a disposable target/ripr checkout",
+            false,
+            false,
+            "Reconciles the exact source/W7 network ledger with reviewer decisions, runs the source-owned production checker on a one-path policy tree, and writes typed integration evidence without moving a ref.",
+        ),
+        command_entry(
+            "source-promotion validate-resolved-tree --source-parent <sha> --swarm-parent <sha> --reviewed-tree <tree> --preflight <receipt.json> --preflight-sha256 <digest> --resolution-manifest <manifest.json> --resolution-sha256 <digest> [--out <dir>]",
+            "report_only",
+            "target/ripr/source-promotion/resolved-tree/{resolved-tree-validation.json,resolved-tree-validation.md,commands/**} or explicit --out <dir>; transient unreferenced Git object and worktree-registry entries in the caller repository are removed before return",
+            false,
+            false,
+            "Validates one exact reviewed tree with the source-parent governance catalog and retained bounded evidence before direct-J construction; retained worktree state or authoritative ref movement rejects validation.",
+        ),
+        command_entry(
+            "source-promotion write-trusted-builder-receipt --source-parent <sha> --workflow-source-sha <sha> --executable <path> --cargo-target-dir <path> --locked-build --isolated-target-dir [--out <dir>]",
+            "report_only",
+            "target/ripr/source-promotion/trusted-builder/{trusted-builder.json,packet-index.json} or explicit --out <dir>",
+            false,
+            false,
+            "Writes a source-bound trusted-builder receipt without constructing a join or mutating Git refs.",
+        ),
+        command_entry(
+            "source-promotion admit-resolved-tree --source-parent <sha> --swarm-parent <sha> --join-tree <tree> --preflight <path> --preflight-sha256 <digest> --resolution-manifest <path> --resolution-sha256 <digest> --validation-packet <dir> --builder-packet <dir> --integration-index <path> --integration-index-sha256 <digest> [--out <dir>]",
+            "report_only",
+            "target/ripr/source-promotion/resolved-tree-admission/{resolved-tree-admission.json,packet-index.json} or explicit --out <dir>",
+            false,
+            false,
+            "Admits one exact resolved tree only after every bound source-owned validation, builder, and integration receipt passes and the integration-index bytes match the caller-bound lowercase SHA-256; it does not construct a join or mutate Git refs.",
+        ),
+        command_entry(
+            "source-promotion construct-exact-join --admission-packet <dir> --validation-packet <dir> --integration-index <path> --integration-index-sha256 <digest> --preflight <path> --resolution-manifest <path> --qualification-receipt <path> --qualification-receipt-sha256 <digest> --source-main-ref <ref> --swarm-ref <ref> --candidate-ref <ref> [--out <dir>]",
+            "mutating",
+            "Git object database plus target/ripr/source-promotion/exact-join-construction/{exact-join-construction.json,packet-index.json} or explicit --out <dir>; no Git ref",
+            false,
+            false,
+            "Constructs one deterministic unreferenced exact-J commit object only after admission, caller-bound integration-index rereads, and terminal qualification; it does not publish or mutate a Git ref.",
+        ),
+        command_entry(
+            "source-promotion publish-candidate-ref --construction-packet <dir> --source-main-ref <ref> --remote origin --target-ref <refs/heads/promote/0.11.0-...> (--expected-absent | --expected-old <sha>) [--out <dir>]",
+            "external_state_mutating",
+            "local and remote candidate refs plus target/ripr/source-promotion/candidate-ref-publication/{candidate-ref-publication.json,packet-index.json} or explicit --out <dir>",
+            true,
+            false,
+            "Publishes only the construction-bound candidate ref with an exact expected-state lease; this capability is judgment-required and does not authorize a real promotion.",
+        ),
+        command_entry(
+            "source-promotion run-admission-workflow <exact identity and locator inputs> --requested-identity <file> --requested-identity-sha256 <digest> --workspace-root <dir> --out <dir>",
+            "report_only",
+            "runner-owned immutable pre-enforcement workflow admission packet",
+            false,
+            false,
+            "Materializes exact immutable inputs and writes a normalized admission disposition; it has no construction, ref, merge, release, or publication authority.",
+        ),
+        command_entry(
+            "source-promotion verify-admission-workflow --packet <dir> --requested-identity <file> --requested-identity-sha256 <digest>",
+            "report_only",
+            "none",
+            false,
+            false,
+            "Independently verifies one immutable workflow admission packet and its closed mutation-attempt contract.",
+        ),
+        command_entry(
+            "source-promotion enforce-admission-workflow --packet <dir> --workspace-root <dir> --expected-status admitted",
+            "report_only",
+            "none",
+            false,
+            false,
+            "Fails closed unless a self-verifying workflow packet has the exact admitted terminal state.",
+        ),
+        command_entry(
+            "source-promotion finalize-admission-workflow --admission-packet <dir> --workspace-root <dir> --out <dir>",
+            "mutating",
+            "one unreferenced commit-tree object in the isolated workflow repository plus a new immutable final packet",
+            false,
+            false,
+            "After uploaded admission evidence is independently verified and enforced, optionally constructs exactly one unreferenced dry-run object; it never mutates refs or publishes.",
         ),
         command_entry(
             "targeted-test-outcome --before <path> --after <path>",
@@ -1865,22 +2017,6 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             true,
             "Writes or checks annotation output depending on --check.",
-        ),
-        command_entry(
-            "badges",
-            "mutating",
-            "badges/*.json and target/ripr/reports",
-            false,
-            false,
-            "Refreshes committed public badge endpoint JSON; use only in explicit badge refresh work.",
-        ),
-        command_entry(
-            "badges --check",
-            "non_mutating_check",
-            "target/ripr/reports",
-            false,
-            false,
-            "Compares generated badge endpoint output without updating committed badges/*.json.",
         ),
         command_entry(
             "update-badge-endpoints",
@@ -2539,14 +2675,6 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Runs VS Code extension compile.",
         ),
         command_entry(
-            "vscode-package",
-            "mutating",
-            "editors/vscode/dist",
-            false,
-            false,
-            "Builds VS Code extension package artifacts.",
-        ),
-        command_entry(
             "vscode-verify-vsix -- <vsix>",
             "non_mutating_check",
             "none",
@@ -2625,6 +2753,102 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Validates committed SelectedWorkIdentityV1 packets against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR A, RIPR-SPEC-0244); wrong repository/issue/action/basis/worktree/head identities fail with exact recompile/reconcile routes, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
+        ),
+        command_entry(
+            "first-hour --crate <path.crate> --prefix <clean-dir> --out <receipt-dir> --fixture-root <dir>",
+            "external_state_mutating",
+            "caller-selected --prefix install tree, --out receipt, and --fixture-root checkout (created, journey-run, cleaned)",
+            true,
+            false,
+            "Installs the packaged candidate into a clean prefix, builds the disposable baseline fixture, and runs the installed check journey under fresh per-rendering cache/HOME roots; deletes the harness-created fixture root on completion.",
+        ),
+        command_entry(
+            "first-hour-controls --crate <path.crate> --prefix <clean-dir> --out <receipt-dir> --fixture-root <dir>",
+            "external_state_mutating",
+            "caller-selected --prefix install tree (including one deliberately tampered executable), --out controls receipt, and --fixture-root checkouts (created, journey-run, cleaned)",
+            true,
+            false,
+            "Installs the packaged candidate once, then drives the production journey with three dishonest states (invalid base, empty diff, tampered binary); each control passes only on its typed refusal and the run exits nonzero otherwise.",
+        ),
+        command_entry(
+            "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path> [--nofeatures-log <path> --nofeatures-status <path>]",
+            "report_only",
+            "stdout only",
+            false,
+            true,
+            "Turns two `cargo test --workspace --no-fail-fast` logs plus their captured cargo exit statuses into a Markdown verdict on stdout. Classifies each failing test from a three-state observation per run (failed / observed pass / not observed) into repeated_failure, unstable, or masked_unknown, so a test absent from one run is never counted as having passed there. Derives run state from the real exit status rather than log prose. When both workspace runs are unusable, an optional earlier no-default-features log pair renders a single-sample partial observation naming stuck tests without deriving a stability verdict. Exits non-zero when a log or status file is missing, because the lane's test outcomes are advisory but its evidence is not. Reads only the supplied files and writes none.",
+        ),
+        command_entry(
+            "orchestration-scorecard",
+            "report_only",
+            "target/ripr/reports/orchestration-scorecard.{md,json}",
+            false,
+            false,
+            "Runs a committed orchestration corpus (fixture corpus with expectations, or a plain real corpus) through the typed counting-law validator (identity, disposition, denominator, verification and cleanup gates) and projects one deterministic JSON/Markdown scorecard; synthetic mechanics rows never enter real denominators and a corpus with zero real attempts reports an honest not-measured rate.",
+        ),
+        command_entry(
+            "issue-lifecycle-scorecard",
+            "report_only",
+            "target/ripr/reports/issue-lifecycle-scorecard.{md,json}",
+            false,
+            false,
+            "Runs a committed issue-lifecycle corpus (fixture corpus with expectations, or a plain real corpus) through the typed counting-law validator (base-attempt reference, intake questions, spec decision, progress suppression, merge-versus-closeout, current-main and burn-down gates) and projects one deterministic JSON/Markdown scorecard; synthetic mechanics rows never enter real denominators, merge never implies completed closeout, and a corpus with zero real lifecycles reports an honest not-measured rate.",
+        ),
+        command_entry(
+            "issue-lifecycle-intake-scorecard",
+            "report_only",
+            "target/ripr/reports/issue-lifecycle-scorecard.{md,json}",
+            false,
+            false,
+            "Runs the committed read-only intake pilot corpus (#4930) fail-closed (six real rows, closed categories, provenance, snapshot digest bindings, packet byte law, synthetic-only controls) and projects the embedded attempts through the unchanged issue-lifecycle counting law and scorecard, so intake results flow through #4929 without a parallel intake report.",
+        ),
+        command_entry(
+            "issue-lifecycle-contract-plan-scorecard",
+            "report_only",
+            "target/ripr/reports/issue-lifecycle-scorecard.{md,json}",
+            false,
+            false,
+            "Runs the committed read-only contract/plan decision-boundary pilot corpus (#4931) fail-closed (two real rows over the contract_required and narrow_accepted_contract_bug categories, author/adversary/root role separation, draft-spec and work-order laws, provenance, snapshot digest bindings, synthetic-only mechanics controls) and projects the embedded attempts through the unchanged issue-lifecycle counting law and scorecard, so contract/plan results flow through #4929 without a parallel report.",
+        ),
+        command_entry(
+            "ripr-swarm attempt-ledger [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--previous-ledger <path>] [--real-repair-attempts <path>]",
+            "report_only",
+            "target/ripr/reports/swarm-attempt-ledger.{json,md}",
+            false,
+            false,
+            "Builds durable attempt history from swarm plan, outcome, prior ledger, and real repair attempt artifacts without executing repairs.",
+        ),
+        command_entry(
+            "badges",
+            "mutating",
+            "badges/*.json and target/ripr/reports",
+            false,
+            false,
+            "Refreshes committed public badge endpoint JSON; use only in explicit badge refresh work.",
+        ),
+        command_entry(
+            "badges --check",
+            "non_mutating_check",
+            "target/ripr/reports",
+            false,
+            false,
+            "Compares generated badge endpoint output without updating committed badges/*.json.",
+        ),
+        command_entry(
+            "vscode-package [--catalog <path>]",
+            "mutating",
+            "editors/vscode/dist",
+            false,
+            false,
+            "Admits the staged distribution catalog, builds the VS Code extension package, and proves the packaged catalog bytes.",
+        ),
+        command_entry(
+            "droid-admit --mode auto-review|dispatch --event-name NAME --repo OWNER/NAME --receipt PATH [--event PATH --fresh-head SHA --fresh-base SHA | --facts PATH]",
+            "non_mutating_check",
+            "droid admission receipt",
+            false,
+            false,
+            "Admits a pull_request_target or dispatched Droid subject for trusted analysis and writes the admission receipt.",
         ),
         command_entry(
             "work result check [--corpus <dir>] [--json]",
@@ -2783,7 +3007,7 @@ fn levenshtein(lhs: &str, rhs: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{command_catalog, help_message, levenshtein};
+    use super::{XtaskCommand, command_catalog, help_message, known_commands, levenshtein};
 
     #[test]
     fn top_level_help_pins_start_here_front_door_language() -> Result<(), String> {
@@ -2858,6 +3082,575 @@ mod tests {
         assert_eq!(levenshtein("check-pr", "check-pr"), 0);
         assert_eq!(levenshtein("chek-pr", "check-pr"), 1);
         assert_eq!(levenshtein("réport", "report"), 1);
+    }
+
+    #[test]
+    fn source_promotion_verify_cli_entrypoint() -> Result<(), String> {
+        let command = XtaskCommand::parse([
+            "source-promotion".to_string(),
+            "verify".to_string(),
+            "--preflight".to_string(),
+            "preflight.json".to_string(),
+        ]);
+        match command {
+            XtaskCommand::SourcePromotion(args) => {
+                if args != ["verify", "--preflight", "preflight.json"] {
+                    return Err(format!("unexpected source-promotion args: {args:?}"));
+                }
+            }
+            other => return Err(format!("source-promotion did not dispatch: {other:?}")),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_controller_commands_are_cataloged() -> Result<(), String> {
+        let known = known_commands();
+        let catalog = command_catalog();
+        for (command, expected_mutability, expected_judgment) in [
+            (
+                "source-promotion write-trusted-builder-receipt --source-parent <sha> --workflow-source-sha <sha> --executable <path> --cargo-target-dir <path> --locked-build --isolated-target-dir [--out <dir>]",
+                "report_only",
+                false,
+            ),
+            (
+                "source-promotion admit-resolved-tree --source-parent <sha> --swarm-parent <sha> --join-tree <tree> --preflight <path> --preflight-sha256 <digest> --resolution-manifest <path> --resolution-sha256 <digest> --validation-packet <dir> --builder-packet <dir> --integration-index <path> --integration-index-sha256 <digest> [--out <dir>]",
+                "report_only",
+                false,
+            ),
+            (
+                "source-promotion construct-exact-join --admission-packet <dir> --validation-packet <dir> --integration-index <path> --integration-index-sha256 <digest> --preflight <path> --resolution-manifest <path> --qualification-receipt <path> --qualification-receipt-sha256 <digest> --source-main-ref <ref> --swarm-ref <ref> --candidate-ref <ref> [--out <dir>]",
+                "mutating",
+                false,
+            ),
+            (
+                "source-promotion publish-candidate-ref --construction-packet <dir> --source-main-ref <ref> --remote origin --target-ref <refs/heads/promote/0.11.0-...> (--expected-absent | --expected-old <sha>) [--out <dir>]",
+                "external_state_mutating",
+                true,
+            ),
+        ] {
+            if !known.contains(&command) {
+                return Err(format!(
+                    "source-promotion controller command is missing from help: {command}"
+                ));
+            }
+            let entry = catalog
+                .iter()
+                .find(|entry| entry.command == command)
+                .ok_or_else(|| {
+                    format!("source-promotion controller command is not cataloged: {command}")
+                })?;
+            if entry.mutability != expected_mutability
+                || entry.judgment_required != expected_judgment
+            {
+                return Err(format!(
+                    "source-promotion controller command has incorrect safety metadata: {command}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn source_promotion_workflow() -> Result<String, String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "xtask manifest has no repository parent".to_string())?;
+        std::fs::read_to_string(root.join(".github/workflows/source-promotion-contract.yml"))
+            .map_err(|error| format!("failed to read source-promotion workflow: {error}"))
+    }
+
+    #[test]
+    fn source_promotion_workflow_is_exact_head_and_read_only() -> Result<(), String> {
+        let workflow = source_promotion_workflow()?;
+        for needle in [
+            "fetch-depth: 0",
+            "ref: ${{ github.event.pull_request.head.sha }}",
+            "join_head",
+            "source-promotion-control: [0-9a-f]{40}",
+            "marker_count",
+            "grep -E '^<!-- source-promotion-control: [0-9a-f]{40} -->$'",
+            "exactly one lowercase source-promotion-control marker",
+            "git -C \"$control_dir\" fetch --no-tags origin \"$control_commit\"",
+            "CONTROL_INPUTS_PATH: docs/release/source-promotion/contract-inputs.json",
+            "PREFLIGHT_PATH: docs/release/source-promotion/preflight.json",
+            "RESOLUTION_MANIFEST_PATH: docs/release/source-promotion/resolution-manifest.json",
+            "ripr.source_promotion_ci_inputs.v2",
+            "preflight_sha256",
+            "git -C \"$control_dir\" show \"$control_commit:$PREFLIGHT_PATH\"",
+            "--match-head-commit $PR_HEAD",
+            "Build verifier from trusted base source",
+            "\"$TRUSTED_VERIFIER\" source-promotion verify",
+            "--main-head \"$MAIN_HEAD\"",
+            "toolchain: 1.95.0",
+            "PR_NUMBER: ${{ github.event.pull_request.number }}",
+            "resolution_sha256",
+            "validation_phase",
+            "validation_reason",
+            "validation_status",
+            "version",
+            "source_parent",
+            "source_parent:$source_parent",
+            "control_sidecars",
+            "control_preflight_path",
+            "control_resolution_manifest_path",
+            "phase=$validation_phase",
+            "reason=$validation_reason",
+            "if: steps.inputs.outcome == 'success'",
+            "if: steps.inputs.outcome == 'success' && steps.live-governance.outcome == 'success'",
+            "source-promotion-validation.log",
+            "mkdir -p \"$out\"",
+            "trusted verifier checkout identity mismatch",
+            "jq -e . \"$PREFLIGHT\"",
+            "control preflight digest mismatch",
+            "control resolution digest mismatch",
+            "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7",
+            "(.conditions.ref_name.exclude // []) == []",
+            "permissions:\n  contents: read",
+            "<!-- source-promotion: true -->",
+            "This workflow never executes the merge command",
+        ] {
+            if !workflow.contains(needle) {
+                return Err(format!(
+                    "source-promotion workflow lost required contract: {needle}"
+                ));
+            }
+        }
+        if workflow
+            .lines()
+            .any(|line| line.trim_start().starts_with("gh pr merge"))
+        {
+            return Err(
+                "source-promotion workflow must print, not execute, gh pr merge".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_rejects_symlink_and_path_escape_inputs() -> Result<(), String> {
+        let workflow = source_promotion_workflow()?;
+        for needle in [
+            "validate_tracked_regular_file",
+            "git -C \"$control_dir\" ls-tree \"$control_commit\"",
+            "control input is not a tracked regular file",
+            "control input path is not canonical",
+            "fixed source repository",
+        ] {
+            if !workflow.contains(needle) {
+                return Err(format!(
+                    "workflow lacks symlink/path-escape guard: {needle}"
+                ));
+            }
+        }
+        for forbidden in [
+            "git show \"$PR_HEAD:$CONTROL_INPUTS_PATH\"",
+            "git show \"$PR_HEAD:$PREFLIGHT_PATH\"",
+            "git show \"$PR_HEAD:$RESOLUTION_MANIFEST_PATH\"",
+            "validate_tracked_regular_file \"$INPUTS_PATH\"",
+        ] {
+            if workflow.contains(forbidden) {
+                return Err(format!(
+                    "promotion workflow retained candidate-checkout authority: {forbidden}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_requires_external_fixed_sidecar() -> Result<(), String> {
+        let workflow = source_promotion_workflow()?;
+        for needle in [
+            "CONTROL_REPOSITORY_URL: https://github.com/EffortlessMetrics/ripr.git",
+            "git -C \"$control_dir\" rev-parse --verify \"$control_commit^{commit}\"",
+            "test \"$(git -C \"$control_dir\" remote get-url origin)\" = \"$CONTROL_REPOSITORY_URL\"",
+            "validate_tracked_regular_file \"$CONTROL_INPUTS_PATH\"",
+            "validate_tracked_regular_file \"$PREFLIGHT_PATH\"",
+            "validate_tracked_regular_file \"$RESOLUTION_MANIFEST_PATH\"",
+            "sha256sum \"$preflight\"",
+            "sha256sum \"$resolution_manifest\"",
+            "control_commit:$control_commit",
+            "ripr.source_promotion_post_merge_contract.v1",
+            "source-promotion-post-merge-contract.json",
+            "--arg control_commit \"$CONTROL_COMMIT\"",
+            "CONTROL_COMMIT: ${{ inputs.control_commit }}",
+            "if: always()",
+        ] {
+            if !workflow.contains(needle) {
+                return Err(format!("workflow lacks immutable sidecar guard: {needle}"));
+            }
+        }
+        for forbidden in [
+            "validate_tracked_regular_file \"$INPUTS_PATH\"",
+            "          INPUTS_PATH: docs/release/source-promotion/contract-inputs.json",
+        ] {
+            if workflow.contains(forbidden) {
+                return Err(format!(
+                    "workflow retained candidate-checkout input authority: {forbidden}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_binds_trusted_source_parent() -> Result<(), String> {
+        let workflow = source_promotion_workflow()?;
+        for needle in [
+            "EXPECTED_SOURCE_PARENT: ${{ inputs.source_parent }}",
+            "source_parent must be an exact lowercase SHA",
+            "test \"$EXPECTED_SOURCE_PARENT\" = \"$source_main\" || fail \"source_parent must equal control source_main\"",
+            "control commit must not be an ancestor of the join head",
+            "control commit must not be a descendant of the join head",
+        ] {
+            if !workflow.contains(needle) {
+                return Err(format!(
+                    "workflow lacks trusted source-parent binding: {needle}"
+                ));
+            }
+        }
+        if workflow.contains("EXPECTED_SOURCE_PARENT: ${{ inputs.source_main }}") {
+            return Err("workflow aliases source_parent from the wrong dispatch input".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_post_merge_receipt_binds_dispatch_input_on_rejection() -> Result<(), String>
+    {
+        let workflow = source_promotion_workflow()?;
+        let receipt = workflow
+            .find("- name: Write SHA-bound post-merge contract receipt")
+            .ok_or_else(|| "post-merge receipt step is missing".to_string())?;
+        let post_merge = &workflow[receipt..];
+        for needle in [
+            "if: always()",
+            "CONTROL_COMMIT: ${{ inputs.control_commit }}",
+            "source-promotion-post-merge-contract.json",
+            "ripr.source_promotion_post_merge_contract.v1",
+        ] {
+            if !post_merge.contains(needle) {
+                return Err(format!("post-merge rejection receipt lacks: {needle}"));
+            }
+        }
+        if post_merge.contains("CONTROL_COMMIT: ${{ steps.control.outputs.control_commit }}") {
+            return Err("post-merge receipt depends on a failed validation step output".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_rejects_placeholder_and_wrong_repo_commands() -> Result<(), String>
+    {
+        let workflow = source_promotion_workflow()?;
+        for needle in [
+            "gh pr merge $PR_NUMBER --repo EffortlessMetrics/ripr",
+            "merge command must bind numeric PR",
+            "merge_command=$(printf '%s\\n' \"$merge_block\"",
+            "exactly one canonical merge command is required",
+        ] {
+            if !workflow.contains(needle) {
+                return Err(format!("workflow lacks merge-command guard: {needle}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_rejects_candidate_verifier_bypass() -> Result<(), String> {
+        let workflow = source_promotion_workflow()?;
+        for needle in [
+            "Build verifier from trusted base source",
+            "git -C \"$trusted_dir\" checkout --detach \"$SOURCE_PARENT\"",
+            "cargo build --locked --manifest-path \"$trusted_dir/Cargo.toml\" -p xtask --bin xtask",
+            "TRUSTED_VERIFIER",
+            "rev-parse HEAD)\" = \"$SOURCE_PARENT",
+        ] {
+            if !workflow.contains(needle) {
+                return Err(format!("workflow lacks trusted-verifier guard: {needle}"));
+            }
+        }
+        if workflow.contains("cargo build --manifest-path \"$trusted_dir/Cargo.toml\" --bin xtask")
+        {
+            return Err("candidate-verifier build shape is still accepted".into());
+        }
+        if workflow.matches("cargo build --locked --manifest-path \"$trusted_dir/Cargo.toml\" -p xtask --bin xtask").count() != 2 {
+            return Err("both trusted verifier lanes must use the locked xtask package binary".into());
+        }
+        if workflow
+            .contains("cargo build --locked --manifest-path \"$GITHUB_WORKSPACE/Cargo.toml\"")
+            || workflow.contains("./target/debug/xtask source-promotion verify")
+        {
+            return Err("candidate checkout can still supply the verifier".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_receipt_contract_distinguishes_success_missing_and_mismatch()
+    -> Result<(), String> {
+        let workflow = source_promotion_workflow()?;
+        for needle in [
+            "SOURCE_PROMOTION_OUT: ${{ runner.temp }}/ripr-source-promotion",
+            "SOURCE_PARENT: ${{ steps.inputs.outputs.source_parent }}",
+            "--out \"$SOURCE_PROMOTION_OUT\"",
+            "out=\"$SOURCE_PROMOTION_OUT\"",
+            "verification=\"$out/source-promotion-verification.json\"",
+            "type == \"object\" and .schema == \"ripr.source_promotion_verification.v2\"",
+            "verifier_receipt_status=present",
+            "verifier_receipt_status=missing",
+            "verifier_receipt_status=schema_mismatch",
+            "verifier receipt schema mismatch",
+            "trusted verifier receipt missing",
+            "verifier_receipt_status:$verifier_receipt_status",
+            "verifier_exit_code:$verifier_exit_code",
+            "TRUSTED_VERIFIER_SHA: ${{ steps.trusted-verifier.outputs.sha }}",
+            "LIVE_TAG: ${{ steps.live-governance.outputs.tag }}",
+            "LIVE_RULESET: ${{ steps.live-governance.outputs.ruleset }}",
+            "(.join_head | type) == \"string\"",
+            "(.source_main | type) == \"string\"",
+            "(.parents | type) == \"array\"",
+            "(.swarm_reachability | type) == \"object\"",
+            "(.release_metadata_surfaces | type) == \"array\"",
+            "(.checks | type) == \"object\"",
+            "(.failure_reasons | type) == \"array\"",
+            "(.invalidation_rules | type) == \"array\"",
+            "(.non_claims | type) == \"array\"",
+            "(.status == \"rejected\" or ((.tree | type) == \"string\"",
+            "(.parents | length) == 2",
+            "all(.parents[]; type == \"string\")",
+            "(.swarm_reachability.all_reachable_count | type) == \"number\"",
+            "trusted verifier exited non-zero",
+        ] {
+            if !workflow.contains(needle) {
+                return Err(format!(
+                    "receipt contract lacks discriminating branch: {needle}"
+                ));
+            }
+        }
+        if workflow.contains("echo \"- PR head / candidate SHA: `")
+            || workflow.contains("echo \"Failure reasons: `")
+        {
+            return Err("receipt summary still executes interpolated Markdown backticks".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_has_failure_fixture_corpus() -> Result<(), String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "xtask manifest has no repository parent".to_string())?
+            .join("tests/fixtures/source_promotion_contract");
+        for (name, expected_phase, expected_reason) in [
+            (
+                "malformed-control.json",
+                "control_marker",
+                "exactly one lowercase source-promotion-control marker is required",
+            ),
+            (
+                "unreachable-control.json",
+                "control_repository",
+                "control commit is unreachable from the source repository",
+            ),
+            (
+                "source-mismatch.json",
+                "control_identity",
+                "control source_main does not equal the PR base SHA",
+            ),
+            (
+                "missing-receipt.json",
+                "verifier_receipt",
+                "trusted verifier receipt missing",
+            ),
+            (
+                "schema-mismatch.json",
+                "verifier_receipt",
+                "trusted verifier receipt schema mismatch",
+            ),
+            (
+                "empty-artifact-dir.json",
+                "verifier_receipt",
+                "trusted verifier receipt missing",
+            ),
+        ] {
+            let path = root.join(name);
+            let text = std::fs::read_to_string(&path)
+                .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+            let value: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
+            for key in ["case", "validation_phase", "validation_reason", "status"] {
+                if value.get(key).and_then(serde_json::Value::as_str).is_none() {
+                    return Err(format!("{} is missing string field {key}", path.display()));
+                }
+            }
+            if value["status"] != "rejected" {
+                return Err(format!("{} must pin fail-closed rejection", path.display()));
+            }
+            if value["validation_phase"] != expected_phase {
+                return Err(format!(
+                    "{} must pin emitted validation phase {expected_phase}",
+                    path.display()
+                ));
+            }
+            if value["validation_reason"] != expected_reason {
+                return Err(format!(
+                    "{} must pin emitted validation reason {expected_reason}",
+                    path.display()
+                ));
+            }
+            if matches!(name, "missing-receipt.json" | "empty-artifact-dir.json")
+                && value["receipt_status"] != "missing"
+            {
+                return Err(format!(
+                    "{} must pin a missing verifier receipt",
+                    path.display()
+                ));
+            }
+            if name == "schema-mismatch.json" && value["receipt_status"] != "schema_mismatch" {
+                return Err(format!(
+                    "{} must pin a schema-mismatched verifier receipt",
+                    path.display()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_builds_xtask_explicitly_from_trusted_source() -> Result<(), String>
+    {
+        let workflow = source_promotion_workflow()?;
+        let expected = "CARGO_TARGET_DIR=\"$trusted_target\" cargo build --locked --manifest-path \"$trusted_dir/Cargo.toml\" -p xtask --bin xtask";
+        if workflow.contains(
+            "CARGO_TARGET_DIR=\"$trusted_target\" cargo build --manifest-path \"$trusted_dir/Cargo.toml\" --bin xtask",
+        ) {
+            return Err("trusted-verifier build regressed to default-package selection".into());
+        }
+
+        for (label, next_label) in [
+            (
+                "Build verifier from trusted base source",
+                "Verify promotion inputs and PR-head binding",
+            ),
+            (
+                "Build verifier from trusted source parent",
+                "Verify exact J reaches merged source main",
+            ),
+        ] {
+            let start = workflow
+                .find(label)
+                .ok_or_else(|| format!("trusted-verifier lane is missing: {label}"))?;
+            let lane = &workflow[start..];
+            let end = lane.find(next_label).ok_or_else(|| {
+                format!("trusted-verifier lane has no expected end marker: {label}")
+            })?;
+            let lane = &lane[..end];
+            let build_count = lane.matches(expected).count();
+            if build_count != 1 {
+                return Err(format!(
+                    "trusted-verifier lane {label:?} must contain exactly one explicit xtask build; found {build_count}"
+                ));
+            }
+            for needle in [
+                "verifier=\"$trusted_target/debug/xtask\"",
+                "test -x \"$verifier\"",
+            ] {
+                if !lane.contains(needle) {
+                    return Err(format!(
+                        "trusted-verifier lane {label:?} must validate the selected xtask binary path: {needle}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_rejects_mixed_merge_strategies() -> Result<(), String> {
+        let workflow = source_promotion_workflow()?;
+        for needle in [
+            "exactly one canonical merge command is required",
+            "--squash",
+            "--rebase",
+            "exactly one --merge strategy is required",
+        ] {
+            if !workflow.contains(needle) {
+                return Err(format!("workflow lacks merge-strategy guard: {needle}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_accepts_documented_multiline_merge_command() -> Result<(), String>
+    {
+        let workflow = source_promotion_workflow()?;
+        for needle in [
+            "__RIPR_MERGE_BLOCK__",
+            "exactly one fenced bash block may contain the merge command",
+            "sed 's/\\\\$//' | tr '\\n' ' '",
+            "gh pr merge $PR_NUMBER --repo EffortlessMetrics/ripr --merge --match-head-commit $PR_HEAD",
+        ] {
+            if !workflow.contains(needle) {
+                return Err(format!(
+                    "workflow lacks multiline merge acceptance: {needle}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_scans_all_bash_fences_for_merge_command() -> Result<(), String> {
+        let workflow = source_promotion_workflow()?;
+        for needle in [
+            "inside && /```/",
+            "if (block ~ /gh pr merge/)",
+            "merge_block_count",
+            "exactly one fenced bash block may contain the merge command",
+        ] {
+            if !workflow.contains(needle) {
+                return Err(format!(
+                    "workflow lacks multi-fence merge parsing: {needle}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_rejects_multiple_merge_fences() -> Result<(), String> {
+        let workflow = source_promotion_workflow()?;
+        if !workflow.contains("test \"$merge_block_count\" -eq 1") {
+            return Err("workflow does not reject multiple merge-containing fences".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_disables_checkout_credentials_before_code() -> Result<(), String> {
+        let workflow = source_promotion_workflow()?;
+        let count = workflow.matches("persist-credentials: false").count();
+        if count != 2 {
+            return Err(format!(
+                "expected both source-promotion checkouts to disable credentials, found {count}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn source_promotion_workflow_refutes_crlf_rewrite_thread() -> Result<(), String> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .ok_or_else(|| "xtask manifest has no repository parent".to_string())?;
+        let attributes = std::fs::read_to_string(root.join(".gitattributes"))
+            .map_err(|error| format!("failed to read .gitattributes: {error}"))?;
+        if !attributes.contains("* text=auto eol=lf") {
+            return Err(".gitattributes does not enforce LF text checkout".to_string());
+        }
+        Ok(())
     }
 }
 #[path = "command/help.rs"]

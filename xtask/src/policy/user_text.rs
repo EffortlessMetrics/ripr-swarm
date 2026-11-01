@@ -1252,7 +1252,17 @@ fn resolve_ripr_binary(explicit: Option<&str>) -> Result<PathBuf, String> {
     let name = if cfg!(windows) { "ripr.exe" } else { "ripr" };
     let path = dir.join(name);
     if path.is_file() {
-        Ok(path)
+        return Ok(path);
+    }
+    // The `cargo xtask` alias runs the driver from `target/xtask-driver`
+    // while `cargo build -p ripr` writes to the shared workspace target
+    // directory, so look there when the driver directory has no product binary.
+    let profile = if release { "release" } else { "debug" };
+    let shared = Path::new("target").join(profile).join(name);
+    if shared.is_file() {
+        shared
+            .canonicalize()
+            .map_err(|err| format!("resolve {}: {err}", shared.display()))
     } else {
         Err(format!("built ripr binary not found at {}", path.display()))
     }

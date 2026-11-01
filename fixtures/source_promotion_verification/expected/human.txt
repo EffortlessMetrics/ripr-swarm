@@ -1,0 +1,53 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/source_promotion_verification/input
+
+Summary: 1 changed behavior checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 1 no test path. 1 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 11 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+Start here:
+  State: ripr cannot tell from reading the code whether tests would notice this
+  Safe next action: look at the reason below and the existing tests before adding a test
+  File: ./src/lib.rs:9
+  Static exposure: no path (severity: warning, confidence 0.48)
+  Why no path: no related test was found that reaches this change
+  Gap ID (for scripts): gap:rust:src/lib.rs:verify_source_promotion_join:return_value:return_value:ok
+  Changed behavior: Ok(())
+  Next step: ripr found no static test path to this change — this is not a coverage assessment. A
+    test may already exercise it through macros, helper-call chains, or integration tests that
+    ripr's static model does not yet trace. If none does, add a co-located test that reaches and
+    observes the changed behavior so a discriminator exists
+  Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach no: No static test path found for the changed owner
+    - infection unknown: No reachable tests were found, so infection cannot be established
+    - 4 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/source_promotion_verification/input --diff <cwd>/fixtures/source_promotion_verification/diff.patch --mode fast probe:src_lib.rs:return_value:db9e15dd
+  ripr context --root <cwd>/fixtures/source_promotion_verification/input --diff <cwd>/fixtures/source_promotion_verification/diff.patch --mode fast --at probe:src_lib.rs:return_value:db9e15dd
+  no repair start offered: ripr cannot build a repair packet for this finding yet because it is still missing: a test assertion that checks the changed return value; safe test target; new test proposal blocked: no governed inline cfg-test module exists in the owner file; follow the Next step above, then rerun `ripr check`
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/source_promotion_verification/input --at src/lib.rs:9 --kind return_value
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json
+
+
+Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
+  analyzed: 1 changed Rust file(s), 1 changed expression(s), and 0 statically linked related
+  test(s). This is not a coverage assessment. A test may already exercise these changes through
+  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
+  none does, add co-located tests that observe the changed behavior.

@@ -8,13 +8,16 @@ mod blind_journey_execute;
 mod bun;
 mod candidate_control;
 mod ci_budget;
+pub(crate) mod distribution_catalog;
 mod dogfood;
 mod dx_scoreboard;
 mod eval_sweep;
 mod eval_sweep_check;
 mod eval_sweep_refresh;
 mod eval_sweep_report;
+mod first_hour;
 mod first_pr;
+mod fixture_workspace;
 mod fixtures;
 mod index;
 mod issue_intake;
@@ -45,6 +48,9 @@ mod recommendation;
 pub(crate) mod release;
 mod release_control;
 mod release_denominator;
+pub(crate) mod release_final_subjects;
+#[cfg(test)]
+mod release_final_subjects_tests;
 mod release_ledger;
 mod release_negative;
 #[cfg(all(test, unix))]
@@ -52,6 +58,7 @@ pub(crate) use release_negative::capture_with_owned_root_for_test;
 mod path_inventory;
 mod release_scope;
 pub(crate) mod release_server;
+pub(crate) mod release_vsix;
 mod repair_card_usability;
 mod repo;
 #[cfg(test)]
@@ -63,6 +70,13 @@ mod sarif;
 mod scale_cliff;
 mod seam_inventory_scaling;
 mod source_promotion;
+mod source_promotion_acceptance;
+mod source_promotion_admission_fixture;
+mod source_promotion_admission_workflow;
+mod source_promotion_control;
+mod source_promotion_network_policy_resolution;
+mod source_promotion_validate_resolved_tree;
+mod source_promotion_verify;
 mod spec_maintenance;
 mod spec_receipts;
 mod targeted_rerun;
@@ -115,6 +129,7 @@ pub(crate) use ci_budget::ci_budget;
 pub(crate) use dogfood::dogfood;
 pub(crate) use dx_scoreboard::dx_scoreboard;
 pub(crate) use eval_sweep::eval_sweep;
+pub(crate) use first_hour::{first_hour, first_hour_controls};
 pub(crate) use first_pr::first_pr;
 pub(crate) use fixtures::{
     FixtureCheckFormat, PrecommitGoldens, fixture_dirs, fixtures, fixtures_with_args, golden_drift,
@@ -193,6 +208,19 @@ pub(crate) use sarif::{
 pub(crate) use scale_cliff::scale_cliff_benchmark;
 pub(crate) use seam_inventory_scaling::seam_inventory_scaling_benchmark;
 pub(crate) use source_promotion::source_promotion;
+pub(crate) use source_promotion_admission_workflow::{
+    source_promotion_admission_workflow, source_promotion_admission_workflow_handles,
+};
+pub(crate) use source_promotion_control::{
+    source_promotion_control, source_promotion_control_handles,
+};
+pub(crate) use source_promotion_network_policy_resolution::{
+    source_promotion_network_policy_resolution, source_promotion_network_policy_resolution_handles,
+};
+pub(crate) use source_promotion_validate_resolved_tree::{
+    SOURCE_PROMOTION_VALIDATE_RESOLVED_TREE_SUBCOMMAND, source_promotion_validate_resolved_tree,
+};
+pub(crate) use source_promotion_verify::source_promotion_verify;
 pub(crate) use spec_maintenance::spec_digest;
 pub(crate) use spec_maintenance::spec_maintenance;
 pub(crate) use spec_receipts::spec_close;

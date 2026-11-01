@@ -6,6 +6,7 @@ const WORKSPACE_MANIFEST: &str = "Cargo.toml";
 const EXTENSION_MANIFEST: &str = "editors/vscode/package.json";
 const EXTENSION_LOCKFILE: &str = "editors/vscode/package-lock.json";
 const NPM_LAUNCHER_MANIFEST: &str = "packaging/npm/launcher/package.json";
+const EXTENSION_DISTRIBUTION: &str = "editors/vscode/distribution.json";
 
 pub(crate) fn bump_version(args: &[String]) -> Result<(), String> {
     let [version] = args else {
@@ -17,9 +18,16 @@ pub(crate) fn bump_version(args: &[String]) -> Result<(), String> {
     let extension = read_file(EXTENSION_MANIFEST)?;
     let lockfile = read_file(EXTENSION_LOCKFILE)?;
     let launcher = read_file(NPM_LAUNCHER_MANIFEST)?;
+    let descriptor = read_file(EXTENSION_DISTRIBUTION)?;
     let contract = crate::policy::distribution::load_distribution_contract()?;
     let update = prepare_release_update(
-        &workspace, &extension, &lockfile, &launcher, version, &contract,
+        &workspace,
+        &extension,
+        &lockfile,
+        &launcher,
+        &descriptor,
+        version,
+        &contract,
     )?;
 
     let paths = [
@@ -27,13 +35,15 @@ pub(crate) fn bump_version(args: &[String]) -> Result<(), String> {
         Path::new(EXTENSION_MANIFEST),
         Path::new(EXTENSION_LOCKFILE),
         Path::new(NPM_LAUNCHER_MANIFEST),
+        Path::new(EXTENSION_DISTRIBUTION),
     ];
-    let originals = [&workspace, &extension, &lockfile, &launcher];
+    let originals = [&workspace, &extension, &lockfile, &launcher, &descriptor];
     let updated = [
         &update.base.workspace,
         &update.base.extension,
         &update.base.lockfile,
         &update.launcher,
+        &update.descriptor,
     ];
 
     for (index, path) in paths.iter().enumerate() {
@@ -51,7 +61,7 @@ pub(crate) fn bump_version(args: &[String]) -> Result<(), String> {
     }
 
     println!(
-        "updated release version {} -> {} in {WORKSPACE_MANIFEST}, {EXTENSION_MANIFEST}, {EXTENSION_LOCKFILE}, and {NPM_LAUNCHER_MANIFEST}",
+        "updated release version {} -> {} in {WORKSPACE_MANIFEST}, {EXTENSION_MANIFEST}, {EXTENSION_LOCKFILE}, {NPM_LAUNCHER_MANIFEST}, and {EXTENSION_DISTRIBUTION}",
         update.base.old_version, version
     );
     Ok(())
@@ -69,6 +79,7 @@ struct VersionUpdate {
 struct ReleaseVersionUpdate {
     base: VersionUpdate,
     launcher: String,
+    descriptor: String,
 }
 
 fn prepare_release_update(
@@ -76,6 +87,7 @@ fn prepare_release_update(
     extension: &str,
     lockfile: &str,
     launcher: &str,
+    descriptor: &str,
     new_version: &str,
     contract: &crate::policy::distribution::DistributionContract,
 ) -> Result<ReleaseVersionUpdate, String> {
@@ -95,10 +107,68 @@ fn prepare_release_update(
         new_version,
         contract,
     )?;
+    let updated_descriptor =
+        update_development_descriptor(descriptor, &base.old_version, new_version)?;
     Ok(ReleaseVersionUpdate {
         base,
         launcher: updated_launcher,
+        descriptor: updated_descriptor,
     })
+}
+
+/// Moves the tracked development distribution template with the release
+/// version. Release catalogs are producer-owned and never bumped here: a
+/// non-development channel fails closed so placement authority cannot drift
+/// through the generic version bump.
+fn update_development_descriptor(
+    descriptor: &str,
+    old_version: &str,
+    new_version: &str,
+) -> Result<String, String> {
+    let mut value: serde_json::Value = serde_json::from_str(descriptor)
+        .map_err(|error| format!("{EXTENSION_DISTRIBUTION} is not valid JSON: {error}"))?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| format!("{EXTENSION_DISTRIBUTION} must be a JSON object"))?;
+    let product_version = object
+        .get("productVersion")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{EXTENSION_DISTRIBUTION} has no usable productVersion field"))?;
+    if product_version != old_version {
+        return Err(format!(
+            "release version drift detected before bump: {EXTENSION_DISTRIBUTION} productVersion={product_version}, workspace={old_version}"
+        ));
+    }
+    let channel = object
+        .get("channel")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if channel != "development" {
+        return Err(format!(
+            "{EXTENSION_DISTRIBUTION} channel `{channel}` is producer-owned; bump-version only moves the development template"
+        ));
+    }
+    let old_tag = format!("v{old_version}");
+    let new_tag = format!("v{new_version}");
+    let old_ref = format!("refs/tags/{old_tag}");
+    let new_ref = format!("refs/tags/{new_tag}");
+    object.insert(
+        "productVersion".to_string(),
+        serde_json::Value::String(new_version.to_string()),
+    );
+    object.insert(
+        "manifestFile".to_string(),
+        serde_json::Value::String(format!("ripr-server-manifest-v{new_version}.json")),
+    );
+    if object.get("releaseTag").and_then(serde_json::Value::as_str) == Some(old_tag.as_str()) {
+        object.insert("releaseTag".to_string(), serde_json::Value::String(new_tag));
+    }
+    if object.get("releaseRef").and_then(serde_json::Value::as_str) == Some(old_ref.as_str()) {
+        object.insert("releaseRef".to_string(), serde_json::Value::String(new_ref));
+    }
+    let rendered = serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("failed to render {EXTENSION_DISTRIBUTION}: {error}"))?;
+    Ok(format!("{rendered}\n"))
 }
 
 /// Read-only release-version sync check (#10731). `bump-version` verifies the
@@ -1396,6 +1466,7 @@ mod npm_launcher_version_tests {
             "{\"version\":\"0.10.0\"}",
             "{\"version\":\"0.10.0\",\"packages\":{\"\":{\"version\":\"0.10.0\"}}}",
             &launcher,
+            "{}",
             "0.11.0",
             &contract,
         )
