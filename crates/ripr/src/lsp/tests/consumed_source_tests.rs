@@ -1102,3 +1102,46 @@ fn batch_relative_keys_equal_the_per_uri_projection() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// The performance claim of #11763, observed through the projector's counting
+/// hook: 40 regular files in two directories cost two directory
+/// canonicalizations in total, not one per file, and a second pass over the
+/// same URIs on the same projector costs none. Only hosts with the
+/// directory-cache fast path (Linux and other non-macOS Unix) make the claim;
+/// elsewhere every URI is resolved in full and the count stays zero.
+#[cfg(unix)]
+#[test]
+fn projector_resolves_each_directory_once_not_once_per_file() -> Result<(), String> {
+    let fixture = consumed_source_alias_fixture("projector-resolution-count")?;
+    let src = fixture.root.join("src");
+    fs::create_dir_all(fixture.root.join("tests"))
+        .map_err(|error| format!("create tests dir: {error}"))?;
+    let mut uris = Vec::new();
+    for index in 0..20 {
+        for dir in [src.clone(), fixture.root.join("tests")] {
+            let path = dir.join(format!("f{index}.rs"));
+            fs::write(&path, SOURCE_A).map_err(|error| format!("write {path:?}: {error}"))?;
+            uris.push(file_uri_for_path(&path)?);
+        }
+    }
+    let mut projector = crate::lsp::uri::RelativeKeyProjector::new(&fixture.root);
+    for _ in 0..2 {
+        for uri in &uris {
+            if projector.relative(uri).is_none() {
+                return Err(format!("BEHAVIORAL: {uri:?} was not projected"));
+            }
+        }
+    }
+    let expected = if cfg!(all(unix, not(target_os = "macos"))) {
+        2
+    } else {
+        0
+    };
+    if projector.directory_resolutions() != expected {
+        return Err(format!(
+            "BEHAVIORAL: {} directory resolutions for 80 projections, expected {expected}",
+            projector.directory_resolutions()
+        ));
+    }
+    Ok(())
+}

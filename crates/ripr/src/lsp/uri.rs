@@ -275,6 +275,9 @@ pub(super) struct RelativeKeyProjector<'a> {
     root: &'a Path,
     canonical_root: PathBuf,
     directories: std::collections::HashMap<PathBuf, Option<PathBuf>>,
+    /// Directory canonicalizations performed so far; the counting hook that
+    /// lets a test prove the per-refresh reduction (#11763).
+    directory_resolutions: usize,
 }
 
 impl<'a> RelativeKeyProjector<'a> {
@@ -283,14 +286,21 @@ impl<'a> RelativeKeyProjector<'a> {
             root,
             canonical_root: canonical_or_normalized(root),
             directories: Default::default(),
+            directory_resolutions: 0,
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn directory_resolutions(&self) -> usize {
+        self.directory_resolutions
     }
 
     pub(super) fn relative(&mut self, uri: &Uri) -> Option<PathBuf> {
         let path = path_from_file_uri(uri)?;
         let directories = &mut self.directories;
+        let resolutions = &mut self.directory_resolutions;
         path_relative_to_root_with(self.root, &self.canonical_root, &path, &mut |candidate| {
-            canonical_candidate_with_directory_cache(candidate, directories)
+            canonical_candidate_with_directory_cache(candidate, directories, resolutions)
                 .unwrap_or_else(|| canonical_or_normalized(candidate))
         })
     }
@@ -320,6 +330,7 @@ pub(super) fn file_uris_relative_to_root<'a>(
 fn canonical_candidate_with_directory_cache(
     candidate: &Path,
     directories: &mut std::collections::HashMap<PathBuf, Option<PathBuf>>,
+    resolutions: &mut usize,
 ) -> Option<PathBuf> {
     if !candidate.is_absolute()
         || !candidate
@@ -336,7 +347,10 @@ fn canonical_candidate_with_directory_cache(
     }
     let canonical_parent = directories
         .entry(parent.to_path_buf())
-        .or_insert_with(|| canonicalize_with_missing_tail(parent))
+        .or_insert_with(|| {
+            *resolutions += 1;
+            canonicalize_with_missing_tail(parent)
+        })
         .as_ref()?;
     Some(canonical_parent.join(name))
 }
@@ -345,6 +359,7 @@ fn canonical_candidate_with_directory_cache(
 fn canonical_candidate_with_directory_cache(
     _candidate: &Path,
     _directories: &mut std::collections::HashMap<PathBuf, Option<PathBuf>>,
+    _resolutions: &mut usize,
 ) -> Option<PathBuf> {
     None
 }
