@@ -195,6 +195,10 @@ pub(super) struct AgentRepairOptions {
     /// a short human summary and the documents stay in their artifact files,
     /// the same split `ripr agent status` uses.
     pub(super) json: bool,
+    /// `ripr repair --quiet` / `ripr continue --quiet` (#11598): drop the
+    /// phase's progress narration and `wrote <path>` lines. `RIPR_QUIET`
+    /// does the same without the flag. Results and refusal prose always print.
+    pub(super) quiet: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -707,6 +711,7 @@ fn parse_agent_repair_command(args: &[String]) -> Result<AgentCommand, String> {
         verify_rollback,
         store,
         json,
+        quiet: false,
     }))
 }
 
@@ -1794,6 +1799,7 @@ mod tests {
                 verify_rollback: false,
                 store: None,
                 json: false,
+                quiet: false,
             }))
         );
         assert_eq!(
@@ -1828,6 +1834,7 @@ mod tests {
                 verify_rollback: false,
                 store: None,
                 json: false,
+                quiet: false,
             }))
         );
     }
@@ -1868,6 +1875,7 @@ mod tests {
                 verify_rollback: false,
                 store: Some(PathBuf::from("target/ripr/alt-attempts")),
                 json: false,
+                quiet: false,
             }))
         );
         assert_eq!(
@@ -2008,6 +2016,7 @@ mod tests {
                 verify_rollback: false,
                 store: None,
                 json: false,
+                quiet: false,
             }))
         );
     }

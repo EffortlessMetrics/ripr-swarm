@@ -13691,6 +13691,72 @@ fn proximity_test_pinning_another_function_cannot_grade_a_match_arm_up() -> Resu
     Ok(())
 }
 
+/// #12053: a repo seam whose one-line arms all hold the same statement
+/// decides nothing an exact assertion can see, so it must not read propagated
+/// (and so not strongly gripped). Differing arms keep the propagated read.
+#[test]
+fn identical_inline_arm_predicate_seam_does_not_propagate_but_differing_arms_do()
+-> Result<(), String> {
+    let propagate_for =
+        |ret: &str, expected: &str, branch: &str, tail: &str| -> Result<StageState, String> {
+            let prod_src = format!(
+                "pub fn pick(x: i32) -> {ret} {{\n    let r;\n    {branch}\n    {tail}\n}}\n"
+            );
+            let test_src =
+                format!("#[test] fn pins_boundary() {{ assert_eq!(pick(5), {expected}); }}\n");
+            let files: Vec<(PathBuf, &str)> = vec![
+                (PathBuf::from("src/lib.rs"), prod_src.as_str()),
+                (PathBuf::from("tests/pick_tests.rs"), test_src.as_str()),
+            ];
+            let index = index_from_files(&files)?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+            let predicate = seams
+                .iter()
+                .find(|s| s.kind() == SeamKind::PredicateBoundary)
+                .ok_or_else(|| "predicate seam present".to_string())?;
+            Ok(evidence_for_seam(predicate, &index).propagate.state)
+        };
+    // Identical int arms decide nothing; differing arms do.
+    assert_eq!(
+        propagate_for("i32", "1", "if x >= 5 { r = 1; } else { r = 1; }", "r + 0")?,
+        StageState::Unknown
+    );
+    assert_eq!(
+        propagate_for("i32", "1", "if x >= 5 { r = 1; } else { r = 2; }", "r + 0")?,
+        StageState::Yes
+    );
+    // Equal-length but different string literals still differ (masking must not equate them).
+    assert_eq!(
+        propagate_for(
+            "&'static str",
+            "\"yes\"",
+            "if x >= 5 { r = \"yes\"; } else { r = \"low\"; }",
+            "r"
+        )?,
+        StageState::Yes
+    );
+    assert_eq!(
+        propagate_for(
+            "&'static str",
+            "\"yes\"",
+            "if x >= 5 { r = \"yes\"; } else { r = \"yes\"; }",
+            "r"
+        )?,
+        StageState::Unknown
+    );
+    // A nested predicate inside identical outer arms is not decided by the outer one.
+    assert_eq!(
+        propagate_for(
+            "i32",
+            "1",
+            "if x >= 5 { if x > 7 { r = 1; } else { r = 2; } } else { if x > 7 { r = 1; } else { r = 2; } }",
+            "r + 0"
+        )?,
+        StageState::Yes
+    );
+    Ok(())
+}
+
 #[test]
 fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
     let owner = FunctionSummary {

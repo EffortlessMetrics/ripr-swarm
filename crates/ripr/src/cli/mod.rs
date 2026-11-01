@@ -9,6 +9,8 @@ mod commands_numeric;
 mod commands_options;
 mod commands_timestamps;
 mod execute;
+#[cfg(kani)]
+mod exit_kani;
 pub(crate) mod help;
 mod help_flags;
 mod help_json;
@@ -1156,13 +1158,13 @@ mod tests {
         assert_eq!(
             run(args(&["ripr", "first-pr", "--gap-ledger"])),
             Err(CommandError::Failure(
-                "missing value for --gap-ledger".to_string()
+                "missing value for --gap-ledger; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             run(args(&["ripr", "start-here", "--gap-ledger"])),
             Err(CommandError::Failure(
-                "missing value for --gap-ledger".to_string()
+                "missing value for --gap-ledger; pass a value right after it".to_string()
             ))
         );
         assert_eq!(

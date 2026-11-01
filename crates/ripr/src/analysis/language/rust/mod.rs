@@ -1427,6 +1427,9 @@ fn apply_probe_and_oracle_limits(
     // item macro, or called inside an executor helper has no call ripr can
     // pair with the assertion; that is a limit, not a missing assertion.
     classify::withhold_indirect_owner_gap(finding, index);
+    // RIPR-SPEC-0352: an inherent receiver blocked only by an unverifiable
+    // assertion macro (target placement unavailable) is a named limit.
+    classify::withhold_receiver_unestablished_gap(finding, index);
     // RIPR-SPEC-0240 / #5503: a changed arm fed by a bounded caller loop in an
     // iterator's `next`, checked by a test that collects the iterator, is a
     // selector domain ripr reads but does not run.
@@ -1449,7 +1452,8 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
 
 /// Whether a `weakly_exposed`, `reachable_unrevealed` or `infection_unknown`
 /// (#11481) finding's only reach is proximity: every
-/// related test shares the owner's file, module or a name token. With reach
+/// related test shares the owner's file, module or a name token (an
+/// owner-named test counts only for `infection_unknown`). With reach
 /// `weak`, the reach stage has already found no test calling the owner, so
 /// the weak reach rests on ripr not tracing a path, the same unresolved
 /// negative a `no_static_path` finding has, and a transitive or macro witness
@@ -1472,7 +1476,10 @@ fn needs_proximity_reach_limit(finding: &Finding) -> bool {
                     // #11481: a test related to an `infection_unknown`
                     // finding only by naming the owner never has to call it
                     // (RelationReason::establishes_reach is false), so it is
-                    // as unresolved as a shared file or token.
+                    // as unresolved as a shared file or token. Only that
+                    // class: a `weakly_exposed` owner-named test holds a real
+                    // weak assertion the repo-wide witness cannot replace
+                    // (decided under #11481).
                     || (finding.class == ExposureClass::InfectionUnknown
                         && reason == crate::domain::RelationReason::OwnerNamedTest)
             })
@@ -1548,6 +1555,8 @@ fn apply_rust_no_static_path_limit(
         property_macro_mentions,
     ) {
         replace_witnessed_no_path_infection_summary(finding);
+        // #11544: unresolved macro reach is not a ruled-out path.
+        classifier::withhold_property_macro_no_path_as_unknown(finding);
     } else if let Some(witness) = transitive_reach.deep_transitive_witness(&owner_name) {
         // Last: a chain past five hops never displaces a shallower or more
         // specific witness (#8047).

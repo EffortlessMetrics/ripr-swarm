@@ -40,7 +40,7 @@ Evidence
   - source enum variant value OtherError::MalformedSource at line 10
 
 Next step
-  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong
 Drill in:
   ripr explain --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast probe:src_lib.rs:call_deletion:07741fa8
   ripr context --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:07741fa8
@@ -77,7 +77,7 @@ Weakness
   - Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
 
 Next step
-  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong
 Drill in:
   ripr explain --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast probe:src_lib.rs:error_path:edac60ec
   ripr context --root <cwd>/fixtures/error_variant_wrapper_foreign_pin/input --diff <cwd>/fixtures/error_variant_wrapper_foreign_pin/diff.patch --mode fast --at probe:src_lib.rs:error_path:edac60ec
