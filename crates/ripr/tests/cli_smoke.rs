@@ -2681,7 +2681,11 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
                         .ok_or_else(|| {
                             format!("selector miss omitted its retry command: {stderr}")
                         })?;
-                    if listing != expected_listing || !stderr.contains("list available finding ids")
+                    // Explain hints use the documented `--format json` spelling
+                    // (#11844); other commands may still name the `--json` alias.
+                    let documented_listing = expected_listing.replace(" --json", " --format json");
+                    if (listing != expected_listing && listing != documented_listing)
+                        || !stderr.contains("list available finding ids")
                     {
                         return Err(
                             format!("selector retry lost the requested scope: {stderr}").into()
@@ -27827,9 +27831,14 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
         &format!("ripr check --root {root_str} --base HEAD --worktree --json"),
         &root_str,
     );
+    // Explain hints use the documented `--format json` spelling (#11844); the
+    // context recovery still names the `--json` alias. Both lists are the same
+    // scoped listing.
+    let explain_listing = expected_listing.replace(" --json", " --format json");
     let mut recoveries = vec![(
         "unmatched explain",
         String::from_utf8_lossy(&corrupted.stderr).into_owned(),
+        explain_listing,
     )];
     for (label, args) in [
         (
@@ -27860,12 +27869,16 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
         if missing.status.success() {
             return Err(format!("{label} must fail"));
         }
-        recoveries.push((label, String::from_utf8_lossy(&missing.stderr).into_owned()));
+        recoveries.push((
+            label,
+            String::from_utf8_lossy(&missing.stderr).into_owned(),
+            expected_listing.clone(),
+        ));
     }
-    for (label, stderr) in recoveries {
-        if !stderr.contains(&format!("`{expected_listing}`")) {
+    for (label, stderr, listing) in recoveries {
+        if !stderr.contains(&format!("`{listing}`")) {
             return Err(format!(
-                "{label} must name the scoped listing `{expected_listing}`:\n{stderr}"
+                "{label} must name the scoped listing `{listing}`:\n{stderr}"
             ));
         }
     }
