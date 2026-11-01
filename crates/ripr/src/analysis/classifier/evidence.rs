@@ -1135,6 +1135,13 @@ impl ClassifiedProbeEvidence {
                             .test_may_reach(test)
                     })
                 },
+                assertion_pins_other_function: &|assertion| {
+                    context.owner_fn.is_some_and(|owner| {
+                        owner_reach
+                            .get_or_init(|| proximity_reach.owner_reach(&owner.name))
+                            .assertion_pins_other_function(&assertion.text)
+                    })
+                },
                 owner_parameters: &owner_parameters,
                 expected_reaches_owner: &expected_reaches_owner,
                 expected_operand_value: &|test, operand| {
