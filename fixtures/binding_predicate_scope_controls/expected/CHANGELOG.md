@@ -438,3 +438,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_scope_controls (31)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+
+Command:
+`cargo xtask goldens bless binding_predicate_scope_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

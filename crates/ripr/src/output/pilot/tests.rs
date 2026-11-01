@@ -98,6 +98,7 @@ fn pilot_context(artifacts: &PilotArtifacts) -> PilotSummaryContext<'_> {
         language_routes: None,
         current_change: None,
         seam_limit: None,
+        repo_exposure_byte_bound: None,
     }
 }
 
@@ -178,6 +179,7 @@ fn pilot_context_with_python<'a>(
         language_routes: None,
         current_change: None,
         seam_limit: None,
+        repo_exposure_byte_bound: None,
     }
 }
 
@@ -585,6 +587,160 @@ fn pilot_summary_json_marks_the_actionable_total_as_a_lower_bound_after_a_seam_l
 }
 
 #[test]
+fn pilot_summary_discloses_the_repo_exposure_byte_bound_and_only_then() -> Result<(), String> {
+    // #12108: repo-exposure.json's seams[] was cut to a byte budget while the
+    // ranking still covers every seam, so both summaries must say so.
+    let entries = [classified_in_owner(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        "a::clone",
+        10,
+    )];
+    let bound = crate::output::repo_exposure::bound_repo_exposure_seams(
+        &entries,
+        Some((1, crate::analysis::SeamLimitSource::Configured)),
+        |_| false,
+        &[],
+    )
+    .ok_or("one entry over a one-byte budget must be cut")?;
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.repo_exposure_byte_bound = Some(&bound);
+    let bounded: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    assert_eq!(bounded["repo_exposure_byte_bound"]["seams_rendered"], 0);
+    assert_eq!(bounded["repo_exposure_byte_bound"]["seams_total"], 1);
+    assert_eq!(bounded["repo_exposure_byte_bound"]["byte_budget"], 1);
+    assert_eq!(bounded["repo_exposure_byte_bound"]["source"], "configured");
+    assert_eq!(
+        bounded["repo_exposure_byte_bound"]["control"],
+        "RIPR_PILOT_REPO_EXPOSURE_BYTES"
+    );
+    // The ranking is not cut by the file's byte budget.
+    assert_eq!(bounded["actionable_seams_total_is_lower_bound"], false);
+    assert!(bounded["seam_limit"].is_null(), "{bounded}");
+    let md = render_pilot_summary_md(&entries, context);
+    assert!(md.contains("repo-exposure.json byte bound reached"), "{md}");
+
+    context.repo_exposure_byte_bound = None;
+    let exact: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    assert!(exact["repo_exposure_byte_bound"].is_null(), "{exact}");
+    assert!(
+        !render_pilot_summary_md(&entries, context).contains("byte bound reached"),
+        "no cut, no disclosure"
+    );
+    Ok(())
+}
+
+#[test]
+fn pilot_outcome_route_leaves_a_seam_limited_repo_exposure_file_for_a_full_baseline()
+-> Result<(), String> {
+    // #12150: `ripr outcome` refuses a seam-limited repo-exposure file, so
+    // the summary must not point its outcome command at that file.
+    let entries = [classified_in_owner(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        "a::clone",
+        10,
+    )];
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 1,
+        total: 7,
+        source: crate::analysis::SeamLimitSource::Default,
+    };
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.seam_limit = Some(&limit);
+    let limited: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    let next = &limited["next"];
+    let outcome = next["outcome_command"].as_str().unwrap_or_default();
+    assert!(outcome.contains("before.repo-exposure.json"), "{next}");
+    assert!(
+        next["before_snapshot_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("before.repo-exposure.json")),
+        "{next}"
+    );
+    // Discriminating negative: an uncut run compares the pilot file itself.
+    context.seam_limit = None;
+    let exact: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    let next = &exact["next"];
+    assert!(next.get("before_snapshot_command").is_none(), "{next}");
+    assert!(
+        !next["outcome_command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("before.repo-exposure.json"),
+        "{next}"
+    );
+    Ok(())
+}
+
+#[test]
+fn pilot_snapshot_commands_lift_the_inventory_cap_after_a_seam_limit() -> Result<(), String> {
+    // #12150: the suggested `check` snapshots run under the default 10,000
+    // seam inventory cap (or any configured limit), so on a repository above
+    // it both files would be cut and `ripr outcome` would refuse them. A
+    // seam-limited pilot run, whether the limit was the default or an
+    // explicit setting, lifts the cap for both snapshot commands.
+    let entries = [classified_in_owner(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        "a::clone",
+        10,
+    )];
+    let lift = format!("{}=0 ", crate::analysis::REPO_EXPOSURE_SEAM_LIMIT_ENV);
+    for (source, analyzed, total) in [
+        (crate::analysis::SeamLimitSource::Default, 2_000, 10_001),
+        (crate::analysis::SeamLimitSource::Configured, 500, 700),
+    ] {
+        let limit = crate::analysis::SeamLimitInfo {
+            analyzed,
+            total,
+            source,
+        };
+        let artifacts = pilot_artifacts();
+        let mut context = pilot_context(&artifacts);
+        context.seam_limit = Some(&limit);
+        let json: serde_json::Value =
+            serde_json::from_str(&render_pilot_summary_json(&entries, context))
+                .map_err(|err| err.to_string())?;
+        let next = &json["next"];
+        for key in ["before_snapshot_command", "after_snapshot_command"] {
+            let command = next[key].as_str().unwrap_or_default();
+            assert!(command.starts_with(&lift), "{key}: {next}");
+            assert!(command.contains(" check --root "), "{key}: {next}");
+        }
+        let md = render_pilot_summary_md(&entries, context);
+        assert!(md.contains(&format!("\n{lift}ripr check ")), "{md}");
+        assert!(
+            md.contains("$env:RIPR_REPO_EXPOSURE_SEAM_LIMIT = '0'; try {"),
+            "the PowerShell form scopes the same variable: {md}"
+        );
+    }
+
+    // Discriminating negatives: an uncut run keeps the plain command, and a
+    // byte bound alone cannot cut the inventory, so it does not lift the cap.
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+    let json: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    let after = json["next"]["after_snapshot_command"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(!after.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT"), "{after}");
+    Ok(())
+}
+
+#[test]
 fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     // #6602: a seam limit dropped classified seams before ranking, so a
     // function may have more seams than the kept slice shows.
@@ -912,6 +1068,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     };
     let limited = PilotSummaryContext {
         seam_limit: Some(&limit),
+        repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&entries, limited);
@@ -984,6 +1141,7 @@ fn pilot_summary_json_contains_config_state_artifacts_and_next_commands() {
         language_routes: None,
         current_change: None,
         seam_limit: None,
+        repo_exposure_byte_bound: None,
     };
 
     let json = crate::testing::cwd_placeholder::project_cwd_text(&render_pilot_summary_json(
@@ -1236,6 +1394,7 @@ fn pilot_terminal_keeps_unchecked_count_guidance_when_limit_cut_an_empty_ranking
     };
     let limited = PilotSummaryContext {
         seam_limit: Some(&limit),
+        repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&entries, limited);
@@ -1307,6 +1466,7 @@ fn pilot_route_lines_say_no_gaps_only_about_the_rust_code_it_checked() {
     let context = PilotSummaryContext {
         language_routes: Some(&routes),
         seam_limit: Some(&limit),
+        repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&[], context);
@@ -1504,6 +1664,7 @@ fn timeout_summary_json_is_partial_and_points_to_retry() {
         language_routes: None,
         current_change: None,
         seam_limit: None,
+        repo_exposure_byte_bound: None,
     };
 
     let json = render_pilot_timeout_summary_json(context);
@@ -1565,6 +1726,7 @@ fn pilot_context_without_config<'a>(artifacts: &'a PilotArtifacts) -> PilotSumma
         language_routes: None,
         current_change: None,
         seam_limit: None,
+        repo_exposure_byte_bound: None,
     }
 }
 
@@ -2905,6 +3067,7 @@ fn pilot_terminal_route_label_has_one_shape_for_every_language() {
     let context = PilotSummaryContext {
         language_routes: Some(&routes),
         seam_limit: None,
+        repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&[], context);
@@ -2939,6 +3102,7 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
     let context = PilotSummaryContext {
         language_routes: Some(&go_only),
         seam_limit: None,
+        repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&[], context);
@@ -2988,6 +3152,7 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
         PilotSummaryContext {
             language_routes: Some(&with_rust),
             seam_limit: None,
+            repo_exposure_byte_bound: None,
             ..pilot_context(&artifacts)
         },
     );
@@ -3011,6 +3176,7 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
         PilotSummaryContext {
             language_routes: Some(&plain),
             seam_limit: None,
+            repo_exposure_byte_bound: None,
             ..pilot_context(&artifacts)
         },
     );
@@ -3043,6 +3209,7 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
     let context = PilotSummaryContext {
         language_routes: Some(&excluded),
         seam_limit: None,
+        repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&[], context);
@@ -3084,6 +3251,7 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
         PilotSummaryContext {
             language_routes: Some(&plain),
             seam_limit: None,
+            repo_exposure_byte_bound: None,
             ..pilot_context(&artifacts)
         },
     );
@@ -3113,6 +3281,7 @@ fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
     let context = PilotSummaryContext {
         language_routes: Some(&routes),
         seam_limit: None,
+        repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
     let json = render_pilot_summary_json(&[], context);
@@ -3150,6 +3319,7 @@ fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
         PilotSummaryContext {
             language_routes: Some(&plain),
             seam_limit: None,
+            repo_exposure_byte_bound: None,
             ..pilot_context(&artifacts)
         },
     );
@@ -3184,6 +3354,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
     let with_routes = PilotSummaryContext {
         language_routes: Some(&supplementary),
         seam_limit: None,
+        repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
     assert_eq!(
@@ -3206,6 +3377,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
     let context = PilotSummaryContext {
         language_routes: Some(&required),
         seam_limit: None,
+        repo_exposure_byte_bound: None,
         ..pilot_context(&artifacts)
     };
     let terminal = render_pilot_terminal(&[], context);
@@ -3282,6 +3454,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         let enabled_context = PilotSummaryContext {
             language_routes: Some(&enabled_ts),
             seam_limit: None,
+            repo_exposure_byte_bound: None,
             ..pilot_context(&artifacts)
         };
         let enabled_terminal = render_pilot_terminal(&[], enabled_context);
@@ -3332,6 +3505,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         let context = PilotSummaryContext {
             language_routes: Some(&perl_only),
             seam_limit: None,
+            repo_exposure_byte_bound: None,
             ..pilot_context(&artifacts)
         };
         let terminal = render_pilot_terminal(&[], context);
@@ -3505,6 +3679,7 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
         let disabled_context = PilotSummaryContext {
             language_routes: Some(&disabled_ts),
             seam_limit: None,
+            repo_exposure_byte_bound: None,
             ..pilot_context(&artifacts)
         };
         let disabled_terminal = render_pilot_terminal(&[], disabled_context);

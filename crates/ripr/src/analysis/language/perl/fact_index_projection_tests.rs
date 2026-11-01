@@ -4,8 +4,10 @@
 //! and run the whole `packet_to_findings_with_currentness` projection, in two
 //! relation shapes. The `*_DIGEST` constants are SHA-256 digests of the full
 //! `Debug` rendering of the produced findings, recorded by running this same
-//! test body against the pre-index implementation (`9c9c785a5`), so equality is
-//! byte-level equivalence with the old linear scans rather than a self-check.
+//! test body against the pre-index implementation (`9c9c785a5`). The historical
+//! view restores only the two native ID fields to their legacy format and
+//! omits later default metadata; every other projected field remains covered
+//! by those original constants rather than a self-generated replacement.
 //!
 //! The packet builders and three historical projection controls retain the
 //! pre-index inputs and assertions. The normalization controls additionally
@@ -31,10 +33,29 @@ fn digest(packet: &PerlFactPacket) -> (String, usize) {
     // These snapshots predate `analysis_scope` (#9941), `confidence_basis` (#10700), the absent related-test
     // support field (#5564) and the related-test `role` (#5563). Retain their
     // original field set.
-    let rendered = pre_index_debug(&format!("{findings:#?}"));
+    let rendered = historical_projection_debug(&findings);
     let mut hasher = Sha256::new();
     hasher.update(rendered.as_bytes());
     (hex_bytes(&hasher.finalize()), findings.len())
+}
+
+/// This index regression uses no settled change lines: display geometry is
+/// still the observed owner declaration, and expression is the behavior hint.
+/// Restore exactly the legacy finding/probe IDs from those independently
+/// retained fields; the native identity contract is tested separately.
+fn historical_projection_debug(findings: &[crate::domain::Finding]) -> String {
+    let mut historical = findings.to_vec();
+    for finding in &mut historical {
+        let legacy = format!(
+            "probe:{}:{}:{}:perl",
+            finding.probe.location.file.display(),
+            finding.probe.location.line,
+            finding.probe.expression,
+        );
+        finding.id = legacy.clone();
+        finding.probe.id = crate::domain::ProbeId(legacy);
+    }
+    pre_index_debug(&format!("{historical:#?}"))
 }
 
 // Ignore later default metadata while retaining the original projection bytes.
@@ -445,7 +466,7 @@ fn pre_index_debug_preserves_non_default_related_test_role_support_and_name() ->
         crate::domain::SourceCurrentness::UnresolvedSubject
     });
     let digest_of = |findings: &[crate::domain::Finding]| {
-        let rendered = pre_index_debug(&format!("{findings:#?}"));
+        let rendered = historical_projection_debug(findings);
         let mut hasher = Sha256::new();
         hasher.update(rendered.as_bytes());
         (rendered, hex_bytes(&hasher.finalize()))
@@ -487,5 +508,56 @@ fn pre_index_debug_preserves_non_default_related_test_role_support_and_name() ->
     let (renamed, renamed_digest) = digest_of(&findings);
     assert!(renamed.contains(" role: Contributing,"));
     assert_ne!(renamed_digest, supported_digest);
+    Ok(())
+}
+
+#[test]
+fn historical_id_view_preserves_material_projection_fields() -> Result<(), String> {
+    let packet = duplicates_packet()?;
+    let findings = packet_to_findings_with_currentness(&packet, &BTreeMap::new(), |_, _| {
+        crate::domain::SourceCurrentness::UnresolvedSubject
+    });
+    assert!(!findings.is_empty());
+    let baseline = historical_projection_debug(&findings);
+    assert!(baseline.contains("id: \"probe:lib/My/App.pm:6:return_value:perl\""));
+    let mut changed_ids = findings.clone();
+    changed_ids[0].id = "changed-native-finding".to_string();
+    changed_ids[0].probe.id = crate::domain::ProbeId("changed-native-probe".to_string());
+    assert_eq!(historical_projection_debug(&changed_ids), baseline);
+
+    for field in ["file", "line", "expression", "class", "role", "support"] {
+        let mut changed = findings.clone();
+        match field {
+            "file" => changed[0].probe.location.file = "lib/Wrong.pm".into(),
+            "line" => changed[0].probe.location.line += 1,
+            "expression" => changed[0].probe.expression.push_str(":changed"),
+            "class" => {
+                changed[0].class = if changed[0].class == crate::domain::ExposureClass::Exposed {
+                    crate::domain::ExposureClass::NoStaticPath
+                } else {
+                    crate::domain::ExposureClass::Exposed
+                }
+            }
+            "role" => {
+                first_related(&mut changed)
+                    .ok_or("missing related test")?
+                    .role = crate::domain::RelatedTestRole::ExaminedOnly
+            }
+            "support" => {
+                first_related(&mut changed)
+                    .ok_or("missing related test")?
+                    .miss_support = Some(crate::domain::RelatedTestMissSupport {
+                    value: "row-owned evidence".to_string(),
+                    flow_sink: None,
+                })
+            }
+            _ => return Err("unknown material field".to_string()),
+        }
+        assert_ne!(
+            historical_projection_debug(&changed),
+            baseline,
+            "{field} must remain observable"
+        );
+    }
     Ok(())
 }

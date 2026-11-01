@@ -31,7 +31,7 @@ pub(crate) fn render_agent_review_summary_json(
             rendered.push('\n');
             rendered
         })
-        .map_err(|err| format!("failed to render agent review summary JSON: {err}"))
+        .map_err(|err| format!("failed to render agent review summary JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 fn target_seam_json(seam: &AgentReviewTargetSeam) -> Value {

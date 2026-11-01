@@ -30,11 +30,18 @@ fn classify_total(conftest: &str, test: &str) -> Result<Finding, String> {
     .ok_or_else(|| "the changed line must classify".to_string())
 }
 
+/// The finding keeps a static limit. Top-level code that writes an attribute
+/// of an imported name, or rebinds it, is also a substitution form
+/// (`fixture_substitution.rs`), so the `mocked_module` limit may speak first;
+/// either limit withholds the credit the inert-tool read would restore.
 fn assert_limited(finding: &Finding, case: &str) {
-    assert_eq!(
+    assert!(
+        matches!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnresolvedPytestFixture | StaticLimitKind::MockedModule)
+        ),
+        "{case}: {:?} {:?}",
         finding.static_limit_kind,
-        Some(StaticLimitKind::UnresolvedPytestFixture),
-        "{case}: {:?}",
         finding.evidence
     );
 }

@@ -1427,6 +1427,9 @@ fn apply_probe_and_oracle_limits(
     // item macro, or called inside an executor helper has no call ripr can
     // pair with the assertion; that is a limit, not a missing assertion.
     classify::withhold_indirect_owner_gap(finding, index);
+    // RIPR-SPEC-0352: an inherent receiver blocked only by an unverifiable
+    // assertion macro (target placement unavailable) is a named limit.
+    classify::withhold_receiver_unestablished_gap(finding, index);
     // RIPR-SPEC-0240 / #5503: a changed arm fed by a bounded caller loop in an
     // iterator's `next`, checked by a test that collects the iterator, is a
     // selector domain ripr reads but does not run.
@@ -1449,7 +1452,8 @@ fn needs_no_static_path_limit(finding: &Finding) -> bool {
 
 /// Whether a `weakly_exposed`, `reachable_unrevealed` or `infection_unknown`
 /// (#11481) finding's only reach is proximity: every
-/// related test shares the owner's file, module or a name token. With reach
+/// related test shares the owner's file, module or a name token (an
+/// owner-named test counts only for `infection_unknown`). With reach
 /// `weak`, the reach stage has already found no test calling the owner, so
 /// the weak reach rests on ripr not tracing a path, the same unresolved
 /// negative a `no_static_path` finding has, and a transitive or macro witness
@@ -1472,7 +1476,10 @@ fn needs_proximity_reach_limit(finding: &Finding) -> bool {
                     // #11481: a test related to an `infection_unknown`
                     // finding only by naming the owner never has to call it
                     // (RelationReason::establishes_reach is false), so it is
-                    // as unresolved as a shared file or token.
+                    // as unresolved as a shared file or token. Only that
+                    // class: a `weakly_exposed` owner-named test holds a real
+                    // weak assertion the repo-wide witness cannot replace
+                    // (decided under #11481).
                     || (finding.class == ExposureClass::InfectionUnknown
                         && reason == crate::domain::RelationReason::OwnerNamedTest)
             })
@@ -1548,6 +1555,8 @@ fn apply_rust_no_static_path_limit(
         property_macro_mentions,
     ) {
         replace_witnessed_no_path_infection_summary(finding);
+        // #11544: unresolved macro reach is not a ruled-out path.
+        classifier::withhold_property_macro_no_path_as_unknown(finding);
     } else if let Some(witness) = transitive_reach.deep_transitive_witness(&owner_name) {
         // Last: a chain past five hops never displaces a shallower or more
         // specific witness (#8047).
@@ -1570,7 +1579,39 @@ fn apply_rust_no_static_path_limit(
         // a harness exists that ripr does not evaluate.
         replace_witnessed_no_path_infection_summary(finding);
         proof_harness::apply_limit(finding, &owner_name, &harness);
+    } else if let Some(ambiguity) = transitive_reach.trait_dispatch_ambiguity(&owner_name) {
+        // #11719: last, so no traced or structural witness is displaced.
+        replace_witnessed_no_path_infection_summary(finding);
+        apply_rust_trait_dispatch_ambiguity_limit(finding, &owner_name, &ambiguity);
     }
+}
+
+/// RIPR-SPEC-0114 (#11719): the owner is called from an impl of an
+/// implicit-dispatch trait method the crate implements more than once, so ripr names the ambiguity and lists
+/// candidate impls instead of guessing one. No witness test, no reach
+/// credit, no related-test relation, no class change.
+fn apply_rust_trait_dispatch_ambiguity_limit(
+    finding: &mut Finding,
+    owner_name: &str,
+    ambiguity: &classify::TraitDispatchAmbiguity,
+) {
+    finding.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    finding
+        .stop_reasons
+        .push(StopReason::TransitiveReachUnresolved);
+    finding
+        .evidence
+        .push(classify::RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE.to_string());
+    finding
+        .evidence
+        .push(classify::trait_dispatch_ambiguity_pointer(
+            ambiguity, owner_name,
+        ));
+    finding
+        .evidence
+        .extend(classify::trait_dispatch_ambiguity_detail_lines(
+            ambiguity, owner_name,
+        ));
 }
 
 /// #9982: the same named limitation a traced integration-test witness gets,
@@ -2536,6 +2577,7 @@ impl RustAdapter {
         // limitation.
         let mut files_with_findings = std::collections::BTreeSet::new();
         let mut seeded_probes = Vec::new();
+        let mut verification_only_files: Vec<(String, usize)> = Vec::new();
         let mut panicked_files: BTreeSet<PathBuf> = BTreeSet::new();
         for changed in analyzable_changed_files
             .iter()
@@ -2575,6 +2617,17 @@ impl RustAdapter {
             // and once per probe so a superseded or deadline-expired refresh
             // exits the classify loop promptly.
             cancellation::checkpoint()?;
+            // RIPR-SPEC-0368: contract attributes and ghost/proof text seed no
+            // probe; count them so the run discloses them instead of reading
+            // as "no behavior changed".
+            let verification_lines =
+                analysis_probes::changed_verification_only_lines(&index, changed);
+            if verification_lines > 0 {
+                verification_only_files.push((
+                    changed.path.to_string_lossy().replace('\\', "/"),
+                    verification_lines,
+                ));
+            }
             let probes = analysis_probes::probes_for_file_with_relations(
                 &options.root,
                 changed,
@@ -2594,6 +2647,8 @@ impl RustAdapter {
                 seeded_probes.push((changed, seeded));
             }
         }
+
+        limitations.extend(verification_only_limitation(&verification_only_files)?);
 
         // Classifying a probe reads the immutable index and the run-shared
         // candidate index, whose memos are thread-safe and pure in their keys
@@ -2873,6 +2928,9 @@ impl RustAdapter {
                     binding_relation.as_ref(),
                     pre_cap_syntax_only,
                 );
+                // RIPR-SPEC-0369: name a `verus!` region by the changed file's
+                // own index key; the probe's file is root-joined.
+                probes::apply_verus_macro_region_limit(&mut finding, &probe, &index, changed);
                 probes::attach_changed_binding_return_evidence(
                     &mut finding,
                     binding_return.as_ref(),
@@ -3162,6 +3220,52 @@ pub(crate) mod injected_classify_panic {
             std::panic::resume_unwind(Box::new("injected classify panic (#11116)"));
         }
     }
+}
+
+/// One aggregate disclosure for changed lines that are verification-erased
+/// text (RIPR-SPEC-0368): contract attributes and Creusot/Prusti ghost items.
+/// A test cannot observe them, so they seed no probe; the disclosure keeps a
+/// contract-only diff from reading as "no behavior changed" and names the
+/// verifier as the authority. It is not an incomplete analysis.
+fn verification_only_limitation(
+    files: &[(String, usize)],
+) -> Result<Option<crate::analysis_outcome::AnalysisLimitation>, String> {
+    use crate::analysis_outcome::{
+        AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
+    if files.is_empty() {
+        return Ok(None);
+    }
+    let lines = files.iter().map(|(_, lines)| lines).sum::<usize>();
+    let paths = files
+        .iter()
+        .map(|(path, _)| path.clone())
+        .collect::<Vec<_>>();
+    let listed = crate::analysis::pipeline::bounded_path_listing(&paths);
+    Ok(Some(
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::VerificationOnlyChange,
+            AnalysisStage::ProbeGeneration,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::InspectFailure,
+                "Verification contract or proof text changed. ripr does not evaluate contracts, \
+                 proofs or ghost code and a test cannot observe them; re-run the verifier \
+                 (for example cargo kani, cargo creusot or cargo prusti) on the affected items.",
+            )?,
+        )
+        .with_affected_items(files.len() as u64)?
+        .with_detail(
+            format!(
+                "{lines} changed line(s) in {} file(s) are verification-only text (contract \
+                 attribute, logic/ghost item or proof macro) and were not probed: {listed}",
+                files.len()
+            )
+            .chars()
+            .take(crate::analysis_outcome::MAX_ANALYSIS_LIMITATION_DETAIL_CHARS)
+            .collect::<String>(),
+        )?,
+    ))
 }
 
 /// One typed limitation per changed Rust file whose facts came from the
@@ -3489,6 +3593,13 @@ impl RustAdapter {
                     &index,
                     None,
                     pre_cap_syntax_only,
+                );
+                // RIPR-SPEC-0369 (#12006): name the file's `verus!` region.
+                probes::apply_verus_macro_region_limit_in_repo_file(
+                    &mut finding,
+                    &probe,
+                    &index,
+                    path,
                 );
                 // #5268: same producer-owned canonical gap identity as the
                 // diff loop, behind the same typed static-limitation gate.
@@ -3979,6 +4090,156 @@ mod tests {
             "diff and repo producers must derive the same identity for the same seam"
         );
         fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    fn repo_options(root: &Path) -> AnalysisOptions {
+        AnalysisOptions {
+            root: root.to_path_buf(),
+            base: None,
+            diff_file: None,
+            mode: AnalysisMode::Ready,
+            resolved_subject_identity: None,
+            open_rust_index_paths: Default::default(),
+            include_unchanged_tests: true,
+            resolve_tsconfig_paths: false,
+            perl_facts_path: None,
+            perl_producer_failure: None,
+            git_timeout: None,
+            git_candidate: None,
+            production_like_targets: Default::default(),
+            test_harnesses: Vec::new(),
+        }
+    }
+
+    /// RIPR-SPEC-0369 (#12006): repository mode over a file with a `verus!`
+    /// region names the limitation, as the diff path does, instead of
+    /// reporting nothing. The finding stays non-actionable and credits no
+    /// test; a file without the macro gets no such finding.
+    #[test]
+    fn repo_analysis_names_a_verus_region_limitation() -> Result<(), String> {
+        let root = temp_root("verus-repo")?;
+        write(
+            &root.join("Cargo.toml"),
+            "[package]\nname='vcrate'\nversion='0.1.0'\nedition='2024'\n",
+        )?;
+        write(
+            &root.join("src/lib.rs"),
+            "use vstd::prelude::*;\nverus! {\nfn inc(x: u32) -> (r: u32)\n    requires x < 100,\n    ensures r <= 200,\n{\n    x + 2\n}\n}\n",
+        )?;
+        write(
+            &root.join("src/plain.rs"),
+            "pub fn plain(x: u32) -> u32 {\n    x + 1\n}\n",
+        )?;
+        let result = RustAdapter.analyze_repo(&repo_options(&root), &OraclePolicy::default())?;
+        let verus: Vec<&Finding> = result
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains("verus_macro_region_unsupported"))
+            })
+            .collect();
+        assert_eq!(verus.len(), 1, "{:?}", result.findings);
+        let finding = verus[0];
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::UnsupportedSyntax)
+        );
+        assert_eq!(finding.probe.location.line, 2);
+        assert!(finding.related_tests.is_empty(), "no test is credited");
+        assert!(finding.canonical_gap.is_none(), "no repair target is named");
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("spanning lines 2-9")),
+            "{:?}",
+            finding.evidence
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(
+                    |step| step.contains("Verus verifier") && step.contains("no test is requested")
+                ),
+            "{:?}",
+            finding.recommended_next_step
+        );
+        // Negative control: the plain file gets no verus finding.
+        assert!(
+            result
+                .findings
+                .iter()
+                .filter(|finding| finding.probe.location.file.ends_with("src/plain.rs"))
+                .all(|finding| !finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains("verus_macro_region_unsupported")))
+        );
+        fs::remove_dir_all(root).map_err(|error| format!("remove fixture: {error}"))?;
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0369: repository mode yields no expression finding for text
+    /// inside `verus! { .. }`; the macro token tree is not indexed as Rust.
+    #[test]
+    fn repo_analysis_excludes_verus_region_and_keeps_sibling_fn() -> Result<(), String> {
+        let root = temp_root("verus-region-repo")?;
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"verus-repo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "use vstd::prelude::*;\nverus! {\nfn f(x: u32) -> (r: u32)\n    ensures r == x,\n{\n    if x > 5 { x } else { x }\n}\n}\nfn ordinary(n: usize) -> bool {\n    n >= 4\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let result = RustAdapter.analyze_repo(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+        )?;
+        fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+        // Positive control: the ordinary fn after the block (line 10) proves the
+        // file was indexed and probed, so the absence of region findings is
+        // attributable to region exclusion (lines 2-8) and not a no-finding path.
+        assert!(
+            result.findings.iter().any(|f| f.probe.location.line == 10),
+            "ordinary fn must still produce a finding: {:?}",
+            result.findings
+        );
+        // The region may carry exactly the named StaticUnknown limitation
+        // (#12006); no expression finding may come from the macro text.
+        assert!(
+            result
+                .findings
+                .iter()
+                .filter(|f| (2..=8).contains(&f.probe.location.line))
+                .all(|f| f.probe.family == ProbeFamily::StaticUnknown),
+            "no expression finding inside the verus! region: {:?}",
+            result.findings
+        );
         Ok(())
     }
 

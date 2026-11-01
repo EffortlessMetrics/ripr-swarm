@@ -81,3 +81,29 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_bool_assert_shadow_direct (7)
+
+Reason:
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
+
+Command:
+`cargo xtask goldens bless rust_bool_assert_shadow_direct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_bool_assert_shadow_direct (8)
+
+Reason:
+RIPR-SPEC-0001: additive summary.conflicting_expressions member (#11554)
+
+Command:
+`cargo xtask goldens bless rust_bool_assert_shadow_direct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -19,9 +19,9 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:audit.py:check_balance:call_or_output_effect:side_effect:log.warning_balance_low%s_balance
   Changed behavior: log.warning("balance low: %s", balance)
-  Discriminator (observed, advisory): Related Python test reaches `check_balance` and reads the
-    logged text through `caplog`: the asserted text `low balance: 5` is in the old logged message
-    `low balance: 5` and not after the edit: the new message reads `balance low: 5`
+  Check (observed, advisory): Related Python test reaches `check_balance` and reads the logged text
+    through `caplog`: the asserted text `low balance: 5` is in the old logged message `low balance:
+    5` and not after the edit: the new message reads `balance low: 5`
   Related test: tests/test_audit.py:6 test_low_balance
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator yes
@@ -40,9 +40,9 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_caplog_builtin_beside_fixtures/input --diff <cwd>/fixtures/python_caplog_builtin_beside_fixtures/diff.patch --mode fast probe:audit.py:python_preview:e21f54bb
-  ripr context --root <cwd>/fixtures/python_caplog_builtin_beside_fixtures/input --diff <cwd>/fixtures/python_caplog_builtin_beside_fixtures/diff.patch --mode fast --at probe:audit.py:python_preview:e21f54bb
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `audit.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  ripr explain --root <cwd>/fixtures/python_caplog_builtin_beside_fixtures/input --diff <cwd>/fixtures/python_caplog_builtin_beside_fixtures/diff.patch --mode fast probe:audit.py:python_preview:v1-3a7c2336
+  ripr context --root <cwd>/fixtures/python_caplog_builtin_beside_fixtures/input --diff <cwd>/fixtures/python_caplog_builtin_beside_fixtures/diff.patch --mode fast --at probe:audit.py:python_preview:v1-3a7c2336
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 More:
   Full evidence: rerun with --format human-full

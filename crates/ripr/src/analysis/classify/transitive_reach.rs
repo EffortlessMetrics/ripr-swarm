@@ -654,6 +654,93 @@ impl<'a> ReachGraph<'a> {
         reaching
     }
 
+    /// Every name that can run `owner_name` at any depth, over the name walk
+    /// and the hops it cannot see (#11552): a function invoking a workspace
+    /// `macro_rules!` whose body names the owner or a name already in the
+    /// set (`outer -> mac!(helper) -> helper -> owner`) joins the set, as does
+    /// a caller of a macro whose definition has no readable body. Plain name
+    /// edges alone would let a function that reaches the owner only through
+    /// a macro pass as unrelated to it. A std method sharing a workspace
+    /// function's name is the reason this follows callers, not callees.
+    fn names_reaching_unbounded(&self, owner_name: &str) -> HashSet<&'a str> {
+        let mut macro_users: Vec<(Option<HashSet<&'a str>>, Vec<&'a str>)> = Vec::new();
+        let mut users_by_macro: HashMap<&str, Vec<&'a str>> = HashMap::new();
+        for function in self.by_name.values().flatten() {
+            for call in calls_of(function) {
+                if is_macro_call(call.name.as_str()) {
+                    let macro_name = call.name.split('!').next().unwrap_or_default();
+                    let macro_name = macro_name.rsplit("::").next().unwrap_or(macro_name);
+                    if self.macro_definitions.contains_key(macro_name) {
+                        users_by_macro
+                            .entry(macro_name)
+                            .or_default()
+                            .push(function.name.as_str());
+                    }
+                }
+            }
+        }
+        for (macro_name, users) in users_by_macro {
+            let mut identifiers: Option<HashSet<&'a str>> = Some(HashSet::new());
+            for definition in &self.macro_definitions[macro_name] {
+                match (definition, identifiers.as_mut()) {
+                    (Some(body), Some(set)) => set.extend(identifier_runs(body)),
+                    // No readable body: it may name anything.
+                    _ => identifiers = None,
+                }
+            }
+            macro_users.push((identifiers, users));
+        }
+        let mut reaching: HashSet<&'a str> = HashSet::new();
+        let mut seen: HashSet<&str> = HashSet::from([owner_name]);
+        let mut frontier: Vec<&str> = vec![owner_name];
+        let mut expanded_macros = vec![false; macro_users.len()];
+        loop {
+            while let Some(callee) = frontier.pop() {
+                for caller in self.callers.get(callee).into_iter().flatten() {
+                    if seen.insert(caller) {
+                        reaching.insert(caller);
+                        frontier.push(*caller);
+                    }
+                }
+            }
+            let mut grew = false;
+            for (position, (identifiers, users)) in macro_users.iter().enumerate() {
+                if expanded_macros[position] {
+                    continue;
+                }
+                let names_reaching = identifiers
+                    .as_ref()
+                    .is_none_or(|set| seen.iter().any(|name| set.contains(name)));
+                if !names_reaching {
+                    continue;
+                }
+                expanded_macros[position] = true;
+                for user in users {
+                    if seen.insert(user) {
+                        reaching.insert(user);
+                        frontier.push(*user);
+                        grew = true;
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        reaching
+    }
+
+    /// Whether the functions named `name` can run `owner_name` over
+    /// [`Self::names_reaching_unbounded`] (#11552).
+    fn function_may_run_owner(
+        &self,
+        name: &str,
+        owner_name: &str,
+        owner_closure: &HashSet<&'a str>,
+    ) -> bool {
+        name == owner_name || owner_closure.contains(name)
+    }
+
     /// The walk past the bound (RIPR-SPEC-0114 step 5, #8047): the same
     /// reverse sweep continues level by level beyond `MAX_TRANSITIVE_DEPTH`.
     /// At each deeper level a test may enter (a test calls one of its names,
@@ -941,6 +1028,9 @@ pub(in crate::analysis) struct OwnerReach<'g, 'a> {
     /// or a chain past `MAX_TRANSITIVE_DEPTH` reaches it. Any test may run it
     /// (#9167 review).
     path_untraced: bool,
+    /// Every name with a name path to the owner at any depth, built on the
+    /// first assertion that asks (#11552).
+    unbounded_reaching: OnceLock<HashSet<&'a str>>,
 }
 
 impl OwnerReach<'_, '_> {
@@ -1026,6 +1116,40 @@ impl OwnerReach<'_, '_> {
                 })
     }
 
+    /// Whether `assertion_text` calls an indexed function that has no name
+    /// path to the owner, and calls nothing that has one (#11552): the
+    /// assertion then reads that function's result. Unindexed callees
+    /// (`Duration::from_millis`) and variant constructors neither tie the
+    /// assertion to the owner nor away from it. The check asks the owner's
+    /// full reverse closure, macro hops included, rather than trusting
+    /// `path_untraced`, which blanket-fails on any macro in a large
+    /// workspace. Fail closed when the owner may be reached implicitly.
+    pub(in crate::analysis) fn assertion_pins_other_function(&self, assertion_text: &str) -> bool {
+        if self.implicit_dispatch {
+            return false;
+        }
+        let closure = self
+            .unbounded_reaching
+            .get_or_init(|| self.graph.names_reaching_unbounded(&self.owner_name));
+        let mut other_indexed = false;
+        for name in super::reveal::called_names(assertion_text) {
+            let name = name.as_str();
+            if name == self.owner_name || self.reaching.contains(name) {
+                return false;
+            }
+            if self.graph.by_name.contains_key(name) {
+                if self
+                    .graph
+                    .function_may_run_owner(name, &self.owner_name, closure)
+                {
+                    return false;
+                }
+                other_indexed = true;
+            }
+        }
+        other_indexed
+    }
+
     /// Whether `test` may run the owner, by name only (#6297). It may when
     /// it calls the owner, calls a production function that reaches the
     /// owner within `MAX_TRANSITIVE_DEPTH` hops, or calls a lower-case name
@@ -1100,6 +1224,92 @@ impl<'a> TransitiveReachIndex<'a> {
         }
         self.graph().walk_past_bound(owner_name, |deeper| {
             self.witness_through(owner_name, deeper)
+        })
+    }
+
+    /// Trait-dispatch ambiguity for `owner_name` (RIPR-SPEC-0114, #11719): the
+    /// owner is called directly from an `impl Trait for X` method whose
+    /// implicit-dispatch name (`fmt`, `eq`, ...) is shared by two or more
+    /// trait impls in the crate, and the index holds a test. A test reaches
+    /// such an impl through `format!`, `==` or `to_string`, which leave no call
+    /// fact, and the name cannot say which impl, so ripr does not pick one:
+    /// the limit names the ambiguity and lists the calling impls. A name with
+    /// a single impl (the unique-impl rule), no calling impl, an owner that is
+    /// itself an implicit-dispatch method and a method outside
+    /// [`IMPLICIT_DISPATCH_METHODS`] give `None`. It is never a witness test.
+    pub(in crate::analysis) fn trait_dispatch_ambiguity(
+        &self,
+        owner_name: &str,
+    ) -> Option<TraitDispatchAmbiguity> {
+        if owner_name.is_empty() || IMPLICIT_DISPATCH_METHODS.contains(&owner_name) {
+            return None;
+        }
+        let graph = self.graph();
+        if graph.all_tests.is_empty() {
+            return None;
+        }
+        // The method with the most calling impls; ties by list order.
+        let mut best: Option<(&str, usize, Vec<&FunctionSummary>)> = None;
+        for method in IMPLICIT_DISPATCH_METHODS {
+            let impl_total = graph
+                .by_name
+                .get(method)
+                .into_iter()
+                .flatten()
+                .filter(|function| is_production_trait_impl_method(function))
+                .count();
+            if impl_total < 2 {
+                continue;
+            }
+            let mut callers: Vec<&FunctionSummary> = graph
+                .by_name
+                .get(method)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|function| {
+                    is_production_trait_impl_method(function)
+                        && calls_of(function)
+                            .any(|call| !is_macro_call(&call.name) && call.name == owner_name)
+                })
+                .collect();
+            callers.sort_by(|a, b| (&a.file, a.start_line).cmp(&(&b.file, b.start_line)));
+            let better = !callers.is_empty()
+                && best
+                    .as_ref()
+                    .is_none_or(|(_, _, current)| callers.len() > current.len());
+            if better {
+                best = Some((method, impl_total, callers));
+            }
+        }
+        let (method, method_impl_count, callers) = best?;
+        let impls: Vec<(&str, &str)> = callers
+            .iter()
+            .filter_map(|function| match &function.item.container {
+                FunctionContainer::TraitImpl {
+                    trait_path,
+                    self_ty,
+                } => Some((trait_path.as_str(), self_ty.as_str())),
+                _ => None,
+            })
+            .collect();
+        let one_trait = impls.windows(2).all(|pair| pair[0].0 == pair[1].0);
+        let mut candidates: Vec<String> = Vec::new();
+        for (trait_path, self_ty) in &impls {
+            let label = if one_trait {
+                (*self_ty).to_string()
+            } else {
+                format!("{trait_path} for {self_ty}")
+            };
+            if !candidates.contains(&label) {
+                candidates.push(label);
+            }
+        }
+        Some(TraitDispatchAmbiguity {
+            method: method.to_string(),
+            impl_count: callers.len(),
+            method_impl_count,
+            candidates,
         })
     }
 
@@ -1371,6 +1581,7 @@ impl<'a> TransitiveReachIndex<'a> {
             // (`outer -> mac!(helper) -> helper -> owner`), hides a hop from
             // the name walk.
             path_untraced,
+            unbounded_reaching: OnceLock::new(),
         }
     }
 
@@ -2993,6 +3204,106 @@ pub(in crate::analysis) const RUST_MACRO_REACH_MESSAGE: &str = "ripr saw a test 
      This is not a coverage assessment -- ripr cannot confirm or deny \
      that the macro-generated path observes the change.";
 
+/// The message emitted when the owner is called from an impl of an
+/// implicit-dispatch trait method that the crate implements more than once (#11719). A named limitation, NOT a
+/// coverage claim and not a witness: no test is named.
+pub(in crate::analysis) const RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE: &str = "ripr saw production code that dispatches through a trait method toward this change, \
+     but the crate has several impls of that method and ripr does not guess which one a test reaches. \
+     This is not a coverage assessment -- ripr cannot confirm or deny \
+     that the change is observed.";
+
+/// Evidence-line prefix of the ambiguity statement.
+pub(in crate::analysis) const TRAIT_DISPATCH_AMBIGUITY_PREFIX: &str = "Trait-dispatch ambiguity: ";
+
+/// Candidate impls named on the ambiguity line; the rest are counted.
+const MAX_AMBIGUITY_CANDIDATES: usize = 5;
+
+/// Several `impl Trait for X` methods of one implicit-dispatch name call the
+/// owner ([`TransitiveReachIndex::trait_dispatch_ambiguity`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::analysis) struct TraitDispatchAmbiguity {
+    pub method: String,
+    /// Impl methods calling the owner (at least one).
+    pub impl_count: usize,
+    /// Trait impls of `method` in the crate (at least two).
+    pub method_impl_count: usize,
+    /// Distinct impl labels, in file/line order.
+    pub candidates: Vec<String>,
+}
+
+/// The candidate impls, at most [`MAX_AMBIGUITY_CANDIDATES`], then a count.
+fn bounded_candidates(ambiguity: &TraitDispatchAmbiguity) -> String {
+    let shown: Vec<&str> = ambiguity
+        .candidates
+        .iter()
+        .take(MAX_AMBIGUITY_CANDIDATES)
+        .map(String::as_str)
+        .collect();
+    let more = ambiguity.candidates.len() - shown.len();
+    if more == 0 {
+        shown.join(", ")
+    } else {
+        format!("{}, and {more} more", shown.join(", "))
+    }
+}
+
+/// A method of an `impl Trait for X` block that is not compiled out of
+/// production: a `#[cfg(test)]` impl block is test scaffolding, so it neither
+/// counts as an impl of the method name nor as a caller (#11719). The
+/// cfg-test reading is the shared `cfg_predicates` authority.
+fn is_production_trait_impl_method(function: &FunctionSummary) -> bool {
+    matches!(function.item.container, FunctionContainer::TraitImpl { .. })
+        && !function
+            .impl_attrs
+            .iter()
+            .any(|attr| crate::analysis::facts::cfg_predicates::attribute_requires_test(attr))
+}
+
+pub(in crate::analysis) fn trait_dispatch_ambiguity_pointer(
+    ambiguity: &TraitDispatchAmbiguity,
+    owner_name: &str,
+) -> String {
+    format!(
+        "{}owner `{}` is called from {} of the {} `{}` impls in this crate ({}); ripr cannot tell which of the calling impls, if any, a test reaches. \
+         Inspect the tests that format or compare these types to judge whether this change is observed.",
+        TRAIT_DISPATCH_AMBIGUITY_PREFIX,
+        owner_name,
+        ambiguity.impl_count,
+        ambiguity.method_impl_count,
+        ambiguity.method,
+        bounded_candidates(ambiguity)
+    )
+}
+
+pub(in crate::analysis) fn trait_dispatch_ambiguity_detail_lines(
+    ambiguity: &TraitDispatchAmbiguity,
+    owner_name: &str,
+) -> [String; 4] {
+    [
+        format!(
+            "{}trait-impl method `{}` ({}) -> owner `{}`",
+            crate::domain::LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX,
+            ambiguity.method,
+            bounded_candidates(ambiguity),
+            owner_name
+        ),
+        format!(
+            "{}test -> one of {} `{}` impls (trait dispatch through syntax or macros) ripr does not resolve",
+            crate::domain::LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX,
+            ambiguity.method_impl_count,
+            ambiguity.method
+        ),
+        format!(
+            "{}analysis/rust-public-api-transitive-reach",
+            crate::domain::LIMITATION_ANALYZER_ROUTE_PREFIX
+        ),
+        format!(
+            "{}named limitation only; ripr cannot confirm or deny that any test reaches or observes the change",
+            crate::domain::LIMITATION_NON_CLAIM_PREFIX
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod declaration_tests {
     use super::*;
@@ -4513,6 +4824,57 @@ mod tests {
             }
         }
         false
+    }
+
+    #[test]
+    fn an_assertion_on_another_indexed_function_pins_that_function_not_the_owner() {
+        // #11552: `reduce` is indexed and has no path to `consume`, so an
+        // assertion reading `reduce(..)` is that function's result. Calling
+        // the owner or anything that reaches it, or calling no indexed
+        // function at all, leaves the assertion unattributed.
+        let index = index_with(
+            vec![
+                make_fn("consume", vec!["reduce"]),
+                make_fn("consume_bridge", vec!["consume"]),
+                make_fn("reduce", vec![]),
+            ],
+            Vec::new(),
+        );
+        let reach_index = TransitiveReachIndex::new(&index);
+        let reach = reach_index.owner_reach("consume");
+        assert!(reach.assertion_pins_other_function(
+            "assert_eq!(reduce(2500), Reduction::Over(Duration::from_millis(15)))"
+        ));
+        assert!(!reach.assertion_pins_other_function("assert_eq!(consume(1), true)"));
+        assert!(!reach.assertion_pins_other_function("assert!(consume_bridge(1))"));
+        assert!(
+            !reach.assertion_pins_other_function("assert_eq!(reduce(1), consume_bridge(1).into())")
+        );
+        assert!(!reach.assertion_pins_other_function("assert!(matches!(x, Reduction::Over(1)))"));
+        assert!(!reach.assertion_pins_other_function("assert_eq!(Duration::from_millis(5), x)"));
+    }
+
+    #[test]
+    fn an_assertion_calling_through_a_macro_hop_to_the_owner_is_not_another_function() {
+        // #11552: `outer` reaches `consume` only through `run!`, whose body
+        // names it, so the name walk misses the edge. A function that invokes
+        // that macro must still count as a possible way to the owner, as must
+        // a caller of a macro with no readable body.
+        let index = index_with_source(
+            vec![
+                make_fn("consume", vec![]),
+                make_fn("outer", vec!["run!"]),
+                make_fn("outer_of_opaque", vec!["opaque!"]),
+                make_fn("leaf", vec![]),
+            ],
+            Vec::new(),
+            "macro_rules! run { () => { consume() }; }\nmacro_rules! opaque;".to_string(),
+        );
+        let reach_index = TransitiveReachIndex::new(&index);
+        let reach = reach_index.owner_reach("consume");
+        assert!(!reach.assertion_pins_other_function("assert_eq!(outer(), 1)"));
+        assert!(!reach.assertion_pins_other_function("assert_eq!(outer_of_opaque(), 1)"));
+        assert!(reach.assertion_pins_other_function("assert_eq!(leaf(), 1)"));
     }
 
     #[test]

@@ -145,12 +145,18 @@ impl PollBackoff {
         delay
     }
 
-    /// Sleep for the next delay, never past `deadline` when one is given.
-    pub(crate) fn sleep(&mut self, deadline: Option<Instant>) {
+    /// Next poll delay after applying an optional deadline clamp at `now`.
+    pub(crate) fn clamped_delay(&mut self, deadline: Option<Instant>, now: Instant) -> Duration {
         let mut delay = self.next_delay();
         if let Some(deadline) = deadline {
-            delay = delay.min(deadline.saturating_duration_since(Instant::now()));
+            delay = delay.min(deadline.saturating_duration_since(now));
         }
+        delay
+    }
+
+    /// Sleep for the next delay, never past `deadline` when one is given.
+    pub(crate) fn sleep(&mut self, deadline: Option<Instant>) {
+        let delay = self.clamped_delay(deadline, Instant::now());
         if !delay.is_zero() {
             std::thread::sleep(delay);
         }
@@ -227,28 +233,8 @@ impl OwnedProcess {
         }
         #[cfg(all(unix, not(windows)))]
         {
-            use std::os::unix::process::CommandExt as _;
-            let mut command = command;
             let group_owned = crate::analysis::cancellation::owns_process_groups();
-            if group_owned {
-                // Opt-in belongs to the MCP attempt, including captured workers.
-                // Public CLI/exporter callers keep their original group policy.
-                ensure_group_observation_supported()?;
-                command.process_group(0);
-            }
-            let child = command.spawn()?;
-            Ok(Self {
-                child,
-                group_owned,
-                custody_lost: false,
-                group_settled: false,
-                #[cfg(all(test, unix, not(windows)))]
-                test_group_kills: 0,
-                #[cfg(test)]
-                test_direct_kills: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-                #[cfg(test)]
-                injected_kill_failure: None,
-            })
+            Self::spawn_with_group(command, group_owned)
         }
         #[cfg(not(any(windows, unix)))]
         {
@@ -259,6 +245,56 @@ impl OwnedProcess {
             let child = command.spawn()?;
             Ok(Self::from_child(child))
         }
+    }
+
+    /// Spawn with explicit descendant containment for an owned execution.
+    ///
+    /// The installed ordinary-test journey uses this entry point outside an
+    /// analysis cancellation scope. On supported Unix platforms it creates a
+    /// fresh process group and retains the existing prereap PID custody. This
+    /// replaces any caller-prepared group setting. Windows uses the same Job
+    /// Object setup as [`Self::spawn`]. Platforms without those containment
+    /// primitives refuse before spawning. The default [`Self::spawn`] behavior
+    /// and its caller-prepared group settings remain unchanged.
+    pub fn spawn_isolated(command: Command) -> std::io::Result<Self> {
+        #[cfg(all(unix, not(windows)))]
+        {
+            Self::spawn_with_group(command, true)
+        }
+        #[cfg(windows)]
+        {
+            Self::spawn(command)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = command;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "isolated process execution requires descendant containment",
+            ))
+        }
+    }
+
+    #[cfg(all(unix, not(windows)))]
+    fn spawn_with_group(mut command: Command, group_owned: bool) -> std::io::Result<Self> {
+        use std::os::unix::process::CommandExt as _;
+        if group_owned {
+            ensure_group_observation_supported()?;
+            command.process_group(0);
+        }
+        let child = command.spawn()?;
+        Ok(Self {
+            child,
+            group_owned,
+            custody_lost: false,
+            group_settled: false,
+            #[cfg(test)]
+            test_group_kills: 0,
+            #[cfg(test)]
+            test_direct_kills: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            #[cfg(test)]
+            injected_kill_failure: None,
+        })
     }
 
     #[cfg(windows)]
@@ -777,11 +813,15 @@ mod tests {
         }
         let marker = marker.replace('\'', "''");
         let mut command = Command::new("powershell");
+        // The primary records its own PID first (`{marker}.primary`) so the
+        // unbound control can end it too; the descendant marker is the
+        // readiness signal and is written last.
         command.args([
             "-NoProfile",
             "-Command",
             &format!(
-                "$p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 40') -NoNewWindow -PassThru; \
+                "Set-Content -LiteralPath '{marker}.primary' -Value $PID; \
+                 $p = Start-Process -FilePath powershell -ArgumentList @('-NoProfile','-Command','Start-Sleep -Seconds 40') -NoNewWindow -PassThru; \
                  Set-Content -LiteralPath '{marker}' -Value $p.Id; Start-Sleep -Seconds 40"
             ),
         ]);
@@ -794,14 +834,17 @@ mod tests {
     /// Re-exec this test binary as the helper owner in `mode`, wait until its
     /// descendant is demonstrably alive, then hard-kill the helper with
     /// `TerminateProcess` (std `Child::kill`), so no `Drop` can run.
-    /// Returns the descendant PID.
+    /// Returns the descendant PID and the owned primary's PID, so the unbound
+    /// control can end both survivors.
     #[cfg(windows)]
-    fn hard_kill_helper_owner(mode: &str) -> Result<u32, String> {
+    fn hard_kill_helper_owner(mode: &str) -> Result<(u32, u32), String> {
         let marker_path = std::env::temp_dir().join(format!(
             "ripr-owner-hardkill-{mode}-{}.pid",
             std::process::id()
         ));
+        let primary_path = std::path::PathBuf::from(format!("{}.primary", marker_path.display()));
         let _ = std::fs::remove_file(&marker_path);
+        let _ = std::fs::remove_file(&primary_path);
         let exe = std::env::current_exe().map_err(|err| format!("current_exe: {err}"))?;
         let mut helper = Command::new(exe)
             .args([
@@ -826,6 +869,22 @@ mod tests {
             }
         };
         let _ = std::fs::remove_file(&marker_path);
+        let primary_pid = std::fs::read_to_string(&primary_path)
+            .map_err(|err| format!("read primary PID marker: {err}"))
+            .and_then(|text| {
+                text.trim()
+                    .parse::<u32>()
+                    .map_err(|err| format!("primary PID marker {:?}: {err}", text.trim()))
+            });
+        let _ = std::fs::remove_file(&primary_path);
+        let primary_pid = match primary_pid {
+            Ok(pid) => pid,
+            Err(err) => {
+                let _ = helper.kill();
+                let _ = helper.wait();
+                return Err(err);
+            }
+        };
         if !alive_on_windows(descendant_pid) {
             let _ = helper.kill();
             let _ = helper.wait();
@@ -839,7 +898,7 @@ mod tests {
         helper
             .wait()
             .map_err(|err| format!("reap helper owner: {err}"))?;
-        Ok(descendant_pid)
+        Ok((descendant_pid, primary_pid))
     }
 
     /// #9564 / #9323 F2: a force-terminated owner must not leak descendants once it
@@ -851,15 +910,20 @@ mod tests {
     #[test]
     fn force_terminated_owner_ends_descendants_only_when_bound() -> Result<(), String> {
         // Control: an unbound owner's descendant survives the hard kill.
-        let leaked_pid = hard_kill_helper_owner("nobind")?;
+        let (leaked_pid, leaked_primary_pid) = hard_kill_helper_owner("nobind")?;
         std::thread::sleep(Duration::from_secs(3));
         let leaked = alive_on_windows(leaked_pid);
-        // Clean the control's survivor before asserting so a failure leaks nothing.
+        // Clean both of the control's survivors before asserting so a failure
+        // leaks nothing. The unbound owned primary outlives the hard kill too,
+        // and left running it holds the harness's inherited output pipe for
+        // its remaining 40 s, which nextest reports as LEAK.
         let _ = Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-Command",
-                &format!("Stop-Process -Id {leaked_pid} -Force -ErrorAction SilentlyContinue"),
+                &format!(
+                    "Stop-Process -Id {leaked_pid},{leaked_primary_pid} -Force -ErrorAction SilentlyContinue"
+                ),
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -870,7 +934,7 @@ mod tests {
             ));
         }
         // Subject: a bound owner's descendant ends with it.
-        let bound_pid = hard_kill_helper_owner("bind")?;
+        let (bound_pid, _bound_primary_pid) = hard_kill_helper_owner("bind")?;
         assert_descendant_terminated(bound_pid, "hard kill of a kill-on-close-bound owner")
     }
 
@@ -894,17 +958,57 @@ mod tests {
         );
     }
 
-    /// A deadline already in the past makes the backoff sleep return at
-    /// once instead of sleeping the scheduled delay past it.
+    /// Deadline clamping is asserted on the computed delay, not wall-clock sleep
+    /// (see #10592).
     #[test]
-    fn poll_backoff_sleep_never_passes_the_deadline() {
+    fn poll_backoff_clamped_delay_respects_deadline() {
+        let now = Instant::now();
+
+        let mut past_deadline = PollBackoff::new();
+        for _ in 0..8 {
+            let _ = past_deadline.next_delay();
+        }
+        assert_eq!(
+            past_deadline.clamped_delay(Some(now), now),
+            Duration::ZERO,
+            "a deadline already in the past must clamp to zero"
+        );
+
+        let mut no_deadline = PollBackoff::new();
+        assert_eq!(
+            no_deadline.clamped_delay(None, now),
+            POLL_BACKOFF_FIRST,
+            "without a deadline the scheduled delay is returned"
+        );
+
+        let mut near_deadline = PollBackoff::new();
+        for _ in 0..8 {
+            let _ = near_deadline.next_delay();
+        }
+        let remaining = Duration::from_millis(10);
+        assert_eq!(
+            near_deadline.clamped_delay(Some(now + remaining), now),
+            remaining,
+            "a near deadline must clamp the scheduled ceiling delay"
+        );
+    }
+
+    /// Mutant guard: returning the scheduled delay while ignoring the deadline
+    /// would fail the past-deadline case above.
+    #[test]
+    fn poll_backoff_clamped_delay_deadline_clamp_is_load_bearing() {
+        let now = Instant::now();
         let mut backoff = PollBackoff::new();
         for _ in 0..8 {
             let _ = backoff.next_delay();
         }
-        let started = Instant::now();
-        backoff.sleep(Some(started));
-        assert!(started.elapsed() < POLL_BACKOFF_CEILING / 2);
+        let clamped = backoff.clamped_delay(Some(now), now);
+        assert_eq!(clamped, Duration::ZERO);
+        assert_eq!(POLL_BACKOFF_CEILING, Duration::from_millis(50));
+        assert_ne!(
+            POLL_BACKOFF_CEILING, clamped,
+            "ignoring the deadline would return the ceiling delay"
+        );
     }
 
     /// Normal completion, captured output and pipe teardown through the

@@ -9,6 +9,7 @@ use crate::domain::{
 };
 use std::path::PathBuf;
 
+mod absorbing_tail_pipeline;
 mod badge_rendering;
 mod handwritten_recovery;
 mod mode_and_selector;
@@ -22,6 +23,8 @@ mod python_packet_eligibility;
 #[cfg(feature = "lang-python")]
 mod python_repo_mode_repair_failclosed;
 mod rendering_contracts;
+#[cfg(feature = "lang-typescript")]
+mod typescript_clause_single_token_packets;
 #[cfg(feature = "lang-typescript")]
 mod typescript_family_selection_packets;
 #[cfg(feature = "lang-typescript")]

@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0373"
+scope = "out"
+reason = "Kani verification artifacts have no runtime-mutant truth for a test to discriminate; covered by repository integration tests"

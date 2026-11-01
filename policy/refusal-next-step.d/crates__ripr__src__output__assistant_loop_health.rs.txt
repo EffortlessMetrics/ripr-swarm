@@ -1,1 +1,0 @@
-crates/ripr/src/output/assistant_loop_health.rs|render assistant loop health JSON failed: {err}

@@ -13,7 +13,7 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: preview language, advisory only
   Safe next action: static limitation `decorator_indirection` keeps this Python preview finding from a repair card, so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; check by hand whether a test observes this change, then rerun `ripr check`
-  File: app/checkout.py:17
+  File: app/checkout.py:19
   Language: python
   Language status: preview
   Static exposure: unknown (severity: note, confidence 0.20)
@@ -38,9 +38,9 @@ Start here:
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_dynamic_route_registration_limit/input --diff <cwd>/fixtures/python_dynamic_route_registration_limit/diff.patch --mode fast probe:app_checkout.py:python_preview:c1a8e812
-  ripr context --root <cwd>/fixtures/python_dynamic_route_registration_limit/input --diff <cwd>/fixtures/python_dynamic_route_registration_limit/diff.patch --mode fast --at probe:app_checkout.py:python_preview:c1a8e812
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  ripr explain --root <cwd>/fixtures/python_dynamic_route_registration_limit/input --diff <cwd>/fixtures/python_dynamic_route_registration_limit/diff.patch --mode fast probe:app_checkout.py:python_preview:v1-35ebabec
+  ripr context --root <cwd>/fixtures/python_dynamic_route_registration_limit/input --diff <cwd>/fixtures/python_dynamic_route_registration_limit/diff.patch --mode fast --at probe:app_checkout.py:python_preview:v1-35ebabec
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

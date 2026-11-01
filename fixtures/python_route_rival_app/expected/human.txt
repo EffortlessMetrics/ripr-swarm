@@ -13,7 +13,7 @@ Analysis outcome: findings below (analysis complete)
 Start here:
   State: preview language, advisory only
   Safe next action: this Python preview finding has no repair card (no Python test reaches this code), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add a test that calls it by hand, then rerun `ripr check`
-  File: shop/orders.py:15
+  File: shop/orders.py:16
   Language: python
   Language status: preview
   Static exposure: no path (severity: warning, confidence 0.40)
@@ -37,9 +37,9 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_route_rival_app/input --diff <cwd>/fixtures/python_route_rival_app/diff.patch --mode fast probe:shop_orders.py:python_preview:afbc10ea
-  ripr context --root <cwd>/fixtures/python_route_rival_app/input --diff <cwd>/fixtures/python_route_rival_app/diff.patch --mode fast --at probe:shop_orders.py:python_preview:afbc10ea
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `shop/orders.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  ripr explain --root <cwd>/fixtures/python_route_rival_app/input --diff <cwd>/fixtures/python_route_rival_app/diff.patch --mode fast probe:shop_orders.py:python_preview:v1-a68c067d
+  ripr context --root <cwd>/fixtures/python_route_rival_app/input --diff <cwd>/fixtures/python_route_rival_app/diff.patch --mode fast --at probe:shop_orders.py:python_preview:v1-a68c067d
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `shop/orders.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

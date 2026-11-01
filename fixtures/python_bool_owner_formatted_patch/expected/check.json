@@ -1,0 +1,89 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_bool_owner_formatted_patch/input",
+  "config_path": "<cwd>/fixtures/python_bool_owner_formatted_patch/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:438821b48cc0f4acec87b5f6db1a4cf9c10188d688586f3029269b7604107c5a","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:rules.py:python_preview:9d399b85",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.20,
+      "probe": {
+        "id": "probe:rules.py:python_preview:9d399b85",
+        "family": "predicate",
+        "delta": "control",
+        "file": "rules.py",
+        "line": 2,
+        "expression": "    return age >= 18",
+        "owner": "python:rules.py::is_adult"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `is_adult`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Static limit `mocked_module` prevents a safe Python infection claim."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Static limit `mocked_module` prevents a safe Python propagation claim."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `smoke_only` (rank 2)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `mocked_module` prevents a safe Python discriminator claim."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `is_adult`", "infection unknown: Static limit `mocked_module` prevents a safe Python infection claim.", "propagation unknown: Static limit `mocked_module` prevents a safe Python propagation claim.", "observation yes: Strongest extracted Python oracle kind: `smoke_only` (rank 2)", "discriminator unknown: Static limit `mocked_module` prevents a safe Python discriminator claim.", "related test tests/test_rules.py:6 test_adult uses smoke only oracle: assert is_adult(18)"],
+      "flow_sinks": [
+      ],
+      "evidence": ["owner: is_adult", "owner_kind: function", "static_limit mocked_module: related test uses patch/mock/monkeypatch module syntax", "test_framework: pytest (test_adult)", "test_verify_command: python -m pytest tests/test_rules.py::test_adult (test_adult)", "related_test_relation: syntactic_call (test_adult)", "test_oracle: smoke_only smoke (test_adult)", "test_oracle_shape: broad_smoke_assertion (test_adult)"],
+      "missing": ["Static limit `mocked_module`: a related Python test uses patch/mock/monkeypatch module syntax; the preview adapter does not resolve runtime substitution semantics."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_adult",
+          "file": "tests/test_rules.py",
+          "line": 6,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "assert is_adult(18)"
+        }
+      ],
+      "stop_reasons": ["static_probe_unknown"],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "static_limit_kind": "mocked_module",
+      "changed_sink": "age",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["rules.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"rules.py","digest":"sha256:4158e1b55abb44ddd11e55935f7c61463daf972291e648d451b92e03eefa4981"}]}
+}

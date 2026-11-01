@@ -179,9 +179,34 @@ pub(super) fn suggested_retry_timeout_ms(spent_ms: u64) -> u64 {
         .max(PILOT_RETRY_MIN_MS)
 }
 
+/// #12150: a suggested `check` snapshot runs under the product's default
+/// inventory cap (or whatever limit the reader's environment configures), so
+/// on a repository pilot had to seam-limit it would be cut too and `ripr
+/// outcome` would refuse the advertised comparison. When pilot's own run was
+/// seam-limited, both snapshot commands lift the inventory cap for that one
+/// invocation with a leading `NAME=0` assignment. This is Bash syntax like the
+/// rest of the command; the PowerShell form comes from
+/// `output::markdown::powershell_command`, which translates the assignment to
+/// a scoped `$env:` set and restore. An uncut pilot run keeps the plain command.
+fn full_inventory_when_seam_limited(command: String, seam_limited: bool) -> String {
+    if seam_limited {
+        format!(
+            "{}=0 {command}",
+            crate::analysis::REPO_EXPOSURE_SEAM_LIMIT_ENV
+        )
+    } else {
+        command
+    }
+}
+
 pub(super) struct PilotCommands {
     pub(super) after_snapshot: String,
     pub(super) outcome: String,
+    /// #12108, #12150: set only when `repo-exposure.json` was byte-bounded or
+    /// seam-limited. That file is not a comparable `ripr outcome` baseline
+    /// (`ripr outcome` refuses it), so the route names a full baseline to
+    /// capture before the repair instead.
+    pub(super) before_snapshot: Option<String>,
     pub(super) retry: String,
 }
 
@@ -208,15 +233,32 @@ impl PilotCommands {
         // Artifact arguments and redirects must preserve the same native
         // spelling as the selected root, including the default output path.
         // display_path/shell_path would select a different Unix directory.
-        let after_snapshot = loop_commands::check_repo_exposure_command(
-            &command_root,
-            context.mode.as_str(),
-            &loop_commands::root_path_display(&after_path),
+        let after_snapshot = full_inventory_when_seam_limited(
+            loop_commands::check_repo_exposure_command(
+                &command_root,
+                context.mode.as_str(),
+                &loop_commands::root_path_display(&after_path),
+            ),
+            context.seam_limit.is_some(),
         );
+        let bounded = context.repo_exposure_byte_bound.is_some() || context.seam_limit.is_some();
+        let before_path = out_dir.join("before.repo-exposure.json");
+        let before_snapshot = bounded.then(|| {
+            full_inventory_when_seam_limited(
+                loop_commands::check_repo_exposure_command(
+                    &command_root,
+                    context.mode.as_str(),
+                    &loop_commands::root_path_display(&before_path),
+                ),
+                context.seam_limit.is_some(),
+            )
+        });
         let outcome = loop_commands::outcome_command(
-            &loop_commands::root_path_display(&loop_commands::bound_root_path(
-                &context.artifacts.repo_exposure_json,
-            )),
+            &loop_commands::root_path_display(&if bounded {
+                before_path.clone()
+            } else {
+                loop_commands::bound_root_path(&context.artifacts.repo_exposure_json)
+            }),
             &loop_commands::root_path_display(&after_path),
             None,
         );
@@ -232,6 +274,7 @@ impl PilotCommands {
         Self {
             after_snapshot,
             outcome,
+            before_snapshot,
             retry,
         }
     }

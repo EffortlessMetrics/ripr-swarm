@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (the strong borrowed assertion is not confirmed to observe the changed effect; identify an effect-observing assertion before the packet is delegatable); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (identify an effect-observing assertion before this repair can be handed to an agent: the strong borrowed assertion is not confirmed to observe the changed effect); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/receipt.ts:2
   Language: typescript
   Language status: preview
@@ -24,9 +24,9 @@ Start here:
     (`"audit"`); all strong assertions observe the owner return value, not this call effect;
     propagation unknown
   Related test: tests/receipt.test.ts:4 unchanged return is not the audit event (the preview adapter could not confirm that this assertion observes the changed behavior)
-  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
-    discriminator `log contains "audit"`; no actionable repair packet is emitted until verify,
-    receipt, and edit-boundary fields are available
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
+    check `log contains "audit"`; no actionable repair packet is emitted until verify, receipt, and
+    edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -45,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_effect_owner_alias/input --diff <cwd>/fixtures/typescript_effect_owner_alias/diff.patch --mode fast probe:src_receipt.ts:typescript_preview:eb6f83d9
   ripr context --root <cwd>/fixtures/typescript_effect_owner_alias/input --diff <cwd>/fixtures/typescript_effect_owner_alias/diff.patch --mode fast --at probe:src_receipt.ts:typescript_preview:eb6f83d9
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

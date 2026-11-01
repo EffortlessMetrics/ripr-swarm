@@ -70,3 +70,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_async_operand (7)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_async_operand --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

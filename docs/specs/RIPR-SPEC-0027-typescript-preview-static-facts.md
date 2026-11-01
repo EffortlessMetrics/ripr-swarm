@@ -504,7 +504,16 @@ tree, not by token order, so `a && b > 1 || c` and `a || b > 1 && c` each name
 removed clause, a moved parenthesis, a swapped
 logical operator, an edit to a non-comparison clause, a clause quoted in a
 string or template literal, and a clause with a call, computed or nullish
-operand each name no boundary. The named clause is a boundary fact only: under
+operand each name no boundary. A clause is withheld (#11442) when more than one token is replaced on either
+side of the edit inside it, or when the edit added a comparison clause, because
+neither can be steered to one discriminator. The one exception is a pure
+operand swap, which must be the whole edit: the same operands exchanged around
+the one comparison operator, which becomes its mirror (`>` with `<`, `>=` with
+`<=`, unchanged for `==`, `===`, `!=` and `!==`), with every token outside that
+comparison identical at the same index and the token count unchanged. That is
+the same boundary written the other way round and is still named; a swap plus
+any other edit in the line, and exchanging operands without mirroring the
+operator, are withheld. The named clause is a boundary fact only: under
 `&&` it is observable when the other clauses hold, so it never claims that a
 test can drive that clause independently.
 

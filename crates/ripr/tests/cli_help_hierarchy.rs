@@ -52,7 +52,7 @@ fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
     assert!(missing.stdout.is_empty());
     assert_eq!(
         String::from_utf8_lossy(&missing.stderr).replace("\r\n", "\n"),
-        "ripr: missing value for --ci\n"
+        "ripr: missing value for --ci; pass a value right after it\n"
     );
     Ok(())
 }
@@ -112,7 +112,7 @@ fn agent_repair_phase_refusals_render_scoped_recovery_without_writes() -> Result
         assert!(missing.stdout.is_empty());
         assert_eq!(
             String::from_utf8_lossy(&missing.stderr).replace("\r\n", "\n"),
-            "ripr: missing value for --phase\n"
+            "ripr: missing value for --phase; pass a value right after it\n"
         );
         let help = run_ripr_in(
             &["agent", "repair", "--phase", "befor", "--help"],
@@ -147,8 +147,14 @@ fn agent_repair_default_and_later_phase_selectors_match_help() -> Result<(), Str
         }
         assert_eq!(implicit.stderr, explicit.stderr);
         for (phase, expected) in [
-            ("after", "requires --attempt <id> or --seam-id <id>"),
-            ("verify", "requires --attempt <id>"),
+            (
+                "after",
+                "requires --attempt <id> or --seam-id <id>; pass the attempt ID the before phase printed, or the seam ID",
+            ),
+            (
+                "verify",
+                "requires --attempt <id>; add `--attempt <id>` to the command",
+            ),
         ] {
             let output = run_ripr_in(&["agent", "repair", "--phase", phase], Some(root))?;
             assert_eq!(output.status.code(), Some(2), "{phase}: {output:?}");
@@ -942,7 +948,7 @@ fn default_help_keeps_the_task_roles_distinct() -> Result<(), String> {
             "Diagnose setup ripr doctor",
             "Inspect one change ripr check",
             "Guided repo adoption ripr pilot --root .",
-            "Repair a Rust seam ripr repair",
+            "Repair a Rust gap ripr repair",
             "Repair a diff gap follow the start from ripr check, when offered",
             "Compose PR evidence ripr first-pr",
             "Adopt advisory CI ripr init --ci github",
@@ -1053,7 +1059,7 @@ fn help_all_rejects_trailing_arguments() -> Result<(), String> {
         assert_contains(
             "ripr help --all trailing-argument error",
             &String::from_utf8_lossy(&output.stderr),
-            "usage: ripr help --all (this route accepts no other arguments)",
+            "usage: ripr help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands",
         )?;
     }
     // The bare selector is unchanged on both spellings.
@@ -1110,7 +1116,7 @@ fn exhaustive_help_keeps_the_same_roles_and_boundaries() -> Result<(), String> {
         "Diagnose setup ripr doctor",
         "Inspect one change ripr check",
         "Guided repo adoption ripr pilot --root .",
-        "Repair a Rust seam ripr repair [<item>] | ripr continue | ripr status",
+        "Repair a Rust gap ripr repair [<item>] | ripr continue | ripr status",
         "Repair a diff gap follow the start from ripr check, when offered",
         "Compose PR evidence ripr first-pr --root . --base BASE --head HEAD",
         "Adopt advisory CI ripr init --ci github",
@@ -1234,7 +1240,7 @@ fn help_screens_state_the_surfaces_the_parsers_accept() -> Result<(), String> {
         assert_contains("exhaustive help (`ripr help --all`)", &all, needle)?;
     }
 
-    // Discriminators. The `Repair a Rust seam` role line is the task-first
+    // Discriminators. The `Repair a Rust gap` role line is the task-first
     // alternation `repair | continue | status`: it names the ordinary
     // commands rather than the internal phase vocabulary, and
     // `default_help_keeps_the_task_roles_distinct` pins it as role
@@ -1741,6 +1747,7 @@ const CHECK_REFERENCE_ENVIRONMENT: &[&str] = &[
     "RIPR_PARTIAL_DIFF_FILE_BUDGET",
     "RIPR_PARTIAL_DIFF_LINE_BUDGET",
     "RIPR_QUIET",
+    "RIPR_PROGRESS",
     "RIPR_GIT_TIMEOUT",
     "RIPR_REPO_EXPOSURE_LATENCY_TRACE",
     "RIPR_ALLOW_REPO_PERL_EXECUTABLE",

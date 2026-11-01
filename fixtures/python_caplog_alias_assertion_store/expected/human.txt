@@ -40,9 +40,9 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_caplog_alias_assertion_store/input --diff <cwd>/fixtures/python_caplog_alias_assertion_store/diff.patch --mode fast probe:audit.py:python_preview:e21f54bb
-  ripr context --root <cwd>/fixtures/python_caplog_alias_assertion_store/input --diff <cwd>/fixtures/python_caplog_alias_assertion_store/diff.patch --mode fast --at probe:audit.py:python_preview:e21f54bb
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  ripr explain --root <cwd>/fixtures/python_caplog_alias_assertion_store/input --diff <cwd>/fixtures/python_caplog_alias_assertion_store/diff.patch --mode fast probe:audit.py:python_preview:v1-3a7c2336
+  ripr context --root <cwd>/fixtures/python_caplog_alias_assertion_store/input --diff <cwd>/fixtures/python_caplog_alias_assertion_store/diff.patch --mode fast --at probe:audit.py:python_preview:v1-3a7c2336
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full
