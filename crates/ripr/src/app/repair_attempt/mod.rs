@@ -1363,7 +1363,14 @@ fn recorded_workflow_path_matches(
             Ok(path) => path,
             Err(_) => return Ok(false),
         };
-        if canonical != root {
+        // `root` may be spelled plain (`D:\..`) or verbatim (`\\?\D:\..`)
+        // depending on how the caller derived it; both name one place, so
+        // compare them with the same prefix folding as the path match below.
+        let same_root = canonical == root || {
+            let reader = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+            matches!((lexical(&canonical), lexical(&reader)), (Some(a), Some(b)) if a == b)
+        };
+        if !same_root {
             return Ok(false);
         }
     }
