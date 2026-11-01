@@ -108,14 +108,25 @@ fn has_directory_component(path: &Path, names: &[&str]) -> bool {
 
 /// Env override for [`DEFAULT_TS_MAX_WORKSPACE_FILES`].
 pub(crate) const TS_MAX_WORKSPACE_FILES_ENV: &str = "RIPR_TS_MAX_WORKSPACE_FILES";
-/// Default ceiling on admitted TS/JS source candidates during workspace
-/// discovery. Directories, assets, and `*.generated.*` files do not consume
-/// this budget; a separate total-entry backstop still terminates huge trees.
+/// Default ceiling on candidate TS/JS source files during workspace
+/// discovery (routed extensions minus the generated-name family). Directories,
+/// assets, and `*.generated.*` files do not consume this budget. A separate
+/// total-entry backstop still terminates huge trees: the default 20_000
+/// candidates imply a 200_000-entry walk before the walk gives up.
 const DEFAULT_TS_MAX_WORKSPACE_FILES: usize = 20_000;
 /// Multiplier for the total-entry walk backstop relative to the candidate
-/// source-file limit. A huge asset tree still terminates even when few (or
-/// no) TypeScript/JavaScript sources exist.
+/// source-file limit. Default `20_000 × 10 = 200_000` directory entries.
+/// A huge asset tree still terminates even when few (or no) TypeScript/JavaScript
+/// sources exist.
 const TS_WORKSPACE_TOTAL_ENTRY_BACKSTOP_MULTIPLIER: usize = 10;
+
+#[cfg(test)]
+thread_local! {
+    /// Directory entries seen by the last [`visit_workspace_with_handwritten`]
+    /// on this thread, including the entry that tripped a cap.
+    static LAST_WALK_TOTAL_ENTRIES: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
 
 /// Parse a positive workspace file-count limit, failing closed to the error
 /// string on invalid input (mirrors `rust/mod.rs::positive_limit_from_env`).
@@ -183,11 +194,11 @@ fn is_candidate_workspace_source(path: &Path) -> bool {
 /// Iterative workspace walk over an explicit work stack.
 ///
 /// Recursion was replaced by a loop so pathologically deep directory trees
-/// cannot overflow the call stack (a hard abort). Only admitted TS/JS source
-/// candidates count against `max_entries` (#11984). Every directory entry
-/// still counts against a larger total-entry backstop (`10× max_entries`) so
-/// a huge asset tree terminates. Exceeding either cap stops the walk and
-/// reports `truncated: true` so the adapter can disclose the bound instead of
+/// cannot overflow the call stack (a hard abort). Only candidate TS/JS source
+/// files count against `max_entries` (#11984). Every directory entry still
+/// counts against a larger total-entry backstop (`10× max_entries`) so a huge
+/// asset tree terminates. Exceeding either cap stops the walk and reports
+/// `truncated: true` so the adapter can disclose the bound instead of
 /// silently analyzing a partial workspace.
 pub(crate) fn visit_workspace_with_handwritten(
     root: &Path,
@@ -299,6 +310,8 @@ pub(crate) fn visit_workspace_with_handwritten(
             break;
         }
     }
+    #[cfg(test)]
+    LAST_WALK_TOTAL_ENTRIES.set(total_entries);
     out.sort();
     if !alias_links.is_empty() {
         skipped_links += alias_links
@@ -847,9 +860,10 @@ mod tests {
     }
 
     /// #11984 item 1: a large non-source tree must not consume the source
-    /// cap. `RIPR_TS_MAX_WORKSPACE_FILES` counts admitted TS/JS candidates
-    /// (minus `*.generated.*`), so a limit below `N + sources` still finds
-    /// every real source and does not report truncation.
+    /// cap. `RIPR_TS_MAX_WORKSPACE_FILES` counts candidate TS/JS files
+    /// (routed extensions minus `*.generated.*`), so a limit below
+    /// `N + sources` still finds every real source and does not report
+    /// truncation.
     #[test]
     fn workspace_file_limit_counts_source_candidates_not_assets() {
         let workspace = TempWorkspace::new("candidate-count");
@@ -885,7 +899,7 @@ mod tests {
         );
     }
 
-    /// More admitted source files than the candidate limit still truncates.
+    /// More candidate source files than the candidate limit still truncates.
     #[test]
     fn workspace_file_limit_truncates_when_sources_exceed_the_cap() {
         let workspace = TempWorkspace::new("source-cap");
@@ -924,6 +938,11 @@ mod tests {
             scan.files.is_empty(),
             "no TS/JS sources exist to discover; got {:?}",
             scan.files
+        );
+        assert_eq!(
+            LAST_WALK_TOTAL_ENTRIES.get(),
+            backstop + 1,
+            "the walk must stop at the 10× total-entry backstop, not after one entry"
         );
     }
 
