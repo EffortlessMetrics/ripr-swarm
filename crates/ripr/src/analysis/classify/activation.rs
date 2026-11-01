@@ -6700,6 +6700,9 @@ fn owner_row_argument_values(
     text_cells: bool,
     scope: super::argument_fold::FoldScope<'_>,
 ) -> Vec<String> {
+    if let Some(value) = scope.property_argument(argument) {
+        return vec![value];
+    }
     let values = owner_argument_values_in(test, argument, text_cells);
     if values.is_empty() {
         // RIPR-SPEC-0158: arithmetic over the test's own literal bindings
