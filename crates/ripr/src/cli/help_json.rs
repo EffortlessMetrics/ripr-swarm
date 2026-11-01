@@ -98,7 +98,9 @@ struct CommandJsonRow {
     writes_json_artifacts: bool,
     /// Flags parsed from the command's help body.
     flags: Vec<crate::cli::help_flags::FlagJson>,
-    /// `own_help_body` or `shared_help_body` (flags are the union for a group).
+    /// `own_help_body`, `shared_help_body` (flags are the union for a group), or
+    /// `no_help_body` (the command has no help body of its own, so an empty
+    /// `flags` list says nothing about the flags it accepts).
     flags_scope: &'static str,
     example: &'static str,
     next_routes: Vec<&'static str>,
@@ -379,7 +381,9 @@ fn command_row(entry: &CommandCatalogEntry, metadata_row: &CommandMetadata) -> C
         flags: help_body
             .map(|body| crate::cli::help_flags::flags_for(entry.path, body))
             .unwrap_or_default(),
-        flags_scope: if shared_body {
+        flags_scope: if help_body.is_none() {
+            "no_help_body"
+        } else if shared_body {
             "shared_help_body"
         } else {
             "own_help_body"
