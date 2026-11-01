@@ -445,3 +445,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_identity_traps (37)
+
+Reason:
+RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_identity_traps --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

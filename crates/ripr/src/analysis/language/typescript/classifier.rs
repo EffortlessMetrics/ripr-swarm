@@ -1019,6 +1019,9 @@ fn ts_mask_lexically(
     // it is division (`i++ / 2`), never a regex start.
     let mut postfix_op = false;
     let mut op_after_operand = false;
+    // A `!` that directly follows an operand is a non-null assertion
+    // (`n! / 2`), so a `/` after it is division too (#7483).
+    let mut postfix_not = false;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
@@ -1058,6 +1061,7 @@ fn ts_mask_lexically(
                     }
                     '/' if regex_allowed
                         && !postfix_op
+                        && !postfix_not
                         && operand_expected(prev, &word, word_after_dot) =>
                     {
                         mode = Mode::Regex { in_class: false };
@@ -1087,6 +1091,12 @@ fn ts_mask_lexically(
                 if matches!(mode, Mode::LineComment | Mode::BlockComment) {
                     after_space = true;
                     continue;
+                }
+                if c == '!' {
+                    postfix_not = (postfix_not && prev == Some('!'))
+                        || !operand_expected(prev, &word, word_after_dot);
+                } else if !c.is_whitespace() {
+                    postfix_not = false;
                 }
                 if (c == '+' || c == '-') && !after_space && prev == Some(c) {
                     postfix_op = op_after_operand && !postfix_op;
@@ -1202,6 +1212,7 @@ fn ts_mask_lexically(
             dots = 0;
             postfix_op = false;
             op_after_operand = false;
+            postfix_not = false;
         }
     }
     out
