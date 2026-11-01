@@ -534,6 +534,21 @@ Proof: `match_arm_proximity_test_pinning_another_function_cannot_confirm`, the
 `match_arm_proximity_other_function_not_credited` fixture; the wrapper control
 above shows a call that reaches the owner is not withheld.
 
+Repo exposure grading (`test_grip_evidence`) applies the same per-assertion
+refusal to every seam kind, not only match arms (#12060, #12146). A test related
+to a seam only by file, module or assertion affinity lends no propagation,
+observation or discrimination credit, and no published oracle, through an
+assertion that calls an indexed function with no path to the seam's owner, so
+`ripr repair` reads the gap `ripr check` reads. A predicate seam such as
+`wait < 5` in `consume` is not credited by a test that pins `reduce`; `reduce`'s
+own predicate keeps the credit. The refusal only withholds, and an assertion
+that pins nothing (no call at all) is not covered (#12234 for receiver method
+calls).
+
+Proof: `proximity_test_pinning_another_function_cannot_grade_a_match_arm_up`,
+`proximity_test_pinning_another_function_cannot_credit_a_predicate_seam`, and
+the `rust_repo_exposure_proximity_other_function_not_promoted` honesty case.
+
 ## Owner-scoped tokens and self-computed expected values (#5830)
 
 A token confirms observation only when the shared word can name the same
