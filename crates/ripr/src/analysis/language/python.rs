@@ -155,21 +155,31 @@ impl<'a> PythonIdentityContext<'a> {
         let source_line = self.source.get(line_start..line_end)?;
         // Diff lines include their indentation; repo facts contain the exact
         // (possibly multiline) AST source span without leading indentation.
-        let start = if source_line == expected {
-            line_start
-        } else {
-            let first = expected.split('\n').next()?;
-            let first = first.strip_suffix('\r').unwrap_or(first);
-            if first.is_empty() {
-                return None;
+        if source_line == expected {
+            return self.normalize_span(line_start, expected);
+        }
+        let first = expected.split('\n').next()?;
+        let first = first.strip_suffix('\r').unwrap_or(first);
+        if first.is_empty() {
+            return None;
+        }
+        // The same statement text may repeat on one physical line
+        // (`return x; return x`). That is ambiguous only when the occurrences
+        // normalize differently; identical readings are one identity.
+        let mut result: Option<String> = None;
+        for (offset, _) in source_line.match_indices(first) {
+            let Some(candidate) = self.normalize_span(line_start + offset, expected) else {
+                continue;
+            };
+            match &result {
+                Some(previous) if *previous != candidate => return None,
+                _ => result = Some(candidate),
             }
-            let mut matches = source_line.match_indices(first);
-            let (offset, _) = matches.next()?;
-            if matches.next().is_some() {
-                return None;
-            }
-            line_start + offset
-        };
+        }
+        result
+    }
+
+    fn normalize_span(&self, start: usize, expected: &str) -> Option<String> {
         let end = start.checked_add(expected.len())?;
         let text = self.source.get(start..end)?;
         if text != expected {
@@ -300,6 +310,24 @@ mod python_identity_review_controls {
         assert_eq!(expr(active)?, expr(formatted)?);
         assert_ne!(expr(active)?, expr(commented)?);
         assert_eq!(expr(quoted_hash)?, expr(quoted_hash_format)?);
+        Ok(())
+    }
+
+    #[test]
+    fn a_statement_repeated_on_one_line_normalizes_when_every_reading_agrees() -> Result<(), String> {
+        let source = "def f(x):\n    return x; return x\n";
+        let context = PythonIdentityContext::new(source).ok_or("source did not lex")?;
+        assert_eq!(
+            context.normalize(2, "return x"),
+            Some("return x".to_string())
+        );
+        let quoted = "def f(x):\n    y = 'a  b'; z = 'a  b'; y = 'a  b'\n";
+        let context = PythonIdentityContext::new(quoted).ok_or("source did not lex")?;
+        assert!(context.normalize(2, "y = 'a  b'").is_some());
+        // One reading is code and the other sits inside a literal: ambiguous.
+        let mixed = "def f(x):\n    return x; s = 'return x'\n";
+        let context = PythonIdentityContext::new(mixed).ok_or("source did not lex")?;
+        assert!(context.normalize(2, "return x").is_none());
         Ok(())
     }
 
