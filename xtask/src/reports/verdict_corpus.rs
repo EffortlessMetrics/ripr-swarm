@@ -2679,8 +2679,42 @@ pub(crate) fn admit_measurement(
             "the diff is not routed to that language exactly once".to_string(),
         ));
     };
+    // The aggregate outcome can read complete while a sibling language carries
+    // the evidence. The producer's per-language row (#11272) says whether the
+    // expected language's own adapter ran: it must be present exactly once
+    // and evidenced, not skipped, unavailable, failed or out of scope.
+    let rows = check
+        .pointer("/language_completeness/languages")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            unestablished("it carries no language_completeness projection".to_string())
+        })?;
+    let mut own = rows
+        .iter()
+        .filter(|row| row.get("language").and_then(Value::as_str) == Some(subject.language));
+    let (Some(row), None) = (own.next(), own.next()) else {
+        return Err(unestablished(
+            "language_completeness has no single row for that language".to_string(),
+        ));
+    };
+    let status = row
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("missing");
+    if !EVIDENCED_LANGUAGE_STATUSES.contains(&status) {
+        return Err(unestablished(format!(
+            "its language_completeness row is `{status}`"
+        )));
+    }
     Ok(())
 }
+
+/// Per-language completeness statuses that evidence an adapter run over the
+/// case: it completed with findings, completed with none, or completed while
+/// disclosing its own limits. Every other status (`unavailable`, `invalid`,
+/// `failed`, `unsupported`, `not_selected`, `no_current_scope`) means the
+/// expected language was not measured.
+const EVIDENCED_LANGUAGE_STATUSES: [&str; 3] = ["complete", "complete_zero", "partial"];
 
 /// A non-aborting Perl failure can exit zero with no findings. It is a failed
 /// measurement, not a silent verdict. Successful runs may omit language_runs.
