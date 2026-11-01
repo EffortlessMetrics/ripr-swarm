@@ -127,6 +127,60 @@ fn pins_parse_into_ids_and_commits_and_reject_unsafe_text() {
     }
 }
 
+#[test]
+fn external_pins_resolve_against_the_scoreboard_corpus_and_never_skip_silently() {
+    use super::nightly::{parse_external_ids, resolve_external};
+    use crate::reports::dx_scoreboard::parse_config;
+
+    assert_eq!(
+        parse_external_ids("rust-analyzer,tokio,servo"),
+        Ok(vec![
+            "rust-analyzer".to_string(),
+            "tokio".to_string(),
+            "servo".to_string()
+        ])
+    );
+    for bad in ["", ",", "a/b", "id;rm", "tokio,tokio", "--flag x"] {
+        assert!(
+            parse_external_ids(bad).is_err(),
+            "{bad:?} should be rejected"
+        );
+    }
+
+    let config = parse_config(
+        "schema_version = \"ripr-dx-scoreboards-v1\"\n\
+         [[corpus]]\nid = \"tokio\"\nurl = \"https://github.com/tokio-rs/tokio\"\n\
+         sha = \"6470b5e4b8e943ad014383a5bf6a93ba415678a3\"\n",
+    );
+    let Ok(config) = config else {
+        assert_eq!(config.err(), None, "the fixture config must parse");
+        return;
+    };
+    let resolved = resolve_external(&["tokio".to_string()], &config.corpus);
+    assert!(resolved.is_ok_and(|pins| pins.len() == 1));
+    // Negative control: an id the corpus does not declare is an error. A gate
+    // that timed nothing would pass for the wrong reason.
+    let missing = resolve_external(&["servo".to_string()], &config.corpus);
+    assert!(missing.is_err_and(|error| error.contains("not in the scoreboard corpus")));
+}
+
+#[test]
+fn external_pins_need_a_nightly_plan_and_cannot_mix_with_direct_arguments() {
+    use super::parse_args;
+    let args = |text: &str| -> Vec<String> { text.split(' ').map(str::to_string).collect() };
+    assert!(
+        parse_args(&args("--external-pins tokio,servo"))
+            .is_ok_and(|options| options.nightly.is_some())
+    );
+    let mixed = parse_args(&args("--external-pins tokio --baseline /bin/true"));
+    assert!(mixed.is_err_and(|error| error.contains("do not combine")));
+    let bad = parse_args(&args("--external-pins a/b"));
+    assert!(bad.is_err_and(|error| error.contains("external pin")));
+    // Both lists write `warm-ab-<id>.*`, so a shared id would overwrite evidence.
+    let shared = parse_args(&args("--pins tokio=a58975de --external-pins tokio"));
+    assert!(shared.is_err_and(|error| error.contains("both --pins and --external-pins")));
+}
+
 #[cfg(unix)]
 mod stub {
     use super::super::{build_packet, parse_args};

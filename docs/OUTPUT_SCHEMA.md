@@ -559,7 +559,7 @@ document.
 
 | Field | Meaning |
 | --- | --- |
-| `detected_languages[]` | Languages the root marker scan found: `language`, `status` (`stable` or `preview`), `adapter_available` (whether the adapter was compiled into this binary), `enabled` (whether the effective config enables it; `null` when the configuration could not be loaded, so enablement is unknown rather than disabled; JavaScript reads through its `typescript` entry). Omitted when no marker was found. |
+| `detected_languages[]` | Languages the root marker scan found: `language`, `status` (`stable` or `preview`), `adapter_available` (whether the adapter was compiled into this binary), `enabled` (whether the effective config enables it; `null` when the configuration could not be loaded, so enablement is unknown rather than disabled; JavaScript reads through its `typescript` entry), `availability_state` (the shared language-availability state, such as `detected_compiled_disabled` or `detected_not_compiled`, or `auto_detected_enabled` when no `ripr.toml` was loaded and marker detection enabled Python or TypeScript; `null` when the configuration could not be loaded; availability never means the adapter ran) and `remediation` (ordered steps for that state, empty when none). Both are additive within schema 0.4 and optional in the schema, so earlier 0.4 documents stay valid; the producer always emits them (#2961). Omitted when no marker was found. |
 | `unanalyzed_source_languages[]` | Source in languages no adapter reads: `language` and `file_count`. A non-coverage disclosure, never a finding. Omitted when no such source exists. |
 | `preview_language_gaps[]` | Detected preview languages `ripr check` skips until they are enabled: `config_entry` (what `[languages] enabled` accepts) and `detected_language` (the source it analyzes). The two differ for a JavaScript-only workspace, which the `typescript` entry analyzes. Omitted when there is no such gap. |
 | `config_defaults` | The effective configuration: `source_path` (`null` when the built-in defaults apply), `analysis_mode`, `lsp_seam_diagnostics`, `suppressions_path`, `bun_ub_profile_configured`, `bun_ub_test_roots[]`, `bun_ub_bridge_hints` (the bridge-hints path, `null` when the profile is absent). The whole field is `null` when the configuration could not be loaded, so it never claims a default the run did not verify. |
@@ -16747,6 +16747,28 @@ Field contract:
   reports the outer inventory total, and each entry names its own recovery
   control. Full recovery requires lifting every active cap. Uncapped output
   has no stale cap limitation.
+- Pilot byte bound (#12108) — the `ripr pilot` copy of this document
+  (`target/ripr/pilot/repo-exposure.json`) keeps its `seams[]` entries within
+  `RIPR_PILOT_REPO_EXPOSURE_BYTES` bytes (default 8,000,000; `0` writes all).
+  Current-change seams are kept first, then inventory order, each group
+  stopping at its first entry that does not fit. A cut adds a `limitations[]`
+  object `{category: "pilot_repo_exposure_byte_bound_applied", seams_rendered,
+  seams_total, seam_bytes_rendered, byte_budget, limit_source, control:
+  "RIPR_PILOT_REPO_EXPOSURE_BYTES", repair_route}`. When no seam cap and no
+  declined file already owns `run_status`, a cut sets it to
+  `"limited_repo_exposure_bytes"`; otherwise that status is kept and the bound
+  is an additional entry. `metrics` describe the entries the file carries.
+  A bounded document carries no `artifact` identity, so `ripr outcome` and
+  `ripr agent verify` refuse it by name rather than comparing it. Entries that
+  fit the budget change nothing. `pilot-summary.json` carries
+  `repo_exposure_byte_bound` (`seams_rendered`, `seams_total`,
+  `seam_bytes_rendered`, `byte_budget`, `source`, `control`), `null` when
+  nothing was cut. The budget counts entry bytes plus the 2-byte `,\n`
+  separator between entries. When cut, `pilot-summary.json` `next` also carries
+  `before_snapshot_command` (a full `ripr check --format repo-exposure-json`
+  baseline to capture before editing) and `next.outcome_command` compares that
+  baseline, never the cut file; `ripr calibrate cargo-mutants` refuses a cut
+  file too.
 - Pilot packet bound (#11951) — the `ripr pilot` copy of this document
   (`target/ripr/pilot/agent-seam-packets.json`) carries at most
   `RIPR_PILOT_PACKET_BUDGET` packets (default 3; `0` writes all). The kept
