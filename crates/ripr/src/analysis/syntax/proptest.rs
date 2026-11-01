@@ -180,7 +180,7 @@ fn closed_binding_context(root: &SyntaxNode, scope: &NameScope) -> Option<bool> 
             // binds `r#name` and `name` identically. Do not lend generated
             // owner-call authority through an unrecognized declaration.
             if let Some(name) = ast::Name::cast(node.clone())
-                && (name.text().starts_with("r#") || protected_name(&name.text()))
+                && (name.text().starts_with("r#") || protected_name(name.text()))
             {
                 return false;
             }
@@ -525,10 +525,10 @@ fn singleton_parameter(parameters: &SyntaxNode, prelude: bool) -> Option<(String
         return None;
     };
     let strategy = compact(&call.expr()?.syntax().text().to_string());
-    if !matches!(
+    if !(matches!(
         strategy.as_str(),
         "proptest::strategy::Just" | "::proptest::strategy::Just"
-    ) && !(prelude && strategy == "Just")
+    ) || prelude && strategy == "Just")
     {
         return None;
     }
@@ -582,10 +582,10 @@ fn property_equality(
         return None;
     }
     let path = compact(&call.path()?.syntax().text().to_string());
-    if !matches!(
+    if !(matches!(
         path.as_str(),
         "proptest::prop_assert_eq" | "::proptest::prop_assert_eq"
-    ) && !(prelude && path == "prop_assert_eq")
+    ) || prelude && path == "prop_assert_eq")
     {
         return None;
     }
