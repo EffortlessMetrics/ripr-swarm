@@ -1738,6 +1738,15 @@ impl WorkspaceKeyContext<'_> {
             } else {
                 workspace_manifests_hash
             };
+        // #12189 (before the Cargo identity, whose unavailable marker must stay
+        // the key's suffix): a committed `.snap` file decides whether a file-backed
+        // snapshot assertion can fail, so adding, deleting or (un)tracking
+        // one must move the key. Existence and tracking are the inputs;
+        // content is not.
+        let workspace_manifests_hash = hash_str(&format!(
+            "{workspace_manifests_hash}:rust-snapshot-files:{}",
+            super::rust_snapshot_files::SnapshotListing::read(self.workspace_root).identity()
+        ));
         // The registered-harness premise is producer-owned Cargo metadata.
         // Raw configuration, including malformed bytes and absence, changes
         // that premise independently of Rust sources, HEAD and ripr.toml.

@@ -6084,6 +6084,13 @@ pub fn discount(amount: i32, threshold: i32) -> bool { amount >= threshold }
 }
 "#,
             )?;
+            // The committed expected file is what lets the file-backed
+            // snapshot discriminate at all (#12189); this test varies only
+            // the configured strength.
+            write_file(
+                &root.join("src/snapshots/krate__tests__snapshots_discount.snap"),
+                "---\nsource: src/lib.rs\nexpression: discount(12, 10)\n---\ntrue\n",
+            )?;
             let medium = if loaded {
                 write_file(
                     &root.join("ripr.toml"),
