@@ -64,7 +64,7 @@ fn encode_missing_discriminators_is_injective() {
     }
 }
 
-// Not proven here (not tractable with Kani 0.68 / CBMC 6.11 at useful bounds):
+// Not verified here (not tractable with Kani 0.68 / CBMC 6.11 at useful bounds):
 // `canonicalize_missing_discriminators` (stable `sort` + `dedup` over
 // `Vec<String>` on top of the normalizer) and `normalize_discriminator_text`
 // idempotence (`Peekable<Chars>` clones and UTF-8 decoding). Both exceeded a

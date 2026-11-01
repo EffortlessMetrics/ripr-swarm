@@ -23,7 +23,7 @@ fn any_path<const N: usize>(buf: &mut [u8; N]) -> usize {
 
 /// A surface matches only when it is identical or a path-separator-anchored
 /// suffix: a truncated suffix (`schema.json` vs `check.schema.json`) never
-/// inherits a disposition. Both directions are proven, so the matcher accepts
+/// inherits a disposition. Both directions are verified, so the matcher accepts
 /// exactly that language.
 ///
 /// Bounds: registered up to 2 characters, observed up to 4, alphabet
