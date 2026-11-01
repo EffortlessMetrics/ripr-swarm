@@ -1636,6 +1636,11 @@ pub(crate) fn proof_obligation_for(seam: &RepoSeam) -> Option<ProofObligation> {
     if [lhs, rhs, predicate].iter().any(|text| text.contains('\n')) {
         return None;
     }
+    // The skeleton interpolates operands into a `/* … */` comment; a `*/` (for
+    // example inside a string literal operand) would end it early.
+    if [lhs, rhs, predicate].iter().any(|text| text.contains("*/")) {
+        return None;
+    }
     let owner = seam.owner().to_string();
     Some(ProofObligation {
         kind: "boundary",
