@@ -300,7 +300,8 @@ tests = [
   "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_on_the_signature_line_finds_the_body_brace_past_signature_braces",
   "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_on_the_signature_line_keeps_branch_text_with_non_ascii_and_comments",
   "crates/ripr/src/analysis/classify/flow.rs::tests::tail_if_on_the_signature_line_fails_closed_for_a_unit_owner",
-  "crates/ripr/tests/repair_layout_parity.rs::one_line_and_rustfmt_layouts_have_identical_repair_readiness_and_facts"
+  "crates/ripr/tests/repair_layout_parity.rs::one_line_and_rustfmt_layouts_have_identical_repair_readiness_and_facts",
+  "crates/ripr/src/analysis/summary.rs::tests::conflicting_expressions_count_expressions_with_more_than_one_class"
 ]
 fixtures = [
   "crates/ripr/tests/cli_smoke/sample_output.rs",
@@ -17450,9 +17451,19 @@ tests = [
   "crates/ripr/tests/field_write_seam.rs::builder_tail_self_is_not_a_later_write",
   "crates/ripr/tests/field_write_seam.rs::should_panic_test_does_not_check_the_written_field",
   "crates/ripr/tests/field_write_seam.rs::ignored_test_does_not_check_the_written_field",
+  "crates/ripr/tests/field_write_seam.rs::builder_field_write_names_the_receiver_not_a_wrapper",
+  "crates/ripr/tests/field_write_seam.rs::copy_builder_read_of_the_unmoved_binding_is_not_a_check",
+  "crates/ripr/tests/field_write_seam.rs::borrowed_receiver_read_of_the_written_field_is_still_a_check",
+  "crates/ripr/tests/field_write_seam.rs::setter_field_write_names_the_value_it_was_called_on",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::inventory_field_write_seams_record_whether_the_owner_borrows_its_receiver",
+  "crates/ripr/src/lsp/hover.rs::seam_hover_tests::field_write_next_step_follows_the_receiver_mode",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::field_write_oracle_shape_follows_the_receiver_mode",
+  "crates/ripr/src/analysis/test_stub/tests.rs::field_write_in_a_method_names_the_receiver_not_a_struct_literal",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::only_a_borrowed_receiver_writes_the_binding_the_test_reads",
 ]
 fixtures = [
   "fixtures/rust_map_overwrite_count",
+  "fixtures/rust_copy_builder_field_write",
   "fixtures/rust_map_insert_count_empty",
   "fixtures/rust_preseeded_first_element",
   "fixtures/rust_pushed_element_last",
@@ -17466,6 +17477,8 @@ code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/analysis/test_grip_evidence.rs",
+  "crates/ripr/src/analysis/test_stub.rs",
+  "crates/ripr/src/output/human/triage.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0228-rust-field-write-observation.md",

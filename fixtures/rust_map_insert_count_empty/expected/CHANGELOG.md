@@ -248,7 +248,7 @@ Updated:
 ## Pending — rust_map_insert_count_empty (19)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0001: additive summary.conflicting_expressions member (#11554)
 
 Command:
 `cargo xtask goldens bless rust_map_insert_count_empty --reason "..."`
@@ -261,7 +261,7 @@ Updated:
 ## Pending — rust_map_insert_count_empty (20)
 
 Reason:
-RIPR-SPEC-0122: explain missing input or assertion honestly
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
 `cargo xtask goldens bless rust_map_insert_count_empty --reason "..."`
@@ -272,6 +272,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — rust_map_insert_count_empty (21)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless rust_map_insert_count_empty --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_map_insert_count_empty (22)
 
 Reason:
 RIPR-SPEC-0122: render the missing check in plain language

@@ -119,6 +119,19 @@ Updated:
 ## Pending — module_reach_super_import_in_file_wrong_module (10)
 
 Reason:
+RIPR-SPEC-0001: additive summary.conflicting_expressions member (#11554)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (11)
+
+Reason:
 RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
@@ -128,7 +141,7 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 
-## Pending — module_reach_super_import_in_file_wrong_module (11)
+## Pending — module_reach_super_import_in_file_wrong_module (12)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

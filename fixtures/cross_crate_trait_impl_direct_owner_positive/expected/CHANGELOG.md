@@ -132,7 +132,7 @@ Updated:
 ## Pending — cross_crate_trait_impl_direct_owner_positive (10)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0001: additive summary.conflicting_expressions member (#11554)
 
 Command:
 `cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
@@ -145,7 +145,7 @@ Updated:
 ## Pending — cross_crate_trait_impl_direct_owner_positive (11)
 
 Reason:
-RIPR-SPEC-0122: explain missing input or assertion honestly
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
 `cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
@@ -156,6 +156,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — cross_crate_trait_impl_direct_owner_positive (12)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless cross_crate_trait_impl_direct_owner_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — cross_crate_trait_impl_direct_owner_positive (13)
 
 Reason:
 RIPR-SPEC-0122: render the missing check in plain language

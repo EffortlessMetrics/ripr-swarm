@@ -507,7 +507,7 @@ Updated:
 ## Pending — python_cross_file_construct_call (30)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0182: Python finding ids move to the versioned v1- namespace (#11368); classification and finding count unchanged; fixture diff and input made consistent so source context is verifiable
 
 Command:
 `cargo xtask goldens bless python_cross_file_construct_call --reason "..."`
@@ -519,7 +519,7 @@ Updated:
 ## Pending — python_cross_file_construct_call (31)
 
 Reason:
-RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
 `cargo xtask goldens bless python_cross_file_construct_call --reason "..."`
@@ -529,6 +529,18 @@ Updated:
 - `expected/human.txt`
 
 ## Pending — python_cross_file_construct_call (32)
+
+Reason:
+RIPR-SPEC-0118 / #10692: observed-assertion label replaces Discriminator in the default check digest; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless python_cross_file_construct_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_cross_file_construct_call (33)
 
 Reason:
 RIPR-SPEC-0122: explain missing input or assertion honestly

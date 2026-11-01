@@ -45,8 +45,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast probe:audit.py:python_preview:a2e6d4a7
-  ripr context --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast --at probe:audit.py:python_preview:a2e6d4a7
+  ripr explain --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast probe:audit.py:python_preview:v1-f8599422
+  ripr context --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast --at probe:audit.py:python_preview:v1-f8599422
   no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `audit.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 More:

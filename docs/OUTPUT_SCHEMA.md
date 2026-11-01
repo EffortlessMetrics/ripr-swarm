@@ -1124,6 +1124,13 @@ count. `summary.changed_rust_files` stays Rust-adapter-only (#2103):
 preview-language files never inflate it, so it is `0` for a Python-only diff
 by design; read `changed_files_by_language` for other languages.
 
+`summary.conflicting_expressions` (additive, no `schema_version` bump, #11554)
+counts changed expressions, keyed by file, line and expression text, that
+carry findings of more than one exposure class. It is emitted only when it is
+greater than `0`, and the per-class counts above still count every finding.
+Selecting one of those findings by location stays ambiguous by design; this
+member is the signal that the same expression was classified two ways.
+
 `language_completeness` (additive, no `schema_version` bump, #11272) is the
 per-language projection of the shared completeness view that the editor, MCP
 and SARIF surfaces already read. It is emitted on every `check --json` run
@@ -16882,14 +16889,28 @@ Field contract:
 - Pilot byte bound (#12108) — the `ripr pilot` copy of this document
   (`target/ripr/pilot/repo-exposure.json`) keeps its `seams[]` entries within
   `RIPR_PILOT_REPO_EXPOSURE_BYTES` bytes (default 8,000,000; `0` writes all).
-  Current-change seams are kept first, then inventory order, each group
-  stopping at its first entry that does not fit. A cut adds a `limitations[]`
+  Selection runs in three priority groups: current-change seams, then the
+  remaining seams in pilot ranking order (#12152), then every other seam in
+  inventory order. A seam that does not fit the remaining budget is skipped
+  (#12151), so later seams of the same group are still kept, and one skipped
+  while a later seam of its group was kept is counted in
+  `seams_skipped_over_budget`, which counts holes only (rejected seams
+  followed by a later fitting seam), so final rejections are visible as
+  `seams_total - seams_rendered`; once
+  a group has skipped a seam, no later group is started. The kept seams are
+  written in inventory order (`selection_order` names the priority, not the
+  `seams[]` order). A cut adds a `limitations[]`
   object `{category: "pilot_repo_exposure_byte_bound_applied", seams_rendered,
-  seams_total, seam_bytes_rendered, byte_budget, limit_source, control:
+  seams_total, seams_skipped_over_budget, selection_order, seam_bytes_rendered, byte_budget, limit_source, control:
   "RIPR_PILOT_REPO_EXPOSURE_BYTES", repair_route}`. When no seam cap and no
   declined file already owns `run_status`, a cut sets it to
   `"limited_repo_exposure_bytes"`; otherwise that status is kept and the bound
-  is an additional entry. `metrics` describe the entries the file carries.
+  is an additional entry. `metrics` describe the entries the file carries, and
+  a bounded document says so itself (#12153): `metrics.population` is
+  `"byte_bound_kept_seams"` and `metrics.population_seams_total` is the full
+  seam count beside the kept `metrics.seams_total`. Each kept seam's
+  `canonical_gap_group_size` is still computed over the full set, so it can
+  exceed the number of that group's seams in the file.
   A bounded document carries no `artifact` identity, so `ripr outcome` and
   `ripr agent verify` refuse it by name rather than comparing it. Entries that
   fit the budget change nothing. `pilot-summary.json` carries
@@ -19386,7 +19407,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.131",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.132",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20171,7 +20192,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.131",
+      "schema_version": "1.132",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

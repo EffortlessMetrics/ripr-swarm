@@ -631,6 +631,14 @@ fn apply_suppression_policy(output: &mut CheckOutput, policy: &Path) -> Result<(
             output.summary.decrement_exposure_class(&finding.class);
         }
     }
+    // A conflict needs two live classes; recount over unsuppressed findings so
+    // the member agrees with the decremented class buckets (#11554).
+    output.summary.conflicting_expressions = crate::analysis::summary::conflicting_expression_count(
+        output
+            .findings
+            .iter()
+            .filter(|finding| !matched.contains_key(&finding.id)),
+    );
     output.suppression = Some(sup::CheckSuppressionOutcome {
         policy_path: policy.display().to_string(),
         suppressed,

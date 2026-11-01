@@ -888,6 +888,17 @@ pub(crate) fn boundary_input_observed_with_weak_oracle(
 }
 
 impl Finding {
+    /// The (file, line, expression) a finding speaks about. Probes of
+    /// different families can sit on one expression (#11554); they share this
+    /// key, so counts and selection can treat them as one verdict.
+    pub(crate) fn expression_key(&self) -> (&std::path::Path, usize, &str) {
+        (
+            self.probe.location.file.as_path(),
+            self.probe.location.line,
+            self.probe.expression.as_str(),
+        )
+    }
+
     /// A weak predicate finding whose related tests already supply the changed
     /// boundary input (infection `yes`): the remaining gap is the oracle, not
     /// the input (#10622). Static evidence only. The finding must also carry

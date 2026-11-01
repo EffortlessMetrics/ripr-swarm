@@ -235,7 +235,7 @@ Updated:
 ## Pending — rust_direct_collection_count_payload (18)
 
 Reason:
-RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+RIPR-SPEC-0001: additive summary.conflicting_expressions member (#11554)
 
 Command:
 `cargo xtask goldens bless rust_direct_collection_count_payload --reason "..."`
@@ -248,7 +248,7 @@ Updated:
 ## Pending — rust_direct_collection_count_payload (19)
 
 Reason:
-RIPR-SPEC-0122: explain missing input or assertion honestly
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
 
 Command:
 `cargo xtask goldens bless rust_direct_collection_count_payload --reason "..."`
@@ -259,6 +259,19 @@ Updated:
 - `expected/human-full.txt`
 
 ## Pending — rust_direct_collection_count_payload (20)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless rust_direct_collection_count_payload --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_direct_collection_count_payload (21)
 
 Reason:
 RIPR-SPEC-0122: render the missing check in plain language
