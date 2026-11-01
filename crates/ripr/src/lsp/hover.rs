@@ -1546,6 +1546,16 @@ fn seam_next_step_for(entry: &ClassifiedSeam) -> String {
             "Assert the exact error variant via `matches!` or `assert_matches!`.".to_string()
         }
         SeamKind::ReturnValue => "Add an exact-value assertion on the returned value.".to_string(),
+        // #11398: a field write in a method changes the value the method
+        // was called on; there is no returned struct to compare.
+        SeamKind::FieldConstruction if crate::analysis::is_field_write_seam(&entry.seam) => {
+            use crate::analysis::FieldWriteRead;
+            match crate::analysis::field_write_read(&entry.seam) {
+                Some(FieldWriteRead::CallResult) => "Call the method, then assert the exact value of the changed field on the value the call returns (a by-value method writes a moved copy).".to_string(),
+                Some(FieldWriteRead::Unspecified) => "Call the method, then assert the exact value of the changed field.".to_string(),
+                _ => "Call the method, then assert the exact value of the changed field on the value it was called on.".to_string(),
+            }
+        }
         SeamKind::FieldConstruction => {
             "Assert on the specific field or use whole-object equality.".to_string()
         }
@@ -1644,6 +1654,46 @@ mod seam_hover_tests {
             evidence,
             class: SeamGripClass::WeaklyGripped,
         }
+    }
+
+    /// #12061: the hover words a field write by the receiver mode the seam
+    /// records: a borrowed receiver is read on the value it was called on, a
+    /// by-value receiver (a moved copy) on the value the call returns, and an
+    /// unrecorded mode names neither.
+    #[test]
+    fn field_write_next_step_follows_the_receiver_mode() {
+        let step = |borrows: Option<bool>| {
+            let mut entry = weakly_gripped_classified();
+            entry.seam = RepoSeam::new(
+                "src/req.rs",
+                "req::Req::timeout",
+                SeamKind::FieldConstruction,
+                10,
+                11,
+                "self.timeout = t * 2",
+                RequiredDiscriminator::FieldValue {
+                    field: "self.timeout = t * 2".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+            .with_owner_borrows_receiver(borrows);
+            seam_next_step_for(&entry)
+        };
+        let borrowed = step(Some(true));
+        assert!(
+            borrowed.contains("on the value it was called on"),
+            "{borrowed}"
+        );
+        let by_value = step(Some(false));
+        assert!(
+            by_value.contains("on the value the call returns") && !by_value.contains("called on"),
+            "{by_value}"
+        );
+        let unrecorded = step(None);
+        assert!(
+            !unrecorded.contains("called on") && !unrecorded.contains("call returns"),
+            "{unrecorded}"
+        );
     }
 
     fn sample_diagnostic() -> Diagnostic {

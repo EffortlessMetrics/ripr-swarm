@@ -421,6 +421,14 @@ pub(crate) struct RepoSeam {
     /// the field existed reads `Unknown`, which renders no call.
     #[serde(default)]
     owner_call: OwnerCallShape,
+    /// For a field write in a method (`self.count += 1`) only: whether the
+    /// owner borrows its receiver (#12061). A borrowed receiver's write is
+    /// read back from the value the method was called on; a by-value
+    /// receiver writes a moved copy, so it is read from the value the call
+    /// returns. `None` for every other seam and for a cache entry written
+    /// before the fact existed, which words the read neutrally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    owner_borrows_receiver: Option<bool>,
 }
 
 /// How a test can call a seam's owner function, read from the parser's item
@@ -615,6 +623,7 @@ impl RepoSeam {
             span: None,
             source_lines: None,
             owner_call: OwnerCallShape::Unknown,
+            owner_borrows_receiver: None,
         }
     }
 
@@ -640,6 +649,16 @@ impl RepoSeam {
     pub(crate) fn with_owner_call(mut self, owner_call: OwnerCallShape) -> Self {
         self.owner_call = owner_call;
         self
+    }
+
+    /// Record whether a field write's owner borrows its receiver (#12061).
+    pub(crate) fn with_owner_borrows_receiver(mut self, borrows: Option<bool>) -> Self {
+        self.owner_borrows_receiver = borrows;
+        self
+    }
+
+    pub(crate) fn owner_borrows_receiver(&self) -> Option<bool> {
+        self.owner_borrows_receiver
     }
 
     pub(crate) fn id(&self) -> &SeamId {
