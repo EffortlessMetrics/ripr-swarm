@@ -3591,7 +3591,7 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     summary: &str,
 ) -> DogfoodGeneratedCiCockpitRun {
     let start_here = summary.contains("### Start here")
-        && summary.contains("Open `target/ripr/reports/start-here.md` first");
+        && summary.contains("Open `start-here.md` in the `ripr-reports` artifact");
     let repair_commands = [
         GENERATED_CI_FIRST_ACTION_REPAIR,
         GENERATED_CI_FIRST_PR_REPAIR,
@@ -3602,8 +3602,11 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     .filter(|command| summary.contains(**command))
     .count();
     let expected_repair_commands = 4usize;
-    let gate_authority_boundary =
-        summary.contains("ripr gate evaluate") && summary.contains("Gate authority:");
+    // #11585 removed the generic `Gate authority:` Start here bullet; the
+    // boundary is stated where it applies, as pass/fail authority naming
+    // `ripr gate evaluate`.
+    let gate_authority_boundary = summary.contains("ripr gate evaluate")
+        && summary.to_ascii_lowercase().contains("pass/fail authority");
     let summary_step = generated_ci_advisory_summary_step(workflow);
     let summary_step_head = summary_step.is_some();
     let summary_invoke = summary_step.is_some_and(generated_ci_summary_step_has_executable_invoke);

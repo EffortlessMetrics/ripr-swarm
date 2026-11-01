@@ -19123,8 +19123,7 @@ jobs:
 RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.
 
 ### Start here
-- Open `target/ripr/reports/start-here.md` first when it exists.
-- Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured.
+- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.
 - {GENERATED_CI_FIRST_ACTION_REPAIR}
 - {GENERATED_CI_FIRST_PR_REPAIR}
 - {GENERATED_CI_FRONT_PANEL_REPAIR}
@@ -19184,6 +19183,24 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
         mutated.errors
     );
     assert!(!mutated.start_here);
+
+    // Dropping the gate boundary wording must fail the scenario (#12261).
+    let no_gate = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "missing-gate-authority",
+        command,
+        10,
+        workflow,
+        &summary.replace("pass/fail authority", "decision source"),
+    );
+    assert!(!no_gate.gate_authority_boundary);
+    assert!(
+        no_gate
+            .errors
+            .iter()
+            .any(|error| error.contains("gate-decision authority")),
+        "{:?}",
+        no_gate.errors
+    );
 
     // Workflow text that still carries the retired shell cannot satisfy the
     // summary properties.
