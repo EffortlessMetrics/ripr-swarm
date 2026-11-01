@@ -148,58 +148,8 @@ impl ReviewCommentsRunReceipt {
         }
     }
 
-    pub(crate) fn admit_identity(
-        &mut self,
-        identity: crate::app::review_comments::ReviewAnalysisIdentity,
-    ) {
-        self.analysis_identity = Some(identity);
-    }
-
-    pub(crate) fn fail(&mut self, phase: &str, category: &str, message: &str) {
-        self.finish_phase(phase, false, None, category, None);
-        self.status = "failed";
-        self.active_phase = Some(phase.to_string());
-        self.primary_failure = Some(ReviewCommentsFailure {
-            phase: phase.to_string(),
-            category: category.to_string(),
-            message: message.to_string(),
-            secondary_diagnostics: Vec::new(),
-        });
-        self.limitations = vec![ReviewCommentsReceiptLimitation {
-            category: category.to_string(),
-            repair_route: "analysis/review-comments-producer-admission".to_string(),
-        }];
-        self.non_claims = vec![
-            "no complete route inventory".to_string(),
-            "no all-clear".to_string(),
-        ];
-        self.phase_started = None;
-    }
-
     pub(crate) fn phase(&mut self, completed: &str, active: &str) {
         self.finish_phase(completed, false, None, "complete", None);
-        self.last_completed_phase = Some(completed.to_string());
-        self.active_phase = Some(active.to_string());
-        self.active_step = None;
-        self.canonical_analysis_evaluated_seams = None;
-        self.phase_started = Some(Instant::now());
-    }
-
-    pub(crate) fn measured_phase(
-        &mut self,
-        completed: &str,
-        active: &str,
-        reused: bool,
-        subject_count: Option<usize>,
-        input_identity_digest: Option<String>,
-    ) {
-        self.finish_phase(
-            completed,
-            reused,
-            subject_count,
-            "complete",
-            input_identity_digest,
-        );
         self.last_completed_phase = Some(completed.to_string());
         self.active_phase = Some(active.to_string());
         self.active_step = None;

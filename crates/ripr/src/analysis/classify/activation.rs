@@ -2014,18 +2014,17 @@ fn missing_discriminator_facts(
     workspace_complete: bool,
     unresolved_boundary: &mut Option<String>,
 ) -> Vec<MissingDiscriminatorFact> {
+    let boundary_evidence = BoundaryEvidence {
+        related_tests,
+        flow_sinks,
+        helper_chain,
+        index,
+        workspace_complete,
+    };
     let mut missing = Vec::new();
     if matches!(probe.family, ProbeFamily::Predicate)
-        && let Some(fact) = missing_boundary_discriminator(
-            probe,
-            owner_fn,
-            related_tests,
-            flow_sinks,
-            helper_chain,
-            index,
-            workspace_complete,
-            unresolved_boundary,
-        )
+        && let Some(fact) =
+            missing_boundary_discriminator(probe, owner_fn, boundary_evidence, unresolved_boundary)
     {
         missing.push(fact);
     }
@@ -2037,11 +2036,7 @@ fn missing_discriminator_facts(
         && let Some(fact) = missing_boundary_discriminator(
             &view,
             owner_fn,
-            related_tests,
-            flow_sinks,
-            helper_chain,
-            index,
-            workspace_complete,
+            boundary_evidence,
             &mut returned_unresolved,
         )
         && returned_unresolved.is_none()
@@ -2640,16 +2635,30 @@ pub(in crate::analysis) fn unresolved_guard_error_edge(
     ))
 }
 
+/// The shared evidence a boundary reading draws on, bundled so the reading takes the probe,
+/// its owner and the unresolved-reason slot without a long positional list.
+#[derive(Clone, Copy)]
+struct BoundaryEvidence<'a> {
+    related_tests: &'a [&'a TestSummary],
+    flow_sinks: &'a [FlowSinkFact],
+    helper_chain: Option<&'a super::helper_transfer::HelperChain>,
+    index: &'a crate::analysis::rust_index::RustIndex,
+    workspace_complete: bool,
+}
+
 fn missing_boundary_discriminator(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
-    related_tests: &[&TestSummary],
-    flow_sinks: &[FlowSinkFact],
-    helper_chain: Option<&super::helper_transfer::HelperChain>,
-    index: &crate::analysis::rust_index::RustIndex,
-    workspace_complete: bool,
+    evidence: BoundaryEvidence<'_>,
     unresolved: &mut Option<String>,
 ) -> Option<MissingDiscriminatorFact> {
+    let BoundaryEvidence {
+        related_tests,
+        flow_sinks,
+        helper_chain,
+        index,
+        workspace_complete,
+    } = evidence;
     let owner = owner_fn?;
     let parameters = function_parameters(owner);
     let owner_source = index
