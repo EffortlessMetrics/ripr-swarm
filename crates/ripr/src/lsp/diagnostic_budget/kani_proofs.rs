@@ -63,7 +63,11 @@ fn budget_item_limits_hold_over_walk() {
                         assert!(cursor.selected_len >= budget.max_items_per_workspace_response);
                     }
                     OmittedDiagnosticReason::SerializedByteLimit => {}
-                    OmittedDiagnosticReason::ProfileFiltered => unreachable!(),
+                    // Profile filtering is decided before the budget cursor runs, so
+                    // this arm must be unreachable; fail the proof if it is not.
+                    OmittedDiagnosticReason::ProfileFiltered => {
+                        kani::assert(false, "budget cursor never omits for profile filtering");
+                    }
                 }
             }
         }
