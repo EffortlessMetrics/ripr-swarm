@@ -3831,3 +3831,73 @@ fn truthiness_swap_fails_open_on_a_separating_default_or_a_branch_value_edit() -
     assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
 }
+
+const OBJECT_BASE_TESTS: &str =
+    "from src.subject import Box\n\ndef test_double():\n    assert Box(2).double() == 4\n";
+
+// #11888 hardening: a class-header lookalike inside a multi-line string (or an
+// unlexable file) is data, so it keeps its probe; a real header does not.
+#[test]
+fn a_class_header_lookalike_inside_a_multiline_string_keeps_its_probe() {
+    let source = "class Box:\n    def double(self):\n        return self.value * 2\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), OBJECT_BASE_TESTS);
+    for in_string in [false, true] {
+        let no_behavior = super::PythonNoBehaviorContext {
+            new_line_in_multiline_string: in_string,
+            ..Default::default()
+        };
+        let finding = super::classify_change_full(
+            file,
+            1,
+            "class Box:",
+            Some("class Box(object):"),
+            &owners,
+            &tests,
+            no_behavior,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(finding.is_none(), !in_string, "in_string={in_string}");
+    }
+}
+
+// Pinned shapes the object-base allow-list must not widen to.
+#[test]
+fn object_base_class_change_pins_type_params_keywords_and_header_shapes() {
+    use super::super::no_behavior::is_annotation_only_def_change as noop;
+    assert!(noop("    class Inner(object):", "    class Inner:"));
+    assert!(noop("class A[T](object):", "class A[T]:"));
+    assert!(!noop("class A[T](object):", "class A[U]:"));
+    assert!(!noop("class A[T](object):", "class A:"));
+    assert!(!noop("class Box(object): pass", "class Box: pass"));
+    assert!(!noop("class Box(object,", "class Box("));
+    assert!(!noop(
+        "class Box(object, metaclass=Meta):",
+        "class Box(metaclass=Meta):"
+    ));
+    assert!(!noop(
+        "class Box(object, flag=True):",
+        "class Box(flag=True):"
+    ));
+    assert!(!noop("class Box(Base, object):", "class Box(Base):"));
+    assert!(!noop("class Box(object):", "class Box(Base):"));
+    // Indentation mismatch is a moved statement: the classify guard refuses it.
+    let source = "class Box:\n    def double(self):\n        return 1\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), OBJECT_BASE_TESTS);
+    assert!(
+        classify_change_with_old(
+            file,
+            1,
+            "    class Box:",
+            Some("class Box(object):"),
+            &owners,
+            &tests
+        )
+        .is_some()
+    );
+}

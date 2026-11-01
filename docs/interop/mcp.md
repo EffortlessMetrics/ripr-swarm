@@ -544,19 +544,20 @@ phase), the shared non-claims, and the resource links. An ineligible item
 returns `isError: true` with `repair_packet_ready: false`, the typed
 ineligibility reason, `attempt: null` and a machine-readable `next` object
 (`kind` one of `nothing_to_do`, `write_test_by_hand`, `change_policy`,
-`commit_then_refresh`, `await_producer_fact`, or `terminal_static_limit` for an
-`infection_unknown` predicate item that carries a typed producer static limit —
-then `static_limit` holds the limit and `mcp` names `ripr_get_top_limitation`,
-with no edit-and-recheck route. The marker applies only where the route would
-have been `write_test_by_hand` or `await_producer_fact`; `change_policy`
-(seam budget) and `commit_then_refresh` keep their own routes; the `reason`; an `mcp` route or
-`null`; and, only for `write_test_by_hand`, `after_editing_tests`; a
+`commit_then_refresh`, `await_producer_fact`, or `terminal_static_limit`; the
+`reason`; an `mcp` route or `null`; and, only for `write_test_by_hand`,
+`after_editing_tests`; a
 `seam_not_found` or `seam_ambiguous` refusal also carries `stub_route`, the
 `ripr agent stub --at FILE:LINE --kind FAMILY` command the shared stub resolver
 names, guidance that does not make the item repair-ready, omitted when the
 resolver names no route or the path would need shell quoting) — no attempt
 is created and no field is guessed, and `next` adds no verdict the shared gate
-did not produce. `isError` is true exactly when no transaction exists. The reasons
+did not produce. `terminal_static_limit` marks an `infection_unknown` predicate
+item that carries a typed producer static limit: `static_limit` holds the limit,
+`mcp` names `ripr_get_top_limitation` and there is no edit-and-recheck route. It
+applies only where the route would have been `write_test_by_hand` or
+`await_producer_fact`; `change_policy` (seam budget) and `commit_then_refresh`
+keep their own routes. `isError` is true exactly when no transaction exists. The reasons
 the shared seam-level repair gate behind `ripr repair` contributes are
 `seam_already_gripped` (the seam's existing tests already check it),
 `seam_gate_refused` (route not ready, cross-language limits, policy
@@ -696,7 +697,11 @@ identity_unnameable    budget_overflow     incomplete_inventory
 Before the first successful refresh the evidence tools fail with
 `no_snapshot` and the repair-attempt / receipt reads fail with
 `attempt_not_found`; `superseded` is reachable for a session transaction
-bound to a snapshot that is no longer current, while superseded tombstones
+bound to a snapshot that is no longer current (a transaction still held in
+memory carries `data.canonical_id`, `data.item_in_current_snapshot` and a
+`data.next` route: `prepare_again` through `ripr_prepare_repair` while the item
+is in the current snapshot, `item_no_longer_listed` through `ripr_list_gaps`
+otherwise), while superseded tombstones
 older than the 64-entry session bound read `attempt_not_found` instead
 (oldest-first eviction); `attempt_invalid` reports a
 durable manifest that fails canonical validation; `seam_not_found`,
