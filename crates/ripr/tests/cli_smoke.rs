@@ -1737,7 +1737,7 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
         // sha256 hex digest. A partial document must not pass as complete.
         let value: serde_json::Value = serde_json::from_slice(&baseline_stdout)
             .map_err(|error| format!("help --json is not valid JSON: {error}"))?;
-        if value["schema_version"] != serde_json::json!(3) {
+        if value["schema_version"] != serde_json::json!(4) {
             return Err(format!(
                 "help --json schema_version moved: {}",
                 value["schema_version"]
