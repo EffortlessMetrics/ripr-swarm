@@ -4,10 +4,11 @@
 use super::*;
 
 fn any_reason() -> FeedbackReason {
-    // Bound: index is within the closed 25-entry taxonomy.
+    // Bound derived from the closed taxonomy itself, so a new reason widens it.
+    let all = FeedbackReason::all();
     let index: usize = kani::any();
-    kani::assume(index < 25);
-    FeedbackReason::all()[index]
+    kani::assume(index < all.len());
+    all[index]
 }
 
 /// Every reason maps to exactly one judgment (total), only `other` requires a

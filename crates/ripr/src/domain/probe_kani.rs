@@ -4,26 +4,62 @@
 
 use super::*;
 
-fn any_currentness() -> SourceCurrentness {
-    match kani::any::<u8>() % 4 {
-        0 => SourceCurrentness::CandidateCurrent,
-        1 => SourceCurrentness::BaseDeleted,
-        2 => SourceCurrentness::MovedOrRenamed,
-        _ => SourceCurrentness::UnresolvedSubject,
+const CURRENTNESS: [SourceCurrentness; 4] = [
+    SourceCurrentness::CandidateCurrent,
+    SourceCurrentness::BaseDeleted,
+    SourceCurrentness::MovedOrRenamed,
+    SourceCurrentness::UnresolvedSubject,
+];
+
+const FAMILIES: [ProbeFamily; 8] = [
+    ProbeFamily::Predicate,
+    ProbeFamily::ReturnValue,
+    ProbeFamily::ErrorPath,
+    ProbeFamily::CallDeletion,
+    ProbeFamily::FieldConstruction,
+    ProbeFamily::SideEffect,
+    ProbeFamily::MatchArm,
+    ProbeFamily::StaticUnknown,
+];
+
+// Wildcard-free matches: a new variant fails to compile under `cfg(kani)` until
+// the symbolic domains above are extended.
+fn currentness_domain_is_exhaustive(value: SourceCurrentness) {
+    match value {
+        SourceCurrentness::CandidateCurrent
+        | SourceCurrentness::BaseDeleted
+        | SourceCurrentness::MovedOrRenamed
+        | SourceCurrentness::UnresolvedSubject => {}
     }
 }
 
-fn any_family() -> ProbeFamily {
-    match kani::any::<u8>() % 8 {
-        0 => ProbeFamily::Predicate,
-        1 => ProbeFamily::ReturnValue,
-        2 => ProbeFamily::ErrorPath,
-        3 => ProbeFamily::CallDeletion,
-        4 => ProbeFamily::FieldConstruction,
-        5 => ProbeFamily::SideEffect,
-        6 => ProbeFamily::MatchArm,
-        _ => ProbeFamily::StaticUnknown,
+fn family_domain_is_exhaustive(family: &ProbeFamily) {
+    match family {
+        ProbeFamily::Predicate
+        | ProbeFamily::ReturnValue
+        | ProbeFamily::ErrorPath
+        | ProbeFamily::CallDeletion
+        | ProbeFamily::FieldConstruction
+        | ProbeFamily::SideEffect
+        | ProbeFamily::MatchArm
+        | ProbeFamily::StaticUnknown => {}
     }
+}
+
+fn any_currentness() -> SourceCurrentness {
+    let index: usize = kani::any();
+    kani::assume(index < CURRENTNESS.len());
+    let value = CURRENTNESS[index];
+    currentness_domain_is_exhaustive(value);
+    value
+}
+
+fn any_family() -> ProbeFamily {
+    let index: usize = kani::any();
+    kani::assume(index < FAMILIES.len());
+    let value = FAMILIES[index].clone();
+    family_domain_is_exhaustive(&value);
+    value
 }
 
 /// Candidate action requires established candidate currentness; base-side and

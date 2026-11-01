@@ -6,24 +6,59 @@
 
 use super::*;
 
-fn any_gap_state() -> GapState {
-    match kani::any::<u8>() % 4 {
-        0 => GapState::Actionable,
-        1 => GapState::AlreadyObserved,
-        2 => GapState::Resolved,
-        _ => GapState::Unknown,
+const GAP_STATES: [GapState; 4] = [
+    GapState::Actionable,
+    GapState::AlreadyObserved,
+    GapState::Resolved,
+    GapState::Unknown,
+];
+
+const ORACLES: [OracleStrength; 6] = [
+    OracleStrength::Strong,
+    OracleStrength::Medium,
+    OracleStrength::Weak,
+    OracleStrength::Smoke,
+    OracleStrength::None,
+    OracleStrength::Unknown,
+];
+
+// Wildcard-free matches: adding a variant to either enum fails to compile under
+// `cfg(kani)` until the symbolic domain above is extended, so the harnesses
+// cannot silently stop covering a new variant.
+fn gap_state_domain_is_exhaustive(state: GapState) {
+    match state {
+        GapState::Actionable
+        | GapState::AlreadyObserved
+        | GapState::Resolved
+        | GapState::Unknown => {}
     }
 }
 
-fn any_oracle() -> OracleStrength {
-    match kani::any::<u8>() % 6 {
-        0 => OracleStrength::Strong,
-        1 => OracleStrength::Medium,
-        2 => OracleStrength::Weak,
-        3 => OracleStrength::Smoke,
-        4 => OracleStrength::None,
-        _ => OracleStrength::Unknown,
+fn oracle_domain_is_exhaustive(oracle: &OracleStrength) {
+    match oracle {
+        OracleStrength::Strong
+        | OracleStrength::Medium
+        | OracleStrength::Weak
+        | OracleStrength::Smoke
+        | OracleStrength::None
+        | OracleStrength::Unknown => {}
     }
+}
+
+fn any_gap_state() -> GapState {
+    let index: usize = kani::any();
+    kani::assume(index < GAP_STATES.len());
+    let value = GAP_STATES[index];
+    gap_state_domain_is_exhaustive(value);
+    value
+}
+
+fn any_oracle() -> OracleStrength {
+    let index: usize = kani::any();
+    kani::assume(index < ORACLES.len());
+    let value = ORACLES[index].clone();
+    oracle_domain_is_exhaustive(&value);
+    value
 }
 
 fn any_state(discriminator: &str) -> CanonicalEvidenceState {
@@ -112,6 +147,45 @@ fn same_identity_decision_table() {
             assert!(false, "unreachable attribution");
         }
     }
+    // Exact classification, restated from the documented precedence (not from
+    // the implementation's branch order): reintroduction wins, then a
+    // resolving gap transition, then a rank decrease, then a rank increase,
+    // then "nothing moved"; anything else stays an unknown at low confidence.
+    let rank_delta = i16::from(hr) - i16::from(br);
+    let same_gap = base.gap_state == head.gap_state || (base_res && head_res);
+    let (expected, expected_confidence) = if base_res && head.gap_state == GapState::Actionable {
+        (
+            DeltaAttribution::ReintroducedByChange,
+            ComparisonConfidence::FixtureBacked,
+        )
+    } else if head_res && !base_res {
+        (
+            DeltaAttribution::ResolvedByChange,
+            ComparisonConfidence::FixtureBacked,
+        )
+    } else if rank_delta < 0 {
+        (
+            DeltaAttribution::WeakenedByChange,
+            ComparisonConfidence::FixtureBacked,
+        )
+    } else if rank_delta > 0 {
+        (
+            DeltaAttribution::ResolvedByChange,
+            ComparisonConfidence::FixtureBacked,
+        )
+    } else if same_gap {
+        (
+            DeltaAttribution::ChangedSurfaceExisting,
+            ComparisonConfidence::FixtureBacked,
+        )
+    } else {
+        (
+            DeltaAttribution::ComparisonUnknown,
+            ComparisonConfidence::Low,
+        )
+    };
+    assert_eq!(delta.delta_attribution, expected);
+    assert_eq!(delta.comparison_confidence, expected_confidence);
     kani::cover!(delta.delta_attribution == DeltaAttribution::ReintroducedByChange);
     kani::cover!(delta.delta_attribution == DeltaAttribution::WeakenedByChange);
     kani::cover!(delta.delta_attribution == DeltaAttribution::ResolvedByChange);
@@ -126,10 +200,10 @@ fn same_identity_decision_table() {
 fn identity_mismatch_is_unknown() {
     let base = any_state("d");
     let head = any_state("other");
-    let delta = compare_fixture_delta("g", true, true, Some(base), Some(head));
+    let delta = compare_fixture_delta("g", true, true, Some(base.clone()), Some(head.clone()));
     assert_eq!(delta.delta_attribution, DeltaAttribution::ComparisonUnknown);
     assert_eq!(delta.comparison_confidence, ComparisonConfidence::Unknown);
-    kani::cover!(delta.head_state.is_some());
+    kani::cover!(base.gap_state != head.gap_state);
 }
 
 /// Totality plus the global invariant over every availability/presence
