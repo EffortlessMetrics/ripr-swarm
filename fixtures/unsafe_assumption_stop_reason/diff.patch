@@ -1,0 +1,20 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,12 +1,13 @@
+ /// # Safety
+ /// `index` must be below `values.len()`.
+-pub fn pick(values: &[u8], index: usize) -> u8 {
+-    values[index]
++pub unsafe fn pick(values: &[u8], index: usize) -> u8 {
++    *values.get_unchecked(index)
+ }
+ 
+ pub fn first(values: &[u8]) -> u8 {
+     if values.is_empty() {
+         return 0;
+     }
+-    pick(values, 0)
++    unsafe { std::hint::unreachable_unchecked() };
++    unsafe { pick(values, 0) }
+ }

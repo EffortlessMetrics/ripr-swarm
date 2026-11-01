@@ -251,6 +251,85 @@ The budget-version constant lives in
 `crates/ripr/src/domain/repair_card.rs` and is pinned by unit tests and
 `cargo xtask check-output-contracts`.
 
+## Structured refusal remedy (`remedy`, additive, #11790, #11584)
+
+Every refusal already names its next step in prose (#11539). Machine
+consumers get the same step as a `remedy` object, derived from that prose by
+one owner (`RefusalRemedy::from_prose` in `crates/ripr/src/domain/`); the
+renderers only serialize it. The prose is the source of truth, so the
+derivation is fail-closed: it copies what the message states and never
+composes, completes or guesses a command.
+
+`remedy` is additive and carried beside the existing refusal fields, without
+a schema-version bump, on:
+
+- `ripr check --format json` refusal envelopes: `run_limitations[0].remedy`
+  (both `0.2` and the `analysis_timeout` `0.3` generation; the two frozen
+  scope-guard documents are unchanged);
+- `ripr agent card --json` refusals: `error.remedy`, beside the typed
+  `error.remedy_route`;
+- `ripr agent stub --json` refusals (`state: refused`): `refusal.remedy`;
+- `ripr agent repair --phase after --json` refusals
+  (`repair_after_refusal`): `remedy`, derived from `error` and the recovery
+  `narration`;
+- MCP typed failures: `failure.remedy`, derived from `failure.recovery`
+  (`data.next`, where a tool returns one, stays the typed route).
+
+The field set is fixed; absent facts are `null` or empty, never omitted:
+
+```json
+{
+  "kind": "command",
+  "command": "ripr check --base <ref>",
+  "alternatives": [],
+  "tool": null,
+  "flags": [],
+  "fill_in": ["<ref>"],
+  "retry_stated": true,
+  "env": [],
+  "conditional": false,
+  "prose_has_more": false
+}
+```
+
+- `kind` — `command` (the message names a backticked `ripr ...` command),
+  `mcp_tool` (it names a `ripr_<tool>` MCP tool and no command), `flags` (it
+  tells the reader to pass flags and names no command or tool) or `none` (it
+  states no machine-readable remedy). `none` is explicit: the human message
+  may still carry a prose step, but no command, tool or flag is invented.
+- `command` — the primary stated command, verbatim. The primary step is the
+  instructed one, not the first mention: a fallback after an `if`/`unless`/
+  `when` condition ranks below an unconditional step, and a mention that only
+  describes (`X is a `ripr check` finding ID`) or sits in an `if` premise is
+  never used. When the instructed step is an MCP tool, `kind` is `mcp_tool`
+  and a conditional command is listed in `alternatives`, not as `command`.
+  `alternatives` — further distinct stated commands in message order (at most
+  three).
+- `tool` — the first stated MCP tool name, verbatim.
+- `flags` — `--flag` tokens the message tells the reader to pass, add, use or
+  repeat (flags already inside `command` are not repeated).
+- `fill_in` — placeholders in `command` (`<ref>`, `BASE`, `{root}`) the
+  consumer must fill before running it.
+- `retry_stated` — `true` only when the message itself tells the reader to
+  rerun or retry, `false` only when it says repeating the call changes
+  nothing, `null` when it says neither. It reports what the message states;
+  it does not say an unchanged retry succeeds (the message may require a fix
+  or a prerequisite first), and it is not an analysis of side effects.
+- `env` — `NAME=value` environment prerequisites the message names outside
+  the command span, verbatim.
+- `conditional` — `true` when the only step the message gives is conditional
+  (`if it persists, run ...`): the command or tool is a fallback, not a first
+  move. An unconditional step always outranks a conditional one.
+- `prose_has_more` — `true` when `command` or `tool` is not self-sufficient:
+  the message names flags (`flags`, every `--flag` outside the command span)
+  or `env` prerequisites the span does not carry, for example a restart that
+  must repeat the original `--root` and trust-binding flags. A consumer must
+  not run `command` as-is when this is `true`; `command` may omit
+  prerequisites the prose states.
+
+A consumer branches on `remedy.kind` and `remedy.command`, never on the prose.
+`kind` values are listed under `refusal_remedy_kind` in Enums.
+
 ## Agent card refusal envelope (`agent_card_refusal`, schema `0.1`)
 
 Every deliberate named refusal of the `ripr agent card` handoff — the default
@@ -850,6 +929,39 @@ format is for reading by a model with a small token budget. On a two-finding
 demo diff it measured 528 bytes against 2,549 (`human`), 4,475 (`human-full`)
 and 11,845 (`json`); it grows by roughly 150 bytes per listed gap and stops at
 five.
+
+`ripr explain <finding-id|file:line> --format agent` (#12104) is the one-finding
+counterpart of `check --format agent`: the same line-oriented text grammar, no
+JSON and no `schema_version`. `--format human` (alias `text`) stays the default.
+`--format json` is refused with a pointer to `ripr context`, which remains the
+JSON packet. It reuses the check projection's record, `tK` row and gap
+predicates, so a finding is a "gap" in both or in neither, and adds no verdict,
+class or ranking. Errors (no match, ambiguous selector, bad scope) stay prose on
+stderr with empty stdout.
+
+```text
+#ripr explain agent static-advisory class=CLASS
+CLASS|FILE:LINE|CHANGED EXPRESSION|missing=VALUE|test=tK|id=FINDING_ID
+tK=FILE:LINE TEST_NAME ORACLE_KIND `ORACLE TEXT` miss=MISS
+limit=STATIC_LIMIT_KIND
+done=... | open=... | stop=...
+next=ripr context ... --at SELECTOR
+```
+
+- Exactly one record; `tK` is the strongest contributing related test (the
+  weak-assertion row for the limited `open=` case) and is absent when none
+  exists. `limit=` appears only when the producer named a static limit.
+- Exactly one terminal line: `open=` for a candidate-current test-side gap
+  (`weakly_exposed` or `reachable_unrevealed`, not limited) or for a
+  reach-only limit that still carries a weak related test (the `check` `open=`
+  rule); `done=` for a candidate-current, unsuppressed exposed finding;
+  `stop=` otherwise (limited, preview-only, `no_static_path`, unknown classes).
+  A finding that is not a current edit target (`base_deleted`, `moved_or_renamed`,
+  `unresolved_subject`) never prints `open=` or `done=`: its `stop=` names the
+  currentness. A policy-suppressed finding prints a suppression `stop=`; a
+  `--from` replay with `--suppression-policy` is refused for this format. All
+  are static advisory, never runtime mutation outcomes.
+- `next=` is the scope-bound `ripr context` command for this finding.
 
 `ripr check --format human` is the bounded default terminal surface. It prints
 header and summary counts, then one `Start here:` triage block with a closed
@@ -3366,6 +3478,7 @@ while `call_effect` remains the fallback for other observable calls.
 - `gap_evidence_unresolved`
 - `helper_identity_unresolved`
 - `compile_time_invariant`
+- `unsafe_obligation`
 - `transitive_reach_unresolved`
 - `infection_evidence_unknown`
 - `propagation_evidence_unknown`
@@ -3406,6 +3519,13 @@ while `call_effect` remains the fallback for other observable calls.
 - `retry_current_subject`
 - `terminal_no_action`
 - `unsupported_or_limited`
+
+`refusal_remedy_kind` values:
+
+- `command`
+- `mcp_tool`
+- `flags`
+- `none`
 
 ## Badge Output
 
@@ -16076,6 +16196,18 @@ agent work orders for every headline-eligible classified seam. The
 artifact lands at `target/ripr/reports/agent-seam-packets.json` when
 generated via `cargo xtask agent-seam-packets`.
 
+Seam packets for a Rust `predicate_boundary` seam whose whole expression is
+one `<`, `<=`, `>` or `>=` comparison also carry an optional, advisory
+`proof_obligation` object (#11551): `kind` (`boundary`), `function`,
+`changed_predicate`, symbolic `witness_inputs[]` (relations over the operands:
+just below, equal to, just above), a `property_skeleton` for a Kani or property
+harness, and `limits[]`. It is derived from the written predicate only, is not
+verified, compares no old predicate, and is computed after `task`,
+`headline_eligible` and the edit cage, so it cannot change classification or
+actionability. Packets for other seam kinds, compound or equality predicates
+and non-Rust files omit it. It is an additive optional member, so
+`schema_version` stays `0.5`.
+
 `ripr agent packet --root . --seam-id <id> --json` emits the same
 `agent-seam-packets-json` envelope filtered to one visible seam. It does not
 dump the full repo packet set. Missing seam IDs, non-actionable seam classes,
@@ -16747,6 +16879,28 @@ Field contract:
   reports the outer inventory total, and each entry names its own recovery
   control. Full recovery requires lifting every active cap. Uncapped output
   has no stale cap limitation.
+- Pilot byte bound (#12108) — the `ripr pilot` copy of this document
+  (`target/ripr/pilot/repo-exposure.json`) keeps its `seams[]` entries within
+  `RIPR_PILOT_REPO_EXPOSURE_BYTES` bytes (default 8,000,000; `0` writes all).
+  Current-change seams are kept first, then inventory order, each group
+  stopping at its first entry that does not fit. A cut adds a `limitations[]`
+  object `{category: "pilot_repo_exposure_byte_bound_applied", seams_rendered,
+  seams_total, seam_bytes_rendered, byte_budget, limit_source, control:
+  "RIPR_PILOT_REPO_EXPOSURE_BYTES", repair_route}`. When no seam cap and no
+  declined file already owns `run_status`, a cut sets it to
+  `"limited_repo_exposure_bytes"`; otherwise that status is kept and the bound
+  is an additional entry. `metrics` describe the entries the file carries.
+  A bounded document carries no `artifact` identity, so `ripr outcome` and
+  `ripr agent verify` refuse it by name rather than comparing it. Entries that
+  fit the budget change nothing. `pilot-summary.json` carries
+  `repo_exposure_byte_bound` (`seams_rendered`, `seams_total`,
+  `seam_bytes_rendered`, `byte_budget`, `source`, `control`), `null` when
+  nothing was cut. The budget counts entry bytes plus the 2-byte `,\n`
+  separator between entries. When cut, `pilot-summary.json` `next` also carries
+  `before_snapshot_command` (a full `ripr check --format repo-exposure-json`
+  baseline to capture before editing) and `next.outcome_command` compares that
+  baseline, never the cut file; `ripr calibrate cargo-mutants` refuses a cut
+  file too.
 - Pilot packet bound (#11951) — the `ripr pilot` copy of this document
   (`target/ripr/pilot/agent-seam-packets.json`) carries at most
   `RIPR_PILOT_PACKET_BUDGET` packets (default 3; `0` writes all). The kept
@@ -19232,7 +19386,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.129",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.131",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. Repo-exposure producers
@@ -20017,7 +20171,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.129",
+      "schema_version": "1.131",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567+languages:rust=1,typescript=1,python=1,perl=0",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

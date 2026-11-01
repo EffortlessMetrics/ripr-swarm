@@ -5622,6 +5622,9 @@ mod tests {
         // observe the owners but need operands that distinguish product order.
         // `python_factor_reorder_rebound` adds one direct-aligned weak card:
         // its rebound table operand leaves multiplication order unresolved.
+        // RIPR-SPEC-0028: `python_adversarial_attribute_sink_same_value_other_receiver`
+        // adds one orthogonal card: the same value on a foreign receiver is
+        // not observation of the changed `self.status` sink.
         // #9186: `python_truthiness_swap_no_exposed_credit` downgrades an
         // `is None` -> `not x` swap that every strong call leaves unseparated to
         // `weakly_exposed`; one more direct-aligned card. Its
@@ -5647,7 +5650,7 @@ mod tests {
         // inputs no call binds unresolved, so their weak boundary findings
         // name no discriminator and carry no repair card; the direct-aligned
         // inventory drops by two.
-        if (direct, no_strong, orthogonal, family_selection) != (21, 27, 30, 1) {
+        if (direct, no_strong, orthogonal, family_selection) != (21, 27, 31, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

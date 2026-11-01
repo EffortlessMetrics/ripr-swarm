@@ -361,6 +361,12 @@ struct PythonOwner {
     /// subcommand, and the name a test passes to the group to reach it
     /// (`cli_subcommand.rs`, #9226). `None` unless the file proves it.
     cli_subcommand: Option<cli_subcommand::CliSubcommand>,
+    /// For a nested function owner (`outer.inner`): whether the enclosing
+    /// function's own body, outside the nested def, calls it by name. A test
+    /// that only calls the enclosing function reaches the nested body only
+    /// when this holds (`related_tests.rs`, #12141). `false` for every other
+    /// owner, which keeps parent-call reach fail-closed.
+    nested_called_by_parent: bool,
 }
 
 /// One declared parameter of a Python function owner.

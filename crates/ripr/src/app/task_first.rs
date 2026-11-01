@@ -2905,7 +2905,7 @@ impl RepairRefusalCode {
         }
     }
 
-    /// The one stderr line a script greps for, printed beside the refusal
+    /// The one stderr line a script greps for, printed after the refusal
     /// prose: `ripr: refusal code=<code> disposition=<disposition>`.
     pub(crate) fn stderr_line(self) -> String {
         format!(
@@ -2913,6 +2913,12 @@ impl RepairRefusalCode {
             self.as_str(),
             self.disposition().as_str()
         )
+    }
+
+    /// The refusal prose with the machine line on its own later line, so the
+    /// first stderr line is the plain-words reason and next step (#12193).
+    pub(crate) fn message_with_stderr_line(self, message: &str) -> String {
+        format!("{}\n{}", message.trim_end(), self.stderr_line())
     }
 }
 

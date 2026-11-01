@@ -242,6 +242,24 @@ payload are not credited, and the shared `oracle_kind_matches_seam_kind` is
 unchanged. The effect can only move a seam toward gripped, which removes
 repair candidates and never adds one.
 
+### Part D — a pin of the removed variant on the changed arm (#12110)
+
+An `error_path` change that replaces one error variant with another on a whole
+match arm (`_ => Err(E::Unknown),` becomes `_ => Err(E::Blank),`) is also seen
+by an exact assertion that pins the *removed* variant, because the pin fails
+once the arm yields the new one. It confirms the change only when all of these
+hold: the paired old text names a different variant; the arm is one readable
+line of an owner `match` that is the owner's tail expression (a `let r = match ..;`
+read later may remap the error); the assertion is an exact error-variant check
+(including an admitted local `assert_matches!`) naming the removed variant;
+and the owner call it compares passes an input the arm selector reads as
+selecting the changed arm (RIPR-SPEC-0229). A pin through an input that selects
+another arm, a test that only shares the file, and a payload-carrying change
+that needs the owner-return pin stay as before. The removed variant is read
+from the compared operands, not a diagnostic message argument; a test that
+shadows the owner with a local callable never confirms; and a credited pin
+clears the new variant's obsolete missing-discriminator fact.
+
 ## Non-Goals
 
 - Does NOT recognize `expect_err` in a middle position (only at the end of the
@@ -355,6 +373,12 @@ Tests in `crates/ripr/src/analysis/extract/oracles/` and
 | `diff_skips_return_error_path_inside_closure_or_async` | Part C diff ReturnExpr enclosure |
 | `ffi_boundary_is_an_identifier_word_not_a_substring` | Part C opaque-path fix |
 | `exact_error_variant_reads_turbofish_and_qualified_constructors` | Part B turbofish binding |
+| `error_path_arm_probe_restores_the_removed_expression_on_one_arm_line` | Part D arm view |
+| `error_path_removed_variant_pinned_credited` (fixture) | Part D positive |
+| `error_path_removed_variant_other_arm_not_credited` (fixture) | Part D other-arm negative |
+| `error_path_removed_variant_remapped_not_credited` (fixture) | Part D remapped-result negative |
+| `error_path_removed_variant_diagnostic_not_credited` (fixture) | Part D diagnostic-text negative |
+| `error_path_removed_variant_shadowed_not_credited` (fixture) | Part D shadowed-owner negative |
 
 ## Acceptance Examples
 

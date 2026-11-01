@@ -485,6 +485,18 @@ considered making `brief` the default and kept `full`: no host-behavior
 observation exists in this repository, and a wrong default silently removes
 evidence from a text-only agent, while an opt-in costs one `env` line.
 
+### Structured failure remedy
+
+Every typed failure object (`code`, `detail`, `recovery`, `remedy`, `data`)
+carries `remedy` next to the `recovery` prose (#11790): `kind` (`command`,
+`mcp_tool`, `flags` or an explicit `none`), the `tool` the recovery names (for
+example `ripr_list_gaps`), `command`, `alternatives`, `flags`, `fill_in` and
+`retry_stated`. It is derived from the `recovery` sentence by the same domain
+owner the CLI refusals use and never guesses: a recovery that names no route
+yields `none`. `data.next`, where a tool returns one, stays the typed route.
+The field set and meanings are in
+[OUTPUT_SCHEMA](../OUTPUT_SCHEMA.md#structured-refusal-remedy-remedy-additive-11790-11584).
+
 ### Slim `tools/list`
 
 `tools/list` is paid at every session start. About two thirds of it is the nine

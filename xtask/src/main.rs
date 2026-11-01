@@ -14983,6 +14983,7 @@ fn check_output_contracts() -> Result<(), String> {
         "crates/ripr/src/domain/language.rs",
         "crates/ripr/src/domain/next_action.rs",
         "crates/ripr/src/domain/probe.rs",
+        "crates/ripr/src/domain/refusal_remedy.rs",
         "crates/ripr/src/domain/repair_card.rs",
         "crates/ripr/src/domain/summary.rs",
         "crates/ripr/src/domain/support.rs",
@@ -15131,6 +15132,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "source_currentness"
             | "static_limit_kind"
             | "agent_card_refusal_kind"
+            | "refusal_remedy_kind"
             | "next_action_class" => {
                 require_contract_value(
                     "crates/ripr/src/domain/",
