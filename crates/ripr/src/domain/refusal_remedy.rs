@@ -447,7 +447,9 @@ fn stated_env(prose: &str, ranges: &[(usize, usize)]) -> Vec<String> {
 /// ("differs from the original `--base`").
 fn original_flag_instruction(before: &str) -> bool {
     let lower = before.to_ascii_lowercase();
-    lower.ends_with("repeating the original")
+    lower.ends_with("repeat the original")
+        || lower.ends_with("repeated the original")
+        || lower.ends_with("repeating the original")
         || lower.ends_with("keep the original")
         || lower.ends_with("keeping the original")
 }
@@ -787,6 +789,14 @@ mod tests {
     }
 
     #[test]
+    fn repeat_the_original_before_a_flag_is_still_an_instruction() {
+        let remedy = RefusalRemedy::from_prose("repeat the original `--base` and retry");
+        assert_eq!(remedy.kind, RemedyKind::Flags);
+        assert_eq!(remedy.flags, vec!["--base".to_string()]);
+        assert_eq!(remedy.retry_stated, Some(true));
+    }
+
+    #[test]
     fn flag_list_is_capped_at_max_listed_preserving_order() {
         let flags: Vec<String> = (1..=17).map(|n| format!("--cap-{n:02}")).collect();
         let prose = format!(
@@ -806,6 +816,16 @@ mod tests {
             "order must be preserved"
         );
         assert!(remedy.prose_has_more, "stated step with extra prose flags");
+    }
+
+    #[test]
+    fn gated_flag_only_prose_respects_the_list_cap() {
+        let flags: Vec<String> = (1..=17).map(|n| format!("--only-{n:02}")).collect();
+        let prose = format!("pass {}", flags.join(" and "));
+        let remedy = RefusalRemedy::from_prose(&prose);
+        assert_eq!(remedy.kind, RemedyKind::Flags);
+        assert_eq!(remedy.flags.len(), MAX_LISTED);
+        assert_eq!(remedy.flags, flags[..MAX_LISTED].to_vec());
     }
 
     #[test]
