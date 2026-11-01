@@ -877,13 +877,22 @@ mod tests {
             .map_err(|error| format!("read {} failed: {error}", schema_path.display()))?;
         let schema: serde_json::Value = serde_json::from_str(&schema_text)
             .map_err(|error| format!("parse review-comments schema failed: {error}"))?;
-        let schema_tokens: BTreeSet<&str> =
-            schema["$defs"]["analysis_limitation"]["properties"]["kind"]["enum"]
-                .as_array()
-                .ok_or_else(|| "analysis_limitation.kind enum missing".to_string())?
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .collect();
+        let schema_kind_enum = schema["$defs"]["analysis_limitation"]["properties"]["kind"]["enum"]
+            .as_array()
+            .ok_or_else(|| "analysis_limitation.kind enum missing".to_string())?;
+        let mut schema_kind_strings = Vec::with_capacity(schema_kind_enum.len());
+        for (index, value) in schema_kind_enum.iter().enumerate() {
+            let token = value.as_str().ok_or_else(|| {
+                format!("analysis_limitation.kind enum entry {index} is not a string")
+            })?;
+            schema_kind_strings.push(token);
+        }
+        let schema_tokens: BTreeSet<&str> = schema_kind_strings.iter().copied().collect();
+        if schema_tokens.len() != schema_kind_strings.len() {
+            return Err(format!(
+                "analysis_limitation.kind enum contains duplicate tokens: {schema_kind_strings:?}"
+            ));
+        }
         let missing_from_schema: Vec<&str> = producer_tokens
             .iter()
             .copied()
