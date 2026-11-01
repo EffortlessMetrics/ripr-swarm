@@ -1176,9 +1176,11 @@ fn deleted_guard_block_an_observed_input_enters_stays_exposed() -> Result<(), St
 
 #[test]
 fn deleted_guard_block_fails_open_on_unreadable_or_changed_structure() -> Result<(), String> {
-    // A condition that is not a comparison cannot be evaluated.
+    // A condition that is not a comparison or a readable flag cannot be
+    // evaluated. (A bare flag with a literal default is readable: `if vip:`
+    // under `vip=False` is provably never entered.)
     let flag_block = vec![
-        line(3, 3, "    if vip:"),
+        line(3, 3, "    if validate(total):"),
         line(4, 3, "        result = total - 50"),
     ];
     // An `or` condition is not read.
@@ -1219,7 +1221,16 @@ fn deleted_guard_block_reads_a_conjunction_past_an_unreadable_conjunct() -> Resu
         assert_eq!(*class, ExposureClass::WeaklyExposed, "{expression}");
     }
     let computed = "from src.cart import apply_discount\n\n\ndef test_small():\n    amount = 100\n    assert apply_discount(amount * 30) == 3000\n";
-    let classes = deleted_guard_classes("conjunction-computed", DISCOUNT_NEW, computed, removed)?;
+    let computed_removed = vec![
+        line(3, 3, "    if total > 1000 and total < 5000:"),
+        line(4, 3, "        result = total - 50"),
+    ];
+    let classes = deleted_guard_classes(
+        "conjunction-computed",
+        DISCOUNT_NEW,
+        computed,
+        computed_removed,
+    )?;
     assert_eq!(classes.len(), 1, "{classes:?}");
     for (expression, class) in &classes {
         assert_eq!(*class, ExposureClass::Exposed, "{expression} {classes:?}");
@@ -1238,10 +1249,19 @@ fn deleted_guard_header_with_a_dedented_body_line_fails_open() -> Result<(), Str
         line(4, 3, "        result = total - 50"),
         line(5, 3, "        result += 1"),
     ];
-    let classes =
-        deleted_guard_classes_with("guard-dedented", new_source, DISCOUNT_TESTS, &[3], removed)?;
-    for (expression, class) in &classes {
-        assert_eq!(*class, ExposureClass::Exposed, "{expression} {classes:?}");
+    // The removed header is the record this guard protects: it must not be
+    // demoted as an unentered block while its dedented line still runs.
+    let findings = analyze_with_test("guard-dedented", new_source, DISCOUNT_TESTS, &[3], removed)?;
+    for finding in findings.iter().filter(|finding| {
+        finding.source_currentness != SourceCurrentness::CandidateCurrent
+            && finding.probe.expression.trim().starts_with("if total")
+    }) {
+        assert_ne!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{}",
+            finding.probe.expression
+        );
     }
     Ok(())
 }
