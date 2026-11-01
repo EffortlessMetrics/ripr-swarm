@@ -3884,6 +3884,7 @@ pub(crate) fn related_mock_payload_oracle(related: &[RelatedTest]) -> Option<Str
 /// and force a wrong actionable `mocked_module` signal on the finding. The
 /// `relation_index` MUST likewise be the same pre-filter, so the collector
 /// sees exactly the candidates pass 1 admitted (#10028).
+#[cfg(test)]
 pub(crate) fn collect_related_mock_paths(
     owner: &TypeScriptOwner,
     all_tests: &[TypeScriptTest],
@@ -3892,15 +3893,26 @@ pub(crate) fn collect_related_mock_paths(
     alias_map: Option<&TsAliasMap>,
     relation_index: &RelationIndex,
 ) -> Vec<String> {
-    let mut paths: Vec<String> = Vec::new();
-    for candidate in related_test_candidates(
+    mock_paths_from_candidates(&related_test_candidates(
         owner,
         all_tests,
         workspace_root,
         reexport_index,
         alias_map,
         relation_index,
-    ) {
+    ))
+}
+
+/// The mock-path projection of an already computed candidate list: each
+/// candidate's `mocks_in_file` contributed once, in candidate order. Callers
+/// that hold the owner's candidates (`owner_line_context`) project them
+/// instead of recomputing the whole relation scan, which is deterministic for
+/// the same inputs.
+pub(crate) fn mock_paths_from_candidates(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    for candidate in candidates {
         for path in &candidate.test.mocks_in_file {
             if !paths.iter().any(|existing| existing == path) {
                 paths.push(path.clone());
