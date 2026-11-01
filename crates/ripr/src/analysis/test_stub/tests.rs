@@ -1833,6 +1833,26 @@ fn proof_obligation_describes_a_single_relational_boundary_and_nothing_else() ->
     assert_eq!(literal.changed_predicate, "s < \"a  b\"");
     assert_eq!(literal.witness_inputs[1], "s == \"a  b\"");
 
+    // `*/` in an operand would close the skeleton's block comment early.
+    let closer = seam_at(
+        "src/lib.rs",
+        "pub fn f(s: &str) -> bool { s < \"a*/b\" }\n",
+        "s < \"a*/b\"",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    assert!(proof_obligation_for(&closer).is_none());
+
+    // Block comments nest, so `/*` leaves the skeleton's comment unterminated.
+    let opener = seam_at(
+        "src/lib.rs",
+        "pub fn f(s: &str) -> bool { s < \"a/*b\" }\n",
+        "s < \"a/*b\"",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    assert!(proof_obligation_for(&opener).is_none());
+
     let compound = "pub fn f(a: u32, b: u32) -> bool { a > 1 && b < 2 }\n";
     for (needle, source, kind, file) in [
         (
