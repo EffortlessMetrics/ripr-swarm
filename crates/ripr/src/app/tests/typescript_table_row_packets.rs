@@ -215,6 +215,11 @@ fn touched_partial_or_derived_tables_keep_the_dynamic_refusal() -> Result<(), St
                 .to_string(),
         ),
         (
+            "each-regex-hidden-eval",
+            "describe(\"tier\", () => {\n  test.each([\n    { input: 999, out: \"silver\" },\n    { input: 1000, out: \"gold\" },\n  ])(typeof /'a/, (t) => {\n    expect(tier(t.input, eval(\"t.out = tier(0)\"), \"it's\")).toBe(t.out);\n  }, typeof /\"a/);\n});"
+                .to_string(),
+        ),
+        (
             "each-eval-write",
             "describe(\"tier\", () => {\n  test.each([\n    { input: 999, out: \"silver\" },\n    { input: 1000, out: \"gold\" },\n  ])(\"tier\", (t) => {\n    expect(tier(t.input, eval(\"t.out = tier(0)\"))).toBe(t.out);\n  });\n});"
                 .to_string(),

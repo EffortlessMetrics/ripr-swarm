@@ -203,6 +203,10 @@ fn hidden_mutation_routes_are_refused_on_every_entry_path() -> Result<(), String
             "this",
             "function (t) { expect(encode(t.input, this.x)).toBe(t.out); }",
         ),
+        (
+            "regex literal hiding eval",
+            "(t) => { expect(encode(t.input, eval(\"t.out = encode('a')\"), \"it's\")).toBe(t.out); }, typeof /\"a/",
+        ),
     ];
     // The same callback without a hidden route resolves, so the guard is the
     // only reason the cases below stay dynamic.

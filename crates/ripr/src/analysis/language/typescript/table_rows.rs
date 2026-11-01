@@ -35,6 +35,15 @@ const MAX_TABLE_ROWS: usize = 64;
 /// a regular expression. Quoted text and comments are skipped, so a title
 /// such as `"this works"` is fine. Fails closed on anything it cannot lex.
 pub(crate) fn row_text_is_inert(text: &str) -> bool {
+    // Lexer-independent backstop: the same words anywhere, even in a string,
+    // so a lexing gap (an odd regex or quote) cannot hide one.
+    if ["eval", "with", "Function", "arguments", "this"]
+        .iter()
+        .any(|word| super::match_object_guard::whole_word_count(text, word) > 0)
+        || text.contains("\\u")
+    {
+        return false;
+    }
     #[derive(Clone, Copy, PartialEq)]
     enum Mode {
         Template,
@@ -43,7 +52,6 @@ pub(crate) fn row_text_is_inert(text: &str) -> bool {
     let bytes = text.as_bytes();
     let mut modes: Vec<Mode> = vec![Mode::Expr(0)];
     let mut idx = 0;
-    let mut previous_significant = b'(';
     while idx < bytes.len() {
         let byte = bytes[idx];
         match modes.last().copied() {
@@ -51,12 +59,10 @@ pub(crate) fn row_text_is_inert(text: &str) -> bool {
                 b'\\' => idx += 2,
                 b'`' => {
                     modes.pop();
-                    previous_significant = b'`';
                     idx += 1;
                 }
                 b'$' if bytes.get(idx + 1) == Some(&b'{') => {
                     modes.push(Mode::Expr(0));
-                    previous_significant = b'(';
                     idx += 2;
                 }
                 _ => idx += 1,
@@ -77,7 +83,6 @@ pub(crate) fn row_text_is_inert(text: &str) -> bool {
                             Some(_) => at += 1,
                         }
                     }
-                    previous_significant = byte;
                     idx = at + 1;
                 }
                 b'/' => match bytes.get(idx + 1) {
@@ -88,21 +93,14 @@ pub(crate) fn row_text_is_inert(text: &str) -> bool {
                         Some(end) => idx += 2 + end + 2,
                         None => return false,
                     },
-                    _ => {
-                        if !(previous_significant.is_ascii_alphanumeric()
-                            || matches!(previous_significant, b')' | b']' | b'_' | b'$'))
-                        {
-                            return false;
-                        }
-                        previous_significant = b'/';
-                        idx += 1;
-                    }
+                    // Any other `/` is a division or a regex literal, and a
+                    // lexer cannot tell them apart without parsing: refuse.
+                    _ => return false,
                 },
                 b'{' => {
                     if let Some(last) = modes.last_mut() {
                         *last = Mode::Expr(depth + 1);
                     }
-                    previous_significant = b'{';
                     idx += 1;
                 }
                 b'}' => {
@@ -114,7 +112,6 @@ pub(crate) fn row_text_is_inert(text: &str) -> bool {
                     } else if let Some(last) = modes.last_mut() {
                         *last = Mode::Expr(depth - 1);
                     }
-                    previous_significant = b'}';
                     idx += 1;
                 }
                 _ if is_identifier_start(byte) => {
@@ -130,12 +127,10 @@ pub(crate) fn row_text_is_inert(text: &str) -> bool {
                     if word == "new" && text[end..].trim_start().starts_with('.') {
                         return false;
                     }
-                    previous_significant = bytes[end - 1];
                     idx = end;
                 }
                 _ if byte.is_ascii_whitespace() => idx += 1,
                 _ => {
-                    previous_significant = byte;
                     idx += 1;
                 }
             },
@@ -557,9 +552,8 @@ mod tests {
     #[test]
     fn row_text_guard_refuses_hidden_mutation_routes_outside_quotes() {
         for ok in [
-            "test.each([{ a: 1 }])(\"this works\", (t) => { expect(f(t.a)).toBe(1); })",
-            "test(`${t.a} -> eval`, () => { expect(f(t.a)).toBe(1); // this\n })",
-            "test(\"x\", () => { expect(f(t.a / 2)).toBe(1); })",
+            "test.each([{ a: 1 }])(\"plain title\", (t) => { expect(f(t.a)).toBe(1); })",
+            "test(`${t.a} -> x`, () => { expect(f(t.a)).toBe(1); // note\n })",
         ] {
             assert!(super::row_text_is_inert(ok), "{ok}");
         }
@@ -574,6 +568,11 @@ mod tests {
             "(t) => { expect(f(t.a, t.\\u006fut = 1)).toBe(t.out); }",
             "(t) => { with (t) { expect(f(a)).toBe(out); } }",
             "(t) => { expect(f(t.a, x = /\"/)).toBe(t.out); }",
+            "(t) => { expect(f(t.a / 2)).toBe(t.out); }",
+            "typeof /'a/, (t) => { expect(f(t.a, eval(\"t.out=3\"), \"it's\")).toBe(t.out); }, typeof /\"a/",
+            "typeof /'a/, (t) => { expect(f(t.a, arguments[0].out = 3, \"it's\")).toBe(t.out); }, typeof /\"a/",
+            "typeof /'a/, (t) => { with (t) { expect(f(a, \"it's\")).toBe(out); } }, typeof /\"a/",
+            "(t) => { expect(f(t.a, \"this\")).toBe(t.out); }",
             "(t) => { expect(f(`${arguments[0]}`)).toBe(t.out); }",
         ] {
             assert!(!super::row_text_is_inert(bad), "{bad}");
