@@ -10749,6 +10749,29 @@
       ]
     },
     {
+      "id": "rust_repo_exposure_identical_inline_arms_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
+      "vector": "repo_exposure_identical_one_line_arms_decide_nothing_a_test_observes",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::tier_identical",
+          "expression": "x >= 5",
+          "grip_class": "propagation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::tier_differing",
+          "expression": "x >= 5",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
       "id": "rust_repo_exposure_uncalled_sibling_not_promoted",
       "language": "rust",
       "tier": "pure",

@@ -13656,31 +13656,61 @@ fn given_boundary_owner_call_when_input_operand_is_closure_local_then_activation
 #[test]
 fn identical_inline_arm_predicate_seam_does_not_propagate_but_differing_arms_do()
 -> Result<(), String> {
-    let test = (
-        "tests/pick_tests.rs",
-        "#[test] fn pins_boundary() { assert_eq!(pick(5), 1); }\n",
-    );
-    let propagate_for = |branch: &str| -> Result<StageState, String> {
-        let prod_src =
-            format!("pub fn pick(x: i32) -> i32 {{\n    let r;\n    {branch}\n    r + 0\n}}\n");
-        let files: Vec<(PathBuf, &str)> = vec![
-            (PathBuf::from("src/lib.rs"), prod_src.as_str()),
-            (PathBuf::from(test.0), test.1),
-        ];
-        let index = index_from_files(&files)?;
-        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
-        let predicate = seams
-            .iter()
-            .find(|s| s.kind() == SeamKind::PredicateBoundary)
-            .ok_or_else(|| "predicate seam present".to_string())?;
-        Ok(evidence_for_seam(predicate, &index).propagate.state)
-    };
+    let propagate_for =
+        |ret: &str, expected: &str, branch: &str, tail: &str| -> Result<StageState, String> {
+            let prod_src = format!(
+                "pub fn pick(x: i32) -> {ret} {{\n    let r;\n    {branch}\n    {tail}\n}}\n"
+            );
+            let test_src =
+                format!("#[test] fn pins_boundary() {{ assert_eq!(pick(5), {expected}); }}\n");
+            let files: Vec<(PathBuf, &str)> = vec![
+                (PathBuf::from("src/lib.rs"), prod_src.as_str()),
+                (PathBuf::from("tests/pick_tests.rs"), test_src.as_str()),
+            ];
+            let index = index_from_files(&files)?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+            let predicate = seams
+                .iter()
+                .find(|s| s.kind() == SeamKind::PredicateBoundary)
+                .ok_or_else(|| "predicate seam present".to_string())?;
+            Ok(evidence_for_seam(predicate, &index).propagate.state)
+        };
+    // Identical int arms decide nothing; differing arms do.
     assert_eq!(
-        propagate_for("if x >= 5 { r = 1; } else { r = 1; }")?,
+        propagate_for("i32", "1", "if x >= 5 { r = 1; } else { r = 1; }", "r + 0")?,
         StageState::Unknown
     );
     assert_eq!(
-        propagate_for("if x >= 5 { r = 1; } else { r = 2; }")?,
+        propagate_for("i32", "1", "if x >= 5 { r = 1; } else { r = 2; }", "r + 0")?,
+        StageState::Yes
+    );
+    // Equal-length but different string literals still differ (masking must not equate them).
+    assert_eq!(
+        propagate_for(
+            "&'static str",
+            "\"yes\"",
+            "if x >= 5 { r = \"yes\"; } else { r = \"low\"; }",
+            "r"
+        )?,
+        StageState::Yes
+    );
+    assert_eq!(
+        propagate_for(
+            "&'static str",
+            "\"yes\"",
+            "if x >= 5 { r = \"yes\"; } else { r = \"yes\"; }",
+            "r"
+        )?,
+        StageState::Unknown
+    );
+    // A nested predicate inside identical outer arms is not decided by the outer one.
+    assert_eq!(
+        propagate_for(
+            "i32",
+            "1",
+            "if x >= 5 { if x > 7 { r = 1; } else { r = 2; } } else { if x > 7 { r = 1; } else { r = 2; } }",
+            "r + 0"
+        )?,
         StageState::Yes
     );
     Ok(())
