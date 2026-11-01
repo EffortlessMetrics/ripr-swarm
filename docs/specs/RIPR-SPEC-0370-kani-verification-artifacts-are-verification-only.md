@@ -141,7 +141,9 @@ See `.ripr/traceability.d/kani-verification-artifacts-0370.toml`.
 
 ## Known limit
 
-The removed side is read from the old source rebuilt from the new-side index
-(`old_source`). A file the diff deletes outright is not indexed on the new
-side, so its removed lines keep prior behavior (probed). A deleted module or
-harness inside a surviving file is covered. Tracked in #12013.
+A file the diff deletes outright is not in the new-side index, so `old_source`
+returns `None` and the removed side is not classified here. That case seeds no
+probe at all: the diff parser counts deleted files and the run discloses
+"deletion-only diffs produce no probes" instead (measured with a diff that
+deletes a harness-only file: 0 probes, 0 findings). What it lacks is the
+`verification_only_change` limitation kind for that case. Tracked in #12013.
