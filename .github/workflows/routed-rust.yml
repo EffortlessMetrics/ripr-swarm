@@ -650,33 +650,24 @@ jobs:
           set -euo pipefail
           # #12122: ci.yml owns selection of the `vscode` extension e2e. Its
           # `vscode surface` job ends non-skipped only for a merge-ready request,
-          # and every `vscode` check of that workflow run lives in the same
-          # check suite. A skipped `vscode` check therefore means "not selected"
-          # only when the request's own `vscode surface` succeeded and the skip
-          # is in its suite: a skipped check from an earlier nonrequest event is
-          # in another suite and can never stand in for it. The surface check
-          # must also belong to the ci.yml run for this same label event: that
-          # run names itself `CI merge-ready request <head> <request time>` from
-          # the event payload (#12236), and this run reads the same head and
-          # request time from its own payload, so an earlier request's suite is
-          # never read, however close in time the requests are; distinct runs
-          # with one title (two events in the same second) are refused, not
-          # guessed between. Every surface check for the head is considered, so a
-          # matching run cannot fall out of a window. Residual (#12236): GitHub
-          # exposes no per-event id shared by the two workflows, so an earlier
-          # request's run with the same title (two events in one second) whose
-          # surface completed while the current request's run was still invisible
-          # cannot be told from the current one. ci.yml's merge-ready concurrency
-          # group normally cancels the earlier run, which fails the Result, but
-          # GitHub does not guarantee that ordering; the verdict read is then the
-          # same head's, and differs only if that earlier run failed for
-          # infrastructure reasons.
-          # No such check
-          # yet means ci.yml has not got that far: wait, then fail closed. In the suite,
-          # the newest executed check (highest id) decides, so a passing re-run
-          # clears an earlier infrastructure failure; a running one is awaited.
-          # Reads retry because one transient API error must not cost a 45
-          # minute re-run.
+          # and every `vscode` check of a run lives in that run's check suite. A
+          # skipped `vscode` check means "not selected" only when the request's
+          # own surface succeeded and the skip is in its suite.
+          # The surface must belong to the ci.yml run for this label event (#12236):
+          # that run titles itself `CI merge-ready request <head> <request time>`
+          # from the event payload and this run reads the same two values, so an
+          # earlier request's suite is not read. Distinct runs with one title (two
+          # events in one second) are refused. Every surface check for the head is
+          # considered, so a matching run cannot fall out of a window.
+          # Residual (#12252): no per-event id is shared by the two workflows. If
+          # an earlier same-second request's run passed while this request's run
+          # was still invisible and then failed nondeterministically, that pass is
+          # read. If the earlier run failed or was cancelled the Result fails,
+          # which is safe; a deterministic failure stays red.
+          # No surface yet: wait, then fail closed. In the suite the newest
+          # executed check decides, so a passing re-run clears an infrastructure
+          # failure and a running one is awaited. Reads retry so one API error
+          # does not cost a 45 minute re-run.
           [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::admitted head is not a full SHA"; exit 1; }
           api() {
             local attempt
