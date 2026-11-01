@@ -5,6 +5,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::run as shared_run;
 
@@ -13,22 +14,59 @@ use super::{Options, report};
 /// How far back the default baseline is taken from the candidate.
 const BASELINE_AGE: &str = "24 hours ago";
 
+/// Where the scoreboard declares the external repositories and their pins.
+const SCOREBOARD_CONFIG: &str = "benchmarks/dx_scoreboard/scoreboards.toml";
+
+/// One pinned change of an external repository, read from the scoreboard
+/// corpus so the A/B times the exact diff the scoreboard row measures.
+pub(crate) struct ExternalPin {
+    id: String,
+    url: String,
+    sha: String,
+    base: String,
+}
+
 pub(crate) struct Plan {
     /// `(id, commit)` of each pinned diff of this repository.
     pins: Vec<(String, String)>,
+    /// Scoreboard corpus ids whose pinned change is timed as well (#11876).
+    external_ids: Vec<String>,
     baseline_ref: Option<String>,
     candidate_ref: Option<String>,
 }
 
 impl Plan {
     pub(crate) fn new(
-        pins: &str,
+        pins: Option<&str>,
+        external: Option<&str>,
         baseline_ref: Option<String>,
         candidate_ref: Option<String>,
     ) -> Result<Self, String> {
         let blank = |value: Option<String>| value.filter(|text| !text.trim().is_empty());
+        let external_ids = match external {
+            Some(text) => parse_external_ids(text)?,
+            None => Vec::new(),
+        };
+        let pins = match pins {
+            Some(text) => parse_pins(text)?,
+            None if external_ids.is_empty() => {
+                return Err("--pins or --external-pins needs at least one entry".to_string());
+            }
+            None => Vec::new(),
+        };
+        // Both lists write `warm-ab-<id>.{json,md}`, so a shared id would
+        // silently replace one pin's evidence with the other's.
+        if let Some(shared) = external_ids
+            .iter()
+            .find(|id| pins.iter().any(|(pin, _)| pin == *id))
+        {
+            return Err(format!(
+                "pin id `{shared}` is used by both --pins and --external-pins"
+            ));
+        }
         Ok(Self {
-            pins: parse_pins(pins)?,
+            pins,
+            external_ids,
             baseline_ref: blank(baseline_ref),
             candidate_ref: blank(candidate_ref),
         })
@@ -66,11 +104,78 @@ pub(crate) fn parse_pins(text: &str) -> Result<Vec<(String, String)>, String> {
     Ok(pins)
 }
 
+/// `id,id` naming scoreboard corpus entries. An id names a report file and a
+/// directory, so it is restricted the same way a pin id is.
+pub(crate) fn parse_external_ids(text: &str) -> Result<Vec<String>, String> {
+    let mut ids: Vec<String> = Vec::new();
+    for id in text.split(',').filter(|id| !id.is_empty()) {
+        let id_ok = id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if !id_ok {
+            return Err(format!(
+                "external pin `{id}` needs letters, digits, `-` or `_`"
+            ));
+        }
+        if ids.iter().any(|seen| seen == id) {
+            return Err(format!("external pin `{id}` is repeated"));
+        }
+        ids.push(id.to_string());
+    }
+    if ids.is_empty() {
+        return Err("--external-pins needs at least one corpus id".to_string());
+    }
+    Ok(ids)
+}
+
+/// Resolve each id against the scoreboard corpus. An id the corpus does not
+/// declare is an error, never a silent skip: a gate that quietly times
+/// nothing would pass for the wrong reason.
+pub(crate) fn resolve_external(
+    ids: &[String],
+    corpus: &[crate::reports::dx_scoreboard::CorpusEntry],
+) -> Result<Vec<ExternalPin>, String> {
+    ids.iter()
+        .map(|id| {
+            let entry = corpus
+                .iter()
+                .find(|entry| entry.id == *id)
+                .ok_or_else(|| format!("external pin `{id}` is not in the scoreboard corpus"))?;
+            Ok(ExternalPin {
+                id: entry.id.clone(),
+                url: entry.url.clone(),
+                sha: entry.sha.clone(),
+                base: entry
+                    .base_sha
+                    .clone()
+                    .unwrap_or_else(|| format!("{}^", entry.sha)),
+            })
+        })
+        .collect()
+}
+
+/// A stalled remote must cost one pin its verdict, not the rest of the job, so
+/// every git call carries a deadline (CodeRabbit on #12154).
+const GIT_DEADLINE: Duration = Duration::from_mins(20);
+
 fn git(args: &[&str], cwd: &Path) -> Result<String, String> {
-    let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
-    let output =
-        shared_run::capture_output_in_dir("git", &owned, cwd, &format!("git {}", args.join(" ")))?;
-    if !output.status.success() {
+    let mut owned: Vec<String> = vec!["-C".to_string(), cwd.to_string_lossy().into_owned()];
+    owned.extend(args.iter().map(|arg| (*arg).to_string()));
+    let output = shared_run::capture_output_with_timeout(
+        "git",
+        &owned,
+        &[("GIT_TERMINAL_PROMPT", "0")],
+        GIT_DEADLINE,
+        &format!("git {}", args.join(" ")),
+    )?;
+    if output.timed_out {
+        return Err(format!(
+            "git {} timed out after {} s",
+            args.join(" "),
+            GIT_DEADLINE.as_secs()
+        ));
+    }
+    if !output.status.is_some_and(|status| status.success()) {
         return Err(format!(
             "git {} failed: {}",
             args.join(" "),
@@ -174,6 +279,28 @@ pub(crate) fn run(options: &Options, plan: &Plan) -> Result<(), String> {
     result
 }
 
+/// Clone one external pin, check out its commit and write the pinned diff.
+fn prepare_external(external: &ExternalPin, scratch: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let tree = scratch.join(format!("ext-{}", external.id));
+    let tree_text = tree.to_string_lossy().into_owned();
+    git(
+        &[
+            "clone",
+            "--quiet",
+            "--filter=blob:none",
+            &external.url,
+            &tree_text,
+        ],
+        scratch,
+    )?;
+    git(&["checkout", "--quiet", "--detach", &external.sha], &tree)?;
+    let diff = git(&["diff", &external.base, &external.sha], &tree)?;
+    let diff_path = scratch.join(format!("ext-{}.diff", external.id));
+    fs::write(&diff_path, diff + "\n")
+        .map_err(|error| format!("failed to write {}: {error}", diff_path.display()))?;
+    Ok((tree, diff_path))
+}
+
 fn run_in(
     options: &Options,
     plan: &Plan,
@@ -191,6 +318,18 @@ fn run_in(
         built.push(build(&source, name, &bins)?);
     }
     let mut failed = Vec::new();
+    let pair = |id: &str, tree: PathBuf, diff: PathBuf| Options {
+        baseline: built[0].clone(),
+        candidate: built[1].clone(),
+        tree,
+        diff,
+        pin: id.to_string(),
+        runs: options.runs,
+        out: options.out.clone(),
+        work: options.work.clone(),
+        limits: options.limits,
+        nightly: None,
+    };
     for (id, commit) in &plan.pins {
         let tree = scratch.join(format!("pin-{id}"));
         worktree(repo, &tree, commit)?;
@@ -199,21 +338,23 @@ fn run_in(
         let diff_path = scratch.join(format!("pin-{id}.diff"));
         fs::write(&diff_path, diff + "\n")
             .map_err(|error| format!("failed to write {}: {error}", diff_path.display()))?;
-        let pair = Options {
-            baseline: built[0].clone(),
-            candidate: built[1].clone(),
-            tree,
-            diff: diff_path,
-            pin: id.clone(),
-            runs: options.runs,
-            out: options.out.clone(),
-            work: options.work.clone(),
-            limits: options.limits,
-            nightly: None,
-        };
-        if let Err(error) = report(&pair) {
+        if let Err(error) = report(&pair(id, tree, diff_path)) {
             eprintln!("{error}");
-            failed.push(id.as_str());
+            failed.push(id.clone());
+        }
+    }
+    if !plan.external_ids.is_empty() {
+        let corpus = crate::reports::dx_scoreboard::load_config(Path::new(SCOREBOARD_CONFIG))?;
+        for external in resolve_external(&plan.external_ids, &corpus.corpus)? {
+            // A clone, checkout or diff that fails costs this pin its verdict,
+            // not the pins after it.
+            let prepared = prepare_external(&external, scratch);
+            let outcome =
+                prepared.and_then(|(tree, diff_path)| report(&pair(&external.id, tree, diff_path)));
+            if let Err(error) = outcome {
+                eprintln!("{error}");
+                failed.push(external.id.clone());
+            }
         }
     }
     if failed.is_empty() {
