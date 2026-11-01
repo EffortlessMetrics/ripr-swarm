@@ -27,7 +27,7 @@ impl CausalDeltaAuthority {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => {
                 return Err(format!(
-                    "read canonical delta failed: {error}; check that the path exists and is writable, then rerun"
+                    "read canonical delta failed: {error}; check that the path exists and is readable, then rerun"
                 ));
             }
         };

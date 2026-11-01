@@ -677,7 +677,7 @@ fn ripr_plus_summary_from_disk(
     }
     let text = std::fs::read_to_string(&report_path).map_err(|err| {
         format!(
-            "failed to read {}: {err}; check that the path exists and is writable, then rerun",
+            "failed to read {}: {err}; check that the path exists and is readable, then rerun",
             report_path.display()
         )
     })?;

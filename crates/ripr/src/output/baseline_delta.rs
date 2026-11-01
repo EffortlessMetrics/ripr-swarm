@@ -996,7 +996,7 @@ fn parse_required_json_input(
     let text = json_text
         .map_err(|error| format!("required {input_name} input {path} is invalid: {error}; regenerate the input with the command that wrote it, then rerun"))?;
     serde_json::from_str::<Value>(&text)
-        .map_err(|error| format!("required {input_name} input {path} is invalid: {error}"))
+        .map_err(|error| format!("required {input_name} input {path} is invalid: {error}; regenerate the input with the command that wrote it, then rerun"))
 }
 
 fn baseline_record_from_value(value: &Value) -> Option<BaselineRecord> {
