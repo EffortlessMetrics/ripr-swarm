@@ -79,6 +79,7 @@ mod boundary;
 mod call_chain;
 mod caplog_text;
 mod classify;
+mod coarse_projection;
 mod conditional_defs;
 mod conditional_expression;
 mod dataclass_default;

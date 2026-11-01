@@ -126,6 +126,11 @@ this repository's license, one per test library or library feature:
   non-literal band, longer owner body, method owner, decorated owner). Every
   case reads `static_unknown`; the outside-band edit is the one case whose
   test catches the change.
+- `authored-py-pytest-coarse`: RIPR-SPEC-0238 rule 30's coarse projections of
+  an owner's result, one owner per case, each `x * 2` edited to `x * 3`: a
+  sign (`assertEqual(f(2) > 0, True)`), a remainder (`assert f(3) % 3 == 0`)
+  and a digit count (`assert len(str(f(3))) == 1`) are gaps, and
+  `assert f(3) == 6` is the credited control.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's
