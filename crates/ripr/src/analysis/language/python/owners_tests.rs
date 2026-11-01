@@ -545,8 +545,9 @@ pub(super) fn collect_tests_from_statements(
     } else {
         Vec::new()
     };
-    for stmt in statements {
+    for (index, stmt) in statements.iter().enumerate() {
         apply_definition_import(file, stmt, &mut definition_imports);
+        let first_pushed = out.len();
         match stmt {
             Stmt::FunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
@@ -959,6 +960,26 @@ pub(super) fn collect_tests_from_statements(
                 }
             }
             _ => {}
+        }
+        // Pytest and unittest collect the last binding of a name in a scope:
+        // an earlier definition (or one later replaced by `name = None`) never
+        // runs.
+        let defined = match stmt {
+            Stmt::FunctionDef(function) => Some(function.name.as_str()),
+            Stmt::AsyncFunctionDef(function) => Some(function.name.as_str()),
+            Stmt::ClassDef(class) => Some(class.name.as_str()),
+            _ => None,
+        };
+        if let Some(defined) = defined
+            && super::test_activation::rebound_later(statements, index, defined, source)
+        {
+            for test in &mut out[first_pushed..] {
+                test.activation_controls.push(
+                    super::test_activation::shadowed_by_later_binding_control(
+                        super::test_activation::DeclarationSite::Function,
+                    ),
+                );
+            }
         }
     }
 }

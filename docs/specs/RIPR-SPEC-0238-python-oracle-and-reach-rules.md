@@ -1049,7 +1049,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     `py-trap-swallowed-assert`, #9691; the `py-unrun-*` cases add `if 0:`,
     `if None:` and `while False:` dead arms, tuple, bare and
     `builtins.AssertionError` handlers, and the live `else` arm, `else` and
-    `finally` blocks and `fail`-calling handler that stay credited).
+    `finally` blocks and `fail`-calling handler that stay credited). An
+    assertion after a definite exit in the same statement list (`return`,
+    `raise`, `pytest.skip`/`fail`/`exit`/`xfail`, `sys.exit`, `os._exit`,
+    `self.skipTest`) or in a `for` over an empty literal is dead too, and a
+    test definition rebound later in the same scope (a second `def` of the
+    name, `name = None`) is never collected, so it carries an activation
+    control (`py-trap-exit-before-assert`, `py-trap-shadowed-test`; the
+    `py-trap-conditional-exit` control stays credited).
 24. **A test the collector skips is activation-controlled.** A parametrize
     decorator over an empty literal table (`[]` or `()`) and an
     unconditional module-level `pytest.importorskip(...)`,

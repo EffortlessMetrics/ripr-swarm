@@ -282,7 +282,7 @@ fn oracle_solely_subscripts_unchanged_dict_key(oracle: &str, changed_keys: &[Str
 
 /// `text` with the contents of its quoted strings blanked out; keeps byte offsets so the
 /// caller can still index the original. Escapes inside strings are honoured.
-fn blank_quoted_strings(text: &str) -> String {
+pub(super) fn blank_quoted_strings(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut quote: Option<char> = None;
     let mut escaped = false;
