@@ -993,10 +993,24 @@ fn parse_required_json_input(
     input_name: &str,
     json_text: Result<String, String>,
 ) -> Result<Value, String> {
-    let text = json_text
-        .map_err(|error| format!("required {input_name} input {path} is invalid: {error}; regenerate the input with the command that wrote it, then rerun"))?;
+    let text = json_text.map_err(|error| invalid_required_json_input(path, input_name, &error))?;
     serde_json::from_str::<Value>(&text)
-        .map_err(|error| format!("required {input_name} input {path} is invalid: {error}; regenerate the input with the command that wrote it, then rerun"))
+        .map_err(|error| invalid_required_json_input(path, input_name, &error.to_string()))
+}
+
+/// A reviewed baseline carries human review state, so regenerating it would
+/// discard that; point at recovering the file instead. Every other required
+/// input is a machine-written artifact that can be regenerated.
+fn invalid_required_json_input(path: &str, input_name: &str, error: &str) -> String {
+    if input_name.starts_with("baseline") {
+        format!(
+            "required {input_name} input {path} is invalid: {error}; recover the reviewed baseline from version control or edit the JSON to repair it, then rerun"
+        )
+    } else {
+        format!(
+            "required {input_name} input {path} is invalid: {error}; regenerate the input with the command that wrote it, then rerun"
+        )
+    }
 }
 
 fn baseline_record_from_value(value: &Value) -> Option<BaselineRecord> {
