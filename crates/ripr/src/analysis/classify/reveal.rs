@@ -76,7 +76,10 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// an assertion is that function's result, not the owner's, so a test
     /// related only by file or module cannot confirm the arm through it, even
     /// when the test makes some unindexed call that might reach the owner.
-    pub(in crate::analysis) assertion_pins_other_function: &'a dyn Fn(&OracleFact) -> bool,
+    /// A local the assertion reads (`let r = tb.reduce(2500); assert_eq!(r, ..)`)
+    /// stands for its single immutable initializer (#12056).
+    pub(in crate::analysis) assertion_pins_other_function:
+        &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
     /// Names the changed owner's signature binds. A test can never hold
     /// the owner's parameter, so for a value probe a shared parameter name
     /// confirms observation only in an assertion that calls the owner
@@ -177,7 +180,7 @@ fn reveal_evidence(
             assertion_has_known_implicit_observer: &|_, _| None,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
-            assertion_pins_other_function: &|_| false,
+            assertion_pins_other_function: &|_, _| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
@@ -225,7 +228,7 @@ fn reveal_evidence_with_exit(
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
-            assertion_pins_other_function: &|_| false,
+            assertion_pins_other_function: &|_, _| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
@@ -262,7 +265,7 @@ fn reveal_evidence_proximity_reach(
         probe,
         related_tests,
         proximity_may_reach_owner,
-        &|_| false,
+        &|_, _| false,
     )
 }
 
@@ -273,7 +276,7 @@ fn reveal_evidence_proximity_reach_pinning(
     probe: &Probe,
     related_tests: &[(&TestSummary, RelationReason)],
     proximity_may_reach_owner: &dyn Fn(&TestSummary) -> bool,
-    assertion_pins_other_function: &dyn Fn(&OracleFact) -> bool,
+    assertion_pins_other_function: &dyn Fn(&TestSummary, &OracleFact) -> bool,
 ) -> (StageEvidence, StageEvidence, Vec<RelatedTest>) {
     let (observe, discriminate, related, _) = reveal_evidence_with_expression(
         probe,
@@ -2489,7 +2492,7 @@ fn analyze_related_assertions(
             let confirms_observation = confirms_observation
                 && !(names_shared_variant
                     && is_proximity_only(*reason)
-                    && (return_admission.assertion_pins_other_function)(assertion));
+                    && (return_admission.assertion_pins_other_function)(test, assertion));
             // RIPR-SPEC-0231 examples 19 and 20: an inequality on the owner
             // call that excludes only a sibling variant of the changed error
             // observes the changed result, but only as `relational_check` /
@@ -6296,7 +6299,7 @@ mod tests {
             assertion_admitted: &|_, _| true,
             sibling_exclusion_admitted: &|_, _| true,
             proximity_may_reach_owner: &|_| false,
-            assertion_pins_other_function: &|_| false,
+            assertion_pins_other_function: &|_, _| false,
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             expected_operand_value: &|_, _| None,
@@ -7772,7 +7775,7 @@ mod tests {
                 assertion_admitted: &|_, _| true,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -7871,7 +7874,7 @@ mod tests {
                     assertion_admitted: &|_, _| true,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
-                    assertion_pins_other_function: &|_| false,
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -8057,7 +8060,7 @@ mod tests {
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
-                    assertion_pins_other_function: &|_| false,
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -8170,7 +8173,7 @@ mod tests {
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
-                    assertion_pins_other_function: &|_| false,
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -8596,7 +8599,7 @@ mod tests {
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -8691,7 +8694,7 @@ mod tests {
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10498,7 +10501,7 @@ return Err(\"typed pin\".into());
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10572,7 +10575,7 @@ return Err(\"typed pin\".into());
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10617,7 +10620,7 @@ return Err(\"typed pin\".into());
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10681,7 +10684,7 @@ return Err(\"typed pin\".into());
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10747,7 +10750,7 @@ return Err(\"typed pin\".into());
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -10957,7 +10960,7 @@ return Err(\"typed pin\".into());
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -11005,7 +11008,7 @@ return Err(\"typed pin\".into());
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -11481,7 +11484,7 @@ return Err(\"typed pin\".into());
                         sibling_exclusion_admitted: &|_, _| true,
                         // The observer sibling may reach the owner (#9167).
                         proximity_may_reach_owner: &|_| true,
-                        assertion_pins_other_function: &|_| false,
+                        assertion_pins_other_function: &|_, _| false,
                         owner_parameters: &[],
                         expected_reaches_owner: &|_, _| false,
                         effect_state_carried: &|_, _| true,
@@ -11565,7 +11568,7 @@ return Err(\"typed pin\".into());
                     },
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| true,
-                    assertion_pins_other_function: &|_| false,
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
@@ -11655,7 +11658,7 @@ return Err(\"typed pin\".into());
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|_| false,
-                    assertion_pins_other_function: &|_| false,
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -11877,16 +11880,18 @@ return Err(\"typed pin\".into());
             (&reaching, RelationReason::DirectOwnerCall),
             (&sibling, RelationReason::SameTestFile),
         ];
-        let (_, may_reach, _) =
-            reveal_evidence_proximity_reach_pinning(&probe, &related, &|_| true, &|assertion| {
-                assertion.text.contains("reduce(")
-            });
+        let (_, may_reach, _) = reveal_evidence_proximity_reach_pinning(
+            &probe,
+            &related,
+            &|_| true,
+            &|_, assertion| assertion.text.contains("reduce("),
+        );
         assert_eq!(may_reach.state, StageState::Weak, "{}", may_reach.summary);
         assert_eq!(may_reach.summary, PROXIMITY_CONFIRMATION_WITHHELD);
 
         // Without the pin the unindexed-call allowance still confirms.
         let (_, unpinned, _) =
-            reveal_evidence_proximity_reach_pinning(&probe, &related, &|_| true, &|_| false);
+            reveal_evidence_proximity_reach_pinning(&probe, &related, &|_| true, &|_, _| false);
         assert_eq!(unpinned.state, StageState::Yes, "{}", unpinned.summary);
     }
 
@@ -11992,7 +11997,7 @@ return Err(\"typed pin\".into());
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|test| test.name == "from_str_fortnight",
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -12101,7 +12106,7 @@ return Err(\"typed pin\".into());
                     assertion_has_known_implicit_observer: &|_, _| None,
                     sibling_exclusion_admitted: &|_, _| true,
                     proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
-                    assertion_pins_other_function: &|_| false,
+                    assertion_pins_other_function: &|_, _| false,
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     expected_operand_value: &|_, _| None,
@@ -12153,7 +12158,7 @@ return Err(\"typed pin\".into());
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -12656,7 +12661,7 @@ return Err(\"typed pin\".into());
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 expected_operand_value: &|_, _| None,
@@ -13207,7 +13212,7 @@ return Err(\"typed pin\".into());
                 assertion_has_known_implicit_observer: &|_, _| None,
                 sibling_exclusion_admitted: &|_, _| true,
                 proximity_may_reach_owner: &|_| false,
-                assertion_pins_other_function: &|_| false,
+                assertion_pins_other_function: &|_, _| false,
                 owner_parameters,
                 expected_reaches_owner: reaches,
                 expected_operand_value: operand_value,
