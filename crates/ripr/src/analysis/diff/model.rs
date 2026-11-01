@@ -1066,25 +1066,36 @@ mod tests {
         // lines are over the token cap, so content pairs nothing and the
         // first added line keeps its coordinate match in work that grows
         // with the line, not with its square.
+        let build = |tokens: usize| {
+            let bundle: String = (0..tokens).map(|n| format!("a{n}+")).collect();
+            let rebuilt: String = (0..tokens).map(|n| format!("b{n}+")).collect();
+            ChangedFile {
+                path: PathBuf::from("dist/app.js"),
+                added_lines: vec![
+                    line(1, 1, &rebuilt),
+                    line(2, 2, "//# sourceMappingURL=app.js.map"),
+                ],
+                removed_lines: vec![line(1, 1, &bundle)],
+            }
+        };
+        let small_file = build(25_000);
+        let large_file = build(50_000);
         crate::testing::scale::assert_growth_within(
             "long minified line",
             25_000,
             50_000,
             3,
             |tokens| {
-                let bundle: String = (0..tokens).map(|n| format!("a{n}+")).collect();
-                let rebuilt: String = (0..tokens).map(|n| format!("b{n}+")).collect();
-                let changed = ChangedFile {
-                    path: PathBuf::from("dist/app.js"),
-                    added_lines: vec![
-                        line(1, 1, &rebuilt),
-                        line(2, 2, "//# sourceMappingURL=app.js.map"),
-                    ],
-                    removed_lines: vec![line(1, 1, &bundle)],
+                let changed = if tokens == 25_000 {
+                    &small_file
+                } else {
+                    &large_file
                 };
                 let map = changed.aligned_counterparts();
                 assert_eq!(map.len(), 1);
-                assert!(!lines_look_alike(&bundle, &rebuilt));
+                let bundle = &changed.removed_lines[0].text;
+                let rebuilt = &changed.added_lines[0].text;
+                assert!(!lines_look_alike(bundle, rebuilt));
             },
         );
     }

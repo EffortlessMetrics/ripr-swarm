@@ -4076,6 +4076,18 @@ fn oracle_discriminates_seam_in_test(
     {
         return false;
     }
+    // #11398: a field write is checked only by an exact read of the written
+    // field that the diff probe's own rule confirms. The seam's field name
+    // alone (any binding, any sibling) is never a discriminator.
+    if let Some(path) = written_field(seam) {
+        return owner.is_some_and(|owner| {
+            oracle_kind_matches_seam_kind(seam.kind(), &oracle.kind)
+                && !test_may_skip_read(test)
+                && crate::analysis::classify::assigned_field_read_confirms(
+                    owner, path, test, oracle, index,
+                )
+        });
+    }
     oracle_discriminates_seam(seam, oracle)
         || direct_collection_mutation_receiver(seam.expression())
             .zip(owner)
@@ -4290,8 +4302,37 @@ fn guarded_result_oracle_matches_seam_variant(
     }
 }
 
+/// The `self` field a field-write seam (`self.count += 1`) requires a test to
+/// check (#11398). `None` for every other seam, including a constructed field.
+/// A write seam's field is graded only by the exact-read rule, never by the
+/// by-name match that a constructed field uses.
+fn written_field(seam: &RepoSeam) -> Option<&str> {
+    use crate::analysis::seams::RequiredDiscriminator;
+
+    if seam.kind() != SeamKind::FieldConstruction
+        || crate::analysis::classify::field_assignment_target(seam.expression()).is_none()
+    {
+        return None;
+    }
+    match seam.required_discriminator() {
+        RequiredDiscriminator::FieldValue { field } => Some(field.as_str()),
+        _ => None,
+    }
+}
+
+/// Whether `test` never reads after the owner call in a default run: an
+/// `#[ignore]`d test does not run, and a `#[should_panic]` test passes by
+/// panicking before its read.
+fn test_may_skip_read(test: &TestSummary) -> bool {
+    is_ignored(test) || is_should_panic(test)
+}
+
 fn field_construction_oracle_matches_seam_field(seam: &RepoSeam, oracle_text: &str) -> bool {
     use crate::analysis::seams::RequiredDiscriminator;
+
+    if written_field(seam).is_some() {
+        return false;
+    }
 
     let RequiredDiscriminator::FieldValue { field } = seam.required_discriminator() else {
         return false;
