@@ -1,4 +1,5 @@
 use super::*;
+use crate::analysis::facts::SourceText;
 use crate::analysis::rust_index::summarize_file;
 use crate::domain::{DeltaKind, OracleStrength, ProbeId, SourceLocation, SymbolId};
 use std::path::{Path, PathBuf};
@@ -731,13 +732,17 @@ fn whole_object_admits_tokenizes_each_test_body_once() {
     };
     let history = whole_object("assert_eq!(inv.history(), Vec::new());");
     let copy = whole_object("assert_eq!(copy, fresh);");
-    let _ = carrier.admits(test, &history);
-    let _ = carrier.admits(test, &copy);
+    const PAD: &str = "01234567890123456789012345678901";
+    let body_a = format!("let mut inv = Inventory::new(5); {PAD}a");
+    let body_b = format!("let mut inv = Inventory::new(5); {PAD}b");
+    assert_eq!(body_a.len(), body_b.len());
+    let mut test_a = test.clone();
+    test_a.body = SourceText::owned(&body_a);
+    let mut test_b = test.clone();
+    test_b.body = SourceText::owned(&body_b);
+    let _ = carrier.admits(&test_a, &history);
+    let _ = carrier.admits(&test_a, &copy);
     TEST_BODY_TOKENIZE_COUNT.with(|count| assert_eq!(count.get(), 1));
-
-    let mut other_test = test.clone();
-    other_test.start_line = test.start_line.saturating_add(100);
-    other_test.file = PathBuf::from("tests/other.rs");
-    let _ = carrier.admits(&other_test, &history);
+    let _ = carrier.admits(&test_b, &history);
     TEST_BODY_TOKENIZE_COUNT.with(|count| assert_eq!(count.get(), 2));
 }

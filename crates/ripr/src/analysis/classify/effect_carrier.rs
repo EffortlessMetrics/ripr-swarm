@@ -655,7 +655,8 @@ impl<'a> SelfTypeMethods<'a> {
     }
 }
 
-type TestBodyTokenCache = RefCell<BTreeMap<(PathBuf, usize, usize), Arc<[Tok]>>>;
+type TestBodyCacheKey = (PathBuf, usize, u64);
+type TestBodyTokenCache = RefCell<BTreeMap<TestBodyCacheKey, Arc<[Tok]>>>;
 
 /// The owner-side half: the fields the deleted call may write and the
 /// self-type methods that read one of them.
@@ -675,7 +676,7 @@ pub(in crate::analysis) struct EffectStateCarrier {
     /// that calls one can move the written state into any field before it
     /// asserts (`inv.reorder()` turning `low_stock` into log entries).
     mutating_readers: BTreeSet<String>,
-    /// Tokenized test bodies keyed by `(file, start_line, body len)`.
+    /// Tokenized test bodies keyed by `(file, start_line, body hash)`.
     body_token_cache: TestBodyTokenCache,
 }
 
@@ -829,9 +830,18 @@ impl EffectStateCarrier {
         })
     }
 
+    fn test_body_cache_key(test: &TestSummary) -> TestBodyCacheKey {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let body = test.body.as_str();
+        let mut hasher = DefaultHasher::new();
+        body.hash(&mut hasher);
+        (test.file.clone(), test.start_line, hasher.finish())
+    }
+
     fn test_body_tokens(&self, test: &TestSummary) -> Arc<[Tok]> {
         let body = test.body.as_str();
-        let key = (test.file.clone(), test.start_line, body.len());
+        let key = Self::test_body_cache_key(test);
         if let Some(tokens) = self.body_token_cache.borrow().get(&key) {
             return Arc::clone(tokens);
         }
