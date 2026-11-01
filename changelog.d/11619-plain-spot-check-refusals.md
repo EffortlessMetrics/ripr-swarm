@@ -1,2 +1,2 @@
-<!-- section: Internal / CI -->
+<!-- section: Changed -->
 - The default `ripr check` screen's repair-start refusals ("no repair start offered: ...") say `spot` where they said `seam`, and the non-Rust refusal says "add the missing assertion"; the repair refusal, JSON, `--format human-full` and flag spellings keep the producer's wording. 580 default `human.txt` goldens were re-blessed one by one and the user-text ceilings lowered (#11619).
