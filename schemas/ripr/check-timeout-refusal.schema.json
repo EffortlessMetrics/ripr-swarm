@@ -108,7 +108,10 @@
         "tool",
         "flags",
         "fill_in",
-        "retry_safe"
+        "retry_stated",
+        "env",
+        "conditional",
+        "prose_has_more"
       ],
       "properties": {
         "kind": { "enum": ["command", "mcp_tool", "flags", "none"] },
@@ -117,7 +120,10 @@
         "tool": { "type": ["string", "null"], "minLength": 1 },
         "flags": { "type": "array", "items": { "type": "string", "pattern": "^--[a-z]" } },
         "fill_in": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "retry_safe": { "type": ["boolean", "null"] }
+        "retry_stated": { "type": ["boolean", "null"] },
+        "env": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "conditional": { "type": "boolean" },
+        "prose_has_more": { "type": "boolean" }
       }
     },
     "input_context": {

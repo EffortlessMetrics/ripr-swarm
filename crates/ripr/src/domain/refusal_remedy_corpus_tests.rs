@@ -122,6 +122,32 @@ fn stated_ripr_command_span(prose: &str) -> bool {
     false
 }
 
+/// Independent recall oracle: `--flag` tokens not inside a backticked
+/// `ripr ...` command span.
+fn flags_outside_command_spans(prose: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for (index, part) in prose.split('`').enumerate() {
+        let in_tick = index % 2 == 1;
+        if in_tick && part.trim().starts_with("ripr ") {
+            continue;
+        }
+        for token in part.split(|c: char| c.is_whitespace() || c == ',' || c == '(' || c == ')') {
+            let flag = token.trim_end_matches(['.', ';', ':', '`']);
+            let bare = flag.strip_prefix("--");
+            if bare.is_some_and(|rest| {
+                rest.starts_with(|c: char| c.is_ascii_lowercase())
+                    && rest
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+            }) && !out.contains(&flag.to_string())
+            {
+                out.push(flag.to_string());
+            }
+        }
+    }
+    out
+}
+
 #[test]
 fn every_message_yields_a_grounded_remedy_or_an_explicit_none() -> Result<(), String> {
     let messages = corpus()?;
@@ -178,8 +204,29 @@ fn every_message_yields_a_grounded_remedy_or_an_explicit_none() -> Result<(), St
                     || !remedy.flags.is_empty()
                     || !remedy.alternatives.is_empty()
                     || !remedy.fill_in.is_empty()
+                    || remedy.conditional
+                    || remedy.prose_has_more
                 {
                     failures.push(format!("none carries stray fields: {message}"));
+                }
+            }
+        }
+        // Recall: when a step is stated, every `--flag` the message names
+        // outside a command span must be reported, and the remedy must say
+        // the prose has more.
+        // Help and usage blobs are not refusal messages; skip them.
+        if message.len() <= 700 && matches!(remedy.kind, RemedyKind::Command | RemedyKind::McpTool)
+        {
+            // The list is bounded (16); beyond that the first 16 must be present.
+            for flag in flags_outside_command_spans(message)
+                .into_iter()
+                .take(MAX_LISTED)
+            {
+                if !remedy.flags.contains(&flag) {
+                    failures.push(format!("flag {flag} missed by remedy: {message}"));
+                }
+                if !remedy.prose_has_more {
+                    failures.push(format!("prose_has_more unset for {flag}: {message}"));
                 }
             }
         }
@@ -225,6 +272,14 @@ fn the_oracle_tells_an_instructed_command_from_a_contextual_mention() {
     assert!(stated_ripr_command_span(
         "pass the id; if stale, run `ripr doctor`"
     ));
+}
+
+#[test]
+fn the_recall_oracle_sees_flags_outside_the_span() {
+    assert_eq!(
+        flags_outside_command_spans("run `ripr x --in-span`, repeating `--root` and --other"),
+        vec!["--root".to_string(), "--other".to_string()]
+    );
 }
 
 #[test]

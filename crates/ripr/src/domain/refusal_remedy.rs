@@ -16,7 +16,7 @@
 //! - a message that states none of these yields [`RemedyKind::None`], an
 //!   explicit "no machine-readable remedy" value. The human message may still
 //!   carry a prose step; the value never claims one it cannot ground;
-//! - `retry_safe` is `Some(true)` only when the message itself tells the
+//! - `retry_stated` is `Some(true)` only when the message itself tells the
 //!   reader to rerun or retry, `Some(false)` only when it says repeating the
 //!   call changes nothing, and `None` otherwise. It reports what the message
 //!   states, not an analysis of side effects.
@@ -31,11 +31,24 @@ const MAX_COMMAND_LEN: usize = 300;
 const MAX_ALTERNATIVES: usize = 3;
 
 /// Bound on any list of flags or placeholders.
-const MAX_LISTED: usize = 8;
+const MAX_LISTED: usize = 16;
 
 /// Words directly before a `--flag` that make it an instruction to pass it.
 const FLAG_VERBS: &[&str] = &[
-    "pass", "add", "use", "repeat", "supply", "give", "set", "with", "specify",
+    "pass",
+    "add",
+    "use",
+    "repeat",
+    "repeating",
+    "repeated",
+    "original",
+    "supply",
+    "give",
+    "set",
+    "with",
+    "specify",
+    "keep",
+    "keeping",
 ];
 
 /// Words that continue a flag list (`pass --before and --after`).
@@ -107,7 +120,17 @@ pub(crate) struct RefusalRemedy {
     pub(crate) fill_in: Vec<String>,
     /// Whether the message states a retry is expected to work (`true`), says
     /// repeating changes nothing (`false`), or says neither (`null`).
-    pub(crate) retry_safe: Option<bool>,
+    pub(crate) retry_stated: Option<bool>,
+    /// `NAME=value` environment prerequisites the message states outside the
+    /// command span, verbatim.
+    pub(crate) env: Vec<String>,
+    /// True when the only step the message gives is conditional (`if it
+    /// persists, run ...`): the command is a fallback, not a first move.
+    pub(crate) conditional: bool,
+    /// True when `command`/`tool` is not self-sufficient: the message names
+    /// flags or environment prerequisites outside the span. A consumer must
+    /// not run the command as-is without reading them.
+    pub(crate) prose_has_more: bool,
 }
 
 impl RefusalRemedy {
@@ -121,7 +144,10 @@ impl RefusalRemedy {
             tool: None,
             flags: Vec::new(),
             fill_in: Vec::new(),
-            retry_safe: None,
+            retry_stated: None,
+            env: Vec::new(),
+            conditional: false,
+            prose_has_more: false,
         }
     }
 
@@ -150,41 +176,53 @@ impl RefusalRemedy {
 
         // Precedence: an instructed step beats any conditional one; within a
         // role a command beats a tool. Explanatory mentions are never used.
-        let (kind, mut command_pool, tool) = if !instructed_commands.is_empty() {
+        let (kind, mut command_pool, tool, conditional) = if !instructed_commands.is_empty() {
             let mut pool = instructed_commands;
             pool.extend(conditional_commands);
-            (RemedyKind::Command, pool, instructed_tools.first().cloned())
+            (
+                RemedyKind::Command,
+                pool,
+                instructed_tools.first().cloned(),
+                false,
+            )
         } else if let Some(tool) = instructed_tools.first() {
             (
                 RemedyKind::McpTool,
                 conditional_commands,
                 Some(tool.clone()),
+                false,
             )
         } else if !conditional_commands.is_empty() {
             (
                 RemedyKind::Command,
                 conditional_commands,
                 conditional_tools.first().cloned(),
+                true,
             )
         } else if let Some(tool) = conditional_tools.first() {
-            (RemedyKind::McpTool, Vec::new(), Some(tool.clone()))
+            (RemedyKind::McpTool, Vec::new(), Some(tool.clone()), true)
         } else {
-            (RemedyKind::None, Vec::new(), None)
+            (RemedyKind::None, Vec::new(), None, false)
         };
         let command = if kind == RemedyKind::Command && !command_pool.is_empty() {
             Some(command_pool.remove(0))
         } else {
             None
         };
-        // A command kind keeps the tool only as extra information; a tool
-        // kind keeps conditional commands as alternatives, never as primary.
         command_pool.truncate(MAX_ALTERNATIVES);
-        let flags = stated_flags(prose, command.as_deref());
+        // With a stated step, every flag named outside a command span is
+        // reported (recall: a trust-bound restart must not look complete
+        // without its flags). With no step, only instructed flags count.
+        let ranges = command_span_ranges(prose);
+        let has_step = kind != RemedyKind::None;
+        let flags = stated_flags(prose, &ranges, !has_step);
+        let env = stated_env(prose, &ranges);
         let kind = if kind == RemedyKind::None && !flags.is_empty() {
             RemedyKind::Flags
         } else {
             kind
         };
+        let prose_has_more = has_step && (!flags.is_empty() || !env.is_empty());
         let fill_in = command.as_deref().map(placeholders).unwrap_or_default();
         Self {
             kind,
@@ -193,7 +231,10 @@ impl RefusalRemedy {
             tool,
             flags,
             fill_in,
-            retry_safe: retry_safe(prose),
+            retry_stated: retry_stated(prose),
+            env,
+            conditional,
+            prose_has_more,
         }
     }
 }
@@ -358,11 +399,53 @@ fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-' || byte == b'.'
 }
 
-/// `--flag` tokens the message tells the reader to pass. A flag counts when
-/// the word right before it is an instruction verb (`pass`, `add`, ...), or a
-/// joiner continuing a list whose previous item counted. Flags inside the
-/// stated command belong to the command and are not repeated here.
-fn stated_flags(prose: &str, command: Option<&str>) -> Vec<String> {
+/// Byte ranges (including the ticks) of backticked ripr command spans.
+fn command_span_ranges(prose: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut offset = 0;
+    for (index, part) in prose.split('`').enumerate() {
+        let start = offset;
+        offset += part.len() + 1;
+        if index % 2 == 1 && is_ripr_command(part.trim()) {
+            out.push((start.saturating_sub(1), offset));
+        }
+    }
+    out
+}
+
+/// `NAME=value` environment prerequisites named outside command spans.
+fn stated_env(prose: &str, ranges: &[(usize, usize)]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut offset = 0;
+    for token in prose.split_inclusive(char::is_whitespace) {
+        let at = offset;
+        offset += token.len();
+        if ranges.iter().any(|(start, end)| at >= *start && at < *end) {
+            continue;
+        }
+        let trimmed = token.trim_matches(|c: char| c.is_whitespace() || "`,;:.()".contains(c));
+        let Some((name, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let name_ok = name.len() >= 3
+            && name.starts_with(|c: char| c.is_ascii_uppercase())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+        if name_ok && !value.is_empty() && !out.iter().any(|seen| seen == trimmed) {
+            if out.len() < MAX_LISTED {
+                out.push(trimmed.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// `--flag` tokens outside command spans. When `gated`, a flag counts only if
+/// the word right before it is an instruction verb (`pass`, `add`, `repeating
+/// the original`, ...) or a joiner continuing a list whose previous item
+/// counted; otherwise (a step is stated) every such flag counts.
+fn stated_flags(prose: &str, ranges: &[(usize, usize)], gated: bool) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut last_counted_end: Option<usize> = None;
     let bytes = prose.as_bytes();
@@ -389,6 +472,12 @@ fn stated_flags(prose: &str, command: Option<&str>) -> Vec<String> {
         if !starts_ok || !boundary_before {
             continue;
         }
+        if ranges
+            .iter()
+            .any(|(start, stop)| at >= *start && at < *stop)
+        {
+            continue;
+        }
         let before = prose[..at].trim_end_matches('`').trim_end();
         let word = before
             .rsplit(|c: char| c.is_whitespace() || c == '(' || c == ';' || c == ':')
@@ -404,20 +493,15 @@ fn stated_flags(prose: &str, command: Option<&str>) -> Vec<String> {
                     .all(|c| c.is_whitespace() || c == '`' || c == ',' || c.is_alphabetic())
                     && prose[prev..at].split_whitespace().count() <= 3
             });
-        if !(verb_ok || continues) {
+        if gated && !(verb_ok || continues) {
             continue;
         }
         last_counted_end = Some(end);
-        let in_command = command.is_some_and(|command| command_has_flag(command, flag));
-        if !in_command && !out.iter().any(|seen| seen == flag) && out.len() < MAX_LISTED {
+        if !out.iter().any(|seen| seen == flag) && out.len() < MAX_LISTED {
             out.push(flag.to_string());
         }
     }
     out
-}
-
-fn command_has_flag(command: &str, flag: &str) -> bool {
-    command.split_whitespace().any(|token| token == flag)
 }
 
 /// Placeholders in a command the consumer must fill: `<...>`, `{...}` and
@@ -466,7 +550,7 @@ fn contains_phrase(text: &str, phrase: &str) -> bool {
     phrase_position(text, phrase).is_some()
 }
 
-fn retry_safe(prose: &str) -> Option<bool> {
+fn retry_stated(prose: &str) -> Option<bool> {
     let lower = prose.to_ascii_lowercase();
     if NO_RETRY_PHRASES
         .iter()
@@ -520,12 +604,52 @@ mod tests {
     }
 
     #[test]
-    fn flags_inside_the_command_are_not_repeated() {
-        let remedy = RefusalRemedy::from_prose(
-            "start over with `ripr agent repair --phase before`; pass --phase",
-        );
+    fn flags_inside_the_command_span_belong_to_the_command() {
+        let remedy =
+            RefusalRemedy::from_prose("start over with `ripr agent repair --phase before`");
         assert_eq!(remedy.kind, RemedyKind::Command);
         assert!(remedy.flags.is_empty(), "{:?}", remedy.flags);
+        assert!(!remedy.prose_has_more);
+    }
+
+    /// The real trust-bound message (python_repair_binding.rs): the restart
+    /// command is not self-sufficient without the repeated flags.
+    #[test]
+    fn trust_bound_restart_reports_the_flags_it_requires() {
+        let remedy = RefusalRemedy::from_prose(
+            "the pinned state is stale; start a new attempt with `ripr agent repair --seam-id <id> --phase before`, repeating the original `--root`, `--python-repair-trust-manifest`, `--python-repair-trust-attempt`, `--edit-authorized` and `--edit-authority <identity>` flags",
+        );
+        assert_eq!(remedy.kind, RemedyKind::Command);
+        assert_eq!(
+            remedy.command.as_deref(),
+            Some("ripr agent repair --seam-id <id> --phase before")
+        );
+        for flag in [
+            "--root",
+            "--python-repair-trust-manifest",
+            "--python-repair-trust-attempt",
+            "--edit-authorized",
+            "--edit-authority",
+        ] {
+            assert!(remedy.flags.iter().any(|f| f == flag), "{flag}: {remedy:?}");
+        }
+        assert!(remedy.prose_has_more, "command must not look complete");
+    }
+
+    #[test]
+    fn env_prerequisite_outside_the_span_is_captured_and_flagged() {
+        let remedy = RefusalRemedy::from_prose(
+            "the repo-exposure artifact is over budget; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0",
+        );
+        assert_eq!(remedy.command.as_deref(), Some("ripr pilot"));
+        assert_eq!(
+            remedy.env,
+            vec!["RIPR_PILOT_REPO_EXPOSURE_BYTES=0".to_string()]
+        );
+        assert!(remedy.prose_has_more);
+        // The retry is stated by the prose, but an unchanged retry is not
+        // claimed to succeed: `retry_stated` is only what the message says.
+        assert_eq!(remedy.retry_stated, Some(true));
     }
 
     #[test]
@@ -534,7 +658,7 @@ mod tests {
             RefusalRemedy::from_prose("list the current ids with ripr_list_gaps, then retry");
         assert_eq!(remedy.kind, RemedyKind::McpTool);
         assert_eq!(remedy.tool.as_deref(), Some("ripr_list_gaps"));
-        assert_eq!(remedy.retry_safe, Some(true));
+        assert_eq!(remedy.retry_stated, Some(true));
     }
 
     #[test]
@@ -553,17 +677,17 @@ mod tests {
     }
 
     #[test]
-    fn retry_safe_follows_only_what_the_message_states() {
+    fn retry_stated_follows_only_what_the_message_states() {
         let again = RefusalRemedy::from_prose("fix the path, then rerun");
-        assert_eq!(again.retry_safe, Some(true));
+        assert_eq!(again.retry_stated, Some(true));
         let pointless = RefusalRemedy::from_prose(
             "calling it again changes nothing; read next.static_limit instead of retrying",
         );
-        assert_eq!(pointless.retry_safe, Some(false));
+        assert_eq!(pointless.retry_stated, Some(false));
         let silent = RefusalRemedy::from_prose("pass `--json`");
-        assert_eq!(silent.retry_safe, None);
+        assert_eq!(silent.retry_stated, None);
         let lookalike = RefusalRemedy::from_prose("the field is retryable");
-        assert_eq!(lookalike.retry_safe, None);
+        assert_eq!(lookalike.retry_stated, None);
     }
 
     #[test]
@@ -606,15 +730,24 @@ mod tests {
     }
 
     #[test]
-    fn a_lone_conditional_step_is_still_reported_not_dropped() {
+    fn a_lone_conditional_step_is_reported_as_conditional() {
         let remedy = RefusalRemedy::from_prose("if it persists, run `ripr doctor`");
         assert_eq!(remedy.command.as_deref(), Some("ripr doctor"));
+        assert!(remedy.conditional, "{remedy:?}");
+        // An unconditional step is not marked conditional.
+        let plain = RefusalRemedy::from_prose("run `ripr doctor`");
+        assert!(!plain.conditional);
+        // A conditional fallback behind an instructed step is not the primary.
+        let behind =
+            RefusalRemedy::from_prose("run `ripr pilot`; if it persists, run `ripr doctor`");
+        assert_eq!(behind.command.as_deref(), Some("ripr pilot"));
+        assert!(!behind.conditional);
     }
 
     #[test]
     fn underscore_is_a_word_character_for_retry_words() {
         assert_eq!(
-            RefusalRemedy::from_prose("see the ripr_retry_budget field").retry_safe,
+            RefusalRemedy::from_prose("see the ripr_retry_budget field").retry_stated,
             None
         );
     }

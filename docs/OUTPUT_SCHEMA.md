@@ -285,7 +285,10 @@ The field set is fixed; absent facts are `null` or empty, never omitted:
   "tool": null,
   "flags": [],
   "fill_in": ["<ref>"],
-  "retry_safe": true
+  "retry_stated": true,
+  "env": [],
+  "conditional": false,
+  "prose_has_more": false
 }
 ```
 
@@ -307,10 +310,22 @@ The field set is fixed; absent facts are `null` or empty, never omitted:
   repeat (flags already inside `command` are not repeated).
 - `fill_in` — placeholders in `command` (`<ref>`, `BASE`, `{root}`) the
   consumer must fill before running it.
-- `retry_safe` — `true` only when the message itself tells the reader to
+- `retry_stated` — `true` only when the message itself tells the reader to
   rerun or retry, `false` only when it says repeating the call changes
-  nothing, `null` when it says neither. It reports what the message states,
-  not an analysis of side effects.
+  nothing, `null` when it says neither. It reports what the message states;
+  it does not say an unchanged retry succeeds (the message may require a fix
+  or a prerequisite first), and it is not an analysis of side effects.
+- `env` — `NAME=value` environment prerequisites the message names outside
+  the command span, verbatim.
+- `conditional` — `true` when the only step the message gives is conditional
+  (`if it persists, run ...`): the command or tool is a fallback, not a first
+  move. An unconditional step always outranks a conditional one.
+- `prose_has_more` — `true` when `command` or `tool` is not self-sufficient:
+  the message names flags (`flags`, every `--flag` outside the command span)
+  or `env` prerequisites the span does not carry, for example a restart that
+  must repeat the original `--root` and trust-binding flags. A consumer must
+  not run `command` as-is when this is `true`; `command` may omit
+  prerequisites the prose states.
 
 A consumer branches on `remedy.kind` and `remedy.command`, never on the prose.
 `kind` values are listed under `refusal_remedy_kind` in Enums.

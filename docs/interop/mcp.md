@@ -491,7 +491,7 @@ Every typed failure object (`code`, `detail`, `recovery`, `remedy`, `data`)
 carries `remedy` next to the `recovery` prose (#11790): `kind` (`command`,
 `mcp_tool`, `flags` or an explicit `none`), the `tool` the recovery names (for
 example `ripr_list_gaps`), `command`, `alternatives`, `flags`, `fill_in` and
-`retry_safe`. It is derived from the `recovery` sentence by the same domain
+`retry_stated`. It is derived from the `recovery` sentence by the same domain
 owner the CLI refusals use and never guesses: a recovery that names no route
 yields `none`. `data.next`, where a tool returns one, stays the typed route.
 The field set and meanings are in

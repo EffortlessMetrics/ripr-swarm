@@ -652,7 +652,7 @@ mod tests {
         assert_eq!(remedy["kind"], "command", "{remedy}");
         assert_eq!(remedy["command"], "ripr check --base <ref>", "{remedy}");
         assert_eq!(remedy["fill_in"], serde_json::json!(["<ref>"]), "{remedy}");
-        assert_eq!(remedy["retry_safe"], true, "{remedy}");
+        assert_eq!(remedy["retry_stated"], true, "{remedy}");
 
         // Negative control: a message that states no step is an explicit
         // `none`, never a guessed command.
@@ -665,7 +665,7 @@ mod tests {
             .ok_or_else(|| format!("run_limitations[0].remedy missing: {value}"))?;
         assert_eq!(remedy["kind"], "none", "{remedy}");
         assert_eq!(remedy["command"], Value::Null, "{remedy}");
-        assert_eq!(remedy["retry_safe"], Value::Null, "{remedy}");
+        assert_eq!(remedy["retry_stated"], Value::Null, "{remedy}");
         assert_eq!(remedy["flags"], serde_json::json!([]), "{remedy}");
         Ok(())
     }

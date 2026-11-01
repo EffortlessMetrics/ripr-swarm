@@ -773,9 +773,16 @@ fn json_refusals_carry_a_grounded_structured_remedy() -> Result<(), String> {
             Some("none") => command.is_none() && tool.is_none() && flags == Some(0),
             _ => false,
         };
-        let has_fields = ["alternatives", "fill_in", "retry_safe"]
-            .iter()
-            .all(|field| remedy.get(*field).is_some());
+        let has_fields = [
+            "alternatives",
+            "fill_in",
+            "retry_stated",
+            "env",
+            "conditional",
+            "prose_has_more",
+        ]
+        .iter()
+        .all(|field| remedy.get(*field).is_some());
         if !grounded || !has_fields {
             failures.push(format!(
                 "{label}: ungrounded remedy {remedy} for: {message}"

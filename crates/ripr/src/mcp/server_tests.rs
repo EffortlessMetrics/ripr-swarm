@@ -2035,7 +2035,7 @@ fn typed_failure_carries_the_remedy_its_recovery_prose_states() {
     .value();
     assert_eq!(stated["remedy"]["kind"], "mcp_tool", "{stated}");
     assert_eq!(stated["remedy"]["tool"], "ripr_list_gaps", "{stated}");
-    assert_eq!(stated["remedy"]["retry_safe"], true, "{stated}");
+    assert_eq!(stated["remedy"]["retry_stated"], true, "{stated}");
     // Negative: a recovery that names no route is an explicit none, and a
     // recovery that says repeating changes nothing is not retry-safe.
     let silent =
@@ -2052,5 +2052,5 @@ fn typed_failure_carries_the_remedy_its_recovery_prose_states() {
         "calling it again changes nothing; read next.static_limit",
     )
     .value();
-    assert_eq!(pointless["remedy"]["retry_safe"], false, "{pointless}");
+    assert_eq!(pointless["remedy"]["retry_stated"], false, "{pointless}");
 }

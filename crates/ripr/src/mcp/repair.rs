@@ -1222,7 +1222,7 @@ pub(super) mod tests {
         // The no-root variant states a real command and a retry.
         let rootless = unknown_attempt("repair-attempt-x", false).value();
         assert_eq!(rootless["remedy"]["kind"], "command", "{rootless}");
-        assert_eq!(rootless["remedy"]["retry_safe"], true, "{rootless}");
+        assert_eq!(rootless["remedy"]["retry_stated"], true, "{rootless}");
     }
 
     fn output(
