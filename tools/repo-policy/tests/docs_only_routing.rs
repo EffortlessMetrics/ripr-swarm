@@ -1092,6 +1092,14 @@ fn extension_e2e_step_classifies_check_runs_by_the_requests_own_suite() -> TestR
     let earlier_only = [(100, earlier_title.as_str())];
     let ordinary = [(100, "CI")];
     let earlier_then_own = [(100, earlier_title.as_str()), (200, own_title.as_str())];
+    let many = [
+        (100, own_title.as_str()),
+        (200, own_title.as_str()),
+        (300, "CI"),
+        (400, "CI"),
+        (500, "CI"),
+        (600, "CI"),
+    ];
     let same_title_pair = [(100, own_title.as_str()), (200, own_title.as_str())];
     let own_then_earlier = [(100, own_title.as_str()), (200, earlier_title.as_str())];
     let surface_ok = || vec![check_json(10, ga, "completed", "success", 100, 100)];
@@ -1363,6 +1371,35 @@ fn extension_e2e_step_classifies_check_runs_by_the_requests_own_suite() -> TestR
                 surface: vec![
                     check_json(10, ga, "completed", "cancelled", 100, 100),
                     check_json(20, ga, "completed", "success", 200, 200),
+                ],
+                vscode: vec![check_json(21, ga, "completed", "success", 200, 200)],
+                api_failures: 0,
+            },
+            false,
+            "more than one ci.yml run",
+        ),
+        (
+            "an earlier same-title run left cancelled by the concurrency group cannot be accepted (#12236 review)",
+            VscodeCase {
+                runs: &mine,
+                surface: vec![check_json(10, ga, "completed", "cancelled", 100, 100)],
+                vscode: vec![check_json(11, ga, "completed", "skipped", 100, 100)],
+                api_failures: 0,
+            },
+            false,
+            "concluded 'cancelled'",
+        ),
+        (
+            "a matching failed run older than five newer nonmatching surfaces still counts toward the ambiguity (#12236 review)",
+            VscodeCase {
+                runs: &many,
+                surface: vec![
+                    check_json(10, ga, "completed", "failure", 100, 100),
+                    check_json(20, ga, "completed", "success", 200, 200),
+                    check_json(30, ga, "completed", "success", 300, 300),
+                    check_json(40, ga, "completed", "success", 400, 400),
+                    check_json(50, ga, "completed", "success", 500, 500),
+                    check_json(60, ga, "completed", "success", 600, 600),
                 ],
                 vscode: vec![check_json(21, ga, "completed", "success", 200, 200)],
                 api_failures: 0,

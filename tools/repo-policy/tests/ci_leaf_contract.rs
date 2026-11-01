@@ -1042,4 +1042,10 @@ fn merge_ready_run_names_its_request_for_the_results_vscode_binding() {
         ),
         "ci.yml must title a merge-ready run with the head and the request time"
     );
+    // The Result relies on this: an earlier request's run with the same title
+    // (two events in one second) is cancelled, never left with a green surface.
+    assert!(
+        WORKFLOW.contains("cancel-in-progress: ${{ !contains(toJSON(inputs), '\"subject_sha\"') && (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}"),
+        "ci.yml must cancel an earlier in-flight merge-ready run when a later request arrives"
+    );
 }

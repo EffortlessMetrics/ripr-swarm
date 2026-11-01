@@ -661,7 +661,11 @@ jobs:
           # request time from its own payload, so an earlier request's suite is
           # never read, however close in time the requests are; distinct runs
           # with one title (two events in the same second) are refused, not
-          # guessed between. No such check
+          # guessed between. Every surface check for the head is considered, so a
+          # matching run cannot fall out of a window. An earlier request's run with
+          # the same title (same second) cannot have a green surface: ci.yml's merge-ready
+          # concurrency group cancels the earlier run when the later request arrives.
+          # No such check
           # yet means ci.yml has not got that far: wait, then fail closed. In the suite,
           # the newest executed check (highest id) decides, so a passing re-run
           # clears an earlier infrastructure failure; a running one is awaited.
@@ -678,6 +682,7 @@ jobs:
           }
           [ -n "$REQUEST_AT" ] || { echo "::error::this run has no request time to bind the vscode surface to"; exit 1; }
           request_title="CI merge-ready request $EXPECTED_HEAD $REQUEST_AT"
+          declare -A run_title=()
           deadline=$((SECONDS + 1200))
           while :; do
             surface_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode%20surface&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode surface check runs for $EXPECTED_HEAD"; exit 1; }
@@ -688,12 +693,15 @@ jobs:
               [ -n "$candidate" ] || continue
               candidate_run=$(jq -r '(.html_url // "") | try (capture("/runs/(?<r>[0-9]+)/") | .r) catch empty' <<<"$candidate")
               [ -n "$candidate_run" ] || continue
-              candidate_title=$(api "repos/$REPOSITORY/actions/runs/$candidate_run" --jq .display_title) || { echo "::error::could not read the title of run $candidate_run"; exit 1; }
+              if [ -z "${run_title[$candidate_run]+set}" ]; then
+                run_title[$candidate_run]=$(api "repos/$REPOSITORY/actions/runs/$candidate_run" --jq .display_title) || { echo "::error::could not read the title of run $candidate_run"; exit 1; }
+              fi
+              candidate_title=${run_title[$candidate_run]}
               if [ "$candidate_title" = "$request_title" ]; then
                 [ "$surface" != '{}' ] || surface=$candidate
                 case " $matched_runs " in *" $candidate_run "*) ;; *) matched_runs="$matched_runs $candidate_run" ;; esac
               fi
-            done < <(jq -s -c '[.[] | select(.app.slug == "github-actions" and .conclusion != "skipped")] | sort_by(.id) | reverse | .[0:5][]' <<<"$surface_raw")
+            done < <(jq -s -c '[.[] | select(.app.slug == "github-actions" and .conclusion != "skipped")] | sort_by(.id) | reverse | .[]' <<<"$surface_raw")
             # The title has one-second resolution, so two label events on one head
             # in the same second share it. Distinct ci.yml runs with this exact
             # title cannot be told apart: refuse rather than read either suite.
