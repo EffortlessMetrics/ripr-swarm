@@ -1354,9 +1354,9 @@ fn recorded_workflow_path_matches(
             Ok(path) => path,
             Err(_) => return Ok(false),
         };
-        // `root` may be spelled plain (`D:\..`) or verbatim (`\\?\D:\..`)
-        // depending on how the caller derived it; both name one place, so
-        // compare them with the same prefix folding as the path match below.
+        // `root` may be spelled plain or verbatim (`\\?\` prefix) depending
+        // on how the caller derived it; both name one place, so compare them
+        // with the same drive-prefix folding as the path match below.
         let same_root = canonical == root || {
             let reader = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
             matches!((lexical(&canonical), lexical(&reader)), (Some(a), Some(b)) if a == b)
@@ -1365,9 +1365,8 @@ fn recorded_workflow_path_matches(
             return Ok(false);
         }
     }
-    // Join `relative` one `/`-separated part at a time: on a verbatim path
-    // (`\\?\D:\..`) `/` is not a separator, so a whole-string join would
-    // fuse the parts into one component and never equal the observed path.
+    // Join `relative` one `/`-separated part at a time so the result is built
+    // from the same components on every host and root spelling.
     let mut joined = recorded_root.to_path_buf();
     for part in relative.split('/') {
         joined.push(part);
