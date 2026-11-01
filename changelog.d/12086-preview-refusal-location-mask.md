@@ -1,2 +1,2 @@
 <!-- section: Fixed -->
-- The goldens gate no longer reports drift when a line is added above the test a TypeScript "no complete repair packet" refusal cites; only the cited `path:line` is masked, and the language and blocker wording stay compared (#12086).
+- The goldens gate no longer treats the test location cited inside a TypeScript "no complete repair packet" refusal as wording: only the cited `path:line` is masked, and the language and blocker wording stay compared. The same location still appears unmasked in the safe-next-action line, the related-test line and `check.json`, so moving a cited test still drifts those surfaces (#12086; remaining surfaces tracked separately).
