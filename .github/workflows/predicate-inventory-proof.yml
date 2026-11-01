@@ -5,6 +5,7 @@ on:
     paths: [.github/workflows/predicate-inventory-proof.yml]
 permissions:
   contents: write
+  actions: read
 concurrency:
   group: ripr-11358-proof
   cancel-in-progress: true
@@ -15,6 +16,7 @@ jobs:
     env:
       BASIS: a7431a52d9a00e6a256be5ee2038ed1b5519f588
       PATCH_BLOB: 5dfe0c02506a4b7155eee2a0c070942485afaaa1
+      REPAIR_BLOB: 690ea8a9bb41799b4394ff29e90980381608ca59
       DESTINATION: codex/11358-complete-stub-inventory-reuse
       CARGO_BUILD_JOBS: '2'
       CARGO_TERM_COLOR: never
@@ -30,13 +32,6 @@ jobs:
           ref: a7431a52d9a00e6a256be5ee2038ed1b5519f588
           path: subject
           persist-credentials: false
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: 6fc993ba833456aaf788c06e8f1c65ca673bb494
-          path: driver
-          sparse-checkout: .github/workflows/predicate-inventory-proof.yml
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
         with:
           toolchain: 1.95.0
@@ -46,70 +41,61 @@ jobs:
           workspaces: build -> target
           shared-key: ripr-8547-focused
           save-if: 'true'
-      - name: Materialize pinned scripts and bounded instrument repairs
+      - name: Materialize retained scripts and exact test-instrument repairs
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           export EVIDENCE="$RUNNER_TEMP/predicate-reuse-evidence"
-          mkdir -p "$EVIDENCE/scripts"
+          mkdir -p "$EVIDENCE/scripts" "$EVIDENCE/scripts-original"
           echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
-          test "$(git -C driver rev-parse HEAD)" = 6fc993ba833456aaf788c06e8f1c65ca673bb494
-          test "$(git -C driver hash-object .github/workflows/predicate-inventory-proof.yml)" = c8f0d8d50854420fdb44953a3d3914b42ce75849
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/13064215893/zip" > "$RUNNER_TEMP/predecessor-proof.zip"
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/$REPAIR_BLOB" > "$EVIDENCE/source-repair-blob.json"
           python3 - <<'PY'
-          import hashlib, os
+          import base64, difflib, hashlib, json, os, zipfile
           from pathlib import Path
-          lines=Path('driver/.github/workflows/predicate-inventory-proof.yml').read_text().splitlines(True)
-          names=[('bind','Bind source, storage and exact patch'),('baseline','Compile the unchanged baseline and freeze its CLI'),('prepare','Prepare only the reviewed six-file candidate'),('red','Execute the intended wrong-implementation control'),('green','Execute focused restored source and existing consumer controls'),('publish','Publish only the native-tested candidate branch'),('measure','Measure separate-process advice and actual root-human repeats'),('policy','Applicable policy and target compilation')]
-          for short,name in names:
-              matches=[i for i,line in enumerate(lines) if line.rstrip()=='      - name: '+name]
-              assert len(matches)==1,name
-              start=next(i for i in range(matches[0]+1,len(lines)) if lines[i].rstrip()=='        run: |')+1
-              end=start
-              while end<len(lines) and (not lines[end].strip() or lines[end].startswith('          ')): end+=1
-              script=''.join(line[10:] if line.startswith('          ') else line for line in lines[start:end])
-              if short=='baseline':
-                  old='run baseline-doctor cargo +1.95.0 run --locked -p xtask -- worktree doctor\n'
-                  assert script.count(old)==1
-                  new="""git rev-parse origin/main > "$EVIDENCE/observed-main.sha"
-          git log --oneline "$BASIS..origin/main" > "$EVIDENCE/observed-main-movement.txt"
-          git diff --name-only "$BASIS" origin/main > "$EVIDENCE/observed-main-paths.txt"
-          if run baseline-doctor cargo +1.95.0 run --locked -p xtask -- worktree doctor; then
-            :
-          else
-            doctor_code=$?
-            test "$doctor_code" = 1
-            python3 - <<'DOCTOR'
-          import os, re
-          from pathlib import Path
-          text=(Path(os.environ['EVIDENCE'])/'baseline-doctor.stdout').read_text()
-          section=text.split('Errors:\\n',1)[1].split('\\nNext actions:',1)[0]
-          errors=[line.strip() for line in section.splitlines() if line.strip()]
-          assert len(errors)==1 and re.fullmatch(r'- branch is behind origin/main by [1-9][0-9]* commit\\(s\\); refresh before opening or updating a PR',errors[0]), text
-          DOCTOR
-            echo 'baseline doctor remains FAILED: behind-only observation retained under AGENTS.md no-restack rule; not merge or integration clearance' >> "$EVIDENCE/status.txt"
-          fi
-          """
-                  script=script.replace(old,new,1)
-              if short=='prepare':
-                  anchor='cargo +1.95.0 fmt --all\n'
-                  assert script.count(anchor)==1
-                  repair="""python3 - <<'FIX'
-          from pathlib import Path
-          p=Path('crates/ripr/src/analysis/file_guidance_inventory_tests.rs')
-          s=p.read_text()
-          old='    entry_path(&fixture.0, &cold, FILE)?;\\n    let (memory, builds, evaluated)'
-          new='    let (memory, builds, evaluated)'
-          assert s.count(old)==1
-          s=s.replace(old,new,1)
-          old='    forget(&cold, FILE);\\n    let (disk, builds, evaluated)'
-          new='    entry_path(&fixture.0, &cold, FILE)?;\\n'+old
-          assert s.count(old)==1
-          p.write_text(s.replace(old,new,1))
-          FIX
-          """
-                  script=script.replace(anchor,repair+anchor,1)
-              path=Path(os.environ['EVIDENCE'])/'scripts'/(short+'.sh');path.write_text(script)
-              print(short,hashlib.sha256(script.encode()).hexdigest())
+          e=Path(os.environ['EVIDENCE']); archive=Path(os.environ['RUNNER_TEMP'])/'predecessor-proof.zip'
+          assert hashlib.sha256(archive.read_bytes()).hexdigest()=='8973a34c2f532fbc5ac8766360b027d1d900eebdcdc49c89dc2a14300eba279c'
+          b=json.loads((e/'source-repair-blob.json').read_text())
+          assert b['sha']==os.environ['REPAIR_BLOB'] and b['encoding']=='base64'
+          (e/'source-repair.py').write_bytes(base64.b64decode(b['content']))
+          changes=[]
+          with zipfile.ZipFile(archive) as z:
+              for short in ['bind','baseline','prepare','red','green','publish','measure','policy']:
+                  script=z.read('_temp/predicate-reuse-evidence/scripts/'+short+'.sh').decode()
+                  original=script
+                  if short=='prepare':
+                      start=script.index("python3 - <<'FIX'\n")
+                      end=script.index('\nFIX\n',start)+len('\nFIX\n')
+                      script=script[:start]+'python3 "$EVIDENCE/source-repair.py"\n'+script[end:]
+                  if short=='red':
+                      old='Some(&identity).filter(|_| false)'
+                      assert script.count(old)==1
+                      script=script.replace(old,'Some(identity.as_slice()).filter(|_| false)',1)
+                  if short=='measure':
+                      old="states=[('weak',3),('strong-edit',0),('weak-restored',3),('second-strong',0),('second-removed',3)]"
+                      new="states=[('weak',3),('strong-edit',0),('weak-restored',3),('second-strong',0),('second-removed',3),('production-edited',0),('production-restored',3)]"
+                      assert script.count(old)==1;script=script.replace(old,new,1)
+                      old='for state,code in states:\n'
+                      new=old+"    actual_source=source.replace('qty > 10','qty > 11') if state=='production-edited' else source\n    (fixture/'src/lib.rs').write_text(actual_source)\n"
+                      assert script.count(old)==1;script=script.replace(old,new,1)
+                      old="    assert (fixture/'src/lib.rs').read_text()==source"
+                      assert script.count(old)==1;script=script.replace(old,old.replace('==source','==actual_source'),1)
+                      old="            if label=='candidate' and repeat==1:\n"
+                      new="            if label=='candidate' and repeat==0 and state in ['strong-edit','second-strong','production-edited']:\n                assert 'start_review_scope_files_' in trace, trace\n"+old
+                      assert script.count(old)==1;script=script.replace(old,new,1)
+                  if short=='policy':
+                      old='run precommit cargo +1.95.0 run --locked -p xtask -- precommit\n'
+                      assert script.count(old)==1
+                      script=script.replace(old,'run strict-clippy cargo +1.95.0 clippy --locked -p ripr --all-targets --all-features -- -D warnings\n'+old,1)
+                  (e/'scripts-original'/(short+'.sh')).write_text(original)
+                  (e/'scripts'/(short+'.sh')).write_text(script)
+                  changes.extend(difflib.unified_diff(original.splitlines(True),script.splitlines(True),fromfile=short+'-retained',tofile=short+'-repaired'))
+                  print(short,hashlib.sha256(script.encode()).hexdigest())
+          (e/'script-repairs.diff').write_text(''.join(changes))
           PY
+          test "$(git hash-object "$EVIDENCE/source-repair.py")" = "$REPAIR_BLOB"
+          python3 -m py_compile "$EVIDENCE/source-repair.py"
           for script in "$EVIDENCE"/scripts/*.sh; do bash -n "$script"; done
       - name: Bind source, storage and exact patch
         working-directory: build
