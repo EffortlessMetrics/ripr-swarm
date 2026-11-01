@@ -432,7 +432,10 @@ Each assertion expression is tried in this order; the first match wins:
    An un-awaited, un-returned statement `expect(..).resolves|rejects..`
    collects nothing and reads `static_unknown` (#11535): the promise settles
    after the test body ends, so it cannot fail the test. Awaited, returned and
-   expression-bodied forms are collected as before. The rule is derived from
+   expression-bodied forms are collected as before, except that an
+   expression-bodied `forEach` callback floats (`forEach` discards its
+   result) and collects nothing. `expect.soft(..)` and `.not.resolves` /
+   `.not.rejects` follow the same rule. The rule is derived from
    jest and is conservative for vitest. Known limits: a test calling
    `expect.assertions(n)` and an expression-bodied subtest or a
    function-reference callback may be demoted although they would fail; this
