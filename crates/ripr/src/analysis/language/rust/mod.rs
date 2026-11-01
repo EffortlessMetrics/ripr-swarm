@@ -4090,7 +4090,7 @@ mod tests {
         .map_err(|error| error.to_string())?;
         fs::write(
             root.join("src/lib.rs"),
-            "use vstd::prelude::*;\nverus! {\nfn f(x: u32) -> (r: u32)\n    ensures r == x,\n{\n    if x > 5 { x } else { x }\n}\n}\n",
+            "use vstd::prelude::*;\nverus! {\nfn f(x: u32) -> (r: u32)\n    ensures r == x,\n{\n    if x > 5 { x } else { x }\n}\n}\nfn ordinary(n: usize) -> bool {\n    n >= 4\n}\n",
         )
         .map_err(|error| error.to_string())?;
         let result = RustAdapter.analyze_repo(
@@ -4113,7 +4113,22 @@ mod tests {
             &OraclePolicy::default(),
         )?;
         fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
-        assert!(result.findings.is_empty(), "{:?}", result.findings);
+        // Positive control: the ordinary fn after the block (line 10) proves the
+        // file was indexed and probed, so the absence of region findings is
+        // attributable to region exclusion (lines 2-8) and not a no-finding path.
+        assert!(
+            result.findings.iter().any(|f| f.probe.location.line == 10),
+            "ordinary fn must still produce a finding: {:?}",
+            result.findings
+        );
+        assert!(
+            result
+                .findings
+                .iter()
+                .all(|f| !(2..=8).contains(&f.probe.location.line)),
+            "no finding inside the verus! region: {:?}",
+            result.findings
+        );
         Ok(())
     }
 

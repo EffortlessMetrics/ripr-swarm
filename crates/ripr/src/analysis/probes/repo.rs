@@ -532,9 +532,12 @@ mod verus_region_tests {
                 .map_err(|error| error.to_string())?;
         let probes = probes_for_repo_file(&root, Path::new("src/lib.rs"), &index);
         let _ = std::fs::remove_dir_all(&root);
+        let (start, end) = crate::analysis::probes::macro_definition::verus_region_lines(source, 3)
+            .ok_or("fixture must contain a located verus! region")?;
+        assert_eq!((start, end), (2, 10), "region extent of the fixture");
         let inside = probes
             .iter()
-            .filter(|probe| probe.location.line <= 10)
+            .filter(|probe| (start..=end).contains(&probe.location.line))
             .collect::<Vec<_>>();
         assert!(inside.is_empty(), "no probe inside the region: {inside:?}");
         assert!(
