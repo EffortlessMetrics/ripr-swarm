@@ -1676,7 +1676,13 @@ fn init_stmt_shadows_submodule(
                     .as_ref()
                     .map(|asname| asname.to_string())
                     .unwrap_or_else(|| {
-                        alias.name.split('.').next().unwrap_or_default().to_string()
+                        alias
+                            .name
+                            .as_str()
+                            .split('.')
+                            .next()
+                            .unwrap_or_default()
+                            .to_string()
                     });
                 if alias.asname.is_some() {
                     shadows.insert(bound);
