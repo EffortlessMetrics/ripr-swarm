@@ -59,6 +59,8 @@ mod assertion_selection;
 mod assertion_selection_tests;
 mod boundary_input;
 #[cfg(test)]
+mod boundary_input_one_line_tests;
+#[cfg(test)]
 mod boundary_input_tests;
 #[cfg(test)]
 mod boundary_label_tests;

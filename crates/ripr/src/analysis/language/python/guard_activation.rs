@@ -17,7 +17,9 @@
 //! the guard, computed operands, non-literal rows, a strong call no row
 //! binds) fails open and keeps the existing verdict, like the boundary
 //! rule's `Unresolved` limitation. Equality follows Python semantics
-//! (`True == 1`), since a wrong exclusion is a wrong actionable signal.
+//! (`True == 1`, `None != 0`), since a wrong exclusion is a wrong actionable
+//! signal. The `None` answer lives here, not in the shared [`literals_equal`],
+//! whose mixed-kind inequality stays unknown for the boundary rule's credit.
 
 use super::PythonOwner;
 use super::assertion_selection::PythonAssertionFocus;
@@ -1196,7 +1198,7 @@ fn is_integer_literal(text: &str) -> bool {
 }
 
 /// Compare two resolved literal values with `op`. Equality uses Python
-/// scalar semantics via [`literals_equal`] (`True == 1`, `False == 0`);
+/// scalar semantics via [`guard_literals_equal`] (`True == 1`, `None != 0`);
 /// ordering parses the canonical decimals and never orders across kinds (a
 /// string against a number is unreadable, which fails open).
 pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Option<bool> {
@@ -1211,8 +1213,8 @@ pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Optio
         return None;
     }
     match op {
-        "==" => literals_equal(left, right),
-        "!=" => literals_equal(left, right).map(|equal| !equal),
+        "==" => guard_literals_equal(left, right),
+        "!=" => guard_literals_equal(left, right).map(|equal| !equal),
         "<" | "<=" | ">" | ">=" => {
             let left = canonical_decimal(left)?;
             let right = canonical_decimal(right)?;
@@ -1247,6 +1249,19 @@ pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Optio
         }
         _ => None,
     }
+}
+
+/// Equality for the exclusion gate. The shared [`literals_equal`] leaves a
+/// decimal against `None` unknown so the boundary rule never awards credit
+/// from it; `None` is a singleton that never equals a number, and excluding on
+/// that definite answer is correct Python, so only this gate states it.
+fn guard_literals_equal(left: &str, right: &str) -> Option<bool> {
+    let none_against_number = (left == "None" && canonical_decimal(right).is_some())
+        || (right == "None" && canonical_decimal(left).is_some());
+    if none_against_number {
+        return Some(false);
+    }
+    literals_equal(left, right)
 }
 
 /// Whether a literal's source text equals its decoded value: a plain decimal,
@@ -1437,6 +1452,13 @@ mod tests {
         assert_eq!(compare_literal_values("\"A\"", "==", "'A'"), Some(true));
         assert_eq!(compare_literal_values("\"A\"", "==", "\"B\""), Some(false));
         assert_eq!(compare_literal_values("None", "!=", "0"), Some(true));
+        assert_eq!(compare_literal_values("0", "!=", "None"), Some(true));
+        assert_eq!(compare_literal_values("None", "==", "0"), Some(false));
+        assert_eq!(compare_literal_values("None", "==", "None"), Some(true));
+        // Ordering still refuses to compare across kinds.
+        assert_eq!(compare_literal_values("None", "<", "0"), None);
+        // The shared boundary equality keeps the pair unknown.
+        assert_eq!(literals_equal("None", "0"), None);
     }
 
     #[test]
