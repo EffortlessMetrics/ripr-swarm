@@ -2506,7 +2506,12 @@ fn decoded_char_literal_inner(inner: &str) -> Option<char> {
                 let body = after_u.strip_prefix('{')?;
                 let end = body.find('}')?;
                 let digits = &body[..end];
-                if digits.is_empty() {
+                // Rust requires a leading hex digit and at most six hex digits
+                // (`_` separators allowed after the first digit).
+                if !digits.starts_with(|ch: char| ch.is_ascii_hexdigit()) {
+                    return None;
+                }
+                if digits.chars().filter(|ch| *ch != '_').count() > 6 {
                     return None;
                 }
                 let mut value = 0u32;
@@ -4189,6 +4194,9 @@ mod tests {
     fn invalid_escaped_char_literals_stay_unknown() {
         assert_eq!(literal_value("'\\q'"), None);
         assert_eq!(literal_value("'\\u{110000}'"), None);
+        assert_eq!(literal_value("'\\u{_}'"), None);
+        assert_eq!(literal_value("'\\u{_41}'"), None);
+        assert_eq!(literal_value("'\\u{0000000}'"), None);
     }
 
     #[test]
