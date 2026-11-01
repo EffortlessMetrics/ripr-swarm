@@ -73,7 +73,7 @@
       "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
       "future_support": "complete error-path repair-card support may use exact payload evidence, but bare broad checks remain weak evidence",
       "must_remain_non_actionable": true,
-      "required_evidence_fragment": "broad error evidence does not establish missing discriminator",
+      "required_evidence_fragment": "broad error evidence does not establish the missing check",
       "raw_evidence_refs": [
         "fixtures/typescript_awaited_promise_reject/expected/check.json#probe:src_profile.ts:typescript_preview:9da98202"
       ],

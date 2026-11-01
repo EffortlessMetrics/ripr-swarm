@@ -343,6 +343,7 @@ pub(super) fn builtin_names_intact(
     let lines: Vec<&str> = owner_source.lines().collect();
     builtins.iter().all(|name| {
         !lines.iter().any(|line| binds_name(line.trim(), name))
+            && !lines.iter().any(|line| patches_builtin(line.trim(), name))
             && !lines.iter().any(|line| {
                 let trimmed = line.trim();
                 let names_it = mentions_identifier(trimmed, name);
@@ -359,6 +360,25 @@ pub(super) fn builtin_names_intact(
                     .any(|prefix| trimmed.starts_with(prefix)))
                     || (trimmed.starts_with("from ") && trimmed.ends_with("import *"))
             })
+    })
+}
+
+/// Whether `line` rewrites the builtin `name` through the `builtins` module
+/// (`builtins.isinstance = f`, `setattr(builtins, ..)`), which no local binding
+/// shows (#12183). A line that mentions `builtins` together with `setattr` or
+/// `__dict__` is refused whatever it sets, because the written name may be
+/// computed; the guard then reads as unknown and keeps its credit.
+fn patches_builtin(line: &str, name: &str) -> bool {
+    if !mentions_identifier(line, "builtins") {
+        return false;
+    }
+    if line.contains("setattr") || line.contains("__dict__") {
+        return true;
+    }
+    let target = format!("builtins.{name}");
+    line.match_indices(&target).any(|(start, _)| {
+        let rest = line[start + target.len()..].trim_start();
+        rest.starts_with('=') && !rest.starts_with("==")
     })
 }
 

@@ -83,6 +83,13 @@ this repository's license, one per test library or library feature:
   fixture. Each test only asserts the response is not `None`, so every mutant
   survives and the cases score how the client's application is read, not the
   oracle (run under Python 3.13.16 and pytest 9.1.1).
+- `authored-py-pytest-fixture-patch`: RIPR-SPEC-0238's fixture-substitution
+  read, one directory per case so a conftest reaches only its own test. An
+  autouse conftest fixture, a requested module fixture and a `setUp`
+  `patch.object` each replace the owner with a stand-in the test asserts, so
+  the edit cannot fail the test (gaps, `static_unknown` abstains); the control
+  directory's autouse fixture only sets an environment variable, so its exact
+  assertion catches the edit and stays credited (Python 3.13.18, pytest 9.2.0).
 - `authored-py-pytest-literals`, `authored-py-pytest-imports`,
   `authored-py-unittest-almost`, `authored-py-unittest-raises` and
   `authored-py-pytest-conjuncts`: one RIPR-SPEC-0238 rule family each (literal
@@ -121,6 +128,15 @@ this repository's license, one per test library or library feature:
   independent reference function pin the value and are credited, as is an
   input both sides read (`n = make_input()`; `scale_input(n) == n * 2`). Labeled under
   Python 3.13.18 and pytest 9.2.0.
+- `authored-py-pytest-uncollected` and `authored-py-pytest-uncollected-config`:
+  RIPR-SPEC-0238 rule 24's collection exclusions (#11527). A test pytest never
+  collects cannot notice an edit, so it is a gap that abstains with
+  `static_unknown`: a class with `__test__ = False`, one that inherits it, a
+  module with `__test__ = False`, a file named by a conftest `collect_ignore`,
+  a file name that `python_files` leaves out, and a directory that `addopts`
+  `--ignore` skips. `__test__ = True` and a file that matches `python_files`
+  stay collected and are credited. The first subject keeps a benign
+  `testpaths = ["tests"]` in `pyproject.toml`, which must not move a verdict.
 - `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band
   abstentions (positional band within and outside the band, spread band,
   non-literal band, longer owner body, method owner, decorated owner). Every

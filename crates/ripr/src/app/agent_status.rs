@@ -1579,7 +1579,7 @@ fn pilot_python_repair_card_message(
 ) -> String {
     let mut message = "the last complete `ripr pilot` run ranked no seam but produced a Python preview repair card".to_string();
     if let Some(discriminator) = &card.missing_discriminator {
-        message.push_str(&format!(" for missing discriminator `{discriminator}`"));
+        message.push_str(&format!(" for the missing check `{discriminator}`"));
     }
     // `ripr check` admits a gap-bound start for its selected Python finding
     // (#10373), so the warning must not say `agent repair` cannot run.
@@ -1606,7 +1606,7 @@ fn pilot_python_repair_card_message(
         message.push_str(&format!(" (`{verify}`)"));
     }
     message.push_str(&format!(
-        ", then rerun `ripr check --root {}` to see whether static evidence now finds the discriminator",
+        ", then rerun `ripr check --root {}` to see whether static evidence now finds the check",
         shell_arg(root_display)
     ));
     message.push_str(&format!(
@@ -2009,7 +2009,7 @@ fn pilot_routed_to_check_message(
             Some(start) => {
                 let start = start.rendered();
                 message.push_str(&format!(
-                ": it routed {code} to {commands}, which reviews changes diff-first and prints the gap-bound start {start} for its selected finding, and running pilot again unchanged routes there again. Run {commands} and that start, or add or strengthen a test for the changed behavior by hand and rerun {commands} to see whether static evidence now finds a discriminator"
+                ": it routed {code} to {commands}, which reviews changes diff-first and prints the gap-bound start {start} for its selected finding, and running pilot again unchanged routes there again. Run {commands} and that start, or add or strengthen a test for the changed behavior by hand and rerun {commands} to see whether static evidence now finds a check"
                 ))
             }
             None => message.push_str(&format!(
@@ -6796,7 +6796,7 @@ mod tests {
             .ok_or_else(|| format!("expected a Python card warning: {:?}", report.warnings))?;
         assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
         for expected in [
-            "produced a Python preview repair card for missing discriminator `amount == DISCOUNT_THRESHOLD`",
+            "produced a Python preview repair card for the missing check `amount == DISCOUNT_THRESHOLD`",
             "running pilot again unchanged records the same card",
             "`ripr first-pr --root",
             "(`pytest tests/test_pricing.py::test_discount`)",
@@ -6805,6 +6805,12 @@ mod tests {
         ] {
             assert!(warning.message.contains(expected), "{}", warning.message);
         }
+        // The card names the gap as "the missing check", never the internal term.
+        assert!(
+            !warning.message.contains("discriminator"),
+            "{}",
+            warning.message
+        );
         let rendered = render_agent_status_markdown(&report);
         assert!(
             !rendered.contains("```bash\nripr pilot --root"),

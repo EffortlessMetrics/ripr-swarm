@@ -5622,6 +5622,9 @@ mod tests {
         // observe the owners but need operands that distinguish product order.
         // `python_factor_reorder_rebound` adds one direct-aligned weak card:
         // its rebound table operand leaves multiplication order unresolved.
+        // RIPR-SPEC-0028: `python_adversarial_attribute_sink_same_value_other_receiver`
+        // adds one orthogonal card: the same value on a foreign receiver is
+        // not observation of the changed `self.status` sink.
         // #9186: `python_truthiness_swap_no_exposed_credit` downgrades an
         // `is None` -> `not x` swap that every strong call leaves unseparated to
         // `weakly_exposed`; one more direct-aligned card. Its
@@ -5638,6 +5641,13 @@ mod tests {
         // `start == 0` boundary and carries one direct-aligned card.
         // #10707: `python_boundary_module_constant_rebound_not_credited` keeps a
         // twice-bound test-module constant unresolved, one more direct card.
+        // #10391: nine conservative patch-scope fixtures
+        // (`python_bool_owner_{environment_protocol, escaped_patch_target,
+        // fake_environment, mock_comprehension, mock_equality,
+        // mock_inspection_override, mock_result_escape, parameter_patch,
+        // patched_callee}`) carry one packet-eligible `no_strong_oracle` card
+        // each; the admitted-environment positive stays exposed and the
+        // formatted-patch limit contributes no card.
         // #9185: `python_message_pin_local_no_exposed_credit` is the two-step
         // `msg = "..."` / `raise Exc(msg)` form of the same downgrade, one more
         // direct-aligned weak card; `python_message_pin_local_control` is
@@ -5647,7 +5657,7 @@ mod tests {
         // inputs no call binds unresolved, so their weak boundary findings
         // name no discriminator and carry no repair card; the direct-aligned
         // inventory drops by two.
-        if (direct, no_strong, orthogonal, family_selection) != (21, 27, 30, 1) {
+        if (direct, no_strong, orthogonal, family_selection) != (21, 36, 31, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

@@ -19,9 +19,9 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
   Changed behavior: return x * 2;
-  Discriminator (observed, advisory): Related test reaches `doubled` with an `exact_value` oracle.
-    Static evidence suggests the changed behavior is observed under an exact-value or
-    exact-error-variant discriminator
+  Check (observed, advisory): Related test reaches `doubled` with an `exact_value` oracle. Static
+    evidence suggests the changed behavior is observed under an exact-value or exact-error-variant
+    check
   Related test: tests/cart.test.ts:11 doubled doubles
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
@@ -46,8 +46,8 @@ Next: drill into the top finding:
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets (TypeScript preview: 2).
-    - src/cart.ts:6 (exposed); kind: field_construction; reason: Related test reaches `cappedTotal` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
-    - src/cart.ts:12 (exposed); kind: field_construction; reason: Related test reaches `flooredTotal` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+    - src/cart.ts:6 (exposed); kind: field_construction; reason: Related test reaches `cappedTotal` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
+    - src/cart.ts:12 (exposed); kind: field_construction; reason: Related test reaches `flooredTotal` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
   Hidden classes:
     exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full

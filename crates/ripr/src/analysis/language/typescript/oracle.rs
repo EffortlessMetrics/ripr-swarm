@@ -113,24 +113,24 @@ pub(crate) fn weak_oracle_recommendation(
 ) -> String {
     match oracle_kind {
         OracleKind::Snapshot => format!(
-            "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         OracleKind::SmokeOnly => format!(
-            "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         OracleKind::MockExpectation => mock_payload_oracle.map_or_else(
                 || format!(
-                    "TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe discriminator for `{discriminator}`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries."
+                    "TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe check for `{discriminator}`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries."
                 ),
                 |oracle| format!(
                     "TypeScript preview advisory: related mock payload evidence `{oracle}` is syntax-bounded for `{discriminator}`, but no actionable repair packet is emitted until verify, receipt, evidence refs, and edit boundaries are available."
                 ),
         ),
         OracleKind::BroadError => format!(
-            "TypeScript preview advisory: broad error evidence does not establish missing discriminator `{discriminator}`; add an exact payload to `toThrow` (string, object, or class reference) and no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: broad error evidence does not establish the missing check `{discriminator}`; add an exact payload to `toThrow` (string, object, or class reference) and no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         _ => format!(
-            "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
     }
 }
@@ -155,6 +155,7 @@ pub(crate) fn collect_expect_assertions_in_statements(
         source,
         receiver,
         &TypeScriptAssertionBindings::default(),
+        false,
     )
 }
 
@@ -166,8 +167,16 @@ pub(crate) fn collect_assertions_in_statements_with_bindings(
     source: &SourceText<'_>,
     receiver: Option<&str>,
     bindings: &TypeScriptAssertionBindings,
+    expression_body: bool,
 ) -> Vec<TypeScriptAssertion> {
-    collect_callback_assertions(statements, source, receiver, bindings, true)
+    collect_callback_assertions(
+        statements,
+        source,
+        receiver,
+        bindings,
+        true,
+        expression_body,
+    )
 }
 
 /// A registered test's expression-bodied arrow returns the whole expression.
@@ -201,6 +210,7 @@ pub(crate) fn collect_test_arrow_expression_assertions(
             identifier_occurrences(text, name) == receiver_method_call_occurrences(text, name)
         }),
         returned_to_runner: true,
+        expression_body: true,
         table_consts: &[],
     };
     let mut out = Vec::new();
@@ -218,6 +228,7 @@ pub(crate) fn collect_callback_assertions(
     receiver: Option<&str>,
     bindings: &TypeScriptAssertionBindings,
     returns_to_runner: bool,
+    expression_body: bool,
 ) -> Vec<TypeScriptAssertion> {
     let literal_consts = loose_literal_consts(statements, source);
     let match_object_consts = match_object_consts(statements, source);
@@ -236,6 +247,7 @@ pub(crate) fn collect_callback_assertions(
             identifier_occurrences(text, name) == receiver_method_call_occurrences(text, name)
         }),
         returned_to_runner: false,
+        expression_body,
         table_consts: &table_consts,
     };
     let mut out = Vec::new();
@@ -375,6 +387,7 @@ pub(crate) fn statements_collect_assertion_probe(
         receiver_named_once: false,
         receiver_only_called: false,
         returned_to_runner: false,
+        expression_body: false,
         table_consts: &[],
     };
     let mut probe = Vec::new();
@@ -414,6 +427,10 @@ pub(crate) struct AssertionContext<'a> {
     /// Whether the expression under inspection is a `return` argument the
     /// test runner awaits.
     returned_to_runner: bool,
+    /// Whether this is the single implicit-return statement of an
+    /// expression-bodied arrow (`() => expect(p).resolves.toBe(x)`), whose
+    /// value the runner awaits. Empty (`false`) inside a nested statement.
+    expression_body: bool,
     /// The test body's top-level literal table `const`s a `for...of` loop may
     /// read (RIPR-SPEC-0243 rule 11). Empty inside a nested statement.
     table_consts: &'a [TableConst],
@@ -425,6 +442,7 @@ impl<'a> AssertionContext<'a> {
     fn returning(&self) -> AssertionContext<'a> {
         AssertionContext {
             returned_to_runner: self.returns_to_runner,
+            expression_body: false,
             literal_consts: self.literal_consts,
             match_object_consts: self.match_object_consts,
             table_consts: self.table_consts,
@@ -444,6 +462,7 @@ impl<'a> AssertionContext<'a> {
             receiver_named_once: self.receiver_named_once,
             receiver_only_called: self.receiver_only_called,
             returned_to_runner: false,
+            expression_body: false,
             table_consts: &[],
         }
     }
@@ -520,6 +539,13 @@ pub(crate) fn collect_expect_assertions_in_statement(
             collect_expect_assertions_from_statement_vec(&block.body, source, &nested, out);
         }
         Statement::ExpressionStatement(expr_stmt) => {
+            // A floating `expect(p).resolves.toBe(x)` / `.rejects.toThrow()`
+            // statement (no `await`, no `return`) leaves its promise to
+            // settle after the test body ends, so its failure cannot fail the
+            // test: no discriminator (fail closed, like a floating `.then`).
+            if !context.expression_body && is_floating_promise_assertion(&expr_stmt.expression) {
+                return;
+            }
             collect_assertions_in_expression(&expr_stmt.expression, false, source, context, out);
         }
         Statement::ReturnStatement(return_stmt) => {
@@ -672,6 +698,22 @@ pub(crate) fn collect_expect_assertions_in_statement(
         }
         _ => {}
     }
+}
+
+/// An un-awaited `expect(...).resolves...` / `.rejects...` assertion
+/// expression statement. `await expect(...)` (also parenthesised) is the
+/// evident awaiting; a `return` argument and an expression-bodied arrow are
+/// handled by the callers. `void expect(...)` is not a call expression and
+/// never reaches the assertion reader.
+fn is_floating_promise_assertion(expr: &Expression<'_>) -> bool {
+    let Expression::CallExpression(call) = expr.get_inner_expression() else {
+        return false;
+    };
+    let Some(member) = call.callee.as_member_expression() else {
+        return false;
+    };
+    expect_assertion_chain(member.object().get_inner_expression())
+        .is_some_and(|(_, async_modifier, _)| async_modifier.is_some())
 }
 
 /// Jump targets open while walking a finalizer, so a `break`/`continue` that
@@ -961,12 +1003,13 @@ fn collect_nested_callback_assertions(
             }
             if callback_parameter_count(callback) == Some(0) {
                 if let Some(statements) = function_body_statements_from_argument(callback) {
-                    collect_expect_assertions_from_statement_vec(
-                        statements,
-                        source,
-                        &context.nested(),
-                        out,
-                    );
+                    // An expression-bodied arrow returns its assertion to the
+                    // awaited chain, so it is not floating.
+                    let body = AssertionContext {
+                        expression_body: callback_is_expression_arrow(callback),
+                        ..context.nested()
+                    };
+                    collect_expect_assertions_from_statement_vec(statements, source, &body, out);
                 }
             } else if let Some(assertions) = callback_case_assertions(
                 callback,
@@ -1044,6 +1087,7 @@ fn collect_nested_callback_assertions(
                 receiver_named_once: false,
                 receiver_only_called: false,
                 returned_to_runner: false,
+                expression_body: false,
                 table_consts: &table_consts,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
@@ -1217,6 +1261,14 @@ fn callback_is_async_or_generator(callback: &oxc_ast::ast::Argument<'_>) -> bool
             function.r#async || function.generator
         }
         _ => true,
+    }
+}
+
+/// `true` for an expression-bodied arrow callback (`() => expect(p)...`).
+fn callback_is_expression_arrow(callback: &oxc_ast::ast::Argument<'_>) -> bool {
+    match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => arrow.expression,
+        _ => false,
     }
 }
 

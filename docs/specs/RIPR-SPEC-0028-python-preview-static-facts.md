@@ -221,7 +221,42 @@ mock expectations, and custom `assert_*` helpers.
   - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
     single resolved workspace function owner provably returns `bool` is an
     exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
-    or non-literal argument stays smoke
+    or non-literal argument stays smoke. The patch veto is narrowed
+    only to a closed allow-list (#10391): a test file keeps the credit when
+    every occurrence of a name containing `patch`, `mock`, `Mock`, `setattr`,
+    `delattr` or `monkey` is an exact `monkeypatch.setenv(` / `delenv(` /
+    `chdir(` call on an injected pytest test/fixture parameter (no default,
+    rebinding, or explicit supplying call), a directly assigned zero-argument constructor from an
+    unshadowed `unittest.mock` import (`Mock`, `MagicMock`, ..), an `import` /
+    `from .. import` statement without `as`, a formal parameter, a recognized
+    imported fixture type annotation, or an inert string statement, with no
+    argument naming the callee or owner. Inspection such as
+    `handle.assert_not_called()` remains allowed; marker-bearing inspection/reset
+    calls require a direct, unrebound zero-argument mock construction. Comprehension
+    bindings cannot borrow an import or constructor from a different scope.
+    Environment and mock calls admit only inert literal arguments: `chdir` may
+    invoke `__fspath__`, `setenv` may invoke `__str__`, and mock comparisons may
+    invoke `__eq__`. Mock configuration, escaping references, and retained call
+    results retain the veto; admitted mock calls are complete discarded expressions.
+    Constructor arguments can replace inspection methods, so they retain the veto. Arbitrary
+    receivers do not qualify by an `assert` prefix or constructor suffix. Defaults and annotations are executable expressions,
+    and all formatted strings retain the veto because their executable expressions
+    are hidden from this token scan. Non-ASCII identifiers also retain the veto:
+    this scan does not implement Python's NFKC identifier normalization. Everything else keeps the credit withheld: any other
+    patch-like call or reference or alias (`patch*`, `setattr`, `delattr`,
+    `monkeypatch.context()`, `mocker.spy`, `swap = ..`, `partial(..)`,
+    `yield from [swap := ..]`), any string outside a docstring that contains
+    `patch`, `mock`, `setattr`, `delattr`, `setitem`, `delitem`, `spy` or
+    `monkey`, any use of `getattr`, `__getattribute__`, `getfixturevalue`,
+    `__import__`, `__builtins__`, `builtins`, `__self__`, `partial`,
+    `setitem`, `delitem`, `spy`, `context` or `syspath_prepend`, a string
+    argument with a backslash, an f-string, adjacent literals, `*args` /
+    `**kwargs`, `autospec`, and file-wide `globals(`, `locals(`, `vars(`,
+    `exec(`, `eval(`, `__code__`, `__dict__`, `__globals__`, `sys.modules` and
+    `importlib`. Accepted residuals, not detected by this pass: conftest
+    autouse fixtures that patch the callee, a collaborator patched out of
+    sight, and a direct `rules.f = fake` assignment (caught by the binding
+    scan, not by patch reading).
 - `assert a == b` â†’ exact-value oracle; `assert a != b` and other
   non-equality comparisons â†’ relational check, weak
 - `assert isinstance(value, SomeType)` â†’ relational check, weak
@@ -1579,6 +1614,23 @@ and seen only through its call in the test body, a discriminating call under
 a non-strong oracle (`assert not pick(0, 3)`), and an owner doctest the
 reader does not see. The change is only `exposed` to `weakly_exposed`, the
 conservative direction.
+
+### Compound and `self.<attr>` operands (#11890)
+
+The same closed allow-list also reads a compound `and`/`or` condition when the
+joining operators match and exactly one operand differs between the old and the
+new condition, both differing operands being single-operand tests of the same
+name (`self.port and self.port != 80` to `self.port is not None and
+self.port != 80`). The tested name may be `self.<attr>` instead of a bare
+parameter when the owner's class `__init__` assigns `self.<attr> = <param>`
+exactly once, nothing else in the class writes `self.<attr>`, and every strong
+related call builds the receiver inline (`Addr("h", 8080).authority()`) with a
+scalar literal for that constructor parameter, an omitted default included.
+Anything else keeps the existing verdict: two differing operands, an unknown
+constructor keyword, a missing required constructor argument, a receiver built
+elsewhere, a later write to the attribute, a falsy constructor argument that
+separates the two tests (`Addr("h", 0)`), and every other shape the #9186 rule
+already refused. `setattr` and `__dict__` writes are not read (a known limit).
 
 ## Metrics
 

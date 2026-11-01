@@ -162,6 +162,20 @@ pub(crate) fn render_pilot_summary_json(
         )),
         None => out.push_str("  \"seam_limit\": null,\n"),
     }
+    // #12108: repo-exposure.json's `seams[]` was cut to a byte budget; the
+    // ranking, packets and counts here still cover the full population.
+    match context.repo_exposure_byte_bound {
+        Some(bound) => out.push_str(&format!(
+            "  \"repo_exposure_byte_bound\": {{\"seams_rendered\": {}, \"seams_total\": {}, \"seam_bytes_rendered\": {}, \"byte_budget\": {}, \"source\": \"{}\", \"control\": \"{}\"}},\n",
+            bound.rendered(),
+            bound.total,
+            bound.bytes,
+            bound.budget,
+            bound.source.as_str(),
+            crate::output::repo_exposure::PILOT_REPO_EXPOSURE_BYTES_ENV
+        )),
+        None => out.push_str("  \"repo_exposure_byte_bound\": null,\n"),
+    }
     push_declined_rust_files_json(&mut out, declined_rust_files(context));
     out.push_str(&format!(
         "  \"withheld_static_limitations_total\": {},\n",
@@ -215,6 +229,12 @@ pub(crate) fn render_pilot_summary_json(
         out.push_str(&format!(
             "    \"outcome_command\": \"{}\",\n",
             json_escape(&commands.outcome)
+        ));
+    }
+    if let Some(before) = &commands.before_snapshot {
+        out.push_str(&format!(
+            "    \"before_snapshot_command\": \"{}\",\n",
+            json_escape(before)
         ));
     }
     match top
@@ -293,6 +313,16 @@ fn render_pilot_summary_md_with_target(
     // #6602: a seam limit cut the classified list before ranking, so every
     // Rust seam count below covers only the seams that were kept, and the
     // actionable count is a lower bound.
+    if let Some(bound) = context.repo_exposure_byte_bound {
+        out.push_str(&format!(
+            "- repo-exposure.json byte bound reached: it lists {} of {} spots ({} byte budget); ranking and `agent-seam-packets.json` cover all {}. Set `{}=0` to list every spot\n",
+            bound.rendered(),
+            bound.total,
+            bound.budget,
+            bound.total,
+            crate::output::repo_exposure::PILOT_REPO_EXPOSURE_BYTES_ENV
+        ));
+    }
     if let Some(limit) = context.seam_limit {
         out.push_str(&format!(
             "- Seam limit reached: ranked {} of {} seams; Rust seam counts below cover those only\n",
@@ -577,7 +607,19 @@ fn render_pilot_summary_md_with_target(
                     "After adding one focused test, rerun repo exposure and compare the snapshots:\n\n",
                 ),
             }
-            vec![&commands.after_snapshot, &commands.outcome]
+            let mut steps = Vec::new();
+            if let Some(before) = &commands.before_snapshot {
+                out.push_str(
+                    "`repo-exposure.json` was cut (byte-bounded or seam-limited), so it is not a comparable baseline. Capture a full baseline before editing, then compare:\n\n```bash\n",
+                );
+                out.push_str(before);
+                out.push_str("\n```\n\n");
+                steps.push(&commands.after_snapshot);
+            } else {
+                steps.push(&commands.after_snapshot);
+            }
+            steps.push(&commands.outcome);
+            steps
         }
     };
     out.push_str(super::command_shell_disclosure());
@@ -664,6 +706,15 @@ fn render_pilot_terminal_with_target(
         out.push_str(&format!(
             "  limit reached: checked {} of {} spots in the code\n",
             limit.analyzed, limit.total
+        ));
+    }
+    // #12108: the terminal states the byte cut too, as JSON and Markdown do.
+    if let Some(bound) = context.repo_exposure_byte_bound {
+        out.push_str(&format!(
+            "  repo-exposure.json byte bound reached: lists {} of {} spots; set {}=0 to list every spot\n",
+            bound.rendered(),
+            bound.total,
+            crate::output::repo_exposure::PILOT_REPO_EXPOSURE_BYTES_ENV
         ));
     }
     // #9368: the terminal shows the top 1 seam; without the total and a
@@ -976,6 +1027,12 @@ fn render_pilot_terminal_with_target(
             ),
         }
         return out;
+    }
+    if let Some(before) = &commands.before_snapshot {
+        out.push_str(
+            "  repo-exposure.json was cut (byte-bounded or seam-limited); capture a full baseline before editing:\n",
+        );
+        out.push_str(&format!("  {before}\n"));
     }
     out.push_str(&format!("  {}\n", commands.after_snapshot));
     out.push_str(&format!("  {}\n", commands.outcome));

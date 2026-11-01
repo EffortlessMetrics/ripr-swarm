@@ -387,6 +387,64 @@ fn doc_examples_in_test_code_or_on_non_functions_register_nothing() -> Result<()
 }
 
 #[test]
+fn cfg_gated_items_and_inner_cfg_files_register_nothing() -> Result<(), Box<dyn Error>> {
+    let example = "/// ```\n/// assert_eq!(wire::read_u16(&[0, 1]), 1);\n/// ```\n";
+    let dir = temp_dir("doctest-cfg-gated")?;
+    for lib in [
+        format!("{example}#[cfg(feature = \"x\")]\npub fn read_u16() {{}}\n"),
+        format!("{example}#[cfg(not(doctest))]\npub fn read_u16() {{}}\n"),
+        format!("{example}#[cfg_attr(docsrs, doc = \"x\")]\npub fn read_u16() {{}}\n"),
+    ] {
+        package(&dir.0, "", &lib)?;
+        assert_eq!(doctests(&dir.0, &["src/lib.rs"])?, Vec::new(), "{lib}");
+        assert_eq!(examples(&lib), Vec::new(), "{lib}");
+    }
+    package(&dir.0, "", &format!("#![cfg(feature = \"x\")]\n{WIRE}"))?;
+    assert_eq!(doctests(&dir.0, &["src/lib.rs"])?, Vec::new());
+    // An inner `#![cfg_attr(.., cfg(..))]` can add a gate, so it refuses too.
+    package(
+        &dir.0,
+        "",
+        &format!("#![cfg_attr(feature = \"x\", cfg(any()))]\n{WIRE}"),
+    )?;
+    assert_eq!(doctests(&dir.0, &["src/lib.rs"])?, Vec::new());
+    // An inner `#![cfg_attr(..)]` is an ordinary crate-root header, not a gate.
+    package(
+        &dir.0,
+        "",
+        &format!("#![cfg_attr(docsrs, feature(doc_cfg))]\n{WIRE}"),
+    )?;
+    assert_eq!(doctests(&dir.0, &["src/lib.rs"])?.len(), 1);
+    let cfg_doctest = format!("{example}#[cfg(doctest)]\npub fn read_u16() {{}}\n");
+    assert_eq!(examples(&cfg_doctest).len(), 1);
+    // And it registers through the index, not just the example scan.
+    package(&dir.0, "", &cfg_doctest)?;
+    assert_eq!(doctests(&dir.0, &["src/lib.rs"])?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn a_spaced_doc_attribute_before_the_run_is_a_shared_document() {
+    // rustdoc joins `#[ doc = ".."]` with the `///` run below it, so the
+    // opening fence in the attribute closes at the run's first fence.
+    let lib = "#[ doc = \"```text\"]\n/// ```\n/// assert_eq!(wire::read_u16(&[0, 1]), 1);\n/// ```\npub fn read_u16() {}\n";
+    assert_eq!(examples(lib), Vec::new(), "{lib}");
+}
+
+#[test]
+fn cfg_doctest_attribute_is_allowed_between_doc_and_item() {
+    use super::doc_examples;
+    assert!(super::attribute_is_cfg_doctest("#[cfg(doctest)]"));
+    assert!(!super::between_doc_and_item_cfg_refuses("#[cfg(doctest)]"));
+    assert!(super::between_doc_and_item_cfg_refuses(
+        "#[cfg(feature = \"x\")]"
+    ));
+    let example = "/// ```\n/// assert_eq!(1, 1);\n/// ```\n";
+    let lib = format!("{example}#[cfg(doctest)]\npub fn read_u16() {{}}\n");
+    assert_eq!(doc_examples(&lib).len(), 1, "{lib}");
+}
+
+#[test]
 fn a_doctest_source_answers_only_for_the_registered_test() -> Result<(), Box<dyn Error>> {
     let dir = temp_dir("doctest-identity")?;
     package(&dir.0, "", WIRE)?;

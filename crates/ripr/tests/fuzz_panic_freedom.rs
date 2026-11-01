@@ -277,7 +277,12 @@ fn apply(seed: &[u8], edits: &[Edit]) -> Vec<u8> {
 /// Unified diff that replaces every line of `old` with every line of `new`.
 fn replace_diff(path: &str, old: &str, new: &[u8]) -> Vec<u8> {
     let old_lines: Vec<&str> = old.lines().collect();
-    let new_lines: Vec<&[u8]> = new.split(|byte| *byte == b'\n').collect();
+    let mut new_lines: Vec<&[u8]> = new.split(|byte| *byte == b'\n').collect();
+    // A trailing newline ends the last line; it does not start an empty added
+    // line past the end of the file, which no real diff carries.
+    if new_lines.len() > 1 && new_lines.last().is_some_and(|last| last.is_empty()) {
+        new_lines.pop();
+    }
     let mut diff = format!(
         "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n@@ -1,{} +1,{} @@\n",
         old_lines.len(),

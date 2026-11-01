@@ -16,7 +16,7 @@ Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 WARNING src/check.py:3
-  id: probe:src_check.py:python_preview:0f3004f4
+  id: probe:src_check.py:python_preview:v1-11825c93
 
 Changed
   after:          msg = "negative value: must be at most zero"
@@ -78,8 +78,8 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `message "negative value: must be at most zero"`
 Drill in:
-  ripr explain --root <cwd>/fixtures/python_message_pin_local_no_exposed_credit/input --diff <cwd>/fixtures/python_message_pin_local_no_exposed_credit/diff.patch --mode fast probe:src_check.py:python_preview:0f3004f4
-  ripr context --root <cwd>/fixtures/python_message_pin_local_no_exposed_credit/input --diff <cwd>/fixtures/python_message_pin_local_no_exposed_credit/diff.patch --mode fast --at probe:src_check.py:python_preview:0f3004f4
+  ripr explain --root <cwd>/fixtures/python_message_pin_local_no_exposed_credit/input --diff <cwd>/fixtures/python_message_pin_local_no_exposed_credit/diff.patch --mode fast probe:src_check.py:python_preview:v1-11825c93
+  ripr context --root <cwd>/fixtures/python_message_pin_local_no_exposed_credit/input --diff <cwd>/fixtures/python_message_pin_local_no_exposed_credit/diff.patch --mode fast --at probe:src_check.py:python_preview:v1-11825c93
 
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

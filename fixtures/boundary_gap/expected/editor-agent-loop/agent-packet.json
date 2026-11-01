@@ -18,6 +18,7 @@
       "current_grip": "weakly_gripped",
       "headline_eligible": true,
       "recommended_test": {"name": "discounted_total_boundary_discriminator", "file": "tests/pricing.rs", "reason": "place the new targeted test next to the producer-owned related test"},
+      "proof_obligation": {"changed_predicate":"amount >= discount_threshold","function":"src/lib.rs::discounted_total","kind":"boundary","limits":["advisory: derived from the written predicate only; it does not change the class or whether a repair is offered","witness inputs are relations over the operands, not verified values","the old predicate is not compared; pick the exact expected result from the specification"],"property_skeleton":"#[kani::proof] fn check_discounted_total_boundary() { /* bind amount and discount_threshold with kani::any(), kani::assume(amount == discount_threshold), call discounted_total, assert the exact result the spec requires */ }","witness_inputs":["amount just below discount_threshold","amount == discount_threshold","amount just above discount_threshold"]},
       "allowed_edit_surface": ["tests/pricing.rs"],
       "forbidden_files": ["src/lib.rs"],
       "must_not_change": ["Do not edit production code; only the files in allowed_edit_surface may change.", "editing any file outside allowed_edit_surface fails the repair attempt terminally (allowed: tests/pricing.rs)"],

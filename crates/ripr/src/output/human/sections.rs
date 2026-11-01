@@ -204,7 +204,7 @@ pub(crate) fn render_finding_digest_with_config(
         // A typed static limitation is the analyzer naming what it could not
         // bind, never an assertion a test could add.
         let label = if finding.class == ExposureClass::Exposed {
-            "Discriminator (observed, advisory)"
+            "Check (observed, advisory)"
         } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
             || ((matches!(
                 finding.class,
