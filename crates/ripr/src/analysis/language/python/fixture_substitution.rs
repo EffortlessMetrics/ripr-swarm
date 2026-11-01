@@ -456,7 +456,9 @@ fn spelled_standin_assignment(stmt: &Stmt, defs: &[&str], imports: &[PythonImpor
     let Expr::Name(value) = assign.value.as_ref() else {
         return false;
     };
-    imports.iter().any(|import| import.alias == root.id.as_str())
+    imports
+        .iter()
+        .any(|import| import.alias == root.id.as_str())
         && defs.contains(&value.id.as_str())
 }
 
