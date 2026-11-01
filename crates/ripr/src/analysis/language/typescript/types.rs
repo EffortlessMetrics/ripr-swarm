@@ -644,6 +644,7 @@ impl PersistedPartialExtraction {
             "template-literal title",
             "tagged-template .each",
             "test/it call in loop/callback/nested body",
+            "runner registration kind mismatch",
         ]
         .into_iter()
         .find(|known| *known == gap.shape)?;

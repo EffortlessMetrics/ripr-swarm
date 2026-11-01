@@ -813,17 +813,26 @@ fn a_warm_run_discloses_the_recorded_partial_extraction_like_the_cold_run() -> R
 fn a_recorded_partial_extraction_restores_only_known_shapes() {
     use super::types::{PersistedPartialExtraction, TypeScriptTestExtractionGap};
     let file = Path::new("tests/x.test.ts");
-    let gap = TypeScriptTestExtractionGap {
-        file: file.to_path_buf(),
-        sample_line: 7,
-        shape: "tagged-template .each",
-        snippet: "test.each`t`".to_string(),
-    };
-    assert_eq!(
-        PersistedPartialExtraction::of(Some(&gap)).restore(file),
-        Some(Some(gap)),
-        "a recorded gap restores to the same gap"
-    );
+    // Every shape `UnextractedTestFinder` can emit must round-trip, or a warm
+    // run silently re-parses that file (the runner-kind mismatch was missed once).
+    for shape in [
+        "template-literal title",
+        "tagged-template .each",
+        "test/it call in loop/callback/nested body",
+        "runner registration kind mismatch",
+    ] {
+        let gap = TypeScriptTestExtractionGap {
+            file: file.to_path_buf(),
+            sample_line: 7,
+            shape,
+            snippet: "test.each`t`".to_string(),
+        };
+        assert_eq!(
+            PersistedPartialExtraction::of(Some(&gap)).restore(file),
+            Some(Some(gap)),
+            "a recorded `{shape}` gap restores to the same gap"
+        );
+    }
     assert_eq!(
         PersistedPartialExtraction::of(None).restore(file),
         Some(None),
