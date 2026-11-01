@@ -107,7 +107,7 @@ Not measured, and why:
 Each line below is computed from the receipts above. Detail sections follow.
 
 - **Wrong gaps.** On changes from real repositories ripr reported a gap on 2 of 22 whose tests caught every listed mutant (9.1%): `serde-derive-rename-field-upper`, `serde-derive-rename-variant-lower`. On the authored cases, which were written to fill empty corpus cells, it did so on 0 of 398 (0.0%).
-- **Mostly unsure.** On real-repository changes it abstained on 29 of 36 cases (80.6%); on the authored cases, 274 of 781 (35.1%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Mostly unsure.** On real-repository changes it abstained on 29 of 36 cases (80.6%); on the authored cases, 272 of 781 (34.8%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 12 mutants on seams ripr called ungripped, real mutation testing caught 0 that ripr said nothing would catch; ripr agreed on 12. No false-gap examples are recorded.
 - **Thin ground truth.** Only 75 of 1745 mutants (4.3%) enter an agreement rate. 493 join a ripr seam precisely, and 418 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -166,8 +166,8 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | False actionable (of discriminated) | 2/420 (0.5%) | 2/22 (9.1%) | 0/398 (0.0%) |
 | False exposed (of not fully discriminated) | 0/397 (0.0%) | 0/14 (0.0%) | 0/383 (0.0%) |
 | False silent (of not fully discriminated) | 0/397 (0.0%) | 0/14 (0.0%) | 0/383 (0.0%) |
-| Ideal verdict | 512/817 (62.7%) | 5/36 (13.9%) | 507/781 (64.9%) |
-| Abstained (limited or silent where acceptable) | 303/817 (37.1%) | 29/36 (80.6%) | 274/781 (35.1%) |
+| Ideal verdict | 514/817 (62.9%) | 5/36 (13.9%) | 509/781 (65.2%) |
+| Abstained (limited or silent where acceptable) | 301/817 (36.8%) | 29/36 (80.6%) | 272/781 (34.8%) |
 | Findings with a contradiction | 0/1005 (0.0%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
@@ -246,7 +246,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `eq-divert-early-return-new-constant` | authored | not_discriminated | gap | limited | infection_unknown | abstained | none |
 | `eq-divert-early-return-old-constant` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `eq-divert-else-if-chain-old-constant` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
-| `eq-divert-match-later-arm-old-constant` | authored | not_discriminated | gap | limited | infection_unknown | abstained | none |
+| `eq-divert-match-later-arm-old-constant` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `eq-swap-compound-gate-off` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `eq-swap-inequality-old-constant-row` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `eq-swap-integer-old-constant-row` | authored | discriminated | credited | credited | exposed | ideal | none |
@@ -626,7 +626,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `shop-quote-total-result-field` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `shop-rebate-same-name-other-crate` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `shop-score-imported-across-crates` | authored | discriminated | credited | credited | exposed | ideal | none |
-| `shop-tier-gold-arm-unreached` | authored | not_discriminated | gap | limited | infection_unknown | abstained | none |
+| `shop-tier-gold-arm-unreached` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `short-circuit-band-table` | authored | discriminated | credited | credited | exposed, propagation_unknown | ideal | none |
 | `sibling-pin-insufficient-matches-arm` | authored | not_discriminated | gap | gap | weakly_exposed | ideal | none |
 | `spec-b-0150-comment-only-family` | authored | discriminated | credited | limited | static_unknown | abstained | none |

@@ -212,7 +212,7 @@ fn open_test_side_gap_suppresses_stop_when_selected_finding_is_limited() {
 fn static_limited_weakly_exposed_alone_keeps_stop() {
     let mut limited_weak = weak_gap("probe:limited-weak", 4);
     limited_weak.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
-    limited_weak.related_tests[0].miss = Some(RelatedTestMiss::ObservationUnconfirmed);
+    limited_weak.related_tests[0].oracle_strength = OracleStrength::Strong;
     let text = rendered(&output(vec![limited_weak]));
     assert!(text.contains("\nstop="), "{text}");
     assert!(text.contains(" gaps=0 "), "{text}");
@@ -257,6 +257,33 @@ fn reach_limit_with_weak_assertion_row_does_not_stop() {
     assert!(
         text.lines()
             .any(|line| line == "next=ripr explain probe:fortnight"),
+        "{text}"
+    );
+}
+
+/// #11825: more open findings than `MAX_GAP_LINES` print the cap and an
+/// exact omitted count; `reachable_unrevealed` opens the same way.
+#[test]
+fn open_limited_findings_over_the_cap_report_the_omitted_count() {
+    let total = MAX_GAP_LINES + 2;
+    let mut findings = Vec::new();
+    for index in 0..total {
+        let mut open = reach_limited_weak(&format!("probe:open{index}"), 10 + index);
+        if index == 0 {
+            open.class = ExposureClass::ReachableUnrevealed;
+        }
+        findings.push(open);
+    }
+    let text = rendered(&output(findings));
+    assert!(text.contains("\nopen="), "{text}");
+    assert!(!text.contains("stop="), "{text}");
+    assert_eq!(
+        text.matches("|test=t1|id=probe:open").count() <= MAX_GAP_LINES,
+        true,
+        "{text}"
+    );
+    assert!(
+        text.contains("\n+2 more open findings not shown; `--format json` lists all\n"),
         "{text}"
     );
 }

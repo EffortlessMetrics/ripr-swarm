@@ -8,14 +8,14 @@
     "partially_discriminated": 127
   },
   "by_outcome": {
-    "abstained": 303,
+    "abstained": 301,
     "false_actionable": 2,
-    "ideal": 512
+    "ideal": 514
   },
   "by_observed_verdict": {
     "credited": 260,
-    "gap": 254,
-    "limited": 290,
+    "gap": 256,
+    "limited": 288,
     "silent": 13
   },
   "false_verdict_rate": {
@@ -39,14 +39,14 @@
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 512,
+    "numerator": 514,
     "denominator": 817,
-    "rate": "0.6267"
+    "rate": "0.6291"
   },
   "abstention_rate": {
-    "numerator": 303,
+    "numerator": 301,
     "denominator": 817,
-    "rate": "0.3709"
+    "rate": "0.3684"
   },
   "contradiction_rate": {
     "numerator": 0,
@@ -59,8 +59,8 @@
       "cases_total": 781,
       "by_observed_verdict": {
         "credited": 257,
-        "gap": 250,
-        "limited": 261,
+        "gap": 252,
+        "limited": 259,
         "silent": 13
       },
       "false_verdict_rate": {
@@ -84,14 +84,14 @@
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 507,
+        "numerator": 509,
         "denominator": 781,
-        "rate": "0.6492"
+        "rate": "0.6517"
       },
       "abstention_rate": {
-        "numerator": 274,
+        "numerator": 272,
         "denominator": 781,
-        "rate": "0.3508"
+        "rate": "0.3483"
       }
     },
     "upstream": {
@@ -1815,13 +1815,13 @@
       "hard_case": false,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
-      "observed_verdict": "limited",
+      "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "infection_unknown"
+        "weakly_exposed"
       ],
-      "outcome": "abstained",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -10208,13 +10208,13 @@
       "hard_case": false,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
-      "observed_verdict": "limited",
+      "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": true,
+      "changed_since_labeling": false,
       "observed_classifications": [
-        "infection_unknown"
+        "weakly_exposed"
       ],
-      "outcome": "abstained",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,

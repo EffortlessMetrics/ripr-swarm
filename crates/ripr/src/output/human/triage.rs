@@ -1678,8 +1678,8 @@ pub(super) fn is_static_limited(finding: &Finding) -> bool {
 ///
 /// `rust_transitive_reach_unresolved` says ripr cannot trace the call chain
 /// from a test to the changed owner. It says nothing about a related test whose
-/// own assertion the producer already read as too weak to tell the old value
-/// from the new (`miss = weak_assertion`, for example a smoke `is_ok()`).
+/// own oracle is too weak to tell the old value from the new (`weak` or
+/// `smoke` strength, for example a smoke `is_ok()`).
 /// Such a finding is not a confirmed gap (reach is unresolved, so it stays out
 /// of `gaps=` and out of repair routing), but it is not "nothing is fixable
 /// from the test side" either. Terminal `stop=` projections must not claim it
@@ -1696,10 +1696,16 @@ pub(super) fn limit_leaves_weak_assertion_open(finding: &Finding) -> bool {
         && weak_assertion_row(finding).is_some()
 }
 
-/// The first contributing related-test row the producer read as too weak.
+/// The first contributing related-test row whose oracle is too weak to tell
+/// the old value from the new (`weak` or `smoke`). Selected on the row's oracle
+/// strength, never on `miss`, which is display-only.
 pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
     finding.related_tests.iter().find(|test| {
-        test.is_contributing() && test.miss == Some(crate::domain::RelatedTestMiss::WeakAssertion)
+        test.is_contributing()
+            && matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
+            )
     })
 }
 
