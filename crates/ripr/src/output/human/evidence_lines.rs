@@ -120,6 +120,22 @@ pub(crate) fn plain_internal_wording(text: &str) -> String {
     plain
 }
 
+/// Render-only plain wording for a repair-route stop condition (#12214).
+///
+/// The Python producer states "the missing discriminator" in its stop
+/// conditions; that exact string is part of the JSON and agent contract and
+/// stays byte-identical there. Editor text (hover, code-action packet, test
+/// skeleton comment) shows the glossary word instead. Only the one known
+/// producer form is rewritten; any other condition passes through unchanged.
+pub(crate) fn plain_stop_condition(text: &str) -> String {
+    const PYTHON_AMBIGUOUS: &str =
+        "Stop if the expected value for the missing discriminator is ambiguous.";
+    if text == PYTHON_AMBIGUOUS {
+        return "Stop if the expected value for the missing check is ambiguous.".to_string();
+    }
+    text.to_string()
+}
+
 /// #9244: the producer's reveal-stage summaries carry the machine marker
 /// `observation_unverified`, which consumers of the stage summary in JSON key
 /// on. The human window already says the same thing in words ("Discriminator
