@@ -112,13 +112,15 @@ pub(crate) const TS_MAX_WORKSPACE_FILES_ENV: &str = "RIPR_TS_MAX_WORKSPACE_FILES
 /// discovery (routed extensions minus the generated-name family). Directories,
 /// assets, and `*.generated.*` files do not consume this budget. A separate
 /// total-entry backstop still terminates huge trees: the default 20_000
-/// candidates imply a 200_000-entry walk before the walk gives up.
+/// candidates imply a 100_000-entry walk before the walk gives up.
 const DEFAULT_TS_MAX_WORKSPACE_FILES: usize = 20_000;
 /// Multiplier for the total-entry walk backstop relative to the candidate
-/// source-file limit. Default `20_000 × 10 = 200_000` directory entries.
+/// source-file limit. Default `20_000 × 5 = 100_000` directory entries.
 /// A huge asset tree still terminates even when few (or no) TypeScript/JavaScript
-/// sources exist.
-const TS_WORKSPACE_TOTAL_ENTRY_BACKSTOP_MULTIPLIER: usize = 10;
+/// sources exist. 5× (not 10×) is the largest integer that still trips the
+/// #11767 producer fixture (`RIPR_TS_MAX_WORKSPACE_FILES=3`, one `.ts` file
+/// plus a dozen `docs/*.txt`) via this backstop after candidate-only counting.
+const TS_WORKSPACE_TOTAL_ENTRY_BACKSTOP_MULTIPLIER: usize = 5;
 
 #[cfg(test)]
 thread_local! {
@@ -196,7 +198,7 @@ fn is_candidate_workspace_source(path: &Path) -> bool {
 /// Recursion was replaced by a loop so pathologically deep directory trees
 /// cannot overflow the call stack (a hard abort). Only candidate TS/JS source
 /// files count against `max_entries` (#11984). Every directory entry still
-/// counts against a larger total-entry backstop (`10× max_entries`) so a huge
+/// counts against a larger total-entry backstop (`5× max_entries`) so a huge
 /// asset tree terminates. Exceeding either cap stops the walk and reports
 /// `truncated: true` so the adapter can disclose the bound instead of
 /// silently analyzing a partial workspace.
@@ -218,8 +220,13 @@ pub(crate) fn visit_workspace_with_handwritten(
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
+        // Sorted names make DFS LIFO visit later names first (`src` before
+        // `docs`), so a tiny operator cap still indexes the source file
+        // before the docs tree trips the total-entry backstop.
+        let mut dir_entries: Vec<_> = entries.flatten().collect();
+        dir_entries.sort_by_key(|entry| entry.file_name());
         let mut stop = false;
-        for entry in entries.flatten() {
+        for entry in dir_entries {
             total_entries += 1;
             if total_entries > max_total_entries {
                 truncated = true;
@@ -920,7 +927,7 @@ mod tests {
     }
 
     /// A huge asset tree still terminates through the total-entry backstop
-    /// (10× the candidate limit) and reports the existing `truncated` flag.
+    /// (5× the candidate limit) and reports the existing `truncated` flag.
     #[test]
     fn workspace_walk_total_entry_backstop_trips_on_huge_nonsource_tree() {
         let workspace = TempWorkspace::new("entry-backstop");
@@ -942,7 +949,34 @@ mod tests {
         assert_eq!(
             LAST_WALK_TOTAL_ENTRIES.get(),
             backstop + 1,
-            "the walk must stop at the 10× total-entry backstop, not after one entry"
+            "the walk must stop at the 5× total-entry backstop, not after one entry"
+        );
+    }
+
+    /// #11767 producer fixture: one source, twelve docs files, cap 3.
+    /// Candidate counting would finish this tree; the 5× backstop plus
+    /// sorted-name DFS still truncates after indexing the `.ts` file so
+    /// `typescript_truncated_discovery` keeps withholding `no_static_path`.
+    #[test]
+    fn workspace_walk_tiny_cap_still_truncates_docs_tree_after_indexing_source() {
+        let workspace = TempWorkspace::new("producer-docs");
+        workspace.write("ripr.toml", "[languages]\nenabled = [\"typescript\"]\n");
+        workspace.write("src/discount.ts", "export const n = 1;\n");
+        for i in 0..12 {
+            workspace.write(&format!("docs/page{i}.txt"), "unrelated\n");
+        }
+        workspace.write("diff.patch", "diff\n");
+        let scan = visit_workspace_with_handwritten(&workspace.0, 3, &[]);
+        assert!(
+            scan.truncated,
+            "cap 3 plus a dozen docs files must still trip the 5× entry backstop; files={:?} entries={}",
+            scan.files,
+            LAST_WALK_TOTAL_ENTRIES.get()
+        );
+        assert!(
+            scan.files.iter().any(|path| path.ends_with("discount.ts")),
+            "sorted DFS must index the source before docs fill the backstop; files={:?}",
+            scan.files
         );
     }
 
