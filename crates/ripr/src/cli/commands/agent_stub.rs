@@ -66,7 +66,7 @@ pub(super) fn run_agent_stub(mut options: AgentStubOptions) -> Result<(), Comman
             let message = if list_selectors {
                 let root = shell_arg(&bound_root(&options.root.to_string_lossy()));
                 format!(
-                    "agent stub: {message}. Run `ripr check --root {root}` to list finding locations or `ripr pilot --root {root}` to list seam IDs."
+                    "agent stub: {message}. Run `ripr check --root {root}` to list finding locations or `ripr pilot --root {root}` to list repair IDs."
                 )
             } else {
                 format!("agent stub: {message}")

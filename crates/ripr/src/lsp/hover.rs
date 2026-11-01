@@ -997,8 +997,76 @@ fn stage_line(name: &str, stage: &StageEvidence) -> String {
     format!(
         "* {name} {}: {}",
         stage.state.as_str(),
-        plain_observation_wording(&stage.summary)
+        plain_hover_summary(&plain_observation_wording(&stage.summary))
     )
+}
+
+/// Producer summaries that append the user's own source text (a sink
+/// expression, test names, a matched literal) after the first `": "`. The tail
+/// of these is never rewritten. A colon elsewhere separates a label from
+/// producer prose (`Discriminator unconfirmed: ...`) and is rewritten.
+const SOURCE_TEXT_AFTER_COLON_PREFIXES: &[&str] = &[
+    "Changed behavior appears to influence ",
+    "Complete propagation witness reaches ",
+    "No complete owner-bound propagation witness found for ",
+    "Propagation witness is incomplete for ",
+    "Related tests appear to reach ",
+    "Related tests exercise the wrapper seam's converted callee",
+    "Detected test input literal matching changed boundary",
+];
+
+/// Hover-only glossary pass over a producer stage summary (#12213). The
+/// summary strings are shared with JSON, SARIF and the CLI Evidence line (which
+/// the glossary exempts), so they are not rewritten at the source; the editor
+/// hover shows "check" where the producer wrote "discriminator". Whole words
+/// only, so identifiers like `missing_discriminators` are never touched.
+///
+/// Backticked spans and the source-text tail of the known producer forms
+/// above are never rewritten: a hover must not tell someone to look for a name
+/// their code does not contain. An unbalanced backtick means source text may
+/// hold a lone backtick, so the summary is then left verbatim.
+fn plain_hover_summary(text: &str) -> String {
+    if text.matches('`').count() % 2 == 1 {
+        return text.to_string();
+    }
+    let tail_start = if SOURCE_TEXT_AFTER_COLON_PREFIXES
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
+    {
+        text.find(": ").map_or(text.len(), |at| at + 2)
+    } else {
+        text.len()
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    let mut in_code = false;
+    let flush = |word: &mut String, out: &mut String, verbatim: bool| {
+        match word.as_str() {
+            _ if verbatim => out.push_str(word),
+            "discriminator" => out.push_str("check"),
+            "Discriminator" => out.push_str("Check"),
+            "discriminators" => out.push_str("checks"),
+            "Discriminators" => out.push_str("Checks"),
+            _ => out.push_str(word),
+        }
+        word.clear();
+    };
+    for (at, c) in text.char_indices() {
+        if c.is_alphanumeric() || c == '_' {
+            word.push(c);
+            continue;
+        }
+        // `word` ended just before `at`, so the tail test uses its start.
+        let word_start = at - word.len();
+        flush(&mut word, &mut out, in_code || word_start >= tail_start);
+        if c == '`' {
+            in_code = !in_code;
+        }
+        out.push(c);
+    }
+    let word_start = text.len() - word.len();
+    flush(&mut word, &mut out, in_code || word_start >= tail_start);
+    out
 }
 
 /// The producer's `discriminate` stage grades the strongest related oracle.
@@ -1022,13 +1090,13 @@ fn discriminator_stage_line(finding: &Finding) -> String {
         format!(
             "* missing check not established ({}); related oracle: {}",
             finding.class.as_str(),
-            plain_observation_wording(&stage.summary)
+            plain_hover_summary(&plain_observation_wording(&stage.summary))
         )
     } else {
         format!(
             "* missing check: {}; related oracle: {}",
             missing.join(", "),
-            plain_observation_wording(&stage.summary)
+            plain_hover_summary(&plain_observation_wording(&stage.summary))
         )
     }
 }
@@ -2836,6 +2904,63 @@ mod top_limitation_parity_tests {
         assert!(
             note.contains("Boundary: static evidence only; advisory action."),
             "the code-action note keeps its advisory boundary:\n{note}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod plain_hover_summary_tests {
+    use super::plain_hover_summary;
+
+    #[test]
+    fn rewrites_producer_prose_but_not_user_source_text() {
+        assert_eq!(
+            plain_hover_summary("the equality-boundary discriminator is missing"),
+            "the equality-boundary check is missing"
+        );
+        // Known forms that append source text: the tail stays verbatim.
+        assert_eq!(
+            plain_hover_summary("Complete propagation witness reaches return value: discriminator"),
+            "Complete propagation witness reaches return value: discriminator"
+        );
+        assert_eq!(
+            plain_hover_summary(
+                "Related tests appear to reach f: discriminator_holds, discriminator"
+            ),
+            "Related tests appear to reach f: discriminator_holds, discriminator"
+        );
+        // Backticked source text stays verbatim.
+        assert_eq!(
+            plain_hover_summary("no strong discriminator for `discriminator`"),
+            "no strong check for `discriminator`"
+        );
+        // A lone backtick may belong to source text: leave the line alone.
+        assert_eq!(
+            plain_hover_summary("no strong discriminator for `x"),
+            "no strong discriminator for `x"
+        );
+    }
+
+    #[test]
+    fn rewrites_producer_prose_after_a_label_colon() {
+        // Real producer summaries (boundary_pairing.rs, Python static limit):
+        // the colon separates a label from producer prose, which is rewritten.
+        assert_eq!(
+            plain_hover_summary(
+                "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"
+            ),
+            "Check unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that check"
+        );
+        assert_eq!(
+            plain_hover_summary(
+                "Static limit `x`: cannot prove whether the generated cases include the changed discriminator."
+            ),
+            "Static limit `x`: cannot prove whether the generated cases include the changed check."
+        );
+        // A Rust path colon is not a label colon.
+        assert_eq!(
+            plain_hover_summary("std::cmp::max discriminator"),
+            "std::cmp::max check"
         );
     }
 }

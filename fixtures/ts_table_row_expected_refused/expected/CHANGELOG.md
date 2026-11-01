@@ -68,3 +68,14 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_table_row_expected_refused (7)
+
+Reason:
+RIPR-SPEC-0122: plain wording for the Evidence stage name and the stage and state legend in the check digest (#10692)
+
+Command:
+`cargo xtask goldens bless ts_table_row_expected_refused --reason "..."`
+
+Updated:
+- `expected/human.txt`
