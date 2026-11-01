@@ -995,26 +995,30 @@ assertions that do not call the owner: they could not have been its oracle,
 or they are real gaps pinned by the runtime controls. A weak assertion alone
 stays `weakly_exposed`.
 
-### A TypeScript workspace walk cut short at its entry cap (#11767)
+### A TypeScript workspace walk cut short at its source cap or entry backstop (#11767)
 
-TypeScript discovery visits at most `RIPR_TS_MAX_WORKSPACE_FILES` directory
-entries (20,000 by default), counting entries that are never indexed. When the
-cap trips, the test universe is partial, so a finding that would say no test
+TypeScript discovery counts at most `RIPR_TS_MAX_WORKSPACE_FILES` candidate
+source files (20,000 by default; routed extensions minus the generated-name
+family). Directories, assets and generated files do not consume that cap. A
+separate total-entry backstop of five times the cap (100,000 by default) still
+ends a walk over a huge non-source tree, and entries are visited in sorted-name
+order. Either bound sets the one `truncated` flag, so the disclosure names both
+bounds rather than which tripped. When a bound trips, the test universe is partial, so a finding that would say no test
 reaches the change rests on tests the walk may never have read.
 
 When discovery was truncated, every TypeScript or JavaScript finding classed
 `no_static_path` with no earlier `static_limit_kind` is rewritten through
 `withhold_gap` to `static_unknown` under `typescript_workspace_discovery_truncated`.
-The first unresolved edge names the cap and the next step names the setting
+The first unresolved edge names both bounds and the next step names the setting
 (and the read budget) or a narrower root. Findings that have a related test
-are not touched, and a walk that finishes under the cap changes nothing.
+are not touched, and a walk that finishes under both bounds changes nothing.
 
 The diff names what changed, so a changed source file the adapter accepts joins
 the partial file set even when the walk stopped before reaching it. Without
 that, a cut-short walk leaves the change with no owner and no finding at all.
 
-This does not make the cut-short run complete: the cap limitation still marks
-the outcome partial. Walk order, budgeting by candidate source files and the
+This does not make the cut-short run complete: the limitation still marks the
+outcome partial. Reference-tree pruning, walk order by changed paths and the
 read budget are separate work.
 
 ## Scope boundary

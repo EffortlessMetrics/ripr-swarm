@@ -1748,7 +1748,10 @@ impl TypeScriptAdapter {
             );
         }
         if workspace_scan.truncated {
-            // Workspace discovery hit the max-visited-files cap; the file list
+            let source_cap = ts_workspace_file_limit();
+            let entry_backstop = ts_workspace_entry_backstop(source_cap);
+            // Workspace discovery hit the candidate-source cap or the total
+            // directory-entry backstop; the file list
             // is partial, so disclose the bound instead of silently analyzing
             // a subset.
             limitations.push(
@@ -1761,8 +1764,7 @@ impl TypeScriptAdapter {
                     )?,
                 )
                 .with_detail(format!(
-                    "Workspace discovery stopped at the {}-entry visit cap ({TS_MAX_WORKSPACE_FILES_ENV}) before covering the workspace; discovered files are a partial set, so a finding that reports no related test may reflect tests that were never read.",
-                    ts_workspace_file_limit()
+                    "Workspace discovery stopped at its limit of {source_cap} TypeScript/JavaScript source files ({TS_MAX_WORKSPACE_FILES_ENV}) or {entry_backstop} directory entries in total before covering the workspace; discovered files are a partial set, so a finding that reports no related test may reflect tests that were never read."
                 ))?,
             );
         }
@@ -1793,11 +1795,13 @@ impl TypeScriptAdapter {
         // distinct (mirror of the Rust path's `dedup_probe_ids`).
         if workspace_scan.truncated {
             // #11767: a truncated walk cannot back "no test reaches this".
-            let entry_cap = ts_workspace_file_limit();
+            let source_cap = ts_workspace_file_limit();
+            let entry_backstop = ts_workspace_entry_backstop(source_cap);
             for finding in &mut findings {
                 crate::analysis::classify::withhold_truncated_discovery_gap(
                     finding,
-                    entry_cap,
+                    source_cap,
+                    entry_backstop,
                     TS_MAX_WORKSPACE_FILES_ENV,
                 );
             }
