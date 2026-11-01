@@ -105,10 +105,13 @@ Verification-only lines, on either side of the diff:
 
 Text that merely carries a verifier word stays ordinary runtime code and is
 probed as before: `#[check(ghost)]` and `#[trusted]` functions, Prusti `#[pure]`
-functions (compiled in a normal build), `#[kani::proof]` harnesses, a contract
+functions (compiled in a normal build), a contract
 attribute followed by code on the same line, a ghost macro inside a `let`
 initialiser or beside other tokens, and an attribute spelled through any other
 crate path.
+
+Kani proof harnesses, `#[cfg(kani)]` modules and `#[cfg_attr(kani, ..)]` contracts
+are verification-only too; see [RIPR-SPEC-0370](RIPR-SPEC-0370-kani-verification-artifacts-are-verification-only.md).
 
 ## Required Evidence
 

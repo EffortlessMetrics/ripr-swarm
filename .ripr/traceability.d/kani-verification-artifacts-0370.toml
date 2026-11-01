@@ -1,0 +1,26 @@
+# Registers side-independent recognition of Kani verification artifacts:
+# deleted/added harnesses, cfg(kani) modules and cfg_attr(kani, contract)
+# attributes seed no probe and are disclosed as verification_only_change.
+[[behavior]]
+id = "RIPR-SPEC-0370"
+name = "Kani proof harnesses, cfg(kani) modules and cfg_attr(kani) contracts are verification-only on either side of a diff"
+spec = "docs/specs/RIPR-SPEC-0370-kani-verification-artifacts-are-verification-only.md"
+tests = [
+  "crates/ripr/src/analysis/probes/verification_erased.rs::kani_harnesses_and_cfg_kani_modules_are_verification_source",
+  "crates/ripr/src/analysis/probes/verification_erased.rs::cfg_attr_kani_contracts_are_verification_only",
+  "crates/ripr/src/analysis/probes/verification_erased.rs::kani_lookalikes_stay_ordinary",
+  "crates/ripr/tests/kani_proof_only_change.rs::proofs_to_contracts_conversion_seeds_no_probe_and_is_disclosed",
+  "crates/ripr/tests/kani_proof_only_change.rs::a_deleted_cfg_kani_proof_module_alone_is_verification_only",
+  "crates/ripr/tests/kani_proof_only_change.rs::a_deleted_harness_in_an_ungated_module_is_still_disclosed",
+  "crates/ripr/tests/kani_proof_only_change.rs::a_deleted_ungated_module_without_a_harness_attribute_stays_probed",
+  "crates/ripr/tests/kani_proof_only_change.rs::a_gated_module_that_is_not_kani_stays_probed",
+  "crates/ripr/tests/kani_proof_only_change.rs::a_production_edit_beside_a_deleted_harness_is_still_probed",
+]
+code = [
+  "crates/ripr/src/analysis/probes/verification_erased.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/analysis/language/rust/mod.rs",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

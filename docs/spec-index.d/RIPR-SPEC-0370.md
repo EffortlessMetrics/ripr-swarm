@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0370](../specs/RIPR-SPEC-0370-kani-verification-artifacts-are-verification-only.md) | proposed | Kani proof harnesses, cfg(kani) modules and cfg_attr(kani) contracts are verification-only on either side of a diff (#10749) |
