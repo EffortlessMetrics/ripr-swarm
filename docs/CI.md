@@ -1466,8 +1466,11 @@ a later release does not change CI behavior until you regenerate. It
 downloads that release's prebuilt binary from the `EffortlessMetrics/ripr`
 GitHub Release and checks it against the release's published SHA-256, which
 takes seconds instead of the minutes `cargo install` spends compiling. A
-checksum mismatch fails the step. On a runner with no prebuilt archive
-(Windows), or when the download fails, it falls back to
+checksum mismatch, a missing checksum, or a malformed archive fails the step
+instead of falling back. Windows x64 installs the release's `zip` (extracted
+with the `tar.exe` that Windows ships, then `ripr.exe` is run by absolute path);
+Windows ARM64 is reported as unsupported. On a runner with no prebuilt archive
+(for example Linux ARM32), or when the download fails, it falls back to
 `cargo install ripr --version <that version> --locked`, which needs a Rust
 toolchain on the runner; on a runner without `cargo` the step fails and says
 to install Rust or add a toolchain step. A development build newer than the
@@ -1839,9 +1842,11 @@ Steps:
   checkout, so the cleanup never discards it.
 - **Install ripr** pins the version whose commands the steps use; an unpinned
   install takes the newest release, whose CLI may not match. It downloads that
-  release's prebuilt binary and checks it against the published SHA-256, falls
-  back to `cargo install` where there is no prebuilt binary, and fails with the
-  fix when the runner has no cargo. The summary step reads this step's outcome
+  release's prebuilt binary (a zip on Windows x64) and checks it against the
+  published SHA-256 before extracting it, falls back to `cargo install` only
+  where there is no prebuilt binary, and fails with the fix when the runner has
+  no cargo. An integrity or archive rejection never falls back, and Windows
+  ARM64 is an explicit unsupported error. The summary step reads this step's outcome
   by its id.
 - **actions/cache** restores ripr's analysis cache. Entries are keyed on file
   contents, configuration, and the ripr version, so an entry that no longer
