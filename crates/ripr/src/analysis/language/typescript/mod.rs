@@ -1930,7 +1930,7 @@ fn test_extraction_partial_summary(
 /// Recovery for conditional assertion credit. Static analysis cannot decide
 /// the branch condition, so the reader resolves the caveat with runtime
 /// coverage, not a re-run.
-const CONDITIONAL_ASSERTION_CREDIT_RECOVERY: &str = "Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes.";
+const CONDITIONAL_ASSERTION_CREDIT_RECOVERY: &str = "Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the check executes.";
 
 /// Samples named in a multi-file conditional-credit summary.
 const CONDITIONAL_ASSERTION_CREDIT_SAMPLES: usize = 3;

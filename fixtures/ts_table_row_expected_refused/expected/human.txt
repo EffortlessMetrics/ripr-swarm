@@ -9,7 +9,7 @@ Changed file(s) by language: typescript = 10
 
 Analysis outcome: limitations below (analysis incomplete)
   The 10 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
-  Limitation: a test or credited assertion sits under a condition static analysis cannot evaluate during language analysis; affected items: 3; recovery: inspect the failure — Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the discriminator executes.
+  Limitation: a test or credited assertion sits under a condition static analysis cannot evaluate during language analysis; affected items: 3; recovery: inspect the failure — Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the check executes.
 
 Start here:
   State: preview language, advisory only

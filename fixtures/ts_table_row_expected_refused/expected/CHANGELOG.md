@@ -56,3 +56,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_table_row_expected_refused (6)
+
+Reason:
+RIPR-SPEC-0027: plain wording for the conditional-credit recovery text (glossary: discriminator -> check)
+
+Command:
+`cargo xtask goldens bless ts_table_row_expected_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
