@@ -633,7 +633,10 @@ impl PersistedPartialExtraction {
 
     /// The verdict for `file`. `None` when the recorded shape is not one this
     /// build produces, so the caller recomputes instead of trusting it.
-    pub(crate) fn restore(&self, file: &std::path::Path) -> Option<Option<TypeScriptTestExtractionGap>> {
+    pub(crate) fn restore(
+        &self,
+        file: &std::path::Path,
+    ) -> Option<Option<TypeScriptTestExtractionGap>> {
         let Some(gap) = &self.gap else {
             return Some(None);
         };

@@ -389,8 +389,7 @@ impl TypeScriptFileFactStore {
         if let Some(reason) = self.unusable_base_reason() {
             return Err(reason.to_owned());
         }
-        let envelope =
-            TypeScriptFileFactEnvelope::new(
+        let envelope = TypeScriptFileFactEnvelope::new(
             key,
             file_facts.clone(),
             test_extraction.cloned(),
