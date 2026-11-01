@@ -16746,6 +16746,23 @@ Field contract:
   reports the outer inventory total, and each entry names its own recovery
   control. Full recovery requires lifting every active cap. Uncapped output
   has no stale cap limitation.
+- Pilot byte bound (#12108) — the `ripr pilot` copy of this document
+  (`target/ripr/pilot/repo-exposure.json`) keeps its `seams[]` entries within
+  `RIPR_PILOT_REPO_EXPOSURE_BYTES` bytes (default 8,000,000; `0` writes all).
+  Current-change seams are kept first, then inventory order, each group
+  stopping at its first entry that does not fit. A cut adds a `limitations[]`
+  object `{category: "pilot_repo_exposure_byte_bound_applied", seams_rendered,
+  seams_total, seam_bytes_rendered, byte_budget, limit_source, control:
+  "RIPR_PILOT_REPO_EXPOSURE_BYTES", repair_route}`. When no seam cap and no
+  declined file already owns `run_status`, a cut sets it to
+  `"limited_repo_exposure_bytes"`; otherwise that status is kept and the bound
+  is an additional entry. `metrics` describe the entries the file carries.
+  A bounded document carries no `artifact` identity, so `ripr outcome` and
+  `ripr agent verify` refuse it by name rather than comparing it. Entries that
+  fit the budget change nothing. `pilot-summary.json` carries
+  `repo_exposure_byte_bound` (`seams_rendered`, `seams_total`,
+  `seam_bytes_rendered`, `byte_budget`, `source`, `control`), `null` when
+  nothing was cut.
 - Pilot packet bound (#11951) — the `ripr pilot` copy of this document
   (`target/ripr/pilot/agent-seam-packets.json`) carries at most
   `RIPR_PILOT_PACKET_BUDGET` packets (default 3; `0` writes all). The kept

@@ -162,6 +162,20 @@ pub(crate) fn render_pilot_summary_json(
         )),
         None => out.push_str("  \"seam_limit\": null,\n"),
     }
+    // #12108: repo-exposure.json's `seams[]` was cut to a byte budget; the
+    // ranking, packets and counts here still cover the full population.
+    match context.repo_exposure_byte_bound {
+        Some(bound) => out.push_str(&format!(
+            "  \"repo_exposure_byte_bound\": {{\"seams_rendered\": {}, \"seams_total\": {}, \"seam_bytes_rendered\": {}, \"byte_budget\": {}, \"source\": \"{}\", \"control\": \"{}\"}},\n",
+            bound.rendered(),
+            bound.total,
+            bound.bytes,
+            bound.budget,
+            bound.source.as_str(),
+            crate::output::repo_exposure::PILOT_REPO_EXPOSURE_BYTES_ENV
+        )),
+        None => out.push_str("  \"repo_exposure_byte_bound\": null,\n"),
+    }
     push_declined_rust_files_json(&mut out, declined_rust_files(context));
     out.push_str(&format!(
         "  \"withheld_static_limitations_total\": {},\n",
@@ -293,6 +307,16 @@ fn render_pilot_summary_md_with_target(
     // #6602: a seam limit cut the classified list before ranking, so every
     // Rust seam count below covers only the seams that were kept, and the
     // actionable count is a lower bound.
+    if let Some(bound) = context.repo_exposure_byte_bound {
+        out.push_str(&format!(
+            "- repo-exposure.json byte bound reached: it lists {} of {} seams ({} byte budget); ranking and `agent-seam-packets.json` cover all {}. Set `{}=0` for every seam\n",
+            bound.rendered(),
+            bound.total,
+            bound.budget,
+            bound.total,
+            crate::output::repo_exposure::PILOT_REPO_EXPOSURE_BYTES_ENV
+        ));
+    }
     if let Some(limit) = context.seam_limit {
         out.push_str(&format!(
             "- Seam limit reached: ranked {} of {} seams; Rust seam counts below cover those only\n",

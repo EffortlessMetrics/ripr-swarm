@@ -526,6 +526,9 @@ pub(crate) fn validate_repo_exposure_artifact(
 ) -> Result<ValidatedArtifact, String> {
     let subject = format!("agent verify {label} artifact");
     let document: RepoExposureDocument = serde_json::from_str(raw).map_err(|err| {
+        if is_byte_bounded_repo_exposure(raw) {
+            return byte_bounded_repo_exposure_refusal(&subject);
+        }
         if is_unversioned_repo_exposure(raw) {
             return legacy_repo_exposure_refusal(root, &subject);
         }
@@ -536,7 +539,13 @@ pub(crate) fn validate_repo_exposure_artifact(
         scope,
         artifact: identity,
         seams,
+        run_status,
     } = document;
+    if run_status.as_deref()
+        == Some(crate::output::repo_exposure::REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS)
+    {
+        return Err(byte_bounded_repo_exposure_refusal(&subject));
+    }
     if schema_version != crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION {
         return Err(format!(
             "agent verify {label} artifact has unsupported repo-exposure schema `{}`; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
@@ -1113,6 +1122,23 @@ fn validate_artifact_commitment(
     Ok(expected_root)
 }
 
+/// A pilot `repo-exposure.json` whose `seams[]` the byte budget cut (#12108)
+/// lists only some of the seams, so a seam absent from it cannot be read as
+/// fixed or absent. Classify it after canonical parsing refused it.
+fn is_byte_bounded_repo_exposure(raw: &str) -> bool {
+    serde_json::from_str::<Value>(raw).is_ok_and(|document| {
+        document.get("run_status").and_then(Value::as_str)
+            == Some(crate::output::repo_exposure::REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS)
+    })
+}
+
+fn byte_bounded_repo_exposure_refusal(subject: &str) -> String {
+    format!(
+        "{subject} is a byte-bounded repo-exposure file (run_status {}): `ripr pilot` cut its seams[] to RIPR_PILOT_REPO_EXPOSURE_BYTES, so a seam missing from it cannot be compared; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0, or produce the snapshot with `ripr check --format repo-exposure-json`, then compare",
+        crate::output::repo_exposure::REPO_EXPOSURE_BYTE_BOUND_RUN_STATUS
+    )
+}
+
 /// Classify only the old repo-exposure shape after canonical parsing refused it.
 /// This diagnosis never admits an artifact or authenticates a producer version.
 fn is_unversioned_repo_exposure(raw: &str) -> bool {
@@ -1311,6 +1337,8 @@ struct RepoExposureDocument {
     scope: String,
     artifact: ArtifactIdentity,
     seams: Vec<RepoExposureSeam>,
+    #[serde(default)]
+    run_status: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -2074,6 +2102,44 @@ mod tests {
     struct CheckFindingsDocumentForTest {
         analysis_outcome: Option<CheckFindingsOutcome>,
         findings: Vec<CheckFindingsFinding>,
+    }
+
+    #[test]
+    fn byte_bounded_repo_exposure_is_refused_by_name_not_as_a_malformed_file() -> Result<(), String>
+    {
+        // #12108: a pilot file whose seams[] the byte budget cut carries no
+        // artifact identity; the refusal names the cut and its recovery.
+        let bounded = serde_json::json!({
+            "schema_version": "0.5",
+            "scope": "repo",
+            "run_status": "limited_repo_exposure_bytes",
+            "seams": []
+        })
+        .to_string();
+        let root = std::path::Path::new(".");
+        let refusal = validate_repo_exposure_artifact(root, &bounded, "before")
+            .err()
+            .ok_or("a byte-bounded repo-exposure file must not validate")?;
+        assert!(
+            refusal.contains("byte-bounded repo-exposure file"),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        // Discriminating negative: the same shape with another status keeps the
+        // generic malformed-artifact refusal, so the new branch is not a catch-all.
+        let other = bounded.replace("limited_repo_exposure_bytes", "complete");
+        let generic = validate_repo_exposure_artifact(root, &other, "before")
+            .err()
+            .ok_or("a file without artifact identity must not validate")?;
+        assert!(!generic.contains("byte-bounded"), "{generic}");
+        assert!(
+            generic.contains("not a canonical repo-exposure artifact"),
+            "{generic}"
+        );
+        Ok(())
     }
 
     fn ts_finding(fp8: &str, classification: &str) -> serde_json::Value {
