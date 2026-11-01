@@ -620,6 +620,55 @@ fn loop_parameter_in_registration_arguments_is_never_resolved() -> Result<(), St
     Ok(())
 }
 
+/// A row title that throws or is rejected at registration means the test is
+/// never registered, so nothing may be credited (reviewer finding on #11420).
+#[test]
+fn a_null_or_undefined_row_title_never_credits_unregistered_tests() -> Result<(), String> {
+    let callback = "() => { expect(encode(t.input)).toBe(t.out); }";
+    for (label, name_cell, title) in [
+        ("null toString title", "null", "t.name.toString()"),
+        ("undefined toString title", "undefined", "t.name.toString()"),
+        ("null bare title", "null", "t.name"),
+        ("boolean bare title", "true", "t.name"),
+    ] {
+        let table = format!(
+            "[\n    {{ input: \"a\", out: \"A\", name: \"first\" }},\n    {{ input: \"b\", out: \"B\", name: {name_cell} }},\n  ]"
+        );
+        let tests = extract_tests(
+            Path::new("tests/encode.test.ts"),
+            &describe_source(&table, "", LOOP, &format!("test({title}, {callback});")),
+        );
+        let credited = tests.iter().flat_map(|t| t.assertions.iter()).any(|a| {
+            matches!(
+                a.expected_value_or_variant.as_deref(),
+                Some("\"A\"") | Some("\"B\"")
+            )
+        });
+        if credited {
+            return Err(format!("{label}: credited: {tests:?}"));
+        }
+    }
+    Ok(())
+}
+
+/// Whitespace inside `expect( ... )` around the sole observed call is still a
+/// direct read (reviewer finding on #11420).
+#[test]
+fn whitespace_inside_expect_keeps_the_direct_read_resolving() -> Result<(), String> {
+    for body in [
+        "test(t.input, () => { expect( encode(t.input) ).toBe(t.out); });",
+        "test(t.input, () => { expect(\n encode(t.input)\n ).toBe(t.out); });",
+    ] {
+        let assertions = assertions_of(&describe_source(TABLE, "", LOOP, body))?;
+        assert_eq!(
+            expected_values(&assertions),
+            vec![Some("\"a%20b\""), Some("\"c%20d\"")],
+            "{body}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn inline_each_object_rows_resolve_for_one_parameter_or_a_plain_pattern() -> Result<(), String> {
     let each = |table: &str, callback: &str| {

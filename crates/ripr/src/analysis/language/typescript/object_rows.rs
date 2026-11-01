@@ -286,12 +286,21 @@ fn scalar_key_title(compact: &str, param: &str, rows: &[ObjectRow]) -> bool {
     else {
         return false;
     };
-    let key = rest.strip_suffix(".toString()").unwrap_or(rest);
+    let (key, via_to_string) = match rest.strip_suffix(".toString()") {
+        Some(key) => (key, true),
+        None => (rest, false),
+    };
+    // A `null`/`undefined` cell makes `.toString()` throw, and a non-string,
+    // non-number bare title is rejected by the runner: either way the test is
+    // never registered, so its assertions must not be credited.
     !key.is_empty()
         && key.bytes().all(ident_part)
         && rows.iter().all(|row| {
-            row.cell(key)
-                .is_some_and(|cell| !cell.starts_with(['[', '{']))
+            row.cell(key).is_some_and(|cell| {
+                !cell.starts_with(['[', '{'])
+                    && !matches!(cell.trim(), "null" | "undefined")
+                    && (via_to_string || !matches!(cell.trim(), "true" | "false"))
+            })
         })
 }
 
