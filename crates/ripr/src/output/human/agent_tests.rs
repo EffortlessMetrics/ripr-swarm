@@ -339,6 +339,25 @@ fn reach_limit_with_a_proximity_only_weak_row_keeps_stop() {
     }
 }
 
+/// #12058: a proximity-only weak row ahead of an owner-bound weak row must not
+/// hide the bound one; the bound row opens the finding and is the one shown.
+#[test]
+fn reach_limit_prefers_a_later_owner_bound_row_over_a_proximity_only_one() {
+    use crate::domain::RelationReason;
+    let mut limited = reach_limited_weak("probe:mixed", 264);
+    let mut proximity = limited.related_tests[0].clone();
+    proximity.name = "unrelated_same_file".to_string();
+    proximity.relation_reason = Some(RelationReason::SameTestFile);
+    limited.related_tests[0].relation_reason = Some(RelationReason::DirectOwnerCall);
+    // The proximity row comes first.
+    limited.related_tests.insert(0, proximity);
+    let text = rendered(&output(vec![limited]));
+    assert!(text.contains("\nopen="), "{text}");
+    assert!(!text.contains("stop="), "{text}");
+    assert!(text.contains("discount_runs"), "{text}");
+    assert!(!text.contains("unrelated_same_file"), "{text}");
+}
+
 /// #11825 negative: a non-current (base-side) limited weak finding is not
 /// open work.
 #[test]
