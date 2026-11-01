@@ -57,12 +57,16 @@ fn collect_assertions(
             }
             Stmt::For(for_stmt) => {
                 let inner = loop_names(loops, for_stmt.target.as_ref());
-                collect_assertions(&for_stmt.body, source, &inner, out);
+                if !iterates_nothing(for_stmt.iter.as_ref()) {
+                    collect_assertions(&for_stmt.body, source, &inner, out);
+                }
                 collect_assertions(&for_stmt.orelse, source, loops, out);
             }
             Stmt::AsyncFor(for_stmt) => {
                 let inner = loop_names(loops, for_stmt.target.as_ref());
-                collect_assertions(&for_stmt.body, source, &inner, out);
+                if !iterates_nothing(for_stmt.iter.as_ref()) {
+                    collect_assertions(&for_stmt.body, source, &inner, out);
+                }
                 collect_assertions(&for_stmt.orelse, source, loops, out);
             }
             Stmt::While(while_stmt) => {
@@ -114,6 +118,46 @@ fn collect_assertions(
             }
             _ => {}
         }
+        // Statements after a definite exit never run: an assertion there can
+        // never fail, so it earns no credit.
+        if statement_exits_test(stmt) {
+            break;
+        }
+    }
+}
+
+/// A loop over an empty literal never runs its body.
+pub(super) fn iterates_nothing(iter: &Expr) -> bool {
+    match iter {
+        Expr::List(list) => list.elts.is_empty(),
+        Expr::Tuple(tuple) => tuple.elts.is_empty(),
+        Expr::Dict(dict) => dict.keys.is_empty(),
+        _ => false,
+    }
+}
+
+/// Whether control cannot continue past `stmt` in its statement list:
+/// `return`, `raise`, or a bare call that skips, fails or exits the process.
+fn statement_exits_test(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Return(_) | Stmt::Raise(_) => true,
+        Stmt::Expr(expr) => matches!(
+            expr.value.as_ref(),
+            Expr::Call(call) if expr_full_name(call.func.as_ref()).is_some_and(|name| matches!(
+                name.as_str(),
+                "pytest.skip"
+                    | "pytest.fail"
+                    | "pytest.exit"
+                    | "pytest.xfail"
+                    | "os._exit"
+                    | "sys.exit"
+                    | "exit"
+                    | "quit"
+                    | "self.skipTest"
+                    | "self.fail"
+            ))
+        ),
+        _ => false,
     }
 }
 

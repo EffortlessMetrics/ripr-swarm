@@ -5,8 +5,11 @@
 //! except a condition that is itself a boolean literal and so provably inert
 //! (`skipif(False)`), and `importorskip` of a module every interpreter has.
 
+use super::oracles::iterates_nothing;
+use super::sink_alignment::blank_quoted_strings;
+use super::source_utils::{SourceText, text_for_range};
 use super::{PythonFramework, PythonImport, PythonTest, expr_full_name};
-use rustpython_parser::ast::{self, Expr, Stmt};
+use rustpython_parser::ast::{self, Expr, Ranged, Stmt};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) enum DeclarationSite {
@@ -153,6 +156,144 @@ fn is_control_name(name: &str) -> bool {
     )
 }
 
+/// How a class or module body binds the `__test__` collection switch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TestSwitch {
+    /// No binding: pytest collects by its usual name rules.
+    Unset,
+    /// Bound to the literal `True`, which keeps (or restores) collection.
+    Enabled,
+    /// Bound to `False`, or to anything not provably `True` (a name, a call,
+    /// an augmented or deleted binding, a binding under a branch): pytest
+    /// may skip the scope, so credit stays withheld.
+    Disabled,
+}
+
+fn is_test_switch(target: &Expr) -> bool {
+    matches!(target, Expr::Name(name) if name.id.as_str() == "__test__")
+}
+
+/// Whether `target` binds `__test__` directly or inside a tuple, list or
+/// starred destructuring target.
+fn target_binds_test_switch(target: &Expr) -> bool {
+    match target {
+        Expr::Tuple(tuple) => tuple.elts.iter().any(target_binds_test_switch),
+        Expr::List(list) => list.elts.iter().any(target_binds_test_switch),
+        Expr::Starred(starred) => target_binds_test_switch(starred.value.as_ref()),
+        other => is_test_switch(other),
+    }
+}
+
+fn is_literal_true(value: &Expr) -> bool {
+    matches!(
+        value,
+        Expr::Constant(constant) if matches!(constant.value, ast::Constant::Bool(true))
+    )
+}
+
+/// The `__test__` binding of a class or module `body`. A top-level binding
+/// follows normal rebinding order; any `__test__` binding nested under a
+/// compound statement is not evaluated, so it counts as `Disabled`.
+pub(super) fn test_switch(body: &[Stmt]) -> TestSwitch {
+    let mut switch = TestSwitch::Unset;
+    for stmt in body {
+        match stmt {
+            Stmt::Assign(assign) if assign.targets.iter().any(target_binds_test_switch) => {
+                // A destructured binding (`(__test__, x) = (False, 1)`) is not
+                // evaluated, so it counts as Disabled even for a `True` value.
+                switch = if assign.targets.iter().any(is_test_switch)
+                    && is_literal_true(assign.value.as_ref())
+                {
+                    TestSwitch::Enabled
+                } else {
+                    TestSwitch::Disabled
+                };
+            }
+            // A bare annotation (`__test__: bool`) creates no attribute.
+            Stmt::AnnAssign(assign)
+                if is_test_switch(assign.target.as_ref()) && assign.value.is_some() =>
+            {
+                switch = if assign.value.as_deref().is_some_and(is_literal_true) {
+                    TestSwitch::Enabled
+                } else {
+                    TestSwitch::Disabled
+                };
+            }
+            Stmt::AugAssign(assign) if is_test_switch(assign.target.as_ref()) => {
+                switch = TestSwitch::Disabled;
+            }
+            Stmt::Delete(delete) if delete.targets.iter().any(is_test_switch) => {
+                switch = TestSwitch::Disabled;
+            }
+            Stmt::If(_)
+            | Stmt::Try(_)
+            | Stmt::TryStar(_)
+            | Stmt::With(_)
+            | Stmt::For(_)
+            | Stmt::While(_)
+            | Stmt::Match(_)
+                if nested_binds_test_switch(stmt) =>
+            {
+                switch = TestSwitch::Disabled;
+            }
+            _ => {}
+        }
+    }
+    switch
+}
+
+fn nested_binds_test_switch(stmt: &Stmt) -> bool {
+    let mut blocks: Vec<&[Stmt]> = Vec::new();
+    match stmt {
+        Stmt::If(node) => blocks.extend([node.body.as_slice(), node.orelse.as_slice()]),
+        Stmt::Try(node) => {
+            blocks.extend([
+                node.body.as_slice(),
+                node.orelse.as_slice(),
+                node.finalbody.as_slice(),
+            ]);
+            for handler in &node.handlers {
+                let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                blocks.push(handler.body.as_slice());
+            }
+        }
+        Stmt::TryStar(node) => {
+            blocks.extend([
+                node.body.as_slice(),
+                node.orelse.as_slice(),
+                node.finalbody.as_slice(),
+            ]);
+            for handler in &node.handlers {
+                let ast::ExceptHandler::ExceptHandler(handler) = handler;
+                blocks.push(handler.body.as_slice());
+            }
+        }
+        Stmt::With(node) => blocks.push(node.body.as_slice()),
+        Stmt::For(node) => blocks.extend([node.body.as_slice(), node.orelse.as_slice()]),
+        Stmt::While(node) => blocks.extend([node.body.as_slice(), node.orelse.as_slice()]),
+        Stmt::Match(node) => blocks.extend(node.cases.iter().map(|case| case.body.as_slice())),
+        _ => {}
+    }
+    blocks
+        .into_iter()
+        .any(|block| test_switch(block) != TestSwitch::Unset)
+}
+
+/// The control pytest's own `__test__ = False` opt-out applies to a class or
+/// a module: it is never collected, so no test below it runs.
+pub(super) fn test_switch_control(site: DeclarationSite) -> PythonActivationControl {
+    collection_control("pytest.collection(__test__ = False)", site)
+}
+
+/// A control for a test pytest's collection rules do not select (project
+/// configuration, `conftest.py` ignores, `__test__`).
+pub(super) fn collection_control(name: &str, site: DeclarationSite) -> PythonActivationControl {
+    PythonActivationControl {
+        name: name.to_string(),
+        site,
+    }
+}
+
 /// A parametrize decorator over an empty literal table collects the test as
 /// skipped, so its body never runs (#9691).
 pub(super) fn empty_parametrize_control(decorators: &[Expr]) -> Option<PythonActivationControl> {
@@ -203,6 +344,102 @@ pub(super) fn parametrize_collection_error_control(
     }
 }
 
+/// A later binding of the same name in the same scope replaced this test
+/// definition before collection, so pytest and unittest never run its body.
+pub(super) fn shadowed_by_later_binding_control(site: DeclarationSite) -> PythonActivationControl {
+    PythonActivationControl {
+        name: "later binding of the test name".to_string(),
+        site,
+    }
+}
+
+/// Whether a statement after `index` in the same list rebinds `name` without
+/// reading the earlier definition (a wrapper such as `name = mark(name)` keeps
+/// it running).
+pub(super) fn rebound_later(
+    statements: &[Stmt],
+    index: usize,
+    name: &str,
+    source: &SourceText<'_>,
+) -> bool {
+    // Quoted text (`factory('test_p')`) is not a read of the earlier definition.
+    let reads_name =
+        |range| mentions_identifier(&blank_quoted_strings(&text_for_range(source, range)), name);
+    let targets_name = |target: &Expr| binds_name(target, name);
+    statements[index + 1..].iter().any(|stmt| match stmt {
+        Stmt::FunctionDef(def) => {
+            def.name.as_str() == name && !def.decorator_list.iter().any(|d| reads_name(d.range()))
+        }
+        Stmt::AsyncFunctionDef(def) => {
+            def.name.as_str() == name && !def.decorator_list.iter().any(|d| reads_name(d.range()))
+        }
+        Stmt::ClassDef(def) => {
+            def.name.as_str() == name
+                && !def.decorator_list.iter().any(|d| reads_name(d.range()))
+                && !def.bases.iter().any(|b| reads_name(b.range()))
+        }
+        Stmt::Assign(assign) => {
+            assign.targets.iter().any(targets_name) && !reads_name(assign.value.range())
+        }
+        Stmt::AnnAssign(assign) => {
+            targets_name(assign.target.as_ref())
+                && assign
+                    .value
+                    .as_ref()
+                    .is_some_and(|value| !reads_name(value.range()))
+        }
+        // `del name` unbinds the earlier definition before collection.
+        Stmt::Delete(delete) => delete.targets.iter().any(targets_name),
+        // A loop or `with` target rebinds the name to a value that is not the
+        // earlier definition (the iterable or context manager could read it,
+        // so those stay credited).
+        // An empty literal iterable never binds the target, so the earlier
+        // definition survives.
+        Stmt::For(for_stmt) => {
+            targets_name(for_stmt.target.as_ref())
+                && !reads_name(for_stmt.iter.range())
+                && !iterates_nothing(for_stmt.iter.as_ref())
+        }
+        Stmt::With(with) => with.items.iter().any(|item| {
+            item.optional_vars.as_deref().is_some_and(targets_name)
+                && !reads_name(item.context_expr.range())
+        }),
+        // `import name` / `import name.sub` (binds the root) / `import x as
+        // name` / `from m import name [as alias]` rebind the name in this scope.
+        Stmt::Import(import) => import.names.iter().any(|alias| match &alias.asname {
+            Some(asname) => asname.as_str() == name,
+            None => alias.name.as_str().split('.').next() == Some(name),
+        }),
+        Stmt::ImportFrom(import) => import
+            .names
+            .iter()
+            .any(|alias| alias.asname.as_ref().unwrap_or(&alias.name).as_str() == name),
+        _ => false,
+    })
+}
+
+/// Whether `target` binds `name` directly or inside a tuple/list target.
+fn binds_name(target: &Expr, name: &str) -> bool {
+    match target {
+        Expr::Name(bound) => bound.id.as_str() == name,
+        Expr::Tuple(tuple) => tuple.elts.iter().any(|elt| binds_name(elt, name)),
+        Expr::List(list) => list.elts.iter().any(|elt| binds_name(elt, name)),
+        Expr::Starred(starred) => binds_name(starred.value.as_ref(), name),
+        _ => false,
+    }
+}
+
+/// Whether `name` occurs in `text` as a whole identifier, so `test_p_helper`
+/// or `xtest_p` does not count as a read of `test_p`.
+fn mentions_identifier(text: &str, name: &str) -> bool {
+    let is_ident = |c: char| c == '_' || c.is_alphanumeric();
+    text.match_indices(name).any(|(start, _)| {
+        let before = text[..start].chars().next_back();
+        let after = text[start + name.len()..].chars().next();
+        !before.is_some_and(is_ident) && !after.is_some_and(is_ident)
+    })
+}
+
 /// Whether `controls` hold [`parametrize_collection_error_control`].
 pub(super) fn has_collection_error(controls: &[PythonActivationControl]) -> bool {
     controls
@@ -219,10 +456,13 @@ pub(super) fn apply_module_controls(
     imports: &[PythonImport],
     tests: &mut [PythonTest],
 ) {
-    let controls: Vec<PythonActivationControl> = statements
+    let mut controls: Vec<PythonActivationControl> = statements
         .iter()
         .flat_map(|stmt| module_statement_controls(stmt, imports))
         .collect();
+    if test_switch(statements) == TestSwitch::Disabled {
+        controls.push(test_switch_control(DeclarationSite::Module));
+    }
     if controls.is_empty() {
         return;
     }

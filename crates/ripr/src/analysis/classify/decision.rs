@@ -211,6 +211,14 @@ fn is_compile_time_assertion(expression: &str) -> bool {
     ) && name[ident_end..].starts_with('!')
 }
 
+/// #11549: the probe label of a changed `unsafe fn` or of an `unsafe` block
+/// holding an unchecked assumption. Label match only; the shape extractor owns
+/// the parsing.
+fn is_unsafe_obligation(expression: &str) -> bool {
+    expression.starts_with("unsafe fn ")
+        || expression == crate::analysis::syntax::ra::UNCHECKED_ASSUMPTION_LABEL
+}
+
 pub(in crate::analysis) fn stop_reasons(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
@@ -223,6 +231,9 @@ pub(in crate::analysis) fn stop_reasons(
         } else {
             reasons.push(StopReason::NoChangedRustLine);
         }
+    }
+    if is_unsafe_obligation(&probe.expression) {
+        reasons.push(StopReason::UnsafeObligation);
     }
     if related_tests.iter().any(|test| {
         test.body.contains("fixture") || test.body.contains("builder") || test.body.contains("arb_")
@@ -527,6 +538,9 @@ fn uncertainty_next_step(
             StopReason::CompileTimeInvariant => {
                 "Check the assertion by building with the target, features and cfg that include it (a gated assertion is not compiled otherwise); a violating edit fails to compile, so no test observes it."
             }
+            StopReason::UnsafeObligation => {
+                "Review the safety contract and each caller or assumption site by hand; a safe-code test cannot discharge an unsafe obligation."
+            }
             StopReason::GapEvidenceUnresolved => {
                 "Inspect the refused assertion and whether it runs; an unreadable assertion is not an established missing test."
             }
@@ -561,6 +575,9 @@ fn weakly_exposed_guidance_for_family(family: &ProbeFamily) -> &'static str {
         _ => "Strengthen the related assertion so it discriminates the changed behavior.",
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs;
 
 #[cfg(test)]
 mod tests {
@@ -1463,6 +1480,16 @@ mod tests {
             ),
             None
         );
+    }
+
+    // #11549: only the unsafe-fn and unchecked-assumption labels name the stop reason.
+    #[test]
+    fn unsafe_obligation_is_recognised_by_probe_label_only() {
+        assert!(is_unsafe_obligation("unsafe fn pick"));
+        assert!(is_unsafe_obligation("unsafe block (unchecked assumption)"));
+        assert!(!is_unsafe_obligation("unsafe block"));
+        assert!(!is_unsafe_obligation("pub fn pick"));
+        assert!(!is_unsafe_obligation("unsafe_fn_pointer"));
     }
 
     // #11547: a changed compile-time assertion names its own stop reason;

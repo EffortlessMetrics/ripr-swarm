@@ -1681,65 +1681,41 @@ fn split_compact_root_object_closer(value: &str) -> String {
 /// Marker that opens the human screen's repair-start refusal sentence.
 const REPAIR_REFUSAL_MARKER: &str = "no repair start offered: ";
 
-/// One `RepairRouteRefusal` variant's stable opening, and the evidence list
-/// (if any) that must stay compared.
+/// One `RepairRouteRefusal` variant whose sentence embeds a value that moves
+/// with unrelated code. Everything after `prefix` is replaced by `<reason>`.
 struct RefusalRule {
-    /// Fixed opening of the variant's sentence. It is the variant discriminator
-    /// and is always compared verbatim.
+    /// Fixed opening of the variant's sentence (the discriminator), compared
+    /// verbatim.
     prefix: &'static str,
-    /// When set, a missing-evidence list follows this marker (empty means the
-    /// list starts right after `prefix`) and stays compared verbatim.
-    list_marker: Option<&'static str>,
-    /// Text that ends the list and starts the maskable trailing advice.
-    list_end: &'static str,
 }
 
 const fn rule(prefix: &'static str) -> RefusalRule {
-    RefusalRule {
-        prefix,
-        list_marker: None,
-        list_end: "",
-    }
+    RefusalRule { prefix }
 }
 
 /// Mirrors the arms of `RepairRouteRefusal::advisory`
-/// (crates/ripr/src/app/navigation.rs). A reason that matches no rule is
-/// compared verbatim, so a new or heavily reworded variant is visible golden
-/// drift that has to be re-blessed and added here, not silently masked.
+/// (crates/ripr/src/app/navigation.rs) whose sentence carries a variable part
+/// (a language, file, command or evidence list). A reason that matches no rule
+/// is compared verbatim, so every arm with fixed wording (no gap ID, no
+/// binding seam, several seams, already exposed, gap/limit conflict, config
+/// unreadable, incomplete static evidence, seam budget) is deliberately absent
+/// here: rewording one is visible golden drift that has to be re-blessed
+/// (#12003). Add an arm only when its sentence embeds a value that moves with
+/// unrelated code, and mask just that value.
 const REPAIR_REFUSAL_RULES: &[RefusalRule] = &[
-    rule("this finding has no gap ID"),
-    rule("ripr found no seam in this finding's file to bind it to"),
-    rule("several seams bind this finding"),
-    rule("nothing to repair here"),
-    rule("`ripr check` reads a gap or limit for this change"),
     rule("the seam inventory behind `ripr repair`"),
-    rule("the seam budget left"),
-    rule("the root's config could not be read"),
     rule("classifying the finding's seams failed"),
-    rule("ripr cannot build a repair packet for this finding yet because the static evidence"),
-    RefusalRule {
-        prefix: "ripr cannot build a repair packet for this finding yet because it is still missing: ",
-        list_marker: Some(""),
-        list_end: "; follow the Next step above",
-    },
-    RefusalRule {
-        prefix: "a related test already reaches the changed boundary input",
-        list_marker: Some(" It is also still missing: "),
-        list_end: ". Follow the Next step above",
-    },
 ];
 
-/// Mask the explanatory prose of the repair-start refusal sentence in human
-/// goldens, keeping the variant and its evidence list compared.
+/// Mask the moving values of the repair-start refusal sentence in human
+/// goldens. Arms with fixed wording are compared verbatim (#12003).
 ///
-/// The prose after `no repair start offered:` is plain language that focused
-/// tests assert directly. Comparing it verbatim made every wording improvement
-/// re-bless one line in each of hundreds of fixtures (#10702). Masking the
-/// whole tail also hid a refusal changing from one variant to another, so each
-/// known variant keeps its fixed opening (the discriminator) and, for the
-/// not-ready variants, the `still missing:` list; only the text around them is
-/// replaced by `<reason>`. A repair start that flips to a refusal, or the
-/// refusal line disappearing, is also still drift.
+/// Masking the whole tail of every refusal let wording regress with the gate
+/// green (#12003), so only an arm whose sentence embeds a language, file or
+/// command (`REPAIR_REFUSAL_RULES`) and the seam count keep a `<reason>` mask;
+/// all other arms, including their evidence lists and advice, are compared
+/// verbatim. A repair start that flips to a refusal, or the refusal line
+/// disappearing, is also drift.
 fn mask_repair_refusal_reason(value: &str) -> String {
     let mut masked = String::with_capacity(value.len());
     for segment in value.split_inclusive('\n') {
@@ -1820,7 +1796,9 @@ fn normalize_seam_count(body: &str) -> Option<String> {
     }
     let after = &rest[digits..];
     let after = after
-        .strip_prefix(" seams")
+        .strip_prefix(" spots")
+        .or_else(|| after.strip_prefix(" spot"))
+        .or_else(|| after.strip_prefix(" seams"))
         .or_else(|| after.strip_prefix(" seam"))?;
     after.strip_prefix(
         " in this finding's file, but could not tie one to this finding's changed line",
@@ -1828,37 +1806,48 @@ fn normalize_seam_count(body: &str) -> Option<String> {
     Some(format!("{SEAMS_UNTIED_OPENING}<reason>"))
 }
 
+/// Opening of the `PreviewPacketNotComplete` sentence (#12086). It embeds the
+/// language and a reason, so it is not a fixed-wording arm; only the test
+/// location inside the reason moves with unrelated edits.
+const PREVIEW_PACKET_REFUSAL_OPENING: &str = "ripr has no complete repair packet for this ";
+
+/// Where a TypeScript blocker reason cites a test: `the test at `path:line``.
+const PREVIEW_TEST_LOCATION_OPENING: &str = "the test at `";
+
+/// Mask the backticked `path:line` a `PreviewPacketNotComplete` reason cites
+/// (#12086). The language, the blocker wording and the rest of the sentence
+/// stay compared, so rewording any of them is drift while adding a line above
+/// the cited test is not. A reason with no cited location (for example the
+/// moved-assertion-selection blocker, which names a test, not a location) is
+/// compared verbatim.
+fn normalize_preview_packet_location(body: &str) -> Option<String> {
+    if !body.starts_with(PREVIEW_PACKET_REFUSAL_OPENING) {
+        return None;
+    }
+    let start = body.find(PREVIEW_TEST_LOCATION_OPENING)? + PREVIEW_TEST_LOCATION_OPENING.len();
+    let len = body[start..].find('`')?;
+    // An empty span cites nothing; leave it verbatim so it reads as drift.
+    if len == 0 {
+        return None;
+    }
+    Some(format!(
+        "{}<location>{}",
+        &body[..start],
+        &body[start + len..]
+    ))
+}
+
 fn mask_refusal_body(body: &str) -> String {
     if let Some(masked) = normalize_seam_count(body) {
         return masked;
     }
+    if let Some(masked) = normalize_preview_packet_location(body) {
+        return masked;
+    }
     for rule in REPAIR_REFUSAL_RULES {
-        let Some(after) = body.strip_prefix(rule.prefix) else {
-            continue;
-        };
-        let mut out = String::from(rule.prefix);
-        let Some(marker) = rule.list_marker else {
-            out.push_str("<reason>");
-            return out;
-        };
-        let list_start = if marker.is_empty() {
-            Some(0)
-        } else {
-            after.find(marker)
-        };
-        match list_start {
-            Some(start) => {
-                if !marker.is_empty() {
-                    out.push_str("<reason>");
-                }
-                let tail = &after[start..];
-                let end = tail.find(rule.list_end).unwrap_or(tail.len());
-                out.push_str(&tail[..end]);
-                out.push_str("<reason>");
-            }
-            None => out.push_str("<reason>"),
+        if body.starts_with(rule.prefix) {
+            return format!("{}<reason>", rule.prefix);
         }
-        return out;
     }
     body.to_string()
 }
@@ -3737,67 +3726,111 @@ mod tests {
     }
 
     #[test]
-    fn refusal_reason_wording_is_masked_but_the_decision_is_pinned() {
+    fn refusal_reason_fixed_wording_is_compared_and_only_moving_values_are_masked() {
         let wrap = |reason: &str| {
             format!("Next:\n  ripr explain x\n  no repair start offered: {reason}\nMore:\n")
         };
-        let canonical =
-            wrap("this finding has no gap ID, so old words; follow the Next step above");
-        let reworded = wrap("this finding has no gap ID, so new words");
+        // Fixed-wording arms are compared verbatim (#12003): rewording one,
+        // even to another word for the same idea, is golden drift.
+        let fixed = [
+            "this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above",
+            "ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above",
+            "several seams bind this finding and the check screen never picks one",
+            "nothing to repair here; the related tests already notice this change (exposed)",
+            "`ripr check` reads a gap or limit for this change, but words",
+            "the root's config could not be read; fix the ripr.toml error at the root, then rerun `ripr check`",
+            "ripr cannot build a repair packet for this finding yet because the static evidence is not complete enough to name a safe test target; follow the Next step above, then rerun `ripr check`",
+            "the seam budget left the repair candidate set unreadable or truncated; rerun",
+            "ripr cannot build a repair packet for this finding yet because it is still missing: a; b; follow the Next step above, then rerun `ripr check`",
+            "a related test already reaches the changed boundary input, but words, yet. It is also still missing: q. Follow the Next step above, then rerun `ripr check`",
+        ];
+        for reason in fixed {
+            assert_eq!(
+                mask_repair_refusal_reason(&wrap(reason)),
+                wrap(reason),
+                "fixed refusal wording must stay compared: {reason}"
+            );
+            let reworded = reason.replacen(' ', "  ", 1);
+            assert_ne!(
+                mask_repair_refusal_reason(&wrap(reason)),
+                mask_repair_refusal_reason(&wrap(&reworded)),
+                "a reworded refusal must read as golden drift: {reason}"
+            );
+        }
+        // Arms that embed a language, file or command keep a fixed opening and
+        // mask only what follows it.
+        for opening in [
+            "the seam inventory behind `ripr repair`",
+            "classifying the finding's seams failed",
+        ] {
+            assert_eq!(
+                mask_repair_refusal_reason(&wrap(&format!("{opening} one"))),
+                mask_repair_refusal_reason(&wrap(&format!("{opening} two")))
+            );
+        }
+        // The preview-packet arm masks only the cited test location (#12086).
+        let preview = |language: &str, cite: &str, tail: &str| {
+            wrap(&format!(
+                "ripr has no complete repair packet for this {language} finding (ripr cannot tell whether the test at `{cite}` covers this change: {tail}); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`"
+            ))
+        };
+        let base = preview(
+            "TypeScript",
+            "tests/a.test.ts:8",
+            "its `.toBe(...)` compares against a variable",
+        );
+        // A moved location is not drift.
         assert_eq!(
-            mask_repair_refusal_reason(&canonical),
-            mask_repair_refusal_reason(&reworded),
-            "a reworded refusal must not read as golden drift"
+            mask_repair_refusal_reason(&base),
+            mask_repair_refusal_reason(&preview(
+                "TypeScript",
+                "tests/b.test.ts:12",
+                "its `.toBe(...)` compares against a variable"
+            ))
+        );
+        // A changed language, matcher or reason wording is drift.
+        for changed in [
+            preview(
+                "JavaScript",
+                "tests/a.test.ts:8",
+                "its `.toBe(...)` compares against a variable",
+            ),
+            preview(
+                "TypeScript",
+                "tests/a.test.ts:8",
+                "its `.toEqual(...)` compares against a variable",
+            ),
+            preview(
+                "TypeScript",
+                "tests/a.test.ts:8",
+                "its `.toBe(...)` compares against a computed value",
+            ),
+        ] {
+            assert_ne!(
+                mask_repair_refusal_reason(&base),
+                mask_repair_refusal_reason(&changed)
+            );
+        }
+        // A reason with no cited location is compared verbatim.
+        let no_cite = |name: &str| {
+            wrap(&format!(
+                "ripr has no complete repair packet for this TypeScript finding (related test `{name}` asserts a different kind of behavior); add or strengthen the test by hand"
+            ))
+        };
+        assert_ne!(
+            mask_repair_refusal_reason(&no_cite("one")),
+            mask_repair_refusal_reason(&no_cite("two"))
         );
         // Negative: a variant change is drift even though both are refusals.
-        let no_seam = wrap("ripr found no seam in this finding's file to bind it to, so new words");
         assert_ne!(
-            mask_repair_refusal_reason(&canonical),
-            mask_repair_refusal_reason(&no_seam)
+            mask_repair_refusal_reason(&wrap(fixed[0])),
+            mask_repair_refusal_reason(&wrap(fixed[1]))
         );
+        let canonical = wrap(fixed[0]);
         // Negative: an unknown reason is compared verbatim.
         assert_ne!(
             mask_repair_refusal_reason(&wrap("something unmapped one")),
             mask_repair_refusal_reason(&wrap("something unmapped two"))
-        );
-        // The `still missing:` list stays compared; the trailing advice does not.
-        let missing = |list: &str, advice: &str| {
-            wrap(&format!(
-                "ripr cannot build a repair packet for this finding yet because it is still missing: {list}; follow the Next step above{advice}"
-            ))
-        };
-        assert_eq!(
-            mask_repair_refusal_reason(&missing("a; b", ", then rerun")),
-            mask_repair_refusal_reason(&missing("a; b", ", reworded"))
-        );
-        assert_ne!(
-            mask_repair_refusal_reason(&missing("a; b", "")),
-            mask_repair_refusal_reason(&missing("a; c", ""))
-        );
-        // A not-ready refusal with an empty list is a different variant.
-        assert_ne!(
-            mask_repair_refusal_reason(&missing("a", "")),
-            mask_repair_refusal_reason(&wrap(
-                "ripr cannot build a repair packet for this finding yet because the static evidence is thin"
-            ))
-        );
-        // The boundary variant keeps its optional `also still missing` list.
-        let boundary = |also: &str, advice: &str| {
-            wrap(&format!(
-                "a related test already reaches the changed boundary input, but words, yet.{also} Follow the Next step above{advice}"
-            ))
-        };
-        assert_eq!(
-            mask_repair_refusal_reason(&boundary("", ", then x")),
-            mask_repair_refusal_reason(&boundary("", ", then y"))
-        );
-        assert_ne!(
-            mask_repair_refusal_reason(&boundary("", "")),
-            mask_repair_refusal_reason(&boundary(" It is also still missing: q.", ""))
-        );
-        assert_ne!(
-            mask_repair_refusal_reason(&boundary(" It is also still missing: q.", "")),
-            mask_repair_refusal_reason(&boundary(" It is also still missing: r.", ""))
         );
         // Negative: a repair start that flips to a refusal is still drift.
         let offered = "Next:\n  ripr explain x\n  ripr repair abc --root r\nMore:\n";
@@ -3819,15 +3852,15 @@ mod tests {
         );
         assert_eq!(
             mask_repair_refusal_reason(
-                "  no repair start offered: several seams bind this finding, x\r\n"
+                "  no repair start offered: classifying the finding's seams failed, x\r\n"
             ),
-            "  no repair start offered: several seams bind this finding<reason>\r\n"
+            "  no repair start offered: classifying the finding's seams failed<reason>\r\n"
         );
         assert_eq!(
             mask_repair_refusal_reason(
-                "  no repair start offered: several seams bind this finding"
+                "  no repair start offered: classifying the finding's seams failed"
             ),
-            "  no repair start offered: several seams bind this finding<reason>"
+            "  no repair start offered: classifying the finding's seams failed<reason>"
         );
     }
 
@@ -3867,7 +3900,22 @@ mod tests {
         let matches = |actual: &Path, surface: &'static str| -> Result<bool, String> {
             Ok(compare_golden("unlisted_fixture", surface, &expected, actual)?.matches)
         };
-        assert!(matches(&reworded, "human.txt")?, "reworded prose is masked");
+        assert!(
+            !matches(&reworded, "human.txt")?,
+            "fixed advice wording is pinned (#12003)"
+        );
+        let inventory_a = write(
+            "inventory_a.txt",
+            &line("the seam inventory behind `ripr repair` has no python file a"),
+        )?;
+        let inventory_b = write(
+            "inventory_b.txt",
+            &line("the seam inventory behind `ripr repair` has no python file b"),
+        )?;
+        assert!(
+            compare_golden("unlisted_fixture", "human.txt", &inventory_a, &inventory_b)?.matches,
+            "an embedded language/file value is masked"
+        );
         assert!(
             !matches(&other_list, "human.txt")?,
             "missing list is pinned"
@@ -3885,8 +3933,8 @@ mod tests {
         };
         let exposed_line =
             "nothing to repair here; the related tests already notice this change (exposed)";
-        let untied_line = "ripr found 4 seams in this finding's file, but could not tie one to this finding's changed line, so y";
-        let one_seam_line = "ripr found 1 seam in this finding's file, but could not tie one to this finding's changed line, so z";
+        let untied_line = "ripr found 4 spots in this finding's file, but could not tie one to this finding's changed line, so y";
+        let one_seam_line = "ripr found 1 spot in this finding's file, but could not tie one to this finding's changed line, so z";
         let old_no_seam = write_exposed(
             "old_no_seam.txt",
             "ripr found no seam in this finding's file to bind it to, so x",

@@ -2926,6 +2926,30 @@
       ]
     },
     {
+      "id": "rust_returned_comparison_rival_import",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/returned_comparison_rival_import",
+      "vector": "bare_rival_import_cannot_supply_owner_boundary_input",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
       "id": "rust_predicate_boundary_oracle_refused",
       "language": "rust",
       "tier": "pure",
@@ -3421,7 +3445,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
@@ -3482,7 +3506,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
@@ -3519,7 +3543,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
@@ -3556,7 +3580,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
@@ -3593,7 +3617,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
@@ -3630,7 +3654,7 @@
         },
         {
           "type": "expected_class",
-          "class": "no_static_path"
+          "class": "static_unknown"
         },
         {
           "type": "must_disclose_limitation_detail"
@@ -6054,6 +6078,43 @@
       "tier": "pure",
       "source_fixture": "fixtures/python_adversarial_attribute_sink_other_receiver",
       "vector": "attribute_sink_other_receiver_value_identity",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "must_not_emit_repair_packet"
+        },
+        {
+          "type": "must_not_have_receipt_command"
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "py_attribute_sink_same_value_other_receiver",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_adversarial_attribute_sink_same_value_other_receiver",
+      "vector": "attribute_sink_same_value_other_receiver_identity",
       "assertions": [
         {
           "type": "must_not_report_clean"
@@ -10749,6 +10810,29 @@
       ]
     },
     {
+      "id": "rust_repo_exposure_identical_inline_arms_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-identical-inline-arms.json",
+      "vector": "repo_exposure_identical_one_line_arms_decide_nothing_a_test_observes",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::tier_identical",
+          "expression": "x >= 5",
+          "grip_class": "propagation_unknown",
+          "reach": "yes"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::tier_differing",
+          "expression": "x >= 5",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
+        }
+      ]
+    },
+    {
       "id": "rust_repo_exposure_uncalled_sibling_not_promoted",
       "language": "rust",
       "tier": "pure",
@@ -14220,6 +14304,10 @@
       "probe_family": "predicate",
       "assertions": [
         {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        },
+        {
           "type": "must_not_report_clean"
         },
         {
@@ -15481,7 +15569,7 @@
         },
         {
           "type": "expected_class",
-          "class": "static_unknown"
+          "class": "infection_unknown"
         }
       ]
     },
@@ -15505,7 +15593,7 @@
         },
         {
           "type": "expected_class",
-          "class": "static_unknown"
+          "class": "infection_unknown"
         }
       ]
     },
@@ -15529,7 +15617,7 @@
         },
         {
           "type": "expected_class",
-          "class": "static_unknown"
+          "class": "infection_unknown"
         }
       ]
     },
@@ -16203,6 +16291,34 @@
           "type": "expected_class",
           "class": "no_static_path"
         }
+      ]
+    },
+    {
+      "id": "ts_then_function_scoped_var_cannot_confirm_return",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_then_function_scoped_var_shadow",
+      "vector": "nested_block_var_captures_callback_receiver_outside_block",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
+      "id": "ts_then_inline_receiver_shadow_cannot_confirm_return",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_then_inline_receiver_shadow",
+      "vector": "returned_then_asserts_on_inline_receiver_shadow_instead_of_owner",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "no_static_path" }
       ]
     }
   ]

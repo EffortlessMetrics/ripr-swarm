@@ -153,6 +153,8 @@ pub(super) use doctor::doctor;
 
 #[path = "commands/gate.rs"]
 mod gate;
+#[cfg(kani)]
+mod gate_exit_kani;
 pub(super) use gate::gate;
 
 #[path = "commands/init.rs"]
@@ -3199,11 +3201,17 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     let mut committed = false;
     // #8739: same meaning as `ripr check --quiet`: stderr progress only.
     let mut quiet = false;
+    // #12104: `--format human` (default) or `agent`.
+    let mut format = app::ExplainFormat::Human;
     let mut root_explicitly_provided = false;
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--quiet" => quiet = true,
+            "--format" => {
+                i += 1;
+                format = parse_explain_format(expect_value(args, i, "--format")?)?;
+            }
             "--root" => {
                 i += 1;
                 input.root = PathBuf::from(expect_value(args, i, "--root")?);
@@ -3328,7 +3336,16 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // looked like a hang. The same stderr-only stage lines `ripr check`
     // projects disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
+    // `explain` has no machine output format (its stdout is the human or
+    // markdown explanation), so only `--quiet` / `RIPR_QUIET` silence it; the
+    // machine-format default that `check` and `pilot` adopt has nothing to key on.
+    if from_artifact.is_some()
+        && input.suppression_policy.is_some()
+        && format == app::ExplainFormat::Agent
+    {
+        return Err("`ripr explain --format agent` cannot apply `--suppression-policy` to a `--from` replay, so a suppressed finding could print as open; drop `--from` or `--suppression-policy`".to_string());
+    }
+    let progress = (!crate::cli::progress::progress_silenced(quiet, false)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             crate::cli::progress::ProgressPolicy::STANDARD,
@@ -3345,6 +3362,7 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             artifact_path,
             asserted_base.as_deref(),
             explicit.mode,
+            format,
         )?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
@@ -3355,7 +3373,10 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
                 explicit.mode,
                 worktree,
                 worktree_from_default,
-                progress_sink,
+                app::ExplainRun {
+                    format,
+                    sink: progress_sink,
+                },
             )?
         }
     };
@@ -3368,6 +3389,23 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     }
     println!("{rendered}");
     Ok(())
+}
+
+/// `ripr explain --format`: the human explanation or the compact agent lines
+/// (#12104). `json` is deliberately not offered: `ripr context` is the JSON
+/// route for one finding, and the refusal says so.
+fn parse_explain_format(value: &str) -> Result<app::ExplainFormat, String> {
+    match value {
+        "human" | "text" => Ok(app::ExplainFormat::Human),
+        "agent" => Ok(app::ExplainFormat::Agent),
+        "json" => Err(
+            "`ripr explain --format json` is not offered; use `ripr context --at <finding-id>` for the JSON packet, or `--format agent` for compact lines"
+                .to_string(),
+        ),
+        other => Err(format!(
+            "unknown explain format `{other}`; expected `human` or `agent`"
+        )),
+    }
 }
 
 /// The selector-less `explain`/`context` error. `listing` lists finding ids
@@ -8289,6 +8327,9 @@ language = "rust"
         assert!(workflow.contains("RIPR_UPLOAD_SARIF"));
         assert!(workflow.contains("RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}"));
         assert!(workflow.contains("RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}"));
+        assert!(
+            workflow.contains("RIPR_PILOT_TIMEOUT_MS: ${{ vars.RIPR_PILOT_TIMEOUT_MS || '' }}")
+        );
         assert!(workflow.contains("RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}"));
         assert!(workflow.contains("pull-requests: write"));
         assert!(workflow.contains("run: ripr reports ci-packet --root ."));
@@ -8569,8 +8610,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 214,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
+            line_count <= 216,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, #11205 added the optional pilot-timeout binding, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));

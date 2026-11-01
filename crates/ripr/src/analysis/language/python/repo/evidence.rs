@@ -376,6 +376,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         &mut all_tests,
         &module_attribute_writes,
     );
+    super::super::collection_config::apply_collection_config(&mut all_tests, root);
 
     // Production subjects: owners + behavior items, related against the
     // evidence pool built above. The public Finding projection is built in

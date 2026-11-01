@@ -199,9 +199,9 @@ pub(crate) fn build_analysis_index_from_loaded_files(
 /// as-is, new or changed files are parsed through the file-fact cache and
 /// inserted, files no longer in the list are removed, and the shared
 /// post-parse phases re-run once over the merged index. When nothing
-/// changed, the index is returned untouched, so one check invocation
-/// builds its workspace index once and reuses it instead of re-decoding
-/// the fact cache and re-running post-processing per consumer.
+/// changed, parsed facts are returned without another build or post-parse
+/// pass. Run-scoped manifest/export authority and dependent query memos are
+/// refreshed because auxiliary inputs need not be among the indexed files.
 pub(crate) fn reuse_cached_index_with_loaded_files(
     mut cached: build::CachedRustIndex,
     root: &Path,
@@ -216,7 +216,7 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
             file.unresolved_property_macros.iter().any(|property| {
                 matches!(
                     property.name.as_str(),
-                    "proptest::proptest" | "::proptest::proptest"
+                    "proptest" | "proptest::proptest" | "::proptest::proptest"
                 )
             })
         })
@@ -250,6 +250,11 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
         .filter(|path| !kept.contains(path.as_path()))
         .collect();
     if extras.is_empty() && dropped.is_empty() {
+        // #11810: a local macro exporter or its selected manifest can change
+        // without changing the indexed Rust files. Do not retain a cached
+        // absent/present export or the assertion sites derived from it.
+        cached.index.member_crates = member_crates::MemberCrates::new(root);
+        cached.index.call_identity_memos.clear();
         return Ok(cached);
     }
     // Post-processing is only incrementally exact when the file set grows by

@@ -759,7 +759,34 @@ fn routed_result_admitted(
     docs: &str,
     docs_gate: &str,
     heavy: &str,
-    (admission_result, admission_status): (&str, &str),
+    admission: (&str, &str),
+) -> TestResult<bool> {
+    // The extension e2e step (#12122) runs only for an admitted merge-ready
+    // request; elsewhere it is skipped and the summary does not read it.
+    let vscode = if admission == ("success", "admitted") {
+        "success"
+    } else {
+        "skipped"
+    };
+    routed_result_with_vscode(
+        fixture,
+        event,
+        detector,
+        docs,
+        docs_gate,
+        heavy,
+        (admission.0, admission.1, vscode),
+    )
+}
+
+fn routed_result_with_vscode(
+    fixture: &Fixture,
+    event: &str,
+    detector: &str,
+    docs: &str,
+    docs_gate: &str,
+    heavy: &str,
+    (admission_result, admission_status, vscode): (&str, &str, &str),
 ) -> TestResult<bool> {
     let source = result_step()?;
     let (setup, _) = source.split_once("        run: |\n").ok_or("result step")?;
@@ -814,6 +841,7 @@ fn routed_result_admitted(
                 "skipped"
             },
         ),
+        ("VSCODE_CHECK_RESULT", vscode),
         ("ADMISSION_RESULT", admission_result),
         ("ADMISSION_STATUS", admission_status),
     ]);
@@ -849,6 +877,36 @@ fn actual_result_block_treats_other_labels_as_a_nonrequest_that_never_qualifies(
         "{first_decision}"
     );
     assert!(source.contains("'Merge-ready Nonrequest'"));
+    Ok(())
+}
+
+#[test]
+fn actual_result_block_fails_a_pull_request_whose_selected_extension_e2e_did_not_succeed()
+-> TestResult {
+    let fixture = Fixture::new()?;
+    assert!(routed_result_with_vscode(
+        &fixture,
+        "pull_request",
+        "success",
+        "true",
+        "success",
+        "skipped",
+        ("success", "admitted", "success"),
+    )?);
+    for outcome in ["failure", "cancelled", "skipped"] {
+        assert!(
+            !routed_result_with_vscode(
+                &fixture,
+                "pull_request",
+                "success",
+                "true",
+                "success",
+                "skipped",
+                ("success", "admitted", outcome),
+            )?,
+            "a {outcome} extension e2e step must fail the Result (#12122)"
+        );
+    }
     Ok(())
 }
 

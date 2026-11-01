@@ -44,13 +44,13 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_infection_shapes/input --diff <cwd>/fixtures/typescript_infection_shapes/diff.patch --mode fast probe:src_guard.ts:typescript_preview:0e63c99e
   ripr context --root <cwd>/fixtures/typescript_infection_shapes/input --diff <cwd>/fixtures/typescript_infection_shapes/diff.patch --mode fast --at probe:src_guard.ts:typescript_preview:0e63c99e
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 Hidden:
   5 lower-priority finding(s) omitted from default human output (TypeScript preview: 5).
     - src/guard.ts:9 (weak); kind: return_value; reason: Related test reaches `floorAt` but the strongest extracted oracle is `relational_check`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a…
     - src/pricing.ts:3 (unknown: infection unclear); kind: return_value; reason: The change to `bulk` is a `literal_return` edit: the edit changes a literal return value, and the adapter does not model whether any test input reaches this return. No assertion…
-    - src/pricing.ts:24 (exposed); kind: return_value; reason: Related test reaches `div` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.
+    - src/pricing.ts:24 (exposed); kind: return_value; reason: Related test reaches `div` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
     - src/pricing.ts:27 (unknown: infection unclear); kind: return_value; reason: The change to `cap` is a `fallback_literal` edit: the edit changes the literal operand of a `??` / `||` fallback, and the adapter does not model whether any test input takes the…
     - src/pricing.ts:32 (unknown: infection unclear); kind: predicate; reason: The change to `say` is a `default_parameter` edit: the edit changes a default parameter value, and the adapter does not model whether any test call omits the argument. No…
   Hidden classes:

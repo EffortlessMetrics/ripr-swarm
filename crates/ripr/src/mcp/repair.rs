@@ -970,6 +970,41 @@ impl WorkspaceSession {
         }
     }
 
+    /// The machine-readable data of a `superseded` failure for a session
+    /// transaction still held in memory (#11622). A refresh after editing
+    /// tests commits a new snapshot, and a session transaction is bound to the
+    /// snapshot it was prepared against, so the read cannot continue it. The
+    /// data names the item and, when that item still exists in the current
+    /// snapshot, the one route that gives a fresh transaction. It claims
+    /// nothing about whether the edit helped: that is the receipt's job.
+    fn superseded_data(&self, transaction: &RepairTransaction, current: Option<&str>) -> Value {
+        let in_current = self
+            .last_good
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.item(&transaction.canonical_id).is_some());
+        json!({
+            "current_snapshot_id": current,
+            "canonical_id": transaction.canonical_id,
+            "item_in_current_snapshot": in_current,
+            "next": if in_current {
+                json!({
+                    "kind": "prepare_again",
+                    "detail": "the session transaction is bound to the snapshot it was prepared against and a refresh replaced that snapshot; prepare a fresh transaction for the same item against the current one",
+                    "mcp": {
+                        "tool": "ripr_prepare_repair",
+                        "arguments": { "canonical_id": transaction.canonical_id },
+                    },
+                })
+            } else {
+                json!({
+                    "kind": "item_no_longer_listed",
+                    "detail": "the item is not in the current snapshot; list the current items with ripr_list_gaps",
+                    "mcp": { "tool": "ripr_list_gaps", "arguments": {} },
+                })
+            },
+        })
+    }
+
     /// `ripr_get_repair_attempt` / `ripr://repair-attempt/{attempt_id}`:
     /// session transactions first, then the durable store of this session's
     /// root, each fail-closed and replay-resistant.
@@ -1000,7 +1035,7 @@ impl WorkspaceSession {
                     ),
                     "re-read ripr_workspace_status for the current snapshot identity and prepare a fresh transaction"
                 )
-                .with_data(json!({ "current_snapshot_id": current })));
+                .with_data(self.superseded_data(transaction, current)));
             }
             return bounded_document(
                 session_attempt_document(transaction),
@@ -1061,7 +1096,7 @@ impl WorkspaceSession {
                     ),
                     "re-read ripr_workspace_status for the current snapshot identity"
                 )
-                .with_data(json!({ "current_snapshot_id": current })));
+                .with_data(self.superseded_data(transaction, current)));
             }
             return bounded_document(
                 session_receipt_document(transaction),
@@ -1179,6 +1214,16 @@ pub(super) mod tests {
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn unknown_attempt_remedy_leads_with_refresh_not_the_conditional_mention() {
+        let value = unknown_attempt("repair-attempt-x", true).value();
+        assert_eq!(value["remedy"]["tool"], "ripr_refresh", "{value}");
+        // The no-root variant states a real command and a retry.
+        let rootless = unknown_attempt("repair-attempt-x", false).value();
+        assert_eq!(rootless["remedy"]["kind"], "command", "{rootless}");
+        assert_eq!(rootless["remedy"]["retry_stated"], true, "{rootless}");
+    }
 
     fn output(
         kind: AnalysisOutcomeKind,
@@ -1827,9 +1872,84 @@ pub(super) mod tests {
         session.last_good = refreshed.last_good;
         match session.repair_attempt_document(&attempt_id, None, Some("root:sha256:a")) {
             Ok(value) => Err(format!("superseded attempt must fail closed: {value}")),
-            Err(failure) if failure.code == "superseded" => Ok(()),
+            Err(failure) if failure.code == "superseded" => {
+                // #11622: the failure names the item and the route to a fresh
+                // transaction, for the attempt read and the receipt read alike.
+                let receipt = session
+                    .receipt_status_document(&attempt_id, None, Some("root:sha256:a"))
+                    .err()
+                    .ok_or("superseded receipt read must fail closed")?;
+                for data in [&failure.data, &receipt.data] {
+                    if data["canonical_id"] != "gap:test:1"
+                        || data["item_in_current_snapshot"] != true
+                        || data["next"]["kind"] != "prepare_again"
+                        || data["next"]["mcp"]["tool"] != "ripr_prepare_repair"
+                        || data["next"]["mcp"]["arguments"]["canonical_id"] != "gap:test:1"
+                    {
+                        return Err(format!("superseded data lost its route: {data}"));
+                    }
+                }
+                // Negative: an item that left the snapshot gets the list route.
+                let mut gone = super::super::gaps::test_finding()?;
+                gone.id = "finding:other".to_string();
+                gone.canonical_gap = None;
+                session.last_good = session_with(&[gone], "root:sha256:a")?.last_good;
+                let listed = session
+                    .repair_attempt_document(&attempt_id, None, Some("root:sha256:a"))
+                    .err()
+                    .ok_or("must stay superseded")?;
+                if listed.data["item_in_current_snapshot"] != false
+                    || listed.data["next"]["kind"] != "item_no_longer_listed"
+                {
+                    return Err(format!(
+                        "a vanished item must route to the list: {listed:?}"
+                    ));
+                }
+                Ok(())
+            }
             Err(failure) => Err(format!("unexpected failure code: {}", failure.code)),
         }
+    }
+
+    /// #11622 positive twin: a refresh whose analysis evidence is unchanged
+    /// commits the identical snapshot identity, so the session transaction
+    /// stays readable (no `superseded`). This pins the premise the
+    /// superseded-route design rests on.
+    #[test]
+    fn unchanged_evidence_refresh_keeps_the_session_attempt_readable() -> Result<(), String> {
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let packet = session
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        let attempt_id = packet
+            .pointer("/attempt/attempt_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "missing attempt id".to_string())?
+            .to_string();
+        let before = session
+            .last_good
+            .as_ref()
+            .map(|snapshot| snapshot.snapshot_id.clone());
+        let refreshed = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let after = refreshed
+            .last_good
+            .as_ref()
+            .map(|snapshot| snapshot.snapshot_id.clone());
+        if before.is_none() || before != after {
+            return Err(format!(
+                "identical evidence must commit the identical snapshot id: {before:?} vs {after:?}"
+            ));
+        }
+        session.last_good = refreshed.last_good;
+        session
+            .repair_attempt_document(&attempt_id, None, Some("root:sha256:a"))
+            .map_err(|failure| format!("unchanged refresh must not supersede: {failure:?}"))?;
+        session
+            .receipt_status_document(&attempt_id, None, Some("root:sha256:a"))
+            .map_err(|failure| {
+                format!("unchanged refresh must keep the receipt read: {failure:?}")
+            })?;
+        Ok(())
     }
 
     #[test]

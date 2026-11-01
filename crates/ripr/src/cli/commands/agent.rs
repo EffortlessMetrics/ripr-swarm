@@ -2097,6 +2097,12 @@ fn render_repair_after_refusal_json(
         "attempt_id": attempt_id,
         "error": error.trim(),
         "narration": narration,
+        // The next step the error and its recovery narration state in prose.
+        "remedy": crate::domain::RefusalRemedy::from_prose(&format!(
+            "{}\n{}",
+            error.trim(),
+            narration.join("\n")
+        )),
     });
     serde_json::to_string_pretty(&document)
         .map(|rendered| format!("{rendered}\n"))
@@ -2206,7 +2212,16 @@ fn run_agent_repair_phase(
         verify_rollback,
         store,
         json,
+        quiet,
     } = options;
+    // #11598: `--quiet` / `RIPR_QUIET` drop this phase's progress narration
+    // and `wrote <path>` lines. Refusal prose, the attempt id and the next
+    // command are results and always print.
+    // `--json` here does not imply quiet: the phase narration is the
+    // protocol-bearing stderr (attempt command, refusal prose) that agents
+    // read, so only `--quiet` / `RIPR_QUIET` drop the progress and `wrote`
+    // lines. The machine-format default belongs to the check-style stream.
+    let quiet = crate::cli::progress::progress_silenced(quiet, false);
     let store_ref = store.as_deref();
 
     match phase {
@@ -2217,7 +2232,7 @@ fn run_agent_repair_phase(
                 let base = base
                     .as_deref()
                     .ok_or_else(|| "agent repair --gap-id lost its parsed --base".to_string())?;
-                return run_gap_bound_before_phase(&root, gap_id, base, store_ref, refusal);
+                return run_gap_bound_before_phase(&root, gap_id, base, store_ref, quiet, refusal);
             }
             let seam_id = seam_id.ok_or_else(|| {
                 "agent repair --phase before lost its parsed seam identity".to_string()
@@ -2247,13 +2262,15 @@ fn run_agent_repair_phase(
                 "repair before requires its identity from the locked CLI publication driver"
                     .to_string()
             })?;
-            eprintln!(
-                "{}",
-                terminal_safe(format!(
-                    "ripr: agent repair --phase before for seam `{seam_id}` at {}",
-                    crate::output::path::human_path(&root)
-                ))
-            );
+            if !quiet {
+                eprintln!(
+                    "{}",
+                    terminal_safe(format!(
+                        "ripr: agent repair --phase before for seam `{seam_id}` at {}",
+                        crate::output::path::human_path(&root)
+                    ))
+                );
+            }
 
             // Render and admit the packet first (F15-12): a seam whose repair
             // packet names no test file ripr may edit refuses here, before any
@@ -2390,7 +2407,7 @@ fn run_agent_repair_phase(
                 &before_report,
             )
             .map_err(String::from)?;
-            for path in &started.paths {
+            for path in started.paths.iter().filter(|_| !quiet) {
                 eprintln!(
                     "{}",
                     terminal_safe(format!("ripr: wrote {}", output::path::human_path(path)))
@@ -2408,13 +2425,15 @@ fn run_agent_repair_phase(
 
             let packet_path = root.join("target/ripr/workflow/agent-packet.json");
             write_text_file(&packet_path, &packet)?;
-            eprintln!(
-                "{}",
-                terminal_safe(format!(
-                    "ripr: wrote {}",
-                    output::path::human_path(&packet_path)
-                ))
-            );
+            if !quiet {
+                eprintln!(
+                    "{}",
+                    terminal_safe(format!(
+                        "ripr: wrote {}",
+                        output::path::human_path(&packet_path)
+                    ))
+                );
+            }
             // Nothing prints on stdout here. The before-phase success stdout —
             // with `--json` the packet document carrying the additive
             // `repair_attempt` continuation (#4329), without it the short
@@ -2455,12 +2474,14 @@ fn run_agent_repair_phase(
             })?;
             refusal.selected_attempt =
                 Some((root.clone(), store.clone(), attempt.attempt_id.clone()));
-            eprintln!(
-                "ripr: agent repair --phase after for attempt `{}` (seam `{}`) at {}",
-                attempt.attempt_id.as_str(),
-                attempt.seam_id,
-                crate::output::path::human_path(&caller_root)
-            );
+            if !quiet {
+                eprintln!(
+                    "ripr: agent repair --phase after for attempt `{}` (seam `{}`) at {}",
+                    attempt.attempt_id.as_str(),
+                    attempt.seam_id,
+                    crate::output::path::human_path(&caller_root)
+                );
+            }
             // A C2a-era gap marker recorded only the symbolic base. It is not
             // re-resolved as if it were the original immutable base: the
             // attempt refuses with a fresh start instead.
@@ -2515,10 +2536,12 @@ fn run_agent_repair_phase(
                 ));
             }
             let prior_refusals = crate::app::repair_attempt::after_refusal_total(&prior_refusals);
-            eprintln!(
-                "ripr: consuming attempt manifest {}",
-                output::path::human_path(&attempt.manifest_path)
-            );
+            if !quiet {
+                eprintln!(
+                    "ripr: consuming attempt manifest {}",
+                    output::path::human_path(&attempt.manifest_path)
+                );
+            }
             // #6033: remember which shared workflow artifacts existed before
             // this phase wrote its own (preserving the previous projection's
             // bytes), so the outcome resolver can withdraw the fresh ones
@@ -2850,11 +2873,13 @@ fn run_agent_repair_phase(
                         edit_cage_verdict: cage_after.verdict.status.as_label(),
                     });
                 }
-                eprintln!(
-                    "ripr: edit-cage verdict for attempt `{}`: {:?}",
-                    cage_after.attempt_id.as_str(),
-                    cage_after.verdict.status
-                );
+                if !quiet {
+                    eprintln!(
+                        "ripr: edit-cage verdict for attempt `{}`: {:?}",
+                        cage_after.attempt_id.as_str(),
+                        cage_after.verdict.status
+                    );
+                }
                 for line in repair_after_cage_recovery_lines(
                     &caller_root,
                     store_ref,
@@ -2980,10 +3005,12 @@ fn run_agent_repair_phase(
                         );
                         match record_outcome {
                             Ok(apply_record_path) => {
-                                eprintln!(
-                                    "ripr: python repair-trust apply record: {}",
-                                    crate::output::path::human_path(&apply_record_path)
-                                );
+                                if !quiet {
+                                    eprintln!(
+                                        "ripr: python repair-trust apply record: {}",
+                                        crate::output::path::human_path(&apply_record_path)
+                                    );
+                                }
                             }
                             Err(error) => {
                                 // Finish already advanced the durable state, so a
@@ -3123,10 +3150,12 @@ fn run_agent_repair_phase(
             let attempt_id = attempt_id.as_deref().ok_or_else(|| {
                 "agent repair --phase verify lost its parsed attempt identity".to_string()
             })?;
-            eprintln!(
-                "ripr: agent repair --phase verify for attempt `{attempt_id}` at {}",
-                crate::output::path::human_path(&root)
-            );
+            if !quiet {
+                eprintln!(
+                    "ripr: agent repair --phase verify for attempt `{attempt_id}` at {}",
+                    crate::output::path::human_path(&root)
+                );
+            }
             let receipt_path = app::python_repair_verification::run_verification_phase(
                 app::python_repair_verification::VerificationOptions {
                     root: &root,
@@ -3153,10 +3182,12 @@ fn run_agent_repair_phase(
                     crate::agent::loop_commands::display_path(&receipt_path)
                 );
             }
-            eprintln!(
-                "ripr: verification receipt: {} (immutable; execution and static movement are separate observations)",
-                crate::output::path::human_path(&receipt_path)
-            );
+            if !quiet {
+                eprintln!(
+                    "ripr: verification receipt: {} (immutable; execution and static movement are separate observations)",
+                    crate::output::path::human_path(&receipt_path)
+                );
+            }
             Ok(())
         }
     }
@@ -3848,6 +3879,7 @@ fn run_gap_bound_before_phase(
     gap_id: &str,
     base: &str,
     store_ref: Option<&Path>,
+    quiet: bool,
     refusal: &mut AfterPhaseRefusalContext,
 ) -> Result<(), String> {
     use crate::agent::loop_commands::{bound_root, shell_arg};
@@ -3856,13 +3888,15 @@ fn run_gap_bound_before_phase(
     };
 
     ensure_command_root(root, "agent repair --phase before")?;
-    eprintln!(
-        "{}",
-        terminal_safe(format!(
-            "ripr: agent repair --phase before for gap `{gap_id}` (base `{base}`) at {}",
-            root.display()
-        ))
-    );
+    if !quiet {
+        eprintln!(
+            "{}",
+            terminal_safe(format!(
+                "ripr: agent repair --phase before for gap `{gap_id}` (base `{base}`) at {}",
+                root.display()
+            ))
+        );
+    }
     let root_display = bound_root(&root.to_string_lossy());
     let store_flag = crate::app::repair_attempt::quoted_store_flag(store_ref);
     let restart = gap_bound_start_command(&root_display, &store_flag, gap_id, base);
@@ -3982,7 +4016,7 @@ fn run_gap_bound_before_phase(
     write_text_file(&before, &snapshot.rendered)?;
     let packet_path = root.join(crate::app::gap_bound_repair::GAP_BOUND_PACKET_ARTIFACT);
     write_text_file(&packet_path, &packet)?;
-    for path in [&before, &packet_path] {
+    for path in [&before, &packet_path].into_iter().filter(|_| !quiet) {
         eprintln!(
             "{}",
             terminal_safe(format!("ripr: wrote {}", output::path::human_path(path)))
@@ -4249,6 +4283,25 @@ mod refusal_tests;
 mod tests {
     use super::gap_bound_rejected_attempt_message as rejected;
     use crate::edit_cage::EditCageVerdictStatus as Status;
+
+    /// The not-found hint for a gap-shaped id mentions `ripr check` only to
+    /// say what a gap id is; the instructed step is `ripr repair <gap-id>`.
+    #[test]
+    fn gap_shaped_seam_id_remedy_is_repair_not_the_explanatory_check() {
+        let hint = super::unknown_seam_id_hint(std::path::Path::new("."), "gap:x");
+        let remedy = crate::domain::RefusalRemedy::from_prose(&hint);
+        assert!(
+            remedy
+                .command
+                .as_deref()
+                .is_some_and(|c| c.starts_with("ripr repair <gap-id> --root")),
+            "{remedy:?} from {hint}"
+        );
+        assert!(
+            !remedy.alternatives.iter().any(|c| c == "ripr check"),
+            "explanatory mention leaked: {remedy:?}"
+        );
+    }
 
     /// A violated verdict may claim an out-of-surface edit; an incomparable
     /// one never observed an edit and must not claim it.

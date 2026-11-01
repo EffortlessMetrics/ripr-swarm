@@ -323,6 +323,7 @@ Updated:
 ## Pending — whole_value_string_from_shadow (24)
 
 Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
 RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
 
 Command:

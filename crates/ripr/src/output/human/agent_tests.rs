@@ -1,6 +1,6 @@
 //! Contract tests for `ripr check --format agent` (#11580).
 
-use super::agent::{MAX_GAP_LINES, render};
+use super::agent::{MAX_GAP_LINES, render, render_finding};
 use crate::app::{CheckDiffProvenance, CheckOutput, Mode};
 use crate::config::RiprConfig;
 use crate::domain::{
@@ -307,6 +307,57 @@ fn reach_limit_without_weak_assertion_row_keeps_stop() {
     assert!(!text.contains("open="), "{text}");
 }
 
+/// #12058 negative: an unrelated weak test that is related only by file or
+/// module proximity does not make a reach-limited finding open; it stays
+/// `stop=`. The same row bound to the owner (a direct call or an owner-named
+/// test) still opens it.
+#[test]
+fn reach_limit_with_a_proximity_only_weak_row_keeps_stop() {
+    use crate::domain::RelationReason;
+    for reason in [
+        RelationReason::SameTestFile,
+        RelationReason::SameModule,
+        RelationReason::WeakTokenSubstring,
+    ] {
+        let mut limited = reach_limited_weak("probe:unrelated", 264);
+        limited.related_tests[0].relation_reason = Some(reason);
+        let text = rendered(&output(vec![limited]));
+        assert!(text.contains("\nstop="), "{reason:?}: {text}");
+        assert!(!text.contains("open="), "{reason:?}: {text}");
+        assert!(!text.contains("\nnext="), "{reason:?}: {text}");
+    }
+    for reason in [
+        RelationReason::DirectOwnerCall,
+        RelationReason::HelperOwnerCall,
+        RelationReason::OwnerNamedTest,
+    ] {
+        let mut limited = reach_limited_weak("probe:bound", 264);
+        limited.related_tests[0].relation_reason = Some(reason);
+        let text = rendered(&output(vec![limited]));
+        assert!(text.contains("\nopen="), "{reason:?}: {text}");
+        assert!(!text.contains("stop="), "{reason:?}: {text}");
+    }
+}
+
+/// #12058: a proximity-only weak row ahead of an owner-bound weak row must not
+/// hide the bound one; the bound row opens the finding and is the one shown.
+#[test]
+fn reach_limit_prefers_a_later_owner_bound_row_over_a_proximity_only_one() {
+    use crate::domain::RelationReason;
+    let mut limited = reach_limited_weak("probe:mixed", 264);
+    let mut proximity = limited.related_tests[0].clone();
+    proximity.name = "unrelated_same_file".to_string();
+    proximity.relation_reason = Some(RelationReason::SameTestFile);
+    limited.related_tests[0].relation_reason = Some(RelationReason::DirectOwnerCall);
+    // The proximity row comes first.
+    limited.related_tests.insert(0, proximity);
+    let text = rendered(&output(vec![limited]));
+    assert!(text.contains("\nopen="), "{text}");
+    assert!(!text.contains("stop="), "{text}");
+    assert!(text.contains("discount_runs"), "{text}");
+    assert!(!text.contains("unrelated_same_file"), "{text}");
+}
+
 /// #11825 negative: a non-current (base-side) limited weak finding is not
 /// open work.
 #[test]
@@ -427,4 +478,142 @@ fn format_name_parses_and_stays_diff_scoped() {
     for other in ["agents", "agent-json", "agent-text", "Agent"] {
         assert_eq!(OutputFormat::parse_cli_name(other), None, "{other}");
     }
+}
+
+// ---- `ripr explain --format agent` (#12104) ----
+
+fn explained(finding: &Finding) -> String {
+    render_finding(
+        finding,
+        std::path::Path::new("repo"),
+        "ripr context --root repo --at probe:a",
+        false,
+    )
+}
+
+#[test]
+fn explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next() {
+    let text = explained(&weak_gap("probe:a", 2));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines,
+        vec![
+            "#ripr explain agent static-advisory class=weakly_exposed",
+            "weakly_exposed|src/lib.rs:2|pct >= 50|missing=pct == 50|test=t1|id=probe:a",
+            "t1=tests/t.rs:3 discount_runs relational_check `assert!(discount(10, 100) > 0);` miss=weak_assertion",
+            "open=a test-side gap remains: no related test is shown to notice this change; static advisory, not runtime proof",
+            "next=ripr context --root repo --at probe:a",
+        ]
+    );
+}
+
+#[test]
+fn explain_agent_exposed_finding_is_done_not_open() {
+    let text = explained(&finding("probe:ok", ExposureClass::Exposed, 4));
+    assert!(text.lines().any(|line| line.starts_with("done=")), "{text}");
+    assert!(!text.contains("open="), "{text}");
+    assert!(!text.contains("stop="), "{text}");
+    assert!(text.contains("|missing=-|test=-|"), "{text}");
+}
+
+#[test]
+fn explain_agent_limited_finding_stops_and_names_the_limit_without_a_gap_claim() {
+    let mut limited_weak = weak_gap("probe:limited", 4);
+    limited_weak.static_limit_kind = Some(StaticLimitKind::RustTransitiveReachUnresolved);
+    limited_weak.related_tests[0].oracle_strength = OracleStrength::Strong;
+    let text = explained(&limited_weak);
+    assert!(
+        text.lines()
+            .any(|line| line == "limit=rust_transitive_reach_unresolved"),
+        "{text}"
+    );
+    assert!(text.lines().any(|line| line.starts_with("stop=")), "{text}");
+    // Discriminating negative: a limited finding is not a gap, so the missing
+    // value must not be offered as something to assert.
+    assert!(!text.contains("|missing=pct == 50|"), "{text}");
+    assert!(!text.contains("open="), "{text}");
+}
+
+#[test]
+fn explain_agent_reach_limit_with_weak_row_is_open_without_a_missing_value() {
+    let text = explained(&reach_limited_weak("probe:fortnight", 264));
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("open=a static limit leaves reach unconfirmed")),
+        "{text}"
+    );
+    assert!(text.contains("|missing=-|test=t1|"), "{text}");
+}
+
+#[test]
+fn explain_agent_agrees_with_check_agent_on_gap_membership() {
+    // One predicate decides "gap" for both surfaces: for every class, explain
+    // prints `open=` exactly when check lists the finding in `gaps=`.
+    for class in [
+        ExposureClass::Exposed,
+        ExposureClass::WeaklyExposed,
+        ExposureClass::ReachableUnrevealed,
+        ExposureClass::NoStaticPath,
+        ExposureClass::StaticUnknown,
+    ] {
+        let f = finding("probe:x", class.clone(), 3);
+        let check_has_gap = rendered(&output(vec![f.clone()])).contains(" gaps=1 ");
+        let explain_open = explained(&f).contains("\nopen=");
+        assert_eq!(check_has_gap, explain_open, "{class:?}");
+    }
+}
+
+#[test]
+fn explain_agent_record_cannot_be_forged_and_stays_static() {
+    let mut gap = weak_gap("probe:a", 2);
+    gap.probe.expression = "a | b\nc".to_string();
+    let text = explained(&gap);
+    let line = text.lines().nth(1).unwrap_or_default();
+    assert!(line.contains("a \\| b c"), "{line}");
+    for parts in [["kil", "led"], ["surv", "ived"], ["pro", "ven"]] {
+        let word = parts.concat();
+        assert!(!text.contains(&word), "{word} in {text}");
+    }
+}
+
+#[test]
+fn explain_agent_non_current_findings_fail_closed_with_a_currentness_stop() {
+    for currentness in [
+        SourceCurrentness::BaseDeleted,
+        SourceCurrentness::MovedOrRenamed,
+        SourceCurrentness::UnresolvedSubject,
+    ] {
+        for class in [ExposureClass::Exposed, ExposureClass::WeaklyExposed] {
+            let mut f = weak_gap("probe:old", 5);
+            f.class = class.clone();
+            f.source_currentness = currentness;
+            let text = explained(&f);
+            assert!(
+                text.contains("\nstop=this finding is not a current edit target ("),
+                "{currentness:?} {class:?}: {text}"
+            );
+            assert!(text.contains(currentness.as_str()), "{text}");
+            assert!(!text.contains("done=") && !text.contains("open="), "{text}");
+            assert!(text.contains("|test=-|"), "{text}");
+        }
+    }
+}
+
+#[test]
+fn explain_agent_suppressed_gap_is_not_open_but_unsuppressed_is() {
+    let gap = weak_gap("probe:a", 2);
+    let ctx = "ripr context --at probe:a";
+    let root = std::path::Path::new("repo");
+    let open = render_finding(&gap, root, ctx, false);
+    let suppressed = render_finding(&gap, root, ctx, true);
+    assert!(open.contains("\nopen="), "{open}");
+    assert!(
+        suppressed.contains("\nstop=this finding is suppressed by policy"),
+        "{suppressed}"
+    );
+    assert!(
+        !suppressed.contains("open=") && !suppressed.contains("done="),
+        "{suppressed}"
+    );
+    assert!(suppressed.contains("|test=-|"), "{suppressed}");
 }
