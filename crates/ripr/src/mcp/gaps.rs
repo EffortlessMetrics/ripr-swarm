@@ -320,6 +320,15 @@ pub(crate) struct GapItem {
     predicate_family: bool,
 }
 
+/// The wire token of a producer static limit, shared by the limitation
+/// document and the terminal-static-limit marker so they cannot disagree.
+fn static_limit_token(kind: crate::domain::StaticLimitKind) -> String {
+    serde_json::to_value(kind)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_else(|| "static_limitation".to_string())
+}
+
 impl GapItem {
     /// `root` is the analyzed workspace root: item locations render through
     /// the shared finding-location owner (#5996), so an MCP item names the
@@ -395,6 +404,25 @@ impl GapItem {
         &self.class
     }
 
+    /// The producer's typed static limit when this is an `infection_unknown`
+    /// predicate item (#11622): ripr named a static limit on the finding
+    /// itself, so neither a refresh on unchanged input nor ripr's repair
+    /// route changes it. Read from committed facts only; it adds no verdict.
+    pub(crate) fn terminal_static_limit(&self) -> Option<Value> {
+        if !(self.predicate_family && self.class == "infection_unknown") {
+            return None;
+        }
+        let kind = self.static_limit?;
+        Some(json!({
+            "kind": static_limit_token(kind),
+            "reason": self
+                .static_limit_reason
+                .clone()
+                .unwrap_or_else(|| kind.describe().to_string()),
+            "recovery": kind.next_step(),
+        }))
+    }
+
     /// The earliest producer fact that prevents a safe repair route for this
     /// item, read from facts committed with the snapshot: no analysis reruns
     /// and no limitation is invented here. Order is upstream first:
@@ -407,29 +435,6 @@ impl GapItem {
     ///    (`repair_readiness`);
     /// 3. otherwise `no_limitation_established`, an explicit typed answer
     ///    (never `null`) that claims no runtime or sufficiency result.
-    /// The producer's typed static limit when this is an `infection_unknown`
-    /// predicate item (#11622): ripr named a static limit on the finding
-    /// itself, so neither a refresh on unchanged input nor ripr's repair
-    /// route changes it. Read from committed facts only; it adds no verdict.
-    pub(crate) fn terminal_static_limit(&self) -> Option<Value> {
-        if !(self.predicate_family && self.class == "infection_unknown") {
-            return None;
-        }
-        let kind = self.static_limit?;
-        let token = serde_json::to_value(kind)
-            .ok()
-            .and_then(|value| value.as_str().map(str::to_string))
-            .unwrap_or_else(|| "static_limitation".to_string());
-        Some(json!({
-            "kind": token,
-            "reason": self
-                .static_limit_reason
-                .clone()
-                .unwrap_or_else(|| kind.describe().to_string()),
-            "recovery": kind.next_step(),
-        }))
-    }
-
     pub(crate) fn limitation_document(&self, snapshot_id: &str) -> Value {
         let links = json!({
             "snapshot": format!("ripr://snapshot/{snapshot_id}"),
@@ -448,10 +453,7 @@ impl GapItem {
         let refresh_recovery =
             "call ripr_refresh and re-read this limitation against the new snapshot";
         let limitation = if let Some(kind) = self.static_limit {
-            let kind_token = serde_json::to_value(kind)
-                .ok()
-                .and_then(|value| value.as_str().map(str::to_string))
-                .unwrap_or_else(|| "static_limitation".to_string());
+            let kind_token = static_limit_token(kind);
             json!({
                 "kind": kind_token,
                 "stage": "producer_static_limit",
@@ -2020,9 +2022,6 @@ mod tests {
             .ok_or_else(|| format!("limitation document lacks {name}: {document}"))
     }
 
-    /// #1898: the producer's own typed static limitation is the earliest
-    /// fact and outranks every readiness gate, reusing the shared
-    /// `describe`/`next_step` vocabulary instead of a renderer-local string.
     /// #11622: the terminal marker needs all three typed facts together:
     /// `infection_unknown` class, `predicate` family and a producer static
     /// limit. Removing any one of them removes the marker.
@@ -2063,6 +2062,9 @@ mod tests {
         Ok(())
     }
 
+    /// #1898: the producer's own typed static limitation is the earliest
+    /// fact and outranks every readiness gate, reusing the shared
+    /// `describe`/`next_step` vocabulary instead of a renderer-local string.
     #[test]
     fn limitation_names_the_producer_static_limit_ahead_of_readiness_gates() -> Result<(), String> {
         let mut limited = finding()?;
