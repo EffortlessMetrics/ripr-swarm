@@ -571,6 +571,7 @@ pub(super) fn related_test_relation(
     if let Some(name) = name_anchor(owner)
         && !test_text_mentions(test, name)
         && !(owner.owner_kind == Some(OwnerKind::Function)
+            && owner.nested_called_by_parent
             && owner
                 .qualified_name
                 .rsplit_once('.')
@@ -1589,6 +1590,7 @@ pub(super) fn body_calls_owner(body_text: &str, owner: &PythonOwner) -> bool {
             && contains_call_name(body_text, &owner.qualified_name))
         || (owner.owner_kind == Some(OwnerKind::Function)
             && owner.qualified_name != owner.name
+            && owner.nested_called_by_parent
             && owner
                 .qualified_name
                 .rsplit_once('.')
@@ -2498,6 +2500,7 @@ fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner, test: &Py
     import.imported == owner.name
         || (owner.owner_kind == Some(OwnerKind::Function)
             && owner.qualified_name != owner.name
+            && owner.nested_called_by_parent
             && owner
                 .qualified_name
                 .rsplit_once('.')

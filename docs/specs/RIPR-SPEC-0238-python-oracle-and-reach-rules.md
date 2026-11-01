@@ -1324,6 +1324,19 @@ mutant calibrates the rule; ripr reports only the static shape.
     needs proof that every owner call is coarse, so an unknown shape never
     invents one.
 
+31. **A nested def is reached through its enclosing call only when the enclosing
+    body calls it.** A def nested in a function is its own owner
+    (`outer.inner`). A test that calls only `outer` is related to a changed
+    `outer.inner` (by call, by name token or by import of `outer`) only when
+    the statements that run with `outer` call `inner` by name, spaced calls
+    included. The nested defs and classes inside `outer` are not part of those
+    statements, so a call from the nested body itself or from an unused sibling
+    def is not an edge. A body that rebinds the name (assignment, walrus,
+    `for`, `as`, `import`) and a def that is only returned or passed are
+    fail-closed: they give no reach. A direct test call of the nested name is
+    unchanged. Whether the assertion observes the nested function's result,
+    not only its call, is a separate problem (#12182).
+
 ### Verdict ladder
 
 No finding is produced for docstring, comment or blank changes, header-only
