@@ -712,7 +712,7 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
             "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value the call returns; a by-value method writes a moved copy, so a read of the binding you called it on sees nothing"
         }
         _ if stub_refusal == TestStubRefusal::FieldWrittenInMethod.reason() => {
-            "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value you called it on. If the method takes `self` by value (a builder), ripr cannot yet confirm that check, so it will still report this change as unclear"
+            "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value you called it on"
         }
         // A unit-returning owner has no result to compare.
         _ if stub_refusal == TestStubRefusal::NoReturnValue.reason() => {
@@ -1982,7 +1982,9 @@ mod tests {
             true,
         );
         assert!(
-            written.contains("the value you called it on") && !written.contains("`Err`"),
+            written.contains("the value you called it on")
+                && !written.contains("`Err`")
+                && !written.contains("by value"),
             "{written}"
         );
         // #12061: a by-value receiver writes a moved copy, so the step reads
