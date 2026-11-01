@@ -4258,6 +4258,20 @@ fn weak_oracle_recommendation_uses_plain_words_for_every_kind() {
             "{kind:?}: {recommended}"
         );
     }
+    // Mock expectations have their own two wordings (no payload / payload).
+    for payload in [None, Some("toHaveBeenCalledWith(5)")] {
+        let recommended =
+            weak_oracle_recommendation(&OracleKind::MockExpectation, "amount == threshold", payload);
+        assert!(recommended.contains("`amount == threshold`"), "{recommended}");
+        assert!(
+            !recommended.to_lowercase().contains("discriminator"),
+            "{payload:?}: {recommended}"
+        );
+        assert!(
+            recommended.contains("no actionable repair packet is emitted"),
+            "{payload:?}: {recommended}"
+        );
+    }
 }
 
 #[test]
@@ -4301,7 +4315,7 @@ fn typescript_preview_weak_oracle_guidance_distinguishes_mock_payload_limits() -
         .as_deref()
         .ok_or_else(|| "expected recommended next step".to_string())?;
     assert!(
-        recommended.contains("mock payloads are not yet a safe discriminator"),
+        recommended.contains("mock payloads are not yet a safe check"),
         "expected mock-payload recommendation, got {recommended:?}"
     );
     assert!(

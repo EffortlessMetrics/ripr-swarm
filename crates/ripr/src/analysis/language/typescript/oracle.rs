@@ -120,7 +120,7 @@ pub(crate) fn weak_oracle_recommendation(
         ),
         OracleKind::MockExpectation => mock_payload_oracle.map_or_else(
                 || format!(
-                    "TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe discriminator for `{discriminator}`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries."
+                    "TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe check for `{discriminator}`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries."
                 ),
                 |oracle| format!(
                     "TypeScript preview advisory: related mock payload evidence `{oracle}` is syntax-bounded for `{discriminator}`, but no actionable repair packet is emitted until verify, receipt, evidence refs, and edit boundaries are available."
