@@ -39,8 +39,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root <cwd>/fixtures/python_cross_file_construct_call/input --diff <cwd>/fixtures/python_cross_file_construct_call/diff.patch --mode fast probe:src_formatter.py:python_preview:93f32878
-  ripr context --root <cwd>/fixtures/python_cross_file_construct_call/input --diff <cwd>/fixtures/python_cross_file_construct_call/diff.patch --mode fast --at probe:src_formatter.py:python_preview:93f32878
+  ripr explain --root <cwd>/fixtures/python_cross_file_construct_call/input --diff <cwd>/fixtures/python_cross_file_construct_call/diff.patch --mode fast probe:src_formatter.py:python_preview:v1-9b65c2a2
+  ripr context --root <cwd>/fixtures/python_cross_file_construct_call/input --diff <cwd>/fixtures/python_cross_file_construct_call/diff.patch --mode fast --at probe:src_formatter.py:python_preview:v1-9b65c2a2
   no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 More:
