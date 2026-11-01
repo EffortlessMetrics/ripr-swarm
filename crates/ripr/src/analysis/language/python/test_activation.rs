@@ -170,6 +170,17 @@ fn is_test_switch(target: &Expr) -> bool {
     matches!(target, Expr::Name(name) if name.id.as_str() == "__test__")
 }
 
+/// Whether `target` binds `__test__` directly or inside a tuple, list or
+/// starred destructuring target.
+fn target_binds_test_switch(target: &Expr) -> bool {
+    match target {
+        Expr::Tuple(tuple) => tuple.elts.iter().any(target_binds_test_switch),
+        Expr::List(list) => list.elts.iter().any(target_binds_test_switch),
+        Expr::Starred(starred) => target_binds_test_switch(starred.value.as_ref()),
+        other => is_test_switch(other),
+    }
+}
+
 fn is_literal_true(value: &Expr) -> bool {
     matches!(
         value,
@@ -184,14 +195,21 @@ pub(super) fn test_switch(body: &[Stmt]) -> TestSwitch {
     let mut switch = TestSwitch::Unset;
     for stmt in body {
         match stmt {
-            Stmt::Assign(assign) if assign.targets.iter().any(is_test_switch) => {
-                switch = if is_literal_true(assign.value.as_ref()) {
+            Stmt::Assign(assign) if assign.targets.iter().any(target_binds_test_switch) => {
+                // A destructured binding (`(__test__, x) = (False, 1)`) is not
+                // evaluated, so it counts as Disabled even for a `True` value.
+                switch = if assign.targets.iter().any(is_test_switch)
+                    && is_literal_true(assign.value.as_ref())
+                {
                     TestSwitch::Enabled
                 } else {
                     TestSwitch::Disabled
                 };
             }
-            Stmt::AnnAssign(assign) if is_test_switch(assign.target.as_ref()) => {
+            // A bare annotation (`__test__: bool`) creates no attribute.
+            Stmt::AnnAssign(assign)
+                if is_test_switch(assign.target.as_ref()) && assign.value.is_some() =>
+            {
                 switch = if assign.value.as_deref().is_some_and(is_literal_true) {
                     TestSwitch::Enabled
                 } else {
@@ -210,6 +228,7 @@ pub(super) fn test_switch(body: &[Stmt]) -> TestSwitch {
             | Stmt::With(_)
             | Stmt::For(_)
             | Stmt::While(_)
+            | Stmt::Match(_)
                 if nested_binds_test_switch(stmt) =>
             {
                 switch = TestSwitch::Disabled;
@@ -249,6 +268,7 @@ fn nested_binds_test_switch(stmt: &Stmt) -> bool {
         Stmt::With(node) => blocks.push(node.body.as_slice()),
         Stmt::For(node) => blocks.extend([node.body.as_slice(), node.orelse.as_slice()]),
         Stmt::While(node) => blocks.extend([node.body.as_slice(), node.orelse.as_slice()]),
+        Stmt::Match(node) => blocks.extend(node.cases.iter().map(|case| case.body.as_slice())),
         _ => {}
     }
     blocks

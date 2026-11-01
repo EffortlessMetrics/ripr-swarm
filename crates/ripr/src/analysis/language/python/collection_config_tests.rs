@@ -128,6 +128,57 @@ fn computed_or_branch_bound_test_switch_withholds_credit() {
 }
 
 #[test]
+fn match_arm_destructured_and_bare_annotation_test_switch_bindings() {
+    // A `match` arm or a destructuring target may set the switch: withheld.
+    for binding in [
+        "match 1:\n    case 1:\n        __test__ = False",
+        "(__test__, marker) = (False, 1)",
+        "[__test__, *rest] = [False, 1]",
+    ] {
+        let source = format!("{binding}\n\n{TEST_BODY}");
+        assert_eq!(
+            control_names("tests/test_calc.py", &source),
+            [SWITCH],
+            "{binding}"
+        );
+        let class_source = format!(
+            "from calc import price\n\n\nclass TestP:\n    {}\n\n    def test_p(self):\n        assert price(3) == 6\n",
+            binding.replace('\n', "\n    ")
+        );
+        assert_eq!(
+            control_names("tests/test_calc.py", &class_source),
+            [SWITCH],
+            "{binding}"
+        );
+    }
+    // A match that never binds the switch, and a bare annotation, create no
+    // attribute: the test stays collected.
+    for binding in ["match 1:\n    case 1:\n        other = 1", "__test__: bool"] {
+        let source = format!("{binding}\n\n{TEST_BODY}");
+        assert!(
+            control_names("tests/test_calc.py", &source).is_empty(),
+            "{binding}"
+        );
+    }
+}
+
+#[test]
+fn addopts_ignore_missing_its_value_is_not_evaluated() -> Result<(), String> {
+    let got = controls_of(
+        "ignore-missing-value",
+        &[
+            ("pytest.ini", "[pytest]\naddopts = --ignore -q\n"),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+        "tests/test_calc.py",
+    )?;
+    if got.is_empty() {
+        return Err("`--ignore -q` must withhold credit, got no control".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn module_test_switch_false_withholds_credit() {
     let source = format!("__test__ = False\n\n{TEST_BODY}");
     assert_eq!(control_names("tests/test_calc.py", &source), [SWITCH]);

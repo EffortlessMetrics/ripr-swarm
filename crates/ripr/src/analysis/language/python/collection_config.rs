@@ -33,11 +33,7 @@
 use super::test_activation::{DeclarationSite, collection_control};
 use super::{PythonFramework, PythonTest};
 use crate::analysis::path_glob::{path_glob_matches, segment_glob_matches};
-use rustpython_parser::{
-    Mode,
-    ast::{self, Expr, Mod, Ranged, Stmt},
-    parse,
-};
+use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -221,7 +217,11 @@ impl ConftestRules {
         if !COLLECTION_NAMES.iter().any(|name| source.contains(name)) {
             return rules;
         }
-        let Ok(Mod::Module(module)) = parse(source, Mode::Module, "conftest.py") else {
+        // Through the shared nesting budget, so a deeply nested conftest
+        // refuses instead of reaching the recursive parser.
+        let Ok(Mod::Module(module)) =
+            super::source_facts::parse_module_result(Path::new("conftest.py"), source)
+        else {
             return Self::unevaluated();
         };
         for stmt in &module.body {
@@ -603,12 +603,18 @@ impl IniRules {
                     None => (word.clone(), None),
                 };
                 if let Some(kind) = ignore_kind(&name) {
+                    let separate = inline.is_none();
                     let value = inline.or_else(|| {
                         let value = words.get(index).cloned();
                         index += usize::from(value.is_some());
                         value
                     });
                     match value {
+                        // pytest rejects `--ignore -q` (an option where the
+                        // value belongs) before collecting anything.
+                        Some(value) if separate && value.starts_with('-') => {
+                            self.unevaluated = true;
+                        }
                         Some(value) if kind == IgnoreKind::Path => self.ignore.push(value),
                         Some(value) => self.ignore_glob.push(value),
                         None => self.unevaluated = true,

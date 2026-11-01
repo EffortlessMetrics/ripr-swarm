@@ -1078,8 +1078,11 @@ mutant calibrates the rule; ripr reports only the static shape.
     abstain, and `xfail(False, reason=...)` and
     `unittest.skipUnless(True, ...)`, which stay active and credited).
     A test pytest never collects is controlled the same way
-    (`pytest.collection(...)`, #11527): a class or module whose `__test__`
-    is not provably the literal `True`, a `conftest.py` `collect_ignore` or
+    (`pytest.collection(...)`, #11527): a class or module that binds `__test__`
+    to anything not provably the literal `True` (an absent binding stays
+    collected and credited; an existing binding that cannot be resolved, such
+    as a computed, destructured, `match`-arm or conditional one, withholds
+    credit because collection is uncertain), a `conftest.py` `collect_ignore` or
     `collect_ignore_glob` entry that covers the file, and the pytest options
     `python_files`, `python_classes` (pytest-style classes),
     `python_functions` (pytest-style tests), `testpaths`, `norecursedirs`
