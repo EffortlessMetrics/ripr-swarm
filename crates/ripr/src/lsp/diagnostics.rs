@@ -173,7 +173,22 @@ pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Ve
     }
 
     let mut buckets = BTreeMap::<String, Vec<usize>>::new();
+    // Group order must not depend on the order the snapshot lists findings in
+    // (that order is an analysis detail and shifts with unrelated changes).
+    // Each finding contributes the key it had before groups could merge
+    // (`canonical:<gap>` or `raw:<anchor>`), and a group sorts by the lowest
+    // key among its members.
+    let mut order_key = vec![String::new(); count];
     for (index, finding) in findings.iter().enumerate() {
+        order_key[index] = match &finding.canonical_gap {
+            Some(gap) => format!("canonical:{}", gap.id),
+            None => {
+                let anchor = overlap_signature(finding)
+                    .and_then(|key| overlap_anchor.get(&key).copied())
+                    .unwrap_or(finding.id.as_str());
+                format!("raw:{anchor}")
+            }
+        };
         if let Some(gap) = &finding.canonical_gap {
             buckets
                 .entry(format!("canonical:{}", gap.id))
@@ -213,9 +228,19 @@ pub(super) fn canonical_group_members(findings: &[Finding]) -> Vec<(&Finding, Ve
         let root = find(index, &mut parent);
         grouped.entry(root).or_default().push(index);
     }
+    let mut ordered = grouped.into_values().collect::<Vec<_>>();
+    ordered.sort_by_cached_key(|indices| {
+        let lowest = indices
+            .iter()
+            .map(|&index| order_key[index].as_str())
+            .min()
+            .unwrap_or_default()
+            .to_string();
+        (lowest, indices.first().copied().unwrap_or_default())
+    });
 
-    grouped
-        .into_values()
+    ordered
+        .into_iter()
         .filter_map(|mut indices| {
             indices.sort_unstable();
             let mut group = indices
