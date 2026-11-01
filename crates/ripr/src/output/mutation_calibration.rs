@@ -689,6 +689,15 @@ fn parse_repo_exposure_static_seams(json: &str) -> Result<Vec<StaticSeamRecord>,
             "repo exposure JSON is a byte-bounded `ripr pilot` file (seams[] cut to RIPR_PILOT_REPO_EXPOSURE_BYTES), so cut seams would read as unmatched mutants; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0, or produce the file with `ripr check --format repo-exposure-json`, then calibrate".to_string(),
         );
     }
+    // #12150: a seam-capped file is a prefix of the inventory; same class.
+    let cut = crate::output::repo_exposure::seam_limit_cut_controls(&value);
+    if !cut.is_empty() {
+        return Err(format!(
+            "repo exposure JSON is a seam-limited file (seams[] cut by {}), so cut seams would read as unmatched mutants; {}",
+            cut.join(" and "),
+            crate::output::repo_exposure::seam_limit_cut_repair(&cut)
+        ));
+    }
 
     let mut records = Vec::new();
     for seam in seams {
@@ -1763,12 +1772,20 @@ mod tests {
                 .ok_or("a byte-bounded file must not calibrate")?;
             assert!(error.contains("byte-bounded"), "{error}");
         }
-        // Negative: a seam cap alone is not a byte bound.
+        // #12150: a seam cap alone is refused by its own name and control.
         let capped = r#"{"run_status":"seam_limit_applied","limitations":[{"category":"pilot_seam_budget_applied"}],"seams":[]}"#;
         let error = mutation_calibration_report_from_json(capped, "[]")
             .err()
-            .unwrap_or_default();
+            .ok_or("a seam-capped file must not calibrate")?;
         assert!(!error.contains("byte-bounded"), "{error}");
+        assert!(error.contains("seam-limited"), "{error}");
+        assert!(error.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{error}");
+        // Negative: a complete file is not refused for a cut.
+        let complete = r#"{"run_status":"complete","seams":[]}"#;
+        let error = mutation_calibration_report_from_json(complete, "[]")
+            .err()
+            .unwrap_or_default();
+        assert!(!error.contains("seam-limited"), "{error}");
         Ok(())
     }
 

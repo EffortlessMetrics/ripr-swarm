@@ -147,10 +147,11 @@ pub(crate) use seam_inventory::file_fact_store_failure_rows;
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
     ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, FileSeamIndex,
-    PilotInventoryDefault, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo,
-    SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
-    classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
-    diff_only_rust_files, inventory_changed_test_classified_seams_at_with_config_node,
+    PilotInventoryDefault, REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory,
+    ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
+    apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
+    classify_seams_in_files_at_with_config, diff_only_rust_files,
+    inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_bound_seams_at_with_config,
