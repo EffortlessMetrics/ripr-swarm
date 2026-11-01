@@ -2076,7 +2076,7 @@ fn limitation_array_contains_category(data: &Value, path: &[&str], category: &st
         })
 }
 
-fn static_limit_note(data: &Value) -> Option<String> {
+pub(super) fn static_limit_note(data: &Value) -> Option<String> {
     let mut lines = Vec::new();
     if let Some(kind) = string_at(data, &["static_limit_kind"]) {
         lines.push(format!("Static limit: {kind}"));
