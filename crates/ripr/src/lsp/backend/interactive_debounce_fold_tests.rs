@@ -44,7 +44,10 @@ fn overlapping_interactive_triggers_issue_one_scheduler_request_at_the_latest_re
         .build()
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
-        let (service, socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
+        let scratch = std::env::temp_dir().join(format!("ripr-debounce-leak-{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).map_err(|err| format!("scratch root: {err}"))?;
+        let scratch_root = scratch.clone();
+        let (service, socket) = LspService::new(move |client| Backend::new(client, scratch_root.clone()));
         drop(socket);
         let backend = service.inner();
         backend.initialize_test_workspace_root();
