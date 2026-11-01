@@ -1901,6 +1901,47 @@ pub(super) mod tests {
         }
     }
 
+    /// #11622 positive twin: a refresh whose analysis evidence is unchanged
+    /// commits the identical snapshot identity, so the session transaction
+    /// stays readable (no `superseded`). This pins the premise the
+    /// superseded-route design rests on.
+    #[test]
+    fn unchanged_evidence_refresh_keeps_the_session_attempt_readable() -> Result<(), String> {
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let packet = session
+            .prepare_repair("gap:test:1", None, Some("root:sha256:a"))
+            .map_err(|failure| failure.detail)?;
+        let attempt_id = packet
+            .pointer("/attempt/attempt_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "missing attempt id".to_string())?
+            .to_string();
+        let before = session
+            .last_good
+            .as_ref()
+            .map(|snapshot| snapshot.snapshot_id.clone());
+        let refreshed = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let after = refreshed
+            .last_good
+            .as_ref()
+            .map(|snapshot| snapshot.snapshot_id.clone());
+        if before.is_none() || before != after {
+            return Err(format!(
+                "identical evidence must commit the identical snapshot id: {before:?} vs {after:?}"
+            ));
+        }
+        session.last_good = refreshed.last_good;
+        session
+            .repair_attempt_document(&attempt_id, None, Some("root:sha256:a"))
+            .map_err(|failure| format!("unchanged refresh must not supersede: {failure:?}"))?;
+        session
+            .receipt_status_document(&attempt_id, None, Some("root:sha256:a"))
+            .map_err(|failure| {
+                format!("unchanged refresh must keep the receipt read: {failure:?}")
+            })?;
+        Ok(())
+    }
+
     #[test]
     fn receipt_status_for_session_attempt_awaits_the_external_edit() -> Result<(), String> {
         let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
