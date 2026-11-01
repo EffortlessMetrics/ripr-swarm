@@ -466,6 +466,26 @@ suite('VS Code test host diagnostics', () => {
       assert.ok(!fs.existsSync(path.join(linked.diagnosticsDir, HOST_LOG_DIR_NAME, 'secret.log')));
       const identity = JSON.parse(fs.readFileSync(path.join(linked.diagnosticsDir, 'retention.json'), 'utf8')) as { copied_files: string[] };
       assert.deepStrictEqual(identity.copied_files, []);
+
+      // A link in an intermediate component: root/linked-parent -> outside,
+      // with the real logs under outside/user-data/logs.
+      const nestedLogs = path.join(outside, 'user-data', HOST_LOG_DIR_NAME);
+      fs.mkdirSync(nestedLogs, { recursive: true });
+      fs.writeFileSync(path.join(nestedLogs, 'nested-secret.log'), 'DO_NOT_COLLECT_NESTED_LOG');
+      fs.symlinkSync(outside, path.join(root, 'linked-parent'), 'junction');
+      const nested = retainHostDiagnostics({
+        artifactRoot: root,
+        userDataDir: path.join(root, 'linked-parent', 'user-data'),
+        failed: true
+      });
+      assert.ok(!fs.existsSync(path.join(nested.diagnosticsDir, HOST_LOG_DIR_NAME, 'nested-secret.log')));
+      // The refused directory leaves no log copies at all, not only no secret file.
+      assert.deepStrictEqual(
+        fs.existsSync(path.join(nested.diagnosticsDir, HOST_LOG_DIR_NAME))
+          ? fs.readdirSync(path.join(nested.diagnosticsDir, HOST_LOG_DIR_NAME))
+          : [],
+        []
+      );
     } finally { fs.rmSync(outside, { recursive: true, force: true }); }
   });
 
