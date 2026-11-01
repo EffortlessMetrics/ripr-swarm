@@ -177,6 +177,22 @@ fn conftest_hooks_and_module_setup_that_patch_keep_the_limit() -> Result<(), Str
 }
 
 #[test]
+fn a_test_module_def_stand_in_assigned_at_top_level_is_not_ambient() -> Result<(), String> {
+    // The stand-in is spelled in the test module (RIPR-SPEC-0108 keeps that
+    // class); an unspelled value is still ambient.
+    let spelled = "import calc\n\n\ndef fake(x):\n    return 0\n\n\ncalc.price = fake\n\n\ndef test_p():\n    assert calc.price(3) == 6\n";
+    let finding = classify_price(&[("tests/test_calc.py", spelled)])?;
+    assert_ne!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::MockedModule),
+        "{:?}",
+        finding.evidence
+    );
+    let unspelled = "import calc\nimport other\n\n\ncalc.price = other.fake\n\n\ndef test_p():\n    assert calc.price(3) == 6\n";
+    assert_mocked(&[("tests/test_calc.py", unspelled)], "unspelled stand-in")
+}
+
+#[test]
 fn fixtures_that_do_not_substitute_or_are_not_reachable_keep_their_credit() -> Result<(), String> {
     let env_only = "import pytest\n\n\n@pytest.fixture(autouse=True)\ndef _env(monkeypatch):\n    monkeypatch.setenv('TZ', 'UTC')\n    monkeypatch.chdir('/')\n";
     assert_credited(

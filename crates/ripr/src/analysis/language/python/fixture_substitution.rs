@@ -115,6 +115,13 @@ pub(super) fn collect_substitution_scope(
         aliases: &aliases,
     };
     let mut scope = SubstitutionScope::default();
+    let defs: Vec<&str> = statements
+        .iter()
+        .filter_map(|stmt| match stmt {
+            Stmt::FunctionDef(function) => Some(function.name.as_str()),
+            _ => None,
+        })
+        .collect();
     for stmt in statements {
         match stmt {
             Stmt::FunctionDef(function) => read_function(
@@ -194,7 +201,17 @@ pub(super) fn collect_substitution_scope(
                         names,
                     });
                 }
-                scope.ambient |= text_substitutes(&[], &text, module_imports);
+                // `Mod.attr = stand_in` where `stand_in` is a plain `def` of
+                // this same file spells its replacement in the test module
+                // itself; the existing replaced-owner reading classifies it
+                // (RIPR-SPEC-0108 pins that class), so only the other
+                // substitution forms count as ambient here.
+                let spelled = spelled_standin_assignment(other, &defs, module_imports);
+                scope.ambient |= if spelled {
+                    text_substitutes_except_attribute(&text, module_imports)
+                } else {
+                    text_substitutes(&[], &text, module_imports)
+                };
             }
         }
     }
@@ -411,6 +428,36 @@ fn text_substitutes(decorators: &[String], text: &str, imports: &[PythonImport])
         || text.contains("sys.modules")
         || text.contains("__dict__")
         || assigns_imported_attribute(text, imports)
+}
+
+/// Whether `text` uses a substitution form other than assigning an attribute
+/// of an imported name.
+fn text_substitutes_except_attribute(text: &str, imports: &[PythonImport]) -> bool {
+    let attribute_lines_removed: String = text
+        .lines()
+        .filter(|line| !assigns_imported_attribute(line, imports))
+        .collect::<Vec<_>>()
+        .join("\n");
+    text_substitutes(&[], &attribute_lines_removed, imports)
+}
+
+/// A top-level `Imported.attr = name` whose value is a plain module-level
+/// `def` of the same file.
+fn spelled_standin_assignment(stmt: &Stmt, defs: &[&str], imports: &[PythonImport]) -> bool {
+    let Stmt::Assign(assign) = stmt else {
+        return false;
+    };
+    let [Expr::Attribute(target)] = assign.targets.as_slice() else {
+        return false;
+    };
+    let Expr::Name(root) = target.value.as_ref() else {
+        return false;
+    };
+    let Expr::Name(value) = assign.value.as_ref() else {
+        return false;
+    };
+    imports.iter().any(|import| import.alias == root.id.as_str())
+        && defs.contains(&value.id.as_str())
 }
 
 /// `name(` where `name` starts at an identifier boundary or follows a dot.
