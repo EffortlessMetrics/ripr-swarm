@@ -97,9 +97,12 @@ fn a_truthiness_guard_reads_a_defaulted_or_omitted_flag() -> Result<(), String> 
     Ok(())
 }
 
-/// An entering parameter is read from the call row, never from a module
-/// constant that happens to share its name (#12171). Both directions are
-/// pinned so the module constant cannot decide the arm either way.
+/// Behavior pin for an entering parameter beside a same-named module constant
+/// (#12171): omitted and explicit arguments, in both directions, through
+/// `classify`. It is not the regression guard for the reader's precedence: the
+/// owner extractor does not hand the reader the constant in this harness, so
+/// the test stays green if that precedence is removed. The direct control,
+/// `the_reader_prefers_the_call_row_over_a_constant_it_is_handed`, carries it.
 #[test]
 fn a_parameter_is_read_from_the_call_not_a_same_named_module_constant() -> Result<(), String> {
     // Constant `True`, parameter defaults to `False`: omitting the argument
@@ -176,7 +179,7 @@ fn the_reader_prefers_the_call_row_over_a_constant_it_is_handed() -> Result<(), 
         guard_condition_holds(
             owner,
             "flag",
-            2,
+            1,
             &row_with("True"),
             &constant("False"),
             source
@@ -188,7 +191,7 @@ fn the_reader_prefers_the_call_row_over_a_constant_it_is_handed() -> Result<(), 
         guard_condition_holds(
             owner,
             "flag",
-            2,
+            1,
             &row_with("False"),
             &constant("True"),
             source
