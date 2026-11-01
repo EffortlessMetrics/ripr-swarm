@@ -251,6 +251,85 @@ The budget-version constant lives in
 `crates/ripr/src/domain/repair_card.rs` and is pinned by unit tests and
 `cargo xtask check-output-contracts`.
 
+## Structured refusal remedy (`remedy`, additive, #11790, #11584)
+
+Every refusal already names its next step in prose (#11539). Machine
+consumers get the same step as a `remedy` object, derived from that prose by
+one owner (`RefusalRemedy::from_prose` in `crates/ripr/src/domain/`); the
+renderers only serialize it. The prose is the source of truth, so the
+derivation is fail-closed: it copies what the message states and never
+composes, completes or guesses a command.
+
+`remedy` is additive and carried beside the existing refusal fields, without
+a schema-version bump, on:
+
+- `ripr check --format json` refusal envelopes: `run_limitations[0].remedy`
+  (both `0.2` and the `analysis_timeout` `0.3` generation; the two frozen
+  scope-guard documents are unchanged);
+- `ripr agent card --json` refusals: `error.remedy`, beside the typed
+  `error.remedy_route`;
+- `ripr agent stub --json` refusals (`state: refused`): `refusal.remedy`;
+- `ripr agent repair --phase after --json` refusals
+  (`repair_after_refusal`): `remedy`, derived from `error` and the recovery
+  `narration`;
+- MCP typed failures: `failure.remedy`, derived from `failure.recovery`
+  (`data.next`, where a tool returns one, stays the typed route).
+
+The field set is fixed; absent facts are `null` or empty, never omitted:
+
+```json
+{
+  "kind": "command",
+  "command": "ripr check --base <ref>",
+  "alternatives": [],
+  "tool": null,
+  "flags": [],
+  "fill_in": ["<ref>"],
+  "retry_stated": true,
+  "env": [],
+  "conditional": false,
+  "prose_has_more": false
+}
+```
+
+- `kind` — `command` (the message names a backticked `ripr ...` command),
+  `mcp_tool` (it names a `ripr_<tool>` MCP tool and no command), `flags` (it
+  tells the reader to pass flags and names no command or tool) or `none` (it
+  states no machine-readable remedy). `none` is explicit: the human message
+  may still carry a prose step, but no command, tool or flag is invented.
+- `command` — the primary stated command, verbatim. The primary step is the
+  instructed one, not the first mention: a fallback after an `if`/`unless`/
+  `when` condition ranks below an unconditional step, and a mention that only
+  describes (`X is a `ripr check` finding ID`) or sits in an `if` premise is
+  never used. When the instructed step is an MCP tool, `kind` is `mcp_tool`
+  and a conditional command is listed in `alternatives`, not as `command`.
+  `alternatives` — further distinct stated commands in message order (at most
+  three).
+- `tool` — the first stated MCP tool name, verbatim.
+- `flags` — `--flag` tokens the message tells the reader to pass, add, use or
+  repeat (flags already inside `command` are not repeated).
+- `fill_in` — placeholders in `command` (`<ref>`, `BASE`, `{root}`) the
+  consumer must fill before running it.
+- `retry_stated` — `true` only when the message itself tells the reader to
+  rerun or retry, `false` only when it says repeating the call changes
+  nothing, `null` when it says neither. It reports what the message states;
+  it does not say an unchanged retry succeeds (the message may require a fix
+  or a prerequisite first), and it is not an analysis of side effects.
+- `env` — `NAME=value` environment prerequisites the message names outside
+  the command span, verbatim.
+- `conditional` — `true` when the only step the message gives is conditional
+  (`if it persists, run ...`): the command or tool is a fallback, not a first
+  move. An unconditional step always outranks a conditional one.
+- `prose_has_more` — `true` when `command` or `tool` is not self-sufficient:
+  the message names flags (`flags`, every `--flag` outside the command span)
+  or `env` prerequisites the span does not carry, for example a restart that
+  must repeat the original `--root` and trust-binding flags. A consumer must
+  not run `command` as-is when this is `true`; `command` may omit
+  prerequisites the prose states.
+
+A consumer branches on `remedy.kind` and `remedy.command`, never on the prose.
+`kind` values are listed under `refusal_remedy_kind` in Enums.
+
 ## Agent card refusal envelope (`agent_card_refusal`, schema `0.1`)
 
 Every deliberate named refusal of the `ripr agent card` handoff — the default
@@ -3407,6 +3486,13 @@ while `call_effect` remains the fallback for other observable calls.
 - `retry_current_subject`
 - `terminal_no_action`
 - `unsupported_or_limited`
+
+`refusal_remedy_kind` values:
+
+- `command`
+- `mcp_tool`
+- `flags`
+- `none`
 
 ## Badge Output
 

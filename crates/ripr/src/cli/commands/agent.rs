@@ -2097,6 +2097,12 @@ fn render_repair_after_refusal_json(
         "attempt_id": attempt_id,
         "error": error.trim(),
         "narration": narration,
+        // The next step the error and its recovery narration state in prose.
+        "remedy": crate::domain::RefusalRemedy::from_prose(&format!(
+            "{}\n{}",
+            error.trim(),
+            narration.join("\n")
+        )),
     });
     serde_json::to_string_pretty(&document)
         .map(|rendered| format!("{rendered}\n"))
@@ -4277,6 +4283,25 @@ mod refusal_tests;
 mod tests {
     use super::gap_bound_rejected_attempt_message as rejected;
     use crate::edit_cage::EditCageVerdictStatus as Status;
+
+    /// The not-found hint for a gap-shaped id mentions `ripr check` only to
+    /// say what a gap id is; the instructed step is `ripr repair <gap-id>`.
+    #[test]
+    fn gap_shaped_seam_id_remedy_is_repair_not_the_explanatory_check() {
+        let hint = super::unknown_seam_id_hint(std::path::Path::new("."), "gap:x");
+        let remedy = crate::domain::RefusalRemedy::from_prose(&hint);
+        assert!(
+            remedy
+                .command
+                .as_deref()
+                .is_some_and(|c| c.starts_with("ripr repair <gap-id> --root")),
+            "{remedy:?} from {hint}"
+        );
+        assert!(
+            !remedy.alternatives.iter().any(|c| c == "ripr check"),
+            "explanatory mention leaked: {remedy:?}"
+        );
+    }
 
     /// A violated verdict may claim an out-of-surface edit; an incomparable
     /// one never observed an edit and must not claim it.
