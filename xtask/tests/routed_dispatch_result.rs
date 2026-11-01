@@ -228,6 +228,7 @@ esac
     };
     let mut eligibility = true;
     let mut eligibility_outcome = "skipped";
+    let mut eligibility_log = String::new();
     if admission == "success"
         && status == "admitted"
         && (event == "merge_group"
@@ -246,6 +247,8 @@ esac
         fs::write(&eligibility_script, result_shell(step)?).map_err(|e| e.to_string())?;
         let output = run_shell(&eligibility_script, &env)?;
         eligibility = output.status.success();
+        eligibility_log = String::from_utf8_lossy(&output.stderr).into_owned()
+            + &String::from_utf8_lossy(&output.stdout);
         eligibility_outcome = if eligibility { "success" } else { "failure" };
     }
     env.insert(
@@ -256,7 +259,12 @@ esac
     let report =
         fs::read_to_string(summary).map_err(|e| format!("missing summary: {e}; {output:?}"))?;
     assert!(report.contains("### Ripr Rust Small Result"));
-    Ok((eligibility && output.status.success(), report))
+    // The eligibility step's own log follows the summary so a test can read
+    // the stage it named when it refused (#8858).
+    Ok((
+        eligibility && output.status.success(),
+        format!("{report}\n{eligibility_log}"),
+    ))
 }
 
 #[test]
@@ -649,6 +657,47 @@ fn terminal_result_rejects_late_eligibility_changes_and_old_attempts() -> Result
         )?
         .0
     );
+    Ok(())
+}
+
+#[test]
+fn refused_eligibility_names_the_stage_that_refused() -> Result<(), String> {
+    let source = workflow()?;
+    let closed = LIVE_PR.replace("\"open\"", "\"closed\"");
+    let unresolved =
+        LIVE_GRAPHQL.replace("\"nodes\":[]", "\"nodes\":[{\"isResolved\":false}]");
+    for (overrides, stage) in [
+        (vec![("MOCK_PR", closed.as_str())], "pull_request_state"),
+        (
+            vec![("MOCK_GRAPHQL", unresolved.as_str())],
+            "review_decision_and_threads",
+        ),
+        (vec![("EXPECTED_REQUEST", "100-0")], "admission_binding"),
+    ] {
+        let (success, report) = run_result(
+            &source,
+            "pull_request",
+            "refs/pull/10/merge",
+            "success",
+            "admitted",
+            &overrides,
+        )?;
+        assert!(!success, "{stage} must still refuse");
+        assert!(
+            report.contains(&format!("eligibility recheck refused at stage {stage} ")),
+            "the refused stage must be named: {stage}\n{report}"
+        );
+    }
+    let (success, report) = run_result(
+        &source,
+        "pull_request",
+        "refs/pull/10/merge",
+        "success",
+        "admitted",
+        &[],
+    )?;
+    assert!(success, "a live request is unchanged");
+    assert!(!report.contains("eligibility recheck refused"));
     Ok(())
 }
 

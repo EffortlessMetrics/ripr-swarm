@@ -551,6 +551,7 @@ jobs:
           # This does not authenticate the caller or establish G's composition.
           current_eligibility() {
             local pr frame cursor=null more page=0
+            why=admission_binding
             [ "$REPOSITORY" = EffortlessMetrics/ripr-swarm ] || return 1
             [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ && "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || return 1
             [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || return 1
@@ -607,7 +608,9 @@ jobs:
                   .repository.full_name == $repo and .id != $id and .run_number >= $number)] | length) == 0
               ' <<<"$all" >/dev/null
             }
+            why=pull_request_state
             read_pr || return
+            why=review_decision_and_threads
             while :; do
               page=$((page + 1)); [ "$page" -le 100 ] || return 1
               frame=$(gh api graphql -f query='query($number:Int!,$cursor:String){repository(owner:"EffortlessMetrics",name:"ripr-swarm"){pullRequest(number:$number){headRefOid reviewDecision mergeQueueEntry{id} reviewThreads(first:100,after:$cursor){nodes{isResolved}pageInfo{hasNextPage endCursor}}}}}' -F number="$PR_NUMBER" -F cursor="$cursor") || return
@@ -623,9 +626,15 @@ jobs:
               [ "$more" = true ] || break
               cursor=$(jq -er '.data.repository.pullRequest.reviewThreads.pageInfo.endCursor | select(type == "string" and length > 0)' <<<"$frame") || return
             done
+            why=pull_request_state_after_threads
             read_pr || return
+            why=same_head_succession
             read_succession
           }
+          # Name the refused stage in the job log. The step already fails closed;
+          # without this the log shows only an exit code (#8858).
+          why=before_check
+          trap 'rc=$?; [ "$rc" -eq 0 ] || echo "::error::eligibility recheck refused at stage $why (exit $rc) for PR #$PR_NUMBER head $EXPECTED_HEAD"' EXIT
           current_eligibility
       - name: Summarize routed result
         if: always()
