@@ -636,7 +636,8 @@ The editor default matches the CLI and direct LSP missing-config default:
 
 ### Commands
 
-The extension contributes these command IDs and palette titles:
+The extension contributes these command IDs and titles (nine of them are
+hidden from the command palette; see the note after the table):
 
 | Command ID | Palette title |
 | --- | --- |
@@ -680,9 +681,16 @@ The extension contributes these command IDs and palette titles:
 
 These are not configured directly. They are surfaced through the command
 palette and from LSP code actions when diagnostics carry the required
-finding or seam data. Repair actions such as `ripr.copyAgentRepairCommand`
-require a repair-eligible seam; listing a command does not make an advisory
-finding repair eligible.
+finding or seam data. Nine payload-bound commands are hidden from the command
+palette (`commandPalette` `when: "false"`, #8586) because they only work on a
+diagnostic's payload, and are reachable only from ripr code actions:
+`ripr.copySuggestedAssertion`, `ripr.copyTargetedTestBrief`,
+`ripr.openRelatedTest`, `ripr.copyAgentRepairCommand`,
+`ripr.copyAgentPacketCommand`, `ripr.copyAgentBriefCommand`,
+`ripr.copyAfterSnapshotCommand`, `ripr.copyAgentVerifyCommand` and
+`ripr.copyAgentReceiptCommand`. Repair actions such as
+`ripr.copyAgentRepairCommand` require a repair-eligible seam; listing a
+command does not make an advisory finding repair eligible.
 
 ## Repo policy files
 
