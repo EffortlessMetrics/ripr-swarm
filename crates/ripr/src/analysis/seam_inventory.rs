@@ -2949,6 +2949,32 @@ pub(crate) fn pilot_seam_budget() -> Result<Option<(usize, SeamLimitSource)>, St
     )
 }
 
+/// Environment variable that overrides how many packets the pilot
+/// `agent-seam-packets.json` artifact carries. `0` writes every packet.
+pub(crate) const PILOT_PACKET_BUDGET_ENV: &str = "RIPR_PILOT_PACKET_BUDGET";
+
+/// Default number of packets in the pilot `agent-seam-packets.json`. Each
+/// packet is several KB, and a repo-scope run can hold hundreds of
+/// `inspect_static_limitation` packets (2-4 MB in total), which is more than
+/// an agent can read. The bound keeps the file readable; the full packet set
+/// stays one `ripr check --format agent-seam-packets-json` or one
+/// `RIPR_PILOT_PACKET_BUDGET=0` rerun away.
+pub(crate) const DEFAULT_PILOT_PACKET_BUDGET: usize = 3;
+
+/// Resolve the pilot packet bound.
+///
+/// - Env var unset: `Some((DEFAULT_PILOT_PACKET_BUDGET, Default))`.
+/// - `"0"`: `None` (operator opt-out: every packet).
+/// - N > 0: `Some((N, Configured))`.
+/// - Anything else: `Err` naming the variable.
+pub(crate) fn pilot_packet_budget() -> Result<Option<(usize, SeamLimitSource)>, String> {
+    seam_limit_from_env(
+        PILOT_PACKET_BUDGET_ENV,
+        DEFAULT_PILOT_PACKET_BUDGET,
+        std::env::var(PILOT_PACKET_BUDGET_ENV),
+    )
+}
+
 #[cfg(test)]
 fn inventory_seam_grip_class_counts_from_state_with_config(
     state: &OwnedWorkspaceState,
@@ -10712,6 +10738,26 @@ pub fn check_b(x: i32) -> bool { x < 0 }
         assert_eq!(
             parse_seam_limit(PILOT_SEAM_BUDGET_ENV, "500"),
             Ok(Some(500))
+        );
+    }
+
+    #[test]
+    fn pilot_packet_budget_resolves_default_configured_and_opt_out() {
+        let resolve = |value: Result<String, std::env::VarError>| {
+            seam_limit_from_env(PILOT_PACKET_BUDGET_ENV, DEFAULT_PILOT_PACKET_BUDGET, value)
+        };
+        assert_eq!(
+            resolve(Err(std::env::VarError::NotPresent)),
+            Ok(Some((3, SeamLimitSource::Default)))
+        );
+        assert_eq!(
+            resolve(Ok("12".to_string())),
+            Ok(Some((12, SeamLimitSource::Configured)))
+        );
+        assert_eq!(resolve(Ok("0".to_string())), Ok(None));
+        assert!(
+            resolve(Ok("many".to_string()))
+                .is_err_and(|error| error.starts_with("RIPR_PILOT_PACKET_BUDGET `many`"))
         );
     }
 

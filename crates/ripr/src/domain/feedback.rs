@@ -464,6 +464,10 @@ pub(crate) fn classify_reference(
     ReferenceState::Mismatched
 }
 
+#[cfg(kani)]
+#[path = "feedback_kani.rs"]
+mod kani_proofs;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -158,7 +158,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         .enabled()
         .contains(&crate::domain::LanguageId::Rust);
     let extension_ms = pilot_deadline_extension_ms(&options);
-    let progress = pilot_progress_sink(options.quiet);
+    let progress = pilot_progress_sink(options.quiet, options.format == PilotStdoutFormat::Json);
     let analysis_started = Instant::now();
     let mut timings = PilotTimings::start();
     let analysis_result = if rust_enabled {
@@ -506,6 +506,8 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             generated_skip.as_ref(),
         ),
     )?;
+    let packet_bound = analysis::pilot_packet_budget()?
+        .map(|(max, source)| output::agent_seam_packets::PacketBound { max, source });
     write_pilot_file(
         &artifacts.agent_seam_packets_json,
         output::agent_seam_packets::render_agent_seam_packets_json_for_root(
@@ -514,6 +516,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
             causal_projection.as_ref(),
             &crate::agent::loop_commands::bound_root(&options.root.to_string_lossy()),
             &declined_rust_files,
+            packet_bound,
         ),
     )?;
 
@@ -681,7 +684,7 @@ fn classify_change_past_seam_limit(
         ) {
             Ok(PilotAnalysisResult::Complete(classified)) => Ok(classified),
             Ok(PilotAnalysisResult::TimedOut) => {
-                Err("it did not finish within pilot's deadline".to_string())
+                Err("it did not finish within pilot's deadline; raise `--timeout-ms`, or narrow the change".to_string())
             }
             Err(error) => Err(error),
         },
@@ -735,8 +738,8 @@ fn elapsed_ms(started: Instant) -> u64 {
 /// one-shot timeout notice and command errors still reach stderr. The
 /// sink is terminal-once, so a timed-out attempt (or its #2424 retry)
 /// needs a fresh one from `pilot_progress_sink`.
-fn pilot_progress_sink(quiet: bool) -> Option<Arc<CliProgressSink>> {
-    if crate::cli::progress::progress_silenced(quiet) {
+fn pilot_progress_sink(quiet: bool, machine_format: bool) -> Option<Arc<CliProgressSink>> {
+    if crate::cli::progress::progress_silenced(quiet, machine_format) {
         return None;
     }
     Some(Arc::new(CliProgressSink::for_stderr(
@@ -1063,8 +1066,12 @@ fn pilot_artifacts(out_dir: &Path) -> output::pilot::PilotArtifacts {
 /// Pilot artifacts default under the analyzed repository, which may commit a
 /// symlink at an artifact path; never write through it.
 fn write_pilot_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<(), String> {
-    output::file_write::write(path, contents.as_ref())
-        .map_err(|err| format!("write output {} failed: {err}", path.display()))
+    output::file_write::write(path, contents.as_ref()).map_err(|err| {
+        format!(
+            "write output {} failed: {err}; check you can write to that path, then rerun",
+            path.display()
+        )
+    })
 }
 
 /// Drop leftover complete-run siblings so a timeout packet cannot be read as
@@ -1083,16 +1090,16 @@ fn remove_timeout_packet_sibling(path: &Path) -> Result<(), String> {
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!(
-            "inspect leftover timeout packet file {} failed: {error}",
+            "inspect leftover timeout packet file {} failed: {error}; check permissions on that path, then rerun",
             path.display()
         )),
         Ok(metadata) if metadata.file_type().is_dir() => Err(format!(
-            "leftover timeout packet path {} is a directory; refusing to leave it as if it were this run's output",
+            "leftover timeout packet path {} is a directory; refusing to leave it as if it were this run's output; remove that directory, then rerun",
             path.display()
         )),
         Ok(_) => std::fs::remove_file(path).map_err(|error| {
             format!(
-                "remove leftover timeout packet file {} failed: {error}",
+                "remove leftover timeout packet file {} failed: {error}; check you can write to that path, then rerun",
                 path.display()
             )
         }),
@@ -1396,27 +1403,27 @@ mod tests {
     fn pilot_requires_values_for_value_flags() {
         assert_eq!(
             pilot(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--out"])),
-            Err("missing value for --out".to_string())
+            Err("missing value for --out; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--mode"])),
-            Err("missing value for --mode".to_string())
+            Err("missing value for --mode; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--max-seams"])),
-            Err("missing value for --max-seams".to_string())
+            Err("missing value for --max-seams; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--timeout-ms"])),
-            Err("missing value for --timeout-ms".to_string())
+            Err("missing value for --timeout-ms; pass a value right after it".to_string())
         );
         assert_eq!(
             pilot(&args(&["--format"])),
-            Err("missing value for --format".to_string())
+            Err("missing value for --format; pass a value right after it".to_string())
         );
     }
 
@@ -1432,7 +1439,7 @@ mod tests {
     fn pilot_rejects_non_positive_max_seams() {
         assert_eq!(
             parse_pilot_options(&args(&["--max-seams", "0"])),
-            Err("--max-seams requires a positive integer; got \"0\"".to_string())
+            Err("--max-seams requires a positive integer; pass a whole number of 1 or more, got \"0\"".to_string())
         );
     }
 
@@ -1440,7 +1447,7 @@ mod tests {
     fn pilot_rejects_non_positive_timeout() {
         assert_eq!(
             parse_pilot_options(&args(&["--timeout-ms", "0"])),
-            Err("--timeout-ms requires a positive integer; got \"0\"".to_string())
+            Err("--timeout-ms requires a positive integer; pass a whole number of 1 or more, got \"0\"".to_string())
         );
     }
 
@@ -1762,10 +1769,10 @@ mod tests {
         // every stage and heartbeat line while the timeout machinery still
         // behaves identically.
         assert!(
-            pilot_progress_sink(true).is_none(),
+            pilot_progress_sink(true, false).is_none(),
             "--quiet must suppress the pilot progress sink"
         );
-        assert!(pilot_progress_sink(false).is_some());
+        assert!(pilot_progress_sink(false, false).is_some());
 
         let result = run_pilot_analysis_with_timeout(
             50,

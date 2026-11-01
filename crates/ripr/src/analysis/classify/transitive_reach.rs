@@ -654,6 +654,93 @@ impl<'a> ReachGraph<'a> {
         reaching
     }
 
+    /// Every name that can run `owner_name` at any depth, over the name walk
+    /// and the hops it cannot see (#11552): a function invoking a workspace
+    /// `macro_rules!` whose body names the owner or a name already in the
+    /// set (`outer -> mac!(helper) -> helper -> owner`) joins the set, as does
+    /// a caller of a macro whose definition has no readable body. Plain name
+    /// edges alone would let a function that reaches the owner only through
+    /// a macro pass as unrelated to it. A std method sharing a workspace
+    /// function's name is the reason this follows callers, not callees.
+    fn names_reaching_unbounded(&self, owner_name: &str) -> HashSet<&'a str> {
+        let mut macro_users: Vec<(Option<HashSet<&'a str>>, Vec<&'a str>)> = Vec::new();
+        let mut users_by_macro: HashMap<&str, Vec<&'a str>> = HashMap::new();
+        for function in self.by_name.values().flatten() {
+            for call in calls_of(function) {
+                if is_macro_call(call.name.as_str()) {
+                    let macro_name = call.name.split('!').next().unwrap_or_default();
+                    let macro_name = macro_name.rsplit("::").next().unwrap_or(macro_name);
+                    if self.macro_definitions.contains_key(macro_name) {
+                        users_by_macro
+                            .entry(macro_name)
+                            .or_default()
+                            .push(function.name.as_str());
+                    }
+                }
+            }
+        }
+        for (macro_name, users) in users_by_macro {
+            let mut identifiers: Option<HashSet<&'a str>> = Some(HashSet::new());
+            for definition in &self.macro_definitions[macro_name] {
+                match (definition, identifiers.as_mut()) {
+                    (Some(body), Some(set)) => set.extend(identifier_runs(body)),
+                    // No readable body: it may name anything.
+                    _ => identifiers = None,
+                }
+            }
+            macro_users.push((identifiers, users));
+        }
+        let mut reaching: HashSet<&'a str> = HashSet::new();
+        let mut seen: HashSet<&str> = HashSet::from([owner_name]);
+        let mut frontier: Vec<&str> = vec![owner_name];
+        let mut expanded_macros = vec![false; macro_users.len()];
+        loop {
+            while let Some(callee) = frontier.pop() {
+                for caller in self.callers.get(callee).into_iter().flatten() {
+                    if seen.insert(caller) {
+                        reaching.insert(caller);
+                        frontier.push(*caller);
+                    }
+                }
+            }
+            let mut grew = false;
+            for (position, (identifiers, users)) in macro_users.iter().enumerate() {
+                if expanded_macros[position] {
+                    continue;
+                }
+                let names_reaching = identifiers
+                    .as_ref()
+                    .is_none_or(|set| seen.iter().any(|name| set.contains(name)));
+                if !names_reaching {
+                    continue;
+                }
+                expanded_macros[position] = true;
+                for user in users {
+                    if seen.insert(user) {
+                        reaching.insert(user);
+                        frontier.push(*user);
+                        grew = true;
+                    }
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        reaching
+    }
+
+    /// Whether the functions named `name` can run `owner_name` over
+    /// [`Self::names_reaching_unbounded`] (#11552).
+    fn function_may_run_owner(
+        &self,
+        name: &str,
+        owner_name: &str,
+        owner_closure: &HashSet<&'a str>,
+    ) -> bool {
+        name == owner_name || owner_closure.contains(name)
+    }
+
     /// The walk past the bound (RIPR-SPEC-0114 step 5, #8047): the same
     /// reverse sweep continues level by level beyond `MAX_TRANSITIVE_DEPTH`.
     /// At each deeper level a test may enter (a test calls one of its names,
@@ -941,6 +1028,9 @@ pub(in crate::analysis) struct OwnerReach<'g, 'a> {
     /// or a chain past `MAX_TRANSITIVE_DEPTH` reaches it. Any test may run it
     /// (#9167 review).
     path_untraced: bool,
+    /// Every name with a name path to the owner at any depth, built on the
+    /// first assertion that asks (#11552).
+    unbounded_reaching: OnceLock<HashSet<&'a str>>,
 }
 
 impl OwnerReach<'_, '_> {
@@ -1024,6 +1114,40 @@ impl OwnerReach<'_, '_> {
                         .get(name)
                         .is_some_and(|functions| functions.len() == 1 && observes(functions[0]))
                 })
+    }
+
+    /// Whether `assertion_text` calls an indexed function that has no name
+    /// path to the owner, and calls nothing that has one (#11552): the
+    /// assertion then reads that function's result. Unindexed callees
+    /// (`Duration::from_millis`) and variant constructors neither tie the
+    /// assertion to the owner nor away from it. The check asks the owner's
+    /// full reverse closure, macro hops included, rather than trusting
+    /// `path_untraced`, which blanket-fails on any macro in a large
+    /// workspace. Fail closed when the owner may be reached implicitly.
+    pub(in crate::analysis) fn assertion_pins_other_function(&self, assertion_text: &str) -> bool {
+        if self.implicit_dispatch {
+            return false;
+        }
+        let closure = self
+            .unbounded_reaching
+            .get_or_init(|| self.graph.names_reaching_unbounded(&self.owner_name));
+        let mut other_indexed = false;
+        for name in super::reveal::called_names(assertion_text) {
+            let name = name.as_str();
+            if name == self.owner_name || self.reaching.contains(name) {
+                return false;
+            }
+            if self.graph.by_name.contains_key(name) {
+                if self
+                    .graph
+                    .function_may_run_owner(name, &self.owner_name, closure)
+                {
+                    return false;
+                }
+                other_indexed = true;
+            }
+        }
+        other_indexed
     }
 
     /// Whether `test` may run the owner, by name only (#6297). It may when
@@ -1457,6 +1581,7 @@ impl<'a> TransitiveReachIndex<'a> {
             // (`outer -> mac!(helper) -> helper -> owner`), hides a hop from
             // the name walk.
             path_untraced,
+            unbounded_reaching: OnceLock::new(),
         }
     }
 
@@ -4704,6 +4829,57 @@ mod tests {
             }
         }
         false
+    }
+
+    #[test]
+    fn an_assertion_on_another_indexed_function_pins_that_function_not_the_owner() {
+        // #11552: `reduce` is indexed and has no path to `consume`, so an
+        // assertion reading `reduce(..)` is that function's result. Calling
+        // the owner or anything that reaches it, or calling no indexed
+        // function at all, leaves the assertion unattributed.
+        let index = index_with(
+            vec![
+                make_fn("consume", vec!["reduce"]),
+                make_fn("consume_bridge", vec!["consume"]),
+                make_fn("reduce", vec![]),
+            ],
+            Vec::new(),
+        );
+        let reach_index = TransitiveReachIndex::new(&index);
+        let reach = reach_index.owner_reach("consume");
+        assert!(reach.assertion_pins_other_function(
+            "assert_eq!(reduce(2500), Reduction::Over(Duration::from_millis(15)))"
+        ));
+        assert!(!reach.assertion_pins_other_function("assert_eq!(consume(1), true)"));
+        assert!(!reach.assertion_pins_other_function("assert!(consume_bridge(1))"));
+        assert!(
+            !reach.assertion_pins_other_function("assert_eq!(reduce(1), consume_bridge(1).into())")
+        );
+        assert!(!reach.assertion_pins_other_function("assert!(matches!(x, Reduction::Over(1)))"));
+        assert!(!reach.assertion_pins_other_function("assert_eq!(Duration::from_millis(5), x)"));
+    }
+
+    #[test]
+    fn an_assertion_calling_through_a_macro_hop_to_the_owner_is_not_another_function() {
+        // #11552: `outer` reaches `consume` only through `run!`, whose body
+        // names it, so the name walk misses the edge. A function that invokes
+        // that macro must still count as a possible way to the owner, as must
+        // a caller of a macro with no readable body.
+        let index = index_with_source(
+            vec![
+                make_fn("consume", vec![]),
+                make_fn("outer", vec!["run!"]),
+                make_fn("outer_of_opaque", vec!["opaque!"]),
+                make_fn("leaf", vec![]),
+            ],
+            Vec::new(),
+            "macro_rules! run { () => { consume() }; }\nmacro_rules! opaque;".to_string(),
+        );
+        let reach_index = TransitiveReachIndex::new(&index);
+        let reach = reach_index.owner_reach("consume");
+        assert!(!reach.assertion_pins_other_function("assert_eq!(outer(), 1)"));
+        assert!(!reach.assertion_pins_other_function("assert_eq!(outer_of_opaque(), 1)"));
+        assert!(reach.assertion_pins_other_function("assert_eq!(leaf(), 1)"));
     }
 
     #[test]

@@ -36,7 +36,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_twin_collection_read_self_computed/input --diff <cwd>/fixtures/rust_twin_collection_read_self_computed/diff.patch --mode fast probe:src_lib.rs:call_deletion:3c28bb05
   ripr context --root <cwd>/fixtures/rust_twin_collection_read_self_computed/input --diff <cwd>/fixtures/rust_twin_collection_read_self_computed/diff.patch --mode fast --at probe:src_lib.rs:call_deletion:3c28bb05
-  no repair start offered: ripr found 4 seams in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
+  no repair start offered: ripr found 4 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 No test stub here: the change shows up as a side effect or call, which needs an observer or mock ripr cannot write
 Write this test by hand: call the function, then assert the visible change the changed call makes (a changed value, state, or output); then rerun `ripr check`.
 

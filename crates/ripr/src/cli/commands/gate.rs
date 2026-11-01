@@ -224,9 +224,9 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     // relative/absolute spellings without traversing the filesystem, then use
     // the shared native lexical comparison (no symlink/case-folding guarantee).
     let absolute_out =
-        std::path::absolute(&out).map_err(|err| format!("gate could not resolve --out: {err}"))?;
+        std::path::absolute(&out).map_err(|err| format!("gate could not resolve --out: {err}; pass a path whose directory exists, such as `--out target/ripr/gate.json`"))?;
     let absolute_out_md = std::path::absolute(&out_md)
-        .map_err(|err| format!("gate could not resolve --out-md: {err}"))?;
+        .map_err(|err| format!("gate could not resolve --out-md: {err}; pass a path whose directory exists, such as `--out-md target/ripr/gate.md`"))?;
     if output::path::same_output_leaf(&absolute_out, &absolute_out_md) {
         return Err(
             "gate --out and --out-md must not be the same path; choose distinct JSON and Markdown destinations"

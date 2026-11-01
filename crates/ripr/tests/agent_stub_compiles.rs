@@ -1550,7 +1550,7 @@ fn limited_journey_hidden_predicate_ambiguity_keeps_identity_and_refuses_stale_b
         .as_str()
         .ok_or("missing predicate identity")?;
     assert!(
-        stdout.contains(&format!("Choose a test-stub seam for {identity}:")),
+        stdout.contains(&format!("Choose a test-stub spot for {identity}:")),
         "{stdout}"
     );
     // Inspect the emitted route itself before reconstructing any argv below:
@@ -1652,7 +1652,7 @@ fn limited_journey_hidden_predicate_ambiguity_keeps_identity_and_refuses_stale_b
         "the stale control must retain its hidden subject: {stale}"
     );
     assert!(
-        !stale.contains("Choose a test-stub seam"),
+        !stale.contains("Choose a test-stub spot"),
         "stale bytes must not gain a route: {stale}"
     );
     scratch.cleanup()

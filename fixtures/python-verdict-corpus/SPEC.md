@@ -113,6 +113,14 @@ this repository's license, one per test library or library feature:
   `else` arm, an `else` or `finally` block beside a swallowing `try`, a handler
   that calls `pytest.fail`, `xfail(False, reason=...)` and
   `unittest.skipUnless(True, ...)` keep the test active and are credited.
+- `authored-py-unittest-derived`: RIPR-SPEC-0238 rule 1's computed expectations (#11531).
+  An exact comparison whose expected side is built from the owner passes on any
+  edit, so it is a gap: a `setUp` attribute, class attribute, module constant or
+  local bound to the owner's call, a forwarder that returns the owner, the owner
+  minus itself, and a pytest assert against a local. A literal expectation and an
+  independent reference function pin the value and are credited, as is an
+  input both sides read (`n = make_input()`; `scale_input(n) == n * 2`). Labeled under
+  Python 3.13.18 and pytest 9.2.0.
 - `authored-py-pytest-uncollected` and `authored-py-pytest-uncollected-config`:
   RIPR-SPEC-0238 rule 24's collection exclusions (#11527). A test pytest never
   collects cannot notice an edit, so it is a gap that abstains with

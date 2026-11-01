@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/property_macro_lexical_fallback/input
 
-Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
 Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
   only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
   no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
@@ -13,7 +13,7 @@ Analysis outcome: limitations below (analysis incomplete; partial_with_limitatio
   The 1 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
   Limitation: some changed files were not analyzed during language analysis (language_scope_unsupported at language_adapter); file: tests/opaque.rs; affected items: 1; recovery: inspect the failure (inspect_failure) — An unchanged test file was indexed by lexical fallback after the reference parser refused it, so related-test evidence for a classified owner was weaker or missing. Check whether tests in the named file already exercise the change before trusting a no-path or weak result; rewrite nightly-only syntax or move those tests to a parser-valid file.
 
-WARNING ./src/lib.rs:2
+NOTE ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:c80557eb
 
 Changed
@@ -27,19 +27,18 @@ Change type
   owner:  src/lib.rs::discounted_total
 
 Static exposure
-  no_static_path (warning, confidence 0.48)
+  static_unknown (note, confidence 0.35)
 
 Evidence
   - reach unknown: Property macro expansion and owner execution are unresolved
   - infection unknown: Property macro expansion and owner execution are unresolved
   - propagation unknown: Property macro expansion and owner execution are unresolved
-  - observation no: No reachable test oracle found
-  - discriminator no: No assertion can discriminate the changed behavior without a reachable test
+  - observation unknown: Not established: whether a test inside the property macro observes this change
+  - discriminator unknown: Not established: whether a test inside the property macro discriminates this change
   - local flow reaches returned value: amount - 10 (line 3)
 
 Weakness
-  - No detected boundary input for the changed predicate
-  - No static test path reaches the changed owner
+  - property-macro reach abstains: ripr does not expand the macro or collect its tests
 
 Stop reasons:
   - a candidate test path stops at a same-repo macro ripr does not expand (macro_reach_unresolved)
@@ -62,8 +61,8 @@ Drill in:
   ripr context --root <cwd>/fixtures/property_macro_lexical_fallback/input --diff <cwd>/fixtures/property_macro_lexical_fallback/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
 
 
-Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
-  analyzed: 1 changed Rust file(s), 1 changed expression(s), and 0 statically linked related
-  test(s). This is not a coverage assessment. A test may already exercise these changes through
-  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
-  none does, add co-located tests that observe the changed behavior.
+Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed Rust file(s), 1 changed expression(s), and
+  0 statically linked related test(s). This is not a coverage assessment. A test may already
+  exercise these changes through macros, helper-call chains, or integration tests that ripr's static
+  model does not yet trace; if none does, add co-located tests that observe the changed behavior.

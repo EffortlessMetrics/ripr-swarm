@@ -222,16 +222,16 @@ impl RepairRouteRefusal {
                 "no repair start offered: ripr found {seams_in_file} {} in this finding's \
                  file, but could not tie one to this finding's changed line, so it cannot pick one \
                  for you; `ripr pilot` lists them, or follow the Next step above",
-                if *seams_in_file == 1 { "seam" } else { "seams" }
+                if *seams_in_file == 1 { "spot" } else { "spots" }
             ),
             Self::FindingAlreadyExposed => "no repair start offered: nothing to repair here; \
                  the related tests already notice this change (exposed)"
                 .to_string(),
             Self::SeamGrippedFindingNot => "no repair start offered: `ripr check` reads a gap \
-                 or limit for this change, but `ripr repair` judges the whole seam and finds \
+                 or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds \
                  its tests already notice changes there (exposed), so it has no gap to start \
-                 from. The two read different evidence (your changed lines versus the whole \
-                 seam) and ripr does not start a repair on conflicting evidence; follow the \
+                 from. The two read different evidence (your changed lines versus the surrounding \
+                 code as a whole) and ripr does not start a repair on conflicting evidence; follow the \
                  Next step above"
                 .to_string(),
             Self::SeveralBindingSeams => {
@@ -966,7 +966,7 @@ mod tests {
         // #10702: seams exist in the file, so the advisory must not claim there are none.
         let counted = RepairRouteRefusal::NoBindingSeam { seams_in_file: 3 }.advisory(gate);
         assert!(
-            counted.contains("found 3 seams in this finding's file")
+            counted.contains("found 3 spots in this finding's file")
                 && !counted.contains("no seam in this finding's file")
                 && !counted.contains("found no seam"),
             "{counted}"
@@ -974,7 +974,7 @@ mod tests {
         let one = RepairRouteRefusal::NoBindingSeam { seams_in_file: 1 }.advisory(gate);
         assert_eq!(
             one,
-            "no repair start offered: ripr found 1 seam in this finding's file, but could not \
+            "no repair start offered: ripr found 1 spot in this finding's file, but could not \
              tie one to this finding's changed line, so it cannot pick one for you; `ripr \
              pilot` lists them, or follow the Next step above"
         );
