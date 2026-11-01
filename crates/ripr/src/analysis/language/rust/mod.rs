@@ -4077,6 +4077,61 @@ mod tests {
         Ok(())
     }
 
+    /// RIPR-SPEC-0369: repository mode yields no expression finding for text
+    /// inside `verus! { .. }`; the macro token tree is not indexed as Rust.
+    #[test]
+    fn repo_analysis_excludes_verus_region_and_keeps_sibling_fn() -> Result<(), String> {
+        let root = temp_root("verus-region-repo")?;
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"verus-repo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "use vstd::prelude::*;\nverus! {\nfn f(x: u32) -> (r: u32)\n    ensures r == x,\n{\n    if x > 5 { x } else { x }\n}\n}\nfn ordinary(n: usize) -> bool {\n    n >= 4\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let result = RustAdapter.analyze_repo(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+        )?;
+        fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+        // Positive control: the ordinary fn after the block (line 10) proves the
+        // file was indexed and probed, so the absence of region findings is
+        // attributable to region exclusion (lines 2-8) and not a no-finding path.
+        assert!(
+            result.findings.iter().any(|f| f.probe.location.line == 10),
+            "ordinary fn must still produce a finding: {:?}",
+            result.findings
+        );
+        assert!(
+            result
+                .findings
+                .iter()
+                .all(|f| !(2..=8).contains(&f.probe.location.line)),
+            "no finding inside the verus! region: {:?}",
+            result.findings
+        );
+        Ok(())
+    }
+
     /// #4586: a changed production file missing from the working tree
     /// (sparse checkout / local delete) must not become a clean
     /// `no_static_path`. The adapter withholds probes and names the file.

@@ -1,0 +1,93 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/typescript_mock_count_block_alias/input
+config: <cwd>/fixtures/typescript_mock_count_block_alias/input/ripr.toml
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Changed file(s) by language: typescript = 1
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+WARNING src/notify.ts:2
+  id: probe:src_notify.ts:typescript_preview:ea4f6421
+
+Changed
+  after:    sender.send(2 * id);
+
+Change type
+  a side effect changed
+  family: side_effect
+  delta:  effect (changes a side effect)
+  owner:  typescript:src/notify.ts::notify
+
+Language
+  language: typescript
+  status: preview
+  owner kind: function
+
+Preview actionability
+  authority: preview_advisory_only
+  gap state: unknown
+  category: incomplete_repair_packet
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  missing fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
+  evidence needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+  raw evidence: src/notify.ts:2 (typescript_preview_probe) source=probe:src_notify.ts:typescript_preview:ea4f6421 owner=notify
+
+Static exposure
+  weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; related tests hold no exact-value oracle (weak or smoke assertion). Preview score, not on the same scale as Rust confidence.
+
+Evidence
+  - reach yes: 1 related test(s) found for owner `notify`
+  - infection unknown: TypeScript preview adapter does not yet model infection
+  - propagation unknown: TypeScript preview adapter does not yet model propagation
+  - observation weak: Strongest extracted oracle kind: `mock_expectation` (rank 3)
+  - discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `call sender.send includes 2 * id`
+  - local flow reaches call effect: sender.send(2 * id); (line 2)
+  - related test test/notify.test.ts:4 notify block count uses strong exact value oracle: assert.equal(...)
+
+Weakness
+  - Related test reaches `notify` with a mock interaction oracle, but TypeScript preview does not yet establish the changed call payload; keep the item advisory until mock-shape actionability can name the callee, expected arguments, verify command, receipt command, and edit boundaries
+  - missing discriminator call sender.send includes 2 * id: changed TypeScript call side effect at line 2 lacks a concrete preview discriminator
+
+TypeScript preview card (advisory)
+  card version: typescript_preview_card.v1
+  authority: preview_advisory_only (typescript/preview)
+  owner: notify
+  owner kind: function
+  changed behavior: side_effect changed at src/notify.ts:2: `sender.send(2 * id);`
+  related test: test/notify.test.ts:4 notify block count
+  oracle: exact_value (strong)
+  missing discriminator: call sender.send includes 2 * id
+  suggested assertion shape: Exact-value evidence is present; verify it targets the changed discriminator.
+  repair packet ready: false
+  why not actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available
+  limits:
+    - Syntax-first TypeScript/JavaScript preview evidence only.
+    - No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.
+    - This card is advisory and is not a repair packet.
+
+TypeScript repair packet (advisory)
+  status: not actionable
+  limitation: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract
+  next capability needed: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints
+
+Next step
+  TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe discriminator for `call sender.send includes 2 * id`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries
+Drill in:
+  ripr explain --root <cwd>/fixtures/typescript_mock_count_block_alias/input --diff <cwd>/fixtures/typescript_mock_count_block_alias/diff.patch --mode fast probe:src_notify.ts:typescript_preview:ea4f6421
+  ripr context --root <cwd>/fixtures/typescript_mock_count_block_alias/input --diff <cwd>/fixtures/typescript_mock_count_block_alias/diff.patch --mode fast --at probe:src_notify.ts:typescript_preview:ea4f6421
+
+
+Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
