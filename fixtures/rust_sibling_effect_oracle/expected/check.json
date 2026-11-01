@@ -488,8 +488,8 @@
       "stop_reasons": [],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "ripr did not credit the `assert_eq!` in module_evidence_retains_single_pass_duplicates_benign_and_unavailable at src/sensors/ripr_limits.rs:374; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
-      "suggested_next_action": "ripr did not credit the `assert_eq!` in module_evidence_retains_single_pass_duplicates_benign_and_unavailable at src/sensors/ripr_limits.rs:374; the \"not credited\" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs.",
+      "recommended_next_step": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
+      "suggested_next_action": "Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.",
       "language": "rust",
       "source_currentness": "base_deleted"
     },

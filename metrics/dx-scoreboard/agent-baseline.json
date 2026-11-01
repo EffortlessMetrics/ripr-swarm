@@ -4,10 +4,10 @@
   "boards": [
     {
       "counts": {
-        "below_target": 3,
+        "below_target": 2,
         "comparison_failed": 0,
         "failed": 0,
-        "meets_target": 7,
+        "meets_target": 8,
         "not_measured": 7,
         "regressed": 0
       },
@@ -38,8 +38,8 @@
   "corpus": [],
   "corpus_version": null,
   "gate": {
-    "baseline_revision": "acb0f4da401e4fa299bfce9b8f72cd124947ffc6",
-    "baseline_runner_class": "local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-80ghz",
+    "baseline_revision": "9db2819fc2aa0516eb6015ecf7d6f74a8299de05",
+    "baseline_runner_class": "local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-10ghz",
     "ceiling_breaches": [],
     "enabled": true,
     "failed_comparisons": [],
@@ -47,24 +47,7 @@
     "regressions": [],
     "review": [],
     "status": "pass",
-    "uncompared": [
-      {
-        "metric": "agent.check_bytes_human",
-        "reason": "metric absent from baseline"
-      },
-      {
-        "metric": "agent.check_bytes_agent_format",
-        "reason": "metric absent from baseline"
-      },
-      {
-        "metric": "agent.check_bytes_json",
-        "reason": "metric absent from baseline"
-      },
-      {
-        "metric": "agent.agent_format_gaps_before_fix",
-        "reason": "metric absent from baseline"
-      }
-    ]
+    "uncompared": []
   },
   "metrics": [
     {
@@ -87,7 +70,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": null,
           "status": "meets_target",
           "value": 1.0
@@ -120,19 +103,19 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "bytesize",
           "status": "meets_target",
           "value": 3.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "humantime",
           "status": "meets_target",
           "value": 3.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "semver",
           "status": "meets_target",
           "value": 3.0
@@ -165,19 +148,19 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "bytesize",
           "status": "meets_target",
           "value": 7.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "humantime",
           "status": "meets_target",
           "value": 8.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "semver",
           "status": "meets_target",
           "value": 10.0
@@ -210,19 +193,19 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "bytesize",
           "status": "meets_target",
           "value": 8.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "humantime",
           "status": "meets_target",
           "value": 9.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "semver",
           "status": "meets_target",
           "value": 9.0
@@ -237,8 +220,15 @@
     },
     {
       "baseline": {
-        "comparable": false,
-        "reason": "metric absent from baseline"
+        "allowed_worsening": 949.25,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 3797.0
       },
       "board": "agent",
       "direction": "lower_is_better",
@@ -248,19 +238,19 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "bytesize",
           "status": "meets_target",
           "value": 3773.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "humantime",
           "status": "meets_target",
           "value": 3797.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "semver",
           "status": "meets_target",
           "value": 3155.0
@@ -275,8 +265,15 @@
     },
     {
       "baseline": {
-        "comparable": false,
-        "reason": "metric absent from baseline"
+        "allowed_worsening": 300.0,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 984.0
       },
       "board": "agent",
       "direction": "lower_is_better",
@@ -286,19 +283,19 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "bytesize",
           "status": "meets_target",
           "value": 773.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "humantime",
           "status": "meets_target",
           "value": 391.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "semver",
           "status": "meets_target",
           "value": 984.0
@@ -313,8 +310,15 @@
     },
     {
       "baseline": {
-        "comparable": false,
-        "reason": "metric absent from baseline"
+        "allowed_worsening": 27616.75,
+        "comparable": true,
+        "delta": 0.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 110467.0
       },
       "board": "agent",
       "direction": "lower_is_better",
@@ -324,19 +328,19 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "bytesize",
           "status": "below_target",
           "value": 57586.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "humantime",
           "status": "below_target",
           "value": 110467.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "semver",
           "status": "below_target",
           "value": 70880.0
@@ -351,8 +355,15 @@
     },
     {
       "baseline": {
-        "comparable": false,
-        "reason": "metric absent from baseline"
+        "allowed_worsening": 0.0,
+        "comparable": true,
+        "delta": 2.0,
+        "missing_repos": [],
+        "new_repos": [],
+        "recovered_repos": [],
+        "regressed": false,
+        "regressed_repos": [],
+        "value": 0.0
       },
       "board": "agent",
       "direction": "higher_is_better",
@@ -362,30 +373,30 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "bytesize",
           "status": "meets_target",
           "value": 2.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "humantime",
-          "status": "below_target",
-          "value": 0.0
+          "status": "meets_target",
+          "value": 4.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "semver",
           "status": "meets_target",
           "value": 4.0
         }
       ],
       "source": "ingest:agent-as-user",
-      "status": "below_target",
+      "status": "meets_target",
       "target": 1.0,
-      "title": "Gaps named by `ripr check --format agent` on the gap commit, before any fix",
+      "title": "Gap or open lines named by `ripr check --format agent` on the gap commit, before any fix",
       "unit": "gaps",
-      "value": 0.0
+      "value": 2.0
     },
     {
       "baseline": {
@@ -407,19 +418,19 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "bytesize",
           "status": "meets_target",
           "value": 0.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "humantime",
           "status": "below_target",
           "value": 4.0
         },
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": "semver",
           "status": "below_target",
           "value": 1.0
@@ -474,7 +485,7 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f)",
+          "detail": "ingested from agent-as-user: docs/AGENT_AS_USER_RUNS.md (agent runs 2026-10-25, #10183, ripr 0.11.0 a6909e94; output sizes and agent-format gap counts measured 2026-10-31, #11816, ripr 0.11.0 9db2819f; humantime agent-format count re-measured 2026-10-31 after #11825, gap and open lines, debug build of the fix branch)",
           "repo": null,
           "status": "meets_target",
           "value": 0.0
@@ -600,7 +611,9 @@
     {
       "baseline": {
         "comparable": false,
-        "reason": "runner class differs (baseline `local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-80ghz`, current `local-linux-x86_64-4cpu-intel-r-xeon-r-processor-2-10ghz`)",
+        "new_repos": [],
+        "reason": "baseline or current value is missing",
+        "recovered_repos": [],
         "value": null
       },
       "board": "agent",
@@ -698,6 +711,54 @@
       "metrics": [],
       "note": "large long-lived binary workspace (~1400 .rs files); shared corpus pin",
       "sha": "f3865b2a4d1acc5276f6b3c67d0e057f4dab3928",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "rust-analyzer",
+      "language": "rust",
+      "metrics": [],
+      "note": "large IDE workspace (~100 crates); the pinned change edits crates/hir and crates/ide-diagnostics",
+      "sha": "8399dcb353388061755fad89b0eadb7f74ca34cb",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "tokio",
+      "language": "rust",
+      "metrics": [],
+      "note": "async runtime workspace, cfg- and macro-heavy; the pinned change edits tokio/src/sync/barrier.rs and its test",
+      "sha": "6470b5e4b8e943ad014383a5bf6a93ba415678a3",
+      "status": "not_measured"
+    },
+    {
+      "counts": {
+        "below_target": 0,
+        "comparison_failed": 0,
+        "failed": 0,
+        "meets_target": 0,
+        "not_measured": 0,
+        "regressed": 0
+      },
+      "id": "servo",
+      "language": "rust",
+      "metrics": [],
+      "note": "browser engine workspace (several thousand .rs files); the pinned change edits components/net/http_cache.rs",
+      "sha": "436d98daa8cc128d96371709bc514b5b4d9cbce3",
       "status": "not_measured"
     },
     {
@@ -957,12 +1018,12 @@
       "status": "not_measured"
     }
   ],
-  "revision": "9db2819fc2aa0516eb6015ecf7d6f74a8299de05",
+  "revision": "fdf285a8b44867b85c326a147fe6927ed912020e",
   "rollup": {
-    "below_target": 3,
+    "below_target": 2,
     "comparison_failed": 0,
     "failed": 0,
-    "meets_target": 7,
+    "meets_target": 8,
     "not_measured": 7,
     "regressed": 0
   },
