@@ -603,6 +603,56 @@ pub(crate) struct TypeScriptTestExtractionGap {
     pub(crate) snippet: String,
 }
 
+/// A test file's partial-extraction verdict as persisted beside its facts.
+/// `gap` is `None` for a fully extracted file; the record exists so a warm run
+/// can tell "checked, nothing dropped" from "never checked".
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct PersistedPartialExtraction {
+    pub(crate) gap: Option<PersistedExtractionGap>,
+}
+
+/// [`TypeScriptTestExtractionGap`] without the file (the envelope's own path)
+/// and with the shape as text (the in-memory shape is a `&'static str`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct PersistedExtractionGap {
+    pub(crate) sample_line: usize,
+    pub(crate) shape: String,
+    pub(crate) snippet: String,
+}
+
+impl PersistedPartialExtraction {
+    pub(crate) fn of(gap: Option<&TypeScriptTestExtractionGap>) -> Self {
+        Self {
+            gap: gap.map(|gap| PersistedExtractionGap {
+                sample_line: gap.sample_line,
+                shape: gap.shape.to_string(),
+                snippet: gap.snippet.clone(),
+            }),
+        }
+    }
+
+    /// The verdict for `file`. `None` when the recorded shape is not one this
+    /// build produces, so the caller recomputes instead of trusting it.
+    pub(crate) fn restore(&self, file: &std::path::Path) -> Option<Option<TypeScriptTestExtractionGap>> {
+        let Some(gap) = &self.gap else {
+            return Some(None);
+        };
+        let shape = [
+            "template-literal title",
+            "tagged-template .each",
+            "test/it call in loop/callback/nested body",
+        ]
+        .into_iter()
+        .find(|known| *known == gap.shape)?;
+        Some(Some(TypeScriptTestExtractionGap {
+            file: file.to_path_buf(),
+            sample_line: gap.sample_line,
+            shape,
+            snippet: gap.snippet.clone(),
+        }))
+    }
+}
+
 /// Owner-shaped construct the syntax-first owner extractor does not index
 /// (#4104-A). One per affected changed file (the first detected shape).
 pub(crate) struct TypeScriptOwnerExtractionGap {

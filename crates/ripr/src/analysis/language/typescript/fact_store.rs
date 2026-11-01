@@ -37,7 +37,7 @@ pub(crate) use crate::analysis::language::adapter::render_fact_cache_line;
 /// On-disk schema version of a `typescript-file-facts` envelope. Any change
 /// to a serialized fact spelling (field rename, type change, new label) is
 /// a schema change: bump this so stale entries read as misses.
-pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "5";
+pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "6";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. Parsing the
 /// file already happened by store time, so exhausting the budget only skips
@@ -120,6 +120,8 @@ impl TypeScriptFileFactKey {
 pub(crate) struct PersistedFileFacts {
     pub(crate) file_facts: FileFacts,
     pub(crate) test_extraction: Option<TestExtraction>,
+    /// The file's partial-extraction verdict, when one was recorded.
+    pub(crate) partial_extraction: Option<super::types::PersistedPartialExtraction>,
 }
 
 /// On-disk shape. The key fields are embedded so a read can verify identity
@@ -139,6 +141,11 @@ struct TypeScriptFileFactEnvelope {
     /// parse-error files, whose tests were never extracted.
     #[serde(default)]
     test_extraction: Option<TestExtraction>,
+    /// Whether the extractor dropped a registration shape in this test file,
+    /// a pure function of the same bytes. `None` when it was not recorded
+    /// (production files, parse errors, a failed check).
+    #[serde(default)]
+    partial_extraction: Option<super::types::PersistedPartialExtraction>,
 }
 
 impl TypeScriptFileFactEnvelope {
@@ -146,6 +153,7 @@ impl TypeScriptFileFactEnvelope {
         key: &TypeScriptFileFactKey,
         file_facts: FileFacts,
         test_extraction: Option<TestExtraction>,
+        partial_extraction: Option<super::types::PersistedPartialExtraction>,
     ) -> Self {
         Self {
             payload_digest: None,
@@ -157,6 +165,7 @@ impl TypeScriptFileFactEnvelope {
             alias_digest: key.alias_digest,
             file_facts,
             test_extraction,
+            partial_extraction,
         }
     }
 
@@ -324,6 +333,7 @@ impl TypeScriptFileFactStore {
                 CacheLoad::Hit(PersistedFileFacts {
                     file_facts: envelope.file_facts,
                     test_extraction,
+                    partial_extraction: envelope.partial_extraction,
                 })
             }
             Err(reason) => corrupt_entry(&path, format!("decode failed: {reason}")),
@@ -374,12 +384,18 @@ impl TypeScriptFileFactStore {
         key: &TypeScriptFileFactKey,
         file_facts: &FileFacts,
         test_extraction: Option<&TestExtraction>,
+        partial_extraction: Option<&super::types::PersistedPartialExtraction>,
     ) -> Result<bool, String> {
         if let Some(reason) = self.unusable_base_reason() {
             return Err(reason.to_owned());
         }
         let envelope =
-            TypeScriptFileFactEnvelope::new(key, file_facts.clone(), test_extraction.cloned());
+            TypeScriptFileFactEnvelope::new(
+            key,
+            file_facts.clone(),
+            test_extraction.cloned(),
+            partial_extraction.cloned(),
+        );
         let digest = envelope.expected_digest()?;
         let bytes = {
             // Compact, with shared lists written once: a file with thousands of
@@ -512,7 +528,7 @@ mod tests {
     fn schema_version_pins_ast_probe_shape_facts() -> Result<(), String> {
         // #11250 added per-line probe shapes to the persisted facts, so
         // envelopes written before them must read as misses.
-        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "5");
+        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "6");
         // A stale-schema envelope: the exact bytes the pre-#11250 ("3")
         // binary wrote — same identity, valid integrity digest, older
         // schema version — sitting at the entry path the current key
@@ -528,7 +544,7 @@ mod tests {
             export_facts: super::super::related_tests::ModuleExportFacts::default(),
             phase_two: super::super::owners::PhaseTwoFacts::default(),
         };
-        let mut stale = TypeScriptFileFactEnvelope::new(&key, facts.clone(), None);
+        let mut stale = TypeScriptFileFactEnvelope::new(&key, facts.clone(), None, None);
         stale.typescript_file_fact_schema_version = "3".to_string();
         let digest = stale.expected_digest()?;
         let bytes = seam_cache::encode_integrity_body(&stale, digest)?;
@@ -545,7 +561,7 @@ mod tests {
         // Positive control: a current-schema envelope at the same path is
         // a hit, so the miss above is the version gate, not a misplaced
         // file.
-        let current = TypeScriptFileFactEnvelope::new(&key, facts, None);
+        let current = TypeScriptFileFactEnvelope::new(&key, facts, None, None);
         let digest = current.expected_digest()?;
         let bytes = seam_cache::encode_integrity_body(&current, digest)?;
         std::fs::write(&entry, &bytes)
@@ -577,7 +593,7 @@ mod tests {
             export_facts: super::super::related_tests::ModuleExportFacts::default(),
             phase_two: super::super::owners::PhaseTwoFacts::default(),
         };
-        let envelope = TypeScriptFileFactEnvelope::new(&key, facts.clone(), None);
+        let envelope = TypeScriptFileFactEnvelope::new(&key, facts.clone(), None, None);
         let digest = envelope.expected_digest()?;
         let bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
         let decoded: TypeScriptFileFactEnvelope = serde_json::from_slice(&bytes)
@@ -602,7 +618,7 @@ mod tests {
             export_facts: super::super::related_tests::ModuleExportFacts::default(),
             phase_two: super::super::owners::PhaseTwoFacts::default(),
         };
-        let envelope = TypeScriptFileFactEnvelope::new(&key, facts, None);
+        let envelope = TypeScriptFileFactEnvelope::new(&key, facts, None, None);
         let digest = envelope.expected_digest()?;
         let mut bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
         let flip = bytes.len() / 2;

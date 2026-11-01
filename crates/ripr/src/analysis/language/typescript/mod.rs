@@ -682,6 +682,7 @@ impl TypeScriptAdapter {
             fact_store::TypeScriptFileFactKey,
             std::rc::Rc<extraction_cache::FileFacts>,
             Option<extraction_cache::TestExtraction>,
+            Option<PersistedPartialExtraction>,
         )> = Vec::new();
 
         for relative in &workspace_files {
@@ -695,6 +696,9 @@ impl TypeScriptAdapter {
                 alias_map_ref,
             );
             let mut recomputed_facts = false;
+            // The partial-extraction verdict a persisted envelope recorded for
+            // this file (`None`: not recorded, so it is computed below).
+            let mut persisted_gap: Option<Option<TypeScriptTestExtractionGap>> = None;
             // A process that already holds this file's facts (an LSP refresh)
             // neither reads nor rewrites the envelope.
             let in_memory = extraction_cache::file_facts_in_memory(
@@ -722,6 +726,10 @@ impl TypeScriptAdapter {
                 None => {}
                 Some(crate::analysis::seam_cache::CacheLoad::Hit(persisted)) => {
                     fact_cache_stats.hits += 1;
+                    persisted_gap = persisted
+                        .partial_extraction
+                        .as_ref()
+                        .and_then(|recorded| recorded.restore(relative));
                     extraction_cache::seed_file_facts(
                         relative,
                         source,
@@ -803,7 +811,7 @@ impl TypeScriptAdapter {
                 // content-keyed, so the cached default facts are as honest as
                 // the in-memory cache's.
                 if recomputed_facts {
-                    pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None));
+                    pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None, None));
                 }
                 continue;
             }
@@ -829,19 +837,9 @@ impl TypeScriptAdapter {
                 }
                 // A worker failure serves an empty extraction it never caches;
                 // only a cached extraction is a function of the bytes.
-                if recomputed_facts
+                let persistable = recomputed_facts
                     && fact_store::export_facts_are_disk_independent(&facts)
-                    && extraction_cache::test_extraction_in_memory(relative, source)
-                {
-                    // Persist the raw cached extraction (pre-promotion), so a
-                    // warm run re-applies snapshot promotion from disk facts
-                    // exactly like a memory hit does.
-                    pending_fact_stores.push((
-                        fact_key,
-                        std::rc::Rc::clone(&facts),
-                        Some((*extraction).clone()),
-                    ));
-                }
+                    && extraction_cache::test_extraction_in_memory(relative, source);
                 let (mut tests, conditional_credit_gap, expansion) = (
                     extraction.0.clone(),
                     extraction.1.clone(),
@@ -865,12 +863,35 @@ impl TypeScriptAdapter {
                 // tagged-template `.each`, tests generated in loops or
                 // callbacks) gets a partial-extraction disclosure so a
                 // confident `no_static_path` is known to be possibly false.
-                if let Some(gap) = detect_partial_test_extraction_expanded(
-                    relative,
-                    source,
-                    &tests,
-                    expansion.as_ref(),
-                ) {
+                // The verdict is a pure function of the file's bytes (promotion
+                // only rewrites assertions, never `body_text`), so a warm run
+                // serves the recorded one instead of parsing the file again.
+                // Only a completed check is recorded: a worker failure says
+                // nothing about the file.
+                let (partial, partial_checked) = match persisted_gap {
+                    Some(recorded) => (recorded, false),
+                    None => match try_detect_partial_test_extraction_expanded(
+                        relative,
+                        source,
+                        &tests,
+                        expansion.as_ref(),
+                    ) {
+                        Ok(gap) => (gap, true),
+                        Err(_) => (None, false),
+                    },
+                };
+                if persistable {
+                    // Persist the raw cached extraction (pre-promotion), so a
+                    // warm run re-applies snapshot promotion from disk facts
+                    // exactly like a memory hit does.
+                    pending_fact_stores.push((
+                        fact_key,
+                        std::rc::Rc::clone(&facts),
+                        Some((*extraction).clone()),
+                        partial_checked.then(|| PersistedPartialExtraction::of(partial.as_ref())),
+                    ));
+                }
+                if let Some(gap) = partial {
                     extraction_gaps.push(gap);
                 }
                 // #8714: an extracted assertion sitting under an unevaluated
@@ -902,7 +923,7 @@ impl TypeScriptAdapter {
                 // Test extraction is cached separately (#10017): only its
                 // pure step, never snapshot promotion.
                 if recomputed_facts && fact_store::export_facts_are_disk_independent(&facts) {
-                    pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None));
+                    pending_fact_stores.push((fact_key, std::rc::Rc::clone(&facts), None, None));
                 }
                 export_facts_by_file.insert(relative.clone(), facts.export_facts.clone());
                 all_owners.extend(facts.owners.clone());
@@ -912,8 +933,13 @@ impl TypeScriptAdapter {
         // #10725: flush the envelopes this run recomputed — one content-keyed
         // envelope per file, after parsing so the writes never interleave
         // with it. Store failures disclose as counters, never as a failed run.
-        for (key, facts, test_extraction) in pending_fact_stores {
-            match fact_store.store(&key, &facts, test_extraction.as_ref()) {
+        for (key, facts, test_extraction, partial_extraction) in pending_fact_stores {
+            match fact_store.store(
+                &key,
+                &facts,
+                test_extraction.as_ref(),
+                partial_extraction.as_ref(),
+            ) {
                 Ok(true) => fact_cache_stats.stores += 1,
                 Ok(false) => {}
                 Err(_) => fact_cache_stats.store_errors += 1,

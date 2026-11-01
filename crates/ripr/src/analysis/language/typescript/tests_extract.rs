@@ -4730,6 +4730,20 @@ pub(crate) fn detect_partial_test_extraction_expanded(
     extracted: &[TypeScriptTest],
     expansion: Option<&super::suite_factory::SuiteFactoryExpansion>,
 ) -> Option<TypeScriptTestExtractionGap> {
+    try_detect_partial_test_extraction_expanded(file, source, extracted, expansion)
+        .ok()
+        .flatten()
+}
+
+/// [`detect_partial_test_extraction_expanded`] that tells a parse-worker
+/// failure from "nothing dropped": only `Ok` is a function of the bytes, so
+/// only `Ok` may be persisted.
+pub(crate) fn try_detect_partial_test_extraction_expanded(
+    file: &Path,
+    source: &str,
+    extracted: &[TypeScriptTest],
+    expansion: Option<&super::suite_factory::SuiteFactoryExpansion>,
+) -> Result<Option<TypeScriptTestExtractionGap>, String> {
     let source = expansion.map_or(source, |expansion| expansion.source.as_str());
     let covered = expansion.map(|expansion| expansion.covered.clone());
     let call_lines = expansion.map(|expansion| expansion.call_lines.clone());
@@ -4737,7 +4751,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
     // the parse closure is `'static` and cannot borrow `extracted`.
     let extracted_starts =
         extracted_span_starts(source, extracted, covered.as_deref().unwrap_or_default());
-    let Ok(gap) = parse_on_worker(file, source, move |file, source, allocator| {
+    parse_on_worker(file, source, move |file, source, allocator| {
         let ret = Parser::new(allocator, source, source_type_for(file)).parse();
         if !ret.errors.is_empty() {
             // Parse-error disclosure owns this case; do not double-report.
@@ -4771,10 +4785,7 @@ pub(crate) fn detect_partial_test_extraction_expanded(
                 snippet,
             },
         )
-    }) else {
-        return None;
-    };
-    gap
+    })
 }
 
 /// Recover the byte-offset span start for every extracted test from its
