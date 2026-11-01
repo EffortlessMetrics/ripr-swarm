@@ -204,7 +204,7 @@ impl StaticLimitKind {
 impl StopReason {
     /// Every reason, for the same walk as [`StaticLimitKind::ALL`].
     #[cfg(test)]
-    pub(crate) fn all() -> [StopReason; 15] {
+    pub(crate) fn all() -> [StopReason; 16] {
         [
             StopReason::MaxDepthReached,
             StopReason::ExternalCrateBoundary,
@@ -221,6 +221,7 @@ impl StopReason {
             StopReason::MacroReachUnresolved,
             StopReason::GapEvidenceUnresolved,
             StopReason::HelperIdentityUnresolved,
+            StopReason::CompileTimeInvariant,
         ]
     }
 
@@ -288,6 +289,11 @@ impl StopReason {
             StopReason::HelperIdentityUnresolved => {
                 "Call the changed function by its full path in the test so the call binds to one \
                  function; rename a same-named function only if the path is not enough."
+            }
+            StopReason::CompileTimeInvariant => {
+                "Check the compile-time assertion by building with the target, features and \
+                 cfg that include it (a gated assertion is not compiled otherwise); no test \
+                 run observes it, so do not add a test for it."
             }
         }
     }
@@ -380,9 +386,10 @@ mod tests {
                 StopReason::MacroReachUnresolved => 12,
                 StopReason::GapEvidenceUnresolved => 13,
                 StopReason::HelperIdentityUnresolved => 14,
+                StopReason::CompileTimeInvariant => 15,
             }
         }
-        const COUNT: usize = 15;
+        const COUNT: usize = 16;
         let all = StopReason::all();
         assert_eq!(all.len(), COUNT);
         let ordinals: Vec<usize> = all.iter().map(ordinal).collect();
