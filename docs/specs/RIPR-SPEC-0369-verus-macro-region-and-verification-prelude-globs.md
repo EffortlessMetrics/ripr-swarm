@@ -135,8 +135,8 @@ above; the same lockfile reader as the audited proptest profile). An
 unlocked crate, a missing or unreadable lockfile, a newer, older or unknown
 version, a path, git or other-registry package, a workspace member of the same
 name, or several locked versions of the crate refuse credit with the same named
-macro-binding refusal as before this spec, and the reason says the version is
-not audited. A future release that exports a trusted assertion name is never
+macro-binding refusal as before this spec; the refusal text does not name the
+version. A future release that exports a trusted assertion name is never
 covered by this entry until it is re-read and added.
 
 New-audit procedure: re-read the published crate's prelude export list at the

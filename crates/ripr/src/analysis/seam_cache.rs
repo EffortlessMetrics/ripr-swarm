@@ -5540,7 +5540,9 @@ mod tests {
         // proof-harness source role (RIPR-SPEC-0367).
         // 1.124 -> 1.125: `verus!` region limit and verification-prelude glob
         // credit (RIPR-SPEC-0369, #11703).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.125");
+        // 1.125 -> 1.126: those prelude globs keep assertion credit only for
+        // audited locked versions (RIPR-SPEC-0369).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.126");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
