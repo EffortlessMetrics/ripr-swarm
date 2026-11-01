@@ -52,7 +52,7 @@ pub(super) fn validate_agent_receipt_verify_path(
 
     if !candidate.starts_with(&root) {
         return Err(format!(
-            "agent receipt --verify-json {} must stay under root {}",
+            "agent receipt --verify-json {} must stay under root {}; pass a path inside that root, or change `--root`",
             crate::output::path::human_path(path),
             crate::output::path::human_path(&root)
         ));
@@ -149,7 +149,7 @@ fn validate_agent_receipt_artifact_path(
 
     if !candidate.starts_with(&root) {
         return Err(format!(
-            "agent receipt {role} {} must stay under root {}",
+            "agent receipt {role} {} must stay under root {}; pass a path inside that root, or change `--root`",
             crate::output::path::human_path(path),
             crate::output::path::human_path(&root)
         ));
@@ -164,19 +164,25 @@ fn agent_receipt_config_fingerprint(root: &Path) -> Result<Option<String>, Strin
         Ok(text) => Ok(Some(config_fingerprint(&text))),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             if crate::config::config_present_at_root(root) {
-                Err(format!("read {} failed: {err}", path.display()))
+                Err(format!(
+                    "read {} failed: {err}; check the path exists and you can read it, then rerun",
+                    path.display()
+                ))
             } else {
                 Ok(None)
             }
         }
-        Err(err) => Err(format!("read {} failed: {err}", path.display())),
+        Err(err) => Err(format!(
+            "read {} failed: {err}; check the path exists and you can read it, then rerun",
+            path.display()
+        )),
     }
 }
 
 fn agent_receipt_generated_at() -> Result<String, String> {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|err| format!("system clock before unix epoch: {err}"))?
+        .map_err(|err| format!("system clock before unix epoch: {err}; set the system clock to the current time, then rerun"))?
         .as_millis();
     Ok(format!("unix_ms:{millis}"))
 }
@@ -229,7 +235,7 @@ pub(super) fn validate_agent_verify_snapshot_path(
 
     if !candidate.starts_with(&root) {
         return Err(format!(
-            "agent verify {flag} {} must stay under root {}",
+            "agent verify {flag} {} must stay under root {}; pass a path inside that root, or change `--root`",
             crate::output::path::human_path(path),
             crate::output::path::human_path(&root)
         ));
@@ -322,7 +328,7 @@ fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, S
     })?;
     if !candidate.starts_with(&root) {
         return Err(format!(
-            "agent brief --diff {} must stay under root {}",
+            "agent brief --diff {} must stay under root {}; pass a path inside that root, or change `--root`",
             crate::output::path::human_path(path),
             crate::output::path::human_path(&root)
         ));
@@ -445,7 +451,7 @@ fn confine_agent_brief_file_path(root: &Path, path: &Path) -> Result<PathBuf, St
             | std::path::Component::RootDir
             | std::path::Component::Prefix(_) => {
                 return Err(format!(
-                    "agent brief --files {} must stay under root {}",
+                    "agent brief --files {} must stay under root {}; pass a path inside that root, or change `--root`",
                     crate::output::path::human_path(path),
                     crate::output::path::human_path(root)
                 ));

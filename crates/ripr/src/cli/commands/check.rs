@@ -375,7 +375,7 @@ pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<
         return Ok(());
     };
     let current = std::fs::canonicalize(".")
-        .map_err(|error| format!("resolve current directory failed: {error}"))?;
+        .map_err(|error| format!("resolve current directory failed: {error}; run from a directory that still exists, or pass `--root <dir>`"))?;
     if root == current {
         return Ok(());
     }
@@ -478,7 +478,7 @@ fn parse_git_timeout_from(
     let timeout = std::time::Duration::from_secs(secs);
     if std::time::Instant::now().checked_add(timeout).is_none() {
         return Err(format!(
-            "{source} is too large for the platform deadline; got {secs} seconds"
+            "{source} is too large for the platform deadline; got {secs} seconds; pass a smaller number of seconds"
         ));
     }
     Ok((secs > 0).then_some(timeout))
@@ -505,7 +505,7 @@ fn check_timeout_from_env(
         Ok(value) => parse_check_timeout_from("RIPR_CHECK_TIMEOUT", &value).map(Some),
         Err(std::env::VarError::NotPresent) => Ok(None),
         Err(std::env::VarError::NotUnicode(_)) => {
-            Err("RIPR_CHECK_TIMEOUT must be valid UTF-8".to_string())
+            Err("RIPR_CHECK_TIMEOUT must be valid UTF-8; set it to a whole number of seconds, or unset it".to_string())
         }
     }
 }
@@ -928,7 +928,7 @@ fn check_inner(
             || write_artifact.is_some()
             || input.suppression_policy.is_some())
     {
-        return Err("--output-dir requires a named --diff file and cannot be combined with --format/--json, --worktree/--committed, --candidate-tree/--candidate-base, --gap-ledger, --write-artifact or --suppression-policy".into());
+        return Err("--output-dir requires a named --diff file and cannot be combined with --format/--json, --worktree/--committed, --candidate-tree/--candidate-base, --gap-ledger, --write-artifact or --suppression-policy; pass a named `--diff <file>` and drop the other flags".into());
     }
     // #6834: refusal-envelope context for every failure below. Argv usage
     // errors above return before this snapshot exists and stay prose-only.
@@ -2267,7 +2267,7 @@ fn render_check_gap_ledger_badge(
         }
     };
     let text = crate::bounded_input::read_to_string(gap_ledger)
-        .map_err(|err| format!("failed to read gap ledger {}: {err}", gap_ledger.display()))?;
+        .map_err(|err| format!("failed to read gap ledger {}: {err}; check the path passed to `--gap-ledger` exists and you can read it", gap_ledger.display()))?;
     let policy = output::badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),
         ..output::badge::BadgePolicy::default()
@@ -3325,11 +3325,11 @@ mod tests {
     fn check_requires_values_for_value_flags() {
         assert_eq!(
             check(&args(&["--diff"])),
-            Err("missing value for --diff".to_string())
+            Err("missing value for --diff; pass a value right after it".to_string())
         );
         assert_eq!(
             check(&args(&["--mode"])),
-            Err("missing value for --mode".to_string())
+            Err("missing value for --mode; pass a value right after it".to_string())
         );
     }
 
@@ -3418,15 +3418,15 @@ mod tests {
     fn check_requires_values_for_all_value_flags() {
         assert_eq!(
             check(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             check(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
         assert_eq!(
             check(&args(&["--format"])),
-            Err("missing value for --format".to_string())
+            Err("missing value for --format; pass a value right after it".to_string())
         );
     }
 }
