@@ -1181,7 +1181,12 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
     // routed CI jobs set it, so `cargo build` writes there.
     ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
-        preparation::build(&["build", "-p", "ripr"])
+        // The build output goes straight to the console here, so the retry
+        // cannot read why it failed; it is Windows-only and bounded.
+        crate::run::retry_while_binary_busy(
+            |_| true,
+            || preparation::build(&["build", "-p", "ripr"]),
+        )
     })
 }
 
