@@ -7313,6 +7313,36 @@ mod tests {
             "{cut}"
         );
 
+        // The count is the number dropped, not a flag: three writable
+        // packets under a bound of 1 omit two.
+        let mut three = vec![weakly_gripped_classified(), second_actionable_classified()];
+        let mut third = second_actionable_classified();
+        let seam = RepoSeam::new(
+            "src/shipping.rs",
+            "shipping::bulk_total",
+            SeamKind::PredicateBoundary,
+            40,
+            41,
+            "count >= bulk_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "count >= bulk_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        third.evidence.seam_id = seam.id().clone();
+        third.seam = seam;
+        third.evidence.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "bulk_threshold (equality boundary)".to_string(),
+            reason: "observed values do not include the equality-boundary case".to_string(),
+            flow_sink: None,
+        }];
+        three.push(third);
+        let (_, many) = render_pilot_packets(&three, pilot_bound(1))?;
+        assert_eq!(
+            many["limitations"][0]["actionable_packets_omitted"], 2,
+            "{many}"
+        );
+
         // Bound of 2 keeps both writable packets and cuts only the tail.
         let (_, tail_only) = render_pilot_packets(&subjects, pilot_bound(2))?;
         let limitation = &tail_only["limitations"][0];
