@@ -2,9 +2,11 @@
 //! behavior line no added line pairs with is base-side evidence on its owner,
 //! never nothing and never a candidate edit target.
 
+use super::deleted_lines::{guard_names_only_parameters, old_guard_view};
 use super::*;
 use crate::analysis::diff::ChangedLine;
 use crate::domain::SourceCurrentness;
+use std::collections::BTreeSet;
 
 const CART_TEST_PY: &str = "from src.cart import capped_total\n\n\ndef test_capped_total_stops_at_the_cap():\n    assert capped_total([80, 50]) == 100\n";
 
@@ -1167,11 +1169,7 @@ fn deleted_guard_block_an_observed_input_enters_stays_exposed() -> Result<(), St
     let classes = deleted_guard_classes("guard-entered", DISCOUNT_NEW, &tests, discount_block())?;
     assert_eq!(classes.len(), 1, "{classes:?}");
     for (expression, class) in &classes {
-        assert_ne!(
-            *class,
-            ExposureClass::WeaklyExposed,
-            "{expression} {classes:?}"
-        );
+        assert_eq!(*class, ExposureClass::Exposed, "{expression} {classes:?}");
     }
     Ok(())
 }
@@ -1200,11 +1198,7 @@ fn deleted_guard_block_fails_open_on_unreadable_or_changed_structure() -> Result
         let classes = deleted_guard_classes_with(label, source, DISCOUNT_TESTS, added, removed)?;
         assert!(!classes.is_empty(), "{label}");
         for (expression, class) in &classes {
-            assert_ne!(
-                *class,
-                ExposureClass::WeaklyExposed,
-                "{label}: {expression}"
-            );
+            assert_eq!(*class, ExposureClass::Exposed, "{label}: {expression}");
         }
     }
     Ok(())
@@ -1226,12 +1220,131 @@ fn deleted_guard_block_reads_a_conjunction_past_an_unreadable_conjunct() -> Resu
     }
     let computed = "from src.cart import apply_discount\n\n\ndef test_small():\n    amount = 100\n    assert apply_discount(amount * 30) == 3000\n";
     let classes = deleted_guard_classes("conjunction-computed", DISCOUNT_NEW, computed, removed)?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
     for (expression, class) in &classes {
-        assert_ne!(
-            *class,
-            ExposureClass::WeaklyExposed,
-            "{expression} {classes:?}"
-        );
+        assert_eq!(*class, ExposureClass::Exposed, "{expression} {classes:?}");
     }
     Ok(())
+}
+
+// F2 (#11889): constants resolve on the new side, so a guard that names a
+// module constant is refused rather than judged against the wrong value.
+#[test]
+fn deleted_guard_block_naming_a_changed_module_constant_fails_open() -> Result<(), String> {
+    let new_source = "LIMIT = 10000\n\n\ndef apply_discount(total, vip=False):\n    result = total\n    return result\n";
+    let removed = vec![
+        line(1, 1, "LIMIT = 10"),
+        line(6, 6, "    if total > LIMIT:"),
+        line(7, 6, "        result = total - 50"),
+    ];
+    let classes =
+        deleted_guard_classes_with("constant", new_source, DISCOUNT_TESTS, &[1], removed)?;
+    assert_eq!(classes.len(), 1, "{classes:?}");
+    assert_eq!(classes[0].1, ExposureClass::Exposed, "{classes:?}");
+    Ok(())
+}
+
+#[test]
+fn guard_names_only_parameters_is_a_closed_reading() {
+    let params = vec!["total".to_string(), "vip".to_string()];
+    assert!(guard_names_only_parameters("total > 1000 and vip", &params));
+    assert!(guard_names_only_parameters("total.real > 1e3", &params));
+    assert!(guard_names_only_parameters("total == 'LIMIT'", &params));
+    assert!(guard_names_only_parameters("not (total is None)", &params));
+    assert!(!guard_names_only_parameters("total > LIMIT", &params));
+    assert!(!guard_names_only_parameters("other > 1", &params));
+}
+
+fn old_view_line(
+    new_source: &str,
+    old_source: &str,
+    owner_name: &str,
+    removed: &[ChangedLine],
+    target: usize,
+    paired: &[usize],
+) -> Option<usize> {
+    let file = Path::new("src/cart.py");
+    let owners = super::owners_tests::extract_owners(file, new_source);
+    let owner = owners.iter().find(|owner| owner.name == owner_name)?;
+    let changed = ChangedFile {
+        path: file.to_path_buf(),
+        added_lines: Vec::new(),
+        removed_lines: removed.to_vec(),
+    };
+    let target = removed.iter().find(|candidate| candidate.line == target)?;
+    let paired: BTreeSet<usize> = paired.iter().copied().collect();
+    old_guard_view(
+        &changed,
+        target,
+        owner,
+        Some(new_source),
+        Some(old_source),
+        &paired,
+    )
+    .map(|view| view.line)
+}
+
+// F1 (#11889): a removed block header is read at its first body line only
+// when that body line is itself a deleted line no added line pairs with.
+#[test]
+fn deleted_guard_header_view_requires_an_unpaired_removed_body() {
+    let new = "def f(total):\n    return total\n";
+    let old = "def f(total):\n    if total > 1000:\n        total = total - 50\n    return total\n";
+    let removed = [
+        line(2, 2, "    if total > 1000:"),
+        line(3, 2, "        total = total - 50"),
+    ];
+    // Whole block deleted: the header is read at its body line.
+    assert_eq!(old_view_line(new, old, "f", &removed, 2, &[]), Some(3));
+    // The body is kept (dedented) and pairs by content: no view.
+    assert_eq!(old_view_line(new, old, "f", &removed, 2, &[3]), None);
+    // A body line itself is read at its own line.
+    assert_eq!(old_view_line(new, old, "f", &removed, 3, &[]), Some(3));
+}
+
+#[test]
+fn deleted_guard_header_view_covers_elif_else_while_nested_methods_and_decorators() {
+    for header in ["elif total > 5:", "else:", "while total > 5:"] {
+        let new = "def f(total):\n    if total > 1:\n        total = 1\n    return total\n";
+        let old = format!(
+            "def f(total):\n    if total > 1:\n        total = 1\n    {header}\n        total = 2\n    return total\n"
+        );
+        let removed = [
+            line(4, 4, &format!("    {header}")),
+            line(5, 4, "        total = 2"),
+        ];
+        assert_eq!(
+            old_view_line(new, &old, "f", &removed, 4, &[]),
+            Some(5),
+            "{header}"
+        );
+        assert_eq!(
+            old_view_line(new, &old, "f", &removed, 4, &[5]),
+            None,
+            "{header}"
+        );
+    }
+    // Nested: the inner header reads at its own body line.
+    let new = "def f(total):\n    if total > 1:\n        pass\n    return total\n";
+    let old = "def f(total):\n    if total > 1:\n        if total > 9:\n            total = 2\n        pass\n    return total\n";
+    let removed = [
+        line(3, 3, "        if total > 9:"),
+        line(4, 3, "            total = 2"),
+    ];
+    assert_eq!(old_view_line(new, old, "f", &removed, 3, &[]), Some(4));
+    // A method in a class and a decorated function resolve their own header.
+    let new = "class C:\n    def m(self, total):\n        return total\n";
+    let old = "class C:\n    def m(self, total):\n        if total > 1:\n            total = 2\n        return total\n";
+    let removed = [
+        line(3, 3, "        if total > 1:"),
+        line(4, 3, "            total = 2"),
+    ];
+    assert_eq!(old_view_line(new, old, "m", &removed, 3, &[]), Some(4));
+    let new = "@cache\ndef f(total):\n    return total\n";
+    let old = "@cache\ndef f(total):\n    if total > 1:\n        total = 2\n    return total\n";
+    let removed = [
+        line(3, 3, "    if total > 1:"),
+        line(4, 3, "        total = 2"),
+    ];
+    assert_eq!(old_view_line(new, old, "f", &removed, 3, &[]), Some(4));
 }

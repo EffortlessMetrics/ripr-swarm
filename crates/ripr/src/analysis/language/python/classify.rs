@@ -349,6 +349,9 @@ pub(super) struct OldGuardView<'a> {
     pub(super) owner: PythonOwner,
     pub(super) source: &'a str,
     pub(super) line: usize,
+    /// The owner's parameter names, the only identifiers an old-side guard may
+    /// name (constants resolve on the new side).
+    pub(super) parameters: Vec<String>,
 }
 
 /// Classify a change at a resolved owner.
@@ -900,6 +903,12 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                     &related_candidates,
                     &focus,
                 )
+                .filter(|gap| {
+                    super::deleted_lines::guard_names_only_parameters(
+                        &gap.discriminator,
+                        &view.parameters,
+                    )
+                })
             })
             .flatten()
     });

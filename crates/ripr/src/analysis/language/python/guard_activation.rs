@@ -1606,6 +1606,29 @@ mod tests {
     }
 
     #[test]
+    fn condition_holds_reads_a_false_conjunct_past_an_unreadable_one() {
+        // #11889: `A and B` is false whenever either side is, so an unreadable
+        // conjunct hides neither a false one before it nor after it; a true
+        // comparison beside an unreadable one stays undecided.
+        let source =
+            "def quote(total, force):\n    if force and total > 1000:\n        return 42\n";
+        let small = test_row(&[("total", "5")]);
+        let large = test_row(&[("total", "2000")]);
+        for condition in ["force and total > 1000", "total > 1000 and force"] {
+            assert_eq!(
+                condition_holds(condition, 1, &small, &[], source, 0),
+                Some(false),
+                "{condition}"
+            );
+            assert_eq!(
+                condition_holds(condition, 1, &large, &[], source, 0),
+                None,
+                "{condition}"
+            );
+        }
+    }
+
+    #[test]
     fn condition_holds_confirms_simple_true_comparison() {
         // The passing sibling of the #7874 controls: a plain true guard
         // still holds, so a discriminating row keeps its credit.

@@ -120,7 +120,14 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
         };
         // Evidence names the projected new-side coordinate, as the Rust
         // adapter records it; only the owner comes from a live neighbour.
-        let old_guard = old_guard_view(changed, removed, owner, new_source, old_side.source);
+        let old_guard = old_guard_view(
+            changed,
+            removed,
+            owner,
+            new_source,
+            old_side.source,
+            &paired,
+        );
         let site = ChangeSite {
             file: &changed.path,
             line: removed.new_side_line,
@@ -135,9 +142,9 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
             owners,
             tests,
             PythonNoBehaviorContext::default(),
-            // A deleted line is base-side evidence: the guarded-arm gate
-            // (#7392) reads new-side guards around a live line, so it stays
-            // off here.
+            // A deleted line is base-side evidence: the new-side guarded-arm
+            // gate (#7392) stays off here; its old-side reading rides in
+            // `site.old_guard` (#11889).
             None,
             Some(&mut finding_origins),
             Some(&mut *related),
@@ -213,12 +220,13 @@ pub(super) fn deleted_line_findings_with_value_origins<'a>(
 ///
 /// A removed `if`/`elif`/`while`/`else` header is read at its first removed
 /// body line, so its own condition is among the guards walked.
-fn old_guard_view<'a>(
+pub(super) fn old_guard_view<'a>(
     changed: &ChangedFile,
     removed: &ChangedLine,
     owner: &PythonOwner,
     new_source: NewSource<'_>,
     old_source: Option<&'a str>,
+    paired: &BTreeSet<usize>,
 ) -> Option<OldGuardView<'a>> {
     let new_source = new_source?;
     let old_source = old_source?;
@@ -280,11 +288,14 @@ fn old_guard_view<'a>(
         && removed_text.trim_end().ends_with(':');
     let mut line = removed.line;
     if opens_block {
+        // The body must itself be a deleted line no added line pairs with: a
+        // guard dropped while its body is kept (dedented) leaves that body
+        // running unguarded, which is not a deletion of the block.
         let next = changed
             .removed_lines
             .iter()
             .find(|candidate| candidate.line == removed.line + 1)?;
-        if indent_width(&next.text) <= indent_width(removed_text) {
+        if paired.contains(&next.line) || indent_width(&next.text) <= indent_width(removed_text) {
             return None;
         }
         line += 1;
@@ -296,7 +307,75 @@ fn old_guard_view<'a>(
         owner: old_owner,
         source: old_source,
         line,
+        parameters: header_parameter_names(new_trimmed),
     })
+}
+
+/// The parameter names of a single-line `def` header (`def f(self, a=1, *b,
+/// c: int = 2, **d):`).
+fn header_parameter_names(header: &str) -> Vec<String> {
+    let Some(open) = header.find('(') else {
+        return Vec::new();
+    };
+    let Some(close) = header.rfind(')') else {
+        return Vec::new();
+    };
+    let inner = header.get(open + 1..close).unwrap_or_default();
+    super::no_behavior::split_top_level_args(inner)
+        .into_iter()
+        .filter_map(|segment| {
+            let name = segment
+                .trim()
+                .trim_start_matches('*')
+                .split([':', '=', ' '])
+                .next()?
+                .trim();
+            (!name.is_empty() && name != "/").then(|| name.to_string())
+        })
+        .collect()
+}
+
+/// Whether every identifier in a guard condition is an owner parameter (or a
+/// keyword literal such as `None`). Module constants resolve on the new side,
+/// which an old-side guard cannot trust, so a condition that names anything
+/// else is refused (#11889).
+pub(super) fn guard_names_only_parameters(condition: &str, parameters: &[String]) -> bool {
+    let bytes = condition.as_bytes();
+    let mut index = 0;
+    let mut quote: Option<u8> = None;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(open) = quote {
+            if byte == open {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        if byte.is_ascii_alphanumeric() || byte == b'_' {
+            let start = index;
+            while index < bytes.len()
+                && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+            {
+                index += 1;
+            }
+            let word = &condition[start..index];
+            let after_dot = start > 0 && bytes[start - 1] == b'.';
+            let numeric = word.as_bytes()[0].is_ascii_digit();
+            let keyword = ["and", "or", "not", "in", "is", "None", "True", "False"].contains(&word);
+            if !(after_dot || numeric || keyword || parameters.iter().any(|name| name == word)) {
+                return false;
+            }
+            continue;
+        }
+        index += 1;
+    }
+    true
 }
 
 /// A removed line that ran behavior: not a comment, blank line, docstring,
