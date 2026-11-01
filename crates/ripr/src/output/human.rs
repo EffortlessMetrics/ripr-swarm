@@ -4598,9 +4598,7 @@ mod tests {
         );
 
         assert!(
-            digest.contains(
-                "  Check (observed, advisory): Related test reaches `applyDiscount`"
-            ),
+            digest.contains("  Check (observed, advisory): Related test reaches `applyDiscount`"),
             "expected observed-advisory label in digest; got:\n{digest}"
         );
         assert!(

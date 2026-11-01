@@ -4260,9 +4260,15 @@ fn weak_oracle_recommendation_uses_plain_words_for_every_kind() {
     }
     // Mock expectations have their own two wordings (no payload / payload).
     for payload in [None, Some("toHaveBeenCalledWith(5)")] {
-        let recommended =
-            weak_oracle_recommendation(&OracleKind::MockExpectation, "amount == threshold", payload);
-        assert!(recommended.contains("`amount == threshold`"), "{recommended}");
+        let recommended = weak_oracle_recommendation(
+            &OracleKind::MockExpectation,
+            "amount == threshold",
+            payload,
+        );
+        assert!(
+            recommended.contains("`amount == threshold`"),
+            "{recommended}"
+        );
         assert!(
             !recommended.to_lowercase().contains("discriminator"),
             "{payload:?}: {recommended}"
