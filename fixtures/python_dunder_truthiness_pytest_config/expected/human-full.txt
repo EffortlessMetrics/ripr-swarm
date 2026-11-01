@@ -37,22 +37,22 @@ Static exposure
 
 Evidence
   - reach weak: 1 heuristic Python test link(s) found for owner `__bool__`; relation is uncertain
-  - infection unknown: Static limit `dynamic_dispatch` prevents a safe Python infection claim
-  - propagation unknown: Static limit `dynamic_dispatch` prevents a safe Python propagation claim
+  - infection unknown: Static limit `decorator_indirection` prevents a safe Python infection claim
+  - propagation unknown: Static limit `decorator_indirection` prevents a safe Python propagation claim
   - observation weak: Strongest extracted Python oracle kind: `unknown` (rank 1)
-  - discriminator unknown: Static limit `dynamic_dispatch` prevents a safe Python discriminator claim
+  - discriminator unknown: Static limit `decorator_indirection` prevents a safe Python discriminator claim
   - related test tests/test_money.py:4 test_truthiness uses no oracle
 
 Weakness
-  - Static limit `dynamic_dispatch`: `Money.__bool__` is a dunder method Python invokes through operator or `with` syntax; related tests build `Money` instances, but the preview adapter does not bind the syntax to the instance or evaluate the assertion against the dunder's result, so it does not grade this edit as a gap
+  - Static limit `decorator_indirection`: related test `test_truthiness` uses `pytest.collection(python_functions)`; static evidence does not establish that its body runs and an assertion failure fails verification. Add an independent active test or inspect the activation condition
 
 Stop reasons:
-  - the path goes through a dynamic call ripr cannot resolve statically (dynamic_dispatch_unresolved)
-    Next: Call the changed owner on the concrete type in a test, not through a trait object, and assert on its result.
+  - ripr could not model this change well enough to classify it (static_probe_unknown)
+    Next: Add a test that calls the changed code and asserts an exact result.
 
 Static limitation
-  dynamic_dispatch — Dynamic dispatch (trait objects or virtual calls) hides which implementation runs, so ripr cannot statically resolve whether a test reaches this change.
-  Next: Add a test that calls the changed owner on the concrete type, not through a trait object or `dyn` value, and assert on its result.
+  decorator_indirection — A decorator wraps the changed owner, so ripr cannot statically confirm a test exercises the underlying behavior.
+  Next: Test the undecorated function directly, and assert on the decorated result with an exact value so a wrong result fails.
 Drill in:
   ripr explain --root <cwd>/fixtures/python_dunder_truthiness_pytest_config/input --diff <cwd>/fixtures/python_dunder_truthiness_pytest_config/diff.patch --mode fast probe:src_shapes_money.py:python_preview:aacb327b
   ripr context --root <cwd>/fixtures/python_dunder_truthiness_pytest_config/input --diff <cwd>/fixtures/python_dunder_truthiness_pytest_config/diff.patch --mode fast --at probe:src_shapes_money.py:python_preview:aacb327b

@@ -90,36 +90,36 @@ pub(super) fn python_guarded_arm_gap(
     // the verdict.
     let every_row_excluded = rows.iter().all(|row| {
         conditions.iter().any(|(condition_line, condition)| {
-            condition_holds(
+            super::guard_atoms::guard_condition_holds(
+                owner,
                 condition,
                 *condition_line,
                 row,
                 &constants,
                 owner_source,
-                owner.start_line,
             ) == Some(false)
         }) || early_exits.iter().any(|(condition_line, condition)| {
             // A row that satisfies an earlier `if X: return ...` leaves the
             // owner before the changed line, so the line never runs for it.
-            condition_holds(
+            super::guard_atoms::guard_condition_holds(
+                owner,
                 condition,
                 *condition_line,
                 row,
                 &constants,
                 owner_source,
-                owner.start_line,
             ) == Some(true)
         }) || else_chains.iter().any(|(condition_line, condition)| {
             // A row that satisfies any condition of the `if`/`elif` chain
             // owning an `else` arm takes an earlier arm, so the `else` arm
             // holding the changed line never runs for it (#9184).
-            condition_holds(
+            super::guard_atoms::guard_condition_holds(
+                owner,
                 condition,
                 *condition_line,
                 row,
                 &constants,
                 owner_source,
-                owner.start_line,
             ) == Some(true)
         })
     });
@@ -524,6 +524,13 @@ fn walk_guards(owner: &PythonOwner, owner_source: &str, changed_line: usize) -> 
             threshold = indent;
             continue;
         }
+        if let Some(iterable) = for_iterable(trimmed) {
+            // A `for` body runs only when the iterable yields an element; the
+            // atom reader evaluates `len(NAME) > 0` over a literal display.
+            conditions.push((index, format!("len({iterable}) > 0")));
+            threshold = indent;
+            continue;
+        }
         if is_block_opener(trimmed) {
             // `for` / `with` / `try` / `except` / `finally` / `def` / `class`
             // open blocks this reader adds no condition for; the walk
@@ -794,6 +801,19 @@ pub(super) fn leading_whitespace(text: &str) -> usize {
     text.chars().take_while(|ch| ch.is_whitespace()).count()
 }
 
+/// The bare-name iterable of a `for TARGET in NAME:` header.
+fn for_iterable(trimmed: &str) -> Option<&str> {
+    let header = trimmed.strip_prefix("for ")?.trim_end().strip_suffix(':')?;
+    let (_, iterable) = header.rsplit_once(" in ")?;
+    let iterable = iterable.trim();
+    (!iterable.is_empty()
+        && iterable
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && !iterable.starts_with(|ch: char| ch.is_ascii_digit()))
+    .then_some(iterable)
+}
+
 fn is_block_opener(trimmed: &str) -> bool {
     [
         "for ",
@@ -865,7 +885,7 @@ fn has_boolean_operator(text: &str) -> bool {
 
 /// True when `keyword` appears in `text` outside quotes, bounded by
 /// non-identifier characters (so `notary` does not match `not`).
-fn keyword_outside_quotes(text: &str, keyword: &str) -> bool {
+pub(super) fn keyword_outside_quotes(text: &str, keyword: &str) -> bool {
     let bytes = text.as_bytes();
     let keyword = keyword.as_bytes();
     let mut quote: Option<u8> = None;

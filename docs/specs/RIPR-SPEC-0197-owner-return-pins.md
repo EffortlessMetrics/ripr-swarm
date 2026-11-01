@@ -41,6 +41,8 @@ Linked issues:
 - #7266 (`ManifestInventory` skips a `[[test]]` whose `required-features`
   are unmet under cargo defaults; the same target stays live when those
   features are default-enabled)
+- #11810 (field assertions refuse a selected local literal macro export
+  imported through `#[macro_use]`, preserving existing benign imports)
 
 Linked PRs:
 
@@ -88,6 +90,33 @@ wrong in three shapes, each of which an earlier candidate credited:
    exit and never evaluates the changed `Ok(..)`.
 
 ## Behavior
+
+For field construction, a plain crate-root `#[macro_use] extern crate` that
+selects the assertion name withholds its assertion credit when every resolved
+consumer placement binds the same selected local library and that library root
+contains a literal unconditional `#[macro_export] macro_rules!` declaration of
+the name (#11810). The source crate identifier, dependency rename, library name
+and library path decide that binding; the extern crate's local alias does not.
+Exactly one plain `macro_use` selector is supported on that import.
+The refusal names the import and export location. It retains the existing
+analyzer-limit classification because the imported macro's behavior is not
+expanded. It supplies no functional or protection evidence.
+
+This witness enters the existing retained field-blocking rank and per-test
+query, so an earlier foreign glob cannot mask it. Withheld or incomplete scans
+remain blocking; a missing export witness never clears another ambiguity.
+The unchanged standard-alias, non-assertion proc-macro and glob-only field
+contracts remain. This bounded refusal does not establish that other external
+macro imports are safe: registry/git sources, conditional/generated exports,
+nested-module exports, reexports, ambiguous consumer placement and library roots
+larger than 256 KiB are outside the witness. Selected-snapshot source reads do
+not turn ignored dependency files into production subjects or bypass the native
+output-set input boundary.
+
+An unchanged-file index reuse refreshes this auxiliary manifest/export authority
+and its dependent assertion-site memos without reparsing or changing source roles.
+An exporter or selected manifest edit can therefore add or revoke this refusal
+even when the supplied indexed Rust files stay byte-for-byte unchanged.
 
 The bounded provider-backed proptest profile in RIPR-SPEC-0117 (#10839) may
 supply a generated test with a receipt for an ordinary-assertion interpretation.
@@ -3329,8 +3358,23 @@ same value and keeps its credit.
 
 Only unqualified owner calls supply separating inputs: a module-qualified or method call of the same name (`rival::thr(101)`) may be another function and is never counted by this path, and helper-transferred rows are not read (#9147). The shared producer's resolver (#9218, below) is more permissive for equality-boundary inputs; this path keeps its stricter rule.
 
-The shared owner call-value producer (`call_values_for_owner`, which feeds the equality-boundary reading `equality_observed`/`exact_rows` and the helper-transferred entry rows) reads a module-qualified free call of the owner's name only when its spelled path settles on the owner: through the same-named-rival call identity when the owner has rivals, otherwise through the owner-alone identity, which reads `crate`/`self`/`super`, in-file `mod` names, `use`-bound modules (`use crate::pricing; pricing::thr(..)`, renames included) and the owner crate's own name from another crate's test, and finally a path anchored at the owner's crate whose target module re-exports the owner through a top-level `pub use` item of the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file never counts), whose leaf is not renamed and whose path resolves to the owner's own module (`pub use internal::inner;`, `pub use crate::internal::*;`). Explicit leaves take precedence over globs (an explicit dependency export beats an owner glob and an explicit owner export beats a dependency glob), a dependency glob beside an owner glob is ambiguous and declines, and a leading `::`, an undeclared first segment, a nested-scope `use` or an unreadable tree does not qualify (`pub use other_dep::thr;`, `pub use other_dep::*;`). A `crate::` qualifier counts only from a test in the owner's own crate target. A bare call, a type-path call and a method call keep their reading; any other qualified spelling (`rival::thr(101)`, a module bound to something else, a dependency path, a glob-bound or unreadable qualifier, a `#[path]`-remapped package) supplies no input row (#9218).
+The shared owner call-value producer (`call_values_for_owner`, including
+helper-entry rows) admits a free call only when the shared call identity
+resolves it to the owner (#9218, #10046). Bare calls resolve through lexical
+imports as well as qualified paths. Workspace sibling functions with the same
+name cannot lend arguments merely because the owner has no same-package rival:
+the owner-alone identity still verifies the test's imports and workspace crate
+names. Qualified paths retain the existing module, crate-alias and verified
+owner re-export reading; type paths and methods retain their separate handling.
 
+Bare calls also consult memoized local pattern-binding facts at the captured
+call's file-absolute line. A local function pointer, closure, uninitialized
+binding later assigned a callable, or a loop/match/closure parameter cannot
+borrow an imported owner's identity. Raw identifiers share the normalized name.
+Bindings in another nested scope or on the same line as their initializer may
+conservatively withhold credit; this bounded scan does not model block lifetimes.
+A call before a later binding and a qualified owner call retain their reading.
+Withheld identity remains unknown, never a named missing-boundary gap.
 Grouped re-exports recurse through syntax-tree use groups, including nested
 `crate::{internal::{thr}}` leaves. A leading `::` belongs only to its leaf and
 descendants; an unrelated absolute sibling cannot invalidate a local owner leaf.
@@ -3341,13 +3385,20 @@ glob underneath it (#10047). The nested positive and dependency-glob, renamed-le
 and cfg controls are pinned in `returned_comparison_boundary` and the
 `rust_nested_use_*` fixtures; the conservative fixtures also join RIPR-SPEC-0108.
 These controls assert the infection-stage boundary summary and presence or absence
-of the exact `x == 101` input row, independently of final gap admission. On the
-current integrated main, the same-name path-qualifier false refusal (#10604)
-leaves all four fixture return-value findings `static_unknown` before and after
-the re-export repair and clears final missing-discriminator arrays. The fixtures
-use direct calls, not function values; their retained limitation is a known
-independent defect, not evidence that the qualifier names a function value.
+of the exact `x == 101` input row, independently of final gap admission. The
+three non-owner fixtures (`rust_nested_use_cfg`, `rust_nested_use_dependency_alias`,
+`rust_nested_use_dependency_glob`) classify their return-value findings
+`infection_unknown`, because call identity does not resolve to the owner;
+`rust_nested_use_owner` remains `static_unknown`. The fixtures use direct calls,
+not function values.
 
-Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). It does not cover the computed-input continuation (`computed_input_parameters`), which reads calls by name and stays unfiltered because it is conservative (it only ever unresolves a boundary), nor the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. The call-value producer and the chain entry rows are the only consumers filtered. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.
+Accepted tradeoff: a genuine owner call spelled through a path ripr cannot resolve is declined, so its input is not read and a missing-equality gap can stay open although a test exercises the boundary. That direction was chosen because crediting an unresolved qualified call lets another function's input suppress the gap and reads `Exposed` wrongly. The filter covers the direct owner calls and the helper-transferred entry rows (`chain_entry_rows`). The computed-input continuation (`computed_input_parameters`) applies the same admission (below). It does not cover the adaptor element-run reader (`sequence_runs`): dropping only some of its calls could remove the discriminating element and create an actionable gap. A re-export counts only from the owner crate target's own module file (a `main.rs`, `src/bin` or `tests` file is another crate) and only from a top-level `pub use` item whose leaf is not renamed; a `use` inside a nested module binds there and never counts.
 
-Out of scope: a bare call whose name an import binds to a rival (`use rival::thr; thr(5)`) keeps the name-only reading it always had, because the resolver filters only module-qualified spellings; resolving bare imports is a separate change.
+`computed_input_parameters` uses the same admission for direct owner calls and
+helper-entry calls, and its entry-row precondition uses `chain_entry_rows`.
+A refused call supplies neither an exact owner row nor a computed-owner
+parameter. When no admitted discriminator resolves the boundary, withheld call
+identity is `infection_unknown`, never a fabricated missing-equality gap.
+Returned comparisons retain the same unresolved boundary reason as predicates.
+An admitted exact boundary input still supplies the discriminator. The adaptor
+element-run reader (`sequence_runs`) is unchanged.

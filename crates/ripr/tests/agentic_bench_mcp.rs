@@ -1557,8 +1557,9 @@ fn b3a_mcp_negative_authority_pre_refresh() -> Result<(), String> {
     )?;
     require_failure_code(&reply, "b3a get_receipt_status", "attempt_not_found")?;
 
-    // Dispatch edge: unknown tools and unknown arguments are protocol
-    // errors, never silent nulls.
+    // Dispatch edge: an unknown tool is a protocol error; an unknown
+    // argument on a known tool is a typed `invalid_argument` tool failure
+    // (#11621); neither is a silent null.
     let reply = session.call("b3a-unknown-tool", "ripr_everything", json!({}))?;
     if protocol_error_code(&reply, "b3a unknown tool")? != -32602 {
         return Err(format!("b3a unknown tool: wrong protocol code: {reply}"));
@@ -1568,11 +1569,7 @@ fn b3a_mcp_negative_authority_pre_refresh() -> Result<(), String> {
         "ripr_workspace_status",
         json!({ "verbose": true }),
     )?;
-    if protocol_error_code(&reply, "b3a unknown argument")? != -32602 {
-        return Err(format!(
-            "b3a unknown argument: wrong protocol code: {reply}"
-        ));
-    }
+    require_failure_code(&reply, "b3a unknown argument", "invalid_argument")?;
 
     // Oversize twin: a large-but-under-input-cap argument fails closed
     // typed, with a bounded reply, and the session keeps serving.

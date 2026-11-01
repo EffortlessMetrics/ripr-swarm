@@ -1,0 +1,12 @@
+diff --git a/fxpatch/core.py b/fxpatch/core.py
+--- a/fxpatch/core.py
++++ b/fxpatch/core.py
+@@ -3,7 +3,7 @@
+ 
+ 
+ def price_requested(x):
+-    return x * 2
++    return x * 3
+ 
+ 
+ def price_setup(x):

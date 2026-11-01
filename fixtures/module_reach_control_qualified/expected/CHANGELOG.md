@@ -118,3 +118,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_control_qualified (10)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless module_reach_control_qualified --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

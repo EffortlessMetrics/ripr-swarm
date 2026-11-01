@@ -257,7 +257,7 @@ expires = "2027-06-30"
 kind = "method_call"
 container = "run_ripr"
 callee = "unwrap"
-receiver_fingerprint = "Command::new(bin).args(args).output()"
+receiver_fingerprint = "Command::new(bin) .args(args) .env(\"RIPR_PROGRESS\", \"1\") .output()"
 
 [allow.last_seen]
 line = 24

@@ -228,6 +228,28 @@ fn required_exit_contract(id: &str) -> Option<CommandExitContract> {
     }
 }
 
+/// How a command spells its JSON-result request (#11599).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum JsonFlag {
+    /// The command accepts neither `--json` nor `--format json`.
+    None,
+    /// `--json`.
+    Json,
+    /// `--format json` (and `--json` is rejected).
+    FormatJson,
+}
+
+impl JsonFlag {
+    /// The flag as typed, for the machine catalog.
+    pub(crate) const fn spelling(self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Json => Some("--json"),
+            Self::FormatJson => Some("--format json"),
+        }
+    }
+}
+
 /// Rich metadata for one catalog row, keyed by the catalog identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CommandMetadata {
@@ -250,8 +272,17 @@ pub(crate) struct CommandMetadata {
     /// Durable state this command mutates; required for
     /// [`CommandOperation::StateChanging`].
     pub(crate) state_target: Option<&'static str>,
-    /// Whether the command has a machine/JSON result document.
-    pub(crate) json_support: bool,
+    /// The exact spelling that makes this command print its JSON result
+    /// document, as a script must type it (#11599). `None` means the command
+    /// rejects both `--json` and `--format json` (a `ripr pilot --json` exits
+    /// 2). `cli_help_json_flags` checks the declared spelling only against
+    /// the command's own parsed help body (shared-body rows and four
+    /// documented gaps are exempt); no test invokes the spelling at runtime.
+    pub(crate) accepts_json_flag: JsonFlag,
+    /// Whether the command writes JSON artifact files (a fixed
+    /// `target/ripr/...json` path or `--out`), independent of any flag. Many
+    /// commands write artifacts yet accept no JSON flag.
+    pub(crate) writes_json_artifacts: bool,
     /// Example invocation synopsis, rendered in `help --all`.
     pub(crate) example: &'static str,
     /// Catalog paths a reader can reasonably run next.
@@ -360,7 +391,8 @@ const METADATA: &[CommandMetadata] = &[
         // machine catalog, so the row cannot claim otherwise — a consumer
         // consulting the catalog as authority would never try the one
         // command that produces it.
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr help <command>",
         next_routes: &["help", "doctor", "check"],
         stop_states: &[],
@@ -382,7 +414,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr capabilities --json",
         next_routes: &["doctor", "check"],
         stop_states: &[],
@@ -410,7 +443,8 @@ const METADATA: &[CommandMetadata] = &[
         state_target: Some(
             "ripr.toml, plus the repository's GitHub Actions workflow set with --ci, .mcp.json with --mcp, and a marked ripr section in the agent instruction files with --agents",
         ),
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr init",
         next_routes: &["doctor", "check"],
         stop_states: &[
@@ -435,7 +469,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr config",
         next_routes: &["config validate", "doctor"],
         stop_states: &[],
@@ -457,7 +492,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr config validate --root PATH",
         next_routes: &["doctor", "check"],
         stop_states: &["explicit refusal on invalid configuration"],
@@ -479,7 +515,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::FormatJson,
+        writes_json_artifacts: true,
         example: "ripr pilot --root .",
         next_routes: &["check", "repair", "doctor"],
         stop_states: &[
@@ -504,7 +541,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["a rendered receipt file with --out PATH"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::FormatJson,
+        writes_json_artifacts: false,
         example: "ripr outcome --before PATH --after PATH",
         next_routes: &["first-pr", "check"],
         stop_states: &["explicit refusal on malformed snapshots"],
@@ -529,7 +567,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/evidence-health.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr evidence-health --root PATH",
         next_routes: &["check", "reports index"],
         stop_states: &["explicit refusal on unreadable inputs"],
@@ -554,7 +593,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr review-comments --root . --base SHA --head SHA",
         next_routes: &["pr-comments plan", "annotations"],
         stop_states: &["explicit refusal on unresolvable revisions"],
@@ -576,7 +616,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr gate",
         next_routes: &["gate evaluate", "baseline create"],
         stop_states: &[],
@@ -601,7 +642,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr gate evaluate --pr-guidance PATH",
         next_routes: &["baseline create", "policy readiness", "zero status"],
         stop_states: &["no actionable gap"],
@@ -623,7 +665,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr baseline",
         next_routes: &["baseline create", "baseline diff"],
         stop_states: &[],
@@ -645,7 +688,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: Some(".ripr/gate-baseline.json, consumed by later baseline and zero runs"),
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr baseline create --from target/ripr/reports/gate-decision.json",
         next_routes: &["baseline diff", "gate evaluate"],
         stop_states: &["explicit refusal without --force when a baseline exists"],
@@ -667,7 +711,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/baseline-debt-delta.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr baseline diff --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json",
         next_routes: &["zero status", "policy readiness", "baseline update"],
         stop_states: &["explicit refusal on a missing or malformed baseline"],
@@ -689,7 +734,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: Some(".ripr/gate-baseline.json, rewritten for later runs"),
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr baseline update --baseline .ripr/gate-baseline.json --current target/ripr/reports/gate-decision.json --remove-resolved",
         next_routes: &["baseline diff", "zero status"],
         stop_states: &["explicit refusal without --force"],
@@ -711,7 +757,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr zero",
         next_routes: &["zero status", "policy readiness"],
         stop_states: &[],
@@ -736,7 +783,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/ripr-zero-status.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr zero status --delta target/ripr/reports/baseline-debt-delta.json",
         next_routes: &["policy readiness", "policy operations"],
         stop_states: &["explicit refusal on missing inputs"],
@@ -758,7 +806,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr policy",
         next_routes: &["policy readiness", "policy operations", "policy history"],
         stop_states: &[],
@@ -780,7 +829,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/policy-readiness.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr policy readiness",
         next_routes: &["policy operations", "policy promote"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -805,7 +855,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/policy-operations.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr policy operations --policy-readiness target/ripr/reports/policy-readiness.json",
         next_routes: &["policy history", "policy promote", "policy readiness"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -830,7 +881,8 @@ const METADATA: &[CommandMetadata] = &[
             ],
         },
         state_target: Some(".ripr/policy-history.jsonl, appended only when --out-jsonl names it"),
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr policy history --current target/ripr/reports/policy-operations.json",
         next_routes: &["policy operations", "policy readiness"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -852,7 +904,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/policy-promotion-baseline-check.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr policy promote --to baseline-check --operations target/ripr/reports/policy-operations.json",
         next_routes: &["policy readiness", "gate evaluate"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -874,7 +927,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/preview-promotion-typescript-boundary-gap.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr policy preview-promote --language typescript --class boundary_gap",
         next_routes: &["policy promote", "policy readiness"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -896,7 +950,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/waiver-aging.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr policy waiver-aging",
         next_routes: &["policy operations", "pr-ledger record"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -921,7 +976,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/suppression-health.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr policy suppression-health --root .",
         next_routes: &["policy operations", "policy readiness"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -943,7 +999,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr pr-ledger",
         next_routes: &["pr-ledger record"],
         stop_states: &[],
@@ -973,7 +1030,8 @@ const METADATA: &[CommandMetadata] = &[
         state_target: Some(
             "the append-only JSONL history (--out-jsonl), consumed by policy waiver-aging and policy history",
         ),
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr pr-ledger record --pr-number 123 --base SHA --head SHA --gate target/ripr/reports/gate-decision.json",
         next_routes: &[
             "policy waiver-aging",
@@ -999,7 +1057,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr pr-comments",
         next_routes: &["pr-comments plan"],
         stop_states: &[],
@@ -1021,7 +1080,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr pr-comments existing --root .",
         next_routes: &["pr-comments plan"],
         stop_states: &["only marked comments from github-actions[bot] count; others are ignored"],
@@ -1046,7 +1106,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/review/comment-publish-plan.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr pr-comments plan --pr-guidance target/ripr/review/comments.json",
         next_routes: &["review-comments", "pr-review front-panel"],
         stop_states: &["blocked operations stay visible in the plan instead of posting"],
@@ -1068,7 +1129,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr pr-comments requests --root . --pull-request 7 --head-sha 0123abcd",
         next_routes: &["pr-comments plan"],
         stop_states: &["an unsafe plan writes no requests and prints why"],
@@ -1090,7 +1152,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr pr-comments summary --root . --pull-request 7 --head-sha 0123abcd --raw -",
         next_routes: &[],
         stop_states: &[
@@ -1114,7 +1177,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr pr-review",
         next_routes: &["pr-review front-panel"],
         stop_states: &[],
@@ -1138,7 +1202,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/pr-review-front-panel.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr pr-review front-panel --pr-guidance target/ripr/review/comments.json",
         next_routes: &["pr-comments plan", "first-action"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -1160,7 +1225,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr coverage-grip",
         next_routes: &["coverage-grip frontier"],
         stop_states: &[],
@@ -1185,7 +1251,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/coverage-grip-frontier.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr coverage-grip frontier --ledger target/ripr/reports/pr-evidence-ledger.json",
         next_routes: &["zero status", "policy readiness"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -1207,7 +1274,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr assistant-loop",
         next_routes: &["assistant-loop proof", "assistant-loop health"],
         stop_states: &[],
@@ -1231,7 +1299,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/test-oracle-assistant-proof.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr assistant-loop proof --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json",
         next_routes: &["assistant-loop health", "pr-review front-panel"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -1253,7 +1322,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/assistant-loop-health.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json",
         next_routes: &["pr-review front-panel"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -1277,7 +1347,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/start-here.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr first-pr --root . --base BASE --head HEAD",
         next_routes: &["repair", "reports index"],
         stop_states: &["--check fails when the composed bundle is stale"],
@@ -1299,7 +1370,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/start-here.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr start-here [same options as first-pr]",
         next_routes: &["first-pr"],
         stop_states: &["--check fails when the composed bundle is stale"],
@@ -1321,7 +1393,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/first-useful-action.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr first-action --pr-guidance target/ripr/review/comments.json",
         next_routes: &["repair", "pr-review front-panel"],
         stop_states: &["no-action is an explicit terminal state"],
@@ -1343,7 +1416,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr reports",
         next_routes: &["reports index", "reports gap-ledger"],
         stop_states: &[],
@@ -1365,7 +1439,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/index.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr reports index",
         next_routes: &["reports gap-ledger", "pr-summary"],
         stop_states: &["explicit refusal on unreadable inputs"],
@@ -1390,7 +1465,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr reports ci-packet --root .",
         next_routes: &["reports ci-summary", "reports index", "first-pr"],
         stop_states: &[
@@ -1415,7 +1491,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr reports ci-summary --root . --base-ref main >> \"$GITHUB_STEP_SUMMARY\"",
         next_routes: &["reports index", "first-pr"],
         stop_states: &["a missing or malformed artifact prints its regeneration route"],
@@ -1437,7 +1514,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/gap-decision-ledger.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr reports gap-ledger --check-output target/ripr/reports/check.json",
         next_routes: &["plus", "swarm queue", "receipt write"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -1459,7 +1537,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/typescript-limitations.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr reports ts-limitations --check-output target/ripr/reports/check.json",
         next_routes: &["reports index"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -1481,7 +1560,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/reports/typescript-false-actionable-audit.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr reports ts-false-actionable --corpus target/ripr/reports/typescript-false-actionable-corpus.json",
         next_routes: &["reports index"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -1503,7 +1583,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr calibrate",
         next_routes: &["calibrate cargo-mutants"],
         stop_states: &[],
@@ -1530,7 +1611,8 @@ const METADATA: &[CommandMetadata] = &[
             ],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::FormatJson,
+        writes_json_artifacts: true,
         example: "ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH",
         next_routes: &["evidence-health", "reports index"],
         stop_states: &["explicit refusal on malformed inputs"],
@@ -1552,7 +1634,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr receipt",
         next_routes: &["receipt write", "receipt check"],
         stop_states: &[],
@@ -1574,7 +1657,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: true,
         example: "ripr receipt write --gap <canonical_gap_id> --verify-command \"cargo test\" --status passed",
         next_routes: &["receipt check", "repair"],
         stop_states: &[
@@ -1599,7 +1683,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr receipt check --path PATH",
         next_routes: &["receipt write", "reports gap-ledger"],
         stop_states: &["orphan_receipt and receipt_gap_mismatch refuse the receipt"],
@@ -1621,7 +1706,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr feedback",
         next_routes: &["feedback record", "feedback export"],
         stop_states: &[],
@@ -1646,7 +1732,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: true,
         example: "ripr feedback record --snapshot ID --reason CODE",
         next_routes: &["feedback export"],
         stop_states: &[
@@ -1674,7 +1761,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["--out PATH join JSON (stdout when --out is omitted)"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr feedback export --root .",
         next_routes: &["reports index"],
         stop_states: &[
@@ -1698,7 +1786,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr agent",
         next_routes: &["agent repair", "agent status"],
         stop_states: &[],
@@ -1723,7 +1812,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr agent repair --root . --seam-id ID --phase before",
         next_routes: &["agent status", "receipt write"],
         stop_states: &[
@@ -1747,7 +1837,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr agent status --root .",
         next_routes: &["agent repair", "agent review-summary"],
         stop_states: &[],
@@ -1772,12 +1863,16 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr repair [<item>] --root .",
         next_routes: &["continue", "status"],
         stop_states: &[
-            "several eligible seams print a bounded selection instead of starting",
-            "no eligible seam prints the setup or limitation action instead of starting",
+            "several eligible seams print a bounded selection instead of starting (stderr code several_eligible_seams)",
+            "no eligible seam prints the setup or limitation action instead of starting (stderr code no_eligible_seam)",
+            "an explicit item that names no seam (item_names_no_seam), several seams (item_names_several_seams), or a seam that is not repair-eligible (seam_not_repair_eligible) starts nothing",
+            "a start held by an uncommitted focused test file (start_refused_uncommitted_target) or with no test route (no_test_route) starts nothing",
+            "a bare `ripr repair` whose selector needs an explicit item (repair_needs_item) starts nothing",
         ],
         exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
         limitations: "records the before snapshot and packet for one subject; ripr never edits source files and never runs project verification from this command.",
@@ -1797,12 +1892,16 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr continue [--attempt ID] --root .",
         next_routes: &["status", "receipt write"],
         stop_states: &[
-            "a receipt-ready attempt reports already-complete; one that ended without a receipt refuses with exit 3",
-            "several current attempts print a bounded selection instead of continuing",
+            "a receipt-ready attempt reports already-complete and exits 0, with or without --attempt (the newest attempt when none is named); one that ended without a receipt refuses with exit 3 (stderr code attempt_ended_without_receipt, or attempt_completion_unconfirmed when no compliant receipt confirms it)",
+            "an attempt still awaiting the focused test edit refuses with exit 3 and code awaiting_edit; retry the same attempt after editing",
+            "an attempt that spent its after-phase retry budget refuses with exit 3 and code retry_budget_exhausted (terminal): start a fresh `ripr repair`",
+            "no current attempt (no_current_attempt) or several (ambiguous_attempts) starts nothing",
+            "an edit-cage violation exits 2 with code edit_cage_violation (attempt_stale or attempt_incomparable when HEAD moved or files cannot be compared): the attempt is terminal, start a fresh `ripr repair`",
         ],
         exit: EXIT_TYPED_REFUSAL_EMPTY_STDOUT,
         limitations: "records the after snapshot and composes static verification for one attempt; ripr never performs the edit and never runs project tests itself.",
@@ -1822,7 +1921,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr status --root .",
         next_routes: &["repair", "continue"],
         stop_states: &[],
@@ -1844,7 +1944,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: true,
         example: "ripr agent start --root . --seam-id ID",
         next_routes: &["agent brief", "agent packet"],
         stop_states: &[],
@@ -1866,7 +1967,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr agent brief --root . --diff PATH --json",
         next_routes: &["agent packet", "agent repair"],
         stop_states: &[],
@@ -1888,7 +1990,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr agent packet --root . --seam-id ID --json",
         next_routes: &["agent verify", "swarm queue"],
         stop_states: &[],
@@ -1910,7 +2013,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr agent card --root . --seam-id ID",
         next_routes: &["agent packet", "agent repair"],
         stop_states: &[],
@@ -1934,7 +2038,8 @@ const METADATA: &[CommandMetadata] = &[
         state_target: Some(
             "the owner file's inline test module or a new tests/ file, only when --write names it",
         ),
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr agent stub --root . --at src/lib.rs:12",
         next_routes: &["agent repair"],
         stop_states: &[],
@@ -1956,7 +2061,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr agent verify --root . --before before.json --after after.json --json",
         next_routes: &["agent verify-execute", "agent receipt"],
         stop_states: &[],
@@ -1978,7 +2084,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json",
         next_routes: &["agent receipt"],
         stop_states: &["refusal without --authorize and a matching authority"],
@@ -2000,7 +2107,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["--out PATH receipt JSON"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json",
         next_routes: &["receipt write"],
         stop_states: &[],
@@ -2022,7 +2130,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr agent review-summary --root .",
         next_routes: &["agent status", "pr-summary"],
         stop_states: &[],
@@ -2044,7 +2153,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr swarm",
         next_routes: &["swarm queue", "swarm ingest"],
         stop_states: &[],
@@ -2066,7 +2176,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr swarm queue --root .",
         next_routes: &["agent packet", "reports gap-ledger"],
         stop_states: &[
@@ -2090,7 +2201,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr swarm ingest --root . --result target/ripr/workflow/agent-result.json",
         next_routes: &["status", "swarm queue"],
         stop_states: &["missing verify evidence is never classified as success"],
@@ -2112,7 +2224,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr diff --root . --base REV --head HEAD --json",
         next_routes: &["check", "explain"],
         stop_states: &["explicit refusal on unresolvable revisions"],
@@ -2134,7 +2247,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["--write-artifact PATH reusable findings artifact"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: true,
         example: "ripr check --base REV",
         next_routes: &["explain", "context", "repair"],
         stop_states: &["explicit refusal when no diff can be resolved"],
@@ -2159,7 +2273,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr explain <finding-id|file:line> --base REV",
         next_routes: &["context", "check"],
         stop_states: &[],
@@ -2184,7 +2299,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr context --at <finding-id>",
         next_routes: &["explain", "repair"],
         stop_states: &[],
@@ -2206,7 +2322,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr doctor",
         next_routes: &["init", "config validate"],
         stop_states: &["missing tools print as skipped with the reason and do not fail the run"],
@@ -2228,7 +2345,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr lsp --stdio",
         next_routes: &["mcp", "doctor"],
         stop_states: &["server exits when the client disconnects"],
@@ -2250,7 +2368,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr cache",
         next_routes: &["cache status", "cache export", "cache clear"],
         stop_states: &[],
@@ -2272,7 +2391,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr cache status --json",
         next_routes: &["cache clear"],
         stop_states: &[],
@@ -2297,7 +2417,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr cache export --out NEW_DIRECTORY",
         next_routes: &["cache status"],
         stop_states: &[
@@ -2323,7 +2444,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["--dry-run prints the eviction plan without changing state"],
         },
         state_target: Some("the ripr cache root"),
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr cache clear --dry-run",
         next_routes: &["cache status"],
         stop_states: &["refusal without --force when entries would be removed"],
@@ -2351,7 +2473,8 @@ const METADATA: &[CommandMetadata] = &[
             ],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr pr-summary",
         next_routes: &["pr-evidence", "reports index"],
         stop_states: &["--check fails when the summary is stale"],
@@ -2373,7 +2496,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr annotations --check",
         next_routes: &["review-comments"],
         stop_states: &["a missing comments file yields empty output, not an error"],
@@ -2395,7 +2519,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/ripr/pr/repo-exposure.md", "target/ripr/pr/pr.diff"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr pr-evidence --base origin/main",
         next_routes: &["pr-summary", "impacted-evidence"],
         stop_states: &["unresolvable revisions are an explicit error"],
@@ -2417,7 +2542,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["target/xtask/impacted-evidence/latest.md"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr impacted-evidence --label ripr-targeted",
         next_routes: &["pr-evidence"],
         stop_states: &["--check fails when the outputs are stale"],
@@ -2443,7 +2569,8 @@ const METADATA: &[CommandMetadata] = &[
             ],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: true,
         example: "ripr plus --gap-ledger target/ripr/reports/gap-decision-ledger.json",
         next_routes: &["reports gap-ledger", "reports index"],
         stop_states: &[
@@ -2470,7 +2597,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &["--out PATH targeted-rerun report JSON (stdout when omitted)"],
         },
         state_target: None,
-        json_support: true,
+        accepts_json_flag: JsonFlag::Json,
+        writes_json_artifacts: false,
         example: "ripr rerun --changed-test PATH[::TEST_NODE]",
         next_routes: &["check", "receipt write"],
         stop_states: &["explicit refusal when the changed test cannot be resolved"],
@@ -2492,7 +2620,8 @@ const METADATA: &[CommandMetadata] = &[
             optional: &[],
         },
         state_target: None,
-        json_support: false,
+        accepts_json_flag: JsonFlag::None,
+        writes_json_artifacts: false,
         example: "ripr mcp --stdio",
         next_routes: &["lsp"],
         stop_states: &["server exits when the client disconnects"],
@@ -2946,7 +3075,7 @@ mod tests {
     }
 
     /// #5266: the catalog is the authority a machine consumer consults, so
-    /// the `help` row must not report `json_support: false` for the very
+    /// the `help` row must not report no JSON flag for the very
     /// route (`ripr help --json`, RIPR-SPEC-0190) that emits the catalog.
     /// Pinning it here keeps the row from drifting back behind the parser,
     /// which accepts `help --json` (`command.rs`).
@@ -2956,9 +3085,9 @@ mod tests {
             .iter()
             .find(|row| row.id == "cmd:help")
             .ok_or("cmd:help has no metadata row")?;
-        if !row.json_support {
+        if row.accepts_json_flag != JsonFlag::Json {
             return Err(
-                "cmd:help reports json_support: false while `ripr help --json` emits the \
+                "cmd:help must declare `--json` while `ripr help --json` emits the \
                  versioned machine catalog"
                     .to_string(),
             );
@@ -2979,16 +3108,17 @@ mod tests {
     }
 
     #[test]
-    fn pilot_row_reports_stdout_json_support() -> Result<(), String> {
+    fn pilot_row_declares_its_exact_json_spelling() -> Result<(), String> {
         // #7428: `ripr pilot --format json` emits the packet summary on stdout.
         let row = metadata()
             .iter()
             .find(|row| row.id == "cmd:pilot")
             .ok_or("cmd:pilot has no metadata row")?;
-        if !row.json_support {
+        // `pilot --json` exits 2: the catalog must not claim the other spelling.
+        if row.accepts_json_flag != JsonFlag::FormatJson {
             return Err(
-                "cmd:pilot reports json_support: false while `ripr pilot --format json` \
-                 emits the summary document"
+                "cmd:pilot must declare `--format json` (not `--json`): `ripr pilot \
+                 --format json` emits the summary document"
                     .to_string(),
             );
         }
@@ -3595,6 +3725,30 @@ mod tests {
         }
         if longest_catalog_prefix("zzz", &paths).is_some() {
             return Err("unknown prefix resolved".to_string());
+        }
+        Ok(())
+    }
+
+    /// #11597: the repair/continue `stop_states` (the `help --json` surface)
+    /// name every refusal code of the typed enum, so a new code cannot ship
+    /// without them.
+    #[test]
+    fn repair_and_continue_stop_states_name_every_refusal_code() -> Result<(), String> {
+        let stop_text = metadata()
+            .iter()
+            .filter(|row| {
+                row.example.starts_with("ripr repair ") || row.example.starts_with("ripr continue")
+            })
+            .flat_map(|row| row.stop_states.iter().copied())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for code in crate::app::task_first::RepairRefusalCode::ALL {
+            if !stop_text.contains(code.as_str()) {
+                return Err(format!(
+                    "repair/continue stop_states do not name `{}`",
+                    code.as_str()
+                ));
+            }
         }
         Ok(())
     }
