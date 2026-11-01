@@ -48,7 +48,7 @@
         {"kind":"return_value","text":"return 3","line":3}
       ],
       "evidence": ["owner: Ledger._ledger_pad", "owner_kind: method", "test_framework: pytest (test_render_ledger)", "test_verify_command: python -m pytest tests/test_ledger.py::test_render_ledger (test_render_ledger)", "related_test_relation: module_value_call (test_render_ledger)", "module_value_read: `Ledger._ledger_pad` 2 -> 3 through `ledger.render_ledger` fails `assert ledger.render_ledger() == \"|  |\"` (test_render_ledger)", "test_oracle: exact_value strong (test_render_ledger)"],
-      "missing": ["Related Python test reaches `_ledger_pad` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `_ledger_pad` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {

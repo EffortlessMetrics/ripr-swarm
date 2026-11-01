@@ -7316,7 +7316,7 @@ pub(crate) fn classify_resolved_owner(
             StageState::Yes,
             vec![format!(
                 // #7752: the article follows the oracle-kind label ("an `exact_value`").
-                "Related test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.",
+                "Related test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.",
                 owner.name,
                 crate::domain::indefinite_article(strongest_kind.as_str()),
                 strongest_kind.as_str()

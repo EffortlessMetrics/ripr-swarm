@@ -25,7 +25,7 @@ Start here:
     a repair packet
   Related test: tests/owners.test.ts:7 cart total smoke (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: replace or augment the smoke-only assertion with an
-    exact-value assertion for missing discriminator `return value == this.items.length + 1`; no
+    exact-value assertion for the missing check `return value == this.items.length + 1`; no
     actionable repair packet is emitted until verify, receipt, and edit-boundary fields are
     available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak

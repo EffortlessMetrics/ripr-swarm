@@ -113,10 +113,10 @@ pub(crate) fn weak_oracle_recommendation(
 ) -> String {
     match oracle_kind {
         OracleKind::Snapshot => format!(
-            "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         OracleKind::SmokeOnly => format!(
-            "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         OracleKind::MockExpectation => mock_payload_oracle.map_or_else(
                 || format!(
@@ -127,10 +127,10 @@ pub(crate) fn weak_oracle_recommendation(
                 ),
         ),
         OracleKind::BroadError => format!(
-            "TypeScript preview advisory: broad error evidence does not establish missing discriminator `{discriminator}`; add an exact payload to `toThrow` (string, object, or class reference) and no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: broad error evidence does not establish the missing check `{discriminator}`; add an exact payload to `toThrow` (string, object, or class reference) and no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         _ => format!(
-            "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
     }
 }
