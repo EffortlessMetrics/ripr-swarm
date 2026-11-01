@@ -1866,8 +1866,8 @@ mod trim_field_period_tests {
     #[test]
     fn strips_a_single_trailing_period() {
         assert_eq!(
-            trim_field_period("add a co-located test so a discriminator exists."),
-            "add a co-located test so a discriminator exists"
+            trim_field_period("add a co-located test so an assertion can notice if it is wrong."),
+            "add a co-located test so an assertion can notice if it is wrong"
         );
     }
 
