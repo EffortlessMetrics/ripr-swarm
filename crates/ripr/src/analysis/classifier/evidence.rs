@@ -2423,7 +2423,10 @@ fn assertion_text_with_local_initializers(
     assertion: &str,
     owner: &FunctionSummary,
 ) -> String {
-    let masked = mask_comments_and_strings(assertion);
+    // Only the compared operands are read: a trailing diagnostic argument is
+    // formatted after the comparison and never observes the local.
+    let operands = crate::analysis::extract::assertion_oracle_text(assertion);
+    let masked = mask_comments_and_strings(operands.as_deref().unwrap_or(assertion));
     let mut seen = BTreeSet::new();
     let mut text = assertion.to_string();
     let bytes = masked.as_bytes();
@@ -2445,12 +2448,14 @@ fn assertion_text_with_local_initializers(
         let reads_local = !after.starts_with(['(', '!', ':'])
             && !before.ends_with('.')
             && !before.ends_with("::")
-            && word.starts_with(|c: char| c.is_ascii_lowercase() || c == '_');
+            && word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_');
         if reads_local
             && seen.insert(word.to_string())
             && let Some(value) = expected_operand_value(index, test, word, owner)
         {
-            text.push(' ');
+            // A new line, so a trailing `// note` on the assertion cannot
+            // comment the initializer out.
+            text.push('\n');
             text.push_str(&value);
         }
         start = end;
@@ -3499,6 +3504,67 @@ mod tests {
             !forged.digest_matches(),
             "callee identity must be bound to semantic digest"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn local_initializers_join_only_compared_operands_and_survive_trailing_comments()
+    -> Result<(), String> {
+        use crate::analysis::extract::mask_comments_and_strings;
+        let root = std::env::temp_dir().join(format!("ripr-12056-locals-{}", std::process::id()));
+        let src = root.join("src");
+        std::fs::create_dir_all(&src).map_err(|error| error.to_string())?;
+        let file = src.join("lib.rs");
+        std::fs::write(
+            &file,
+            "pub fn reduce(t: u64) -> u64 { t }\nconst REDUCED: u64 = reduce(3);\npub fn owner(t: u64) -> u64 { t + 1 }\n\
+             #[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn probe() {\n\
+             let other = reduce(3);\n        assert_eq!(wrapper(), 4, \"other: {:?}\", other);\n\
+             assert_eq!(other, 3); // note\n    }\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let index = crate::analysis::facts::build_index(&root, &[file])?;
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "owner")
+            .ok_or("owner indexed")?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "probe")
+            .ok_or("test indexed")?;
+        let diagnostic = super::assertion_text_with_local_initializers(
+            &index,
+            test,
+            "assert_eq!(wrapper(), 4, \"other: {:?}\", other);",
+            owner,
+        );
+        assert!(
+            !diagnostic.contains("reduce("),
+            "a local read only by the diagnostic is not an observed value: {diagnostic}"
+        );
+        let commented = super::assertion_text_with_local_initializers(
+            &index,
+            test,
+            "assert_eq!(other, 3); // note",
+            owner,
+        );
+        assert!(
+            mask_comments_and_strings(&commented).contains("reduce("),
+            "the initializer survives a trailing comment: {commented}"
+        );
+        let constant = super::assertion_text_with_local_initializers(
+            &index,
+            test,
+            "assert_eq!(REDUCED, 3);",
+            owner,
+        );
+        assert!(
+            constant.contains("reduce("),
+            "a workspace constant is resolved like a local: {constant}"
+        );
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
         Ok(())
     }
 
