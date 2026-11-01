@@ -5779,6 +5779,10 @@ fn normalize_refusal_stderr(stderr: &str, root_arg: &str, drop_narration: bool) 
                         word.trim_end_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '-'));
                     if bare.starts_with("repair-attempt-") {
                         format!("<attempt>{}", &word[bare.len()..])
+                    } else if bare.len() == 7 && bare.bytes().all(|b| b.is_ascii_hexdigit()) {
+                        // The fixture repos commit at different times, so the
+                        // short HEAD hash differs between workspaces.
+                        format!("<head>{}", &word[bare.len()..])
                     } else {
                         word.to_string()
                     }
