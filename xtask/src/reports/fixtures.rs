@@ -9,8 +9,9 @@
 //! existing call sites (`dispatch.rs`, `dogfood.rs`, `fixture_contracts`,
 //! `evidence_promotion`, and `tests.rs`) compile unchanged.
 
+use super::fixture_workspace;
 use crate::no_panic::contains_word;
-use crate::run::{run_output_bytes, run_output_optional, run_output_owned_with_envs};
+use crate::run::{capture_process_output_in, run_output_bytes, run_output_optional};
 use crate::{
     collect_pr_changes, forbidden_static_terms, has_markdown_heading, json_escape, markdown_cell,
     normalize_path, read_text_lossy, ripr_debug_binary, ripr_debug_binary_in,
@@ -763,6 +764,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "release_denominator"
                     | "release_scope"
                     | "source_promotion"
+                    | "source_promotion_resolved_tree"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
                     | "work_portfolio"
@@ -862,6 +864,11 @@ pub(crate) struct FixtureRun {
 }
 
 impl FixtureRun {
+    #[cfg(test)]
+    pub(crate) fn check_json_path(&self) -> &Path {
+        &self.check_json
+    }
+
     #[cfg(test)]
     pub(crate) fn comparisons_all_match(&self) -> bool {
         self.comparisons.iter().all(|comparison| comparison.matches)
@@ -1057,6 +1064,27 @@ fn clear_fixture_cache(dir: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
+    // #3054: discard the fixture's cached facts before anything else, including
+    // the binary build. The clear is the runner's first owned effect, so a
+    // process blocked on Cargo's artifact lock has already cleared a stale
+    // cache and cannot later serve it to a binary built elsewhere.
+    clear_fixture_cache(&fixture_cache_dir(&fixture_name(path)?)?)?;
+    let binary = ripr_fixture_binary()?;
+    let mut workspace = fixture_workspace::FixtureWorkspace::create(path)?;
+    let result = run_fixture_outputs_isolated(path, &binary, workspace.root());
+    let cleanup = workspace.cleanup();
+    match (result, cleanup) {
+        (Ok(run), Ok(())) => Ok(run),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(cleanup)) => Err(format!("{error}; {cleanup}")),
+    }
+}
+
+fn run_fixture_outputs_isolated(
+    path: &Path,
+    binary: &str,
+    cwd: &Path,
+) -> Result<FixtureRun, String> {
     let name = fixture_name(path)?;
     if name == observation_tail_return::FIXTURE {
         observation_tail_return::validate(path)?;
@@ -1093,17 +1121,17 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
     let root = normalize_path(&input);
     let diff_file = normalize_path(&diff);
 
-    // #3054: clear before the first surface, then let all three share the warm
-    // entry. The clear must happen here, next to the runs it governs, so no
-    // command entry point can reach the fixture corpus without it.
+    // #3054: `run_fixture_outputs` cleared this cache before the binary build;
+    // all three surfaces now share the warm entry.
     let cache_dir = fixture_cache_dir(&name)?;
-    clear_fixture_cache(&cache_dir)?;
 
-    let json = normalize_fixture_json_output(&run_fixture_check(
+    let json = normalize_fixture_json_output(&run_fixture_check_with_context(
+        binary,
         &root,
         &diff_file,
         FixtureCheckFormat::Json,
         Some(&cache_dir),
+        Some(cwd),
     )?);
     fs::write(&check_json, json).map_err(|err| {
         format!(
@@ -1112,11 +1140,13 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
         )
     })?;
 
-    let human = normalize_fixture_human_output(&run_fixture_check(
+    let human = normalize_fixture_human_output(&run_fixture_check_with_context(
+        binary,
         &root,
         &diff_file,
         FixtureCheckFormat::Human,
         Some(&cache_dir),
+        Some(cwd),
     )?);
     fs::write(&human_txt, human).map_err(|err| {
         format!(
@@ -1125,11 +1155,13 @@ pub(crate) fn run_fixture_outputs(path: &Path) -> Result<FixtureRun, String> {
         )
     })?;
 
-    let human_full = normalize_fixture_human_output(&run_fixture_check(
+    let human_full = normalize_fixture_human_output(&run_fixture_check_with_context(
+        binary,
         &root,
         &diff_file,
         FixtureCheckFormat::HumanFull,
         Some(&cache_dir),
+        Some(cwd),
     )?);
     fs::write(&human_full_txt, human_full).map_err(|err| {
         format!(
@@ -1404,6 +1436,17 @@ pub(crate) fn run_fixture_check(
     cache_dir: Option<&Path>,
 ) -> Result<String, String> {
     let binary = ripr_fixture_binary()?;
+    run_fixture_check_with_context(&binary, root, diff_file, format, cache_dir, None)
+}
+
+fn run_fixture_check_with_context(
+    binary: &str,
+    root: &str,
+    diff_file: &str,
+    format: FixtureCheckFormat,
+    cache_dir: Option<&Path>,
+    cwd: Option<&Path>,
+) -> Result<String, String> {
     let mut args = vec![
         "check".to_string(),
         "--root".to_string(),
@@ -1428,14 +1471,26 @@ pub(crate) fn run_fixture_check(
         .iter()
         .map(|(key, value)| (*key, value.as_str()))
         .collect::<Vec<_>>();
-    match cache_dir {
-        Some(dir) => {
-            let value = dir.to_string_lossy().into_owned();
-            envs.push((FIXTURE_CACHE_DIR_ENV, &value));
-            envs.push(("RAYON_NUM_THREADS", "1"));
-            run_output_owned_with_envs(&binary, &args, &envs)
-        }
-        None => run_output_owned_with_envs(&binary, &args, &envs),
+    let cache_value = cache_dir.map(|dir| dir.to_string_lossy().into_owned());
+    if let Some(value) = cache_value.as_deref() {
+        envs.push((FIXTURE_CACHE_DIR_ENV, value));
+        envs.push(("RAYON_NUM_THREADS", "1"));
+    }
+    // The child resolves relative paths from `cwd` when given; the directory is set on the child
+    // only, because the fixture runs are rayon-parallel and share this process.
+    let output = capture_process_output_in(binary, &args, cwd, &[], &[], &envs)
+        .map_err(|error| error.message)?;
+    let text = String::from_utf8_lossy(&output).into_owned();
+    // An isolated workspace mirrors the repository layout, so the paths the child prints under it
+    // are the same `fixtures/<name>/...` paths a checkout run prints under the repository root.
+    // Rewrite the workspace prefix to the repository prefix so the shared `<cwd>/` projection and
+    // the checked-in goldens stay machine- and workspace-independent.
+    match (cwd, std::env::current_dir()) {
+        (Some(workspace), Ok(repository)) => Ok(text.replace(
+            &format!("{}/", normalize_path(workspace)),
+            &format!("{}/", normalize_path(&repository)),
+        )),
+        _ => Ok(text),
     }
 }
 

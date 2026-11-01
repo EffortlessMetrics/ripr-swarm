@@ -6,6 +6,8 @@ mod check_fast_strict;
 mod front_door;
 #[path = "precommit_v2.rs"]
 mod precommit_v2;
+#[path = "release_server_invocation.rs"]
+mod release_server_invocation;
 
 fn print_help_route(args: &[String]) -> Result<(), String> {
     match args {
@@ -54,6 +56,8 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
             super::windows_advisory::run_isolated(&args)
         }
         XtaskCommand::EvalSweep(args) => super::reports::eval_sweep(&args),
+        XtaskCommand::FirstHour(args) => super::reports::first_hour(&args),
+        XtaskCommand::FirstHourControls(args) => super::reports::first_hour_controls(&args),
         XtaskCommand::SuggestedFixes => super::suggested_fixes(),
         XtaskCommand::Precommit => precommit_v2::run(),
         XtaskCommand::CiPolicy => precommit_v2::run_policy(),
@@ -143,21 +147,55 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::ReleaseControl(args) => super::reports::release_control(&args),
         XtaskCommand::ReleaseDenominator(args) => super::reports::release_denominator(&args),
         XtaskCommand::ReleaseLedger(args) => super::reports::release_ledger(&args),
-        XtaskCommand::SourcePromotion(args) => super::reports::source_promotion(&args),
+        XtaskCommand::SourcePromotion(args)
+            if super::reports::source_promotion_admission_workflow_handles(&args) =>
+        {
+            super::reports::source_promotion_admission_workflow(&args)
+        }
+        XtaskCommand::SourcePromotion(args)
+            if super::reports::source_promotion_control_handles(&args) =>
+        {
+            super::reports::source_promotion_control(&args)
+        }
+        XtaskCommand::SourcePromotion(args)
+            if super::reports::source_promotion_network_policy_resolution_handles(&args) =>
+        {
+            super::reports::source_promotion_network_policy_resolution(&args)
+        }
+        XtaskCommand::SourcePromotion(args)
+            if args.first().map(String::as_str)
+                == Some(super::reports::SOURCE_PROMOTION_VALIDATE_RESOLVED_TREE_SUBCOMMAND) =>
+        {
+            super::reports::source_promotion_validate_resolved_tree(&args)
+        }
+        XtaskCommand::SourcePromotion(args)
+            if args.first().map(String::as_str) == Some("preflight") =>
+        {
+            super::reports::source_promotion(&args)
+        }
+        XtaskCommand::SourcePromotion(args) => super::reports::source_promotion_verify(&args),
         XtaskCommand::BackSync(args) => super::reports::back_sync(&args),
         XtaskCommand::ReleaseScope(args) => super::reports::release_scope(&args),
-        XtaskCommand::ReleaseServerArchive(args) => {
-            super::reports::release_server::release_server_archive(&args)
+        XtaskCommand::CiDocsOnly(args) => super::ci_docs_only(&args),
+        XtaskCommand::CiRoutedRustPlan(args) => super::ci_routed_rust_plan(&args),
+        XtaskCommand::CiRecordCommand(args) => super::ci_record_command(&args),
+        XtaskCommand::CiChildReceipt(args) => super::ci_child_receipt(&args),
+        XtaskCommand::CiRoutedRustResult(args) => super::ci_routed_rust_result(&args),
+        XtaskCommand::ReleaseServerArchive(args) => release_server_invocation::archive(&args),
+        XtaskCommand::ReleaseServerManifest(args) => release_server_invocation::manifest(&args),
+        XtaskCommand::ReleaseFinalServerSubjects(args) => {
+            super::reports::release_final_subjects::release_final_server_subjects(&args)
         }
-        XtaskCommand::ReleaseServerManifest(args) => {
-            super::reports::release_server::release_server_manifest(&args)
+        XtaskCommand::ReleaseDistributionCatalog(args) => {
+            super::reports::distribution_catalog::release_distribution_catalog(&args)
         }
         XtaskCommand::ReleaseBindServerDescriptor(args) => {
             super::reports::release_server::release_bind_server_descriptor(&args)
         }
-        XtaskCommand::ReleaseUploadAssets(args) => {
-            super::reports::release_server::release_upload_assets(&args)
+        XtaskCommand::ReleaseUploadVsix(args) => {
+            super::reports::release_vsix::release_upload_vsix(&args)
         }
+        XtaskCommand::ReleaseUploadAssets(args) => release_server_invocation::upload(&args),
         XtaskCommand::TargetedTestOutcome(args) => super::reports::targeted_test_outcome(&args),
         XtaskCommand::MutationCalibration(args) => super::reports::mutation_calibration(&args),
         XtaskCommand::BunUbCalibration(args) => super::reports::bun_ub_calibration(&args),
@@ -272,10 +310,11 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         }
         XtaskCommand::QualifyPythonWheelhouse(args) => super::qualify_python_wheelhouse(&args),
         XtaskCommand::VscodeCompile => super::vscode_compile(),
-        XtaskCommand::VscodePackage => super::vscode_package(),
         XtaskCommand::VscodeVerifyVsix(args) => super::vscode_verify_vsix(&args),
+        XtaskCommand::VscodePackage(args) => super::vscode_package(&args),
         XtaskCommand::VscodeTest => super::vscode_test(),
         XtaskCommand::VscodeTestE2e => super::vscode_test_e2e(),
+        XtaskCommand::DroidAdmit(args) => super::droid_admit::droid_admit(&args),
         XtaskCommand::Package => {
             super::run("cargo", &["package", "-p", "ripr", "--list"]).map(|_| ())
         }

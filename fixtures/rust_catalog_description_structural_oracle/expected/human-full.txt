@@ -1,0 +1,42 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_catalog_description_structural_oracle/input
+
+Summary: 1 changed behavior(s) checked: 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
+  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
+  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
+  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
+  unsuppressed = not hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+INFO ./src/lib.rs:11
+  id: probe:src_lib.rs:return_value:90200739
+
+Changed
+  before: "checks catalog consistency".to_string()
+  after:  "verifies catalog consistency".to_string()
+
+Change type
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
+  owner:  src/lib.rs::default_check_description
+  gap id (for scripts): gap:rust:src/lib.rs:default_check_description:return_value:return_value:lit766572696669657320636174616c6f6720636f6e73697374656e6379.to_string
+
+Static exposure
+  exposed (info, confidence 1.00)
+
+Evidence
+  - reach yes: Related tests appear to reach default_check_description: catalog_with_single_consistent_entry_has_no_violations
+  - infection yes: Reachable tests can plausibly activate this changed behavior
+  - propagation yes: Complete propagation witness reaches returned value: "verifies catalog consistency".to_string()
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator yes: Strong oracle found: exact value or pattern assertion
+  - local flow reaches returned value: "verifies catalog consistency".to_string() (line 11)
+  - related test tests/catalog.rs:6 catalog_with_single_consistent_entry_has_no_violations uses strong exact value oracle: assert_eq!( entry_description_violations(&catalog), Vec::<String>::new() );
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_catalog_description_structural_oracle/input --diff <cwd>/fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:90200739
+  ripr context --root <cwd>/fixtures/rust_catalog_description_structural_oracle/input --diff <cwd>/fixtures/rust_catalog_description_structural_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:90200739

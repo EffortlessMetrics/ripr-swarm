@@ -86,7 +86,15 @@ upload because repository secrets are unavailable.
 
 ### Validate locally
 
-To generate coverage and inspect artifacts locally:
+To generate coverage and inspect artifacts locally, run the same supported
+recipe as `.github/workflows/coverage.yml`: export the instrumentation
+environment first, clean after that environment, run a plain instrumented
+build and plain test run, then report. The explicit absolute
+`RIPR_TEST_BINARY` binds the analyzer-consuming xtask tests to the actual
+instrumented executable; a configured coverage target that does not name the
+instrumented analyzer fails closed instead of substituting an ordinary
+binary. `report` takes no build flags and, at this virtual workspace root,
+covers all members even without `--workspace`.
 
 ```bash
 cargo build -p ripr

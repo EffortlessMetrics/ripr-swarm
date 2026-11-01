@@ -71,7 +71,6 @@ pub enum ripr::lsp::diagnostic_budget::DiagnosticBudgetEligibility
 pub enum ripr::lsp::diagnostic_budget::DiagnosticBudgetError
 pub enum ripr::lsp::diagnostic_budget::DiagnosticOverflowReason
 pub enum ripr::lsp::diagnostic_budget::OmittedDiagnosticReason
-
 # CLI exit-code contract (swarm/q3-exit-codes): owner cli; reason:
 # intentional public error type returned by `ripr::cli::run`; carries the
 # exit-code contract (Failure -> 2, Decision -> 3, Interrupted -> 130) documented in
@@ -149,7 +148,6 @@ pub mod ripr::mcp
 # owned-subprocess authority consumed by the `xtask` bounded runners so there
 # is exactly one Job Object process-owner implementation; covered_by:
 # cargo test -p ripr --lib process_owner, cargo xtask check-public-api.
-
 pub mod ripr::process_owner
 pub struct ripr::process_owner::OwnedProcess
 pub mod ripr::output
@@ -436,3 +434,23 @@ pub use ripr::output::json::render_context_packet
 pub use ripr::provider_contract::*
 pub use ripr::reject_pr_evidence_error_packet
 pub use ripr::render_check
+pub const ripr::review_input::REVIEW_ANALYZER_GENERATION
+pub const ripr::review_input::REVIEW_INDEX_MAX_BYTES
+pub const ripr::review_input::REVIEW_INDEX_MAX_ENTRIES
+pub const ripr::review_input::REVIEW_INDEX_SCHEMA_VERSION
+pub const ripr::review_input::REVIEW_INPUT_PROJECTION_LIMIT
+pub const ripr::review_input::REVIEW_INPUT_SCHEMA_VERSION
+pub const ripr::review_input::REVIEW_INPUT_SELECTION_POLICY
+pub const ripr::review_input::REVIEW_INPUT_SELECTION_POLICY_VERSION
+pub fn ripr::config::load_for_root
+pub fn ripr::config::repo_exposure_config_identity_hash
+pub fn ripr::review_input::canonical_projection
+pub fn ripr::review_input::canonical_projection_all
+pub fn ripr::review_input::canonical_projection_from_index
+pub fn ripr::review_input::canonical_root_identity
+pub fn ripr::review_input::projection_summary
+pub mod ripr::review_input
+pub struct ripr::review_input::CanonicalFindingIndexV1
+pub struct ripr::review_input::ReviewFindingProjectionV1
+pub struct ripr::review_input::ReviewInputV1
+pub struct ripr::review_input::ReviewRelatedTestProjectionV1

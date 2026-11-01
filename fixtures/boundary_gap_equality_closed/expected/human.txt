@@ -1,0 +1,40 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/boundary_gap_equality_closed/input
+
+Summary: 1 changed behavior checked: 1 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path. 1 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+Start here:
+  State: no gap selected for repair
+  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation
+  File: ./src/lib.rs:2
+  Static exposure: exposed (severity: info, confidence 1.00)
+  Gap ID (for scripts): gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
+  Changed behavior: amount >= discount_threshold
+  Related test (1 of 3 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach discounted_total: below_threshold_has_no_discount, exact_threshold_discounts, far_above_threshold_discounts
+    - infection yes: Detected related test input at the changed boundary
+    - 16 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/boundary_gap_equality_closed/input --diff <cwd>/fixtures/boundary_gap_equality_closed/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/boundary_gap_equality_closed/input --diff <cwd>/fixtures/boundary_gap_equality_closed/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

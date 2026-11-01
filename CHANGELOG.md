@@ -2071,7 +2071,101 @@ are scoped or reviewed.
 - `ripr` now evaluates a match guard that resolves exactly over the bound inputs — one comparison whose operands each evaluate through the shared literal evaluator, or `str::len()` on an exact string — and selects the arm only when the guard is true. A guard that does not evaluate still refuses the whole match, and the wire value is unchanged. Earns the `spec-b-0164-guard-arm` corpus row (#10304).
 - Static limitations and stop reasons now carry a concrete `Next:` step in `ripr check --format human-full` and `ripr explain`, enforced for every variant by exhaustive matches and per-variant tests (RIPR-SPEC-0319, #9438).
 
+- Reconcile 0.11 RC guidance with dated public tag/release state, historical
+  conditional RC1 authority and tentative next-cut intent. Require exact
+  candidate-bound authority and qualification; ordinary source integration
+  does not authorize a cut. (#1848, ripr)
+
+- Release workflow supply-chain hardening: `release-server-binaries.yml` now assembles the final subjects read-only, attests them with GitHub build provenance in a dedicated OIDC-only job, verifies every attestation, and only then uploads in a job that holds `contents: write` and no OIDC token; third-party actions in CI workflows are pinned to full commit SHAs and `badge-endpoints.yml` scopes its write permissions to its one job. This is a step toward #1502 and does not close it (no typed inventory/receipt yet).
+
+- Document staged public-to-swarm integration, qualification and return promotion;
+  route agent guidance through the same runbook and identify the existing
+  direct-J contract reconciliation without changing runtime gates (#1768).
+
+- Tightened release distribution catalog admission so schema-2 RC/stable catalogs must carry the canonical producer identity, and the Rust producer now rejects uppercase SHA-256 input before emitting a catalog that the closed VS Code parser would reject. (#1708, ripr)
+
+- Add `xtask release-final-server-subjects` to prepare the exact twelve existing
+  server upload subjects from canonical assembler output. The nonpublishing
+  inventory, provenance inputs and checksum list are bound by the terminal
+  preparation receipt; rejection retains diagnostics without successful files.
+  This does not attest, verify provenance, authorize uploads or close #1502.
+
+- Fix npm staging's tarball argument to use an explicit local `./dist/` path.
+  The real CLI transport test now runs the workflow's shell command from the
+  same relative directory layout and refuses Git transports during rehearsal. (#1798, ripr)
+
+- Prepare native/npm `0.11.0-alpha.2` with fresh same-source wheel, pip/uv and
+  npm qualification. Reuse the native builder, bind all seven executed jobs
+  and the exact native artifact, and preserve independent PyPI publication
+  authority. This preparation does not publish either registry or add platforms. (#1797, ripr)
+
+- Add manual, existing-package npm staging from exact source-main qualification
+  artifacts. Read-only admission checks native bytes, all four qualification
+  artifacts and installed-use denominators before an isolated stage-only OIDC
+  job. A real npm CLI loopback test checks unchanged tar transport; live trust,
+  staging, maintainer approval and public readback remain separate operations. (#1796, ripr)
+
+- Prepare a single native `@effortlessmetrics/ripr` npm alpha for Linux x86-64/glibc 2.34+,
+  preserving the exact published PyPI executable with separate product and
+  packaging provenance. Qualification covers local/global/npm exec/npx installs
+  without lifecycle scripts; this does not itself publish npm or add platforms.
+  Use the scoped package after npm's unscoped-name rejection, retaining the
+  installed `ripr` command and verifying scoped package paths during reinstall. (RIPR-SPEC-0370)
+
+- Prepare the first `ripr-rs` PyPI prerelease (`0.11.0a1`, native
+  `0.11.0-alpha.1`) as a native CLI wheel for Linux x86-64 with glibc 2.34 or
+  newer. Qualification checks audited wheel contents and isolated pip/uv
+  installation, Python preview use, and removal; other platforms are not
+  included in this initial scope. (#1791, ripr)
+- Add source-owned qualification and explicitly requested publication of the
+  exact admitted wheel, binding its source, successful run, version and digest.
+  Publication uses the registered PyPI trusted publisher without rebuilding;
+  qualification alone does not publish a release. (ripr#1791) (#1791, ripr)
+
+## 0.11.0 - Swarm promotion and fail-closed output hardening
+
+Release date: staged (unreleased).
+
+RIPR 0.11.0 promotes the swarm development line through the reviewed
+source join: a repository-governed Rust test-harness registry
+(`[analysis.test_harnesses]`, exact registrations only), Python
+repo-mode evidence, complete direct propagation witnesses, and the
+currentness-gated actionability surfaces. It supersedes the staged-only
+0.10.1 (no 0.10.1 tag or crate was published) and includes its bounded
+subprocess-adapter analysis.
+
+User-visible hardening on top of the join: generated shell renderers
+fail closed on unsupported tokens and withheld PowerShell forms
+(guidance instead of a misleading translation), same-fingerprint probe
+IDs are disambiguated within a run so suppressions track code, the
+VS Code managed server flow resolves an embedded distribution
+descriptor and binds its cache to the descriptor generation, and the
+Python repair-trust binding hashes the live driver image through
+`/proc/self/exe` on Linux/Android.
+
+Version plumbing is a single source of truth again: `crates/ripr`
+inherits the workspace package version, so the released binary
+identity matches the release metadata.
+
+## 0.10.1 - Bounded subprocess adapter analysis
+
+Release date: staged (unreleased).
+
+RIPR 0.10.1 adds a narrow, deny-by-default boundary for recognizing bounded
+allowlisted subprocess adapters as observable side effects during static
+analysis. The boundary preserves strict exposure behavior for dynamic, shell,
+unbounded, or otherwise unsupported subprocess shapes.
+
 ### Fixed
+
+- **Bounded subprocess adapter classification** (RIPR-SPEC-0112, #1454):
+  receipt-producing adapters with a literal allowlisted command, arguments,
+  timeout, captured output, cleanup, and explicit error handling can use the
+  existing `side_effect` probe family. Dynamic command names and shell-shaped
+  dispatch remain unclassified and continue through the conservative exposure
+  path.
+
+### Non-claims
 
 - Security: a repository can no longer seed `ripr check` with its own cache.
   The seam-fact, classified-seam and file-fact caches protect entries with an
@@ -6178,7 +6272,7 @@ are scoped or reviewed.
 
 ## 0.10.0 - Honest-by-construction evidence and downstream gate adoption
 
-Release date: 2026-06-15 (crates.io publication; the GitHub release draft for this version remains unfinalized).
+Release date: staged (unreleased).
 
 RIPR 0.10.0 hardens the central promise that evidence is only credited to a seam
 it actually observes. The headline is honesty-by-construction: across Rust,
@@ -6235,8 +6329,8 @@ badge, and distribution authority.
 ### Release themes
 
 - TypeScript/Bun bounded preview adapter (opt-in, advisory).
-- Perl strict actionability **model** (fixture-only / test-scoped — the adapter is `#[cfg(test)] mod perl;` and not production-routable yet; see Campaign 31, #1379).
-- Preview cards across every output surface (renderers exist; Perl cards project only from synthetic test findings until the production exporter/consumer bridge lands).
+- Perl strict actionability enforcement.
+- Preview cards across every output surface.
 - Diff-first changed-surface review.
 - Cache sharding and explicit large-repo cache limits.
 - No new authority: preview evidence does not emit public repair packets.
@@ -6266,18 +6360,6 @@ badge, and distribution authority.
 - Added preview cards to check JSON, human output, SARIF, GitHub annotations,
   and gap ledger Markdown, so preview evidence renders consistently on every
   surface without becoming a public repair packet.
-
-**Scope caveat (recorded retroactively for honesty, Campaign 31 #1379):** the
-Perl work in 0.9.0 is fixture-only and test-scoped. The adapter module is
-`#[cfg(test)] mod perl;` (`crates/ripr/src/analysis/language/mod.rs:25-26`),
-`lang-perl` is an empty Cargo feature not in `default`, the production path
-router recognizes no `.pm`/`.pl`/`.t`/`.psgi` extension, and the pipeline
-returns a fail-closed stub even with the feature on. The preview-card
-renderers are real production code, but they project only from synthetic test
-findings — no production Perl source can feed them until the
-`perl-lsp ripr-facts` exporter and the production `PerlAdapter` bridge land.
-Perl's support tier is `scaffold`, not `preview`; see
-[Support Tiers](docs/status/SUPPORT_TIERS.md).
 
 #### Diff-first review
 

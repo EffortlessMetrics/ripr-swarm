@@ -5619,6 +5619,47 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
             &dist.join("ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip.sha256"),
             "windows-sha\n",
         );
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+        for (target, executable, archive) in [
+            ("x86_64-pc-windows-msvc", "ripr.exe", "zip"),
+            ("x86_64-unknown-linux-gnu", "ripr", "tar.gz"),
+            ("aarch64-unknown-linux-gnu", "ripr", "tar.gz"),
+            ("x86_64-apple-darwin", "ripr", "tar.gz"),
+            ("aarch64-apple-darwin", "ripr", "tar.gz"),
+        ] {
+            write(
+                &root
+                    .join("target")
+                    .join(target)
+                    .join("release")
+                    .join(executable),
+                target,
+            );
+            let archive_args = vec![
+                "--version".to_string(),
+                "1.2.3".to_string(),
+                "--target".to_string(),
+                target.to_string(),
+                "--executable".to_string(),
+                executable.to_string(),
+                "--archive".to_string(),
+                archive.to_string(),
+            ];
+            release_server_archive_prebuilt(&archive_args)?;
+        }
+        let linux_sha =
+            super::sha256_file(&dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"))?;
+        let windows_sha =
+            super::sha256_file(&dist.join("ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip"))?;
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+            &format!("{linux_sha}\n"),
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip.sha256"),
+            &format!("{windows_sha}\n"),
+        );
         // Simulate a reused `dist/` from a pre-rename run: a stale legacy
         // `checksums.txt` must be cleaned up, never hashed into the new
         // sidecar, and never surfaced in the manifest.
@@ -5632,20 +5673,90 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
         ];
 
         super::release_server_manifest(&args)?;
+        super::release_server_manifest(&args)?;
 
         let manifest_path = dist.join("ripr-server-manifest-v1.2.3.json");
         let manifest_text = fs::read_to_string(&manifest_path)
             .map_err(|err| format!("read release manifest: {err}"))?;
         let manifest: Value = serde_json::from_str(&manifest_text)
             .map_err(|err| format!("parse release manifest: {err}"))?;
-        assert_eq!(manifest["version"], "1.2.3");
+        assert_eq!(manifest["product_version"], "1.2.3");
+        let assembly_receipt: Value = serde_json::from_str(
+            &fs::read_to_string(dist.join("ripr-server-assembly-v1.2.3.receipt.json"))
+                .map_err(|err| format!("read assembly receipt: {err}"))?,
+        )
+        .map_err(|err| format!("parse assembly receipt: {err}"))?;
+        assert_eq!(assembly_receipt["schema_version"], "0.2");
+        assert_eq!(assembly_receipt["version"], "1.2.3");
+        assert_eq!(assembly_receipt["disposition"], "assembled");
+        assert_eq!(assembly_receipt["publication_mutation_attempted"], false);
+        assert_eq!(assembly_receipt["placement_independent"], true);
+        assert_eq!(assembly_receipt["inputs"]["receipt_count"], 5);
+        assert_eq!(assembly_receipt["accepted_subject_count"], 5);
+        assert_eq!(manifest["schema_version"], "2");
+        assert_eq!(manifest["source_repository"], "EffortlessMetrics/ripr");
+        assert!(manifest["build_identity"]["repository"].is_string());
+        assert!(manifest["build_identity"]["candidate_sha"].is_string());
+        assert!(manifest["build_identity"]["candidate_tree"].is_string());
+        let generation = manifest["distribution_generation"]
+            .as_str()
+            .ok_or("manifest distribution_generation is not a string")?;
+        assert_eq!(generation.len(), 64);
+        assert!(
+            generation
+                .chars()
+                .all(|character| character.is_ascii_hexdigit()),
+            "distribution generation must be lowercase hex"
+        );
+        assert_eq!(assembly_receipt["distribution_generation"], generation);
+        let target_set = manifest["target_set"]["targets"]
+            .as_array()
+            .ok_or("manifest target_set.targets is not an array")?;
+        assert_eq!(target_set.len(), 5);
+        assert!(manifest["target_set"]["digest"].is_string());
+        assert_eq!(manifest["producer"]["schema"], "server-manifest/2");
+        // Placement independence: no absolute URL may enter manifest bytes.
+        assert!(
+            !manifest_text.contains("https://") && !manifest_text.contains("http://"),
+            "manifest bytes must not select a network origin"
+        );
         assert_eq!(
-            manifest["assets"]["x86_64-unknown-linux-gnu"]["url"],
-            "https://github.com/EffortlessMetrics/ripr/releases/download/v1.2.3/ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["receipt"]["schema_version"],
+            "0.2"
+        );
+        assert_eq!(
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["receipt"]["target"],
+            "x86_64-unknown-linux-gnu"
+        );
+        assert_eq!(
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["subject"],
+            "ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"
+        );
+        assert_eq!(
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["archive_format"],
+            "tar.gz"
+        );
+        assert!(manifest["assets"]["x86_64-unknown-linux-gnu"]["archive_size"].is_number());
+        assert_eq!(
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["sha256"],
+            linux_sha
+        );
+        assert_eq!(
+            manifest["assets"]["x86_64-unknown-linux-gnu"]["executable"]["path"],
+            "ripr"
+        );
+        assert!(manifest["assets"]["x86_64-unknown-linux-gnu"]["executable"]["sha256"].is_string());
+        assert_eq!(
+            manifest["assets"]["x86_64-pc-windows-msvc"]["subject"],
+            "ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip"
+        );
+        assert_eq!(
+            manifest["assets"]["x86_64-pc-windows-msvc"]["archive_format"],
+            "zip"
         );
         assert_eq!(
             manifest["assets"]["x86_64-pc-windows-msvc"]["sha256"],
-            "windows-sha"
+            windows_sha
         );
 
         let checksums = fs::read_to_string(dist.join("SHA256SUMS"))
@@ -5653,7 +5764,23 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
         assert!(checksums.contains("  ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"));
         assert!(checksums.contains("  ripr-server-v1.2.3-x86_64-pc-windows-msvc.zip"));
         assert!(checksums.contains("  ripr-server-manifest-v1.2.3.json"));
+        for line in checksums.lines() {
+            let (digest, _) = line
+                .split_once("  ")
+                .ok_or_else(|| format!("invalid SHA256SUMS line: {line}"))?;
+            assert_eq!(digest.len(), 64, "digest must be 64 hex characters: {line}");
+            assert!(
+                digest
+                    .chars()
+                    .all(|character| character.is_ascii_hexdigit()),
+                "digest must contain only hexadecimal characters: {line}"
+            );
+        }
         assert!(!checksums.contains(".sha256"));
+        assert!(
+            !checksums.contains(".receipt.json"),
+            "internal receipt evidence must not be published in SHA256SUMS"
+        );
         // Neither sidecar hashes itself or the stale legacy file.
         assert!(
             !checksums.contains("SHA256SUMS"),
@@ -5674,8 +5801,8 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
             .ok_or("manifest assets is not an object")?;
         assert_eq!(
             assets.len(),
-            2,
-            "only the two server targets are manifested"
+            5,
+            "all configured server targets are manifested"
         );
         assert!(!assets.contains_key("SHA256SUMS"));
         assert!(!assets.contains_key("checksums.txt"));
@@ -5684,44 +5811,61 @@ fn release_server_manifest_writes_assets_and_checksums() -> Result<(), String> {
 }
 
 #[test]
-fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result<(), String> {
+fn release_server_manifest_does_not_write_the_editor_distribution_descriptor() -> Result<(), String>
+{
+    // The placement-independent manifest carries product identity only, so it
+    // cannot supply the generation/URL rows the editor descriptor admits. The
+    // descriptor is bound exclusively by `release-bind-server-descriptor`
+    // against the receipted manifest digest; a manifest run must never write it.
     with_temp_cwd("release-server-descriptor", |root| {
         let dist = root.join("dist");
-        write(
-            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
-            "linux",
-        );
-        write(
-            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
-            "linux-sha\n",
-        );
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+        for target in super::release_server_target_set() {
+            let (executable, archive) = if target.contains("windows") {
+                ("ripr.exe", "zip")
+            } else {
+                ("ripr", "tar.gz")
+            };
+            write(
+                &root
+                    .join("target")
+                    .join(target)
+                    .join("release")
+                    .join(executable),
+                target,
+            );
+            release_server_archive_prebuilt(&[
+                "--version".to_string(),
+                "1.2.3".to_string(),
+                "--target".to_string(),
+                target.to_string(),
+                "--executable".to_string(),
+                executable.to_string(),
+                "--archive".to_string(),
+                archive.to_string(),
+            ])?;
+        }
 
-        let args = vec![
+        super::release_server_manifest(&[
             "--version".to_string(),
             "v1.2.3".to_string(),
             "--repository".to_string(),
             "EffortlessMetrics/ripr".to_string(),
-        ];
+        ])?;
 
-        super::release_server_manifest(&args)?;
-
+        assert!(
+            dist.join("ripr-server-manifest-v1.2.3.json").is_file(),
+            "the manifest run must have completed"
+        );
         let descriptor_path = root
             .join("editors")
             .join("vscode")
             .join("src")
             .join("serverDescriptor.ts");
-        let descriptor = fs::read_to_string(&descriptor_path)
-            .map_err(|err| format!("read editor distribution descriptor: {err}"))?;
-        let manifest_sha256 = super::sha256_file(&dist.join("ripr-server-manifest-v1.2.3.json"))?;
         assert!(
-            descriptor.contains(&format!(
-                "{{ generation: \"1.2.3\", manifestSha256: \"{manifest_sha256}\" }}"
-            )),
-            "the descriptor must embed the exact generation and the manifest's raw-byte digest"
-        );
-        assert!(
-            descriptor.contains("SERVER_DISTRIBUTION_DESCRIPTORS"),
-            "the descriptor must declare the editor's admitted-descriptor list"
+            !descriptor_path.exists(),
+            "release-server-manifest must not write the editor descriptor"
         );
         Ok(())
     })
@@ -5730,7 +5874,7 @@ fn release_server_manifest_embeds_the_editor_distribution_descriptor() -> Result
 #[test]
 fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), String> {
     use sha2::{Digest, Sha256};
-    let manifest = br#"{"version":"1.2.3","assets":{"x86_64-unknown-linux-gnu":{"url":"https://github.com/o/r/releases/download/v1.2.3/a.tar.gz","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let manifest = br#"{"schema_version":"2","product_version":"1.2.3","assets":{"x86_64-unknown-linux-gnu":{"subject":"ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
     let digest = format!("{:x}", Sha256::digest(manifest));
     let source = super::bound_descriptor_source("1.2.3", manifest, &digest)?;
     assert!(source.contains(&format!(
@@ -5763,8 +5907,13 @@ fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), Strin
     }
     for body in [
         &b"not json"[..],
-        br#"{"version":"1.2.3","assets":{}}"#,
-        br#"{"version":"1.2.3","assets":{"t":{"url":"https://x/a","sha256":"zz"}}}"#,
+        br#"{"schema_version":"2","product_version":"1.2.3","assets":{}}"#,
+        br#"{"schema_version":"2","product_version":"1.2.3","assets":{"t":{"subject":"ripr-server-v1.2.3-t.zip","sha256":"zz"}}}"#,
+        // Legacy v1 shape and a v1/v2 mixture must not bind.
+        br#"{"version":"1.2.3","assets":{"t":{"url":"https://x/ripr-server-v1.2.3-t.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#,
+        br#"{"schema_version":"2","version":"1.2.3","product_version":"1.2.3","assets":{"t":{"subject":"ripr-server-v1.2.3-t.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#,
+        br#"{"schema_version":"1","product_version":"1.2.3","assets":{"t":{"subject":"ripr-server-v1.2.3-t.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#,
+        br#"{"schema_version":"2","product_version":"1.2.3","assets":{"t":{"subject":"ripr-server-v1.2.3-other.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#,
     ] {
         let body_digest = format!("{:x}", Sha256::digest(body));
         if super::bound_descriptor_source("1.2.3", body, &body_digest).is_ok() {
@@ -5775,68 +5924,67 @@ fn bound_descriptor_requires_the_receipted_manifest_digest() -> Result<(), Strin
         return Err("a malformed digest must be refused".to_string());
     };
     assert!(err.contains("64 lowercase hex"), "{err}");
-    let http = br#"{"version":"1.2.3","assets":{"t":{"url":"http://x/a","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
-    let http_digest = format!("{:x}", Sha256::digest(http));
-    let Err(err) = super::bound_descriptor_source("1.2.3", http, &http_digest) else {
-        return Err("a non-https asset url must be refused".to_string());
+    let with_url = br#"{"schema_version":"2","product_version":"1.2.3","assets":{"t":{"subject":"ripr-server-v1.2.3-t.zip","url":"https://x/a","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let url_digest = format!("{:x}", Sha256::digest(with_url));
+    let Err(err) = super::bound_descriptor_source("1.2.3", with_url, &url_digest) else {
+        return Err("a placement url in a schema 2 asset must be refused".to_string());
     };
-    assert!(err.contains("non-https"), "{err}");
+    assert!(err.contains("placement url"), "{err}");
+    let nested = br#"{"schema_version":"2","product_version":"1.2.3","assets":{"t":{"subject":"a/ripr-server-v1.2.3-t.zip","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}"#;
+    let nested_digest = format!("{:x}", Sha256::digest(nested));
+    let Err(err) = super::bound_descriptor_source("1.2.3", nested, &nested_digest) else {
+        return Err("a path-bearing subject must be refused".to_string());
+    };
+    assert!(err.contains("relative subject"), "{err}");
     Ok(())
 }
 
 #[test]
 fn release_server_manifest_rejects_prerelease_version_before_descriptor() -> Result<(), String> {
-    // The editor descriptor admits a distribution generation
-    // (MAJOR.MINOR.PATCH) and the downloader only ever looks the generation
-    // up, so a prerelease or build-metadata version would embed a descriptor
-    // row no request can match and silently leave the packaged RC extension
-    // without a fallback.
-    // A four-component version can never match the downloader's
-    // three-component generation lookup either.
-    for version in ["1.2.3-rc.1", "1.2.3+meta", "1.2.3.4"] {
-        with_temp_cwd("release-server-descriptor-prerelease", |root| {
-            let dist = root.join("dist");
-            let asset_name = format!("ripr-server-v{version}-x86_64-unknown-linux-gnu.tar.gz");
-            write(&dist.join(&asset_name), "linux");
-            write(&dist.join(format!("{asset_name}.sha256")), "linux-sha\n");
+    // Server subjects are product identity: a channel-suffixed version is
+    // refused by the shared product-version admission before any manifest or
+    // editor descriptor can be written, so an RC placement can never embed a
+    // generation row no downloader request could match.
+    with_temp_cwd("release-server-descriptor-prerelease", |root| {
+        let dist = root.join("dist");
+        let version = "1.2.3-rc.1";
+        let asset_name = format!("ripr-server-v{version}-x86_64-unknown-linux-gnu.tar.gz");
+        write(&dist.join(&asset_name), "linux");
+        write(&dist.join(format!("{asset_name}.sha256")), "linux-sha\n");
 
-            let args = vec![
-                "--version".to_string(),
-                format!("v{version}"),
-                "--repository".to_string(),
-                "EffortlessMetrics/ripr".to_string(),
-            ];
+        let args = vec![
+            "--version".to_string(),
+            format!("v{version}"),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
 
-            let Err(err) = super::release_server_manifest(&args) else {
-                return Err(format!(
-                    "prerelease/build-metadata version `{version}` must not write the descriptor"
-                ));
-            };
-            assert!(
-                err.contains("MAJOR.MINOR.PATCH"),
-                "the error must name the required distribution generation form; got: {err}"
-            );
-
-            // The guard sits exactly at the descriptor boundary: the
-            // generation-keyed run artifacts exist, the descriptor does not.
-            assert!(
-                dist.join(format!("ripr-server-manifest-v{version}.json"))
-                    .exists(),
-                "the manifest write precedes the refused descriptor write"
-            );
-            let descriptor_path = root
-                .join("editors")
-                .join("vscode")
-                .join("src")
-                .join("serverDescriptor.ts");
-            assert!(
-                !descriptor_path.exists(),
-                "a prerelease/build-metadata version must never write the editor descriptor"
-            );
-            Ok(())
-        })?;
-    }
-    Ok(())
+        let Err(err) = super::release_server_manifest(&args) else {
+            return Err(format!(
+                "prerelease version `{version}` must not write a manifest or descriptor"
+            ));
+        };
+        assert!(
+            err.contains("must not carry a release-channel suffix"),
+            "the error must name the product-identity guard; got: {err}"
+        );
+        assert!(
+            !dist
+                .join(format!("ripr-server-manifest-v{version}.json"))
+                .exists(),
+            "a refused version must not write a manifest"
+        );
+        let descriptor_path = root
+            .join("editors")
+            .join("vscode")
+            .join("src")
+            .join("serverDescriptor.ts");
+        assert!(
+            !descriptor_path.exists(),
+            "a prerelease version must never write the editor descriptor"
+        );
+        Ok(())
+    })
 }
 
 /// The `ripr` binary this test run was built against, as an absolute path.
@@ -55790,4 +55938,2836 @@ fn pr_triage_mixed_rollup_keeps_unknown_visible_alongside_other_results() -> Res
         })
     }));
     Ok(())
+}
+
+// ---- ported from ripr main: items with no swarm equivalent (merge sync) ----
+
+#[test]
+fn release_server_build_uses_canonical_locked_toolchain() -> Result<(), String> {
+    // In this repository the five-target build lives in the reusable
+    // qualification workflow that `release-server-binaries.yml` delegates to;
+    // the locked cargo build itself runs inside the archive producer.
+    let workflow = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(".github/workflows/server-archive-qualification.yml"),
+    )
+    .map_err(|error| format!("failed to read server archive qualification workflow: {error}"))?;
+    let build = workflow
+        .split_once("\n  build:")
+        .and_then(|(_, rest)| rest.split_once("\n  manifest:"))
+        .map(|(build, _)| build)
+        .ok_or_else(|| "qualification workflow is missing the build or manifest job".to_string())?;
+    if workflow.contains("dtolnay/rust-toolchain@stable")
+        || !build.contains("dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4")
+        || !build.contains("toolchain: 1.95.0")
+        || !workflow.contains("permissions:\n  contents: read")
+        || workflow.contains("contents: write")
+        || !build
+            .contains("cargo xtask release-server-archive --version \"$QUALIFICATION_VERSION\"")
+        || workflow.contains("cargo generate-lockfile")
+    {
+        return Err("release target build is not pinned, locked, and read-only".to_string());
+    }
+    let producer = include_str!("reports/release_server/producer.rs");
+    if !producer.contains("\"--locked\".to_string()")
+        || !producer.contains("\"--release\".to_string()")
+    {
+        return Err(
+            "the archive producer must build the release profile with --locked".to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn release_server_workflow_isolates_attestation_from_upload() -> Result<(), String> {
+    // This repository's server workflows are nonpublishing rehearsals:
+    // attestation and release upload belong to the source repository's
+    // release workflow. Isolation here means no job in either workflow can
+    // hold an OIDC, attestation or release-write scope, and neither carries an
+    // upload path.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    for name in [
+        "release-server-binaries.yml",
+        "server-archive-qualification.yml",
+    ] {
+        let workflow = std::fs::read_to_string(root.join(".github/workflows").join(name))
+            .map_err(|error| format!("failed to read {name}: {error}"))?;
+        for forbidden in [
+            "id-token: write",
+            "attestations: write",
+            "contents: write",
+            "release-upload-assets",
+            "gh release",
+            "actions/attest-build-provenance",
+        ] {
+            if workflow.contains(forbidden) {
+                return Err(format!(
+                    "{name} must stay a nonpublishing rehearsal but contains `{forbidden}`"
+                ));
+            }
+        }
+        if !workflow.contains("permissions:\n  contents: read") {
+            return Err(format!("{name} must declare read-only contents permission"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn release_server_assets_rejects_duplicate_target_archives() -> Result<(), String> {
+    let root = temp_dir("release-server-assets-duplicate-target");
+    write(
+        &root.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
+        "tar",
+    );
+    write(
+        &root.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.zip"),
+        "zip",
+    );
+
+    let Err(error) = super::release_server_assets(&root, "1.2.3") else {
+        return Err("duplicate target archives must be rejected".to_string());
+    };
+    assert!(error.contains("duplicate release server target"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn release_server_assets_rejects_non_regular_staging_entries() -> Result<(), String> {
+    let root = temp_dir("release-server-assets-non-regular");
+    fs::create_dir(root.join("ripr-server-v1.2.3-extra"))
+        .map_err(|error| format!("create staging directory: {error}"))?;
+
+    let Err(error) = super::release_server_assets(&root, "1.2.3") else {
+        return Err("non-regular staging entries must be rejected".to_string());
+    };
+    assert!(
+        error.contains("non-regular release server staging entry"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn release_server_manifest_rejects_malformed_receipt() -> Result<(), String> {
+    with_temp_cwd("release-server-manifest-malformed-receipt", |root| {
+        let dist = root.join("dist");
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
+            "linux",
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+            "linux-sha\n",
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.receipt.json"),
+            "{ malformed",
+        );
+
+        let args = vec![
+            "--version".to_string(),
+            "v1.2.3".to_string(),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
+        let Err(error) = super::release_server_manifest(&args) else {
+            return Err("malformed receipt must reject manifest assembly".to_string());
+        };
+        assert!(
+            error.contains("malformed release server receipt"),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_manifest_rejects_receipt_version_mismatch() -> Result<(), String> {
+    with_temp_cwd("release-server-manifest-receipt-version", |root| {
+        let dist = root.join("dist");
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
+            "linux",
+        );
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+            "linux-sha\n",
+        );
+        let receipt = serde_json::json!({
+            "schema_version": "0.2",
+            "repository": "EffortlessMetrics/ripr",
+            "candidate_sha": "candidate",
+            "candidate_tree": "tree",
+            "toolchain": {"rustc": "rustc", "cargo": "cargo"},
+            "toolchain_file_sha256": "toolchain",
+            "cargo_lock_sha256": "lock",
+            "profile": "release",
+            "features": [],
+            "locked": true,
+            "build_command": "cargo build",
+            "version": "9.9.9",
+            "target": "x86_64-unknown-linux-gnu",
+            "archive_format": "tar.gz",
+            "executable": {"path": "ripr", "size": 1, "sha256": "exe"},
+            "archive": {"path": "ripr-server-v9.9.9-x86_64-unknown-linux-gnu.tar.gz", "size": 1, "sha256": "archive"},
+            "members": []
+        });
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.receipt.json"),
+            &format!("{receipt}\n"),
+        );
+
+        let args = vec![
+            "--version".to_string(),
+            "v1.2.3".to_string(),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
+        let Err(error) = super::release_server_manifest(&args) else {
+            return Err("receipt version mismatch must reject manifest assembly".to_string());
+        };
+        assert!(error.contains("receipt version"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_manifest_rejects_archive_checksum_mismatch() -> Result<(), String> {
+    with_temp_cwd("release-server-manifest-checksum-mismatch", |root| {
+        let dist = root.join("dist");
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+        for (target, executable, archive) in [
+            ("x86_64-pc-windows-msvc", "ripr.exe", "zip"),
+            ("x86_64-unknown-linux-gnu", "ripr", "tar.gz"),
+            ("aarch64-unknown-linux-gnu", "ripr", "tar.gz"),
+            ("x86_64-apple-darwin", "ripr", "tar.gz"),
+            ("aarch64-apple-darwin", "ripr", "tar.gz"),
+        ] {
+            write(
+                &root
+                    .join("target")
+                    .join(target)
+                    .join("release")
+                    .join(executable),
+                target,
+            );
+            let archive_args = vec![
+                "--version".to_string(),
+                "1.2.3".to_string(),
+                "--target".to_string(),
+                target.to_string(),
+                "--executable".to_string(),
+                executable.to_string(),
+                "--archive".to_string(),
+                archive.to_string(),
+            ];
+            release_server_archive_prebuilt(&archive_args)?;
+        }
+        write(
+            &dist.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+            "0000000000000000000000000000000000000000000000000000000000000000\n",
+        );
+
+        let args = vec![
+            "--version".to_string(),
+            "v1.2.3".to_string(),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
+        let Err(error) = super::release_server_manifest(&args) else {
+            return Err("archive checksum mismatch must reject manifest assembly".to_string());
+        };
+        assert!(error.contains("archive checksum mismatch"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_manifest_rejects_missing_configured_target() -> Result<(), String> {
+    let assets = vec![super::ReleaseServerAsset {
+        target: "x86_64-unknown-linux-gnu".to_string(),
+        file_name: "ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz".to_string(),
+    }];
+    let Err(error) = super::validate_configured_release_server_targets(&assets) else {
+        return Err("missing configured target must reject assembly".to_string());
+    };
+    assert!(
+        error.contains("missing configured release server target"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn release_server_receipt_set_rejects_mixed_candidate_identity() -> Result<(), String> {
+    with_temp_cwd("release-server-receipt-mixed-candidate", |root| {
+        for target in ["x86_64-unknown-linux-gnu", "x86_64-apple-darwin"] {
+            let executable = "ripr";
+            write(
+                &root
+                    .join("target")
+                    .join(target)
+                    .join("release")
+                    .join(executable),
+                target,
+            );
+            write(&root.join("LICENSE-MIT"), "mit");
+            write(&root.join("LICENSE-APACHE"), "apache");
+            let args = vec![
+                "--version".to_string(),
+                "1.2.3".to_string(),
+                "--target".to_string(),
+                target.to_string(),
+                "--executable".to_string(),
+                executable.to_string(),
+                "--archive".to_string(),
+                "tar.gz".to_string(),
+            ];
+            release_server_archive_prebuilt(&args)?;
+        }
+
+        let receipt_path = root
+            .join("dist")
+            .join("ripr-server-v1.2.3-x86_64-apple-darwin.receipt.json");
+        let mut receipt: Value = serde_json::from_str(
+            &fs::read_to_string(&receipt_path)
+                .map_err(|error| format!("read receipt for mutation: {error}"))?,
+        )
+        .map_err(|error| format!("parse receipt for mutation: {error}"))?;
+        receipt["candidate_sha"] = Value::String("different-candidate".to_string());
+        write(&receipt_path, &format!("{receipt}\n"));
+
+        let Err(error) = super::validate_release_server_receipts(&root.join("dist"), "1.2.3")
+        else {
+            return Err("mixed candidate receipts must be rejected".to_string());
+        };
+        assert!(error.contains("receipt candidate SHA mismatch"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_receipt_set_accepts_different_runner_hosts() -> Result<(), String> {
+    with_temp_cwd("release-server-receipt-cross-platform", |root| {
+        for target in ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"] {
+            let executable = if target.contains("windows") {
+                "ripr.exe"
+            } else {
+                "ripr"
+            };
+            write(
+                &root
+                    .join("target")
+                    .join(target)
+                    .join("release")
+                    .join(executable),
+                target,
+            );
+            write(&root.join("LICENSE-MIT"), "mit");
+            write(&root.join("LICENSE-APACHE"), "apache");
+            release_server_archive_prebuilt(&[
+                "--version".to_string(),
+                "1.2.3".to_string(),
+                "--target".to_string(),
+                target.to_string(),
+                "--executable".to_string(),
+                executable.to_string(),
+                "--archive".to_string(),
+                if executable.ends_with(".exe") {
+                    "zip"
+                } else {
+                    "tar.gz"
+                }
+                .to_string(),
+            ])?;
+        }
+        let receipt_path = root.join("dist/ripr-server-v1.2.3-x86_64-pc-windows-msvc.receipt.json");
+        let mut receipt: Value = serde_json::from_str(
+            &fs::read_to_string(&receipt_path).map_err(|error| format!("read receipt: {error}"))?,
+        )
+        .map_err(|error| format!("parse receipt: {error}"))?;
+        let rustc = receipt["toolchain"]["rustc"]
+            .as_str()
+            .ok_or("rustc field is not a string")?
+            .lines()
+            .map(|line| {
+                if line.starts_with("host:") {
+                    "host: x86_64-pc-windows-msvc"
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        receipt["toolchain"]["rustc"] = Value::String(rustc);
+        write(&receipt_path, &format!("{receipt}\n"));
+        super::validate_release_server_receipts(&root.join("dist"), "1.2.3")?;
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_receipt_set_rejects_unsupported_schema() -> Result<(), String> {
+    with_temp_cwd("release-server-receipt-schema", |root| {
+        let target = "x86_64-unknown-linux-gnu";
+        write(
+            &root
+                .join("target")
+                .join(target)
+                .join("release")
+                .join("ripr"),
+            "binary",
+        );
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+        release_server_archive_prebuilt(&[
+            "--version".to_string(),
+            "1.2.3".to_string(),
+            "--target".to_string(),
+            target.to_string(),
+            "--executable".to_string(),
+            "ripr".to_string(),
+            "--archive".to_string(),
+            "tar.gz".to_string(),
+        ])?;
+        let receipt_path =
+            root.join("dist/ripr-server-v1.2.3-x86_64-unknown-linux-gnu.receipt.json");
+        let mut receipt: Value = serde_json::from_str(
+            &fs::read_to_string(&receipt_path).map_err(|error| format!("read receipt: {error}"))?,
+        )
+        .map_err(|error| format!("parse receipt: {error}"))?;
+        receipt["schema_version"] = Value::String("0.1".to_string());
+        write(&receipt_path, &format!("{receipt}\n"));
+        let Err(error) = super::validate_release_server_receipts(&root.join("dist"), "1.2.3")
+        else {
+            return Err("unsupported receipt schema must reject".to_string());
+        };
+        assert!(
+            error.contains("unsupported release server receipt schema"),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_receipt_set_rejects_archive_mapping_mismatch() -> Result<(), String> {
+    with_temp_cwd("release-server-receipt-archive-mapping", |root| {
+        let target = "x86_64-unknown-linux-gnu";
+        let executable = "ripr";
+        write(
+            &root
+                .join("target")
+                .join(target)
+                .join("release")
+                .join(executable),
+            "binary",
+        );
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+        let args = vec![
+            "--version".to_string(),
+            "1.2.3".to_string(),
+            "--target".to_string(),
+            target.to_string(),
+            "--executable".to_string(),
+            executable.to_string(),
+            "--archive".to_string(),
+            "tar.gz".to_string(),
+        ];
+        release_server_archive_prebuilt(&args)?;
+
+        let receipt_path = root
+            .join("dist")
+            .join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.receipt.json");
+        let mut receipt: Value = serde_json::from_str(
+            &fs::read_to_string(&receipt_path)
+                .map_err(|error| format!("read receipt for mutation: {error}"))?,
+        )
+        .map_err(|error| format!("parse receipt for mutation: {error}"))?;
+        receipt["archive"]["path"] = Value::String("other-archive.tar.gz".to_string());
+        write(&receipt_path, &format!("{receipt}\n"));
+
+        let Err(error) = super::validate_release_server_receipts(&root.join("dist"), "1.2.3")
+        else {
+            return Err("archive mapping mismatch must be rejected".to_string());
+        };
+        assert!(
+            error.contains("receipt archive mapping mismatch"),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_receipt_set_rejects_unsafe_paths() -> Result<(), String> {
+    with_temp_cwd("release-server-receipt-unsafe-path", |root| {
+        let target = "x86_64-unknown-linux-gnu";
+        write(
+            &root
+                .join("target")
+                .join(target)
+                .join("release")
+                .join("ripr"),
+            "binary",
+        );
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+        release_server_archive_prebuilt(&[
+            "--version".to_string(),
+            "1.2.3".to_string(),
+            "--target".to_string(),
+            target.to_string(),
+            "--executable".to_string(),
+            "ripr".to_string(),
+            "--archive".to_string(),
+            "tar.gz".to_string(),
+        ])?;
+        let receipt_path =
+            root.join("dist/ripr-server-v1.2.3-x86_64-unknown-linux-gnu.receipt.json");
+        let mut receipt: Value = serde_json::from_str(
+            &fs::read_to_string(&receipt_path).map_err(|error| format!("read receipt: {error}"))?,
+        )
+        .map_err(|error| format!("parse receipt: {error}"))?;
+        receipt["archive"]["path"] = Value::String("../outside.tar.gz".to_string());
+        write(&receipt_path, &format!("{receipt}\n"));
+        let Err(error) = super::validate_release_server_receipts(&root.join("dist"), "1.2.3")
+        else {
+            return Err("unsafe receipt path must reject".to_string());
+        };
+        assert!(error.contains("not a safe staging file"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_receipt_set_rejects_member_inventory_mismatch() -> Result<(), String> {
+    with_temp_cwd("release-server-receipt-member-inventory", |root| {
+        let target = "x86_64-unknown-linux-gnu";
+        let executable = "ripr";
+        write(
+            &root
+                .join("target")
+                .join(target)
+                .join("release")
+                .join(executable),
+            "binary",
+        );
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+        let args = vec![
+            "--version".to_string(),
+            "1.2.3".to_string(),
+            "--target".to_string(),
+            target.to_string(),
+            "--executable".to_string(),
+            executable.to_string(),
+            "--archive".to_string(),
+            "tar.gz".to_string(),
+        ];
+        release_server_archive_prebuilt(&args)?;
+
+        let receipt_path = root
+            .join("dist")
+            .join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.receipt.json");
+        let mut receipt: Value = serde_json::from_str(
+            &fs::read_to_string(&receipt_path)
+                .map_err(|error| format!("read receipt for mutation: {error}"))?,
+        )
+        .map_err(|error| format!("parse receipt for mutation: {error}"))?;
+        receipt["members"][0]["sha256"] = Value::String("different-member".to_string());
+        write(&receipt_path, &format!("{receipt}\n"));
+
+        let Err(error) = super::validate_release_server_receipts(&root.join("dist"), "1.2.3")
+        else {
+            return Err("member inventory mismatch must be rejected".to_string());
+        };
+        assert!(error.contains("member inventory mismatch"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_manifest_rejects_extra_staged_file() -> Result<(), String> {
+    let root = temp_dir("release-server-manifest-extra-file");
+    write(
+        &root.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz"),
+        "archive",
+    );
+    write(
+        &root.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+        "sha",
+    );
+    write(
+        &root.join("ripr-server-v1.2.3-x86_64-unknown-linux-gnu.receipt.json"),
+        "receipt",
+    );
+    write(&root.join("unexpected.txt"), "unreviewed");
+    let assets = vec![super::ReleaseServerAsset {
+        target: "x86_64-unknown-linux-gnu".to_string(),
+        file_name: "ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz".to_string(),
+    }];
+    let receipt_targets = ["x86_64-unknown-linux-gnu".to_string()]
+        .into_iter()
+        .collect();
+    let Err(error) =
+        super::validate_release_server_staging_inventory(&root, "1.2.3", &assets, &receipt_targets)
+    else {
+        return Err("extra staged file must be rejected".to_string());
+    };
+    assert!(
+        error.contains("unrecognized staged release server file"),
+        "{error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn release_server_atomic_write_replaces_complete_output() -> Result<(), String> {
+    let root = temp_dir("release-server-atomic-write");
+    let output = root.join("manifest.json");
+    super::write_release_server_outputs_transactional(&[(&output, "first\n")])?;
+    super::write_release_server_outputs_transactional(&[(&output, "second\n")])?;
+    assert_eq!(
+        fs::read_to_string(&output).map_err(|error| format!("read atomic output: {error}"))?,
+        "second\n"
+    );
+    assert!(
+        fs::read_dir(&root)
+            .map_err(|error| format!("read transaction directory: {error}"))?
+            .filter_map(Result::ok)
+            .all(|entry| !entry.file_name().to_string_lossy().contains(".tmp"))
+    );
+    Ok(())
+}
+
+#[test]
+fn release_server_transaction_preserves_existing_outputs_when_staging_fails() -> Result<(), String>
+{
+    let root = temp_dir("release-server-transaction-staging-failure");
+    let existing = root.join("manifest.json");
+    write(&existing, "previous\n");
+    let missing_parent = root.join("missing").join("checksums");
+    let outputs = [
+        (existing.as_path(), "replacement\n"),
+        (missing_parent.as_path(), "never\n"),
+    ];
+    let Err(error) = super::write_release_server_outputs_transactional(&outputs) else {
+        return Err("staging failure must be rejected".to_string());
+    };
+    assert!(error.contains("failed to stage"), "{error}");
+    assert_eq!(
+        fs::read_to_string(&existing).map_err(|error| format!("read preserved output: {error}"))?,
+        "previous\n"
+    );
+    Ok(())
+}
+
+/// Archives a prebuilt `target/<triple>/release/<executable>` the way the
+/// swarm archive producer does after its payload staging step: it prepares the
+/// flat `package/` directory (executable, licenses, README), then hands it to
+/// the shared archive and receipt writer. The cargo build and payload identity
+/// steps belong to the producer and are covered by its own tests; this keeps
+/// receipt, manifest and assembler fixtures runnable in an isolated cwd.
+pub(crate) fn release_server_archive_prebuilt(args: &[String]) -> Result<(), String> {
+    let version = super::required_release_arg(args, "version", "RAW_VERSION")?;
+    let target = super::required_release_arg(args, "target", "TARGET")?;
+    let executable = super::required_release_arg(args, "executable", "EXECUTABLE")?;
+    let archive = super::required_release_arg(args, "archive", "ARCHIVE")?;
+    let version = super::normalize_product_version(&version)?;
+    let package_dir = Path::new("package");
+    if package_dir.exists() {
+        fs::remove_dir_all(package_dir).map_err(|err| format!("remove package dir: {err}"))?;
+    }
+    fs::create_dir_all(package_dir).map_err(|err| format!("create package dir: {err}"))?;
+    fs::create_dir_all("dist").map_err(|err| format!("create dist dir: {err}"))?;
+    let built = Path::new("target")
+        .join(&target)
+        .join("release")
+        .join(&executable);
+    fs::copy(&built, package_dir.join(&executable))
+        .map_err(|err| format!("copy {} into package: {err}", built.display()))?;
+    for license in ["LICENSE-MIT", "LICENSE-APACHE"] {
+        fs::copy(license, package_dir.join(license))
+            .map_err(|err| format!("copy {license} into package: {err}"))?;
+    }
+    fs::write(
+        package_dir.join("README-server.txt"),
+        super::release_server_readme(&version),
+    )
+    .map_err(|err| format!("write package README: {err}"))?;
+    crate::reports::release_server::write_server_archive(
+        &version,
+        &target,
+        &executable,
+        &archive,
+        package_dir,
+    )
+}
+
+#[test]
+fn release_server_archive_prepares_package_before_format_validation() -> Result<(), String> {
+    with_temp_cwd("release-server-archive", |root| {
+        let executable = if cfg!(windows) { "ripr.exe" } else { "ripr" };
+        write(
+            &root
+                .join("target")
+                .join("x86_64-unknown-linux-gnu")
+                .join("release")
+                .join(executable),
+            "binary",
+        );
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+
+        let args = vec![
+            "--version".to_string(),
+            "v1.2.3".to_string(),
+            "--target".to_string(),
+            "x86_64-unknown-linux-gnu".to_string(),
+            "--executable".to_string(),
+            executable.to_string(),
+            "--archive".to_string(),
+            "bad-format".to_string(),
+        ];
+
+        let Err(err) = release_server_archive_prebuilt(&args) else {
+            return Err("unsupported archive format should fail".to_string());
+        };
+        assert!(err.contains("unsupported release server archive format"));
+        assert_eq!(
+            fs::read_to_string(root.join("package").join(executable))
+                .map_err(|err| format!("read packaged executable: {err}"))?,
+            "binary"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("package").join("README-server.txt"))
+                .map_err(|err| format!("read packaged README: {err}"))?,
+            super::release_server_readme("1.2.3")
+        );
+        assert!(root.join("dist").is_dir());
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_archive_writes_bounded_receipt_and_deterministic_tar() -> Result<(), String> {
+    with_temp_cwd("release-server-receipt", |root| {
+        let executable = if cfg!(windows) { "ripr.exe" } else { "ripr" };
+        write(
+            &root
+                .join("target")
+                .join("x86_64-unknown-linux-gnu")
+                .join("release")
+                .join(executable),
+            "binary",
+        );
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+        let args = vec![
+            "--version".to_string(),
+            "1.2.3".to_string(),
+            "--target".to_string(),
+            "x86_64-unknown-linux-gnu".to_string(),
+            "--executable".to_string(),
+            executable.to_string(),
+            "--archive".to_string(),
+            "tar.gz".to_string(),
+        ];
+
+        release_server_archive_prebuilt(&args)?;
+        let archive = root.join("dist/ripr-server-v1.2.3-x86_64-unknown-linux-gnu.tar.gz");
+        let first_archive =
+            fs::read(&archive).map_err(|err| format!("read first archive: {err}"))?;
+        release_server_archive_prebuilt(&args)?;
+        let second_archive =
+            fs::read(&archive).map_err(|err| format!("read second archive: {err}"))?;
+        assert_eq!(
+            first_archive, second_archive,
+            "tar output must be deterministic"
+        );
+
+        let receipt_path =
+            root.join("dist/ripr-server-v1.2.3-x86_64-unknown-linux-gnu.receipt.json");
+        let receipt: Value = serde_json::from_str(
+            &fs::read_to_string(&receipt_path)
+                .map_err(|err| format!("read receipt {}: {err}", receipt_path.display()))?,
+        )
+        .map_err(|err| format!("parse receipt: {err}"))?;
+        assert_eq!(receipt["schema_version"], "0.2");
+        assert!(receipt["candidate_sha"].as_str().is_some());
+        assert!(receipt["candidate_tree"].as_str().is_some());
+        assert!(receipt["toolchain"]["rustc"].as_str().is_some());
+        assert!(receipt["toolchain"]["cargo"].as_str().is_some());
+        assert!(receipt["cargo_lock_sha256"].as_str().is_some());
+        assert_eq!(receipt["profile"], "release");
+        assert_eq!(receipt["features"], serde_json::json!([]));
+        assert_eq!(receipt["locked"], true);
+        assert_eq!(receipt["target"], "x86_64-unknown-linux-gnu");
+        assert_eq!(receipt["archive_format"], "tar.gz");
+        assert_eq!(receipt["executable"]["path"], executable);
+        let members = receipt["members"]
+            .as_array()
+            .ok_or("receipt members is not an array")?;
+        assert_eq!(members.len(), 4);
+        assert!(
+            members
+                .iter()
+                .any(|member| { member["path"] == executable && member["role"] == "executable" })
+        );
+        assert!(
+            members
+                .iter()
+                .any(|member| { member["path"] == "LICENSE-MIT" && member["mode"] == 0o644 })
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn release_server_manifest_is_byte_identical_across_runs() -> Result<(), String> {
+    with_temp_cwd("release-server-manifest-determinism", |root| {
+        let dist = root.join("dist");
+        write(&root.join("LICENSE-MIT"), "mit");
+        write(&root.join("LICENSE-APACHE"), "apache");
+        for (target, executable, archive) in [
+            ("x86_64-pc-windows-msvc", "ripr.exe", "zip"),
+            ("x86_64-unknown-linux-gnu", "ripr", "tar.gz"),
+            ("aarch64-unknown-linux-gnu", "ripr", "tar.gz"),
+            ("x86_64-apple-darwin", "ripr", "tar.gz"),
+            ("aarch64-apple-darwin", "ripr", "tar.gz"),
+        ] {
+            write(
+                &root
+                    .join("target")
+                    .join(target)
+                    .join("release")
+                    .join(executable),
+                target,
+            );
+            let archive_args = vec![
+                "--version".to_string(),
+                "1.2.3".to_string(),
+                "--target".to_string(),
+                target.to_string(),
+                "--executable".to_string(),
+                executable.to_string(),
+                "--archive".to_string(),
+                archive.to_string(),
+            ];
+            release_server_archive_prebuilt(&archive_args)?;
+        }
+        let args = vec![
+            "--version".to_string(),
+            "v1.2.3".to_string(),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
+        super::release_server_manifest(&args)?;
+        let first = fs::read_to_string(dist.join("ripr-server-manifest-v1.2.3.json"))
+            .map_err(|err| format!("read first manifest render: {err}"))?;
+        super::release_server_manifest(&args)?;
+        let second = fs::read_to_string(dist.join("ripr-server-manifest-v1.2.3.json"))
+            .map_err(|err| format!("read second manifest render: {err}"))?;
+        assert_eq!(
+            first, second,
+            "the same candidate inputs must render byte-identical manifest bytes across runs"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn release_distribution_generation_is_candidate_bound() -> Result<(), String> {
+    assert_eq!(
+        super::release_server_target_set(),
+        [
+            "x86_64-pc-windows-msvc",
+            "x86_64-unknown-linux-gnu",
+            "aarch64-unknown-linux-gnu",
+            "x86_64-apple-darwin",
+            "aarch64-apple-darwin",
+        ]
+    );
+    let target_digest = super::release_server_target_set_digest();
+    assert_eq!(target_digest.len(), 64);
+    let first = super::release_distribution_generation("1.2.3", "sha-a", "tree-a", &target_digest);
+    let repeat = super::release_distribution_generation("1.2.3", "sha-a", "tree-a", &target_digest);
+    assert_eq!(first, repeat);
+    let next_candidate =
+        super::release_distribution_generation("1.2.3", "sha-b", "tree-a", &target_digest);
+    assert_ne!(
+        first, next_candidate,
+        "a new candidate must yield a new distribution generation"
+    );
+    Ok(())
+}
+
+#[test]
+fn release_server_subjects_reject_channel_suffixed_version() -> Result<(), String> {
+    assert_eq!(super::normalize_product_version("v1.2.3")?, "1.2.3");
+    let Err(error) = super::normalize_product_version("1.2.3-rc.1") else {
+        return Err("channel-suffixed product version must reject".to_string());
+    };
+    assert!(error.contains("channel"), "{error}");
+    let Err(error) = super::normalize_product_version("1.2.3+../escape") else {
+        return Err("unsafe product version must reject".to_string());
+    };
+    assert!(error.contains("unsupported characters"), "{error}");
+    with_temp_cwd("release-server-subjects-channel-version", |_root| {
+        let manifest_args = vec![
+            "--version".to_string(),
+            "1.2.3-rc.1".to_string(),
+            "--repository".to_string(),
+            "EffortlessMetrics/ripr".to_string(),
+        ];
+        let Err(error) = super::release_server_manifest(&manifest_args) else {
+            return Err(
+                "channel-suffixed product version must reject manifest assembly".to_string(),
+            );
+        };
+        assert!(error.contains("channel"), "{error}");
+        let archive_args = vec![
+            "--version".to_string(),
+            "1.2.3-rc.1".to_string(),
+            "--target".to_string(),
+            "x86_64-unknown-linux-gnu".to_string(),
+            "--executable".to_string(),
+            "ripr".to_string(),
+            "--archive".to_string(),
+            "tar.gz".to_string(),
+        ];
+        let Err(error) = release_server_archive_prebuilt(&archive_args) else {
+            return Err(
+                "channel-suffixed product version must reject archive assembly".to_string(),
+            );
+        };
+        assert!(error.contains("channel"), "{error}");
+        Ok(())
+    })
+}
+
+fn write_distribution_catalog_manifest(
+    dist: &std::path::Path,
+    version: &str,
+    repository: &str,
+) -> Result<(), String> {
+    let manifest = serde_json::json!({
+        "schema_version": "2",
+        "product_version": version,
+        "distribution_generation": "a".repeat(64),
+        "source_repository": repository,
+        "target_set": {
+            "targets": [
+                "aarch64-apple-darwin",
+                "aarch64-unknown-linux-gnu",
+                "x86_64-apple-darwin",
+                "x86_64-unknown-linux-gnu",
+                "x86_64-pc-windows-msvc",
+            ],
+            "digest": "c".repeat(64),
+        },
+        "producer": {"tool": "xtask release-server-manifest", "schema": "server-manifest/2"},
+        "build_identity": {},
+        "assets": {},
+    });
+    let text = serde_json::to_string_pretty(&manifest)
+        .map_err(|err| format!("render catalog test manifest: {err}"))?;
+    write(
+        &dist.join(format!("ripr-server-manifest-v{version}.json")),
+        &format!("{text}\n"),
+    );
+    Ok(())
+}
+
+fn distribution_catalog_args(root: &std::path::Path, extra: &[&str]) -> Vec<String> {
+    let mut args = vec![
+        "--product-version".to_string(),
+        "1.2.3".to_string(),
+        "--channel".to_string(),
+        "stable".to_string(),
+        "--stable-tag".to_string(),
+        "v1.2.3".to_string(),
+        "--manifest".to_string(),
+        root.join("dist")
+            .join("ripr-server-manifest-v1.2.3.json")
+            .to_string_lossy()
+            .to_string(),
+        "--repository".to_string(),
+        "EffortlessMetrics/ripr".to_string(),
+        "--out".to_string(),
+        root.join("dist")
+            .join("catalog.json")
+            .to_string_lossy()
+            .to_string(),
+    ];
+    for chunk in extra.chunks(2) {
+        args.push(chunk[0].to_string());
+        args.push(chunk[1].to_string());
+    }
+    args
+}
+
+#[test]
+fn release_distribution_catalog_builds_stable_catalog_with_rc_fallback() -> Result<(), String> {
+    with_temp_cwd("release-distribution-catalog-stable", |root| {
+        let dist = root.join("dist");
+        std::fs::create_dir_all(&dist).map_err(|err| format!("create dist: {err}"))?;
+        write_distribution_catalog_manifest(&dist, "1.2.3", "EffortlessMetrics/ripr")?;
+        let args = distribution_catalog_args(root, &["--rc-tag", "v1.2.3-rc.1"]);
+        super::release_distribution_catalog(&args)?;
+        super::release_distribution_catalog(&args)?;
+        let catalog_path = dist.join("catalog.json");
+        let first =
+            fs::read_to_string(&catalog_path).map_err(|err| format!("read catalog: {err}"))?;
+        let catalog: Value =
+            serde_json::from_str(&first).map_err(|err| format!("parse catalog: {err}"))?;
+        assert_eq!(catalog["schema"], 2);
+        assert_eq!(catalog["productVersion"], "1.2.3");
+        assert_eq!(catalog["channel"], "stable");
+        assert_eq!(catalog["releaseTag"], "v1.2.3");
+        assert_eq!(catalog["releaseRef"], "refs/tags/v1.2.3");
+        assert_eq!(
+            catalog["fallbackPlacements"],
+            serde_json::json!([{
+                "channel": "rc",
+                "releaseTag": "v1.2.3-rc.1",
+                "releaseRef": "refs/tags/v1.2.3-rc.1",
+            }])
+        );
+        assert_eq!(catalog["manifestFile"], "ripr-server-manifest-v1.2.3.json");
+        assert_eq!(
+            catalog["sourceRepository"],
+            "https://github.com/EffortlessMetrics/ripr"
+        );
+        assert_eq!(catalog["distributionGeneration"], "a".repeat(64));
+        assert_eq!(catalog["targetSetDigest"], "c".repeat(64));
+        let expected_manifest_sha =
+            super::sha256_file(&dist.join("ripr-server-manifest-v1.2.3.json"))?;
+        assert_eq!(catalog["manifestSha256"], expected_manifest_sha);
+        assert_eq!(catalog["producer"]["schema"], "distribution-catalog/1");
+        Ok(())
+    })
+}
+
+#[test]
+fn release_distribution_catalog_builds_rc_catalog_without_fallback() -> Result<(), String> {
+    with_temp_cwd("release-distribution-catalog-rc", |root| {
+        let dist = root.join("dist");
+        std::fs::create_dir_all(&dist).map_err(|err| format!("create dist: {err}"))?;
+        write_distribution_catalog_manifest(&dist, "1.2.3", "EffortlessMetrics/ripr")?;
+        let mut args = distribution_catalog_args(root, &["--rc-tag", "v1.2.3-rc.1"]);
+        for pair in args.chunks_mut(2) {
+            if pair[0] == "--channel" {
+                pair[1] = "rc".to_string();
+            }
+        }
+        super::release_distribution_catalog(&args)?;
+        let catalog: Value = serde_json::from_str(
+            &fs::read_to_string(dist.join("catalog.json"))
+                .map_err(|err| format!("read catalog: {err}"))?,
+        )
+        .map_err(|err| format!("parse catalog: {err}"))?;
+        assert_eq!(catalog["channel"], "rc");
+        assert_eq!(catalog["releaseTag"], "v1.2.3-rc.1");
+        assert_eq!(catalog["releaseRef"], "refs/tags/v1.2.3-rc.1");
+        assert_eq!(catalog["fallbackPlacements"], serde_json::json!([]));
+        Ok(())
+    })
+}
+
+#[test]
+fn release_distribution_catalog_rejects_mismatched_identity() -> Result<(), String> {
+    with_temp_cwd("release-distribution-catalog-reject", |root| {
+        let dist = root.join("dist");
+        std::fs::create_dir_all(&dist).map_err(|err| format!("create dist: {err}"))?;
+        write_distribution_catalog_manifest(&dist, "1.2.3", "EffortlessMetrics/ripr")?;
+        let base = distribution_catalog_args(root, &[]);
+        // Channel-suffixed product version.
+        let mut args = base.clone();
+        args[1] = "1.2.3-rc.1".to_string();
+        let Err(error) = super::release_distribution_catalog(&args) else {
+            return Err("channel-suffixed product must reject catalog assembly".to_string());
+        };
+        assert!(error.contains("channel"), "{error}");
+        // Stable placement must equal the product tag.
+        let mut args = base.clone();
+        args[5] = "v9.9.9".to_string();
+        let Err(error) = super::release_distribution_catalog(&args) else {
+            return Err("wrong stable placement must reject catalog assembly".to_string());
+        };
+        assert!(error.contains("must equal the product tag"), "{error}");
+        // Non-canonical RC number.
+        let args = distribution_catalog_args(root, &["--rc-tag", "v1.2.3-rc.01"]);
+        let Err(error) = super::release_distribution_catalog(&args) else {
+            return Err("non-canonical RC number must reject catalog assembly".to_string());
+        };
+        assert!(error.contains("non-canonical RC number"), "{error}");
+        // RC channel without a preferred RC placement.
+        let mut args = base.clone();
+        args[3] = "rc".to_string();
+        let Err(error) = super::release_distribution_catalog(&args) else {
+            return Err("RC channel without --rc-tag must reject catalog assembly".to_string());
+        };
+        assert!(error.contains("--rc-tag"), "{error}");
+        // Repository mismatch against the manifest.
+        let mut args = base.clone();
+        args[9] = "OtherOrg/ripr".to_string();
+        let Err(error) = super::release_distribution_catalog(&args) else {
+            return Err("repository mismatch must reject catalog assembly".to_string());
+        };
+        assert!(error.contains("does not match manifest source"), "{error}");
+        // Missing manifest file.
+        let mut args = base.clone();
+        args[7] = root
+            .join("dist")
+            .join("missing.json")
+            .to_string_lossy()
+            .to_string();
+        let Err(error) = super::release_distribution_catalog(&args) else {
+            return Err("missing manifest must reject catalog assembly".to_string());
+        };
+        assert!(error.contains("unavailable"), "{error}");
+        Ok(())
+    })
+}
+
+#[test]
+fn workflow_runtime_policy_rejects_pinned_node20_cache_actions() -> Result<(), String> {
+    let workflow = r#"
+jobs:
+  test:
+    steps:
+      - uses: actions/cache/restore@0400d5f644dc74513175e3cd8d07132dd4860809
+      - uses: actions/cache/save@0400d5f644dc74513175e3cd8d07132dd4860809
+"#;
+    let violations =
+        workflow_runtime_violations(".github/workflows/ci.yml", workflow, &BTreeMap::new());
+    if violations.len() != 2
+        || !violations
+            .iter()
+            .all(|value| value.contains("caa296126883cff596d87d8935842f9db880ef25"))
+    {
+        return Err(format!(
+            "pinned Node 20 cache actions escaped the runtime policy: {violations:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn ripr_plus_receipt_happy_path_regression_pass_status() -> Result<(), String> {
+    let fixture = r#"{
+            "schema_version": "0.1",
+            "format": "repo-exposure-summary-json",
+            "tool": "ripr",
+            "ripr_version": "0.7.0",
+            "scope": "repo",
+            "basis": "canonical_actionable_gap",
+            "metadata": {
+                "root": ".",
+                "base": "origin/main",
+                "head": "HEAD",
+                "mode": "draft"
+            },
+            "metrics": {
+                "raw_seams": 3,
+                "headline_eligible_seams": 2,
+                "canonical_gap_records": 0,
+                "raw_actionable_seam_records": 0,
+                "unsuppressed_exposure_gaps": 0,
+                "suppressed_exposure_gaps": 0
+            },
+            "reason_breakdown": {
+                "actionability": {}
+            },
+            "limits": {
+                "top_files_limit": 25,
+                "top_files_total": 0,
+                "top_files_truncated": false
+            },
+            "top_files": []
+        }"#;
+    let receipt = ripr_plus_receipt_from_repo_exposure_summary_json(fixture, "abc1234")?;
+
+    let status = receipt["status"].as_str().unwrap_or("");
+    assert!(
+        status == "pass" || status == "warn",
+        "happy-path receipt must have pass or warn status, got {status:?}"
+    );
+    let unresolved = receipt.get("unresolved").and_then(Value::as_u64);
+    assert!(
+        unresolved.is_some(),
+        "happy-path receipt must have a concrete unresolved count, not null"
+    );
+    assert_eq!(unresolved, Some(0));
+    Ok(())
+}
+
+#[test]
+fn vscode_package_args_parse_catalog_staging() -> Result<(), String> {
+    assert!(super::parse_vscode_package_args(&[])?.is_none());
+    assert_eq!(
+        super::parse_vscode_package_args(&["--catalog".to_string(), "catalog.json".to_string()])?,
+        Some(std::path::PathBuf::from("catalog.json"))
+    );
+    assert_eq!(
+        super::parse_vscode_package_args(&["--catalog=catalog.json".to_string()])?,
+        Some(std::path::PathBuf::from("catalog.json"))
+    );
+    for args in [
+        vec!["--bogus".to_string()],
+        vec!["--catalog".to_string()],
+        vec!["--catalog=".to_string()],
+        vec!["--catalog".to_string(), "a".to_string(), "b".to_string()],
+    ] {
+        let Err(error) = super::parse_vscode_package_args(&args) else {
+            return Err(format!("packaging args {args:?} must fail closed"));
+        };
+        assert!(error.contains("Usage"), "{error}");
+    }
+    Ok(())
+}
+
+#[test]
+fn vsix_inventory_rejects_size_totals_that_overflow_u64() -> Result<(), String> {
+    let overflowing = vec![
+        vsix_entry("extension/package.json", u64::MAX),
+        vsix_entry("extension/out/a.js", 1),
+    ];
+    let Err(error) = super::check_vsix_inventory(&overflowing, 10, u64::MAX) else {
+        return Err("a size total that overflows u64 must be rejected".to_string());
+    };
+    assert!(error.contains("overflows u64"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn vsix_inventory_rejects_compressed_totals_that_overflow_u64() -> Result<(), String> {
+    let mut inflated = vsix_entry("extension/package.json", 1);
+    inflated.compressed_size = u64::MAX;
+    let mut tail = vsix_entry("extension/out/a.js", 1);
+    tail.compressed_size = 1;
+    let overflowing = vec![inflated, tail];
+    let Err(error) = super::vsix_size_totals(&overflowing) else {
+        return Err("a compressed total that overflows u64 must be rejected".to_string());
+    };
+    assert!(error.contains("overflows u64"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn vscode_package_inspection_accepts_single_catalog() -> Result<(), String> {
+    with_temp_cwd("vscode-package-inspection", |root| {
+        let vsix = root.join("ripr-0.4.0.vsix");
+        write_packaging_test_vsix(
+            &vsix,
+            &[
+                ("extension/package.json", "{}"),
+                ("extension/distribution.json", "{\"schema\":2}"),
+            ],
+        )?;
+        assert_eq!(super::read_vsix_catalog(&vsix)?, b"{\"schema\":2}".to_vec());
+        let shadow = root.join("shadow.vsix");
+        write_packaging_test_vsix(
+            &shadow,
+            &[
+                ("extension/distribution.json", "{}"),
+                ("extension/nested/distribution.json", "{}"),
+            ],
+        )?;
+        let Err(error) = super::read_vsix_catalog(&shadow) else {
+            return Err("shadow packaged catalog must fail closed".to_string());
+        };
+        assert!(error.contains("shadow catalog"), "{error}");
+        let missing = root.join("missing.vsix");
+        write_packaging_test_vsix(&missing, &[("extension/package.json", "{}")])?;
+        let Err(error) = super::read_vsix_catalog(&missing) else {
+            return Err("VSIX without a catalog must fail closed".to_string());
+        };
+        assert!(
+            error.contains("has no extension/distribution.json"),
+            "{error}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn vscode_package_verify_binds_vsix_catalog_to_admission_digest() -> Result<(), String> {
+    use crate::reports::release_server::sha256_bytes;
+
+    let admitted = b"{\"schema\":2,\"producer\":{\"tool\":\"xtask release-distribution-catalog\",\"schema\":\"distribution-catalog/1\"}}";
+    let admission = serde_json::from_str::<Value>(&format!(
+        "{{\"catalogSha256\":\"{}\"}}",
+        sha256_bytes(admitted)
+    ))
+    .map_err(|err| format!("fixture admission receipt is not valid JSON: {err}"))?;
+    super::verify_packaged_catalog_against_admission(admitted, &admission)?;
+
+    // A post-admission mutation of distribution.json changes the packaged
+    // bytes without changing the receipt. The old disk re-read comparison
+    // (packaged == staged) still passes on this pair, so only the receipt
+    // binding fails closed here.
+    let mut mutated = admitted.to_vec();
+    mutated[12] = b'3';
+    let staged_reread = mutated.clone();
+    assert_eq!(mutated, staged_reread);
+    let Err(error) = super::verify_packaged_catalog_against_admission(&mutated, &admission) else {
+        return Err("post-admission catalog mutation must fail closed".to_string());
+    };
+    assert!(
+        error.contains("differ from the admission receipt catalogSha256"),
+        "{error}"
+    );
+
+    let Err(error) = super::verify_packaged_catalog_against_admission(
+        admitted,
+        &Value::Object(Default::default()),
+    ) else {
+        return Err("a receipt without catalogSha256 must fail closed".to_string());
+    };
+    assert!(error.contains("carries no catalogSha256"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn review_comments_cross_check_covers_every_live_consumer() -> Result<(), String> {
+    let root = repo_root()?;
+    let workflows = [
+        // ripr-swarm delegates the routed Rust implementation to the reusable
+        // rust-gates.yml, which carries the only review-comments producer pair
+        // (generate-and-check, then the paired --check run).
+        (".github/workflows/rust-gates.yml", 2usize),
+    ];
+    let mut consumers = 0usize;
+    for (path, expected) in workflows {
+        let text = std::fs::read_to_string(root.join(path))
+            .map_err(|err| format!("read {path}: {err}"))?;
+        let found = text
+            .lines()
+            .filter(|line| line.contains("cargo xtask ripr-review-comments "))
+            .count();
+        if found != expected {
+            return Err(format!(
+                "{path} has {found} live review-comments consumers, expected {expected}"
+            ));
+        }
+        let violations = super::workflow_review_comments_cross_check_violations(path, &text);
+        if !violations.is_empty() {
+            return Err(violations.join("\n"));
+        }
+        consumers += found;
+    }
+    if consumers != 2 {
+        return Err(format!(
+            "expected two live consumer commands, found {consumers}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn review_comments_cross_check_oracle_rejects_contract_drift() -> Result<(), String> {
+    let valid = r#"jobs:
+  rust:
+    steps:
+      - run: |
+          cargo xtask ripr-pr --base "$BASE" --head "$HEAD"
+          cargo xtask ripr-pr --base "$BASE" --head "$HEAD" --check
+          cargo xtask ripr-review-comments --base "$BASE" --head "$HEAD" --check-output target/ripr/pr/check.json
+          cargo xtask ripr-review-comments --base "$BASE" --head "$HEAD" --check-output target/ripr/pr/check.json --check
+"#;
+    if !super::workflow_review_comments_cross_check_violations("fixture.yml", valid).is_empty() {
+        return Err("valid producer-backed fixture was rejected".to_string());
+    }
+    let inline = r#"jobs:
+  rust:
+    steps:
+      - run: cargo xtask ripr-pr --base "$BASE" --head "$HEAD"
+      - run: cargo xtask ripr-pr --base "$BASE" --head "$HEAD" --check
+      - run: cargo xtask ripr-review-comments --base "$BASE" --head "$HEAD" --check-output target/ripr/pr/check.json
+      - run: cargo xtask ripr-review-comments --base "$BASE" --head "$HEAD" --check-output target/ripr/pr/check.json --check
+"#;
+    if !super::workflow_review_comments_cross_check_violations("inline.yml", inline).is_empty() {
+        return Err("valid inline producer-backed fixture was rejected".to_string());
+    }
+    let cases = [
+        (
+            "commented check-output flag",
+            valid.replacen(
+                " --check-output target/ripr/pr/check.json",
+                " # --check-output target/ripr/pr/check.json",
+                1,
+            ),
+        ),
+        (
+            "missing cross-check",
+            valid.replacen(" --check-output target/ripr/pr/check.json", "", 1),
+        ),
+        (
+            "wrong subject",
+            valid.replacen(
+                "ripr-review-comments --base \"$BASE\"",
+                "ripr-review-comments --base \"$OTHER_BASE\"",
+                1,
+            ),
+        ),
+        (
+            "producer after consumer",
+            valid.replacen(
+                "          cargo xtask ripr-pr --base \"$BASE\" --head \"$HEAD\"\n          cargo xtask ripr-pr --base \"$BASE\" --head \"$HEAD\" --check\n",
+                "",
+                1,
+            ),
+        ),
+        (
+            "shell no-op shielding",
+            valid.replacen(
+                "cargo xtask ripr-pr --base \"$BASE\" --head \"$HEAD\"",
+                "cargo xtask ripr-pr --base \"$BASE\" --head \"$HEAD\" || :",
+                1,
+            ),
+        ),
+        (
+            "step continue-on-error shielding",
+            valid.replacen(
+                "      - run: |",
+                "      - continue-on-error: true\n        run: |",
+                1,
+            ),
+        ),
+        (
+            "step continue-on-error after run",
+            valid.replacen(
+                "cargo xtask ripr-pr --base \"$BASE\" --head \"$HEAD\"",
+                "cargo xtask ripr-pr --base \"$BASE\" --head \"$HEAD\"\n        continue-on-error: true",
+                1,
+            ),
+        ),
+        (
+            "statically disabled producer",
+            valid.replacen(
+                "      - run: |",
+                "      - if: ${{ false }}\n        run: |",
+                1,
+            ),
+        ),
+        (
+            "echoed producer",
+            valid.replacen(
+                "cargo xtask ripr-pr --base \"$BASE\" --head \"$HEAD\"",
+                "echo cargo xtask ripr-pr --base \"$BASE\" --head \"$HEAD\"",
+                1,
+            ),
+        ),
+    ];
+    for (name, mutated) in cases {
+        if mutated == valid {
+            return Err(format!("{name} mutation did not alter the fixture"));
+        }
+        if super::workflow_review_comments_cross_check_violations("fixture.yml", &mutated)
+            .is_empty()
+        {
+            return Err(format!("oracle accepted {name}"));
+        }
+    }
+    Ok(())
+}
+
+/// ripr#1446: the routed Rust migration deleted roughly four hundred lines of
+/// workflow, so every removed command needs an explicit disposition rather than
+/// a line-count argument. This binds `docs/ci/routed-rust-command-disposition.md`
+/// to the workflow it describes: a retained command must still be present, and a
+/// command recorded as removed must actually be gone.
+/// ripr#1446: the docs-only lane skips the Rust proof, so it is the easiest
+/// place for the routed workflow to become fail-open. Each case names the
+/// property being challenged rather than only the expected boolean.
+/// ripr#1446: the aggregate decides from planned propositions and normalized
+/// receipts, never from GitHub's scheduling artefacts alone. Each row names the
+/// property under test, so a regression reports which invariant broke rather
+/// than only which tuple changed.
+#[test]
+fn routed_rust_aggregate_transition_matrix() -> Result<(), String> {
+    use crate::{
+        AggregateVerdict as V, ChildConclusion as C, PlannedRoute as P, ReceiptState as R,
+    };
+    let verdict = |planned, child, receipt, subject_observed, subject_agrees| {
+        crate::routed_rust_aggregate_verdict(
+            planned,
+            child,
+            receipt,
+            subject_observed,
+            subject_agrees,
+            true,
+        )
+    };
+
+    let cases: &[(&str, P, C, R, bool, bool, V)] = &[
+        (
+            "rust proof succeeded for this subject",
+            P::GithubHostedRust,
+            C::Success,
+            R::Passed,
+            true,
+            true,
+            V::Passed,
+        ),
+        (
+            "required rust proof skipped is not a pass",
+            P::GithubHostedRust,
+            C::Skipped,
+            R::NotRun,
+            true,
+            true,
+            V::NotProven,
+        ),
+        (
+            "required rust proof with no receipt proves nothing",
+            P::GithubHostedRust,
+            C::Success,
+            R::Missing,
+            true,
+            true,
+            V::NotProven,
+        ),
+        (
+            "green proof against the wrong subject",
+            P::GithubHostedRust,
+            C::Success,
+            R::Passed,
+            true,
+            false,
+            V::StaleOrWrongSubject,
+        ),
+        (
+            "rust binding failure after observing the wrong subject",
+            P::GithubHostedRust,
+            C::Failure,
+            R::NotRun,
+            true,
+            false,
+            V::StaleOrWrongSubject,
+        ),
+        (
+            "rust checkout failure before observing a subject proves nothing",
+            P::GithubHostedRust,
+            C::Failure,
+            R::NotRun,
+            false,
+            false,
+            V::NotProven,
+        ),
+        (
+            "cancelled is neither pass nor product failure",
+            P::GithubHostedRust,
+            C::Cancelled,
+            R::NotRun,
+            true,
+            true,
+            V::Cancelled,
+        ),
+        (
+            "rust proof failed",
+            P::GithubHostedRust,
+            C::Failure,
+            R::Failed,
+            true,
+            true,
+            V::Failed,
+        ),
+        (
+            "instrument failure is not a product verdict",
+            P::GithubHostedRust,
+            C::Success,
+            R::InstrumentFailure,
+            true,
+            true,
+            V::NotProven,
+        ),
+        (
+            "green tick with a failing receipt is contradictory",
+            P::GithubHostedRust,
+            C::Success,
+            R::Failed,
+            true,
+            true,
+            V::Failed,
+        ),
+        (
+            "failed tick with a passing receipt is contradictory",
+            P::GithubHostedRust,
+            C::Failure,
+            R::Passed,
+            true,
+            true,
+            V::Failed,
+        ),
+        (
+            "docs lane proved by the docs gate",
+            P::DocsOnly,
+            C::Success,
+            R::Passed,
+            true,
+            true,
+            V::Passed,
+        ),
+        (
+            "docs proof against the wrong subject",
+            P::DocsOnly,
+            C::Success,
+            R::Passed,
+            true,
+            false,
+            V::StaleOrWrongSubject,
+        ),
+        (
+            "docs binding failure after observing the wrong subject",
+            P::DocsOnly,
+            C::Failure,
+            R::NotRun,
+            true,
+            false,
+            V::StaleOrWrongSubject,
+        ),
+        (
+            "docs checkout failure before observing a subject proves nothing",
+            P::DocsOnly,
+            C::Failure,
+            R::NotRun,
+            false,
+            false,
+            V::NotProven,
+        ),
+        (
+            "docs gate failed",
+            P::DocsOnly,
+            C::Failure,
+            R::Failed,
+            true,
+            true,
+            V::Failed,
+        ),
+        (
+            "docs gate absent proves nothing",
+            P::DocsOnly,
+            C::Skipped,
+            R::Missing,
+            false,
+            true,
+            V::NotProven,
+        ),
+        (
+            "planning failure proves nothing",
+            P::PlanFailed,
+            C::Skipped,
+            R::Missing,
+            false,
+            true,
+            V::NotProven,
+        ),
+        (
+            "unsupported subject needs an explicit disposition",
+            P::UnsupportedSubject,
+            C::Skipped,
+            R::Missing,
+            false,
+            true,
+            V::NotProven,
+        ),
+    ];
+
+    for (property, planned, child, receipt, subject_observed, subject_agrees, expected) in cases {
+        let actual = verdict(
+            *planned,
+            *child,
+            *receipt,
+            *subject_observed,
+            *subject_agrees,
+        );
+        if actual != *expected {
+            return Err(format!(
+                "aggregate mis-decided {property}: got {actual:?}, expected {expected:?}"
+            ));
+        }
+    }
+    let forbidden_route = crate::routed_rust_aggregate_verdict(
+        P::GithubHostedRust,
+        C::Success,
+        R::Passed,
+        true,
+        true,
+        false,
+    );
+    if forbidden_route != V::NotProven {
+        return Err(format!(
+            "a forbidden route attempt must invalidate an otherwise passing child, got {forbidden_route:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn routed_rust_test_proposition_plan(required: &[&str]) -> Vec<serde_json::Value> {
+    crate::ROUTED_RUST_PROPOSITION_IDS
+        .iter()
+        .map(|id| {
+            serde_json::json!({
+                "proposition_id": id,
+                "applicability": if required.contains(id) { "required" } else { "not_applicable" },
+            })
+        })
+        .collect()
+}
+
+fn routed_rust_test_execution_propositions(required: &[&str]) -> Vec<serde_json::Value> {
+    crate::ROUTED_RUST_PROPOSITION_IDS
+        .iter()
+        .map(|id| {
+            let required = required.contains(id);
+            serde_json::json!({
+                "proposition_id": id,
+                "applicability": if required { "required" } else { "not_applicable" },
+                "state": if required { "passed" } else { "not_applicable" },
+            })
+        })
+        .collect()
+}
+
+fn routed_rust_test_command(id: &str, state: &str) -> serde_json::Value {
+    let evidence = format!("evidence for {id}\n");
+    serde_json::json!({
+        "command_id": id,
+        "command": crate::routed_rust_expected_command(id, "base", "head"),
+        "state": state,
+        "exit_code": if state == "passed" { serde_json::json!(0) } else { serde_json::json!(1) },
+        "duration_ms": 1,
+        "evidence_path": format!("target/ripr/reports/routed-rust-command-{id}.log"),
+        "evidence_sha256": crate::routed_rust_bytes_digest(evidence.as_bytes()),
+    })
+}
+
+fn write_routed_rust_test_evidence(root: &Path, required: &[&str]) -> Result<(), String> {
+    let dir = crate::child_receipt_dir(root);
+    fs::create_dir_all(&dir).map_err(|err| format!("create evidence directory: {err}"))?;
+    for id in required {
+        fs::write(
+            dir.join(format!("routed-rust-command-{id}.log")),
+            format!("evidence for {id}\n"),
+        )
+        .map_err(|err| format!("write test evidence for {id}: {err}"))?;
+    }
+    Ok(())
+}
+
+fn routed_rust_test_plan(route: &str, required: &[&str]) -> serde_json::Value {
+    serde_json::json!({
+        "schema": "ripr.routed_rust_plan.v1",
+        "plan_version": 1,
+        "workflow_version": 1,
+        "repository": "EffortlessMetrics/ripr",
+        "workflow": "EffortlessMetrics/ripr/.github/workflows/routed-rust.yml@refs/pull/1/merge",
+        "event": "pull_request",
+        "trust_class": "maintainer_candidate",
+        "base_sha": "base",
+        "pr_head_sha": "head",
+        "pr_head_tree": "head-tree",
+        "subject_sha": "subject",
+        "subject_tree": "tree",
+        "changed_paths_sha256": "changed-digest",
+        "changed_path_count": 1,
+        "changed_paths_utf8": true,
+        "scheduled_route": route,
+        "authoritative_applicability": route,
+        "conservative_overproof": false,
+        "required_proposition_ids": required,
+        "proposition_plan": routed_rust_test_proposition_plan(required),
+        "credential_availability": {
+            "repository_write": false,
+            "org_runner": false,
+            "release": false,
+            "registry": false,
+            "marketplace": false,
+            "signing": false,
+        },
+        "runner_identity": {"os": "Linux", "arch": "X64", "image_os": "ubuntu24", "image_version": "test-image-version"},
+        "toolchain_identity": "rustc-digest",
+        "cargo_identity": "cargo-digest",
+        "cargo_lock_sha256": "lock-digest",
+        "cache_identity": "ripr-routed-rust-Linux-cache-action-digest",
+        "cache_matched_identity": "ripr-routed-rust-Linux-cache-action-digest",
+        "cache_hit": "true",
+        "artifact_identity": "ripr-routed-rust-evidence-run-attempt",
+        "self_hosted_selection_attempted": false,
+        "private_runner_secret_requested": false,
+        "org_runner_query_attempted": false,
+        "state": "planned",
+        "failure_reason": null,
+        "invalidations": [],
+        "non_claims": ["release_readiness", "publication_authority", "self_hosted_capacity"],
+    })
+}
+
+#[test]
+fn routed_rust_child_receipt_preserves_state_commands_and_subject() -> Result<(), String> {
+    let root = temp_dir("routed-rust-child-receipt");
+    let dir = crate::child_receipt_dir(&root);
+    fs::create_dir_all(&dir).map_err(|err| format!("create receipt fixture: {err}"))?;
+
+    let cases = [
+        (
+            "passed",
+            "success",
+            concat!(
+                "{\"command_id\":\"precommit\",\"state\":\"passed\",\"exit_code\":0}\n",
+                "{\"command_id\":\"check_agent_skills\",\"state\":\"passed\",\"exit_code\":0}\n"
+            ),
+            "subject-a",
+            "tree-a",
+            ["passed", "passed"],
+        ),
+        (
+            "failed",
+            "failure",
+            "{\"command_id\":\"precommit\",\"state\":\"failed\",\"exit_code\":1}\n",
+            "subject-a",
+            "tree-a",
+            ["failed", "not_run"],
+        ),
+        (
+            "instrument_failure",
+            "failure",
+            concat!(
+                "{\"command_id\":\"precommit\",\"state\":\"passed\",\"exit_code\":0}\n",
+                "{\"command_id\":\"check_agent_skills\",\"state\":\"passed\",\"exit_code\":0}\n"
+            ),
+            "subject-a",
+            "tree-a",
+            ["passed", "passed"],
+        ),
+        (
+            "instrument_failure",
+            "failure",
+            "",
+            "subject-a",
+            "tree-a",
+            ["not_run", "not_run"],
+        ),
+        (
+            "cancelled",
+            "cancelled",
+            "",
+            "subject-a",
+            "tree-a",
+            ["not_run", "not_run"],
+        ),
+        (
+            "instrument_failure",
+            "success",
+            concat!(
+                "{\"command_id\":\"precommit\",\"state\":\"passed\",\"exit_code\":0}\n",
+                "{\"command_id\":\"check_agent_skills\",\"state\":\"passed\",\"exit_code\":0}\n"
+            ),
+            "",
+            "tree-a",
+            ["passed", "passed"],
+        ),
+        (
+            "instrument_failure",
+            "success",
+            concat!(
+                "{\"command_id\":\"precommit\",\"state\":\"passed\",\"exit_code\":0}\n",
+                "{\"command_id\":\"check_agent_skills\",\"state\":\"passed\",\"exit_code\":0}\n"
+            ),
+            "subject-a",
+            "",
+            ["passed", "passed"],
+        ),
+        ("cancelled", "cancelled", "", "", "", ["not_run", "not_run"]),
+    ];
+
+    for (expected_state, outcome, recorded, subject, subject_tree, expected_commands) in cases {
+        fs::write(dir.join("commands.jsonl"), recorded)
+            .map_err(|err| format!("write command fixture: {err}"))?;
+        let plan = serde_json::json!({
+            "schema": "ripr.routed_rust_plan.v1",
+            "subject_sha": subject,
+            "subject_tree": subject_tree,
+            "required_proposition_ids": ["precommit", "check_agent_skills"],
+            "proposition_plan": routed_rust_test_proposition_plan(crate::ROUTED_RUST_DOCS_REQUIRED_IDS.as_slice()),
+        });
+        fs::write(
+            dir.join("routed-rust-plan.json"),
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&plan)
+                    .map_err(|err| format!("render plan fixture: {err}"))?
+            ),
+        )
+        .map_err(|err| format!("write plan fixture: {err}"))?;
+        let args = vec![
+            "--plan".to_string(),
+            "precommit,check_agent_skills".to_string(),
+            "--job-outcome".to_string(),
+            outcome.to_string(),
+            "--subject-sha".to_string(),
+            subject.to_string(),
+            "--subject-tree".to_string(),
+            subject_tree.to_string(),
+        ];
+        crate::ci_child_receipt_at(&root, &args)?;
+        let receipt: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("routed-rust-execution.json"))
+                .map_err(|err| format!("read child receipt: {err}"))?,
+        )
+        .map_err(|err| format!("parse child receipt: {err}"))?;
+        let command_states: Vec<&str> = receipt["commands"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|command| command["state"].as_str())
+            .collect();
+        if receipt["state"] != expected_state
+            || receipt["subject_sha"] != subject
+            || receipt["subject_tree"] != subject_tree
+            || receipt["planned_command_count"] != 2
+            || command_states != expected_commands
+        {
+            return Err(format!(
+                "child receipt did not preserve the {expected_state} case: {receipt}"
+            ));
+        }
+    }
+
+    fs::remove_dir_all(&root).map_err(|err| format!("remove receipt fixture: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn routed_rust_result_rejects_each_forbidden_route_attempt() -> Result<(), String> {
+    with_temp_cwd("routed-rust-result-forbidden-route", |root| {
+        let dir = crate::child_receipt_dir(root);
+        fs::create_dir_all(&dir).map_err(|err| format!("create result fixture: {err}"))?;
+        let plan_path = dir.join("routed-rust-plan.json");
+        let execution_path = dir.join("routed-rust-execution.json");
+        let required = crate::routed_rust_required_ids("github_hosted_rust", "pull_request");
+        let plan = routed_rust_test_plan("github_hosted_rust", &required);
+        let plan_bytes = format!(
+            "{}\n",
+            serde_json::to_string_pretty(&plan).map_err(|err| format!("render plan: {err}"))?
+        );
+        fs::write(&plan_path, &plan_bytes).map_err(|err| format!("write plan: {err}"))?;
+        let commands: Vec<serde_json::Value> = required
+            .iter()
+            .map(|id| routed_rust_test_command(id, "passed"))
+            .collect();
+        write_routed_rust_test_evidence(root, &required)?;
+        let execution = serde_json::json!({
+            "schema": "ripr.routed_rust_execution.v1",
+            "plan_sha256": crate::routed_rust_bytes_digest(plan_bytes.as_bytes()),
+            "state": "passed",
+            "subject_sha": "subject",
+            "subject_tree": "tree",
+            "required_proposition_ids": required,
+            "commands": commands,
+            "propositions": routed_rust_test_execution_propositions(&required),
+            "job_outcome": "success",
+            "planned_command_count": required.len(),
+            "observed_command_count": required.len(),
+            "failure_class": null,
+            "invalidations": [],
+        });
+        fs::write(
+            &execution_path,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&execution)
+                    .map_err(|err| format!("render execution: {err}"))?
+            ),
+        )
+        .map_err(|err| format!("write execution: {err}"))?;
+
+        let assertions = [
+            "self-hosted-selection-attempted",
+            "private-runner-secret-requested",
+            "org-runner-query-attempted",
+        ];
+        for forbidden in assertions {
+            let mut args: Vec<String> = [
+                "--plan-path",
+                plan_path.to_str().ok_or("non-UTF-8 plan path")?,
+                "--execution-path",
+                execution_path.to_str().ok_or("non-UTF-8 execution path")?,
+                "--child-conclusion",
+                "success",
+                "--download-outcome",
+                "success",
+                "--expected-repository",
+                "EffortlessMetrics/ripr",
+                "--expected-workflow",
+                "EffortlessMetrics/ripr/.github/workflows/routed-rust.yml@refs/pull/1/merge",
+                "--expected-event",
+                "pull_request",
+                "--expected-base",
+                "base",
+                "--expected-pr-head",
+                "head",
+                "--expected-pr-head-tree",
+                "head-tree",
+                "--expected-trust-class",
+                "maintainer_candidate",
+                "--expected-authoritative-applicability",
+                "github_hosted_rust",
+                "--expected-toolchain-identity",
+                "rustc-digest",
+                "--expected-cargo-identity",
+                "cargo-digest",
+                "--expected-cargo-lock-sha256",
+                "lock-digest",
+                "--expected-cache-identity",
+                "ripr-routed-rust-Linux-cache-action-digest",
+                "--expected-cache-hit",
+                "true",
+                "--expected-cache-matched-identity",
+                "ripr-routed-rust-Linux-cache-action-digest",
+                "--expected-runner-os",
+                "Linux",
+                "--expected-runner-arch",
+                "X64",
+                "--expected-runner-image-os",
+                "ubuntu24",
+                "--expected-runner-image-version",
+                "test-image-version",
+                "--expected-artifact-identity",
+                "ripr-routed-rust-evidence-run-attempt",
+                "--expected-route",
+                "github_hosted_rust",
+                "--expected-subject",
+                "subject",
+                "--expected-subject-tree",
+                "tree",
+                "--expected-changed-paths-sha256",
+                "changed-digest",
+                "--expected-changed-path-count",
+                "1",
+                "--expected-changed-paths-utf8",
+                "true",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+            for assertion in assertions {
+                args.push(format!("--{assertion}"));
+                args.push(
+                    if assertion == forbidden {
+                        "true"
+                    } else {
+                        "false"
+                    }
+                    .to_string(),
+                );
+            }
+            if crate::ci_routed_rust_result(&args).is_ok() {
+                return Err(format!(
+                    "protected result accepted forbidden route assertion `{forbidden}=true`"
+                ));
+            }
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn routed_rust_result_is_owned_by_exact_plan_and_execution_bytes() -> Result<(), String> {
+    with_temp_cwd("routed-rust-result-byte-authority", |root| {
+        let dir = crate::child_receipt_dir(root);
+        fs::create_dir_all(&dir).map_err(|err| format!("create result fixture: {err}"))?;
+        let plan_path = dir.join("routed-rust-plan.json");
+        let execution_path = dir.join("routed-rust-execution.json");
+        let required = crate::routed_rust_required_ids("docs_only", "pull_request");
+        let base_plan = routed_rust_test_plan("docs_only", &required);
+        let make_args = |child: &str,
+                         expected_cache_hit: &str,
+                         expected_cache_matched_identity: &str|
+         -> Result<Vec<String>, String> {
+            Ok(vec![
+                "--plan-path".to_string(),
+                plan_path.to_str().ok_or("non-UTF-8 plan path")?.to_string(),
+                "--execution-path".to_string(),
+                execution_path
+                    .to_str()
+                    .ok_or("non-UTF-8 execution path")?
+                    .to_string(),
+                "--child-conclusion".to_string(),
+                child.to_string(),
+                "--download-outcome".to_string(),
+                "success".to_string(),
+                "--expected-repository".to_string(),
+                "EffortlessMetrics/ripr".to_string(),
+                "--expected-workflow".to_string(),
+                "EffortlessMetrics/ripr/.github/workflows/routed-rust.yml@refs/pull/1/merge"
+                    .to_string(),
+                "--expected-event".to_string(),
+                "pull_request".to_string(),
+                "--expected-base".to_string(),
+                "base".to_string(),
+                "--expected-pr-head".to_string(),
+                "head".to_string(),
+                "--expected-pr-head-tree".to_string(),
+                "head-tree".to_string(),
+                "--expected-trust-class".to_string(),
+                "maintainer_candidate".to_string(),
+                "--expected-authoritative-applicability".to_string(),
+                "docs_only".to_string(),
+                "--expected-toolchain-identity".to_string(),
+                "rustc-digest".to_string(),
+                "--expected-cargo-identity".to_string(),
+                "cargo-digest".to_string(),
+                "--expected-cargo-lock-sha256".to_string(),
+                "lock-digest".to_string(),
+                "--expected-cache-identity".to_string(),
+                "ripr-routed-rust-Linux-cache-action-digest".to_string(),
+                "--expected-cache-hit".to_string(),
+                expected_cache_hit.to_string(),
+                "--expected-cache-matched-identity".to_string(),
+                expected_cache_matched_identity.to_string(),
+                "--expected-runner-os".to_string(),
+                "Linux".to_string(),
+                "--expected-runner-arch".to_string(),
+                "X64".to_string(),
+                "--expected-runner-image-os".to_string(),
+                "ubuntu24".to_string(),
+                "--expected-runner-image-version".to_string(),
+                "test-image-version".to_string(),
+                "--expected-artifact-identity".to_string(),
+                "ripr-routed-rust-evidence-run-attempt".to_string(),
+                "--expected-route".to_string(),
+                "docs_only".to_string(),
+                "--expected-subject".to_string(),
+                "subject".to_string(),
+                "--expected-subject-tree".to_string(),
+                "tree".to_string(),
+                "--expected-changed-paths-sha256".to_string(),
+                "changed-digest".to_string(),
+                "--expected-changed-path-count".to_string(),
+                "1".to_string(),
+                "--expected-changed-paths-utf8".to_string(),
+                "true".to_string(),
+                "--self-hosted-selection-attempted".to_string(),
+                "false".to_string(),
+                "--private-runner-secret-requested".to_string(),
+                "false".to_string(),
+                "--org-runner-query-attempted".to_string(),
+                "false".to_string(),
+            ])
+        };
+
+        for case in [
+            "valid",
+            "valid_cache_miss",
+            "valid_cache_false_miss",
+            "valid_cache_partial",
+            "digest",
+            "subject",
+            "stale_pair",
+            "plan_catalog",
+            "plan_identity",
+            "plan_applicability",
+            "cache_hit_identity",
+            "cache_false_primary",
+            "cache_empty_with_match",
+            "runner_identity",
+            "propositions",
+            "wrong_command",
+            "missing_evidence_path",
+            "wrong_evidence_digest",
+            "missing_evidence_bytes",
+            "receipt_failed",
+            "tick_failed",
+            "malformed_failed",
+            "malformed_stale",
+            "job_outcome_mismatch",
+            "self_invalidated",
+        ] {
+            let mut plan = base_plan.clone();
+            if case == "stale_pair" {
+                plan["subject_sha"] = serde_json::json!("historical-subject");
+                plan["subject_tree"] = serde_json::json!("historical-tree");
+            }
+            if case == "plan_catalog" {
+                let rows = plan["proposition_plan"]
+                    .as_array_mut()
+                    .ok_or("fixture proposition plan must be an array")?;
+                rows.pop();
+            }
+            if case == "plan_identity" {
+                plan["artifact_identity"] = serde_json::json!("historical-artifact");
+            }
+            if case == "plan_applicability" {
+                plan["authoritative_applicability"] = serde_json::json!("github_hosted_rust");
+            }
+            if case == "cache_hit_identity" {
+                plan["cache_matched_identity"] = serde_json::json!("different-cache-key");
+            }
+            if case == "valid_cache_miss" {
+                plan["cache_hit"] = serde_json::json!("");
+                plan["cache_matched_identity"] = serde_json::json!("");
+            }
+            if case == "valid_cache_false_miss" {
+                plan["cache_hit"] = serde_json::json!("false");
+                plan["cache_matched_identity"] = serde_json::json!("");
+            }
+            if case == "valid_cache_partial" {
+                plan["cache_hit"] = serde_json::json!("false");
+                plan["cache_matched_identity"] = serde_json::json!("different-cache-key");
+            }
+            if case == "cache_false_primary" {
+                plan["cache_hit"] = serde_json::json!("false");
+            }
+            if case == "cache_empty_with_match" {
+                plan["cache_hit"] = serde_json::json!("");
+                plan["cache_matched_identity"] = serde_json::json!("unexpected-cache-key");
+            }
+            if case == "runner_identity" {
+                plan["runner_identity"]["os"] = serde_json::json!("Windows");
+            }
+            let plan_bytes = format!(
+                "{}\n",
+                serde_json::to_string_pretty(&plan).map_err(|err| format!("render plan: {err}"))?
+            );
+            fs::write(&plan_path, &plan_bytes).map_err(|err| format!("write plan: {err}"))?;
+            let commands: Vec<serde_json::Value> = required
+                .iter()
+                .map(|id| routed_rust_test_command(id, "passed"))
+                .collect();
+            write_routed_rust_test_evidence(root, &required)?;
+            let mut execution = serde_json::json!({
+                "schema": "ripr.routed_rust_execution.v1",
+                "plan_sha256": crate::routed_rust_bytes_digest(plan_bytes.as_bytes()),
+                "state": "passed",
+                "subject_sha": plan["subject_sha"],
+                "subject_tree": plan["subject_tree"],
+                "required_proposition_ids": required,
+                "commands": commands,
+                "propositions": routed_rust_test_execution_propositions(&required),
+                "job_outcome": "success",
+                "planned_command_count": required.len(),
+                "observed_command_count": required.len(),
+                "failure_class": null,
+                "invalidations": [],
+            });
+            let child = match case {
+                "digest" => {
+                    execution["plan_sha256"] = serde_json::json!("wrong");
+                    "success"
+                }
+                "subject" => {
+                    execution["subject_sha"] = serde_json::json!("stale");
+                    "success"
+                }
+                "propositions" => {
+                    execution["commands"] = serde_json::json!([
+                        {"command_id": "precommit", "state": "passed"}
+                    ]);
+                    "success"
+                }
+                "missing_evidence_path" => {
+                    execution["commands"][0]
+                        .as_object_mut()
+                        .ok_or("command fixture must be an object")?
+                        .remove("evidence_path");
+                    "success"
+                }
+                "wrong_command" => {
+                    execution["commands"][0]["command"] = serde_json::json!("true");
+                    "success"
+                }
+                "wrong_evidence_digest" => {
+                    execution["commands"][0]["evidence_sha256"] = serde_json::json!("wrong-digest");
+                    "success"
+                }
+                "missing_evidence_bytes" => {
+                    fs::remove_file(dir.join(format!("routed-rust-command-{}.log", required[0])))
+                        .map_err(|err| format!("remove command evidence fixture: {err}"))?;
+                    "success"
+                }
+                "receipt_failed" => {
+                    execution["state"] = serde_json::json!("failed");
+                    execution["job_outcome"] = serde_json::json!("failure");
+                    execution["failure_class"] = serde_json::json!("product");
+                    execution["commands"][0]["state"] = serde_json::json!("failed");
+                    execution["commands"][0]["exit_code"] = serde_json::json!(1);
+                    execution["propositions"][4]["state"] = serde_json::json!("failed");
+                    "success"
+                }
+                "tick_failed" => "failure",
+                "malformed_failed" => {
+                    execution["state"] = serde_json::json!("failed");
+                    execution["job_outcome"] = serde_json::json!("failure");
+                    execution["failure_class"] = serde_json::json!("product");
+                    execution["commands"][0]["state"] = serde_json::json!("failed");
+                    execution["commands"][0]["exit_code"] = serde_json::json!(1);
+                    execution["commands"][0]
+                        .as_object_mut()
+                        .ok_or("command fixture must be an object")?
+                        .remove("duration_ms");
+                    execution["propositions"][4]["state"] = serde_json::json!("failed");
+                    "failure"
+                }
+                "malformed_stale" => {
+                    execution["schema"] = serde_json::json!("wrong");
+                    execution["subject_sha"] = serde_json::json!("historical-subject");
+                    "success"
+                }
+                "job_outcome_mismatch" => {
+                    execution["job_outcome"] = serde_json::json!("failure");
+                    "success"
+                }
+                "self_invalidated" => {
+                    execution["invalidations"] = serde_json::json!(["instrument broke"]);
+                    "success"
+                }
+                _ => "success",
+            };
+            fs::write(
+                &execution_path,
+                format!(
+                    "{}\n",
+                    serde_json::to_string_pretty(&execution)
+                        .map_err(|err| format!("render execution: {err}"))?
+                ),
+            )
+            .map_err(|err| format!("write execution: {err}"))?;
+            let expected_cache_hit = plan["cache_hit"].as_str().unwrap_or_default();
+            let expected_cache_matched_identity =
+                plan["cache_matched_identity"].as_str().unwrap_or_default();
+            let result = crate::ci_routed_rust_result(&make_args(
+                child,
+                expected_cache_hit,
+                expected_cache_matched_identity,
+            )?);
+            let expected_valid = matches!(
+                case,
+                "valid" | "valid_cache_miss" | "valid_cache_false_miss" | "valid_cache_partial"
+            );
+            if expected_valid && result.is_err() {
+                return Err(format!("exact packet pair did not pass: {result:?}"));
+            }
+            if !expected_valid && result.is_ok() {
+                return Err(format!("result accepted invalid packet case `{case}`"));
+            }
+            let packet: serde_json::Value = serde_json::from_str(
+                &fs::read_to_string(dir.join("routed-rust-result.json"))
+                    .map_err(|err| format!("read result packet: {err}"))?,
+            )
+            .map_err(|err| format!("parse result packet: {err}"))?;
+            if matches!(case, "receipt_failed" | "tick_failed")
+                && (packet["verdict"] != "failed"
+                    || !packet["invalidations"].as_array().is_some_and(|values| {
+                        values
+                            .iter()
+                            .any(|value| value == "child_conclusion_receipt_mismatch")
+                    }))
+            {
+                return Err(format!(
+                    "conclusion mismatch `{case}` was not retained as failed contradictory evidence: {packet}"
+                ));
+            }
+            if case == "stale_pair" && packet["verdict"] != "stale_or_wrong_subject" {
+                return Err(format!(
+                    "matching historical packets were not classified stale: {packet}"
+                ));
+            }
+            if case == "plan_catalog" && packet["verdict"] != "not_proven" {
+                return Err(format!(
+                    "deleted not_applicable proposition did not invalidate the plan: {packet}"
+                ));
+            }
+            if case == "malformed_failed" && packet["verdict"] != "not_proven" {
+                return Err(format!(
+                    "malformed evidence was falsely attributed as product failure: {packet}"
+                ));
+            }
+            if case == "malformed_stale" && packet["verdict"] != "not_proven" {
+                return Err(format!(
+                    "malformed execution evidence masqueraded as stale: {packet}"
+                ));
+            }
+            if case == "job_outcome_mismatch" && packet["verdict"] != "failed" {
+                return Err(format!(
+                    "job outcome contradiction remained green: {packet}"
+                ));
+            }
+            if case == "self_invalidated" && packet["verdict"] != "not_proven" {
+                return Err(format!(
+                    "self-invalidated execution evidence remained green: {packet}"
+                ));
+            }
+        }
+
+        let mut failed_download_args = make_args(
+            "success",
+            "true",
+            "ripr-routed-rust-Linux-cache-action-digest",
+        )?;
+        let outcome = failed_download_args
+            .iter()
+            .position(|value| value == "--download-outcome")
+            .and_then(|index| failed_download_args.get_mut(index + 1))
+            .ok_or("download outcome argument missing")?;
+        *outcome = "failure".to_string();
+        if crate::ci_routed_rust_result(&failed_download_args).is_ok() {
+            return Err("result consumed evidence after failed artifact integrity".to_string());
+        }
+        let failed_download_packet: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("routed-rust-result.json"))
+                .map_err(|err| format!("read failed-download result: {err}"))?,
+        )
+        .map_err(|err| format!("parse failed-download result: {err}"))?;
+        if failed_download_packet["verdict"] != "not_proven"
+            || !failed_download_packet["invalidations"]
+                .as_array()
+                .is_some_and(|values| {
+                    values
+                        .iter()
+                        .any(|value| value == "artifact_download_not_successful")
+                })
+        {
+            return Err(format!(
+                "failed artifact download did not fail closed: {failed_download_packet}"
+            ));
+        }
+
+        fs::remove_file(&execution_path).map_err(|err| format!("remove execution: {err}"))?;
+        if crate::ci_routed_rust_result(&make_args(
+            "success",
+            "true",
+            "ripr-routed-rust-Linux-cache-action-digest",
+        )?)
+        .is_ok()
+        {
+            return Err("result accepted missing execution bytes".to_string());
+        }
+        let result: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(dir.join("routed-rust-result.json"))
+                .map_err(|err| format!("read result packet: {err}"))?,
+        )
+        .map_err(|err| format!("parse result packet: {err}"))?;
+        if result["verdict"] != "not_proven" || result["invalidations"].as_array().is_none() {
+            return Err(format!(
+                "missing evidence did not produce retained not_proven result: {result}"
+            ));
+        }
+        Ok(())
+    })
+}
+
+#[test]
+fn routed_rust_scheduler_preserves_nul_framing() -> Result<(), String> {
+    let workflow = routed_rust_workflow_text()?;
+    if workflow.contains("tr '\\0' '\\n'") || !workflow.contains("read -r -d ''") {
+        return Err(
+            "the docs scheduler must consume `git diff --name-only -z` records without line conversion"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn routed_rust_changed_path_decoder_rejects_non_utf8_without_lossy_replacement()
+-> Result<(), String> {
+    let hostile = b"docs/\xff.md\0";
+    if crate::routed_rust_decode_changed_paths(hostile).is_ok() {
+        return Err("non-UTF-8 Git path was accepted as a docs-only candidate".to_string());
+    }
+    let valid = crate::routed_rust_decode_changed_paths(b"docs/a.md\0docs/line\nname.md\0")
+        .map_err(|err| format!("valid NUL inventory was rejected: {err}"))?;
+    if valid != ["docs/a.md", "docs/line\nname.md"] {
+        return Err(format!("NUL records were not preserved exactly: {valid:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn routed_rust_changed_path_outputs_bind_exact_raw_bytes() -> Result<(), String> {
+    let valid = b"docs/guide.md\0docs/reference.md\0";
+    let (valid_digest, valid_count, valid_utf8) = crate::routed_rust_changed_path_identity(valid);
+    if valid_digest != crate::routed_rust_bytes_digest(valid) || valid_count != 2 || !valid_utf8 {
+        return Err("valid NUL-delimited paths lost their exact identity".to_string());
+    }
+    let valid_outputs =
+        crate::routed_rust_changed_path_outputs(true, &valid_digest, valid_count, valid_utf8);
+    for expected in [
+        "docs_only=true\n".to_string(),
+        format!("changed_paths_sha256={valid_digest}\n"),
+        "changed_path_count=2\n".to_string(),
+        "changed_paths_utf8=true\n".to_string(),
+    ] {
+        if !valid_outputs.contains(&expected) {
+            return Err(format!("changed-path outputs omitted `{expected}`"));
+        }
+    }
+
+    let hostile = b"docs/guide-\xff.md\0";
+    let (hostile_digest, hostile_count, hostile_utf8) =
+        crate::routed_rust_changed_path_identity(hostile);
+    if hostile_digest != crate::routed_rust_bytes_digest(hostile)
+        || hostile_count != 1
+        || hostile_utf8
+    {
+        return Err("non-UTF-8 paths did not retain raw-byte identity".to_string());
+    }
+    let hostile_outputs = crate::routed_rust_changed_path_outputs(
+        false,
+        &hostile_digest,
+        hostile_count,
+        hostile_utf8,
+    );
+    if !hostile_outputs.contains("docs_only=false\n")
+        || !hostile_outputs.contains("changed_path_count=1\n")
+        || !hostile_outputs.contains("changed_paths_utf8=false\n")
+    {
+        return Err("non-UTF-8 changed-path outputs were incomplete".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn routed_rust_changed_path_observation_failure_is_not_evidence() -> Result<(), String> {
+    let result = crate::ci_docs_only(&[
+        "--base".to_string(),
+        "not-a-git-object".to_string(),
+        "--head".to_string(),
+        "HEAD".to_string(),
+    ]);
+    let error = match result {
+        Ok(()) => return Err("failed git diff observation emitted current evidence".to_string()),
+        Err(error) => error,
+    };
+    if !error.contains("changed-path observation failed") {
+        return Err(format!("unexpected observation failure: {error}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn routed_rust_plan_digests_pr_head_changes_not_merge_subject_changes() {
+    assert_eq!(
+        crate::routed_rust_changed_subject("pr-head", "merge-subject"),
+        "pr-head"
+    );
+    assert_eq!(
+        crate::routed_rust_changed_subject("", "push-subject"),
+        "push-subject"
+    );
+}
+
+#[test]
+fn routed_rust_state_model_does_not_claim_unobservable_timeouts() -> Result<(), String> {
+    let source = include_str!("main.rs");
+    let routed_state_model = source
+        .split("pub(crate) enum ChildConclusion")
+        .nth(1)
+        .and_then(|tail| tail.split("fn routed_rust_arg").next())
+        .ok_or("could not isolate the routed Rust state model")?;
+    if routed_state_model.contains("TimedOut") || routed_state_model.contains("timed_out") {
+        return Err(
+            "the routed Rust state model claims a timeout state that GitHub job.status cannot emit"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+/// Exactly one verdict may publish a green required check. Everything else,
+/// including interruption and unproven work, must be non-green.
+#[test]
+fn only_passed_is_green() -> Result<(), String> {
+    use crate::AggregateVerdict as V;
+    let non_green = [
+        V::Failed,
+        V::NotProven,
+        V::StaleOrWrongSubject,
+        V::Cancelled,
+    ];
+    if !V::Passed.is_green() {
+        return Err("passed must be green".to_string());
+    }
+    for verdict in non_green {
+        if verdict.is_green() {
+            return Err(format!("{} must not be green", verdict.as_str()));
+        }
+    }
+    Ok(())
+}
+
+/// A skipped child can only be green when the plan itself made that lane
+/// inapplicable. This is the invariant the earlier `vscode` required-check
+/// incident exposed, kept as a permanent source-CI property.
+#[test]
+fn skipping_is_never_read_as_irrelevance() -> Result<(), String> {
+    use crate::{ChildConclusion as C, PlannedRoute as P, ReceiptState as R};
+    let verdict = |planned, child, receipt, subject_agrees| {
+        crate::routed_rust_aggregate_verdict(planned, child, receipt, true, subject_agrees, true)
+    };
+    for receipt in [R::Missing, R::NotRun] {
+        let required = verdict(P::GithubHostedRust, C::Skipped, receipt, true);
+        if required.is_green() {
+            return Err(format!(
+                "a skipped required rust lane must not be green, got {required:?}"
+            ));
+        }
+    }
+    // The docs lane is legitimately inapplicable when the plan says so, but the
+    // docs gate itself still has to have proved something.
+    let docs = verdict(P::DocsOnly, C::Success, R::Passed, true);
+    if !docs.is_green() {
+        return Err("a proved docs-only subject should be green".to_string());
+    }
+    Ok(())
+}
+
+/// ripr#1446: the cheap scheduler must be a strict under-approximation of the
+/// typed authority.
+///
+/// The unsafe direction is a change the authority would refuse being sent down
+/// the docs-only lane, because that skips the Rust proof entirely. The safe
+/// direction — the scheduler over-proving a documentation change — costs compute
+/// and nothing else, so this asserts implication rather than equality.
+#[test]
+fn scheduler_never_schedules_docs_only_for_authority_non_docs() -> Result<(), String> {
+    let corpus: Vec<Vec<String>> = vec![
+        vec!["docs/foo.md".into()],
+        vec!["docs/specs/RIPR-SPEC-0001-x.md".into()],
+        vec!["docs/handoffs/2026-01-01-x.md".into()],
+        vec!["docs/a.md".into(), "docs/specs/b.md".into()],
+        vec!["CHANGELOG.md".into()],
+        vec!["docs/OUTPUT_SCHEMA.md".into()],
+        vec!["Cargo.toml".into()],
+        vec!["Cargo.lock".into()],
+        vec!["crates/ripr/Cargo.toml".into()],
+        vec![".github/workflows/ci.yml".into()],
+        vec![".github/workflows/routed-rust.yml".into()],
+        vec!["crates/ripr/src/lib.rs".into()],
+        vec!["xtask/src/main.rs".into()],
+        vec!["policy/workflow_allowlist.txt".into()],
+        vec!["docs/a.md".into(), "crates/ripr/src/lib.rs".into()],
+        vec!["docs/a.md".into(), "CHANGELOG.md".into()],
+        vec!["README.md".into()],
+        vec!["editors/vscode/package.json".into()],
+        vec![],
+        vec!["".into(), "   ".into()],
+        // Control-character smuggling: a source-shaped prefix hidden behind a
+        // trailing `.md`.
+        vec![format!("src/evil{}docs/x.md", '\n')],
+        vec![format!("docs/a{}../../src/evil.rs", '\r')],
+    ];
+
+    for paths in &corpus {
+        let scheduled = crate::scheduler_schedules_docs_only(paths);
+        let authoritative = crate::changed_paths_are_docs_only(paths);
+        if scheduled && !authoritative {
+            return Err(format!(
+                "scheduler would route {paths:?} to the docs-only lane but the authority refuses it; \
+                 the cheap path must never skip the Rust proof for an authority-non-doc change"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The asymmetry is intentional and must actually exist: at least one change set
+/// is over-proved by the scheduler. Without this the implication test could pass
+/// trivially by the two rules being identical, which would defeat the point of
+/// keeping a cheap scheduler at all.
+#[test]
+fn scheduler_is_strictly_more_conservative_than_the_authority() -> Result<(), String> {
+    // `README.md` is documentation-shaped to the authority but is not under
+    // `docs/`, so the scheduler sends it to the full proof.
+    let readme = vec!["README.md".to_string()];
+    if crate::scheduler_schedules_docs_only(&readme) {
+        return Err("scheduler should not accept README.md".to_string());
+    }
+    if !crate::changed_paths_are_docs_only(&readme) {
+        return Err("authority should accept README.md as documentation".to_string());
+    }
+    Ok(())
+}
+
+/// The mirrored Rust rule must stay aligned with the shell rule that actually
+/// schedules, otherwise the implication is proved about the wrong predicate.
+#[test]
+fn docs_only_route_is_hostile_to_non_documentation_change_sets() -> Result<(), String> {
+    let cases: [(&str, &[&str], bool); 14] = [
+        ("plain documentation", &["docs/foo.md"], true),
+        (
+            "spec documentation",
+            &["docs/specs/RIPR-SPEC-0001-x.md"],
+            true,
+        ),
+        (
+            "handoff documentation",
+            &["docs/handoffs/2026-01-01-x.md"],
+            true,
+        ),
+        (
+            "several documentation files",
+            &["docs/a.md", "docs/specs/b.md"],
+            true,
+        ),
+        // Release-facing markdown must not reach the reduced route.
+        ("changelog is release metadata", &["CHANGELOG.md"], false),
+        (
+            "output schema is a contract",
+            &["docs/OUTPUT_SCHEMA.md"],
+            false,
+        ),
+        // Manifests and lockfiles change what ships.
+        ("workspace manifest", &["Cargo.toml"], false),
+        ("lockfile", &["Cargo.lock"], false),
+        ("crate manifest", &["crates/ripr/Cargo.toml"], false),
+        // CI definitions decide how everything else is proven.
+        ("workflow definition", &[".github/workflows/ci.yml"], false),
+        // Source is never documentation.
+        ("rust source", &["crates/ripr/src/lib.rs"], false),
+        (
+            "mixed documentation and source",
+            &["docs/a.md", "crates/ripr/src/lib.rs"],
+            false,
+        ),
+        // "We observed nothing" is not "the change is documentation". A failed
+        // or empty changed-path observation must take the full route.
+        ("empty observation", &[], false),
+        ("blank observation entries", &["", "   "], false),
+    ];
+
+    for (property, paths, expected) in cases {
+        let owned: Vec<String> = paths.iter().map(|path| (*path).to_string()).collect();
+        let actual = crate::changed_paths_are_docs_only(&owned);
+        if actual != expected {
+            return Err(format!(
+                "docs-only route mis-classified {property}: paths {paths:?} gave {actual}, expected {expected}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A single non-documentation path must defeat any number of documentation
+/// paths; the route is all-or-nothing rather than majority-based.
+/// A fork controls its own filenames. If the changed-path inventory were split
+/// on newlines, a file whose name literally contains a newline followed by
+/// `docs/looks-like-docs.md` would be read as two paths, one of which looks like
+/// documentation. NUL-delimited collection keeps it a single path, and a single
+/// path that is not documentation forces the full proof.
+#[test]
+fn docs_only_route_treats_a_newline_bearing_filename_as_one_path() -> Result<(), String> {
+    let hostile = format!("src/evil{}docs/looks-like-docs.md", '\n');
+    if crate::changed_paths_are_docs_only(std::slice::from_ref(&hostile)) {
+        return Err(
+            "a single path containing a newline must not be read as documentation".to_string(),
+        );
+    }
+    // Line-splitting the same bytes would have produced a docs-only verdict for
+    // the trailing fragment, which is the failure this transport choice prevents.
+    let split: Vec<String> = hostile.split('\n').map(str::to_string).collect();
+    if split.len() != 2 {
+        return Err("fixture should split into two line-shaped paths".to_string());
+    }
+    if !crate::changed_paths_are_docs_only(&[split[1].clone()]) {
+        return Err("the second line-shaped fragment should look like documentation".to_string());
+    }
+    Ok(())
+}
+
+/// The digest covers the exact path bytes the predicate consumed, including the
+/// delimiter, so two different inventories cannot collide into one identity.
+#[test]
+fn changed_paths_digest_distinguishes_inventories() -> Result<(), String> {
+    let two_paths = vec!["docs/a.md".to_string(), "docs/b.md".to_string()];
+    let concatenated = vec!["docs/a.mddocs/b.md".to_string()];
+    if crate::changed_paths_digest(&two_paths) == crate::changed_paths_digest(&concatenated) {
+        return Err("concatenated paths must not digest identically to two paths".to_string());
+    }
+    if crate::changed_paths_digest(&two_paths) != crate::changed_paths_digest(&two_paths.clone()) {
+        return Err("digest must be stable for the same inventory".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn docs_only_route_requires_every_path_to_be_documentation() -> Result<(), String> {
+    let mut paths: Vec<String> = (0..50)
+        .map(|index| format!("docs/note-{index}.md"))
+        .collect();
+    if !crate::changed_paths_are_docs_only(&paths) {
+        return Err("fifty documentation files should take the docs-only route".to_string());
+    }
+    paths.push("crates/ripr/src/main.rs".to_string());
+    if crate::changed_paths_are_docs_only(&paths) {
+        return Err(
+            "one source file among fifty documentation files must force the full route".to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn fixture_isolation_preserves_explicit_languages_and_python_detection() -> Result<(), String> {
+    with_repo_cwd(|| {
+        let mixed = super::run_fixture(Path::new("fixtures/mixed_rust_typescript_preview"))?;
+        if !mixed.comparisons_all_match() {
+            return Err("isolated explicit-language fixture drifted from committed goldens".into());
+        }
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| format!("fixture timestamp: {error}"))?
+            .as_nanos();
+        let fixture = PathBuf::from("target/ripr")
+            .join(format!("python-discovery-{}-{stamp}", std::process::id()));
+        let result = (|| {
+            for file in ["pyproject.toml", "src/pricing.py", "tests/test_pricing.py"] {
+                let target = fixture.join("input").join(file);
+                let parent = target.parent().ok_or("fixture file has no parent")?;
+                fs::create_dir_all(parent)
+                    .map_err(|error| format!("create fixture parent: {error}"))?;
+                fs::copy(Path::new("fixtures/python/basic").join(file), target)
+                    .map_err(|error| format!("copy Python fixture: {error}"))?;
+            }
+            fs::copy(
+                "fixtures/python/basic/diff.patch",
+                fixture.join("diff.patch"),
+            )
+            .map_err(|error| format!("copy Python diff: {error}"))?;
+            let run = super::run_fixture_outputs(&fixture)?;
+            let value: Value = serde_json::from_str(
+                &fs::read_to_string(run.check_json_path())
+                    .map_err(|error| format!("read Python findings: {error}"))?,
+            )
+            .map_err(|error| format!("parse Python findings: {error}"))?;
+            let findings = value
+                .get("findings")
+                .and_then(Value::as_array)
+                .ok_or("missing Python findings")?;
+            if !findings.iter().any(|finding| {
+                finding.get("language").and_then(Value::as_str) == Some("python")
+                    && finding.get("language_status").and_then(Value::as_str) == Some("preview")
+            }) {
+                return Err("isolated no-config Python fixture lost autodetection".into());
+            }
+            Ok(())
+        })();
+        let cleanup =
+            fs::remove_dir_all(&fixture).map_err(|error| format!("remove Python fixture: {error}"));
+        match (result, cleanup) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(error), Err(cleanup)) => Err(format!("{error}; {cleanup}")),
+        }
+    })
 }

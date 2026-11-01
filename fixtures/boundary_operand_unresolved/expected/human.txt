@@ -1,0 +1,54 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/boundary_operand_unresolved/input
+
+Summary: 3 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path, 2 unclear. 3 found, 0 suppressed by your settings
+
+Analysis outcome: limitations below (analysis incomplete)
+  The 3 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
+  Limitation: part of the analysis failed during language analysis; recovery: inspect the failure — Run ripr from a Cargo workspace root (or restore the missing Cargo.toml), then re-run the analysis.
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:5
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Gap ID (for scripts): gap:rust:src/lib.rs:quote_body:return_value:return_value:some_lit
+  Changed behavior: Some("")
+  Missing check: No strong assertion was detected
+  Related test (1 of 3 matched rows): tests/q.rs:4 empty_body_equality_case (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: The related test `nonempty_body` already has an exact assertion; this does not
+    establish observation of the returned value. Check whether the change can affect the returned
+    value. If it can, add a separating input and assert the exact returned value. If it cannot, test
+    the changed effect separately; another input cannot distinguish unchanged returns
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      discriminator = assertion distinguishes intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach quote_body: empty_body_equality_case, missing_close_returns_none, nonempty_body
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 16 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/boundary_operand_unresolved/input --diff <cwd>/fixtures/boundary_operand_unresolved/diff.patch --mode fast probe:src_lib.rs:return_value:941b437a
+  ripr context --root <cwd>/fixtures/boundary_operand_unresolved/input --diff <cwd>/fixtures/boundary_operand_unresolved/diff.patch --mode fast --at probe:src_lib.rs:return_value:941b437a
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/boundary_operand_unresolved/input --at src/lib.rs:5 --kind return_value
+
+Hidden:
+  2 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:4 (unknown: infection unclear); kind: predicate; reason: Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side…
+    - ./src/lib.rs:6 (unknown: infection unclear); kind: predicate; reason: Changed boundary input is unresolved: boundary operands `end` and `start` are local or computed values ripr cannot map to the related tests' inputs, so it cannot tell which side…
+  Hidden classes:
+    unknown: infection unclear = ripr could not tell what input makes the change take effect
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

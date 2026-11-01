@@ -363,7 +363,7 @@ cargo xtask ripr-annotations [--comments <path>] [--out <path>] [--check]
 cargo xtask ripr-plus [--gap-ledger <path>] [--repo-exposure-summary <path>]
 cargo xtask ripr-pr [--base <rev>] [--head <rev>] [--root <path>] [--check]
 cargo xtask ripr-pr-summary [--check]
-cargo xtask ripr-review-comments [--base <rev>] [--head <rev>] [--root <path>] [--check]
+cargo xtask ripr-review-comments [--base <rev>] [--head <rev>] [--root <path>] [--check-output <path>] [--check]
 cargo xtask ripr-swarm attempt-ledger [--swarm-plan <path>] [--actionable-gap-outcomes <path>] [--previous-ledger <path>] [--real-repair-attempts <path>]
 cargo xtask ripr-swarm attempt --packet <id> --dry-run [--actionable-gaps <path>]
 cargo xtask ripr-swarm plan [--top <n>] [--actionable-gaps <path>]
@@ -1292,6 +1292,37 @@ If a pre-existing hook is not ripr-managed, the command refuses to overwrite it
 so local user hooks are not clobbered.
 
 ## CI Reports
+
+The repository's root `ripr.toml` explicitly enables Rust and preview TypeScript
+analysis. Mixed-language PR evidence must analyze changed extension sources before
+the review-comments consumer can reuse the producer's complete analysis. This is
+a repository-local opt-in, not a change to RIPR's Rust-only default or TypeScript's
+preview support tier. Disabled or unavailable adapters still produce partial
+evidence, which the consumer rejects rather than treating as a clean review.
+
+Corpus fixture runs use owned copies with a configuration-discovery boundary,
+preserving fixture-relative command paths, fixture-owned configuration and
+no-config defaults. Their fact cache remains pinned outside the tracked corpus.
+
+`cargo test -p xtask repository_language_policy_admits_real_mixed_language_producer`
+checks actual mixed-language CLI findings, canonical producer projection and
+review-consumer admission, with a Rust-only rejection control. It does not prove
+canonical-delta snapshot generation, distribution packaging or release readiness.
+
+PR check subjects, bounded review input and review receipts share the
+`review_input::canonical_root_identity` representation. Existing roots are
+canonicalized using native filesystem semantics before display normalization.
+On Windows, ordinary and verbatim drive/UNC paths identify the same root; on
+POSIX, backslashes remain filename characters. Exact root equality remains an
+admission requirement: evidence from a different checkout is not reusable merely
+because its commits and source files match.
+
+`cargo test -p xtask real_producer_root_identity_is_admitted_but_not_replayed`
+exercises actual CLI findings through both the xtask producer packet and public
+`ripr pr-evidence` producer/validator and review consumer, including equivalent-root
+admission and independent-clone rejection. Empty-diff fallback receipts use the
+same root and cache identity authority as child-produced receipts.
+This bounded fixture does not run canonical-delta snapshots or qualify a release.
 
 CI uploads review artifacts from the Rust workflow when reports are present:
 

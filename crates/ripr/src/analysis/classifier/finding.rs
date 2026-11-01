@@ -3,8 +3,17 @@ use crate::analysis::classify::{
     ASSERTION_CONTEXT_UNESTABLISHED, ProbeContext, body_contains_owner_call,
     ensure_unknown_stop_reason, exact_error_variant, exact_oracle_gap_next_step,
     is_partial_eq_method, missing_evidence, oracle_crediting_relations, recommended_next_step,
-    recommended_next_step_with_boundary, stop_reasons, wrapper_error_seam_expression,
+    recommended_next_step_with_boundary, stop_reasons, unresolved_guard_error_edge,
+    wrapper_error_seam_expression,
 };
+
+/// #1579: repair assignment for a changed error return behind a
+/// boolean guard the analyzer cannot carry the producing expression
+/// through. It must not prescribe a boundary or error-assertion test
+/// the suite already contains; the typed limitation names the guard
+/// edge static analysis cannot establish, deferring the
+/// discrimination verdict to real mutation testing.
+pub(in crate::analysis) const ERROR_RETURN_GUARD_UNRESOLVED_NEXT_STEP: &str = "Typed static limitation (rust_value_propagation_unresolved): ripr cannot statically resolve the changed error return's producing expression through the boolean guard, so it does not prescribe a boundary or error-assertion test the suite may already contain. Verify via real mutation testing whether the exact observer discriminates the producing expression.";
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
 use crate::value_origins::LocatedActivationEvidence as ActivationEvidence;
@@ -157,6 +166,33 @@ pub(in crate::analysis) fn build_finding_with_origins(
         .flatten()
         .filter(|fact| fact.reason.starts_with(ARM_UNSELECTED_REASON_PREFIX))
         .map(|fact| format!("{} =>", fact.value));
+    // #1579: a bare-guard predicate over a changed error return an
+    // exact observer already covers is unconfirmed, not
+    // established-missing. Prescribing a boundary or error-assertion
+    // test would instruct the user to add a test the suite already
+    // contains, so the typed static limitation replaces the
+    // prescription. The class stays `InfectionUnknown`: the gap is
+    // still visible, only the impossible repair assignment is withheld.
+    let error_guard_unresolved: Option<String> = if class == ExposureClass::InfectionUnknown
+        && matches!(context.probe.family, ProbeFamily::Predicate)
+    {
+        unresolved_guard_error_edge(
+            context.probe,
+            context.owner_fn,
+            &test_summaries,
+            &evidence.flow_sinks,
+            context.helper_chain.as_ref(),
+            context.index,
+        )
+        .filter(|_| {
+            strong_assertion_observes_owner_result(
+                &context.related_tests,
+                context.owner_fn.map(|owner| owner.name.as_str()),
+            )
+        })
+    } else {
+        None
+    };
     let recommended_next_step = if let Some(guard) = unentered_guard {
         Some(format!(
             "Add a related test input that enters `{guard}`; no related test call runs the changed line, so no assertion can observe it yet."
@@ -173,6 +209,8 @@ pub(in crate::analysis) fn build_finding_with_origins(
         Some("Inspect existing tests for activation of the changed `?` exit and whether their oracle constrains that path; static activation is unestablished.".to_string())
     } else if class == ExposureClass::WeaklyExposed && exact_oracle_covers_direct_sink {
         None
+    } else if error_guard_unresolved.is_some() {
+        Some(ERROR_RETURN_GUARD_UNRESOLVED_NEXT_STEP.to_string())
     } else if matches!(
         class,
         ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
@@ -288,6 +326,11 @@ pub(in crate::analysis) fn build_finding_with_origins(
                 .to_string(),
         );
     }
+    if let Some(reason) = &error_guard_unresolved {
+        evidence_lines.push(format!(
+            "Typed static limitation (rust_value_propagation_unresolved): {reason}, so the missing discriminator is unconfirmed and no boundary or error-assertion test is prescribed"
+        ));
+    }
     // RIPR-SPEC-0240: hand the refusal scope to the gap-admission post-pass,
     // which runs after every producer-named limit and consumes the marker.
     if class == ExposureClass::ReachableUnrevealed
@@ -356,7 +399,13 @@ pub(in crate::analysis) fn build_finding_with_origins(
         language: None,
         language_status: None,
         owner_kind: None,
-        static_limit_kind: None,
+        // #1579: carry the #3271 named limitation so CLI, ledger, gate,
+        // LSP, and packet projections consume the same limitation fact.
+        // The language adapter only assigns a limit when none is set,
+        // so this producer-assigned kind is never overwritten.
+        static_limit_kind: error_guard_unresolved
+            .is_some()
+            .then_some(StaticLimitKind::RustValuePropagationUnresolved),
         changed_sink: None,
         observed_sink: None,
         oracle_alignment: None,
@@ -578,6 +627,32 @@ fn exact_oracle_aligns_with_sink(
     })
 }
 
+/// #1726 review: the guard producer accepts a strong assertion in any
+/// owner-calling test, so a strong assertion on an unrelated value
+/// could take the limitation. The consumer additionally requires the
+/// strong assertion to mention an identifier bound from an owner call
+/// (the same owner-bound authority `oracle_binds_sink_identity`
+/// applies to value sinks), so only an observer of the owner result
+/// withholds the prescription. A directly asserted owner call with no
+/// `let` binding stays fail-closed and keeps its repair.
+fn strong_assertion_observes_owner_result(
+    related_tests: &[(&TestSummary, RelationReason)],
+    owner_name: Option<&str>,
+) -> bool {
+    let Some(owner_name) = owner_name else {
+        return false;
+    };
+    related_tests.iter().any(|(test, _)| {
+        let bound = bound_identifiers_from_owner_calls(&test.body, owner_name);
+        test.assertions.iter().any(|assertion| {
+            assertion.strength == OracleStrength::Strong
+                && bound
+                    .iter()
+                    .any(|name| contains_identifier(&assertion.text, name))
+        })
+    })
+}
+
 fn sink_kind_corresponds(family: &ProbeFamily, kind: &FlowSinkKind) -> bool {
     matches!(
         (family, kind),
@@ -792,6 +867,7 @@ mod tests {
         ActivationEvidence, Unconfirmed, annotate_related_test_misses,
         bound_identifiers_from_owner_calls, exact_oracle_aligns_with_sink,
         oracle_binds_sink_identity, oracle_text_aligns_with_sink, sink_kind_corresponds,
+        strong_assertion_observes_owner_result,
     };
     use crate::analysis::classifier::evidence::ClassifiedProbeEvidence;
     use crate::analysis::rust_index::TestSummary;
@@ -1585,6 +1661,71 @@ mod tests {
             "assert_eq!(other, Ok(amount))",
             "let other = recalculate(5);",
             Some("calculate")
+        ));
+    }
+
+    // #1726 review T2: the guard limitation needs a strong assertion
+    // observing an owner-bound result, not just any strong assertion
+    // in an owner-calling test.
+    #[test]
+    fn owner_result_observation_requires_bound_strong_assertion() {
+        use crate::analysis::rust_index::OracleFact;
+
+        fn summary(body: &str, assertions: Vec<OracleFact>) -> TestSummary {
+            let mut test = test_summary("case", body);
+            test.assertions = assertions;
+            test
+        }
+
+        fn strong(text: &str) -> OracleFact {
+            OracleFact {
+                kind: OracleKind::ExactValue,
+                strength: OracleStrength::Strong,
+                line: 2,
+                text: text.to_string(),
+                observed_tokens: Vec::new(),
+                ok_value_observed: None,
+            }
+        }
+
+        fn paired(test: &TestSummary) -> Vec<(&TestSummary, RelationReason)> {
+            vec![(test, RelationReason::DirectOwnerCall)]
+        }
+
+        // A strong assertion on the owner-bound result observes it.
+        let bound = summary(
+            "let err = calculate(true).expect_err(\"x\");",
+            vec![strong("assert_eq!(err, cancelled_error());")],
+        );
+        assert!(strong_assertion_observes_owner_result(
+            &paired(&bound),
+            Some("calculate")
+        ));
+        // A strong assertion on an unrelated value does not, even
+        // when the test calls the owner.
+        let unbound = summary(
+            "calculate(true);\nassert_eq!(other, 42);",
+            vec![strong("assert_eq!(other, 42);")],
+        );
+        assert!(!strong_assertion_observes_owner_result(
+            &paired(&unbound),
+            Some("calculate")
+        ));
+        // A weak assertion on the bound result does not qualify.
+        let mut weak_assertion = strong("assert_eq!(err, cancelled_error());");
+        weak_assertion.strength = OracleStrength::Weak;
+        let weak = summary(
+            "let err = calculate(true).expect_err(\"x\");",
+            vec![weak_assertion],
+        );
+        assert!(!strong_assertion_observes_owner_result(
+            &paired(&weak),
+            Some("calculate")
+        ));
+        // No owner means no binding to observe through.
+        assert!(!strong_assertion_observes_owner_result(
+            &paired(&bound),
+            None
         ));
     }
 

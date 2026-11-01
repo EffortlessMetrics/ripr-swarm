@@ -380,6 +380,10 @@ fn validate_run_receipt(
         "root_identity",
         "base_sha",
         "head_sha",
+        "requested_mode",
+        "analysis_identity",
+        "phase_evidence",
+        "primary_failure",
         "last_completed_phase",
         "active_phase",
         "reusable_cache_identity",
@@ -391,7 +395,7 @@ fn validate_run_receipt(
     }
     expect_string_value(
         receipt.get("schema_version"),
-        "0.1",
+        "0.2",
         "run_receipt.schema_version",
         violations,
     );
@@ -981,10 +985,14 @@ fn review_comments_receipt(
         });
     let mut receipt = existing_receipt.unwrap_or_else(|| {
         serde_json::json!({
-            "schema_version": "0.1",
+            "schema_version": "0.2",
             "root_identity": root_identity,
             "base_sha": base_sha,
             "head_sha": head_sha,
+            "requested_mode": "fast",
+            "analysis_identity": Value::Null,
+            "phase_evidence": [],
+            "primary_failure": Value::Null,
             "configured_timeout_ms": review_comments_timeout_ms().unwrap_or(120_000),
             "last_completed_phase": Value::Null,
             "active_phase": "review_comments_process",
@@ -1052,6 +1060,15 @@ fn review_comments_receipt(
                     "category": limitation_category,
                     "repair_route": repair_route,
                 }]),
+            );
+            object.insert(
+                "primary_failure".to_string(),
+                serde_json::json!({
+                    "phase": "review_comments_process",
+                    "category": limitation_category,
+                    "message": first_line(producer_error),
+                    "secondary_diagnostics": []
+                }),
             );
             object.insert(
                 "non_claims".to_string(),
@@ -2162,11 +2179,15 @@ mod tests {
             "warnings": [],
             "limits_note": "Comments are capped and advisory; summary-only items never annotate.",
             "run_receipt": {
-                "schema_version": "0.1",
+                "schema_version": "0.2",
                 "status": "complete",
                 "root_identity": normalize_path_text(&command_root_arg(repo, &options.root)),
                 "base_sha": resolve_revision_identity(&receipt_root, &options.base),
                 "head_sha": resolve_revision_identity(&receipt_root, &options.head),
+                "requested_mode": "fast",
+                "analysis_identity": null,
+                "phase_evidence": [],
+                "primary_failure": null,
                 "configured_timeout_ms": 120000,
                 "last_completed_phase": "artifact_io",
                 "active_phase": null,

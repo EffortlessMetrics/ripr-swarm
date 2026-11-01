@@ -6,7 +6,7 @@
 //! [`activation_and_boundary_input`]. Output feeds the infect stage; it never
 //! claims a runtime outcome.
 
-use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary};
+use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary, extract_literals};
 use super::arm_selection::{may_declare_items_in_owner_scope, may_name_constant};
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
@@ -2014,18 +2014,17 @@ fn missing_discriminator_facts(
     workspace_complete: bool,
     unresolved_boundary: &mut Option<String>,
 ) -> Vec<MissingDiscriminatorFact> {
+    let boundary_evidence = BoundaryEvidence {
+        related_tests,
+        flow_sinks,
+        helper_chain,
+        index,
+        workspace_complete,
+    };
     let mut missing = Vec::new();
     if matches!(probe.family, ProbeFamily::Predicate)
-        && let Some(fact) = missing_boundary_discriminator(
-            probe,
-            owner_fn,
-            related_tests,
-            flow_sinks,
-            helper_chain,
-            index,
-            workspace_complete,
-            unresolved_boundary,
-        )
+        && let Some(fact) =
+            missing_boundary_discriminator(probe, owner_fn, boundary_evidence, unresolved_boundary)
     {
         missing.push(fact);
     }
@@ -2037,11 +2036,7 @@ fn missing_discriminator_facts(
         && let Some(fact) = missing_boundary_discriminator(
             view,
             owner_fn,
-            related_tests,
-            flow_sinks,
-            helper_chain,
-            index,
-            workspace_complete,
+            boundary_evidence,
             &mut returned_unresolved,
         )
         && returned_unresolved.is_none()
@@ -2562,16 +2557,117 @@ fn observed_input_separates_threshold_move(
     clippy::too_many_arguments,
     reason = "the shared evidence inputs plus the unresolved-boundary reason computed on the same pass"
 )]
-fn missing_boundary_discriminator(
+/// #1579: stable reason marker for a changed error return behind a
+/// boolean guard the bounded evaluator cannot carry the producing
+/// expression through. The finding builder matches on the returned
+/// reason to withhold an unverifiable repair prescription.
+pub(in crate::analysis) const ERROR_RETURN_GUARD_UNRESOLVED_MARKER: &str =
+    "error return guard unresolved";
+
+/// #1579: name the guard when a bare-identifier predicate guards a
+/// changed error return an exact observer already covers. A guard
+/// with visible literals keeps its satisfiable boundary repair; only
+/// the bare-guard shape (no boundary to test) with a strong
+/// owner-calling observer qualifies. Every related-test row must
+/// leave the sink expression `Unsupported`: a single row the
+/// evaluator resolves means the edge is not unresolved, so the
+/// marker stays withheld no matter the row order. Returns `None`
+/// when the guard is not an owner parameter, the sink is not behind
+/// the guard, or no exact observer exists, so those keep their
+/// honest evidence and satisfiable repair.
+pub(in crate::analysis) fn unresolved_guard_error_edge(
     probe: &Probe,
     owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
     flow_sinks: &[FlowSinkFact],
     helper_chain: Option<&super::helper_transfer::HelperChain>,
     index: &crate::analysis::rust_index::RustIndex,
+) -> Option<String> {
+    let guard = probe.expression.trim();
+    if !super::value_transfer::is_identifier(guard) || !extract_literals(guard).is_empty() {
+        return None;
+    }
+    let owner = owner_fn?;
+    // #1726 review: `function_parameters` preserves `mut`, so a
+    // mutable guard (`mut cancelled: bool`) must match the bare probe
+    // guard. Only the comparison is normalized; call-row and helper
+    // binding keep consuming the raw positional names.
+    let parameters = function_parameters(owner);
+    if !parameters
+        .iter()
+        .any(|parameter| parameter.strip_prefix("mut ").unwrap_or(parameter) == guard)
+    {
+        return None;
+    }
+    let sink = flow_sinks
+        .iter()
+        .find(|sink| sink.kind == FlowSinkKind::ErrorVariant && sink.line > probe.location.line)?;
+    let exact_observer = related_tests.iter().any(|test| {
+        test.assertions
+            .iter()
+            .any(|assertion| assertion.strength == OracleStrength::Strong)
+            && super::related_tests::body_contains_owner_call(&test.body, &owner.name)
+    });
+    if !exact_observer {
+        return None;
+    }
+    let call_values = call_values_for_owner(
+        owner,
+        &parameters,
+        related_tests,
+        helper_chain,
+        index,
+        false,
+    );
+    if call_values.is_empty() {
+        return None;
+    }
+    let mut earliest_unsupported: Option<String> = None;
+    for row in &call_values {
+        let inputs: super::value_transfer::ExactInputs = row
+            .iter()
+            .map(|cell| (cell.parameter.clone(), cell.value.clone()))
+            .collect();
+        match super::value_transfer::evaluate_initializer(&sink.text, &inputs) {
+            super::value_transfer::EvalOutcome::Unsupported { earliest_edge } => {
+                if earliest_unsupported.is_none() {
+                    earliest_unsupported = Some(earliest_edge);
+                }
+            }
+            _ => return None,
+        }
+    }
+    let earliest_edge = earliest_unsupported?;
+    Some(format!(
+        "{ERROR_RETURN_GUARD_UNRESOLVED_MARKER}: `{guard}` guards the changed `{}` (earliest unsupported edge: {earliest_edge})",
+        sink.text
+    ))
+}
+
+/// The shared evidence a boundary reading draws on, bundled so the reading takes the probe,
+/// its owner and the unresolved-reason slot without a long positional list.
+#[derive(Clone, Copy)]
+struct BoundaryEvidence<'a> {
+    related_tests: &'a [&'a TestSummary],
+    flow_sinks: &'a [FlowSinkFact],
+    helper_chain: Option<&'a super::helper_transfer::HelperChain>,
+    index: &'a crate::analysis::rust_index::RustIndex,
     workspace_complete: bool,
+}
+
+fn missing_boundary_discriminator(
+    probe: &Probe,
+    owner_fn: Option<&FunctionSummary>,
+    evidence: BoundaryEvidence<'_>,
     unresolved: &mut Option<String>,
 ) -> Option<MissingDiscriminatorFact> {
+    let BoundaryEvidence {
+        related_tests,
+        flow_sinks,
+        helper_chain,
+        index,
+        workspace_complete,
+    } = evidence;
     let owner = owner_fn?;
     let parameters = function_parameters(owner);
     let owner_source = index
@@ -7011,7 +7107,10 @@ fn split_top_level_args(text: &str) -> Vec<String> {
     let mut depth = 0i32;
     let mut in_string = false;
     let mut escaped = false;
-    for (idx, ch) in text.char_indices() {
+    let chars = text.char_indices().collect::<Vec<_>>();
+    let mut at = 0usize;
+    while let Some(&(idx, ch)) = chars.get(at) {
+        at += 1;
         if in_string {
             if escaped {
                 escaped = false;
@@ -7024,6 +7123,15 @@ fn split_top_level_args(text: &str) -> Vec<String> {
         }
         match ch {
             '"' => in_string = true,
+            // A char literal is one unit: brackets inside `'['` must not
+            // affect depth, or the top-level comma is lost and later
+            // arguments are mislabeled (#1724 review). A lifetime (`'a`)
+            // is not a literal and is left alone.
+            '\'' => {
+                if let Some(close) = char_literal_close(&chars, at - 1) {
+                    at = close + 1;
+                }
+            }
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth -= 1,
             ',' if depth == 0 => {
@@ -12324,5 +12432,196 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
         assert!(!macro_names_rebound(&index, &["assert"]));
         assert_eq!(index.call_identity_memos.rebound_scan_count(), 1);
+    }
+
+    #[test]
+    fn split_top_level_args_respects_char_literals() {
+        // #1724 review: brackets inside `'['`/`']'` must not suppress the
+        // top-level comma, or `close` is mislabeled as `open`.
+        assert_eq!(
+            split_top_level_args("\"[]\", '[', ']'"),
+            vec!["\"[]\"".to_string(), "'['".to_string(), "']'".to_string()]
+        );
+        // A lifetime is not a char literal and must not swallow arguments.
+        assert_eq!(
+            split_top_level_args("text: &'a str, other: &'b str"),
+            vec!["text: &'a str".to_string(), "other: &'b str".to_string()]
+        );
+    }
+
+    fn guard_owner() -> FunctionSummary {
+        function(
+            "pub fn score(cancelled: bool) -> i32 {\n    if cancelled {\n        1\n    } else {\n        0\n    }\n}",
+        )
+    }
+
+    fn guard_sink(line: usize) -> FlowSinkFact {
+        FlowSinkFact {
+            kind: FlowSinkKind::ErrorVariant,
+            text: "Result::Err(OpError { code: -32800 })".to_string(),
+            line,
+            owner: None,
+        }
+    }
+
+    fn guard_test(name: &str, body: &str, strong_oracle: bool) -> TestSummary {
+        TestSummary {
+            name: name.to_string(),
+            file: PathBuf::from("tests/score.rs"),
+            start_line: 10,
+            end_line: 14,
+            body: body.to_string().into(),
+            calls: vec![CallFact {
+                name: "score".to_string(),
+                line: 11,
+                text: "score(true)".to_string().into(),
+            }],
+            assertions: if strong_oracle {
+                vec![OracleFact {
+                    kind: OracleKind::ExactValue,
+                    strength: OracleStrength::Strong,
+                    line: 12,
+                    text: "assert_eq!(err, cancelled_error());".to_string(),
+                    observed_tokens: Vec::new(),
+                    ok_value_observed: None,
+                }]
+            } else {
+                Vec::new()
+            },
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        }
+    }
+
+    // #1726 review T1: a mutable guard parameter (`mut cancelled`)
+    // still names the guard edge; only the comparison is normalized.
+    #[test]
+    fn guard_error_edge_names_mutable_guard_parameter() -> Result<(), String> {
+        let index = crate::analysis::rust_index::RustIndex::default();
+        let mut owner = guard_owner();
+        owner.body = "pub fn score(mut cancelled: bool) -> i32 {\n    if cancelled {\n        1\n    } else {\n        0\n    }\n}"
+            .into();
+        let probe = probe(ProbeFamily::Predicate, "cancelled");
+        let test = guard_test(
+            "cancelled_return_is_exact",
+            "let err = score(true).expect_err(\"x\");\nassert_eq!(err, cancelled_error());",
+            true,
+        );
+
+        let Some(reason) = unresolved_guard_error_edge(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[guard_sink(3)],
+            None,
+            &index,
+        ) else {
+            return Err("mutable guard must name the edge".to_string());
+        };
+        if !reason.contains("`cancelled`") {
+            return Err(format!("reason must name the guard: {reason}"));
+        }
+        Ok(())
+    }
+
+    // #1579: a bare guard parameter over a changed error return an
+    // exact observer already covers names the guard edge.
+    #[test]
+    fn guard_error_edge_names_guard_for_exactly_observed_return() -> Result<(), String> {
+        let index = crate::analysis::rust_index::RustIndex::default();
+        let owner = guard_owner();
+        let probe = probe(ProbeFamily::Predicate, "cancelled");
+        let test = guard_test(
+            "cancelled_return_is_exact",
+            "let err = score(true).expect_err(\"x\");\nassert_eq!(err, cancelled_error());",
+            true,
+        );
+
+        let Some(reason) = unresolved_guard_error_edge(
+            &probe,
+            Some(&owner),
+            &[&test],
+            &[guard_sink(3)],
+            None,
+            &index,
+        ) else {
+            return Err("bare guard with exact observer must name the edge".to_string());
+        };
+        for needle in [
+            ERROR_RETURN_GUARD_UNRESOLVED_MARKER,
+            "`cancelled`",
+            "not a supported operation chain",
+        ] {
+            if !reason.contains(needle) {
+                return Err(format!("reason must carry {needle}: {reason}"));
+            }
+        }
+        Ok(())
+    }
+
+    // #1579 paired controls: each missing signal withholds the marker
+    // so satisfiable repairs stay prescribable.
+    #[test]
+    fn guard_error_edge_withholds_without_each_signal() {
+        let index = crate::analysis::rust_index::RustIndex::default();
+        let owner = guard_owner();
+        let exact = guard_test(
+            "cancelled_return_is_exact",
+            "let err = score(true).expect_err(\"x\");\nassert_eq!(err, cancelled_error());",
+            true,
+        );
+        let weak = guard_test(
+            "cancelled_return_is_weak",
+            "let err = score(true).expect_err(\"x\");",
+            false,
+        );
+        let guarded = probe(ProbeFamily::Predicate, "cancelled");
+        let literal_guard = probe(ProbeFamily::Predicate, "amount >= threshold");
+        let foreign_guard = probe(ProbeFamily::Predicate, "other_flag");
+        let edge = |probe: &Probe,
+                    owner: Option<&FunctionSummary>,
+                    test: &TestSummary,
+                    sink: FlowSinkFact| {
+            unresolved_guard_error_edge(probe, owner, &[test], &[sink], None, &index)
+        };
+
+        // Guard with visible literals keeps its boundary repair.
+        assert!(
+            edge(&literal_guard, Some(&owner), &exact, guard_sink(3)).is_none(),
+            "literal guard must not take the unresolved edge"
+        );
+        // Guard that is not an owner parameter names no edge.
+        assert!(
+            edge(&foreign_guard, Some(&owner), &exact, guard_sink(3)).is_none(),
+            "non-parameter guard must not take the unresolved edge"
+        );
+        // Sink on the probe line is not behind the guard.
+        assert!(
+            edge(&guarded, Some(&owner), &exact, guard_sink(2)).is_none(),
+            "sink on the guard line must not take the unresolved edge"
+        );
+        // No exact observer means the assertion gap stays actionable.
+        assert!(
+            edge(&guarded, Some(&owner), &weak, guard_sink(3)).is_none(),
+            "missing exact observer must not take the unresolved edge"
+        );
+        // A sink the evaluator resolves is not an unresolved edge.
+        let resolved = FlowSinkFact {
+            kind: FlowSinkKind::ErrorVariant,
+            text: "\"operation cancelled\"".to_string(),
+            line: 3,
+            owner: None,
+        };
+        assert!(
+            edge(&guarded, Some(&owner), &exact, resolved).is_none(),
+            "resolvable sink must not take the unresolved edge"
+        );
+        // No owner means no guard identity to name.
+        assert!(
+            edge(&guarded, None, &exact, guard_sink(3)).is_none(),
+            "missing owner must not take the unresolved edge"
+        );
     }
 }

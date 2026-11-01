@@ -173,6 +173,22 @@ pub(crate) fn source_promotion(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Geometry-only preflight for fixtures that exercise the retained ancestor
+/// verifier. It parses the public argument grammar and runs the real geometry
+/// producer, but deliberately skips native handoff admission, so its receipt
+/// carries no `acceptance` and cannot stand in for the public command's output.
+#[cfg(test)]
+pub(crate) fn geometry_preflight_without_admission(args: &[String]) -> Result<(), String> {
+    let options = parse_args(args)?;
+    let geometry = build_receipt(&options)?;
+    let json = serde_json::to_string_pretty(&geometry)
+        .map_err(|error| format!("failed to serialize geometry receipt: {error}"))?;
+    fs::create_dir_all(&options.out)
+        .map_err(|error| format!("failed to create {}: {error}", options.out.display()))?;
+    fs::write(options.out.join(REPORT_JSON), format!("{json}\n"))
+        .map_err(|error| format!("failed to write geometry receipt: {error}"))
+}
+
 fn parse_args(args: &[String]) -> Result<Options, String> {
     if args.first().map(String::as_str) != Some("preflight") {
         return Err(usage());
@@ -380,9 +396,16 @@ fn build_receipt(options: &Options) -> Result<GeometryReceipt, String> {
         swarm_changed: path_inventory(&swarm_paths, CHANGED_PARENT),
         swarm_only: path_inventory(&swarm_only_paths, SWARM_ONLY),
     };
+    // An ancestor source permits fast-forward only to the automatic tree.
+    // A separately verified resolution with different bytes needs a join (#1855).
+    let reviewed_tree_requires_join = dry_merge
+        .reviewed_resolved_tree
+        .as_ref()
+        .zip(dry_merge.preview_tree.as_ref())
+        .is_some_and(|(reviewed, preview)| !reviewed.eq_ignore_ascii_case(preview));
     Ok(GeometryReceipt {
         schema: SCHEMA.to_string(),
-        mode: if merge_base == options.source_parent {
+        mode: if merge_base == options.source_parent && !reviewed_tree_requires_join {
             "fast_forward".to_string()
         } else {
             "two_parent_join".to_string()

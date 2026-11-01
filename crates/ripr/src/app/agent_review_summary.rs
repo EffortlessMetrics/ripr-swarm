@@ -634,7 +634,6 @@ mod tests {
             &root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT),
             r#"{"schema_version":"0.5","tool":"ripr","status":"advisory","provenance":{"before_class":"weakly_gripped","after_class":"weakly_gripped","movement":"unchanged","verify_artifact":{"path":"target/ripr/workflow/agent-verify.json","sha256":"sha256:verify"}},"seam":{"seam_id":"seam-stale","file":"src/pricing.rs","line":42,"seam_kind":"predicate_boundary","before":"weakly_gripped","after":"weakly_gripped","change":"unchanged","grip_class":"weakly_gripped"},"summary":{"remaining_gap":"Fixture-controlled static review state.","next_recommendation":"Add the missing discriminator or stronger assertion named by the packet.","next_action":{"kind":"unchanged","summary":"Static grip did not improve.","recommended_action":"Add the missing discriminator or stronger assertion named by the packet."}}}"#,
         )?;
-        std::thread::sleep(std::time::Duration::from_millis(25));
         write_file(
             &root.join(WORKFLOW_AGENT_VERIFY_ARTIFACT),
             &serde_json::to_string_pretty(&serde_json::json!({
@@ -645,9 +644,28 @@ mod tests {
             }))
             .map_err(|err| format!("render verify fixture: {err}"))?,
         )?;
-        std::thread::sleep(std::time::Duration::from_millis(25));
         write_file(&root.join(WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT), "{}")?;
         write_file(&root.join(WORKFLOW_AFTER_SNAPSHOT_ARTIFACT), "{}")?;
+        // Pin artifact mtimes explicitly. The stale-artifact warnings compare
+        // mtime order, and sleep-separated writes flake on coarse filesystem
+        // timestamp granularity; explicit stamps keep the pinned stale state
+        // (receipt older than verify older than the snapshots) deterministic.
+        let stale_base = std::time::UNIX_EPOCH + std::time::Duration::from_hours(500_000);
+        for (relative, offset_secs) in [
+            (WORKFLOW_AGENT_RECEIPT_ARTIFACT, 0),
+            (WORKFLOW_AGENT_VERIFY_ARTIFACT, 10),
+            (WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, 20),
+            (WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, 20),
+        ] {
+            let path = root.join(relative);
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .and_then(|file| {
+                    file.set_modified(stale_base + std::time::Duration::from_secs(offset_secs))
+                })
+                .map_err(|err| format!("pin mtime {}: {err}", path.display()))?;
+        }
         assert_review_summary_matches_fixture(&root, Path::new("."), "stale-artifact")?;
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
         Ok(())

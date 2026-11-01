@@ -4,15 +4,16 @@
 //! static evidence into a proof, and an incomplete receipt never means that
 //! the requested review is clean or complete.
 
+use crate::review_input::canonical_root_identity;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-pub(crate) const REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION: &str = "0.1";
+pub(crate) const REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION: &str = "0.2";
 
 /// Named limitation category for a review-guidance dispatch refused at the
 /// memory ceiling (#4388). Consumers match this category — not error prose —
@@ -32,12 +33,34 @@ pub(crate) struct ReviewCommentsReceiptLimitation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ReviewCommentsPhaseEvidence {
+    pub(crate) phase: String,
+    pub(crate) duration_ms: u64,
+    pub(crate) reused: bool,
+    pub(crate) subject_count: Option<usize>,
+    pub(crate) stop_reason: String,
+    pub(crate) input_identity_digest: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct ReviewCommentsFailure {
+    pub(crate) phase: String,
+    pub(crate) category: String,
+    pub(crate) message: String,
+    pub(crate) secondary_diagnostics: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct ReviewCommentsRunReceipt {
     pub(crate) schema_version: &'static str,
     pub(crate) status: &'static str,
     pub(crate) root_identity: String,
     pub(crate) base_sha: String,
     pub(crate) head_sha: String,
+    pub(crate) requested_mode: String,
+    pub(crate) analysis_identity: Option<crate::app::review_comments::ReviewAnalysisIdentity>,
+    pub(crate) phase_evidence: Vec<ReviewCommentsPhaseEvidence>,
+    pub(crate) primary_failure: Option<ReviewCommentsFailure>,
     pub(crate) configured_timeout_ms: u64,
     pub(crate) last_completed_phase: Option<String>,
     pub(crate) active_phase: Option<String>,
@@ -59,6 +82,8 @@ pub(crate) struct ReviewCommentsRunReceipt {
     pub(crate) limitations: Vec<ReviewCommentsReceiptLimitation>,
     pub(crate) non_claims: Vec<String>,
     pub(crate) atomic_write_status: &'static str,
+    #[serde(skip)]
+    phase_started: Option<Instant>,
 }
 
 impl ReviewCommentsRunReceipt {
@@ -66,6 +91,7 @@ impl ReviewCommentsRunReceipt {
         root: &Path,
         base: &str,
         head: &str,
+        mode: &crate::app::Mode,
         timeout_ms: u64,
         expected_artifacts: &[String],
         revision_budget: Option<Duration>,
@@ -100,6 +126,10 @@ impl ReviewCommentsRunReceipt {
             root_identity,
             base_sha,
             head_sha,
+            requested_mode: mode.as_str().to_string(),
+            analysis_identity: None,
+            phase_evidence: Vec::new(),
+            primary_failure: None,
             configured_timeout_ms: timeout_ms,
             last_completed_phase: None,
             active_phase: Some("input_validation".to_string()),
@@ -114,14 +144,17 @@ impl ReviewCommentsRunReceipt {
                 "no complete route inventory is claimed until status is complete".to_string(),
             ],
             atomic_write_status: "not_written",
+            phase_started: Some(Instant::now()),
         }
     }
 
     pub(crate) fn phase(&mut self, completed: &str, active: &str) {
+        self.finish_phase(completed, false, None, "complete", None);
         self.last_completed_phase = Some(completed.to_string());
         self.active_phase = Some(active.to_string());
         self.active_step = None;
         self.canonical_analysis_evaluated_seams = None;
+        self.phase_started = Some(Instant::now());
     }
 
     /// Records how many seams `canonical_analysis` had classified when the
@@ -136,6 +169,9 @@ impl ReviewCommentsRunReceipt {
     }
 
     pub(crate) fn complete(&mut self, artifacts: &[String]) {
+        if let Some(active) = self.active_phase.clone() {
+            self.finish_phase(&active, false, Some(artifacts.len()), "complete", None);
+        }
         self.status = "complete";
         self.last_completed_phase = Some("artifact_io".to_string());
         self.active_phase = None;
@@ -143,6 +179,29 @@ impl ReviewCommentsRunReceipt {
         self.canonical_analysis_evaluated_seams = None;
         self.completed_artifacts = artifacts.to_vec();
         self.missing_artifacts.clear();
+        self.phase_started = None;
+    }
+
+    fn finish_phase(
+        &mut self,
+        phase: &str,
+        reused: bool,
+        subject_count: Option<usize>,
+        stop_reason: &str,
+        input_identity_digest: Option<String>,
+    ) {
+        let duration_ms = self
+            .phase_started
+            .map(|started| started.elapsed().as_millis() as u64)
+            .unwrap_or_default();
+        self.phase_evidence.push(ReviewCommentsPhaseEvidence {
+            phase: phase.to_string(),
+            duration_ms,
+            reused,
+            subject_count,
+            stop_reason: stop_reason.to_string(),
+            input_identity_digest,
+        });
     }
 
     pub fn limited_timeout(&mut self, active_phase: &str) {
@@ -280,18 +339,6 @@ pub(crate) fn attach_to_json(
         .map_err(|err| format!("render review-comments JSON with receipt failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
-fn canonical_root_identity(root: &Path) -> String {
-    let normalized = root
-        .canonicalize()
-        .unwrap_or_else(|_| root.to_path_buf())
-        .to_string_lossy()
-        .replace('\\', "/");
-    normalized
-        .strip_prefix("//?/")
-        .unwrap_or(&normalized)
-        .to_string()
-}
-
 fn reusable_cache_identity(root: &str, base: &str, head: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"ripr-review-comments\0");
@@ -355,6 +402,7 @@ mod tests {
             Path::new("."),
             "origin/main",
             "HEAD",
+            &crate::app::Mode::Fast,
             30_000,
             &["comments.json".to_string()],
             None,
@@ -503,6 +551,7 @@ mod tests {
             &dir,
             "HEAD",
             "HEAD",
+            &crate::app::Mode::Fast,
             30_000,
             &artifacts,
             Some(Duration::from_secs(30)),
@@ -517,6 +566,7 @@ mod tests {
             &dir,
             "HEAD",
             "HEAD",
+            &crate::app::Mode::Fast,
             30_000,
             &artifacts,
             Some(Duration::ZERO),
@@ -527,7 +577,15 @@ mod tests {
                 skipped.base_sha, skipped.head_sha
             ));
         }
-        let ceiling = ReviewCommentsRunReceipt::new(&dir, "HEAD", "HEAD", 30_000, &artifacts, None);
+        let ceiling = ReviewCommentsRunReceipt::new(
+            &dir,
+            "HEAD",
+            "HEAD",
+            &crate::app::Mode::Fast,
+            30_000,
+            &artifacts,
+            None,
+        );
         if ceiling.base_sha != resolved.base_sha {
             return Err(format!(
                 "the no-budget fixed-ceiling path must still resolve, got {:?}",

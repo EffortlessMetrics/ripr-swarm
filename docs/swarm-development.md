@@ -232,40 +232,7 @@ Each orchestrator should:
 
 ## Promotion Back To Source
 
-Promotion remains a source-repo pull request. The release transaction pins one
-exact swarm head before this procedure begins; do not substitute a floating
-`swarm/main` ref while building or reviewing the join. Before opening it,
-confirm the promotion is carrying reviewed swarm state rather than active
-construction:
-
-```bash
-gh pr list --repo EffortlessMetrics/ripr --state open
-gh pr list --repo EffortlessMetrics/ripr-swarm --state open
-gh api repos/EffortlessMetrics/ripr-swarm/branches/main/protection
-gh run list --repo EffortlessMetrics/ripr-swarm --workflow routed-rust.yml --branch main --limit 1
-```
-
-The operator should see no ordinary source-repo development PRs, a protected
-`ripr-swarm/main` branch requiring `Ripr Rust Small Result`, and a recent green
-routed Rust result on the selected swarm head. Capture the run's exact SHA,
-conclusion, and URL and fail closed before creating `J`:
-
-```bash
-ROUTED_RUN="$(gh run list --repo EffortlessMetrics/ripr-swarm \
-  --workflow routed-rust.yml --branch main --limit 1 \
-  --json headSha,conclusion,url \
-  --jq '.[0] | [.headSha, .conclusion, .url] | @tsv')"
-IFS=$'\t' read -r ROUTED_HEAD ROUTED_CONCLUSION ROUTED_URL <<<"$ROUTED_RUN"
-test "$ROUTED_HEAD" = "$SWARM_PARENT"
-test "$ROUTED_CONCLUSION" = "success"
-```
-
-Retain `ROUTED_HEAD`, `ROUTED_CONCLUSION`, and `ROUTED_URL` in the promotion
-receipt and PR body. Open swarm PRs do not block promotion by themselves, but
-each one should be classified as included, deferred, superseded, or not
-release-relevant in the promotion PR body.
-
-Record these immutable inputs before creating the source branch:
+Use the [staged Source Promotion runbook](SOURCE_PROMOTION.md#staged-integration):
 
 ```text
 SOURCE_PARENT  = exact ripr/main commit held for this transaction

@@ -543,6 +543,7 @@ fn review_comments_with_admission(
         &input.root,
         &options.base,
         &options.head,
+        &input.mode,
         options.timeout_ms,
         &artifacts,
         revision_budget,

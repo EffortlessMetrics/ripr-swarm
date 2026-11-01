@@ -8,3 +8,6 @@
 # should be removed instead of allowlisted.
 crates/ripr/src/config/perl_executable_tests.rs|C:\path\to\Perl|1|Generic Windows absolute exporter path with spaces exercises exact config preservation (#8841).
 crates/ripr/tests/sarif_uri_identity.rs|C:\path\to\a%b.rs|1|Generic drive-looking filename exercises native Unix SARIF URI identity (RIPR-SPEC-0008).
+editors/vscode/test/suite/archive_inventory.test.ts|C:/path/to/evil|1|Generic Windows drive-path fixture for hostile archive member rejection; owner repo-policy; issue #1641.
+crates/ripr/src/review_input.rs|C:/path/to/repo|2|Generic Windows drive-path fixture for review_root_spelling_preserves_platform_identity; owner repo-policy; issue #1686.
+crates/ripr/src/review_input.rs|C:\path\to\repo|1|Generic Windows drive-path fixture for review_root_spelling_preserves_platform_identity; owner repo-policy; issue #1686.
