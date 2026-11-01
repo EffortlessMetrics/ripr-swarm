@@ -96,7 +96,7 @@ validates every committed producer document instead, so a qualification run does
 not depend on which subjects someone remembered to register (#3919, #3920):
 
 ```bash
-cargo xtask schema-producer-sweep [--rev REV] \
+cargo xtask schema-producer-sweep [--rev REV | --worktree] \
   [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
 ```
 
