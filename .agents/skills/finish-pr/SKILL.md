@@ -42,6 +42,18 @@ reconciling an uncertain outcome. Check observations and mutation are not
 atomic, so retain native enforcement. Report a rejection without guessing its
 cause; never bypass enforcement or change settings.
 
+For the audited heavy Rust qualification route, use `scripts/guarded_merge.py`
+for the expected-head squash after completing that final judgment. It does not
+establish substantive review or every other gate. A guard refusal, including
+failed or ambiguous evidence, remains blocked until the evidence is reconciled;
+do not treat it as permission to use another merge path. If the qualification
+route was independently established as unsupported before guard invocation,
+follow its existing ordinary protected exact-head procedure with current required
+Result, review and other gates; do not claim the guard passed. An unknown or
+rejected mutation requires PR and merge-state readback before any retry. Check
+observations and the server mutation are not atomic, so native required checks
+and protections remain authoritative.
+
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists.
 2. Write a complete body:
    - production and evidence delta;
