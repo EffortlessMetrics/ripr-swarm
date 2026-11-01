@@ -16,7 +16,7 @@ Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
 
 WARNING audit.py:8
-  id: probe:audit.py:python_preview:a2e6d4a7
+  id: probe:audit.py:python_preview:v1-f8599422
 
 Changed
   after:          log.warning("msgs: 5")
@@ -78,8 +78,8 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `call includes "msgs: 5"`
 Drill in:
-  ripr explain --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast probe:audit.py:python_preview:a2e6d4a7
-  ripr context --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast --at probe:audit.py:python_preview:a2e6d4a7
+  ripr explain --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast probe:audit.py:python_preview:v1-f8599422
+  ripr context --root <cwd>/fixtures/python_caplog_alias_in_literal/input --diff <cwd>/fixtures/python_caplog_alias_in_literal/diff.patch --mode fast --at probe:audit.py:python_preview:v1-f8599422
 
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.
