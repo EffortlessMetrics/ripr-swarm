@@ -3256,10 +3256,19 @@ mod tests {
         let mut probe = arm_probe("Err(E::Blank)", 4);
         probe.family = ProbeFamily::ErrorPath;
         probe.before = Some("Err(E::Unknown)".to_string());
-        let arm = error_path_arm_probe(&probe, &owner).expect("one readable arm line");
-        assert_eq!(arm.family, ProbeFamily::MatchArm);
-        assert_eq!(arm.expression, "_ => Err(E::Blank),");
-        assert_eq!(arm.before.as_deref(), Some("_ => Err(E::Unknown),"));
+        let arm = error_path_arm_probe(&probe, &owner);
+        assert_eq!(
+            arm.as_ref().map(|arm| &arm.family),
+            Some(&ProbeFamily::MatchArm)
+        );
+        assert_eq!(
+            arm.as_ref().map(|arm| arm.expression.as_str()),
+            Some("_ => Err(E::Blank),")
+        );
+        assert_eq!(
+            arm.as_ref().and_then(|arm| arm.before.as_deref()),
+            Some("_ => Err(E::Unknown),")
+        );
 
         // The match result is bound and remapped afterwards: the owner's
         // return value is not the arm's.
