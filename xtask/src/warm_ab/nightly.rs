@@ -5,6 +5,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::run as shared_run;
 
@@ -153,11 +154,28 @@ pub(crate) fn resolve_external(
         .collect()
 }
 
+/// A stalled remote must cost one pin its verdict, not the rest of the job, so
+/// every git call carries a deadline (CodeRabbit on #12154).
+const GIT_DEADLINE: Duration = Duration::from_mins(20);
+
 fn git(args: &[&str], cwd: &Path) -> Result<String, String> {
-    let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
-    let output =
-        shared_run::capture_output_in_dir("git", &owned, cwd, &format!("git {}", args.join(" ")))?;
-    if !output.status.success() {
+    let mut owned: Vec<String> = vec!["-C".to_string(), cwd.to_string_lossy().into_owned()];
+    owned.extend(args.iter().map(|arg| (*arg).to_string()));
+    let output = shared_run::capture_output_with_timeout(
+        "git",
+        &owned,
+        &[("GIT_TERMINAL_PROMPT", "0")],
+        GIT_DEADLINE,
+        &format!("git {}", args.join(" ")),
+    )?;
+    if output.timed_out {
+        return Err(format!(
+            "git {} timed out after {} s",
+            args.join(" "),
+            GIT_DEADLINE.as_secs()
+        ));
+    }
+    if !output.status.is_some_and(|status| status.success()) {
         return Err(format!(
             "git {} failed: {}",
             args.join(" "),
