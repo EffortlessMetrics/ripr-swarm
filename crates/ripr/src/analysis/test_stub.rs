@@ -1598,13 +1598,22 @@ pub(crate) fn proof_obligation_for(seam: &RepoSeam) -> Option<ProofObligation> {
     if !matches!(comparison.op.as_str(), "<" | "<=" | ">" | ">=") {
         return None;
     }
-    let lhs = one_line(comparison.lhs.trim());
-    let rhs = one_line(comparison.rhs.trim());
+    // Source text is kept verbatim: collapsing whitespace would change a string
+    // literal operand (`"a  b"`). A multi-line spelling gets no obligation
+    // rather than a rewritten one.
+    let (lhs, rhs, predicate) = (
+        comparison.lhs.trim(),
+        comparison.rhs.trim(),
+        seam.expression().trim(),
+    );
+    if [lhs, rhs, predicate].iter().any(|text| text.contains('\n')) {
+        return None;
+    }
     let owner = seam.owner().to_string();
     Some(ProofObligation {
         kind: "boundary",
         function: owner.clone(),
-        changed_predicate: one_line(seam.expression()),
+        changed_predicate: predicate.to_string(),
         witness_inputs: vec![
             format!("{lhs} just below {rhs}"),
             format!("{lhs} == {rhs}"),

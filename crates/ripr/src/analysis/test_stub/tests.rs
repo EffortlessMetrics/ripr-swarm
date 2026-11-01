@@ -1747,6 +1747,17 @@ fn proof_obligation_describes_a_single_relational_boundary_and_nothing_else() ->
     assert!(obligation.property_skeleton.contains("kani::proof"));
     assert!(!obligation.limits.is_empty());
 
+    let spaced = seam_at(
+        "src/lib.rs",
+        "pub fn f(s: &str) -> bool { s < \"a  b\" }\n",
+        "s < \"a  b\"",
+        SeamKind::PredicateBoundary,
+        boundary(""),
+    )?;
+    let literal = proof_obligation_for(&spaced).ok_or("string comparison has an obligation")?;
+    assert_eq!(literal.changed_predicate, "s < \"a  b\"");
+    assert_eq!(literal.witness_inputs[1], "s == \"a  b\"");
+
     let compound = "pub fn f(a: u32, b: u32) -> bool { a > 1 && b < 2 }\n";
     for (needle, source, kind, file) in [
         (
