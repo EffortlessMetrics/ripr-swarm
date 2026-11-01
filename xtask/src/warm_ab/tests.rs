@@ -182,6 +182,42 @@ fn external_pins_need_a_nightly_plan_and_cannot_mix_with_direct_arguments() {
 }
 
 #[cfg(unix)]
+#[test]
+fn a_stalled_remote_times_out_and_a_reachable_one_still_runs() {
+    use super::nightly::git_within;
+    use std::time::{Duration, Instant};
+    let dir = std::env::temp_dir().join(format!("ripr-warm-ab-stall-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(std::fs::create_dir_all(&dir).is_ok_and(|()| true));
+    // The `ext` transport runs a command as the remote; `sleep` never speaks
+    // the protocol, so the clone stalls until the deadline kills it.
+    let started = Instant::now();
+    let stalled = git_within(
+        &[
+            "-c",
+            "protocol.ext.allow=always",
+            "clone",
+            "--quiet",
+            "ext::sleep 60",
+            "stalled",
+        ],
+        &dir,
+        Duration::from_secs(2),
+    );
+    assert!(
+        stalled.is_err_and(|error| error.contains("timed out")),
+        "a stalled clone must fail as a timeout"
+    );
+    assert!(started.elapsed() < Duration::from_secs(30));
+    // The next pin's git call still runs and succeeds.
+    assert_eq!(
+        git_within(&["--version"], &dir, Duration::from_secs(30)).map(|v| v.starts_with("git")),
+        Ok(true)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
 mod stub {
     use super::super::{build_packet, parse_args};
     use std::fs;
