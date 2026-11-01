@@ -2103,7 +2103,7 @@ Status: proposed
         }
         if !uploads_artifact_at_v7(&job) || !job.contains("ripr-spec-maintenance") {
             return Err(
-                "the digest job must retain the full report as the ripr-spec-maintenance artifact"
+                "the digest job must retain the full report as the ripr-spec-maintenance artifact, uploaded by actions/upload-artifact at v7 (the pin's version comment)"
                     .to_string(),
             );
         }

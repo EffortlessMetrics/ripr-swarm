@@ -126,6 +126,21 @@ fn expected_job_with_recovery_quote_repair() -> Result<String, String> {
 
 /// Pinned spelling in the staged job, then the tag spelling the retained
 /// predecessor fixture still names.
+/// Apply every `PIN_NORMALIZATION` pair, failing loudly on a pair that matches
+/// nothing: a no-op pair is a dead normalization that would otherwise surface
+/// only as an unreadable job diff.
+fn apply_pin_normalization(mut job: String) -> Result<String, String> {
+    for (pinned, tag) in PIN_NORMALIZATION {
+        if !job.contains(pinned) {
+            return Err(format!(
+                "pin normalization matches nothing in the staged job: {pinned}"
+            ));
+        }
+        job = job.replace(pinned, tag);
+    }
+    Ok(job)
+}
+
 const PIN_NORMALIZATION: [(&str, &str); 5] = [
     (
         "dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95",
@@ -163,14 +178,7 @@ fn production_producer_preserves_all_native_commands_oracles_and_cleanup() -> Re
     // The last pair is the embedded Python assertions, which search the
     // workflow for the pinned `uses:` spelling and so carry the commit with no
     // trailing comment.
-    let mut unpinned = normalized_job(STAGED)?;
-    for (pinned, tag) in PIN_NORMALIZATION {
-        assert!(
-            unpinned.contains(pinned),
-            "pin normalization matches nothing in the staged job: {pinned}"
-        );
-        unpinned = unpinned.replace(pinned, tag);
-    }
+    let unpinned = apply_pin_normalization(normalized_job(STAGED)?)?;
     assert_eq!(unpinned, expected_job_with_recovery_quote_repair()?);
     Ok(())
 }
@@ -275,12 +283,12 @@ fn a_pin_bump_without_a_normalization_update_is_detected() -> Result<(), String>
         "actions/checkout@0000000000000000000000000000000000000000 # v6.2.0",
     );
     assert_ne!(bumped, STAGED, "control must mutate the staged workflow");
-    let still_pinned = PIN_NORMALIZATION
-        .iter()
-        .all(|(pinned, _)| bumped.contains(pinned));
+    let error = apply_pin_normalization(normalized_job(&bumped)?)
+        .err()
+        .ok_or("a bumped pin must fail the normalization, not pass silently")?;
     assert!(
-        !still_pinned,
-        "a bumped pin must leave at least one normalization pair unmatched"
+        error.contains("pin normalization matches nothing in the staged job"),
+        "{error}"
     );
     Ok(())
 }
