@@ -2,14 +2,17 @@ use super::capabilities::WorkspaceRootResolution;
 use super::component_outcome::ComponentOutcome;
 use super::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
 use super::input_identity::LspAnalysisInputIdentity;
-use super::uri::{file_uri_relative_to_root, file_uris_match, path_from_file_uri};
+use super::uri::{
+    RelativeKeyProjector, file_uri_is_lexically_non_rust, file_uri_relative_to_root,
+    file_uris_match, path_from_file_uri,
+};
 use crate::analysis::language_outcome::{LanguageCompletenessView, LanguageDisclosure};
 use crate::analysis::{ClassifiedSeam, PreviewLanguageAdvisory};
 use crate::analysis_outcome::AnalysisOutcome;
 use crate::app::Mode;
 use crate::config::LspDiagnosticProfile;
 use crate::domain::{Finding, LanguageId};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -719,6 +722,53 @@ impl AnalysisHealth {
     pub(super) fn pending(&self) -> bool {
         self.pending_attempt_id.is_some()
     }
+
+    /// Why `allows_current_repairs` is false, as `(refresh_state, recovery)`
+    /// (#4427). `in_flight`: a refresh is queued, running, pending or inside
+    /// the interactive debounce window (`refresh_debounced`), so a retry
+    /// shortly should succeed. `no_snapshot`: nothing has been analyzed yet
+    /// (or the input was invalidated) and nothing failed. `terminal`: the
+    /// latest attempt failed, was cancelled or was superseded without a
+    /// result. `stale_snapshot`: a snapshot is retained but is not current.
+    /// Every case still fails closed.
+    pub(super) fn repair_block_guidance(
+        &self,
+        refresh_debounced: bool,
+    ) -> (&'static str, &'static str) {
+        if refresh_debounced
+            || self.pending()
+            || matches!(
+                self.state,
+                AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+            )
+        {
+            return (
+                "in_flight",
+                "A refresh is in progress; retry the repair packet shortly.",
+            );
+        }
+        if matches!(
+            self.state,
+            AnalysisAttemptState::Failed
+                | AnalysisAttemptState::Cancelled
+                | AnalysisAttemptState::Superseded
+        ) {
+            return (
+                "terminal",
+                "The latest refresh did not produce a result; check ripr status and run a refresh to recover.",
+            );
+        }
+        if self.snapshot_id.is_none() {
+            return (
+                "no_snapshot",
+                "No analysis snapshot exists yet; open or save a Rust file or run a refresh, then retry the repair packet.",
+            );
+        }
+        (
+            "stale_snapshot",
+            "The retained snapshot is not current; run a refresh, then retry the repair packet.",
+        )
+    }
 }
 
 impl RefreshMetadata {
@@ -879,6 +929,13 @@ pub(super) struct AnalysisSnapshot {
     /// select) is read from here, not re-derived from limitation text.
     /// `None` when the producer returned no view (no analysis ran).
     pub(super) language_view: Option<LanguageCompletenessView>,
+    /// Numeric editor-row origins captured by the same Rust analysis pass that
+    /// produced `findings` (#10609). Code-lens placement, the lens-view
+    /// identity and unpublished line-hover lookup select their row from this
+    /// map, never from a later disk read or from diagnostic visibility. A
+    /// finding without a record (non-Rust, or a producer without origins)
+    /// takes the conservative analyzer-row fallback.
+    pub(super) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
 }
 
 /// Changed-file coverage for languages the run did not analyze because the
@@ -1163,8 +1220,10 @@ impl AnalysisSnapshot {
     pub(super) fn prepare_diagnostic_uri_index(&mut self) {
         let uris = self.diagnostics_by_uri.keys().cloned().collect::<Vec<_>>();
         let mut by_relative = BTreeMap::new();
+        let root = self.root.clone();
+        let mut projector = super::uri::RelativeKeyProjector::new(&root);
         for (position, uri) in uris.iter().enumerate() {
-            if let Some(relative) = file_uri_relative_to_root(&self.root, uri) {
+            if let Some(relative) = projector.relative(uri) {
                 by_relative
                     .entry(relative)
                     .and_modify(|stored| *stored = None)
@@ -1402,6 +1461,93 @@ pub(super) struct DocumentQuarantine {
     pub(super) withdrawal_disclosed: bool,
 }
 
+/// Owner of the open-document store, per-document save digests and the last
+/// published diagnostics (#2941). Each field keeps its own lock exactly as the
+/// `Backend` held them, so lock ordering and behavior are unchanged; the
+/// digest and quarantine-marker transitions live here instead of in `Backend`.
+#[derive(Default)]
+pub(super) struct QuarantineLedger {
+    pub(super) documents: Mutex<DocumentStore>,
+    /// Per-document save digest plus the workspace revision that save
+    /// produced; the revision lets a failed refresh drop only the digests no
+    /// successful snapshot has covered yet.
+    saved_content_digests: Mutex<BTreeMap<Uri, (String, u64)>>,
+    pub(super) last_diagnostics: Mutex<BTreeMap<Uri, Vec<Diagnostic>>>,
+}
+
+impl QuarantineLedger {
+    pub(super) fn saved_content_digest_matches(&self, uri: &Uri, digest: &str) -> bool {
+        self.saved_content_digests
+            .lock()
+            .ok()
+            .and_then(|digests| digests.get(uri).map(|(recorded, _)| recorded.clone()))
+            .is_some_and(|recorded| recorded == digest)
+    }
+
+    pub(super) fn record_saved_content_digest(&self, uri: &Uri, digest: String, revision: u64) {
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.insert(uri.clone(), (digest, revision));
+        }
+    }
+
+    /// Drop digests stamped with a revision no published snapshot covered.
+    pub(super) fn retain_covered_digests(&self, covered_revision: u64) {
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.retain(|_, (_, revision)| *revision <= covered_revision);
+        }
+    }
+
+    pub(super) fn forget_saved_content_digest(&self, uri: &Uri) {
+        if let Ok(mut digests) = self.saved_content_digests.lock() {
+            digests.remove(uri);
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn saved_content_digest_uris(&self) -> Vec<Uri> {
+        self.saved_content_digests
+            .lock()
+            .map(|digests| digests.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// `(path, reason)` for a quarantined open document; `None` when the
+    /// document is unknown or clean.
+    pub(super) fn document_quarantine(
+        &self,
+        uri: &Uri,
+    ) -> Option<(PathBuf, DocumentStalenessReason)> {
+        let documents = self.documents.lock().ok()?;
+        let state = documents.state_for_uri(uri)?;
+        let quarantine = state.quarantine.as_ref()?;
+        Some((state.path.clone(), quarantine.reason))
+    }
+
+    pub(super) fn document_path_for_uri(&self, uri: &Uri) -> Option<PathBuf> {
+        self.documents
+            .lock()
+            .ok()?
+            .state_for_uri(uri)
+            .map(|state| state.path.clone())
+    }
+
+    /// Mark the withdrawal disclosed, returning `(path, reason)` only on the
+    /// first disclosure of the quarantine episode.
+    pub(super) fn mark_withdrawal_disclosed(
+        &self,
+        uri: &Uri,
+    ) -> Option<(PathBuf, DocumentStalenessReason)> {
+        let mut documents = self.documents.lock().ok()?;
+        let state = documents.state_for_uri_mut(uri)?;
+        let quarantine = state.quarantine.as_mut()?;
+        if quarantine.withdrawal_disclosed {
+            return None;
+        }
+        quarantine.withdrawal_disclosed = true;
+        Some((state.path.clone(), quarantine.reason))
+    }
+}
+
 /// Quarantine edges produced by applying a committed snapshot's analyzed
 /// identities (#1970): documents that entered quarantine, and documents
 /// that exited it with each exit carrying its disclosed marker.
@@ -1596,10 +1742,11 @@ fn document_position_byte_offset(
     let line = text.get(line_start..line_end)?;
 
     let relative = if *encoding == PositionEncodingKind::UTF8 {
-        if target_units > line.len() || !line.is_char_boundary(target_units) {
+        let clamped = target_units.min(line.len());
+        if !line.is_char_boundary(clamped) {
             return None;
         }
-        target_units
+        clamped
     } else if *encoding == PositionEncodingKind::UTF32 {
         encoded_units_to_byte_offset(line, target_units, |character| {
             let _ = character;
@@ -1631,7 +1778,8 @@ fn encoded_units_to_byte_offset(
             return None;
         }
     }
-    (units == target_units).then_some(line.len())
+    // LSP 3.17: a character offset past the line end is treated as the line end.
+    (target_units >= units).then_some(line.len())
 }
 
 /// Bounds on one `didChange` notification (#11508).
@@ -1770,6 +1918,14 @@ fn invalidate_incremental_document_state(state: &mut DocumentState) -> Quarantin
 #[derive(Default)]
 pub(super) struct DocumentStore {
     pub(super) documents: BTreeMap<Uri, DocumentState>,
+    /// Workspace-relative keys already resolved for open `.rs` candidates,
+    /// keyed by URI; each entry is valid only for the root recorded with it (#11763). Each
+    /// resolution canonicalizes the root and the candidate, so recomputing
+    /// every document on every refresh made N `didOpen`s cost O(N^2)
+    /// filesystem calls. An entry is dropped on reopen, close, a save of that
+    /// document and watched-file events at or above its path, and ignored when
+    /// the root differs.
+    rust_index_keys: BTreeMap<Uri, (PathBuf, Option<PathBuf>)>,
 }
 
 impl DocumentStore {
@@ -1781,8 +1937,87 @@ impl DocumentStore {
             params.text_document.text,
         );
         let transition = state.refresh_quarantine();
+        self.rust_index_keys.remove(&uri);
         self.documents.insert(uri, state);
         transition
+    }
+
+    /// Workspace-relative paths of the open `.rs` documents under `root`.
+    /// Equivalent to resolving every document with `file_uri_relative_to_root`
+    /// and keeping `.rs` keys, without repeating the filesystem resolution for
+    /// documents whose key is already known or lexically cannot be `.rs`.
+    ///
+    /// Staleness boundary: a cached key is served until the document is
+    /// reopened, closed or saved, a watched-file event at or above its path
+    /// arrives, or the root changes. A symlink retargeted outside the editor
+    /// with no watcher covering it is therefore seen late. That is acceptable
+    /// because this index is not the containment authority: workspace
+    /// diagnostics still resolve their own projector on every refresh.
+    pub(super) fn open_rust_index_paths(&mut self, root: &Path) -> BTreeSet<PathBuf> {
+        let Self {
+            documents,
+            rust_index_keys,
+        } = self;
+        // One projector per pass, built on the first cache miss: the root and
+        // each directory are resolved once for all misses, not once per
+        // document, and a fully warm pass resolves nothing.
+        let mut projector: Option<RelativeKeyProjector<'_>> = None;
+        documents
+            .keys()
+            .filter_map(|uri| {
+                if let Some((cached_root, key)) = rust_index_keys.get(uri)
+                    && cached_root == root
+                {
+                    return key.clone();
+                }
+                if file_uri_is_lexically_non_rust(root, uri) {
+                    return None;
+                }
+                let key = projector
+                    .get_or_insert_with(|| RelativeKeyProjector::new(root))
+                    .relative(uri);
+                rust_index_keys.insert(uri.clone(), (root.to_path_buf(), key.clone()));
+                key
+            })
+            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn rust_index_key_is_cached(&self, uri: &Uri) -> bool {
+        self.rust_index_keys.contains_key(uri)
+    }
+
+    /// Forget the resolved index key of one document so its next refresh
+    /// re-resolves it against the current filesystem (a save can replace a
+    /// symlink with a regular file). Other documents keep their keys.
+    pub(super) fn invalidate_rust_index_key(&mut self, uri: &Uri) {
+        self.rust_index_keys.remove(uri);
+    }
+
+    /// Forget resolved index keys a filesystem event at `event` can affect:
+    /// the document at that path and any document below it (a directory
+    /// event can retarget or replace a symlinked ancestor). Entries elsewhere
+    /// stay warm, so unrelated watched events (build output, logs) cost no
+    /// re-resolution.
+    pub(super) fn invalidate_rust_index_keys_under(&mut self, event: &Uri) {
+        let prefix = event.as_str().trim_end_matches('/');
+        // Equivalent spellings of one file (`file://localhost/...`, percent
+        // escapes) differ as raw strings, so the decoded paths are compared
+        // too.
+        let event_path = path_from_file_uri(event);
+        self.rust_index_keys.retain(|uri, _| {
+            let candidate = uri.as_str();
+            let raw_below = candidate == prefix
+                || candidate
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| rest.starts_with('/'));
+            let path_below = match (&event_path, path_from_file_uri(uri)) {
+                (Some(event_path), Some(path)) => path.starts_with(event_path),
+                _ => false,
+            };
+            !(raw_below || path_below)
+        });
     }
 
     /// Whether the just-opened buffer already matches the persisted saved
@@ -1979,13 +2214,18 @@ impl DocumentStore {
     ) -> (BTreeMap<Uri, Option<String>>, Vec<Uri>) {
         let mut digests = BTreeMap::new();
         let mut entered = Vec::new();
+        // One projector per refresh: the root and each directory are
+        // canonicalized once, not once per open document (#11763).
+        let mut projector = super::uri::RelativeKeyProjector::new(root);
         for (uri, state) in &self.documents {
             let analyzed = if state
                 .path
                 .extension()
                 .is_some_and(|extension| extension == "rs")
             {
-                file_uri_relative_to_root(root, uri).and_then(|relative| consumed.digest(&relative))
+                projector
+                    .relative(uri)
+                    .and_then(|relative| consumed.digest(&relative))
             } else {
                 read_saved_digest(uri).or_else(|| state.saved_digest.clone())
             };
@@ -2038,6 +2278,7 @@ impl DocumentStore {
     }
 
     pub(super) fn close(&mut self, params: DidCloseTextDocumentParams) {
+        self.rust_index_keys.remove(&params.text_document.uri);
         self.documents.remove(&params.text_document.uri);
     }
 
@@ -2196,6 +2437,62 @@ mod tests {
         for (kind, expected) in cases {
             assert_eq!(kind.as_str(), expected);
         }
+    }
+
+    #[test]
+    fn quarantine_ledger_owns_digests_and_disclosure_once() -> Result<(), String> {
+        let uri = test_uri("file:///workspace/src/lib.rs")?;
+        let ledger = QuarantineLedger::default();
+        if ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("unrecorded digest must not match".to_string());
+        }
+        ledger.record_saved_content_digest(&uri, "a".to_string(), 5);
+        if !ledger.saved_content_digest_matches(&uri, "a")
+            || ledger.saved_content_digest_matches(&uri, "b")
+        {
+            return Err("recorded digest must match only itself".to_string());
+        }
+        ledger.retain_covered_digests(4);
+        if ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("digest above covered revision must be dropped".to_string());
+        }
+        ledger.record_saved_content_digest(&uri, "a".to_string(), 3);
+        ledger.retain_covered_digests(4);
+        if !ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("covered digest must be retained".to_string());
+        }
+        ledger.forget_saved_content_digest(&uri);
+        if ledger.saved_content_digest_matches(&uri, "a") {
+            return Err("closed document digest must be forgotten".to_string());
+        }
+
+        let mut state = clean_document_state(&uri, "fn saved() {}");
+        if ledger.document_quarantine(&uri).is_some()
+            || ledger.mark_withdrawal_disclosed(&uri).is_some()
+        {
+            return Err("unknown document is neither quarantined nor disclosable".to_string());
+        }
+        state.quarantine = Some(DocumentQuarantine {
+            reason: DocumentStalenessReason::InvalidIncrementalChange,
+            withdrawal_disclosed: false,
+        });
+        ledger
+            .documents
+            .lock()
+            .map_err(|error| format!("documents lock poisoned: {error}"))?
+            .documents
+            .insert(uri.clone(), state);
+        if ledger.document_quarantine(&uri).map(|(_, reason)| reason)
+            != Some(DocumentStalenessReason::InvalidIncrementalChange)
+        {
+            return Err("quarantined document must report its reason".to_string());
+        }
+        if ledger.mark_withdrawal_disclosed(&uri).is_none()
+            || ledger.mark_withdrawal_disclosed(&uri).is_some()
+        {
+            return Err("withdrawal must disclose exactly once per episode".to_string());
+        }
+        Ok(())
     }
 
     #[test]
@@ -2576,25 +2873,8 @@ mod tests {
         assert_eq!(edit("ab\rcd", 1, 1)?, "ab\rcXd");
         assert_eq!(edit("ab\r", 1, 0)?, "ab\rX");
         assert_eq!(edit("ab\r", 0, 2)?, "abX\r");
-        // A CR is not addressable as a character of its line.
-        let mut buffer = "ab\r".to_string();
-        let beyond = Position {
-            line: 0,
-            character: 3,
-        };
-        let refused = apply_document_content_changes(
-            &mut buffer,
-            vec![TextDocumentContentChangeEvent {
-                range: Some(tower_lsp_server::ls_types::Range {
-                    start: beyond,
-                    end: beyond,
-                }),
-                range_length: None,
-                text: "X".to_string(),
-            }],
-            &PositionEncodingKind::UTF16,
-        );
-        assert!(refused.is_err());
+        // An offset past the line end clamps to the line end (LSP 3.17).
+        assert_eq!(edit("ab\r", 0, 3)?, "abX\r");
         // Lines past the final terminator do not exist.
         assert_eq!(
             edit("ab\r", 2, 0),
@@ -3438,6 +3718,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -3475,6 +3756,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if snapshot.is_consistent() {
@@ -3522,6 +3804,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -3577,6 +3860,7 @@ mod tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         })
     }
 
@@ -4242,5 +4526,119 @@ mod tests {
             WorkspaceRootResolution::Unavailable("no folders".to_string()),
         );
         assert_eq!(unavailable.detail.as_deref(), Some("no folders"));
+    }
+
+    /// Overlong LSP character offsets clamp to the line end for every negotiated
+    /// encoding (#7316). Mid-character and absent-line positions stay refused.
+    #[test]
+    fn overlong_incremental_character_offsets_clamp_to_line_end() -> Result<(), String> {
+        let line = "abc";
+        let past_end = 99u32;
+
+        for encoding in [
+            PositionEncodingKind::UTF8,
+            PositionEncodingKind::UTF16,
+            PositionEncodingKind::UTF32,
+        ] {
+            let end_units = if encoding == PositionEncodingKind::UTF8 {
+                line.len() as u32
+            } else if encoding == PositionEncodingKind::UTF16 {
+                line.chars().map(|c| c.len_utf16()).sum::<usize>() as u32
+            } else {
+                line.chars().count() as u32
+            };
+
+            let apply_range = |start: u32, end: u32, insert: &str| -> Result<String, String> {
+                let mut buffer = line.to_string();
+                apply_document_content_changes(
+                    &mut buffer,
+                    vec![TextDocumentContentChangeEvent {
+                        range: Some(tower_lsp_server::ls_types::Range {
+                            start: Position {
+                                line: 0,
+                                character: start,
+                            },
+                            end: Position {
+                                line: 0,
+                                character: end,
+                            },
+                        }),
+                        range_length: None,
+                        text: insert.to_string(),
+                    }],
+                    &encoding,
+                )
+                .map_err(|()| format!("refused for {encoding:?} range {start}..{end}"))?;
+                Ok(buffer)
+            };
+
+            // Overlong start only: insert at line end.
+            assert_eq!(
+                apply_range(past_end, end_units, "X")?,
+                "abcX",
+                "overlong start, {encoding:?}"
+            );
+            // Overlong end only: replace suffix from true start to clamped end.
+            assert_eq!(
+                apply_range(1, past_end, "X")?,
+                "aX",
+                "overlong end, {encoding:?}"
+            );
+            // Both overlong: zero-width insert at line end.
+            assert_eq!(
+                apply_range(past_end, past_end, "X")?,
+                "abcX",
+                "both overlong, {encoding:?}"
+            );
+        }
+
+        // Absent line is still refused.
+        let mut buffer = line.to_string();
+        let absent = apply_document_content_changes(
+            &mut buffer,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 9,
+                        character: 0,
+                    },
+                    end: Position {
+                        line: 9,
+                        character: 0,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(absent.is_err());
+        assert_eq!(buffer, line);
+
+        // Mid-surrogate (UTF-16 code unit inside emoji) is still refused.
+        let mut emoji = "a🎉b".to_string();
+        let original = emoji.clone();
+        let mid = apply_document_content_changes(
+            &mut emoji,
+            vec![TextDocumentContentChangeEvent {
+                range: Some(tower_lsp_server::ls_types::Range {
+                    start: Position {
+                        line: 0,
+                        character: 2,
+                    },
+                    end: Position {
+                        line: 0,
+                        character: 3,
+                    },
+                }),
+                range_length: None,
+                text: "X".to_string(),
+            }],
+            &PositionEncodingKind::UTF16,
+        );
+        assert!(mid.is_err());
+        assert_eq!(emoji, original);
+
+        Ok(())
     }
 }

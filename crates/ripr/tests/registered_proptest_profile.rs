@@ -9,6 +9,9 @@ use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+#[path = "registered_proptest_profile/empty_string.rs"]
+mod empty_string;
+
 const SOURCE: &str = include_str!("fixtures/proptest_singleton/input/src/lib.rs");
 const PROPERTY: &str = include_str!("fixtures/proptest_singleton/input/tests/boundary.rs");
 const MANIFEST: &str = include_str!("fixtures/proptest_singleton/input/Cargo.toml");
@@ -971,7 +974,7 @@ fn admitted_property(fixture: &Fixture, label: &str) -> Result<(Value, Value), S
 
 fn refused_property(fixture: &Fixture, label: &str) -> Result<(), String> {
     let diff = finding(fixture, &format!("{label}-diff"), None)?;
-    assert_eq!(diff["classification"], "no_static_path", "{diff}");
+    assert_eq!(diff["classification"], "static_unknown", "{diff}");
     assert_eq!(diff["related_tests_total"], 0, "{diff}");
     for values in [
         &diff["related_tests"],

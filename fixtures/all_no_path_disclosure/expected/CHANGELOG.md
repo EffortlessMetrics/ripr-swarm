@@ -581,3 +581,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — all_no_path_disclosure (32)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+
+Command:
+`cargo xtask goldens bless all_no_path_disclosure --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

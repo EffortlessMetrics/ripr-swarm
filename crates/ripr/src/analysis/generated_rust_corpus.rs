@@ -96,7 +96,12 @@ fn corpus_payload_size_for_paths(
             Err(err) if err.kind() == std::io::ErrorKind::NotFound && !discovered => {
                 continue;
             }
-            Err(err) => return Err(format!("stat {} failed: {err}", path.display())),
+            Err(err) => {
+                return Err(format!(
+                    "stat {} failed: {err}; check the path exists and is readable",
+                    path.display()
+                ));
+            }
         };
         file_count += 1;
         total_bytes = total_bytes.saturating_add(metadata.len());

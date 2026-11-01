@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- Kani bounded-model-checking harnesses (`cfg(kani)` only, no effect on normal builds) prove the exposure classification decision is total over the seven-class vocabulary, that unknown/opaque/missing stages never promote to `exposed`, that stronger oracle evidence never lowers the class, and that oracle strength ranking and the self-computed cap are ordered and monotone (#11624).

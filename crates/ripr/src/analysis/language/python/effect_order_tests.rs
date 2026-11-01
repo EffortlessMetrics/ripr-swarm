@@ -343,18 +343,20 @@ fn effect_order_helper_capture_does_not_gain_effect_channel_credit() -> Check {
         );
     }
     let captured = finding(false, body, false, helper)?;
-    // The shared effect reader must not treat a captured argument as a later
-    // field read. The separate legacy owner-result branch still credits this
-    // implicit-None result: a known residual, requiring propagation semantics.
-    assert_eq!(captured.class, ExposureClass::Exposed);
-    assert_eq!(
+    // A field read before the call compared with the implicit-None result
+    // observes nothing of the write, through either credit route (#10178).
+    assert_eq!(captured.class, ExposureClass::WeaklyExposed);
+    assert_ne!(
         captured.alignment_reason.as_deref(),
         Some("strong_oracle_observes_owner_method_on_bound_receiver")
     );
     let after = "def test_it():\n    rec = Recorder()\n    assert_equal(rec.note(\"error\") or \"error\", rec.last)";
+    // The field is captured as a helper argument, which the effect reader does
+    // not treat as a field read; with the result branches closed this genuine
+    // post-call comparison is a conservative miss, never a false credit.
     assert_eq!(
         finding(false, after, false, helper)?.class,
-        ExposureClass::Exposed
+        ExposureClass::WeaklyExposed
     );
 
     // A blanket helper refusal would lose a real discriminator when the
@@ -420,5 +422,73 @@ fn effect_order_mock_inspection_follows_argument_evaluation() -> Check {
         .ok_or("expected changed mock-call finding")?;
         assert_eq!(found.class == ExposureClass::Exposed, exposed, "{body}");
     }
+    Ok(())
+}
+
+#[test]
+fn implicit_none_owner_result_does_not_credit_a_field_write() -> Check {
+    let helper = "\ndef assert_equal(actual, expected):\n    assert actual == expected\n";
+    // Each negative names the owner call in a strong assertion but compares
+    // only the implicit-None result, with the field read before the call or
+    // not at all. The positive control reads the field after the call.
+    for (module, body, exposed) in [
+        (
+            false,
+            "def test_it():\n    rec = Recorder()\n    assert rec.note(\"error\") is None",
+            false,
+        ),
+        (
+            false,
+            "def test_it():\n    rec = Recorder()\n    before = rec.last\n    result = rec.note(\"error\")\n    assert_equal(before, result)",
+            false,
+        ),
+        (
+            false,
+            "def test_it():\n    rec = Recorder()\n    rec.note(\"error\")\n    assert rec.last == \"fault\"",
+            true,
+        ),
+        (
+            true,
+            "def test_it():\n    assert_equal(response.status_code, checkout() or None)",
+            false,
+        ),
+        (true, "def test_it():\n    assert checkout() is None", false),
+        (
+            true,
+            "def test_it():\n    checkout()\n    assert response.status_code == 400",
+            true,
+        ),
+    ] {
+        let initial_error = !module;
+        let found = finding(module, body, initial_error, helper)?;
+        assert_eq!(found.class == ExposureClass::Exposed, exposed, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn owner_that_returns_a_value_keeps_its_result_credit() -> Check {
+    // A bare `return` or a returned value is a recognized value-return shape:
+    // the closed no-value fact does not hold, so the call's result may still
+    // observe the owner (a documented textual limit, not new credit).
+    let source = SOURCE.replace(
+        "            self.last = \"fault\"",
+        "            self.last = \"fault\"\n        return self.last",
+    );
+    let file = Path::new("shop/route.py");
+    let mut owners = extract_owners(file, &source);
+    apply_class_facts(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "Recorder.note")
+        .ok_or("expected Recorder.note owner")?;
+    assert!(!owner.term_facts.returns_no_value());
+    let mut owners = extract_owners(file, SOURCE);
+    apply_class_facts(&mut owners);
+    let owner = owners
+        .iter()
+        .find(|owner| owner.qualified_name == "Recorder.note")
+        .ok_or("expected Recorder.note owner")?;
+    assert!(owner.term_facts.returns_no_value());
     Ok(())
 }

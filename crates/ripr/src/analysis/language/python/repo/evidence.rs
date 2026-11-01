@@ -296,6 +296,10 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
     let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
     let mut read_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut substitution_by_file: std::collections::BTreeMap<
+        PathBuf,
+        super::super::fixture_substitution::SubstitutionScope,
+    > = std::collections::BTreeMap::new();
     let mut module_attribute_writes: Vec<(
         PathBuf,
         Vec<super::super::module_constants::PythonModuleAttributeWrite>,
@@ -323,6 +327,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                             reach_conftests.insert(relative.clone());
                         }
                     }
+                    substitution_by_file.insert(relative.clone(), facts.substitution_scope.clone());
                     files.push(PythonRepoFileRecord {
                         path: normalized_path(relative),
                         role: role.as_str(),
@@ -354,6 +359,11 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         }
     }
 
+    super::super::fixture_substitution::apply_fixture_substitution(
+        &mut all_tests,
+        &substitution_by_file,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
+    );
     super::super::fixtures::taint_admission_by_conftest(
         &mut all_tests,
         &implicit_conftests,
@@ -376,6 +386,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         &mut all_tests,
         &module_attribute_writes,
     );
+    super::super::collection_config::apply_collection_config(&mut all_tests, root);
 
     // Production subjects: owners + behavior items, related against the
     // evidence pool built above. The public Finding projection is built in

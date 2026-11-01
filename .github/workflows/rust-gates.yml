@@ -74,7 +74,7 @@ jobs:
       CARGO_BUILD_JOBS: ${{ inputs.cargo-build-jobs }}
       CARGO_TERM_COLOR: always
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
@@ -164,7 +164,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Install CI tools
-        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: ${{ inputs.use-scratch && 'sccache,nextest' || 'nextest' }}
 
@@ -260,7 +260,7 @@ jobs:
       # normalize, bless, or weaken the golden comparison.
       - name: Retain wildcard calibration producer outputs
         if: always() && (steps.goldens.outcome == 'success' || steps.goldens.outcome == 'failure')
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name }}-wildcard-calibration-${{ github.run_attempt }}
           path: |
@@ -368,7 +368,7 @@ jobs:
       # A failed/aborted runner may have context only; it must not inherit XML.
       - name: Upload required Rust test results
         if: always() && steps.rust-tests.outcome != 'skipped'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name }}-nextest-${{ github.run_attempt }}
           path: |
@@ -544,7 +544,7 @@ jobs:
 
       - name: Upload RIPR reports
         if: failure() || inputs.upload-success-artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name }}
           path: |

@@ -17,7 +17,9 @@
 //! the guard, computed operands, non-literal rows, a strong call no row
 //! binds) fails open and keeps the existing verdict, like the boundary
 //! rule's `Unresolved` limitation. Equality follows Python semantics
-//! (`True == 1`), since a wrong exclusion is a wrong actionable signal.
+//! (`True == 1`, `None != 0`), since a wrong exclusion is a wrong actionable
+//! signal. The `None` answer lives here, not in the shared [`literals_equal`],
+//! whose mixed-kind inequality stays unknown for the boundary rule's credit.
 
 use super::PythonOwner;
 use super::assertion_selection::PythonAssertionFocus;
@@ -88,36 +90,36 @@ pub(super) fn python_guarded_arm_gap(
     // the verdict.
     let every_row_excluded = rows.iter().all(|row| {
         conditions.iter().any(|(condition_line, condition)| {
-            condition_holds(
+            super::guard_atoms::guard_condition_holds(
+                owner,
                 condition,
                 *condition_line,
                 row,
                 &constants,
                 owner_source,
-                owner.start_line,
             ) == Some(false)
         }) || early_exits.iter().any(|(condition_line, condition)| {
             // A row that satisfies an earlier `if X: return ...` leaves the
             // owner before the changed line, so the line never runs for it.
-            condition_holds(
+            super::guard_atoms::guard_condition_holds(
+                owner,
                 condition,
                 *condition_line,
                 row,
                 &constants,
                 owner_source,
-                owner.start_line,
             ) == Some(true)
         }) || else_chains.iter().any(|(condition_line, condition)| {
             // A row that satisfies any condition of the `if`/`elif` chain
             // owning an `else` arm takes an earlier arm, so the `else` arm
             // holding the changed line never runs for it (#9184).
-            condition_holds(
+            super::guard_atoms::guard_condition_holds(
+                owner,
                 condition,
                 *condition_line,
                 row,
                 &constants,
                 owner_source,
-                owner.start_line,
             ) == Some(true)
         })
     });
@@ -522,6 +524,13 @@ fn walk_guards(owner: &PythonOwner, owner_source: &str, changed_line: usize) -> 
             threshold = indent;
             continue;
         }
+        if let Some(iterable) = for_iterable(trimmed) {
+            // A `for` body runs only when the iterable yields an element; the
+            // atom reader evaluates `len(NAME) > 0` over a literal display.
+            conditions.push((index, format!("len({iterable}) > 0")));
+            threshold = indent;
+            continue;
+        }
         if is_block_opener(trimmed) {
             // `for` / `with` / `try` / `except` / `finally` / `def` / `class`
             // open blocks this reader adds no condition for; the walk
@@ -792,6 +801,19 @@ pub(super) fn leading_whitespace(text: &str) -> usize {
     text.chars().take_while(|ch| ch.is_whitespace()).count()
 }
 
+/// The bare-name iterable of a `for TARGET in NAME:` header.
+fn for_iterable(trimmed: &str) -> Option<&str> {
+    let header = trimmed.strip_prefix("for ")?.trim_end().strip_suffix(':')?;
+    let (_, iterable) = header.rsplit_once(" in ")?;
+    let iterable = iterable.trim();
+    (!iterable.is_empty()
+        && iterable
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        && !iterable.starts_with(|ch: char| ch.is_ascii_digit()))
+    .then_some(iterable)
+}
+
 fn is_block_opener(trimmed: &str) -> bool {
     [
         "for ",
@@ -860,7 +882,7 @@ fn has_boolean_operator(text: &str) -> bool {
 
 /// True when `keyword` appears in `text` outside quotes, bounded by
 /// non-identifier characters (so `notary` does not match `not`).
-fn keyword_outside_quotes(text: &str, keyword: &str) -> bool {
+pub(super) fn keyword_outside_quotes(text: &str, keyword: &str) -> bool {
     let bytes = text.as_bytes();
     let keyword = keyword.as_bytes();
     let mut quote: Option<u8> = None;
@@ -1193,7 +1215,7 @@ fn is_integer_literal(text: &str) -> bool {
 }
 
 /// Compare two resolved literal values with `op`. Equality uses Python
-/// scalar semantics (`guard_literals_equal`: `True == 1`, `False == 0`);
+/// scalar semantics via [`guard_literals_equal`] (`True == 1`, `None != 0`);
 /// ordering parses the canonical decimals and never orders across kinds (a
 /// string against a number is unreadable, which fails open).
 pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Option<bool> {
@@ -1208,8 +1230,8 @@ pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Optio
         return None;
     }
     match op {
-        "==" => Some(guard_literals_equal(left, right)),
-        "!=" => Some(!guard_literals_equal(left, right)),
+        "==" => guard_literals_equal(left, right),
+        "!=" => guard_literals_equal(left, right).map(|equal| !equal),
         "<" | "<=" | ">" | ">=" => {
             let left = canonical_decimal(left)?;
             let right = canonical_decimal(right)?;
@@ -1246,41 +1268,25 @@ pub(super) fn compare_literal_values(left: &str, op: &str, right: &str) -> Optio
     }
 }
 
+/// Equality for the exclusion gate. The shared [`literals_equal`] leaves a
+/// decimal against `None` unknown so the boundary rule never awards credit
+/// from it; `None` is a singleton that never equals a number, and excluding on
+/// that definite answer is correct Python, so only this gate states it.
+fn guard_literals_equal(left: &str, right: &str) -> Option<bool> {
+    let none_against_number = (left == "None" && canonical_decimal(right).is_some())
+        || (right == "None" && canonical_decimal(left).is_some());
+    if none_against_number {
+        return Some(false);
+    }
+    literals_equal(left, right)
+}
+
 /// Whether a literal's source text equals its decoded value: a plain decimal,
 /// `True`/`False`/`None`, or a string with no escape sequence.
 fn guard_literal_is_readable(text: &str) -> bool {
     canonical_decimal(text).is_some()
         || matches!(text, "True" | "False" | "None")
         || python_string_literal_value(text).is_some_and(|body| !body.contains('\\'))
-}
-
-/// Equality as Python evaluates it for scalar literals. The shared
-/// [`literals_equal`] intentionally never equates mixed kinds ("fails closed
-/// toward not observed") because the boundary rule uses it to award credit;
-/// this gate uses the answer to EXCLUDE a call, which reverses the
-/// conservative direction, so bool/numeric pairs follow Python semantics:
-/// `True == 1` and `False == 0` hold, and `2 == True` does not.
-fn guard_literals_equal(left: &str, right: &str) -> bool {
-    match (bool_decimal(left), bool_decimal(right)) {
-        (Some(left), Some(right)) => return left == right,
-        (Some(bool_value), None) => {
-            return canonical_decimal(right).is_some_and(|num| num == bool_value);
-        }
-        (None, Some(bool_value)) => {
-            return canonical_decimal(left).is_some_and(|num| num == bool_value);
-        }
-        (None, None) => {}
-    }
-    literals_equal(left, right)
-}
-
-/// The decimal value Python equates a bool with, or None for anything else.
-fn bool_decimal(text: &str) -> Option<String> {
-    match text {
-        "True" => Some("1".to_string()),
-        "False" => Some("0".to_string()),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -1463,6 +1469,13 @@ mod tests {
         assert_eq!(compare_literal_values("\"A\"", "==", "'A'"), Some(true));
         assert_eq!(compare_literal_values("\"A\"", "==", "\"B\""), Some(false));
         assert_eq!(compare_literal_values("None", "!=", "0"), Some(true));
+        assert_eq!(compare_literal_values("0", "!=", "None"), Some(true));
+        assert_eq!(compare_literal_values("None", "==", "0"), Some(false));
+        assert_eq!(compare_literal_values("None", "==", "None"), Some(true));
+        // Ordering still refuses to compare across kinds.
+        assert_eq!(compare_literal_values("None", "<", "0"), None);
+        // The shared boundary equality keeps the pair unknown.
+        assert_eq!(literals_equal("None", "0"), None);
     }
 
     #[test]
@@ -1509,9 +1522,8 @@ mod tests {
 
     #[test]
     fn compare_literal_values_equates_bool_like_python() {
-        // Python compares `True == 1` and `False == 0` as true; the shared
-        // literals_equal never mixes kinds, which is conservative for credit
-        // but wrong for the exclusion direction this gate evaluates.
+        // Python compares `True == 1` and `False == 0`; boundary and guard
+        // paths share [`literals_equal`] for that semantics.
         assert_eq!(compare_literal_values("True", "==", "1"), Some(true));
         assert_eq!(compare_literal_values("1", "==", "True"), Some(true));
         assert_eq!(compare_literal_values("False", "==", "0"), Some(true));

@@ -76,7 +76,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with an exception assertion for missing discriminator `raises KeyError matching "empty"`
+  Python preview: strengthen the existing related test with an exception assertion for the missing check `raises KeyError matching "empty"`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_adversarial_error_path_untaken_branch/input --diff <cwd>/fixtures/python_adversarial_error_path_untaken_branch/diff.patch --mode fast probe:src_parseint.py:python_preview:0f645328
   ripr context --root <cwd>/fixtures/python_adversarial_error_path_untaken_branch/input --diff <cwd>/fixtures/python_adversarial_error_path_untaken_branch/diff.patch --mode fast --at probe:src_parseint.py:python_preview:0f645328

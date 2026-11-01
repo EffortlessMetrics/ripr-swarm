@@ -562,14 +562,37 @@ const LIVE_CASES: &[Case] = &[
         reason: "requires --json",
     },
     Case {
+        args: &["status", "--attempt", "repair-attempt-short"],
+        exit: 2,
+        reason: "suffix must contain",
+    },
+    Case {
+        args: &[
+            "agent",
+            "receipt",
+            "--seam-id",
+            "x",
+            "--verify-json",
+            "v.json",
+            "--json",
+            "--attempt",
+            "bogus",
+        ],
+        exit: 2,
+        reason: "must start with",
+    },
+    Case {
         args: &["status", "--attempt", "nope"],
         exit: 2,
         reason: "must start with",
     },
 ];
 
-fn scratch_repo() -> Result<PathBuf, String> {
-    let dir = std::env::temp_dir().join(format!("ripr-refusal-next-step-{}", std::process::id()));
+fn scratch_repo(tag: &str) -> Result<PathBuf, String> {
+    let dir = std::env::temp_dir().join(format!(
+        "ripr-refusal-next-step-{tag}-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).map_err(|error| format!("create scratch: {error}"))?;
     std::fs::write(
@@ -603,7 +626,7 @@ fn scratch_repo() -> Result<PathBuf, String> {
 
 #[test]
 fn live_refusals_name_a_next_step() -> Result<(), String> {
-    let repo = scratch_repo()?;
+    let repo = scratch_repo("live")?;
     let mut failures = Vec::new();
     for case in LIVE_CASES {
         let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
@@ -661,4 +684,115 @@ fn action_cue_requires_a_clause_start_not_a_stray_word() {
         "no finding matched x: run `ripr check` to list them"
     ));
     assert!(has_action_cue("base does not resolve. check the spelling"));
+}
+
+/// Structured remedy (#11790): the machine-readable refusal documents carry a
+/// `remedy` derived from the same prose the guard above checks. Each case runs
+/// the built binary on a real bad invocation and asserts the remedy is
+/// grounded in the document's own message: a stated command is a verbatim
+/// substring of it, and `none` carries no command, tool or flags.
+struct JsonCase {
+    args: &'static [&'static str],
+    exit: i32,
+    /// JSON pointer of the refusal prose and of its remedy in the document.
+    message_pointer: &'static str,
+    remedy_pointer: &'static str,
+}
+
+const JSON_CASES: &[JsonCase] = &[
+    JsonCase {
+        args: &["check", "--base", "no-such-ref-xyz", "--format", "json"],
+        exit: 2,
+        message_pointer: "/run_limitations/0/message",
+        remedy_pointer: "/run_limitations/0/remedy",
+    },
+    JsonCase {
+        args: &["agent", "card", "--seam-id", "nope", "--json"],
+        exit: 3,
+        message_pointer: "/error/message",
+        remedy_pointer: "/error/remedy",
+    },
+    JsonCase {
+        args: &["agent", "stub", "--seam-id", "nope", "--json"],
+        exit: 3,
+        message_pointer: "/refusal/reason",
+        remedy_pointer: "/refusal/remedy",
+    },
+];
+
+#[test]
+fn json_refusals_carry_a_grounded_structured_remedy() -> Result<(), String> {
+    let repo = scratch_repo("json")?;
+    let mut failures = Vec::new();
+    for case in JSON_CASES {
+        let label = format!("ripr {}", case.args.join(" "));
+        let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .args(case.args)
+            .current_dir(&repo)
+            .output()
+            .map_err(|error| format!("run {label}: {error}"))?;
+        if output.status.code() != Some(case.exit) {
+            failures.push(format!(
+                "{label}: exit {:?}, wanted {}",
+                output.status.code(),
+                case.exit
+            ));
+            continue;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let document: serde_json::Value = match serde_json::from_str(&stdout) {
+            Ok(document) => document,
+            Err(error) => {
+                failures.push(format!("{label}: stdout is not JSON ({error}): {stdout}"));
+                continue;
+            }
+        };
+        let (Some(message), Some(remedy)) = (
+            document
+                .pointer(case.message_pointer)
+                .and_then(|value| value.as_str()),
+            document.pointer(case.remedy_pointer),
+        ) else {
+            failures.push(format!(
+                "{label}: missing {} or {}: {stdout}",
+                case.message_pointer, case.remedy_pointer
+            ));
+            continue;
+        };
+        let kind = remedy.get("kind").and_then(|value| value.as_str());
+        let command = remedy.get("command").and_then(|value| value.as_str());
+        let tool = remedy.get("tool").and_then(|value| value.as_str());
+        let flags = remedy
+            .get("flags")
+            .and_then(|value| value.as_array())
+            .map(Vec::len);
+        let grounded = match kind {
+            Some("command") => command.is_some_and(|command| message.contains(command)),
+            Some("mcp_tool") => tool.is_some_and(|tool| message.contains(tool)),
+            Some("flags") => flags.is_some_and(|count| count > 0),
+            Some("none") => command.is_none() && tool.is_none() && flags == Some(0),
+            _ => false,
+        };
+        let has_fields = [
+            "alternatives",
+            "fill_in",
+            "retry_stated",
+            "env",
+            "conditional",
+            "prose_has_more",
+        ]
+        .iter()
+        .all(|field| remedy.get(*field).is_some());
+        if !grounded || !has_fields {
+            failures.push(format!(
+                "{label}: ungrounded remedy {remedy} for: {message}"
+            ));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&repo);
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("\n"))
+    }
 }

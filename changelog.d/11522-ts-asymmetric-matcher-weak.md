@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A TypeScript Jest or Vitest `toBe`, `toEqual` or `toStrictEqual` whose expected value is a top-level asymmetric matcher (`expect.any(String)`, `expect.anything()`, `expect.stringMatching(..)`, `expect.objectContaining(..)`), or whose asserted subject is a derived property of the changed value (`typeof f(x)`, a spread-free array literal's `.length`), now reads `relational_check` / weak instead of `exact_value` / strong, so those tests report `weakly_exposed` rather than `exposed` (#11522).

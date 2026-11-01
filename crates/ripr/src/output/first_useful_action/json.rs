@@ -51,5 +51,5 @@ pub(crate) fn render_first_useful_action_json(
         warnings: &report.warnings,
         limits: &report.limits,
     })
-    .map_err(|err| format!("render first useful action JSON failed: {err}"))
+    .map_err(|err| format!("render first useful action JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
