@@ -1,9 +1,0 @@
-crates/ripr/src/cli/commands/receipt.rs|create {} failed: {err}
-crates/ripr/src/cli/commands/receipt.rs|receipt check --gap requires a non-empty canonical_gap_id
-crates/ripr/src/cli/commands/receipt.rs|receipt check --ledger requires a non-empty path to a gap-decision-ledger JSON file
-crates/ripr/src/cli/commands/receipt.rs|receipt check --path requires a non-empty path
-crates/ripr/src/cli/commands/receipt.rs|receipt cross-reference failed: {}
-crates/ripr/src/cli/commands/receipt.rs|receipt requires --status (passed|failed|not_run|unknown)
-crates/ripr/src/cli/commands/receipt.rs|receipt write --out requires a non-empty path
-crates/ripr/src/cli/commands/receipt.rs|receipt write --packet requires a non-empty packet ID
-crates/ripr/src/cli/commands/receipt.rs|receipt write requires --verify-command

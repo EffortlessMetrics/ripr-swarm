@@ -1,0 +1,6 @@
+# Registers the nested-owner-call local initializer regression (#7470).
+[[extend]]
+id = "RIPR-SPEC-0248"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_reads_the_outer_call_of_a_local_initializer",
+]

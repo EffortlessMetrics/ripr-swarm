@@ -48,7 +48,7 @@
         {"kind":"unknown","text":"MISSING_TABLE = {1: 5, 2: 6}","line":1}
       ],
       "evidence": ["owner: <module>", "owner_kind: module_function", "test_framework: pytest (test_missing_key_reads_the_fallback)", "test_verify_command: python -m pytest tests/test_table.py::test_missing_key_reads_the_fallback (test_missing_key_reads_the_fallback)", "related_test_relation: module_value_call (test_missing_key_reads_the_fallback)", "module_value_read: `MISSING_TABLE` {1: 5, 2: 5} -> {1: 5, 2: 6} through `price` fails `assert price(3) == 5` (test_missing_key_reads_the_fallback)", "test_oracle: exact_value strong (test_missing_key_reads_the_fallback)"],
-      "missing": ["Related Python test reaches `<module>` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator."],
+      "missing": ["Related Python test reaches `<module>` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
       "assertion_texts": {
       },
       "activation": {

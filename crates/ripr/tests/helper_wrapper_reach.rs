@@ -591,18 +591,58 @@ fn match_arm_behind_a_forwarding_wrapper_keeps_its_verdict_path() -> Result<(), 
 }
 
 #[test]
-fn wrapper_that_transforms_the_argument_transfers_no_boundary_value() -> Result<(), String> {
+fn wrapper_that_transforms_the_argument_binds_the_folded_boundary_value() -> Result<(), String> {
+    // RIPR-SPEC-0159 computed chain-edge argument: `qty + 1` over the
+    // wrapper's own `u32` parameter folds exactly, so `order_discount(9)`
+    // hands the owner 10 (the boundary) and `order_discount(8)` hands it 9.
     let computed = "    if is_bulk(qty + 1) {\n        5\n    } else {\n        0\n    }";
-    let finding = predicate_finding(&bulk_source(computed, BOUNDARY_TESTS), BULK_DIFF)?;
-    // Reach still holds through the call; the computed hop argument stops
-    // the exact-value transfer, so the wrapper's `10` is not a boundary row.
+    let tests =
+        "        assert_eq!(order_discount(9), 5);\n        assert_eq!(order_discount(8), 0);";
+    let finding = predicate_finding(&bulk_source(computed, tests), BULK_DIFF)?;
     assert_eq!(
         relation_of(&finding, "ten_items_earn_the_bulk_discount"),
         Some("helper_owner_call"),
         "{finding}"
     );
-    assert_ne!(finding["classification"], "exposed", "{finding}");
-    assert_ne!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
+    assert_eq!(finding["ripr"]["infect"]["state"], "yes", "{finding}");
+    Ok(())
+}
+
+#[test]
+fn wrapper_that_transforms_the_argument_by_an_unreadable_value_transfers_no_boundary_value()
+-> Result<(), String> {
+    // Each stimulus is consistent with its wrapper's runtime value (`qty + 1`
+    // is the boundary at 9, `qty * 1` at 10), so a retained abstention is the
+    // unreadable argument stopping the transfer and not the stimulus
+    // contradicting a folded reading.
+    let plus_one_tests =
+        "        assert_eq!(order_discount(9), 5);\n        assert_eq!(order_discount(8), 0);";
+    for (computed, tests) in [
+        (
+            "    if is_bulk(qty + step()) {\n        5\n    } else {\n        0\n    }",
+            plus_one_tests,
+        ),
+        (
+            "    if is_bulk((qty + 1) as u32) {\n        5\n    } else {\n        0\n    }",
+            plus_one_tests,
+        ),
+        (
+            "    if is_bulk(qty * LIMIT) {\n        5\n    } else {\n        0\n    }",
+            BOUNDARY_TESTS,
+        ),
+    ] {
+        let source = bulk_source(computed, tests).replace(
+            "fn is_bulk",
+            "const LIMIT: u32 = 1;\nfn step() -> u32 {\n    1\n}\n\nfn is_bulk",
+        );
+        let finding = predicate_finding(&source, BULK_DIFF)?;
+        // Reach still holds through the call; the unreadable hop argument
+        // stops the exact-value transfer.
+        assert_ne!(
+            finding["ripr"]["infect"]["state"], "yes",
+            "{computed}: {finding}"
+        );
+    }
     Ok(())
 }
 

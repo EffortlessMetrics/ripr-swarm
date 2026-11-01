@@ -79,7 +79,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `x == 0`
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `x == 0`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_truthiness_swap_no_exposed_credit/input --diff <cwd>/fixtures/python_truthiness_swap_no_exposed_credit/diff.patch --mode fast probe:src_lib.py:python_preview:fc6faa73
   ripr context --root <cwd>/fixtures/python_truthiness_swap_no_exposed_credit/input --diff <cwd>/fixtures/python_truthiness_swap_no_exposed_credit/diff.patch --mode fast --at probe:src_lib.py:python_preview:fc6faa73

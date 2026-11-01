@@ -691,9 +691,10 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
     // a partial run with findings gets the scope caveat instead. #4952: the
     // EOL-only churn disclosure does not scope the analysis down, so the
     // incomplete-scope hedges stay off when it is the only limitation.
-    let scoped_down = outcome.limitations.iter().any(|limitation| {
-        limitation.kind != crate::analysis_outcome::AnalysisLimitationKind::EolOnlyChurn
-    });
+    let scoped_down = outcome
+        .limitations
+        .iter()
+        .any(|limitation| !limitation.kind.is_advisory_disclosure());
     if scoped_down {
         if output.findings.is_empty() {
             out.push_str(
@@ -1288,7 +1289,8 @@ pub fn render_finding(finding: &Finding) -> String {
 }
 
 /// Render one finding with the bounded context follow-up for the selected
-/// finding.
+/// finding. Production routes (`explain`) call the `_and_files` form directly.
+#[cfg(test)]
 pub(crate) fn render_finding_with_context_command(
     finding: &Finding,
     config: &RiprConfig,
@@ -1376,6 +1378,22 @@ pub(crate) fn render_agent_with_config_and_navigation(
     provenance: CheckDiffProvenance,
 ) -> String {
     agent::render(output, config, drill_in, provenance)
+}
+
+/// `ripr explain --format agent` (#12104): the compact agent projection of one
+/// selected finding, with an explicit `done=` / `open=` / `stop=` terminal line.
+pub(crate) fn render_finding_agent(
+    finding: &Finding,
+    root: &Path,
+    context_command: &str,
+    suppressed: bool,
+) -> String {
+    terminal_safe(agent::render_finding(
+        finding,
+        root,
+        context_command,
+        suppressed,
+    ))
 }
 
 pub(crate) use evidence_lines::{JsonPointerWording, plain_observation_wording};
@@ -4597,14 +4615,16 @@ mod tests {
         );
 
         assert!(
-            digest.contains(
-                "  Discriminator (observed, advisory): Related test reaches `applyDiscount`"
-            ),
+            digest.contains("  Check (observed, advisory): Related test reaches `applyDiscount`"),
             "expected observed-advisory label in digest; got:\n{digest}"
         );
         assert!(
             !digest.contains("Missing check:"),
             "exposed digest must not claim a missing discriminator; got:\n{digest}"
+        );
+        assert!(
+            !digest.contains("Discriminator (observed"),
+            "the observed-evidence label must use plain words; got:\n{digest}"
         );
     }
 
@@ -4861,7 +4881,7 @@ mod tests {
                 finding.class
             );
             assert!(
-                !digest.contains("Discriminator (observed, advisory)"),
+                !digest.contains("Check (observed, advisory)"),
                 "non-exposed digest must not use the observed-advisory label; got:\n{digest}"
             );
         }
@@ -5277,7 +5297,7 @@ mod tests {
         // command instead of a bare "verify independently" with no route.
         assert!(
             rendered.contains(
-                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing discriminator `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`\n"
+                "  Safe next action: preview-language evidence is advisory; the repair packet is complete: in `tests/discount.test.ts`, add a focused assertion for the missing check `amount == threshold`, shaped like `expect(result).toBe(expected)`; run `jest tests/discount.test.ts`, then rerun `ripr check`\n"
             ),
             "{rendered}"
         );
@@ -7722,7 +7742,7 @@ mod tests {
 
         assert!(
             flattened.ends_with(
-                "add a co-located test that reaches and observes the changed behavior so a discriminator exists"
+                "add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong"
             ),
             "digest must keep the remedy; got:\n{digest}"
         );

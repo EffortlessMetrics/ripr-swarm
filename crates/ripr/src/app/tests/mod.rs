@@ -9,6 +9,7 @@ use crate::domain::{
 };
 use std::path::PathBuf;
 
+mod absorbing_tail_pipeline;
 mod badge_rendering;
 mod handwritten_recovery;
 mod mode_and_selector;

@@ -28,7 +28,7 @@ Start here:
   Suggested test: test_rejects_zero_value
   Test node: tests/test_validation.py::test_rejects_zero_value
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_error_path_shape/input && python -m pytest tests/test_validation.py::test_rejects_zero_value) (high)
-  Next step — Python preview: strengthen the existing related test with an exception assertion for missing discriminator `raises ValueError matching "positive required"`
+  Next step — Python preview: strengthen the existing related test with an exception assertion for the missing check `raises ValueError matching "positive required"`
   Evidence: reach yes · infection yes · propagation yes · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -47,7 +47,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_error_path_shape/input --diff <cwd>/fixtures/python_error_path_shape/diff.patch --mode fast probe:src_validation.py:python_preview:82db397b
   ripr context --root <cwd>/fixtures/python_error_path_shape/input --diff <cwd>/fixtures/python_error_path_shape/diff.patch --mode fast --at probe:src_validation.py:python_preview:82db397b
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/validation.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/validation.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

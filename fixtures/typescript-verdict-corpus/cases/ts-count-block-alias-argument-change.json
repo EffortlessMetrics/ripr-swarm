@@ -1,0 +1,44 @@
+{
+  "case_id": "ts-count-block-alias-argument-change",
+  "subject_id": "authored-ts-count-block-alias",
+  "diff": "cases/ts-count-block-alias-argument-change.diff",
+  "anchor": {
+    "file": "src/notify.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "call_argument",
+  "test_shape": "node_mock_unconditional_block_alias",
+  "hard_case": "A unique immutable count alias inside an unconditional block cannot see changed arguments; same-block argument pins are the executed control.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test test/notify.test.ts",
+    "toolchain": "Node v24.19.0; node:test built in; full authored package run for the original, equivalent rewrite and wrong argument",
+    "mutants": [
+      {
+        "replacement": "sender.send(id + 1);",
+        "mutated_line": "sender.send(id + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: sends 5 instead of 8 for id=4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The recorded argument distinguishes wrong arguments from the intended behavior; a block-local count remains one for the original, equivalent rewrite and wrong argument.",
+  "labeling_observation": {
+    "ripr_commit": "56f5ab8bb0b7654545acec888c49e8e35eced6aa",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

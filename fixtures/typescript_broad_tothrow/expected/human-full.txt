@@ -37,7 +37,7 @@ Preview actionability
   gap state: unknown
   category: missing_target_shape
   repair packet ready: false
-  why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   repair route: add probe-specific discriminator extraction for this expression before repair packet projection
   missing fields: repair_kind, target_test_shape, verify_command, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs
   evidence needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
@@ -68,7 +68,7 @@ TypeScript preview card (advisory)
   oracle: unknown (unknown)
   suggested assertion shape: Add an exact boundary assertion for the changed predicate.
   repair packet ready: false
-  why not actionable: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  why not actionable: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   repair route: add probe-specific discriminator extraction for this expression before repair packet projection
   limits:
     - Syntax-first TypeScript/JavaScript preview evidence only.
@@ -77,7 +77,7 @@ TypeScript preview card (advisory)
 
 TypeScript repair packet (advisory)
   status: not actionable
-  limitation: TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape
+  limitation: TypeScript preview found related test evidence but cannot name a safe target check or observer shape
   next capability needed: safe probe discriminator, repair kind, target shape, verify command, receipt command, and edit boundaries
 
 Next step
