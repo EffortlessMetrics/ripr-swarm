@@ -4077,6 +4077,46 @@ mod tests {
         Ok(())
     }
 
+    /// RIPR-SPEC-0369: repository mode yields no expression finding for text
+    /// inside `verus! { .. }`; the macro token tree is not indexed as Rust.
+    #[test]
+    fn repo_analysis_reports_nothing_for_verus_region_only_file() -> Result<(), String> {
+        let root = temp_root("verus-region-repo")?;
+        fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"verus-repo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        fs::write(
+            root.join("src/lib.rs"),
+            "use vstd::prelude::*;\nverus! {\nfn f(x: u32) -> (r: u32)\n    ensures r == x,\n{\n    if x > 5 { x } else { x }\n}\n}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let result = RustAdapter.analyze_repo(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: None,
+                mode: AnalysisMode::Ready,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: true,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: None,
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+        )?;
+        fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
+        assert!(result.findings.is_empty(), "{:?}", result.findings);
+        Ok(())
+    }
+
     /// #4586: a changed production file missing from the working tree
     /// (sparse checkout / local delete) must not become a clean
     /// `no_static_path`. The adapter withholds probes and names the file.
