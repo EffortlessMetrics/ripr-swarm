@@ -2716,6 +2716,7 @@ fn push_packet_json(
                 seam.owner_call(),
                 Some(seam.required_discriminator()),
                 evidence,
+                crate::analysis::field_write_read(seam),
             )
         } else {
             Vec::new()
@@ -3325,6 +3326,7 @@ pub(crate) fn assertion_shape_for_entry(entry: &ClassifiedSeam) -> AssertionShap
             entry.seam.owner_call(),
             Some(entry.seam.required_discriminator()),
             &entry.evidence,
+            crate::analysis::field_write_read(&entry.seam),
         )
     };
     assertion_shape_from_guidance(guidance)
@@ -3340,6 +3342,7 @@ fn assertion_guidance_for(
     owner_call: &OwnerCallShape,
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
+    field_write: Option<crate::analysis::FieldWriteRead>,
 ) -> AssertionGuidance {
     let assertion_kind = assertion_kind_for(kind);
     let observer_required = match kind {
@@ -3347,13 +3350,22 @@ fn assertion_guidance_for(
         SeamKind::CallPresence => Some(ObserverKind::CallSite),
         _ => None,
     };
-    let derived_example = suggested_assertions_for(kind, owner, owner_call, required, evidence)
-        .into_iter()
-        .find(|suggestion| {
-            let trimmed = suggestion.trim_start();
-            !trimmed.starts_with("//") && trimmed.contains("assert")
-        });
+    let derived_example =
+        suggested_assertions_for(kind, owner, owner_call, required, evidence, field_write)
+            .into_iter()
+            .find(|suggestion| {
+                let trimmed = suggestion.trim_start();
+                !trimmed.starts_with("//") && trimmed.contains("assert")
+            });
     let basis = if assertion_template_uses_required_discriminator(kind, required) {
+        Some(AssertionBasis::SeamRequiredDiscriminator)
+    } else if matches!(kind, SeamKind::FieldConstruction)
+        && field_write.is_some()
+        && matches!(
+            required,
+            Some(RequiredDiscriminator::FieldValue { field }) if !field.trim().is_empty()
+        )
+    {
         Some(AssertionBasis::SeamRequiredDiscriminator)
     } else if required.is_none() && !evidence.observed_values.is_empty() {
         Some(AssertionBasis::ObservedValueFact)
@@ -3616,12 +3628,67 @@ fn oracle_strength_recipe(oracle_kind: &str, current_strength: &str) -> String {
 
 /// Best-effort assertion templates the agent can fill in. These are
 /// guidance, not generated tests — placeholders are intentional.
+/// Path assigned in a `self.<path>` field write (`timeout` for `self.timeout = t`).
+fn field_write_assignment_path(expression: &str) -> Option<&str> {
+    let rest = expression.trim().strip_prefix("self.")?;
+    let path_len = rest
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
+        .unwrap_or(rest.len());
+    let (path, after) = rest.split_at(path_len);
+    let after = after.trim_start();
+    let op_len = after.find('=')?;
+    let assigns = matches!(
+        &after[..op_len],
+        "" | "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
+    ) && !after[op_len + 1..].starts_with(['=', '>']);
+    (assigns
+        && !path.is_empty()
+        && path.split('.').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+                && part
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        }))
+    .then_some(path)
+}
+
+fn field_construction_field_path(
+    required: Option<&RequiredDiscriminator>,
+    field_write: Option<crate::analysis::FieldWriteRead>,
+) -> &str {
+    if field_write.is_none() {
+        return "field";
+    }
+    if let Some(RequiredDiscriminator::FieldValue { field }) = required {
+        let field = field.trim();
+        if let Some(path) = field_write_assignment_path(field) {
+            return path;
+        }
+        if !field.is_empty() && !field.contains('=') {
+            return field;
+        }
+    }
+    "/* changed field */"
+}
+
+fn field_write_assertion_receiver(owner_call: &OwnerCallShape) -> String {
+    match owner_call {
+        OwnerCallShape::Method { self_type } => format!("/* {self_type} value */"),
+        _ => "subject".to_string(),
+    }
+}
+
 fn suggested_assertions_for(
     kind: SeamKind,
     owner: &str,
     owner_call: &OwnerCallShape,
     required: Option<&RequiredDiscriminator>,
     evidence: &TestGripEvidence,
+    field_write: Option<crate::analysis::FieldWriteRead>,
 ) -> Vec<String> {
     let owner_short = owner.rsplit("::").next().unwrap_or(owner);
     // #5357: the owner's parser facts decide the call syntax, so a method
@@ -3662,10 +3729,31 @@ fn suggested_assertions_for(
             "assert_eq!({}, /* expected */)",
             call("/* input */")
         )],
-        SeamKind::FieldConstruction => vec![format!(
-            "let result = {}; assert_eq!(result.field, /* expected */);",
-            call("/* input */")
-        )],
+        SeamKind::FieldConstruction => {
+            use crate::analysis::FieldWriteRead;
+            let field = field_construction_field_path(required, field_write);
+            match field_write {
+                Some(FieldWriteRead::Receiver) => {
+                    let receiver = field_write_assertion_receiver(owner_call);
+                    vec![format!(
+                        "{}; assert_eq!({receiver}.{field}, /* expected */);",
+                        call("/* input */")
+                    )]
+                }
+                Some(FieldWriteRead::CallResult) => vec![format!(
+                    "let result = {}; assert_eq!(result.{field}, /* expected */);",
+                    call("/* input */")
+                )],
+                Some(FieldWriteRead::Unspecified) => vec![
+                    "// assert the changed field after the call with an exact equality check"
+                        .to_string(),
+                ],
+                None => vec![format!(
+                    "let result = {}; assert_eq!(result.field, /* expected */);",
+                    call("/* input */")
+                )],
+            }
+        }
         SeamKind::SideEffect => vec![format!(
             "// arrange a mock/observer; assert {} produced the expected effect",
             call("...")
@@ -8529,6 +8617,139 @@ mod tests {
         assert!(
             missing_oracle_shape_for(SeamKind::FieldConstruction, ExpectedSink::ReturnValue, None)
                 != by_value
+        );
+    }
+
+    /// #11726: field-write assertion templates follow `field_write_read`, not
+    /// the returned-struct paste shape.
+    fn field_write_assertion_templates(borrows: Option<bool>) -> Vec<String> {
+        let seam = RepoSeam::new(
+            "src/req.rs",
+            "req::Req::timeout",
+            SeamKind::FieldConstruction,
+            10,
+            11,
+            "self.timeout = t * 2",
+            RequiredDiscriminator::FieldValue {
+                field: "timeout".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        )
+        .with_owner_borrows_receiver(borrows)
+        .with_owner_call(OwnerCallShape::Method {
+            self_type: "Req".to_string(),
+        });
+        suggested_assertions_for(
+            seam.kind(),
+            seam.owner(),
+            seam.owner_call(),
+            Some(seam.required_discriminator()),
+            &TestGripEvidence {
+                seam_id: seam.id().clone(),
+                related_tests: Vec::new(),
+                reach: stage(StageState::Yes),
+                activate: stage(StageState::Yes),
+                propagate: stage(StageState::Weak),
+                observe: stage(StageState::Weak),
+                discriminate: stage(StageState::No),
+                observed_values: Vec::new(),
+                missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
+                new_test_target: None,
+            },
+            crate::analysis::field_write_read(&seam),
+        )
+    }
+
+    #[test]
+    fn field_write_suggested_assertion_on_receiver_reads_mutated_field() {
+        let templates = field_write_assertion_templates(Some(true));
+        assert_eq!(
+            templates,
+            vec![
+                "/* Req value */.timeout(/* input */); assert_eq!(/* Req value */.timeout, /* expected */);"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn field_write_suggested_assertion_on_call_result_when_self_by_value() {
+        let templates = field_write_assertion_templates(Some(false));
+        assert_eq!(
+            templates,
+            vec![
+                "let result = /* Req value */.timeout(/* input */); assert_eq!(result.timeout, /* expected */);"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn field_write_suggested_assertion_without_recorded_receiver_mode_is_neutral() {
+        let templates = field_write_assertion_templates(None);
+        assert_eq!(
+            templates,
+            vec![
+                "// assert the changed field after the call with an exact equality check"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn struct_field_construction_suggested_assertion_unchanged_without_field_write() {
+        let seam = seam_with(
+            "quote::build",
+            SeamKind::FieldConstruction,
+            RequiredDiscriminator::FieldValue {
+                field: "quote.total".to_string(),
+            },
+            ExpectedSink::OutputField,
+        );
+        let entry = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+        let templates = suggested_assertions_for(
+            entry.seam.kind(),
+            entry.seam.owner(),
+            entry.seam.owner_call(),
+            Some(entry.seam.required_discriminator()),
+            &entry.evidence,
+            crate::analysis::field_write_read(&entry.seam),
+        );
+        assert_eq!(
+            templates,
+            vec!["let result = build(/* input */); assert_eq!(result.field, /* expected */);"]
+        );
+    }
+
+    #[test]
+    fn field_write_assertion_guidance_example_follows_receiver_mode() {
+        let seam = RepoSeam::new(
+            "src/req.rs",
+            "req::Req::timeout",
+            SeamKind::FieldConstruction,
+            10,
+            11,
+            "self.timeout = t * 2",
+            RequiredDiscriminator::FieldValue {
+                field: "timeout".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        )
+        .with_owner_borrows_receiver(Some(true))
+        .with_owner_call(OwnerCallShape::Method {
+            self_type: "Req".to_string(),
+        });
+        let entry = classified_with(seam, SeamGripClass::WeaklyGripped, Vec::new());
+        let shape = assertion_shape_for_entry(&entry);
+        let example = shape.example();
+        assert!(
+            example.is_some_and(|example| {
+                example.contains("assert_eq!(/* Req value */.timeout, /* expected */);")
+                    && !example.contains("let result =")
+            }),
+            "expected receiver field-write concrete example, got {:?}",
+            example
         );
     }
 }
