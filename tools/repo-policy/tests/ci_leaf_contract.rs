@@ -1031,3 +1031,15 @@ fn staged_and_explicit_activation_event_matrix() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn merge_ready_run_names_its_request_for_the_results_vscode_binding() {
+    // #12236: routed-rust.yml's Result admits a `vscode surface` check only from
+    // the ci.yml run whose title is exactly this string.
+    assert!(
+        WORKFLOW.contains(
+            "format('CI merge-ready request {0} {1}', github.event.pull_request.head.sha, github.event.pull_request.updated_at)"
+        ),
+        "ci.yml must title a merge-ready run with the head and the request time"
+    );
+}
