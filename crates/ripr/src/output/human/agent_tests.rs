@@ -556,7 +556,7 @@ fn explain_agent_agrees_with_check_agent_on_gap_membership() {
         ExposureClass::NoStaticPath,
         ExposureClass::StaticUnknown,
     ] {
-        let f = finding("probe:x", class, 3);
+        let f = finding("probe:x", class.clone(), 3);
         let check_has_gap = rendered(&output(vec![f.clone()])).contains(" gaps=1 ");
         let explain_open = explained(&f).contains("\nopen=");
         assert_eq!(check_has_gap, explain_open, "{class:?}");
@@ -585,7 +585,7 @@ fn explain_agent_non_current_findings_fail_closed_with_a_currentness_stop() {
     ] {
         for class in [ExposureClass::Exposed, ExposureClass::WeaklyExposed] {
             let mut f = weak_gap("probe:old", 5);
-            f.class = class;
+            f.class = class.clone();
             f.source_currentness = currentness;
             let text = explained(&f);
             assert!(
