@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (the strong borrowed assertion is not confirmed to observe the changed effect; identify an effect-observing assertion before the packet is delegatable); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (identify an effect-observing assertion before this repair can be handed to an agent: the strong borrowed assertion is not confirmed to observe the changed effect); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/receipt.ts:2
   Language: typescript
   Language status: preview

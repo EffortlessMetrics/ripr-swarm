@@ -128,7 +128,8 @@ impl Fixture {
                     .ok_or("leaf driver error prefix missing")?;
                 assert!(
                     String::from_utf8_lossy(&aggregate.stderr).contains(error),
-                    "leaf error changed: {check}"
+                    "leaf error changed: {check}\n--- leaf rerun stderr ---\n{error}\n--- aggregate stderr ---\n{}",
+                    String::from_utf8_lossy(&aggregate.stderr)
                 );
             }
             assert_eq!(

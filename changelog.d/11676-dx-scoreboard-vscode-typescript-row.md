@@ -1,0 +1,2 @@
+<!-- section: Added -->
+- DX scoreboard: add two heavy TypeScript rows with warm-check gates. `vscode-typescript` is a three-file edit in VS Code's own tree (5,328 files), gated at 90 s and 1 GiB: every run took about 250 s and 1.47 GiB before the fact store wrote each shared list once (#11676), and it now measures 48.6 s / 457 MiB. `typescript-compiler` pins the workspace-walk cap refusal (#11794): `static_unknown` with the named limit instead of zero findings, gated at 5 s and 256 MiB against a measured 2.6 s / 62 MiB.

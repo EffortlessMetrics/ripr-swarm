@@ -1061,7 +1061,7 @@ fn snapshot_root(root: &Path) -> Option<PathBuf> {
 
 fn read_manifest(root: &Path, directory: &Path, snapshot: bool) -> std::io::Result<Option<String>> {
     if !snapshot {
-        return std::fs::read_to_string(directory.join("Cargo.toml")).map(Some);
+        return crate::bounded_input::read_metadata_toml(directory.join("Cargo.toml")).map(Some);
     }
     let Some(read_root) = snapshot_root(root) else {
         return Err(std::io::Error::other("workspace root unavailable"));
@@ -1071,7 +1071,16 @@ fn read_manifest(root: &Path, directory: &Path, snapshot: bool) -> std::io::Resu
         .map_err(std::io::Error::other)?
         .join("Cargo.toml");
     crate::analysis::committed_source::read_cargo_manifest(&read_root, &relative)?
-        .map(|bytes| String::from_utf8(bytes).map_err(std::io::Error::other))
+        .map(|bytes| {
+            // The committed object is as hostile as the worktree file: bound it
+            // before the `toml` lexer multiplies its size (#11563).
+            if bytes.len() as u64 > crate::bounded_input::MAX_METADATA_TOML_BYTES {
+                return Err(std::io::Error::other(
+                    "committed manifest exceeds the metadata TOML byte limit",
+                ));
+            }
+            String::from_utf8(bytes).map_err(std::io::Error::other)
+        })
         .transpose()
 }
 

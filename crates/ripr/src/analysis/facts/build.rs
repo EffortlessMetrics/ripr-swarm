@@ -721,7 +721,7 @@ fn build_index_with_adapters(
 /// never an error: the gate only ever under-credits.
 fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
     let mut names = std::collections::BTreeSet::new();
-    let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+    let Ok(text) = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")) else {
         return names;
     };
     // A manifest is a TOML document (a table), not a standalone value:
@@ -756,7 +756,7 @@ fn manifest_package_names(root: &Path) -> std::collections::BTreeSet<String> {
 /// package, or moves the library root (`[lib] path` other than `src/lib.rs`),
 /// so every consumer under-credits.
 fn manifest_library_name(root: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(root.join("Cargo.toml")).ok()?;
+    let text = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")).ok()?;
     let value = text.parse::<toml::Table>().ok()?;
     let package = value
         .get("package")
@@ -819,8 +819,12 @@ fn absolute_member_dirs(root: &Path) -> Vec<PathBuf> {
 
 /// The `[workspace] members` directories (literal paths and trailing `/*`
 /// globs, minus `exclude`) of the root manifest.
+///
+/// Cargo keeps an explicitly listed literal member even when the same path
+/// appears in `exclude`; exclusions apply to glob-expanded members only,
+/// compared as workspace-root-anchored path prefixes (#7904).
 fn workspace_member_directories(root: &Path) -> Vec<PathBuf> {
-    let Ok(text) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+    let Ok(text) = crate::bounded_input::read_metadata_toml(root.join("Cargo.toml")) else {
         return Vec::new();
     };
     let Ok(value) = text.parse::<toml::Table>() else {
@@ -843,7 +847,7 @@ fn workspace_member_directories(root: &Path) -> Vec<PathBuf> {
             .unwrap_or_default()
     };
     let excluded = patterns("exclude");
-    let mut members = Vec::new();
+    let mut members: Vec<(String, bool)> = Vec::new();
     for pattern in patterns("members") {
         if let Some(parent) = pattern.strip_suffix("/*") {
             let Ok(entries) = std::fs::read_dir(root.join(parent)) else {
@@ -851,17 +855,25 @@ fn workspace_member_directories(root: &Path) -> Vec<PathBuf> {
             };
             for entry in entries.flatten() {
                 if let Some(name) = entry.file_name().to_str() {
-                    members.push(format!("{parent}/{name}"));
+                    members.push((format!("{parent}/{name}"), false));
                 }
             }
         } else if !pattern.contains(['*', '?', '[']) {
-            members.push(pattern);
+            members.push((pattern, true));
         }
     }
     members
         .into_iter()
-        .filter(|member| !excluded.contains(member))
-        .map(PathBuf::from)
+        .filter(|(member, from_literal_entry)| {
+            if *from_literal_entry {
+                return true;
+            }
+            let member_path = root.join(member);
+            !excluded
+                .iter()
+                .any(|exclude| member_path.starts_with(root.join(exclude)))
+        })
+        .map(|(member, _)| PathBuf::from(member))
         .collect()
 }
 
@@ -1010,6 +1022,62 @@ mod tests {
             assert!(!owned.contains(name), "{name}: {owned:?}");
         }
         fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    fn workspace_member_macro_scope(
+        members: &str,
+        exclude: &str,
+        member_dir: &str,
+        package_name: &str,
+    ) -> Result<std::collections::BTreeSet<String>, Box<dyn Error>> {
+        let root = temp_dir("workspace_member_macro_scope")?;
+        fs::write(
+            root.join("Cargo.toml"),
+            format!(
+                "[package]\nname='root'\nversion='0.1.0'\nedition='2024'\n\n\
+                 [workspace]\nresolver='3'\nmembers=[{members}]\nexclude=[{exclude}]\n"
+            ),
+        )?;
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("src/lib.rs"), "pub fn root() {}\n")?;
+        fs::create_dir_all(root.join(member_dir).join("src"))?;
+        fs::write(
+            root.join(member_dir).join("Cargo.toml"),
+            format!("[package]\nname='{package_name}'\nversion='0.1.0'\nedition='2024'\n"),
+        )?;
+        fs::write(
+            root.join(member_dir).join("src/lib.rs"),
+            "pub fn member() {}\n",
+        )?;
+        let files = vec![
+            PathBuf::from("src/lib.rs"),
+            PathBuf::from(member_dir).join("src/lib.rs"),
+        ];
+        let index = build_index(&root, &files)?;
+        let owned = index.macro_scope_crates().clone();
+        fs::remove_dir_all(&root)?;
+        Ok(owned)
+    }
+
+    #[test]
+    fn literal_workspace_member_kept_when_exactly_excluded() -> Result<(), Box<dyn Error>> {
+        let owned = workspace_member_macro_scope("'dep/sub'", "'dep/sub'", "dep/sub", "sub")?;
+        assert!(owned.contains("sub"), "{owned:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn glob_discovered_member_dropped_when_exactly_excluded() -> Result<(), Box<dyn Error>> {
+        let owned = workspace_member_macro_scope("'dep/*'", "'dep/sub'", "dep/sub", "sub")?;
+        assert!(!owned.contains("sub"), "{owned:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn glob_discovered_member_kept_when_exclude_is_unrelated() -> Result<(), Box<dyn Error>> {
+        let owned = workspace_member_macro_scope("'dep/*'", "'other'", "dep/sub", "sub")?;
+        assert!(owned.contains("sub"), "{owned:?}");
         Ok(())
     }
 
