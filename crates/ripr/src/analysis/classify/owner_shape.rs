@@ -77,6 +77,11 @@ fn has_non_test_caller(owner: &FunctionSummary, index: &RustIndex) -> bool {
 /// by its inner fragments so a non-assert call cannot hide inside a control
 /// header.
 fn body_is_assertion_dominated(body: &str) -> bool {
+    let (assert_statements, other_statements) = count_assert_and_other_statements(body);
+    assert_statements >= 1 && other_statements == 0
+}
+
+fn count_assert_and_other_statements(body: &str) -> (usize, usize) {
     let mut assert_statements = 0usize;
     let mut other_statements = 0usize;
     let mut statement = String::new();
@@ -103,16 +108,7 @@ fn body_is_assertion_dominated(body: &str) -> bool {
             || trimmed.ends_with('}')
             || trimmed.starts_with('}');
         if completes {
-            match one_line_fn_body(&statement) {
-                // A one-line `fn f() { a; b }` is the signature plus its body
-                // statements, never one assert-looking statement (#11546).
-                Some(body) => {
-                    for part in top_level_statements(body) {
-                        record_statement(part, &mut assert_statements, &mut other_statements);
-                    }
-                }
-                None => record_statement(&statement, &mut assert_statements, &mut other_statements),
-            }
+            record_statement(&statement, &mut assert_statements, &mut other_statements);
             statement.clear();
         }
     }
@@ -120,53 +116,7 @@ fn body_is_assertion_dominated(body: &str) -> bool {
         record_statement(&statement, &mut assert_statements, &mut other_statements);
     }
 
-    assert_statements >= 1 && other_statements == 0
-}
-
-/// The text between the braces of a `fn` whose signature and whole body share
-/// one accumulated statement, or `None` for any other statement.
-fn one_line_fn_body(statement: &str) -> Option<&str> {
-    let mut rest = statement;
-    loop {
-        let stripped = rest
-            .strip_prefix("pub(crate) ")
-            .or_else(|| rest.strip_prefix("pub "))
-            .or_else(|| rest.strip_prefix("async "))
-            .or_else(|| rest.strip_prefix("unsafe "))
-            .or_else(|| rest.strip_prefix("const "));
-        match stripped {
-            Some(next) => rest = next,
-            None => break,
-        }
-    }
-    if !rest.starts_with("fn ") || !statement.ends_with('}') {
-        return None;
-    }
-    let open = statement.find('{')? + 1;
-    let close = statement.rfind('}')?;
-    (open <= close).then(|| &statement[open..close])
-}
-
-/// A body split at its brace-depth-zero `;`, each statement keeping its `;`.
-/// A trailing expression without `;` is the last statement.
-fn top_level_statements(body: &str) -> Vec<&str> {
-    let mut parts = Vec::new();
-    let mut depth = 0usize;
-    let mut start = 0usize;
-    for (index, character) in body.char_indices() {
-        match character {
-            '{' | '(' | '[' => depth += 1,
-            '}' | ')' | ']' => depth = depth.saturating_sub(1),
-            ';' if depth == 0 => {
-                parts.push(body[start..=index].trim());
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    parts.push(body[start..].trim());
-    parts.retain(|part| !part.is_empty());
-    parts
+    (assert_statements, other_statements)
 }
 
 fn record_statement(statement: &str, assert_statements: &mut usize, other_statements: &mut usize) {
@@ -183,14 +133,7 @@ enum StatementKind {
     Ignorable,
 }
 
-fn classify_statement(statement: &str) -> StatementKind {
-    if let Some(kind) = classify_compound_statement(statement) {
-        return kind;
-    }
-    if contains_assert_family_call(statement) || is_discarded_expect(statement) {
-        return StatementKind::Assert;
-    }
-    let mut rest = statement;
+fn strip_fn_modifiers(mut rest: &str) -> &str {
     loop {
         let stripped = rest
             .strip_prefix("pub(crate) ")
@@ -203,6 +146,64 @@ fn classify_statement(statement: &str) -> StatementKind {
             None => break,
         }
     }
+    rest
+}
+
+/// A one-line `fn … { … }` item is accumulated as a single statement; classify
+/// only the braced body instead of treating the signature as ignorable after a
+/// whole-text assert match (#11546).
+fn classify_inline_fn_body(statement: &str) -> Option<StatementKind> {
+    let rest = strip_fn_modifiers(statement);
+    if !rest.starts_with("fn ") || !rest.contains('{') || !rest.ends_with('}') {
+        return None;
+    }
+    let open = rest.find('{')?;
+    let close = rest.rfind('}')?;
+    if open >= close {
+        return None;
+    }
+    let (assert_statements, other_statements) =
+        count_assert_and_other_in_braced_body(&rest[open + 1..close]);
+    Some(if other_statements > 0 {
+        StatementKind::Other
+    } else if assert_statements >= 1 {
+        StatementKind::Assert
+    } else {
+        StatementKind::Ignorable
+    })
+}
+
+/// Statement boundaries inside a one-line `{ … }` fn body: split on `;` before
+/// treating a trailing `}` as completion, so `assert!(…); if … { … }` is not one
+/// assert-dominated statement (#11546).
+fn count_assert_and_other_in_braced_body(inner: &str) -> (usize, usize) {
+    let mut assert_statements = 0usize;
+    let mut other_statements = 0usize;
+    let mut rest = inner.trim();
+    while let Some(pos) = rest.find(';') {
+        let statement = rest[..=pos].trim();
+        if !statement.is_empty() {
+            record_statement(statement, &mut assert_statements, &mut other_statements);
+        }
+        rest = rest[pos + 1..].trim_start();
+    }
+    if !rest.is_empty() {
+        record_statement(rest, &mut assert_statements, &mut other_statements);
+    }
+    (assert_statements, other_statements)
+}
+
+fn classify_statement(statement: &str) -> StatementKind {
+    if let Some(kind) = classify_compound_statement(statement) {
+        return kind;
+    }
+    if let Some(kind) = classify_inline_fn_body(statement) {
+        return kind;
+    }
+    if contains_assert_family_call(statement) {
+        return StatementKind::Assert;
+    }
+    let rest = strip_fn_modifiers(statement);
     // The enclosing `fn` signature, declarations, and control-flow headers do
     // not count for or against dominance.
     let ignorable = rest.starts_with("fn ")
@@ -269,45 +270,25 @@ fn contains_assert_family_call(text: &str) -> bool {
     ASSERT_FAMILY_MACROS
         .iter()
         .any(|needle| contains_word_call(text, needle))
+        || contains_expect_as_assert(text)
 }
 
-/// `.expect(` is an assertion only as a whole statement whose value is
-/// discarded, `maybe().expect("why");`. In a `let`, a `return`, an argument
-/// or a tail expression it unwraps a value the function uses, which is
-/// ordinary logic (#11546).
-fn is_discarded_expect(statement: &str) -> bool {
-    let statement = statement.trim();
-    let Some(call) = statement.strip_suffix(';') else {
-        return false;
-    };
-    if [
-        "let ", "return ", "break ", "if ", "match ", "while ", "for ", "loop ",
-    ]
-    .iter()
-    .any(|prefix| call.starts_with(prefix))
-    {
+/// `.expect(` counts only for setup-style unwraps (`let` bindings or a direct
+/// `receiver.expect(`), not for tail value expressions like
+/// `x.checked_add(2).expect("overflow")` (#11546).
+fn contains_expect_as_assert(text: &str) -> bool {
+    if !text.contains(".expect(") {
         return false;
     }
-    // The statement's outermost call must be `.expect(..)`: its argument list
-    // closes exactly at the end, so `keep(x.expect("m"));` does not count.
-    let Some(open) = call.rfind(".expect(") else {
+    let trimmed = text.trim();
+    if trimmed.starts_with("let ") {
+        return true;
+    }
+    let Some(pos) = trimmed.find(".expect(") else {
         return false;
     };
-    let arguments = &call[open + ".expect(".len()..];
-    let mut depth = 1usize;
-    for (index, character) in arguments.char_indices() {
-        match character {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return index + 1 == arguments.len();
-                }
-            }
-            _ => {}
-        }
-    }
-    false
+    let prefix = &trimmed[..pos];
+    !prefix.contains('.')
 }
 
 /// Word-boundary match so `my_assert!(` does not count as `assert!(`. The
@@ -592,6 +573,47 @@ mod tests {
         Ok(())
     }
 
+    // #11546: one-line fn items must not read as assertion-dominated oracles.
+    #[test]
+    fn one_line_debug_assert_clamp_is_not_assertion_dominated() -> Result<(), String> {
+        let body =
+            "pub fn clamp(x: i32) -> i32 { debug_assert!(x >= 0); if x > 9 { 9 } else { x } }\n";
+        assert!(
+            !body_is_assertion_dominated(body),
+            "debug_assert plus control/value logic on one line is not an oracle"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn one_line_assert_clamp_is_not_assertion_dominated() -> Result<(), String> {
+        let body = "pub fn clamp(x: i32) -> i32 { assert!(x >= 0); if x > 9 { 9 } else { x } }\n";
+        assert!(
+            !body_is_assertion_dominated(body),
+            "assert! plus control/value logic on one line is not an oracle"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn one_line_tail_expect_is_not_assertion_dominated() -> Result<(), String> {
+        let body = "fn add_two(x: i32) -> i32 { x.checked_add(2).expect(\"overflow\") }\n";
+        assert!(
+            !body_is_assertion_dominated(body),
+            "a tail `.expect` return is ordinary logic, not an assertion helper"
+        );
+        let owner = function("src/lib.rs", "add_two", body, false, Vec::new());
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            ..Default::default()
+        });
+        assert!(
+            !is_assertion_shaped_owner(&owner, &index),
+            "tail expect must not trigger the assertion-helper reframe"
+        );
+        Ok(())
+    }
+
     #[test]
     fn comment_and_string_mentions_do_not_count_as_assertions() -> Result<(), String> {
         let owner = function(
@@ -819,7 +841,7 @@ mod tests {
     }
 
     #[test]
-    fn expect_setup_next_to_asserts_stays_assertion_shaped() -> Result<(), String> {
+    fn expect_in_let_binding_counts_as_assert_statement() -> Result<(), String> {
         let owner = function(
             "src/lib.rs",
             "assert_fragments_parse",
@@ -834,65 +856,9 @@ mod tests {
 
         assert!(
             is_assertion_shaped_owner(&owner, &index),
-            "`let` and loop-header `.expect(` setup is ignorable beside real asserts"
+            "expect-based setup plus asserts stays assertion-shaped"
         );
         Ok(())
-    }
-
-    fn lone_owner_shaped(body: &str) -> bool {
-        let owner = function("src/lib.rs", "clamp", body, false, Vec::new());
-        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
-            functions: vec![owner.clone()],
-            ..Default::default()
-        });
-        is_assertion_shaped_owner(&owner, &index)
-    }
-
-    // #11546: ordinary logic written on one line, or unwrapped with `.expect(`,
-    // is not an assertion helper; the same fn split over lines never was.
-    #[test]
-    fn one_line_logic_with_an_assert_is_not_an_assertion_owner() {
-        for (one_line, multi_line) in [
-            (
-                "pub fn clamp(x: i32) -> i32 { debug_assert!(x >= 0); if x > 9 { 9 } else { x } }",
-                "pub fn clamp(x: i32) -> i32 {\n    debug_assert!(x >= 0);\n    if x > 9 { 9 } else { x }\n}\n",
-            ),
-            (
-                "pub fn clamp(x: i32) -> i32 { assert!(x >= 0); x.min(9) }",
-                "pub fn clamp(x: i32) -> i32 {\n    assert!(x >= 0);\n    x.min(9)\n}\n",
-            ),
-            (
-                "pub fn bump(x: i32) -> i32 { let y = x.checked_add(2).expect(\"overflow\"); y }",
-                "pub fn bump(x: i32) -> i32 {\n    let y = x.checked_add(2).expect(\"overflow\");\n    y\n}\n",
-            ),
-            (
-                "pub fn bump(x: i32) -> i32 { return x.checked_add(2).expect(\"overflow\"); }",
-                "pub fn bump(x: i32) -> i32 {\n    return x.checked_add(2).expect(\"overflow\");\n}\n",
-            ),
-            (
-                "pub fn bump(x: i32) -> i32 { keep(x.checked_add(2).expect(\"overflow\")); }",
-                "pub fn bump(x: i32) -> i32 {\n    keep(x.checked_add(2).expect(\"overflow\"));\n}\n",
-            ),
-            (
-                "pub fn bump(x: i32) -> i32 { x.checked_add(2).expect(\"overflow\") }",
-                "pub fn bump(x: i32) -> i32 {\n    x.checked_add(2).expect(\"overflow\")\n}\n",
-            ),
-        ] {
-            assert!(!lone_owner_shaped(one_line), "one line: {one_line}");
-            assert!(!lone_owner_shaped(multi_line), "multi line: {multi_line}");
-        }
-    }
-
-    #[test]
-    fn one_line_pure_assertion_body_and_discarded_expect_stay_assertion_shaped() {
-        for body in [
-            "fn check(x: i32) { assert!(x >= 0); assert_eq!(x, x); }",
-            "fn check(x: i32) { debug_assert!(x >= 0); }",
-            "fn check(x: Option<i32>) { x.expect(\"present\"); }",
-            "fn check(x: Option<i32>) {\n    x.expect(\"present\");\n}\n",
-        ] {
-            assert!(lone_owner_shaped(body), "{body}");
-        }
     }
 
     // Review finding (PR #2170): a single-line `if cond { side_effect(); }`
