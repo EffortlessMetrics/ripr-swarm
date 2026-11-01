@@ -225,10 +225,10 @@ pub fn canonical_projection_from_index(
     index: &CanonicalFindingIndexV1,
 ) -> Result<Vec<ReviewFindingProjectionV1>, String> {
     if index.schema_version != REVIEW_INDEX_SCHEMA_VERSION {
-        return Err("canonical finding index schema is unsupported; re-run `ripr check --format json` to regenerate the producer output".to_string());
+        return Err("canonical finding index schema is unsupported; regenerate the PR evidence packet with `ripr pr-evidence`".to_string());
     }
     if index.entries.len() > REVIEW_INDEX_MAX_ENTRIES {
-        return Err("canonical finding index exceeds entry limit; re-run `ripr check --format json` to regenerate the producer output".to_string());
+        return Err("canonical finding index exceeds entry limit; regenerate the PR evidence packet with `ripr pr-evidence`".to_string());
     }
     if index.entries.len() as u64 != index.total_finding_count {
         return Err("canonical finding index count is contradictory".to_string());
@@ -236,11 +236,11 @@ pub fn canonical_projection_from_index(
     let encoded = serde_json::to_vec(&index.entries)
         .map_err(|error| format!("serialize canonical finding index: {error}"))?;
     if encoded.len() > REVIEW_INDEX_MAX_BYTES {
-        return Err("canonical finding index exceeds byte limit; re-run `ripr check --format json` to regenerate the producer output".to_string());
+        return Err("canonical finding index exceeds byte limit; regenerate the PR evidence packet with `ripr pr-evidence`".to_string());
     }
     let expected = format!("sha256:{:x}", Sha256::digest(&encoded));
     if index.index_sha256 != expected {
-        return Err("canonical finding index digest does not match entries; re-run `ripr check --format json` to regenerate the producer output".to_string());
+        return Err("canonical finding index digest does not match entries; regenerate the PR evidence packet with `ripr pr-evidence`".to_string());
     }
     let mut entries = index.entries.clone();
     let mut ids = std::collections::HashSet::new();
