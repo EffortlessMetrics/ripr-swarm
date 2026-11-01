@@ -230,6 +230,17 @@ pub(super) fn old_guard_view<'a>(
 ) -> Option<OldGuardView<'a>> {
     let new_source = new_source?;
     let old_source = old_source?;
+    // A call row resolves imported constants on the new side, so an edited
+    // module-level assignment could bind an old-side guard to a value the old
+    // test never saw. Refuse the view when the diff touches one.
+    if changed
+        .removed_lines
+        .iter()
+        .chain(changed.added_lines.iter())
+        .any(|line| is_module_assignment(&line.text))
+    {
+        return None;
+    }
     let new_header = new_source
         .lines()
         .nth(owner.start_line.checked_sub(1)?)?
@@ -288,14 +299,29 @@ pub(super) fn old_guard_view<'a>(
         && removed_text.trim_end().ends_with(':');
     let mut line = removed.line;
     if opens_block {
-        // The body must itself be a deleted line no added line pairs with: a
-        // guard dropped while its body is kept (dedented) leaves that body
-        // running unguarded, which is not a deletion of the block.
-        let next = changed
-            .removed_lines
-            .iter()
-            .find(|candidate| candidate.line == removed.line + 1)?;
-        if paired.contains(&next.line) || indent_width(&next.text) <= indent_width(removed_text) {
+        // Every line of the block must itself be a deleted line no added line
+        // pairs with: a guard dropped while any of its body is kept (dedented)
+        // leaves that body running unguarded, which is not a deletion of the
+        // block.
+        let block_indent = indent_width(removed_text);
+        let mut saw_body = false;
+        for (index, raw) in old_lines.iter().enumerate().skip(removed_index + 1) {
+            if raw.trim().is_empty() {
+                continue;
+            }
+            if indent_width(raw) <= block_indent {
+                break;
+            }
+            let deleted = changed
+                .removed_lines
+                .iter()
+                .any(|candidate| candidate.line == index + 1);
+            if !deleted || paired.contains(&(index + 1)) {
+                return None;
+            }
+            saw_body = true;
+        }
+        if !saw_body {
             return None;
         }
         line += 1;
@@ -309,6 +335,28 @@ pub(super) fn old_guard_view<'a>(
         line,
         parameters: header_parameter_names(new_trimmed),
     })
+}
+
+/// Whether a diff line is an unindented `NAME = value` / `NAME: T = value`.
+fn is_module_assignment(text: &str) -> bool {
+    if text.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let Some(eq) = text.find('=') else {
+        return false;
+    };
+    let after = text.as_bytes().get(eq + 1).copied();
+    if after == Some(b'=') || eq == 0 {
+        return false;
+    }
+    let before = &text[..eq];
+    if before.ends_with(['!', '<', '>', '+', '-', '*', '/', '%', '|', '&', '^', '@']) {
+        return false;
+    }
+    let name = before.split(':').next().unwrap_or("").trim();
+    !name.is_empty()
+        && name.chars().all(|ch| ch.is_alphanumeric() || ch == '_')
+        && !name.chars().next().is_some_and(|ch| ch.is_ascii_digit())
 }
 
 /// The parameter names of a single-line `def` header (`def f(self, a=1, *b,

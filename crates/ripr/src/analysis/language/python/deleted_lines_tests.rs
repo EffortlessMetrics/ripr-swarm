@@ -1227,6 +1227,25 @@ fn deleted_guard_block_reads_a_conjunction_past_an_unreadable_conjunct() -> Resu
     Ok(())
 }
 
+// A guard dropped while part of its body is kept (dedented) leaves that part
+// running for every input, so the removal is not a deletion of an unentered
+// block and the existing verdict stands.
+#[test]
+fn deleted_guard_header_with_a_dedented_body_line_fails_open() -> Result<(), String> {
+    let new_source = "def apply_discount(total, vip=False):\n    result = total\n    result += 1\n    return result\n";
+    let removed = vec![
+        line(3, 3, "    if total > 1000:"),
+        line(4, 3, "        result = total - 50"),
+        line(5, 3, "        result += 1"),
+    ];
+    let classes =
+        deleted_guard_classes_with("guard-dedented", new_source, DISCOUNT_TESTS, &[3], removed)?;
+    for (expression, class) in &classes {
+        assert_eq!(*class, ExposureClass::Exposed, "{expression} {classes:?}");
+    }
+    Ok(())
+}
+
 // F2 (#11889): constants resolve on the new side, so a guard that names a
 // module constant is refused rather than judged against the wrong value.
 #[test]

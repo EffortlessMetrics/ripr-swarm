@@ -3877,6 +3877,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_fails_open_on_unreadable_or_changed_structure",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_reads_a_conjunction_past_an_unreadable_conjunct",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_block_naming_a_changed_module_constant_fails_open",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_header_with_a_dedented_body_line_fails_open",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::guard_names_only_parameters_is_a_closed_reading",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_header_view_requires_an_unpaired_removed_body",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_guard_header_view_covers_elif_else_while_nested_methods_and_decorators",
