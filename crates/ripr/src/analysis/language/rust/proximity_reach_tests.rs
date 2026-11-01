@@ -1435,9 +1435,486 @@ fn the_owner_named_admission_is_limited_to_infection_unknown_all_owner_named() -
         assert!(!super::needs_proximity_reach_limit(&finding), "{other:?}");
     }
     // (c) deliberate asymmetry: owner_named_test alone does not limit a
-    // weakly_exposed finding (follow-up, #11481).
+    // weakly_exposed finding (decided, #11481; see the natural-fixture pair below).
     finding.class = ExposureClass::WeaklyExposed;
     finding.related_tests = vec![base];
     assert!(!super::needs_proximity_reach_limit(&finding));
+    Ok(())
+}
+
+// RIPR-SPEC-0114 (#11719): an owner called from several `impl Trait for X {
+// fn fmt }` names the trait-dispatch ambiguity instead of guessing an impl.
+
+/// `pad` (`len >= min` on line 6, changed to `len > min`) plus `impls`
+/// (each a full item).
+fn pad_lib(impls: &str) -> String {
+    format!(
+        "use std::fmt;\npub struct A;\npub struct B;\n\nfn pad(len: usize, min: usize) -> bool {{\n    len >= min\n}}\n{impls}"
+    )
+}
+
+const PAD_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -6,1 +6,1 @@\n-    len >= min\n+    len > min\n";
+
+fn display_impl(ty: &str) -> String {
+    format!(
+        "impl fmt::Display for {ty} {{\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{\n        let _ = pad(1, 2);\n        f.write_str(\"x\")\n    }}\n}}\n"
+    )
+}
+
+/// An integration test that formats an `A`; no call fact names `fmt`.
+const FORMAT_TEST: &str =
+    "#[test]\nfn displays() {\n    assert_eq!(format!(\"{}\", reach::A), \"x\");\n}\n";
+
+/// A test that formats the other type, `B`, whose `fmt` never calls `pad`.
+const OTHER_TEST: &str =
+    "#[test]\nfn displays_b() {\n    assert_eq!(format!(\"{}\", reach::B), \"b\");\n}\n";
+
+fn pad_finding(label: &str, lib: &str) -> Result<Finding, String> {
+    pad_finding_with(label, lib, FORMAT_TEST)
+}
+
+fn pad_finding_with(label: &str, lib: &str, test: &str) -> Result<Finding, String> {
+    let fixture = Fixture::new(label, lib)?;
+    fs::create_dir_all(fixture.0.join("tests")).map_err(|e| e.to_string())?;
+    fs::write(fixture.0.join("tests/fmt.rs"), test).map_err(|e| e.to_string())?;
+    fixture.finding_on_line(PAD_DIFF, 6)
+}
+
+fn assert_bare_no_static_path(finding: &Finding, label: &str) {
+    assert_eq!(finding.class, ExposureClass::NoStaticPath, "{label}");
+    assert_eq!(finding.ripr.reach.state, StageState::No, "{label}");
+    assert!(finding.related_tests.is_empty(), "{label}");
+}
+
+#[test]
+fn an_owner_called_from_several_fmt_impls_names_the_dispatch_ambiguity() -> Result<(), String> {
+    let impls = format!("{}{}", display_impl("A"), display_impl("B"));
+    let finding = pad_finding("pad-ambiguous", &pad_lib(&impls))?;
+    // Class, reach, related tests and confidence are those of the bare reading.
+    assert_bare_no_static_path(&finding, "ambiguous");
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustTransitiveReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        finding
+            .stop_reasons
+            .contains(&StopReason::TransitiveReachUnresolved)
+    );
+    let line = finding
+        .evidence
+        .iter()
+        .find(|line| line.starts_with("Trait-dispatch ambiguity: "))
+        .ok_or("no ambiguity line")?;
+    assert!(
+        line.contains("owner `pad` is called from 2 impls of `fmt` (A, B), one of 2 `fmt` impls")
+            && line.contains("cannot tell whether any test reaches one of these impls"),
+        "{line}"
+    );
+    // No witness test is named and no runtime claim is made.
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|l| l.starts_with(crate::domain::TRANSITIVE_REACH_WITNESS_PREFIX))
+    );
+    Ok(())
+}
+
+#[test]
+fn the_ambiguity_lists_a_bounded_number_of_candidates() -> Result<(), String> {
+    let mut impls = String::new();
+    let mut types = String::new();
+    for ty in ["A", "B", "C", "D", "E", "F", "G"] {
+        impls.push_str(&display_impl(ty));
+        if ty > "B" {
+            types.push_str(&format!(" pub struct {ty};"));
+        }
+    }
+    let lib = pad_lib(&impls).replace("pub struct B;\n", &format!("pub struct B;{types}\n"));
+    let finding = pad_finding("pad-bounded", &lib)?;
+    let line = finding
+        .evidence
+        .iter()
+        .find(|line| line.starts_with("Trait-dispatch ambiguity: "))
+        .ok_or("no ambiguity line")?;
+    assert!(
+        line.contains("7 impls of `fmt` (A, B, C, D, E, and 2 more), one of 7 `fmt` impls"),
+        "{line}"
+    );
+    Ok(())
+}
+
+#[test]
+fn one_calling_impl_among_many_names_the_ambiguity_with_that_candidate() -> Result<(), String> {
+    // The dtolnay/semver `display::pad` shape (#11719): one `Display::fmt`
+    // calls the private helper, the crate has other `fmt` impls.
+    let impls = format!(
+        "{}impl fmt::Display for B {{\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{\n        f.write_str(\"b\")\n    }}\n}}\n",
+        display_impl("A")
+    );
+    let finding = pad_finding_with("pad-single-of-many", &pad_lib(&impls), OTHER_TEST)?;
+    assert_bare_no_static_path(&finding, "single-of-many");
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustTransitiveReachUnresolved)
+    );
+    let line = finding
+        .evidence
+        .iter()
+        .find(|line| line.starts_with("Trait-dispatch ambiguity: "))
+        .ok_or("no ambiguity line")?;
+    assert!(
+        line.contains("called from 1 impl of `fmt` (A), one of 2 `fmt` impls"),
+        "{line}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_unique_fmt_impl_calling_the_owner_keeps_the_bare_reading() -> Result<(), String> {
+    // The name `fmt` identifies the impl, so there is no ambiguity to name.
+    let finding = pad_finding("pad-unique", &pad_lib(&display_impl("A")))?;
+    assert_unlimited(&finding, "unique");
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|l| l.starts_with("Trait-dispatch ambiguity: "))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_second_impl_that_does_not_call_the_owner_is_not_a_caller() -> Result<(), String> {
+    let impls = format!(
+        "{}impl fmt::Display for B {{\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{\n        f.write_str(\"b\")\n    }}\n}}\n",
+        display_impl("A")
+    );
+    let finding = pad_finding_with("pad-not-caller", &pad_lib(&impls), OTHER_TEST)?;
+    let line = finding
+        .evidence
+        .iter()
+        .find(|line| line.starts_with("Trait-dispatch ambiguity: "))
+        .ok_or("no ambiguity line")?;
+    assert!(!line.contains("(A, B)") && !line.contains(", B)"), "{line}");
+    Ok(())
+}
+
+#[test]
+fn no_calling_impl_keeps_the_bare_reading() -> Result<(), String> {
+    let impls = "impl fmt::Display for A {\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        f.write_str(\"a\")\n    }\n}\nimpl fmt::Display for B {\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        f.write_str(\"b\")\n    }\n}\n";
+    let finding = pad_finding("pad-none", &pad_lib(impls))?;
+    assert_bare_no_static_path(&finding, "none");
+    assert_unlimited(&finding, "none");
+    Ok(())
+}
+
+#[test]
+fn several_impls_of_a_trait_method_ripr_does_not_dispatch_implicitly_stay_bare()
+-> Result<(), String> {
+    let run_impl = |ty: &str| {
+        format!(
+            "impl Run for {ty} {{\n    fn run(&self) -> bool {{\n        pad(1, 2)\n    }}\n}}\n"
+        )
+    };
+    let impls = format!(
+        "pub trait Run {{\n    fn run(&self) -> bool;\n}}\n{}{}",
+        run_impl("A"),
+        run_impl("B")
+    );
+    let finding = pad_finding("pad-run", &pad_lib(&impls))?;
+    assert_bare_no_static_path(&finding, "run");
+    assert_unlimited(&finding, "run");
+    Ok(())
+}
+
+#[test]
+fn several_impls_without_any_test_stay_bare() -> Result<(), String> {
+    let impls = format!("{}{}", display_impl("A"), display_impl("B"));
+    let lib = format!(
+        "use std::fmt;\npub struct A;\npub struct B;\n\nfn pad(len: usize, min: usize) -> bool {{\n    len >= min\n}}\n{impls}"
+    );
+    let finding = Fixture::new("pad-no-tests", &lib)?.finding_on_line(PAD_DIFF, 6)?;
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    assert!(finding.related_tests.is_empty());
+    Ok(())
+}
+
+const CALLING_B_FMT: &str = "fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        let _ = pad(1, 2);\n        f.write_str(\"x\")\n    }";
+
+#[test]
+fn a_cfg_test_only_impl_is_neither_a_caller_nor_an_impl() -> Result<(), String> {
+    // One production `fmt` caller; a `#[cfg(test)]` impl that also calls the
+    // owner must not make the name look ambiguous.
+    let impls = format!(
+        "{}#[cfg(test)]\nimpl fmt::Display for B {{\n    {CALLING_B_FMT}\n}}\n",
+        display_impl("A")
+    );
+    let finding = pad_finding_with("pad-cfg-test-impl", &pad_lib(&impls), OTHER_TEST)?;
+    assert_bare_no_static_path(&finding, "cfg-test-impl");
+    assert_unlimited(&finding, "cfg-test-impl");
+    Ok(())
+}
+
+#[test]
+fn inherent_fmt_methods_are_not_trait_impls_and_do_not_count() -> Result<(), String> {
+    // Two inherent `fmt` methods calling the owner: no trait dispatch.
+    let inherent = |ty: &str| {
+        format!("impl {ty} {{\n    pub fn fmt(&self) -> bool {{\n        pad(1, 2)\n    }}\n}}\n")
+    };
+    let both = format!("{}{}", inherent("A"), inherent("B"));
+    let finding = pad_finding("pad-inherent-both", &pad_lib(&both))?;
+    assert_bare_no_static_path(&finding, "inherent-both");
+    assert_unlimited(&finding, "inherent-both");
+    // One trait `fmt` caller plus an inherent `fmt` is still one trait impl.
+    let mixed = format!("{}{}", display_impl("A"), inherent("B"));
+    let finding = pad_finding("pad-inherent-mixed", &pad_lib(&mixed))?;
+    assert_unlimited(&finding, "inherent-mixed");
+    Ok(())
+}
+
+#[test]
+fn a_self_qualified_call_from_the_single_caller_behaves_as_the_plain_call() -> Result<(), String> {
+    // `Self::pad(..)` normalises to the callee name `pad`, so the single
+    // calling impl among many still names the ambiguity.
+    let impls = format!(
+        "impl fmt::Display for A {{\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{\n        let _ = Self::pad(1, 2);\n        f.write_str(\"x\")\n    }}\n}}\n{}",
+        "impl fmt::Display for B {\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        f.write_str(\"b\")\n    }\n}\n"
+    );
+    let finding = pad_finding_with("pad-self-call", &pad_lib(&impls), OTHER_TEST)?;
+    assert_bare_no_static_path(&finding, "self-call");
+    let plain = pad_finding_with(
+        "pad-plain-call",
+        &pad_lib(&format!(
+            "{}impl fmt::Display for B {{\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {{\n        f.write_str(\"b\")\n    }}\n}}\n",
+            display_impl("A")
+        )),
+        OTHER_TEST,
+    )?;
+    assert_eq!(finding.static_limit_kind, plain.static_limit_kind);
+    assert_eq!(finding.evidence, plain.evidence);
+    Ok(())
+}
+
+// #11481 follow-up decision (fail-closed, no extension): `owner_named_test`
+// is NOT admitted for `weakly_exposed`. That class only exists because a
+// related test carries a credited weak assertion; an owner-named test is the
+// strongest "this test is about the owner" signal short of a call, so its weak
+// assertion is a real gap. The witness walk is repo-wide and name-only and is
+// not tied to that test, so naming "reach unresolved" and dropping the gap
+// lines could hide a weak assertion the test really holds. The pair below
+// differs only in the test's name, so the relation alone decides.
+fn weak_assertion_fixture(test_name: &str) -> Result<Finding, String> {
+    assert!(
+        MACRO_ROUTED.contains("fn outer_triples() {\n        assert_eq!(outer(4), 12);"),
+        "fixture template drifted"
+    );
+    let lib = format!(
+        "{}}}\n",
+        MACRO_ROUTED.replace(
+            "fn outer_triples() {\n        assert_eq!(outer(4), 12);",
+            &format!("fn {test_name}() {{\n        assert!(outer(4) > 0);")
+        )
+    );
+    assert!(lib.contains(&format!("fn {test_name}()")), "{lib}");
+    Fixture::new(test_name, &lib)?.rate_finding()
+}
+
+#[test]
+fn a_weakly_exposed_owner_named_weak_assertion_keeps_its_gap_while_proximity_is_limited()
+-> Result<(), String> {
+    let named = weak_assertion_fixture("inner_rate_is_positive")?;
+    // Fixture construction: one owner-named row holding a real weak oracle.
+    assert_eq!(named.class, ExposureClass::WeaklyExposed);
+    assert_eq!(named.ripr.reach.state, StageState::Weak);
+    assert!(all_relations(&named, |reason| {
+        reason == RelationReason::OwnerNamedTest
+    }));
+    assert!(
+        named.related_tests.iter().any(|test| test.oracle.is_some()
+            && test.oracle_strength == crate::domain::OracleStrength::Weak),
+        "{:?}",
+        named.related_tests
+    );
+    assert!(!super::needs_proximity_reach_limit(&named));
+    assert_unlimited(&named, "owner-named weak assertion");
+
+    // Discriminating alternate: the same shape without the owner's name in the
+    // test is proximity-only and still names the macro limit.
+    let proximity = weak_assertion_fixture("outer_is_positive")?;
+    assert_eq!(proximity.class, ExposureClass::WeaklyExposed);
+    assert!(
+        all_relations(&proximity, crate::analysis::classify::is_proximity_only),
+        "{:?}",
+        proximity.related_tests
+    );
+    assert_eq!(
+        proximity.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        proximity.evidence
+    );
+    Ok(())
+}
+
+// #12098: the related-test cap must not drop an owner-named weak row behind
+// eight earlier-sorting proximity rows. Real Rust producer fixture, no
+// synthetic `relation_reason`.
+const NUMERIC_OWNER_BODY: &str = r####"use std::str::FromStr;
+fn numeric_identifier(input: &str) -> Result<u64, String> {
+    let mut value = 0u64;
+    for digit in input.bytes() {
+        if digit < b'0' || digit > b'9' {
+            return Err("bad digit".to_string());
+        }
+        value = value * 10 + (digit - b'0') as u64;
+    }
+    Ok(value)
+}
+pub struct Version(pub u64);
+impl FromStr for Version {
+    type Err = String;
+    fn from_str(text: &str) -> Result<Self, String> {
+        Ok(Version(numeric_identifier(text)?))
+    }
+}
+impl Version {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        Version::from_str(text)
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+"####;
+
+const WEAK_OWNER_NAMED_ASSERTION: &str = "assert!(Version::parse(\"1x\").is_err());";
+const STRONG_OWNER_NAMED_ASSERTION: &str =
+    "assert_eq!(Version::parse(\"1x\").unwrap_err(), \"bad digit\");";
+
+/// `proximity_tests` same-file tests sorted ahead of the owner-named test by
+/// name, each with an exact-value assertion, then the owner-named test
+/// carrying `owner_named_assertion`.
+fn crowded_owner_named_fixture(
+    proximity_tests: usize,
+    owner_named_assertion: &str,
+) -> Result<Finding, String> {
+    let mut lib = String::from(NUMERIC_OWNER_BODY);
+    for index in 0..proximity_tests {
+        lib.push_str(&format!(
+            "    #[test]\n    fn aa_unrelated_{index:02}() {{\n        assert_eq!(format!(\"n{index}\"), \"n{index}\");\n    }}\n"
+        ));
+    }
+    lib.push_str(&format!(
+        "    #[test]\n    fn numeric_identifier_rejects_garbage() {{\n        {owner_named_assertion}\n    }}\n}}\n"
+    ));
+    let fixture = Fixture::new(&format!("crowded-{proximity_tests}"), &lib)?;
+    fixture.boundary_finding()
+}
+
+fn owner_named_row(finding: &Finding) -> Option<(usize, &crate::domain::RelatedTest)> {
+    finding
+        .related_tests
+        .iter()
+        .enumerate()
+        .find(|(_, test)| test.name == "numeric_identifier_rejects_garbage")
+}
+
+/// The selection `triage::weak_assertion_row` makes: the first contributing row
+/// whose oracle is `weak` or `smoke`.
+fn weak_bound_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
+    finding.related_tests.iter().find(|test| {
+        test.is_contributing()
+            && matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
+            )
+    })
+}
+
+fn assert_crowded_premises(finding: &Finding, proximity_tests: usize) {
+    // Fixture construction: the producer emits the owner-named relation behind
+    // the transitive-reach limit, and every other row is file proximity.
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustTransitiveReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert_eq!(finding.related_tests_total(), proximity_tests + 1);
+    assert_eq!(
+        finding.related_tests.len(),
+        8,
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .all(|test| test.name == "numeric_identifier_rejects_garbage"
+                || test.relation_reason == Some(RelationReason::SameTestFile)),
+        "{:?}",
+        finding.related_tests
+    );
+}
+
+#[test]
+fn eight_proximity_rows_do_not_displace_the_owner_named_weak_row() -> Result<(), String> {
+    let finding = crowded_owner_named_fixture(10, WEAK_OWNER_NAMED_ASSERTION)?;
+    assert_crowded_premises(&finding, 10);
+    let (index, row) = owner_named_row(&finding)
+        .ok_or_else(|| format!("owner-named row was displaced: {:?}", finding.related_tests))?;
+    assert_eq!(row.relation_reason, Some(RelationReason::OwnerNamedTest));
+    assert_eq!(row.oracle_strength, crate::domain::OracleStrength::Weak);
+    // Row 0 is not rescored: the primary related test is still the first
+    // proximity row by name.
+    assert_ne!(index, 0, "{:?}", finding.related_tests);
+    assert_eq!(finding.related_tests[0].name, "aa_unrelated_00");
+    // The row `weak_assertion_row` inspects exists.
+    assert_eq!(
+        weak_bound_row(&finding).map(|test| test.name.as_str()),
+        Some("numeric_identifier_rejects_garbage")
+    );
+    Ok(())
+}
+
+#[test]
+fn eight_proximity_rows_still_cap_when_the_owner_named_oracle_is_strong() -> Result<(), String> {
+    // Discriminating negative: only a weak or smoke owner-named row is lifted,
+    // so a strong owner-named row stays behind the cap like any proximity row.
+    let finding = crowded_owner_named_fixture(10, STRONG_OWNER_NAMED_ASSERTION)?;
+    assert_crowded_premises(&finding, 10);
+    assert!(
+        owner_named_row(&finding).is_none(),
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(weak_bound_row(&finding).is_none());
+    Ok(())
+}
+
+#[test]
+fn an_uncrowded_window_keeps_its_name_order_with_the_owner_named_weak_row() -> Result<(), String> {
+    // Discriminating negative: under the cap nothing is cut, so nothing moves.
+    let finding = crowded_owner_named_fixture(3, WEAK_OWNER_NAMED_ASSERTION)?;
+    assert_eq!(finding.related_tests_total(), 4);
+    let names: Vec<&str> = finding
+        .related_tests
+        .iter()
+        .map(|test| test.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "aa_unrelated_00",
+            "aa_unrelated_01",
+            "aa_unrelated_02",
+            "numeric_identifier_rejects_garbage"
+        ]
+    );
     Ok(())
 }

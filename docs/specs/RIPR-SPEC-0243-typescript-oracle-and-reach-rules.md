@@ -250,6 +250,23 @@ tests. A loop over a known non-empty literal keeps its expansion (Rule 13). A
 loop variable or callback parameter named `test`, `it` or `describe` is not
 descended. The dropped-registration disclosure no longer fires for these shapes.
 
+**Rule 21a. A `#private` class method is an owner whose reach is unknown (#10440).**
+A direct ordinary method of a top-level class declared with a `#name` key is extracted as an owner named with its
+`#` (`#calculateDelay`), so a change inside it no longer reads as a
+`typescript_owner_extraction_partial` gap with no finding. No test can call it
+by name, and reach through a public method of the class (`this.#name(...)`) is
+not modeled, so an empty relation set says nothing either way: the finding reads
+`static_unknown` with reach, observation and discrimination unknown, never the
+confident `no_static_path`, and a public caller's assertion earns it no credit.
+String-literal, numeric and computed method keys, private accessors and
+function-valued private fields keep the partial-extraction disclosure. Private
+methods, accessors and function-valued fields nested inside an enclosing owner also keep that disclosure, and their
+changed lines must not borrow the enclosing public owner's test credit. The
+disclosure counts affected files, not methods or changed lines. Human stop
+reasons, actionability and preview cards must not invent a candidate test path
+or prescribe an assertion for this unknown. Resolving the call chain from the
+tests' public entry, extracting nested private owners and disclosing a wholly deleted private member (boundaries come from candidate-side source, so removing the entire method stays a silent gap) are future work.
+
 **Rule 22. A test inside `describe.skipIf(cond)` / `describe.runIf(cond)` is reached, never credited (#10629).**
 Vitest's conditional suite factories take a runtime condition static analysis
 does not evaluate. A `describe.skipIf(cond)('name', () => { ... })` or
@@ -411,6 +428,18 @@ Each assertion expression is tried in this order; the first match wins:
    the callback has a first parameter that does not shadow an imported
    assertion binding;
 4. `node:assert` or chai `assert` through an imported binding.
+
+   An un-awaited, un-returned statement `expect(..).resolves|rejects..`
+   collects nothing and reads `static_unknown` (#11535): the promise settles
+   after the test body ends, so it cannot fail the test. Awaited, returned and
+   expression-bodied forms are collected as before, except that an
+   expression-bodied `forEach` callback floats (`forEach` discards its
+   result) and collects nothing. `expect.soft(..)` and `.not.resolves` /
+   `.not.rejects` follow the same rule. The rule is derived from
+   jest and is conservative for vitest. Known limits: a test calling
+   `expect.assertions(n)` and an expression-bodied subtest or a
+   function-reference callback may be demoted although they would fail; this
+   over-demotion is accepted (fail-closed). See RIPR-SPEC-0246 rule 4.
 
 **Rule 2. Jest negation is an assertion with capped strength.** `.not`
 between `expect(...)` (or `.resolves` / `.rejects`) and the matcher is
@@ -580,6 +609,26 @@ re-reads the same one-hop local; a literal-vs-literal self-comparison
 stays strong at extraction and the observation guard refuses it credit.
 Whitespace inside a string literal is significant, so
 `expect("ab").toBe("a b")` is not self-comparing.
+
+**Rule 9a. Partial-value equality is not exact (#11522).** A `toBe`,
+`toEqual` or `toStrictEqual` reads `relational_check` / weak, not
+`exact_value` / strong, when either (a) its matcher argument is a
+top-level asymmetric matcher, a call chain rooted at an identifier named
+`expect` (`expect.any(String)`, `expect.anything()`,
+`expect.stringMatching(/B/)`, `expect.objectContaining({ a: 1 })`), or
+(b) its asserted subject is a derived property of the value: any
+`typeof <expr>` or the `.length` of a spread-free array literal
+(`expect([f(100)]).toEqual([false])` stays strong). The matcher then
+accepts a family of values, or observes a kind or constant size the
+changed behavior need not move. Both checks are shape-only: they do not
+test whether the expression names the changed owner, so
+`expect(typeof owner(x)).toBe("boolean")` loses credit it could earn.
+That is the deliberate fail-closed direction. The asymmetric-matcher
+check does not restrict the namespace (`expect.soft` is also demoted); it
+relies on rule 3, under which a non-runner `expect` yields no assertion
+before this rule is reached. The demotion runs before the `.not` cap and
+the `rejects` exact-error override, so neither re-raises it. Owner:
+`expect_assertion_from_expression` in `typescript/oracle.rs`.
 
 ### Other assertion tables
 
@@ -1594,15 +1643,33 @@ the masker.
 22. **Mock call counts (2026-10-22, #9684).**
     Adopted: for a changed side-effect call (a probe whose
     change is to what the owner's call sends), an assertion whose observed
-    expression is a plain identifier path ending `.mock.callCount()` or
-    `.mock.calls.length` counts calls and reads `mock_expectation` / weak,
+    expression ends in `.mock.callCount()` or `.mock.calls.length`,
+    including optional chains, literal computed keys, and unambiguously bound
+    callback-local `const` aliases of those paths, counts calls and reads
+    `mock_expectation` / weak (#10174),
     like `toHaveBeenCalledTimes`, under any matcher (the classifier applies
     this; extraction still labels the equality `exact_value`). Rejected:
     crediting the count as an exact value of the arguments the changed call
     sends. Not demoted: a deleted call, an added call (a changed line with
     no removed counterpart, which a count sees), or a value that decides
-    how many calls run (a count sees both), an aliased or optional-chained count,
-    and `mock.calls[0].arguments` pins, which keep their reading.
+    how many calls run (a count sees both), and `mock.calls[0].arguments`
+    pins, which keep their reading. Alias resolution follows straight-line
+    callback-local constant identities, including supported named callbacks,
+    and refuses names bound more than once anywhere in the registration.
+    An admitted nested callback keeps its own constant identities. Standalone
+    unconditional lexical blocks retain their own scope, including nested blocks.
+    A name also read outside its declaring callback or block is unresolved
+    rather than capturing an unrelated outer value; alias facts admit no new assertions.
+    A count binding cannot supply exact argument evidence even when declared
+    lexically later; this demotion establishes no execution or admission. Count facts are read once per related test; ordinary argument
+    pins do not trigger repeated whole-test parsing. Mutable, destructured,
+    outer-scope and ambiguous aliases, dynamic keys within the count
+    suffix, arithmetic on a count, and other APIs such as Sinon `callCount`
+    properties retain their existing reading; they are not covered by this
+    bounded recognizer. Ambiguous alias spellings, a test body that fails to
+    parse, and a worker-refusal textual fallback likewise retain the existing
+    reading (a disclosed fail-open). `toHaveBeenCalledTimes` already reads weak mock
+    evidence without an exact-value equality.
 23. **Factory-built getter receivers (2026-10-30, #10402).** Adopted: a getter
     owner is related to a test that binds `const box = factory(...)` once and
     asserts `expect(box.<getter>)`, when the owner's module exports `factory`
@@ -2059,7 +2126,10 @@ keys); do not take the next number.
 
 - #9684 (decision 22): `tests/mock_call_count_tests.rs` pins the call-count
   reading and its controls. Corpus row `ts-trap-mocked-send` moves from
-  credited to gap.
+  credited to gap. #10174 adds runtime-labeled alias, optional-chain and
+  computed-key rows plus an argument-pin control, live golden fixtures and
+  independent RIPR-SPEC-0108 invariants. The count-only rows move from
+  credited to gap; the argument pin keeps credit. No coverage floor changes.
 
 - #10157: `call_removal_tests.rs::counted_removal_receiver_identity_controls`
   covers the four executable controls from #9667 comment 6371144187 and the

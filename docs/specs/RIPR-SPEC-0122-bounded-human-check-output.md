@@ -262,7 +262,7 @@ The digest's discriminator line label reflects the discriminator state:
 - `Missing check` — the finding is not `exposed`; the named
   discriminator is absent from the related tests (#10691: the digest says
   "check"; the internal word stays in JSON and specs).
-- `Discriminator (observed, advisory)` — the finding is `exposed` and the
+- `Check (observed, advisory)` — the finding is `exposed` and the
   field carries an observation rationale instead of a missing discriminator.
   Preview-language classifiers record that rationale in the same field, so an
   unconditional `Missing discriminator` header would contradict the exposure
@@ -580,7 +580,7 @@ ineligible seam — the drill-down prints one advisory line of the shape
 still answer, the recovery is ``run `ripr repair <item> --root <root>` for the
 full gate's answer``. A refusal whose gate answer would only repeat it names
 its own recovery instead (#9244): a finding with no canonical gap says there
-is no seam to start a repair from and sends the reader to the Next step above
+is no gap to start a repair from and sends the reader to the Next step above
 (it makes no claim about missing discriminators, which other languages can
 name without a Rust canonical gap), except a TypeScript or JavaScript preview
 finding whose repair packet is blocked by an unresolved expected value or a
@@ -868,6 +868,51 @@ unchanged, and the lines claim no runtime outcome.
   non-indexed rival types, and `Self::`, `<W as T>::`, turbofish and `use .. as`
   type spellings are not resolved (the last over-withhold); a bare call of a
   name the test file defines itself never counts.
+- Tests for the match-arm repair start (#11111 burn-down): a changed match arm
+  passes the same gates as the return value above, and additionally needs the
+  related test's owner call to be direct under `check`'s own relation rules,
+  with the owner's impl type (and trait) declared exactly once and never
+  renamed or aliased, and a free-function owner the only free function of
+  its name in the workspace. The owner's whole body must be one top-level
+  `match <parameter> { .. }` on a bare parameter; the changed arm's pattern is
+  a single plain string, char or integer literal, and every earlier arm is a
+  plain literal (or `|` of literals) with no guard, binding or wildcard. One
+  related test must satisfy every gate at once: it calls the owner directly,
+  passes the arm's literal verbatim as that parameter's own argument, and its
+  assertion observes the owner's result. The literal and the observed result
+  must come from the same call, read by an allowlist of test shapes: the
+  owner's name appears exactly once in the test body (and no credited helper
+  also calls it); that call is the whole right side of a top-level
+  `let name = ..;` or sits in the condition operands of a top-level
+  `assert!`, `assert_eq!` or `assert_ne!` statement (never its
+  failure-message arguments, and never `debug_assert!`), with only plain
+  operand text around it (no closure, block, branch, short-circuit, `?` or
+  macro call, however spaced: `name ! (..)` counts), and only while no
+  file rebinds `assert`, `assert_eq` or `assert_ne`; every argument is one simple token (a literal, a name, a field or a
+  path, optionally borrowed); the owner's own parameter list is read only
+  when the function itself declares no generic parameters and every
+  parameter is `name: Type` with a plain type (no generic type, tuple
+  or pattern that could hold commas); a `self` method is reached only as
+  `value.method(..)` so its arguments line up with its parameters; the body
+  holds no attribute; and no other top-level statement holds `?` or an
+  early-exit word (`return`, `break`, `continue`, `else`, `loop`, `panic`,
+  `unreachable`, `todo`, `unimplemented`, `exit`). A literal and an assertion
+  split across two tests or two calls, a call inside a branch, `match` or
+  closure, a same-named call on another receiver, a path-qualified
+  `Type::method(receiver, ..)` call, a closure or generic argument, a
+  `#[cfg]`-gated assertion, a call only in an assertion message, an earlier
+  `return`, a local bound to the literal (rebound, reassigned or not), a
+  literal in another argument or only in a builder that never reaches the
+  owner, a derived scrutinee, a nested arm, an arm after a guard arm, and an
+  arm whose literal an earlier arm already names (alone, in a `|`
+  alternation, or as the same integer spelled differently) all stay refused.
+  The arm reader masks comments and strings, so a quote in a comment cannot
+  hide an earlier arm. A later reassignment of the bound result and sharing
+  this reading with the check-side arm selection are not yet covered (#11515). A test on a sibling arm, a discarded result,
+  an exact arm assertion, and a receiver bound to a test-module shadow type or
+  a type declared twice stay refused; a weak assertion on a sibling struct
+  field is still not a struct-field start
+  (`crates/ripr/tests/return_value_repair_start.rs`).
 - Format parsing tests for `human-full` and `text-full`.
 - CLI unit tests for repo-scope warnings with `--base` and `--diff`, and no
   warning for diff-scoped JSON.
@@ -877,7 +922,40 @@ unchanged, and the lines claim no runtime outcome.
   bounded default output.
 - Output-contract, static-language, traceability, and check-pr gates.
 
+### `explain --format agent` (#12104)
+
+`ripr explain <finding> --format agent` prints the selected finding in the
+`check --format agent` line style: one record, its strongest related test, at
+most one `limit=` line, exactly one terminal line, and a scope-bound
+`next=ripr context ...` command. The terminal states are:
+
+- `open=` only for a candidate-current, unsuppressed test-side gap (or a
+  reach-only limit that still carries a weak related test), using the same
+  predicates as `check --format agent`;
+- `done=` only for a candidate-current, unsuppressed `exposed` finding that is
+  not limited;
+- `stop=` for everything else. A base-deleted, moved or unresolved-subject
+  finding (`Finding::is_candidate_actionable` false) never prints `open=` or
+  `done=`; its `stop=` names the source currentness. A policy-suppressed finding
+  prints a suppression `stop=`. A `--from` replay combined with
+  `--suppression-policy` is refused for this format because the replay cannot
+  apply the policy.
+
+`--format json` is refused toward `ripr context`, which remains the JSON packet.
+The format adds no verdict and claims no runtime outcome.
+
 ## Test Mapping
+
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_gap_is_one_record_one_test_open_terminal_and_context_next`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_exposed_finding_is_done_not_open`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_limited_finding_stops_and_names_the_limit_without_a_gap_claim`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_reach_limit_with_weak_row_is_open_without_a_missing_value`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_agrees_with_check_agent_on_gap_membership`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_record_cannot_be_forged_and_stays_static`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_non_current_findings_fail_closed_with_a_currentness_stop`
+- `crates/ripr/src/output/human/agent_tests.rs::explain_agent_suppressed_gap_is_not_open_but_unsuppressed_is`
+- `crates/ripr/tests/cli_smoke.rs::explain_format_agent_prints_compact_lines_and_json_is_refused`
+- `crates/ripr/tests/cli_smoke.rs::explain_format_agent_from_artifact_replays_the_context_next_command`
 
 - `crates/ripr/src/output/human.rs::tests::plain_language_default_and_glossed_human_full` (#10691: the default view carries none of probe, canonical gap, observable sink, unsuppressed, Missing discriminator; `human-full` keeps the glossed tokens)
 - `crates/ripr/src/output/human.rs::tests::bounded_adapter_unavailable_limitation_is_one_plain_pointer` (#10691)
@@ -1033,3 +1111,6 @@ unchanged, and the lines claim no runtime outcome.
     count line above the same two format pointers. When the omitted set includes
     preview-language or non-Rust identity, that line names the per-language
     counts; a Rust-only remainder stays the count line alone.
+11. `ripr explain <exposed finding> --format agent` prints `done=`; the same
+    finding marked base-deleted prints a `stop=` naming `base_deleted`, and a
+    policy-suppressed weak gap prints a suppression `stop=` rather than `open=`.

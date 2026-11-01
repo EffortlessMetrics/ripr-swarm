@@ -19,9 +19,8 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:src/rates.py:lookup:return_value:return_value:rate_table.get_tier_1
   Changed behavior: return RATE_TABLE.get(tier, 1)
-  Discriminator (observed, advisory): Related Python test reaches `lookup` with an `exact_value`
-    oracle. Static evidence suggests the changed behavior is observed under an exact-value
-    discriminator
+  Check (observed, advisory): Related Python test reaches `lookup` with an `exact_value` oracle.
+    Static evidence suggests the changed behavior is observed under an exact-value check
   Related test: tests/test_rates.py:4 test_lookup_unknown_tier
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
@@ -42,7 +41,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_unreached_get_default_control/input --diff <cwd>/fixtures/python_unreached_get_default_control/diff.patch --mode fast probe:src_rates.py:python_preview:0a52360f
   ripr context --root <cwd>/fixtures/python_unreached_get_default_control/input --diff <cwd>/fixtures/python_unreached_get_default_control/diff.patch --mode fast --at probe:src_rates.py:python_preview:0a52360f
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/rates.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 More:
   Full evidence: rerun with --format human-full

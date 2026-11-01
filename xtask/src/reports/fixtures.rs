@@ -1171,12 +1171,52 @@ static RIPR_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 /// reaches the binary through — rather than to individual command entry points,
 /// where a newly added entry point (as `golden-drift` was) silently opts out.
 pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
+    if isolate_fixture_binary() {
+        let target = isolated_default_target_dir(&ripr_debug_binary())?;
+        let binary = ripr_debug_binary_in(Some(target.clone()));
+        return ripr_fixture_binary_built_by(binary, &RIPR_ISOLATED_BINARY_BUILD, &|| {
+            preparation::build_default_isolated(&target)
+        });
+    }
     // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
     // routed CI jobs set it, so `cargo build` writes there.
     ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
-        preparation::build(&["build", "-p", "ripr"])
+        // The build output goes straight to the console here, so the retry
+        // cannot read why it failed; it is Windows-only and bounded.
+        crate::run::retry_while_binary_busy(
+            |_| true,
+            || preparation::build(&["build", "-p", "ripr"]),
+        )
     })
 }
+
+/// Set by a lane whose test run is itself built with a different feature set
+/// than the fixture corpus (Test Analytics: `nextest --all-features`). There the
+/// suite's `target/debug/ripr` is the all-features build, and the corpus's plain
+/// `cargo build -p ripr` would relink it to the default-feature build mid-suite,
+/// so feature-aware tests would race the swap (#11602). With the variable set,
+/// the corpus builds its default binary in a private target directory instead.
+/// Unset (the required lane builds default features throughout), behavior is
+/// unchanged and the shared binary is rebuilt in place as before (#3054).
+pub(crate) const FIXTURE_BINARY_ISOLATE_ENV: &str = "RIPR_FIXTURE_BINARY_ISOLATE";
+
+fn isolate_fixture_binary() -> bool {
+    std::env::var_os(FIXTURE_BINARY_ISOLATE_ENV).is_some_and(|value| value == "1")
+}
+
+/// Private target for the isolated default-feature build, beside (not inside)
+/// the Perl variant's own `debug/` so the two feature sets never thrash one
+/// Cargo fingerprint.
+pub(crate) fn isolated_default_target_dir(shared: &Path) -> Result<PathBuf, String> {
+    let root = shared
+        .parent()
+        .and_then(Path::parent)
+        .ok_or("missing shared target root")?;
+    std::path::absolute(root.join("fixture-variants").join("default"))
+        .map_err(|err| format!("resolve isolated default target: {err}"))
+}
+
+static RIPR_ISOLATED_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 
 /// Memoized result of the one `cargo build -p ripr --features lang-perl` this
 /// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
@@ -1450,13 +1490,13 @@ fn compare_golden(
     let actual_text = read_text_lossy(actual)?;
     let (expected_text, actual_text) = if surface == "check.json" {
         (
-            normalize_check_json_golden_document(&expected_text),
-            normalize_check_json_golden_document(&actual_text),
+            mask_check_json_test_locations(&normalize_check_json_golden_document(&expected_text)),
+            mask_check_json_test_locations(&normalize_check_json_golden_document(&actual_text)),
         )
     } else {
         (
-            mask_repair_refusal_reason(&expected_text),
-            mask_repair_refusal_reason(&actual_text),
+            mask_test_file_citations(&mask_repair_refusal_reason(&expected_text)),
+            mask_test_file_citations(&mask_repair_refusal_reason(&actual_text)),
         )
     };
     let normalized_expected = normalize_golden_text(&expected_text);
@@ -1641,65 +1681,41 @@ fn split_compact_root_object_closer(value: &str) -> String {
 /// Marker that opens the human screen's repair-start refusal sentence.
 const REPAIR_REFUSAL_MARKER: &str = "no repair start offered: ";
 
-/// One `RepairRouteRefusal` variant's stable opening, and the evidence list
-/// (if any) that must stay compared.
+/// One `RepairRouteRefusal` variant whose sentence embeds a value that moves
+/// with unrelated code. Everything after `prefix` is replaced by `<reason>`.
 struct RefusalRule {
-    /// Fixed opening of the variant's sentence. It is the variant discriminator
-    /// and is always compared verbatim.
+    /// Fixed opening of the variant's sentence (the discriminator), compared
+    /// verbatim.
     prefix: &'static str,
-    /// When set, a missing-evidence list follows this marker (empty means the
-    /// list starts right after `prefix`) and stays compared verbatim.
-    list_marker: Option<&'static str>,
-    /// Text that ends the list and starts the maskable trailing advice.
-    list_end: &'static str,
 }
 
 const fn rule(prefix: &'static str) -> RefusalRule {
-    RefusalRule {
-        prefix,
-        list_marker: None,
-        list_end: "",
-    }
+    RefusalRule { prefix }
 }
 
 /// Mirrors the arms of `RepairRouteRefusal::advisory`
-/// (crates/ripr/src/app/navigation.rs). A reason that matches no rule is
-/// compared verbatim, so a new or heavily reworded variant is visible golden
-/// drift that has to be re-blessed and added here, not silently masked.
+/// (crates/ripr/src/app/navigation.rs) whose sentence carries a variable part
+/// (a language, file, command or evidence list). A reason that matches no rule
+/// is compared verbatim, so every arm with fixed wording (no gap ID, no
+/// binding seam, several seams, already exposed, gap/limit conflict, config
+/// unreadable, incomplete static evidence, seam budget) is deliberately absent
+/// here: rewording one is visible golden drift that has to be re-blessed
+/// (#12003). Add an arm only when its sentence embeds a value that moves with
+/// unrelated code, and mask just that value.
 const REPAIR_REFUSAL_RULES: &[RefusalRule] = &[
-    rule("this finding has no gap ID"),
-    rule("ripr found no seam in this finding's file to bind it to"),
-    rule("several seams bind this finding"),
-    rule("nothing to repair here"),
-    rule("`ripr check` reads a gap or limit for this change"),
     rule("the seam inventory behind `ripr repair`"),
-    rule("the seam budget left"),
-    rule("the root's config could not be read"),
     rule("classifying the finding's seams failed"),
-    rule("ripr cannot build a repair packet for this finding yet because the static evidence"),
-    RefusalRule {
-        prefix: "ripr cannot build a repair packet for this finding yet because it is still missing: ",
-        list_marker: Some(""),
-        list_end: "; follow the Next step above",
-    },
-    RefusalRule {
-        prefix: "a related test already reaches the changed boundary input",
-        list_marker: Some(" It is also still missing: "),
-        list_end: ". Follow the Next step above",
-    },
 ];
 
-/// Mask the explanatory prose of the repair-start refusal sentence in human
-/// goldens, keeping the variant and its evidence list compared.
+/// Mask the moving values of the repair-start refusal sentence in human
+/// goldens. Arms with fixed wording are compared verbatim (#12003).
 ///
-/// The prose after `no repair start offered:` is plain language that focused
-/// tests assert directly. Comparing it verbatim made every wording improvement
-/// re-bless one line in each of hundreds of fixtures (#10702). Masking the
-/// whole tail also hid a refusal changing from one variant to another, so each
-/// known variant keeps its fixed opening (the discriminator) and, for the
-/// not-ready variants, the `still missing:` list; only the text around them is
-/// replaced by `<reason>`. A repair start that flips to a refusal, or the
-/// refusal line disappearing, is also still drift.
+/// Masking the whole tail of every refusal let wording regress with the gate
+/// green (#12003), so only an arm whose sentence embeds a language, file or
+/// command (`REPAIR_REFUSAL_RULES`) and the seam count keep a `<reason>` mask;
+/// all other arms, including their evidence lists and advice, are compared
+/// verbatim. A repair start that flips to a refusal, or the refusal line
+/// disappearing, is also drift.
 fn mask_repair_refusal_reason(value: &str) -> String {
     let mut masked = String::with_capacity(value.len());
     for segment in value.split_inclusive('\n') {
@@ -1780,7 +1796,9 @@ fn normalize_seam_count(body: &str) -> Option<String> {
     }
     let after = &rest[digits..];
     let after = after
-        .strip_prefix(" seams")
+        .strip_prefix(" spots")
+        .or_else(|| after.strip_prefix(" spot"))
+        .or_else(|| after.strip_prefix(" seams"))
         .or_else(|| after.strip_prefix(" seam"))?;
     after.strip_prefix(
         " in this finding's file, but could not tie one to this finding's changed line",
@@ -1788,37 +1806,150 @@ fn normalize_seam_count(body: &str) -> Option<String> {
     Some(format!("{SEAMS_UNTIED_OPENING}<reason>"))
 }
 
+/// Opening of the `PreviewPacketNotComplete` sentence (#12086). It embeds the
+/// language and a reason, so it is not a fixed-wording arm; only the test
+/// location inside the reason moves with unrelated edits.
+const PREVIEW_PACKET_REFUSAL_OPENING: &str = "ripr has no complete repair packet for this ";
+
+/// Where a TypeScript blocker reason cites a test: `the test at `path:line``.
+const PREVIEW_TEST_LOCATION_OPENING: &str = "the test at `";
+
+/// Mask the backticked `path:line` a `PreviewPacketNotComplete` reason cites
+/// (#12086). The language, the blocker wording and the rest of the sentence
+/// stay compared, so rewording any of them is drift while adding a line above
+/// the cited test is not. A reason with no cited location (for example the
+/// moved-assertion-selection blocker, which names a test, not a location) is
+/// compared verbatim.
+fn normalize_preview_packet_location(body: &str) -> Option<String> {
+    if !body.starts_with(PREVIEW_PACKET_REFUSAL_OPENING) {
+        return None;
+    }
+    let start = body.find(PREVIEW_TEST_LOCATION_OPENING)? + PREVIEW_TEST_LOCATION_OPENING.len();
+    let len = body[start..].find('`')?;
+    // An empty span cites nothing; leave it verbatim so it reads as drift.
+    if len == 0 {
+        return None;
+    }
+    Some(format!(
+        "{}<location>{}",
+        &body[..start],
+        &body[start + len..]
+    ))
+}
+
+/// Filename suffixes of JS/TS test files whose cited line moves when an
+/// unrelated edit shifts the test (#12163).
+const TEST_FILE_SUFFIXES: &[&str] = &[
+    ".test.ts",
+    ".test.tsx",
+    ".test.js",
+    ".test.jsx",
+    ".test.mjs",
+    ".test.cjs",
+    ".spec.ts",
+    ".spec.tsx",
+    ".spec.js",
+    ".spec.jsx",
+    ".spec.mjs",
+    ".spec.cjs",
+];
+
+fn ends_with_test_file(text: &str) -> bool {
+    TEST_FILE_SUFFIXES
+        .iter()
+        .any(|suffix| text.ends_with(suffix))
+}
+
+/// Replace the line in every `<test file>:<line>` citation with `<line>`
+/// (#12163). Only a JS/TS test-file path immediately followed by `:` and
+/// digits is touched, so source locations, blocker wording and every other
+/// number stay compared.
+fn mask_test_file_citations(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(colon) = rest.find(':') {
+        let (head, tail) = rest.split_at(colon);
+        out.push_str(head);
+        out.push(':');
+        let after = &tail[1..];
+        let digits = after.bytes().take_while(u8::is_ascii_digit).count();
+        // Judge the path against the whole text already emitted, not just
+        // this segment, so a path split by an earlier citation still matches.
+        if digits > 0 && ends_with_test_file(&out[..out.len() - 1]) {
+            out.push_str("<line>");
+            rest = &after[digits..];
+        } else {
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// True when the rest of a pretty-printed member line is exactly an unsigned
+/// canonical unsigned integer (no leading zero), with at most one trailing comma. `null`, a quoted string or a
+/// malformed number is not masked, so a broken test pointer stays drift.
+fn is_unsigned_json_number_member(rest: &str) -> bool {
+    let value = rest.trim_end();
+    let value = value.strip_suffix(',').unwrap_or(value);
+    !value.is_empty()
+        && (value == "0" || !value.starts_with('0'))
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// In pretty `check.json`, mask `"line": N` when the nearest preceding
+/// `"file"` member names a JS/TS test file (#12163). Related-test entries put
+/// `file` immediately before `line`; a `line` after any other file, or with no
+/// file before it, is compared as written.
+fn mask_test_lines_in_check_json(text: &str) -> String {
+    let mut last_file_is_test = false;
+    let mut out = String::with_capacity(text.len());
+    for chunk in text.split_inclusive('\n') {
+        let trimmed = chunk.trim_start();
+        // A `file` only governs the `line` in its own object: leaving or
+        // entering an object ends it, so a later `line` with no `file` of its
+        // own stays compared.
+        if trimmed.starts_with('}') || trimmed.trim_end().ends_with('{') {
+            last_file_is_test = false;
+        }
+        if let Some(value) = trimmed.strip_prefix("\"file\": \"") {
+            let name = value.split('"').next().unwrap_or("");
+            last_file_is_test = ends_with_test_file(name);
+        } else if last_file_is_test
+            && trimmed
+                .strip_prefix("\"line\": ")
+                .is_some_and(is_unsigned_json_number_member)
+        {
+            let indent = &chunk[..chunk.len() - trimmed.len()];
+            let comma = if trimmed.trim_end().ends_with(',') {
+                ","
+            } else {
+                ""
+            };
+            let newline = if chunk.ends_with('\n') { "\n" } else { "" };
+            out.push_str(&format!("{indent}\"line\": \"<line>\"{comma}{newline}"));
+            continue;
+        }
+        out.push_str(chunk);
+    }
+    out
+}
+
+fn mask_check_json_test_locations(text: &str) -> String {
+    mask_test_lines_in_check_json(&mask_test_file_citations(text))
+}
+
 fn mask_refusal_body(body: &str) -> String {
     if let Some(masked) = normalize_seam_count(body) {
         return masked;
     }
+    if let Some(masked) = normalize_preview_packet_location(body) {
+        return masked;
+    }
     for rule in REPAIR_REFUSAL_RULES {
-        let Some(after) = body.strip_prefix(rule.prefix) else {
-            continue;
-        };
-        let mut out = String::from(rule.prefix);
-        let Some(marker) = rule.list_marker else {
-            out.push_str("<reason>");
-            return out;
-        };
-        let list_start = if marker.is_empty() {
-            Some(0)
-        } else {
-            after.find(marker)
-        };
-        match list_start {
-            Some(start) => {
-                if !marker.is_empty() {
-                    out.push_str("<reason>");
-                }
-                let tail = &after[start..];
-                let end = tail.find(rule.list_end).unwrap_or(tail.len());
-                out.push_str(&tail[..end]);
-                out.push_str("<reason>");
-            }
-            None => out.push_str("<reason>"),
+        if body.starts_with(rule.prefix) {
+            return format!("{}<reason>", rule.prefix);
         }
-        return out;
     }
     body.to_string()
 }
@@ -3059,6 +3190,20 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 mod tests {
 
     #[test]
+    fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() {
+        let shared = std::path::Path::new("/w/target/debug/ripr");
+        // `std::path::absolute` anchors a rootless Windows path to the current
+        // drive (`/w` gains a drive prefix), so the expectation goes through it too.
+        assert_eq!(
+            super::isolated_default_target_dir(shared),
+            std::path::absolute("/w/target/fixture-variants/default")
+                .map_err(|err| format!("resolve isolated default target: {err}"))
+        );
+        let missing = super::isolated_default_target_dir(std::path::Path::new("ripr"));
+        assert_eq!(missing, Err("missing shared target root".to_string()));
+    }
+
+    #[test]
     fn windows_python_golden_projection_keeps_fixture_and_selector_identity() {
         let bash = "  Verify command (Bash): (cd -P -- <cwd>/fixtures/py/input && python -m pytest tests/test_a.py::test_one) (high)\n";
         let manual = "  Suggested command (unverified; inspect and run from the selected root): python -m pytest tests/test_a.py::test_one\n";
@@ -3683,67 +3828,111 @@ mod tests {
     }
 
     #[test]
-    fn refusal_reason_wording_is_masked_but_the_decision_is_pinned() {
+    fn refusal_reason_fixed_wording_is_compared_and_only_moving_values_are_masked() {
         let wrap = |reason: &str| {
             format!("Next:\n  ripr explain x\n  no repair start offered: {reason}\nMore:\n")
         };
-        let canonical =
-            wrap("this finding has no gap ID, so old words; follow the Next step above");
-        let reworded = wrap("this finding has no gap ID, so new words");
+        // Fixed-wording arms are compared verbatim (#12003): rewording one,
+        // even to another word for the same idea, is golden drift.
+        let fixed = [
+            "this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above",
+            "ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above",
+            "several seams bind this finding and the check screen never picks one",
+            "nothing to repair here; the related tests already notice this change (exposed)",
+            "`ripr check` reads a gap or limit for this change, but words",
+            "the root's config could not be read; fix the ripr.toml error at the root, then rerun `ripr check`",
+            "ripr cannot build a repair packet for this finding yet because the static evidence is not complete enough to name a safe test target; follow the Next step above, then rerun `ripr check`",
+            "the seam budget left the repair candidate set unreadable or truncated; rerun",
+            "ripr cannot build a repair packet for this finding yet because it is still missing: a; b; follow the Next step above, then rerun `ripr check`",
+            "a related test already reaches the changed boundary input, but words, yet. It is also still missing: q. Follow the Next step above, then rerun `ripr check`",
+        ];
+        for reason in fixed {
+            assert_eq!(
+                mask_repair_refusal_reason(&wrap(reason)),
+                wrap(reason),
+                "fixed refusal wording must stay compared: {reason}"
+            );
+            let reworded = reason.replacen(' ', "  ", 1);
+            assert_ne!(
+                mask_repair_refusal_reason(&wrap(reason)),
+                mask_repair_refusal_reason(&wrap(&reworded)),
+                "a reworded refusal must read as golden drift: {reason}"
+            );
+        }
+        // Arms that embed a language, file or command keep a fixed opening and
+        // mask only what follows it.
+        for opening in [
+            "the seam inventory behind `ripr repair`",
+            "classifying the finding's seams failed",
+        ] {
+            assert_eq!(
+                mask_repair_refusal_reason(&wrap(&format!("{opening} one"))),
+                mask_repair_refusal_reason(&wrap(&format!("{opening} two")))
+            );
+        }
+        // The preview-packet arm masks only the cited test location (#12086).
+        let preview = |language: &str, cite: &str, tail: &str| {
+            wrap(&format!(
+                "ripr has no complete repair packet for this {language} finding (ripr cannot tell whether the test at `{cite}` covers this change: {tail}); add or strengthen the test by hand as the Next step above says, then rerun `ripr check`"
+            ))
+        };
+        let base = preview(
+            "TypeScript",
+            "tests/a.test.ts:8",
+            "its `.toBe(...)` compares against a variable",
+        );
+        // A moved location is not drift.
         assert_eq!(
-            mask_repair_refusal_reason(&canonical),
-            mask_repair_refusal_reason(&reworded),
-            "a reworded refusal must not read as golden drift"
+            mask_repair_refusal_reason(&base),
+            mask_repair_refusal_reason(&preview(
+                "TypeScript",
+                "tests/b.test.ts:12",
+                "its `.toBe(...)` compares against a variable"
+            ))
+        );
+        // A changed language, matcher or reason wording is drift.
+        for changed in [
+            preview(
+                "JavaScript",
+                "tests/a.test.ts:8",
+                "its `.toBe(...)` compares against a variable",
+            ),
+            preview(
+                "TypeScript",
+                "tests/a.test.ts:8",
+                "its `.toEqual(...)` compares against a variable",
+            ),
+            preview(
+                "TypeScript",
+                "tests/a.test.ts:8",
+                "its `.toBe(...)` compares against a computed value",
+            ),
+        ] {
+            assert_ne!(
+                mask_repair_refusal_reason(&base),
+                mask_repair_refusal_reason(&changed)
+            );
+        }
+        // A reason with no cited location is compared verbatim.
+        let no_cite = |name: &str| {
+            wrap(&format!(
+                "ripr has no complete repair packet for this TypeScript finding (related test `{name}` asserts a different kind of behavior); add or strengthen the test by hand"
+            ))
+        };
+        assert_ne!(
+            mask_repair_refusal_reason(&no_cite("one")),
+            mask_repair_refusal_reason(&no_cite("two"))
         );
         // Negative: a variant change is drift even though both are refusals.
-        let no_seam = wrap("ripr found no seam in this finding's file to bind it to, so new words");
         assert_ne!(
-            mask_repair_refusal_reason(&canonical),
-            mask_repair_refusal_reason(&no_seam)
+            mask_repair_refusal_reason(&wrap(fixed[0])),
+            mask_repair_refusal_reason(&wrap(fixed[1]))
         );
+        let canonical = wrap(fixed[0]);
         // Negative: an unknown reason is compared verbatim.
         assert_ne!(
             mask_repair_refusal_reason(&wrap("something unmapped one")),
             mask_repair_refusal_reason(&wrap("something unmapped two"))
-        );
-        // The `still missing:` list stays compared; the trailing advice does not.
-        let missing = |list: &str, advice: &str| {
-            wrap(&format!(
-                "ripr cannot build a repair packet for this finding yet because it is still missing: {list}; follow the Next step above{advice}"
-            ))
-        };
-        assert_eq!(
-            mask_repair_refusal_reason(&missing("a; b", ", then rerun")),
-            mask_repair_refusal_reason(&missing("a; b", ", reworded"))
-        );
-        assert_ne!(
-            mask_repair_refusal_reason(&missing("a; b", "")),
-            mask_repair_refusal_reason(&missing("a; c", ""))
-        );
-        // A not-ready refusal with an empty list is a different variant.
-        assert_ne!(
-            mask_repair_refusal_reason(&missing("a", "")),
-            mask_repair_refusal_reason(&wrap(
-                "ripr cannot build a repair packet for this finding yet because the static evidence is thin"
-            ))
-        );
-        // The boundary variant keeps its optional `also still missing` list.
-        let boundary = |also: &str, advice: &str| {
-            wrap(&format!(
-                "a related test already reaches the changed boundary input, but words, yet.{also} Follow the Next step above{advice}"
-            ))
-        };
-        assert_eq!(
-            mask_repair_refusal_reason(&boundary("", ", then x")),
-            mask_repair_refusal_reason(&boundary("", ", then y"))
-        );
-        assert_ne!(
-            mask_repair_refusal_reason(&boundary("", "")),
-            mask_repair_refusal_reason(&boundary(" It is also still missing: q.", ""))
-        );
-        assert_ne!(
-            mask_repair_refusal_reason(&boundary(" It is also still missing: q.", "")),
-            mask_repair_refusal_reason(&boundary(" It is also still missing: r.", ""))
         );
         // Negative: a repair start that flips to a refusal is still drift.
         let offered = "Next:\n  ripr explain x\n  ripr repair abc --root r\nMore:\n";
@@ -3765,16 +3954,148 @@ mod tests {
         );
         assert_eq!(
             mask_repair_refusal_reason(
-                "  no repair start offered: several seams bind this finding, x\r\n"
+                "  no repair start offered: classifying the finding's seams failed, x\r\n"
             ),
-            "  no repair start offered: several seams bind this finding<reason>\r\n"
+            "  no repair start offered: classifying the finding's seams failed<reason>\r\n"
         );
         assert_eq!(
             mask_repair_refusal_reason(
-                "  no repair start offered: several seams bind this finding"
+                "  no repair start offered: classifying the finding's seams failed"
             ),
-            "  no repair start offered: several seams bind this finding<reason>"
+            "  no repair start offered: classifying the finding's seams failed<reason>"
         );
+    }
+
+    /// #12163: moving a cited TypeScript test shifts its line in every surface
+    /// that names it. The real `ts_dynamic_oracle` golden, with each cited
+    /// test line moved, must still compare equal; a changed blocker wording, a
+    /// changed oracle or a moved *source* line must not.
+    #[test]
+    fn moved_typescript_test_line_is_not_drift_on_any_surface_but_other_changes_are()
+    -> Result<(), String> {
+        let fixture = "ts_dynamic_oracle";
+        let root =
+            crate::dogfood::repo_rooted_fixture_path(&format!("fixtures/{fixture}/expected"));
+        let dir = unique_temp_path("12163-moved-test-line");
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let shift = |text: &str, from: &str, to: &str| text.replace(from, to);
+        for surface in ["human.txt", "check.json"] {
+            let golden_path = root.join(surface);
+            let golden = std::fs::read_to_string(&golden_path).map_err(|err| err.to_string())?;
+            let write = |name: &str, text: &str| -> Result<std::path::PathBuf, String> {
+                let path = dir.join(format!("{surface}.{name}"));
+                std::fs::write(&path, text).map_err(|err| err.to_string())?;
+                Ok(path)
+            };
+            let compare = |actual: &Path| -> Result<bool, String> {
+                Ok(compare_golden(
+                    fixture,
+                    if surface == "human.txt" {
+                        "human.txt"
+                    } else {
+                        "check.json"
+                    },
+                    &golden_path,
+                    actual,
+                )?
+                .matches)
+            };
+            // Fixture-construction guard: the golden really cites the test.
+            assert!(
+                golden.contains("tests/pricing.test.ts:5") || golden.contains("\"line\": 3"),
+                "{surface}: fixture no longer cites the test line"
+            );
+            // Move every cited test line (citations and structured lines).
+            let moved = shift(
+                &golden,
+                "tests/pricing.test.ts:5",
+                "tests/pricing.test.ts:9",
+            );
+            let moved = shift(&moved, "tests/pricing.test.ts:3", "tests/pricing.test.ts:7");
+            let moved = if surface == "check.json" {
+                moved
+                    .replace(
+                        "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 3",
+                        "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 7",
+                    )
+                    .replace(
+                        "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 3,",
+                        "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 7,",
+                    )
+            } else {
+                moved
+            };
+            assert_ne!(moved, golden, "{surface}: the moved copy must differ");
+            assert!(
+                compare(&write("moved", &moved)?)?,
+                "{surface}: moved test line is not drift"
+            );
+            // Negative controls: other changes remain drift.
+            let reworded = shift(
+                &moved,
+                "compares against a variable",
+                "compares against a computed value",
+            );
+            if reworded != moved {
+                assert!(
+                    !compare(&write("reworded", &reworded)?)?,
+                    "{surface}: reworded blocker is drift"
+                );
+            }
+            let other_test = shift(&moved, "tests/pricing.test.ts:9", "tests/other.test.ts:9");
+            if other_test != moved {
+                assert!(
+                    !compare(&write("other_file", &other_test)?)?,
+                    "{surface}: a different test file is drift"
+                );
+            }
+            if surface == "check.json" {
+                for broken in ["null", "\"7\"", "7x", "-7", "07", "7,,", ""] {
+                    let invalid = moved.replace(
+                        "\"file\": \"tests/pricing.test.ts\",\n          \"line\": 7",
+                        &format!(
+                            "\"file\": \"tests/pricing.test.ts\",\n          \"line\": {broken}"
+                        ),
+                    );
+                    assert_ne!(
+                        invalid, moved,
+                        "the invalid-line control must edit the JSON"
+                    );
+                    assert!(
+                        !compare(&write("invalid_line", &invalid)?)?,
+                        "a test line of `{broken}` is drift, not a masked line"
+                    );
+                }
+                // A `line` in a later object with no `file` of its own is not
+                // governed by the earlier test-file object.
+                let closed =
+                    "{\n  \"file\": \"tests/a.test.ts\",\n  \"line\": 3\n},\n{\n  \"line\": ";
+                assert_ne!(
+                    mask_test_lines_in_check_json(&format!("{closed}3\n}}")),
+                    mask_test_lines_in_check_json(&format!("{closed}4\n}}")),
+                    "a bare line after a closed test-file object stays compared"
+                );
+                assert_eq!(
+                    mask_test_lines_in_check_json(
+                        "{\n  \"file\": \"tests/a.test.ts\",\n  \"line\": 3\n}"
+                    ),
+                    mask_test_lines_in_check_json(
+                        "{\n  \"file\": \"tests/a.test.ts\",\n  \"line\": 4\n}"
+                    ),
+                    "a test-file line inside its own object is masked"
+                );
+                let source_moved = shift(&moved, "\"line\": 2", "\"line\": 3");
+                assert_ne!(
+                    source_moved, moved,
+                    "check.json cites a source line to move"
+                );
+                assert!(
+                    !compare(&write("source_moved", &source_moved)?)?,
+                    "a moved source line is drift"
+                );
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -3813,7 +4134,22 @@ mod tests {
         let matches = |actual: &Path, surface: &'static str| -> Result<bool, String> {
             Ok(compare_golden("unlisted_fixture", surface, &expected, actual)?.matches)
         };
-        assert!(matches(&reworded, "human.txt")?, "reworded prose is masked");
+        assert!(
+            !matches(&reworded, "human.txt")?,
+            "fixed advice wording is pinned (#12003)"
+        );
+        let inventory_a = write(
+            "inventory_a.txt",
+            &line("the seam inventory behind `ripr repair` has no python file a"),
+        )?;
+        let inventory_b = write(
+            "inventory_b.txt",
+            &line("the seam inventory behind `ripr repair` has no python file b"),
+        )?;
+        assert!(
+            compare_golden("unlisted_fixture", "human.txt", &inventory_a, &inventory_b)?.matches,
+            "an embedded language/file value is masked"
+        );
         assert!(
             !matches(&other_list, "human.txt")?,
             "missing list is pinned"
@@ -3831,8 +4167,8 @@ mod tests {
         };
         let exposed_line =
             "nothing to repair here; the related tests already notice this change (exposed)";
-        let untied_line = "ripr found 4 seams in this finding's file, but could not tie one to this finding's changed line, so y";
-        let one_seam_line = "ripr found 1 seam in this finding's file, but could not tie one to this finding's changed line, so z";
+        let untied_line = "ripr found 4 spots in this finding's file, but could not tie one to this finding's changed line, so y";
+        let one_seam_line = "ripr found 1 spot in this finding's file, but could not tie one to this finding's changed line, so z";
         let old_no_seam = write_exposed(
             "old_no_seam.txt",
             "ripr found no seam in this finding's file to bind it to, so x",
@@ -4113,9 +4449,9 @@ mod tests {
         let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
         let untied_list = transitional::NO_SEAM_UNTIED_SURFACES;
         let gripped_list = transitional::NO_SEAM_GRIPPED_SURFACES;
-        if untied_list.len() != 43 || gripped_list.len() != 93 {
+        if untied_list.len() != 44 || gripped_list.len() != 92 {
             return Err(format!(
-                "expected 43 untied and 93 gripped surfaces, got {} and {}",
+                "expected 44 untied and 92 gripped surfaces, got {} and {}",
                 untied_list.len(),
                 gripped_list.len()
             ));

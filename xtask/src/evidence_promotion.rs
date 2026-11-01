@@ -10,6 +10,9 @@
 
 use super::*;
 
+mod partial_analysis;
+mod repo_seam_reports;
+
 pub(crate) const EVIDENCE_PROMOTION_HONESTY_CORPUS: &str =
     "fixtures/evidence-promotion-honesty-corpus/corpus.json";
 
@@ -301,6 +304,9 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
     ExpectedCompleteness {
         completeness: String,
     },
+    ExpectedPartialAnalysis {
+        detail: partial_analysis::ExpectedPartialAnalysis,
+    },
     ExpectedChangedRustFiles {
         count: u64,
     },
@@ -318,6 +324,25 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
         expression: String,
         grip_class: String,
         reach: String,
+    },
+    /// Judged against a repo-exposure report's `seams[]` (#12145): every seam
+    /// whose `owner` matches and whose `expression` contains the selector must
+    /// list a related test named `test` in `file` (and, when pinned, at `line`)
+    /// whose published `oracle_strength` (and, when pinned, `relation_reason`)
+    /// equals the pin. The producer identifies a related test by name, file and
+    /// line, so a same-named test in another file cannot stand in for the
+    /// intended row. A seam that does not list the named test is a violation,
+    /// as is a selector that matches no seam.
+    /// This pins the related-test oracle independently of `grip_class`, which
+    /// stayed unchanged when #12060 credited a test that pins another function.
+    ExpectedRepoSeamRelatedTest {
+        owner: String,
+        expression: String,
+        test: String,
+        file: String,
+        line: Option<u64>,
+        oracle_strength: String,
+        relation_reason: Option<String>,
     },
     MustDiscloseWitness,
     MustDiscloseLimitationDetail,
@@ -800,6 +825,11 @@ fn evidence_promotion_parse_assertion(
                 evidence_promotion_required_assertion_class(case_id, index, assertion, "class")?;
             Ok(EvidencePromotionSemanticAssertion::MaximumClass { class })
         }
+        "expected_partial_analysis" => Ok(
+            EvidencePromotionSemanticAssertion::ExpectedPartialAnalysis {
+                detail: partial_analysis::parse(case_id, index, assertion)?,
+            },
+        ),
         "expected_completeness" => {
             let completeness = evidence_promotion_required_assertion_string(
                 case_id,
@@ -883,6 +913,63 @@ fn evidence_promotion_parse_assertion(
                 grip_class,
                 reach,
             })
+        }
+        "expected_repo_seam_related_test" => {
+            let oracle_strength = evidence_promotion_required_assertion_string(
+                case_id,
+                index,
+                assertion,
+                "oracle_strength",
+            )?;
+            if !matches!(
+                oracle_strength.as_str(),
+                "strong" | "medium" | "weak" | "smoke" | "none" | "unknown"
+            ) {
+                return Err(format!(
+                    "evidence promotion case `{case_id}` assertion {index}: \
+                     expected_repo_seam_related_test.oracle_strength must be an OracleStrength \
+                     string (strong, medium, weak, smoke, none, or unknown)"
+                ));
+            }
+            Ok(
+                EvidencePromotionSemanticAssertion::ExpectedRepoSeamRelatedTest {
+                    owner: evidence_promotion_required_assertion_string(
+                        case_id, index, assertion, "owner",
+                    )?,
+                    expression: evidence_promotion_required_assertion_string(
+                        case_id,
+                        index,
+                        assertion,
+                        "expression",
+                    )?,
+                    test: evidence_promotion_required_assertion_string(
+                        case_id, index, assertion, "test",
+                    )?,
+                    file: evidence_promotion_required_assertion_string(
+                        case_id, index, assertion, "file",
+                    )?,
+                    line: match assertion.get("line") {
+                        None | Some(Value::Null) => None,
+                        Some(value) => match value.as_u64().filter(|line| *line > 0) {
+                            Some(line) => Some(line),
+                            None => {
+                                return Err(format!(
+                                    "evidence promotion case `{case_id}` assertion {index}: \
+                                     expected_repo_seam_related_test.line must be a positive \
+                                     integer when present"
+                                ));
+                            }
+                        },
+                    },
+                    oracle_strength,
+                    relation_reason: evidence_promotion_optional_assertion_string(
+                        case_id,
+                        index,
+                        assertion,
+                        "relation_reason",
+                    )?,
+                },
+            )
         }
         "must_disclose_witness" => Ok(EvidencePromotionSemanticAssertion::MustDiscloseWitness),
         "must_disclose_limitation_detail" => {
@@ -1610,6 +1697,98 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                     }
                 }
             }
+            EvidencePromotionSemanticAssertion::ExpectedRepoSeamRelatedTest {
+                owner,
+                expression,
+                test,
+                file,
+                line,
+                oracle_strength,
+                relation_reason,
+            } => {
+                let Some(seams) = check_json.get("seams").and_then(Value::as_array) else {
+                    violations.push(format!(
+                        "{case_label}: `expected_repo_seam_related_test` requires a \
+                         repo-exposure report with a `seams` array"
+                    ));
+                    continue;
+                };
+                let matched: Vec<&Value> = seams
+                    .iter()
+                    .filter(|seam| {
+                        seam.get("owner").and_then(Value::as_str) == Some(owner.as_str())
+                            && seam
+                                .get("expression")
+                                .and_then(Value::as_str)
+                                .is_some_and(|text| text.contains(expression.as_str()))
+                    })
+                    .collect();
+                if matched.is_empty() {
+                    violations.push(format!(
+                        "{case_label}: `expected_repo_seam_related_test` matched no seam with \
+                         owner `{owner}` and expression containing `{expression}`; a selector \
+                         that matches nothing must fail, never pass vacuously"
+                    ));
+                    continue;
+                }
+                for seam in matched {
+                    let seam_label = seam
+                        .get("seam_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<missing seam_id>");
+                    let named: Vec<&Value> = seam
+                        .get("related_tests")
+                        .and_then(Value::as_array)
+                        .map(|tests| {
+                            tests
+                                .iter()
+                                .filter(|row| {
+                                    row.get("name").and_then(Value::as_str) == Some(test.as_str())
+                                        && row.get("file").and_then(Value::as_str)
+                                            == Some(file.as_str())
+                                        && line.is_none_or(|pinned| {
+                                            row.get("line").and_then(Value::as_u64) == Some(pinned)
+                                        })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if named.is_empty() {
+                        violations.push(format!(
+                            "{case_label}: seam `{seam_label}` lists no related test named \
+                             `{test}` in `{file}`; a pin on an absent test must fail, never \
+                             pass vacuously"
+                        ));
+                        continue;
+                    }
+                    for row in named {
+                        let actual_strength = row
+                            .get("oracle_strength")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if actual_strength != oracle_strength {
+                            violations.push(format!(
+                                "{case_label}: seam `{seam_label}` publishes related test \
+                                 `{test}` with oracle_strength `{actual_strength}` but the \
+                                 corpus pins `{oracle_strength}`"
+                            ));
+                        }
+                        if let Some(expected_reason) = relation_reason {
+                            let actual_reason = row
+                                .get("relation_reason")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            if actual_reason != expected_reason {
+                                violations.push(format!(
+                                    "{case_label}: seam `{seam_label}` publishes related test \
+                                     `{test}` with relation_reason `{actual_reason}` but the \
+                                     corpus pins `{expected_reason}`"
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
             EvidencePromotionSemanticAssertion::MustReportClean => {
                 if !evidence_promotion_report_reads_clean(check_json, &findings) {
                     violations.push(format!(
@@ -2033,6 +2212,13 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                             "{case_label}: finding `{finding_id}` class `{class}` exceeds maximum `{expected_max_class}`"
                         ));
                     }
+                }
+            }
+            EvidencePromotionSemanticAssertion::ExpectedPartialAnalysis { detail } => {
+                if !partial_analysis::matches(detail, check_json) {
+                    violations.push(format!(
+                        "{case_label}: `expected_partial_analysis` requires incomplete typed partial_with_limitations and exactly one matching limitation: {detail:?}"
+                    ));
                 }
             }
             EvidencePromotionSemanticAssertion::ExpectedCompleteness { completeness } => {
@@ -2784,7 +2970,9 @@ fn evidence_promotion_finding_packet_ready(finding: &Value) -> bool {
 
 fn evidence_promotion_packet_blocked_message_reason(value: &str) -> Option<&'static str> {
     let trimmed = value.trim();
-    if trimmed == "gap_state: advisory" {
+    // `advisory` was the TypeScript adapter's non-vocabulary word until #11691
+    // mapped it to `unknown`; keep recognizing both so older artifacts stay blocked.
+    if matches!(trimmed, "gap_state: advisory" | "gap_state: unknown") {
         return Some("blocked gap_state evidence");
     }
     if trimmed == "actionability_category: incomplete_repair_packet" {
@@ -2882,7 +3070,10 @@ fn evidence_promotion_human_packet_blocked_message_reason(value: &str) -> Option
     if normalized == "repair packet ready: false" {
         return Some("blocked packet-ready false status");
     }
-    if normalized == "gap state: advisory" {
+    if matches!(
+        normalized.as_str(),
+        "gap state: advisory" | "gap state: unknown"
+    ) {
         return Some("blocked advisory gap state");
     }
     if normalized == "category: incomplete_repair_packet" {
@@ -4022,6 +4213,9 @@ pub(crate) fn check_evidence_promotion_honesty(args: &[String]) -> Result<(), St
     let corpus_path = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS);
     let mut pure_violations = Vec::new();
     validate_evidence_promotion_honesty_corpus_at(corpus_path, &mut pure_violations)?;
+    // The repo-seam reports are hand-captured; regenerate each from its
+    // subject so a stale capture or an analyzer regression turns red (#12144).
+    repo_seam_reports::check_regenerated_reports(&mut pure_violations)?;
     let mut external_runs = Vec::new();
     if options.run_pinned_external {
         external_runs = run_evidence_promotion_pinned_external_cases(corpus_path, &options)?;
@@ -5042,6 +5236,261 @@ mod repo_seam_grip_assertion_tests {
             match evidence_promotion_parse_assertion("repo_seam_grip_case", 0, &assertion) {
                 Err(error) => assert!(error.contains(field), "{error}"),
                 Ok(_) => return Err(format!("bogus `{field}` value must be rejected")),
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod repo_seam_related_test_assertion_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The #12060 shape: `consume`'s match arm lists `reduce_over`, a test that
+    /// pins another function. `published` is the strength the report carries.
+    fn report_with(strength: &str, kind: &str) -> Value {
+        json!({
+            "schema_version": "0.1",
+            "seams": [
+                {
+                    "seam_id": "seam:src/lib.rs::consume:17",
+                    "kind": "match_arm",
+                    "owner": "src/lib.rs::consume",
+                    "expression": "Reduction::Over(wait) =>",
+                    "grip_class": "reachable_unrevealed",
+                    "evidence": {"reach": "yes"},
+                    "related_tests": [
+                        {
+                            "name": "consume_runs",
+                            "file": "src/lib.rs",
+                            "line": 26,
+                            "oracle_kind": "unknown",
+                            "oracle_strength": "none",
+                            "relation_reason": "direct_owner_call"
+                        },
+                        {
+                            "name": "reduce_over",
+                            "file": "src/lib.rs",
+                            "line": 31,
+                            "oracle_kind": kind,
+                            "oracle_strength": strength,
+                            "relation_reason": "direct_owner_call"
+                        }
+                    ]
+                }
+            ]
+        })
+    }
+
+    fn pin(strength: &str) -> Value {
+        json!({
+            "type": "expected_repo_seam_related_test",
+            "owner": "src/lib.rs::consume",
+            "expression": "Reduction::Over(wait) =>",
+            "test": "reduce_over",
+            "file": "src/lib.rs",
+            "oracle_strength": strength
+        })
+    }
+
+    fn violations_for(assertion: Value, report: &Value) -> Result<Vec<String>, String> {
+        let parsed = match evidence_promotion_parse_assertion("related_oracle_case", 0, &assertion)
+        {
+            Ok(parsed) => parsed,
+            Err(error) => return Err(format!("assertion was rejected: {error}")),
+        };
+        Ok(evidence_promotion_semantic_violations(
+            "related_oracle_case",
+            Some("fixtures/evidence-promotion-honesty-corpus/reports/x.json"),
+            &[parsed],
+            report,
+            None,
+            false,
+        ))
+    }
+
+    #[test]
+    fn a_published_none_passes_the_none_pin() -> Result<(), String> {
+        let violations = violations_for(pin("none"), &report_with("none", "unknown"))?;
+        assert!(violations.is_empty(), "{violations:?}");
+        Ok(())
+    }
+
+    /// The #12060 regression: the report credits `reduce_over` as an exact
+    /// value assertion on a match arm of another function. The seam's
+    /// `grip_class` and `reach` are unchanged, so only this pin sees it.
+    #[test]
+    fn the_pre_fix_strong_credit_turns_the_none_pin_red() -> Result<(), String> {
+        let violations = violations_for(pin("none"), &report_with("strong", "exact_value"))?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("oracle_strength `strong` but the corpus pins `none`"),
+            "{violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn the_pre_fix_credit_leaves_the_grip_pin_green() -> Result<(), String> {
+        // Witness for why the sibling assertion exists: the existing grip pin
+        // cannot see this regression.
+        let parsed = match evidence_promotion_parse_assertion(
+            "related_oracle_case",
+            0,
+            &json!({
+                "type": "expected_repo_seam_grip",
+                "owner": "src/lib.rs::consume",
+                "expression": "Reduction::Over(wait) =>",
+                "grip_class": "reachable_unrevealed",
+                "reach": "yes"
+            }),
+        ) {
+            Ok(parsed) => parsed,
+            Err(error) => return Err(format!("assertion was rejected: {error}")),
+        };
+        let violations = evidence_promotion_semantic_violations(
+            "related_oracle_case",
+            Some("fixtures/x.json"),
+            &[parsed],
+            &report_with("strong", "exact_value"),
+            None,
+            false,
+        );
+        assert!(violations.is_empty(), "{violations:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_named_test_the_seam_does_not_list_is_a_violation() -> Result<(), String> {
+        let mut assertion = pin("none");
+        assertion["test"] = json!("no_such_test");
+        let violations = violations_for(assertion, &report_with("none", "unknown"))?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("lists no related test named `no_such_test` in `src/lib.rs`"),
+            "{violations:?}"
+        );
+        Ok(())
+    }
+
+    /// A same-named test in another file must not stand in for the intended row
+    /// (the producer identifies related tests by name, file and line, and caps
+    /// the rows it renders per seam).
+    #[test]
+    fn a_same_named_test_in_another_file_does_not_satisfy_the_pin() -> Result<(), String> {
+        let mut report = report_with("none", "unknown");
+        report["seams"][0]["related_tests"][1]["file"] = json!("tests/other.rs");
+        let violations = violations_for(pin("none"), &report)?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("lists no related test named `reduce_over` in `src/lib.rs`"),
+            "{violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn line_is_pinned_only_when_present() -> Result<(), String> {
+        let report = report_with("none", "unknown");
+        let mut matching = pin("none");
+        matching["line"] = json!(31);
+        assert!(violations_for(matching, &report)?.is_empty());
+
+        let mut differing = pin("none");
+        differing["line"] = json!(99);
+        let violations = violations_for(differing, &report)?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("lists no related test"),
+            "{violations:?}"
+        );
+
+        let mut bogus = pin("none");
+        bogus["line"] = json!(0);
+        match evidence_promotion_parse_assertion("related_oracle_case", 0, &bogus) {
+            Err(error) => assert!(error.contains("line"), "{error}"),
+            Ok(_) => return Err("line 0 must be rejected".to_string()),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_seam_without_a_related_tests_array_is_a_violation() -> Result<(), String> {
+        let mut report = report_with("none", "unknown");
+        report["seams"][0]
+            .as_object_mut()
+            .ok_or("seam must be an object")?
+            .remove("related_tests");
+        let violations = violations_for(pin("none"), &report)?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].contains("lists no related test"),
+            "{violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn selector_matching_no_seam_is_a_violation_never_vacuous() -> Result<(), String> {
+        for (owner, expression) in [
+            ("no_such_owner", "Reduction::Over(wait) =>"),
+            ("src/lib.rs::consume", "no-such-expression"),
+        ] {
+            let mut assertion = pin("none");
+            assertion["owner"] = json!(owner);
+            assertion["expression"] = json!(expression);
+            let violations = violations_for(assertion, &report_with("none", "unknown"))?;
+            assert_eq!(violations.len(), 1, "{owner}: {violations:?}");
+            assert!(violations[0].contains("matched no seam"), "{violations:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn relation_reason_is_pinned_only_when_present() -> Result<(), String> {
+        let report = report_with("none", "unknown");
+        let mut matching = pin("none");
+        matching["relation_reason"] = json!("direct_owner_call");
+        assert!(violations_for(matching, &report)?.is_empty());
+
+        let mut differing = pin("none");
+        differing["relation_reason"] = json!("proximity");
+        let violations = violations_for(differing, &report)?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0]
+                .contains("relation_reason `direct_owner_call` but the corpus pins `proximity`"),
+            "{violations:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn non_repo_exposure_report_is_a_violation() -> Result<(), String> {
+        let violations = violations_for(pin("none"), &json!({"findings": []}))?;
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(violations[0].contains("`seams` array"), "{violations:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn parser_rejects_unknown_strength_and_missing_fields() -> Result<(), String> {
+        let mut bogus = pin("none");
+        bogus["oracle_strength"] = json!("totally_bogus");
+        match evidence_promotion_parse_assertion("related_oracle_case", 0, &bogus) {
+            Err(error) => assert!(error.contains("oracle_strength"), "{error}"),
+            Ok(_) => return Err("bogus oracle_strength must be rejected".to_string()),
+        }
+        for field in ["owner", "expression", "test", "file", "oracle_strength"] {
+            let mut missing = pin("none");
+            missing
+                .as_object_mut()
+                .ok_or("assertion must be an object")?
+                .remove(field);
+            match evidence_promotion_parse_assertion("related_oracle_case", 0, &missing) {
+                Err(error) => assert!(error.contains(field), "{error}"),
+                Ok(_) => return Err(format!("missing `{field}` must be rejected")),
             }
         }
         Ok(())

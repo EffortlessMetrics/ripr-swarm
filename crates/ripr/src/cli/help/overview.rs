@@ -47,6 +47,7 @@ What are you trying to do?
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio (started by your editor)
   Adopt advisory CI     ripr init --ci github
+  Wire up your agent    ripr init --agents all   (docs/AGENT_QUICKSTART.md)
 
 More:
   ripr help <command>    Options for one command.
@@ -76,7 +77,7 @@ pub(super) const HELP_ALL: &str = r#"ripr — complete command reference.
 
 Task-oriented overview: ripr --help
 Options for one command: ripr help <command>
-Machine catalog: ripr help --json  (this route accepts no other arguments)
+Machine catalog: ripr help --json  (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands
 
 Global flags (accepted in any position, before or after the command, except on ripr help --json):
   -v, --verbose   Extra pipeline diagnostics on stderr: analyzed languages,
@@ -93,11 +94,12 @@ Task map:
   Repair a diff gap     follow the start from ripr check, when offered
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Adopt advisory CI     ripr init --ci github
+  Wire up your agent    ripr init --agents claude|codex|cursor|all
 
 Setup:
   ripr doctor
   ripr capabilities [--language NAME] [--json | --markdown]
-  ripr init [--root PATH] [--ci github] [--dry-run] [--force]
+  ripr init [--root PATH] [--ci github] [--mcp] [--agents TARGET] [--dry-run] [--force]
   ripr config validate [--root PATH]
   ripr cache status [--root PATH] [--json]
   ripr cache export [--root PATH] --out NEW_DIRECTORY
@@ -141,7 +143,7 @@ Editor & Agent:
 
 PR & Review:
   ripr outcome --before PATH --after PATH [--format md|markdown|text|json] [--out PATH]
-  ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check]
+  ripr first-pr [--root .] [--base REV] [--head HEAD] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--out-dir target/ripr/reports] [--check|--run-chain]
   ripr start-here [same options as first-pr]   [compatibility]
   ripr first-action [--root .] (--pr-guidance target/ripr/review/comments.json|--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json|--gap-ledger target/ripr/reports/gap-decision-ledger.json|--ledger target/ripr/reports/pr-evidence-ledger.json) [--out target/ripr/reports/first-useful-action.json]
   ripr review-comments --root . --base SHA --head SHA [--out target/ripr/review/comments.json]

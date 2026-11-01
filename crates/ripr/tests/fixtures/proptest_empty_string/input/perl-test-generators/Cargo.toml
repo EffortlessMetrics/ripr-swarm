@@ -1,0 +1,8 @@
+[package]
+name = "perl-test-generators"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+proptest = "=1.11.0"

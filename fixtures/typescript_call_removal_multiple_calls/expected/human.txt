@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview found related test evidence but cannot name a safe target discriminator or observer shape); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
+  Safe next action: this TypeScript preview finding's repair packet is not ready (TypeScript preview found related test evidence but cannot name a safe target check or observer shape); `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/audit.ts:2
   Language: typescript
   Language status: preview
@@ -45,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_call_removal_multiple_calls/input --diff <cwd>/fixtures/typescript_call_removal_multiple_calls/diff.patch --mode fast probe:src_audit.ts:typescript_preview:a853f862
   ripr context --root <cwd>/fixtures/typescript_call_removal_multiple_calls/input --diff <cwd>/fixtures/typescript_call_removal_multiple_calls/diff.patch --mode fast --at probe:src_audit.ts:typescript_preview:a853f862
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (TypeScript preview: 1).

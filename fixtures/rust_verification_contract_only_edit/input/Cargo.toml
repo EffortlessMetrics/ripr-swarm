@@ -1,0 +1,9 @@
+[package]
+name = "rust_verification_contract_only_edit_fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "rust_verification_contract_only_edit_fixture"
+path = "src/lib.rs"

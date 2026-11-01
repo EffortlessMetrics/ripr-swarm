@@ -40,7 +40,7 @@ pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
     stdout
         .write_all(&summary)
         .and_then(|()| stdout.flush())
-        .map_err(|err| format!("{COMMAND} could not write the summary: {err}"))
+        .map_err(|err| format!("{COMMAND} could not write the summary: {err}; check you can write to the summary path, then rerun"))
 }
 
 /// `RIPR_GATE_MODE` counts as set when it is non-empty, read raw as
@@ -217,7 +217,9 @@ mod tests {
             assert!(parse(&[flag, "v"], &settings).is_ok(), "{flag}");
             assert_eq!(
                 parse(&[flag], &settings),
-                Err(format!("missing value for {flag}"))
+                Err(format!(
+                    "missing value for {flag}; pass a value right after it"
+                ))
             );
         }
     }
