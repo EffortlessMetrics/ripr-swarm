@@ -928,6 +928,27 @@ impl Finding {
         self.source_currentness.permits_candidate_action()
     }
 
+    /// The one sentence every surface uses to say a finding is not a
+    /// candidate edit target (#11905). `None` for a candidate-current finding.
+    /// Human, hover and any later renderer take the wording from here so a
+    /// base-side finding reads the same on every surface.
+    pub fn source_currentness_disclosure(&self) -> Option<String> {
+        if self.is_candidate_actionable() {
+            return None;
+        }
+        // `unresolved_subject` means the producer could not tell, so it must
+        // not be called base-side evidence.
+        let reason = if self.source_currentness.is_base_side() {
+            "base-side evidence, not a candidate edit target"
+        } else {
+            "source currentness not established, not a candidate edit target"
+        };
+        Some(format!(
+            "{} \u{2014} {reason}",
+            self.source_currentness.as_str()
+        ))
+    }
+
     /// Mark this finding as produced by a repo-mode run (#5531). The single
     /// place that sets the typed scope and derives the compatibility
     /// evidence line `analysis_scope: repo` (disclosed in
