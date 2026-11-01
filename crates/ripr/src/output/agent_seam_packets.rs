@@ -372,10 +372,30 @@ fn render_agent_seam_packets_json_with_root(
         ));
     }
     if let Some(bound) = &bound {
+        // #12064: the cut keeps actionable packets first, so it only drops
+        // an actionable one when there are more of them than the bound.
+        // Say so by count; a reader of the file could otherwise believe it
+        // holds every repairable seam.
+        let actionable_omitted = actionable
+            .iter()
+            .filter(|entry| task_for(entry) == TASK_WRITE_TARGETED_TEST)
+            .count()
+            .saturating_sub(bound.max);
+        let omitted_field = if actionable_omitted > 0 {
+            format!(
+                "      \"actionable_packets_omitted\": {actionable_omitted},\n      \"actionable_packets_message\": \"{}\",\n",
+                crate::output::json::escape(&format!(
+                    "{actionable_omitted} {TASK_WRITE_TARGETED_TEST} packet(s) were omitted by the packet bound, so this file does not list every repairable seam."
+                ))
+            )
+        } else {
+            String::new()
+        };
         limitations.push(format!(
-            "    {{\n      \"category\": \"pilot_packet_bound_applied\",\n      \"packets_emitted\": {},\n      \"packets_eligible\": {},\n      \"limit_source\": \"{}\",\n      \"control\": \"{}\",\n      \"repair_route\": \"{}\"\n    }}",
+            "    {{\n      \"category\": \"pilot_packet_bound_applied\",\n      \"packets_emitted\": {},\n      \"packets_eligible\": {},\n{}      \"limit_source\": \"{}\",\n      \"control\": \"{}\",\n      \"repair_route\": \"{}\"\n    }}",
             rendered.len(),
             actionable.len(),
+            omitted_field,
             bound.source.as_str(),
             crate::analysis::PILOT_PACKET_BUDGET_ENV,
             crate::output::json::escape(PILOT_PACKET_BOUND_ROUTE),
@@ -7266,6 +7286,55 @@ mod tests {
             full_text.len()
         );
         assert!(bounded_text.len() < 60_000, "{}", bounded_text.len());
+        Ok(())
+    }
+
+    /// #12064: more writable packets than the bound drops some of them, and
+    /// the limitation says how many; a cut of only the static-limitation tail
+    /// carries no such wording.
+    #[test]
+    fn pilot_packet_bound_counts_omitted_actionable_packets() -> Result<(), String> {
+        let mut subjects = vec![weakly_gripped_classified(), second_actionable_classified()];
+        subjects.extend(static_limitation_tail(3));
+
+        // Bound of 1 keeps one of two writable packets: one is omitted.
+        let (_, cut) = render_pilot_packets(&subjects, pilot_bound(1))?;
+        let limitation = &cut["limitations"][0];
+        assert_eq!(limitation["actionable_packets_omitted"], 1, "{cut}");
+        let message = limitation["actionable_packets_message"]
+            .as_str()
+            .ok_or("message")?;
+        assert!(message.contains("write_targeted_test"), "{message}");
+        assert!(
+            limitation["repair_route"]
+                .as_str()
+                .ok_or("route")?
+                .contains("RIPR_PILOT_PACKET_BUDGET=0"),
+            "{cut}"
+        );
+
+        // Bound of 2 keeps both writable packets and cuts only the tail.
+        let (_, tail_only) = render_pilot_packets(&subjects, pilot_bound(2))?;
+        let limitation = &tail_only["limitations"][0];
+        assert_eq!(limitation["packets_emitted"], 2, "{tail_only}");
+        assert!(
+            limitation.get("actionable_packets_omitted").is_none(),
+            "{tail_only}"
+        );
+        assert!(
+            limitation.get("actionable_packets_message").is_none(),
+            "{tail_only}"
+        );
+
+        // Bound of 4 keeps both writable and part of the tail: still no
+        // actionable-omission wording.
+        let (_, partial) = render_pilot_packets(&subjects, pilot_bound(4))?;
+        assert!(
+            partial["limitations"][0]
+                .get("actionable_packets_omitted")
+                .is_none(),
+            "{partial}"
+        );
         Ok(())
     }
 
