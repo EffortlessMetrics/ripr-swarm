@@ -443,6 +443,32 @@ suite('VS Code test host diagnostics', () => {
     assert.ok(Buffer.byteLength(kept) <= MAX_HOST_DIAGNOSTICS_FILE_BYTES);
   });
 
+  test('refuses to copy a log directory that is a symlink or sits outside the artifact root', () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-outside-logs-'));
+    try {
+      const outsideLogs = path.join(outside, HOST_LOG_DIR_NAME);
+      fs.mkdirSync(outsideLogs, { recursive: true });
+      fs.writeFileSync(path.join(outsideLogs, 'secret.log'), 'DO_NOT_COLLECT_OUTSIDE_LOG');
+      // Positive control in the same shape: a contained log directory is copied.
+      writeLog(root, 'control.log', 'CONTAINED_LOG');
+      const contained = retainHostDiagnostics({ artifactRoot: root, userDataDir: resolveUserDataDir(root), failed: true });
+      assert.ok(fs.existsSync(path.join(contained.diagnosticsDir, HOST_LOG_DIR_NAME, 'control.log')));
+
+      // A user-data directory outside the artifact root.
+      const external = retainHostDiagnostics({ artifactRoot: root, userDataDir: outside, failed: true });
+      assert.ok(!fs.existsSync(path.join(external.diagnosticsDir, HOST_LOG_DIR_NAME, 'secret.log')));
+
+      // A log directory that is itself a symlink to an outside directory.
+      const linkedUserData = path.join(root, 'linked-user-data');
+      fs.mkdirSync(linkedUserData, { recursive: true });
+      fs.symlinkSync(outsideLogs, path.join(linkedUserData, HOST_LOG_DIR_NAME), 'junction');
+      const linked = retainHostDiagnostics({ artifactRoot: root, userDataDir: linkedUserData, failed: true });
+      assert.ok(!fs.existsSync(path.join(linked.diagnosticsDir, HOST_LOG_DIR_NAME, 'secret.log')));
+      const identity = JSON.parse(fs.readFileSync(path.join(linked.diagnosticsDir, 'retention.json'), 'utf8')) as { copied_files: string[] };
+      assert.deepStrictEqual(identity.copied_files, []);
+    } finally { fs.rmSync(outside, { recursive: true, force: true }); }
+  });
+
   test('matrix receipt refuses other filenames, outside paths, directories and symlink traversal', () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-outside-receipt-'));
     try {
