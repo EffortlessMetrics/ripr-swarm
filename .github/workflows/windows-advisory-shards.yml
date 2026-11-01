@@ -95,8 +95,8 @@ jobs:
       # File redirect, not `| tee`: see windows-advisory.yml. The shard's real
       # cargo status is recorded so a failed test still fails the job, and the log
       # is uploaded even when it does. The log is also streamed to the step output
-      # as nextest writes it (`tail -f`, stopped after the status is recorded), and
-      # the Summarize and Upload steps run under `always()`. This is intended to leave
+      # as nextest writes it (`tail -F`, which also waits for the file; stopped after
+      # the status is recorded), and the Summarize and Upload steps run under `always()`. This is intended to leave
       # the SLOW rows and the log so far from a shard that wedges until the job cap
       # (#12092); that is not yet observed on Windows, and it cannot help if the
       # runner itself stops reporting.
@@ -124,7 +124,7 @@ jobs:
           shard=${{ matrix.shard }}
           cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 -E "not $ACL_TESTS" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
-          tail -n +1 -f target/shard-$shard.log &
+          tail -n +1 -F target/shard-$shard.log &
           tail_pid=$!
           winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9 || true)
           (
