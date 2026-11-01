@@ -277,13 +277,37 @@ fn contains_assert_family_call(text: &str) -> bool {
 /// ordinary logic (#11546).
 fn is_discarded_expect(statement: &str) -> bool {
     let statement = statement.trim();
-    statement.ends_with(';')
-        && statement.contains(".expect(")
-        && [
-            "let ", "return ", "break ", "if ", "match ", "while ", "for ", "loop ",
-        ]
-        .iter()
-        .all(|prefix| !statement.starts_with(prefix))
+    let Some(call) = statement.strip_suffix(';') else {
+        return false;
+    };
+    if [
+        "let ", "return ", "break ", "if ", "match ", "while ", "for ", "loop ",
+    ]
+    .iter()
+    .any(|prefix| call.starts_with(prefix))
+    {
+        return false;
+    }
+    // The statement's outermost call must be `.expect(..)`: its argument list
+    // closes exactly at the end, so `keep(x.expect("m"));` does not count.
+    let Some(open) = call.rfind(".expect(") else {
+        return false;
+    };
+    let arguments = &call[open + ".expect(".len()..];
+    let mut depth = 1usize;
+    for (index, character) in arguments.char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return index + 1 == arguments.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Word-boundary match so `my_assert!(` does not count as `assert!(`. The
@@ -836,6 +860,18 @@ mod tests {
             (
                 "pub fn clamp(x: i32) -> i32 { assert!(x >= 0); x.min(9) }",
                 "pub fn clamp(x: i32) -> i32 {\n    assert!(x >= 0);\n    x.min(9)\n}\n",
+            ),
+            (
+                "pub fn bump(x: i32) -> i32 { let y = x.checked_add(2).expect(\"overflow\"); y }",
+                "pub fn bump(x: i32) -> i32 {\n    let y = x.checked_add(2).expect(\"overflow\");\n    y\n}\n",
+            ),
+            (
+                "pub fn bump(x: i32) -> i32 { return x.checked_add(2).expect(\"overflow\"); }",
+                "pub fn bump(x: i32) -> i32 {\n    return x.checked_add(2).expect(\"overflow\");\n}\n",
+            ),
+            (
+                "pub fn bump(x: i32) -> i32 { keep(x.checked_add(2).expect(\"overflow\")); }",
+                "pub fn bump(x: i32) -> i32 {\n    keep(x.checked_add(2).expect(\"overflow\"));\n}\n",
             ),
             (
                 "pub fn bump(x: i32) -> i32 { x.checked_add(2).expect(\"overflow\") }",
