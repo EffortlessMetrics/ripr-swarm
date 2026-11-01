@@ -37,6 +37,11 @@ fn an_imported_patch_name_does_not_unsettle_the_argnames() -> Result<(), String>
 
 #[test]
 fn a_call_or_an_alias_of_the_writer_keeps_the_limit() -> Result<(), String> {
+    // An aliased call is not a recognised substitution form, so it only
+    // unsettles the argnames. A module-scope `patch(..)` or `setattr(..)` is a
+    // substitution form in top-level test-module code, so the stronger
+    // `mocked_module` limit (`fixture_substitution.rs`) may speak first;
+    // either way the finding keeps a static limit and earns no credit.
     for (case, prefix) in [
         (
             "alias",
@@ -52,10 +57,13 @@ fn a_call_or_an_alias_of_the_writer_keeps_the_limit() -> Result<(), String> {
         ),
     ] {
         let finding = classify_total(prefix)?;
-        assert_eq!(
+        assert!(
+            matches!(
+                finding.static_limit_kind,
+                Some(StaticLimitKind::UnresolvedPytestFixture | StaticLimitKind::MockedModule)
+            ),
+            "{case}: {:?} {:?}",
             finding.static_limit_kind,
-            Some(StaticLimitKind::UnresolvedPytestFixture),
-            "{case}: {:?}",
             finding.evidence
         );
     }
