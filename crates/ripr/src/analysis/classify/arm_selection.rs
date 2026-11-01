@@ -2466,10 +2466,74 @@ fn literal_value(text: &str) -> Option<LiteralValue> {
         .strip_prefix('\'')
         .and_then(|rest| rest.strip_suffix('\''))
     {
-        return (!inner.contains(['\'', '\\']) && inner.chars().count() == 1)
-            .then(|| LiteralValue::Char(inner.to_string()));
+        return decoded_char_literal_inner(inner).map(|ch| LiteralValue::Char(ch.to_string()));
     }
     integer_value(text).map(LiteralValue::Int)
+}
+
+/// The one scalar inside a `'…'` literal after the outer quotes are removed.
+fn decoded_char_literal_inner(inner: &str) -> Option<char> {
+    if inner.is_empty() {
+        return None;
+    }
+    if let Some(rest) = inner.strip_prefix('\\') {
+        let (decoded, tail) = match rest.as_bytes().first().copied()? {
+            b'n' => ('\n', &rest[1..]),
+            b'r' => ('\r', &rest[1..]),
+            b't' => ('\t', &rest[1..]),
+            b'0' => ('\0', &rest[1..]),
+            b'\\' => ('\\', &rest[1..]),
+            b'\'' => ('\'', &rest[1..]),
+            b'"' => ('"', &rest[1..]),
+            b'x' => {
+                let hex_digits = rest.get(1..)?;
+                let hex = hex_digits.get(0..2)?;
+                if hex.len() < 2
+                    || !hex.as_bytes()[0].is_ascii_hexdigit()
+                    || !hex.as_bytes()[1].is_ascii_hexdigit()
+                {
+                    return None;
+                }
+                let value = u8::from_str_radix(hex, 16).ok()?;
+                if value > 0x7F {
+                    return None;
+                }
+                (char::from(value), hex_digits.get(2..).unwrap_or(""))
+            }
+            b'u' => {
+                let after_u = rest.get(1..)?;
+                let body = after_u.strip_prefix('{')?;
+                let end = body.find('}')?;
+                let digits = &body[..end];
+                // Rust requires a leading hex digit and at most six hex digits
+                // (`_` separators allowed after the first digit).
+                if !digits.starts_with(|ch: char| ch.is_ascii_hexdigit()) {
+                    return None;
+                }
+                if digits.chars().filter(|ch| *ch != '_').count() > 6 {
+                    return None;
+                }
+                let mut value = 0u32;
+                for ch in digits.chars() {
+                    if ch == '_' {
+                        continue;
+                    }
+                    let digit = ch.to_digit(16)?;
+                    value = value.checked_mul(16)?.checked_add(digit)?;
+                }
+                let decoded = char::from_u32(value)?;
+                (decoded, body.get(end + 1..).unwrap_or(""))
+            }
+            _ => return None,
+        };
+        if !tail.is_empty() {
+            return None;
+        }
+        return Some(decoded);
+    }
+    (!inner.contains(['\'', '\\']) && inner.chars().count() == 1)
+        .then(|| inner.chars().next())
+        .flatten()
 }
 
 /// Decimal, hex, octal or binary integer literals with `_` separators and an
@@ -4095,6 +4159,67 @@ mod tests {
         assert!(selector.assertion_selects("assert_eq!(suit_color('C'), \"black\");"));
         assert!(!selector.assertion_selects("assert_eq!(suit_color('H'), \"red\");"));
         Ok(())
+    }
+
+    #[test]
+    fn escaped_char_literal_arms_match_decoded_inputs() -> Result<(), String> {
+        let cases = [
+            ("'\\n' => 1,", "'\\n'", 1),
+            ("'\\\\' => 2,", "'\\\\'", 2),
+            ("'\\'' => 3,", "'\\''", 3),
+            ("'\\x41' => 4,", "'\\x41'", 4),
+            ("'\\u{e9}' => 5,", "'\\u{e9}'", 5),
+        ];
+        for (arm, input, want) in cases {
+            let body = format!(
+                "pub fn code(c: char) -> u32 {{\n    match c {{\n        {arm}\n        _ => 0,\n    }}\n}}\n"
+            );
+            let selector = ArmSelector::establish(&arm_probe(arm, 3), &owner(&body, "code"))
+                .ok_or_else(|| format!("premise: arm {arm} should establish"))?;
+            assert!(
+                selector.assertion_selects(&format!("assert_eq!(code({input}), {want});")),
+                "arm {arm} with input {input}"
+            );
+        }
+        let newline_body = "pub fn code(c: char) -> u32 {\n    match c {\n        '\\n' => 1,\n        _ => 0,\n    }\n}\n";
+        let selector =
+            ArmSelector::establish(&arm_probe("'\\n' => 1,", 3), &owner(newline_body, "code"))
+                .ok_or_else(|| "premise: newline arm".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(code('n'), 1);"));
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_escaped_char_literals_stay_unknown() {
+        assert_eq!(literal_value("'\\q'"), None);
+        assert_eq!(literal_value("'\\u{110000}'"), None);
+        assert_eq!(literal_value("'\\u{_}'"), None);
+        assert_eq!(literal_value("'\\u{_41}'"), None);
+        assert_eq!(literal_value("'\\u{0000000}'"), None);
+    }
+
+    #[test]
+    fn escaped_char_literals_decode_for_literal_value() {
+        assert_eq!(
+            literal_value("'\\n'"),
+            Some(LiteralValue::Char("\n".to_string()))
+        );
+        assert_eq!(
+            literal_value("'\\\\'"),
+            Some(LiteralValue::Char("\\".to_string()))
+        );
+        assert_eq!(
+            literal_value("'\\''"),
+            Some(LiteralValue::Char("'".to_string()))
+        );
+        assert_eq!(
+            literal_value("'\\x41'"),
+            Some(LiteralValue::Char("A".to_string()))
+        );
+        assert_eq!(
+            literal_value("'\\u{e9}'"),
+            Some(LiteralValue::Char("é".to_string()))
+        );
     }
 
     #[test]

@@ -865,3 +865,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (41)
+
+Reason:
+RIPR-SPEC-0027: a two-token edit (operator and literal) names no clause boundary (#11442)
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
