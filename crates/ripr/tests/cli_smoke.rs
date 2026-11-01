@@ -2675,12 +2675,14 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
                         )
                         .into());
                     }
+                    // Explain misses spell the listing `--format json` (#11844).
                     let listing = stderr
                         .split('`')
                         .find(|part| part.starts_with("ripr check "))
                         .ok_or_else(|| {
                             format!("selector miss omitted its retry command: {stderr}")
-                        })?;
+                        })?
+                        .replace(" --format json", " --json");
                     if listing != expected_listing || !stderr.contains("list available finding ids")
                     {
                         return Err(
@@ -27863,6 +27865,10 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
         recoveries.push((label, String::from_utf8_lossy(&missing.stderr).into_owned()));
     }
     for (label, stderr) in recoveries {
+        // The explain miss spells the listing `--format json` (#11844); the
+        // missing-selector hint keeps the `--json` alias. Both name the same
+        // scoped command, so compare on the alias spelling.
+        let stderr = stderr.replace(" --format json`", " --json`");
         if !stderr.contains(&format!("`{expected_listing}`")) {
             return Err(format!(
                 "{label} must name the scoped listing `{expected_listing}`:\n{stderr}"
