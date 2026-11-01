@@ -307,6 +307,38 @@ fn reach_limit_without_weak_assertion_row_keeps_stop() {
     assert!(!text.contains("open="), "{text}");
 }
 
+/// #12058 negative: an unrelated weak test that is related only by file or
+/// module proximity does not make a reach-limited finding open; it stays
+/// `stop=`. The same row bound to the owner (a direct call or an owner-named
+/// test) still opens it.
+#[test]
+fn reach_limit_with_a_proximity_only_weak_row_keeps_stop() {
+    use crate::domain::RelationReason;
+    for reason in [
+        RelationReason::SameTestFile,
+        RelationReason::SameModule,
+        RelationReason::WeakTokenSubstring,
+    ] {
+        let mut limited = reach_limited_weak("probe:unrelated", 264);
+        limited.related_tests[0].relation_reason = Some(reason);
+        let text = rendered(&output(vec![limited]));
+        assert!(text.contains("\nstop="), "{reason:?}: {text}");
+        assert!(!text.contains("open="), "{reason:?}: {text}");
+        assert!(!text.contains("\nnext="), "{reason:?}: {text}");
+    }
+    for reason in [
+        RelationReason::DirectOwnerCall,
+        RelationReason::HelperOwnerCall,
+        RelationReason::OwnerNamedTest,
+    ] {
+        let mut limited = reach_limited_weak("probe:bound", 264);
+        limited.related_tests[0].relation_reason = Some(reason);
+        let text = rendered(&output(vec![limited]));
+        assert!(text.contains("\nopen="), "{reason:?}: {text}");
+        assert!(!text.contains("stop="), "{reason:?}: {text}");
+    }
+}
+
 /// #11825 negative: a non-current (base-side) limited weak finding is not
 /// open work.
 #[test]
