@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0370: a diff whose only changed Rust lines are Kani verification
+//! RIPR-SPEC-0373: a diff whose only changed Rust lines are Kani verification
 //! artifacts (deleted or added proof harnesses, `cfg(kani)` modules, `cfg_attr(kani, ..)`
 //! contracts) seeds no production probe and is disclosed as
 //! `verification_only_change`. The shape is the "use function contracts instead

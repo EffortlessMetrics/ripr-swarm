@@ -8,7 +8,7 @@
 //! or observe them. A changed line of this kind is not a runtime behavior to
 //! probe, and "add a co-located test" would be a wrong repair signal for it.
 //!
-//! Kani verification artifacts (RIPR-SPEC-0370) are the same kind of text. A
+//! Kani verification artifacts (RIPR-SPEC-0373) are the same kind of text. A
 //! proof-harness item (`#[kani::proof]`, `#[kani::proof_for_contract(..)]`, or
 //! the same path under `cfg_attr`), an item-level `#[cfg(kani)] mod`, and a
 //! `#[cfg_attr(kani, kani::requires(..), ..)]` contract are recognised from the

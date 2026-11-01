@@ -1,4 +1,4 @@
-# RIPR-SPEC-0370: Kani proof harnesses, `cfg(kani)` modules and `cfg_attr(kani, ..)` contracts are verification-only on either side of a diff
+# RIPR-SPEC-0373: Kani proof harnesses, `cfg(kani)` modules and `cfg_attr(kani, ..)` contracts are verification-only on either side of a diff
 
 Status: proposed
 
@@ -126,7 +126,7 @@ findings of its runtime lines.
 
 ## Test Mapping
 
-See `.ripr/traceability.d/kani-verification-artifacts-0370.toml`.
+See `.ripr/traceability.d/kani-verification-artifacts-0373.toml`.
 
 ## Implementation Mapping
 

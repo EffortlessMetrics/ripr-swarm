@@ -1,3 +1,18 @@
 id = "RIPR-SPEC-0370"
-scope = "out"
-reason = "Kani verification artifacts have no runtime-mutant truth for a test to discriminate; covered by repository integration tests"
+scope = "in"
+
+[[waived]]
+example = 1
+reason = "no producer yet: the spec-and-proof slice pins the fail-closed floor in crates/ripr/tests/loop_range_bound.rs; a runtime-labeled corpus case lands with the producer"
+
+[[waived]]
+example = 2
+reason = "no producer yet: credit for a discriminating pin lands with the producer, which adds the runtime-labeled case"
+
+[[waived]]
+example = 3
+reason = "no producer yet: the withheld-pin reading lands with the producer"
+
+[[waived]]
+example = 4
+reason = "outside-the-shape ranges keep the existing static_unknown probe; no runtime mutant label distinguishes them"

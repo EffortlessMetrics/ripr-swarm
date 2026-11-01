@@ -111,7 +111,7 @@ initialiser or beside other tokens, and an attribute spelled through any other
 crate path.
 
 Kani proof harnesses, `#[cfg(kani)]` modules and `#[cfg_attr(kani, ..)]` contracts
-are verification-only too; see [RIPR-SPEC-0370](RIPR-SPEC-0370-kani-verification-artifacts-are-verification-only.md).
+are verification-only too; see [RIPR-SPEC-0373](RIPR-SPEC-0373-kani-verification-artifacts-are-verification-only.md).
 
 ## Required Evidence
 

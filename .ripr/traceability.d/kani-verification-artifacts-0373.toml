@@ -2,9 +2,9 @@
 # deleted/added harnesses, cfg(kani) modules and cfg_attr(kani, contract)
 # attributes seed no probe and are disclosed as verification_only_change.
 [[behavior]]
-id = "RIPR-SPEC-0370"
+id = "RIPR-SPEC-0373"
 name = "Kani proof harnesses, cfg(kani) modules and cfg_attr(kani) contracts are verification-only on either side of a diff"
-spec = "docs/specs/RIPR-SPEC-0370-kani-verification-artifacts-are-verification-only.md"
+spec = "docs/specs/RIPR-SPEC-0373-kani-verification-artifacts-are-verification-only.md"
 tests = [
   "crates/ripr/src/analysis/probes/verification_erased.rs::kani_harnesses_and_cfg_kani_modules_are_verification_source",
   "crates/ripr/src/analysis/probes/verification_erased.rs::cfg_attr_kani_contracts_are_verification_only",

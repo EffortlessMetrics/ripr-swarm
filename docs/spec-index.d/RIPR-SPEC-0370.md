@@ -1,1 +1,1 @@
-| [RIPR-SPEC-0370](../specs/RIPR-SPEC-0370-kani-verification-artifacts-are-verification-only.md) | proposed | Kani proof harnesses, cfg(kani) modules and cfg_attr(kani) contracts are verification-only on either side of a diff (#10749) |
+| [RIPR-SPEC-0370](../specs/RIPR-SPEC-0370-loop-range-bound-change.md) | proposed | A changed `for` range bound is credited only by an exact pin that makes the old and new ranges differ (#11399) |
