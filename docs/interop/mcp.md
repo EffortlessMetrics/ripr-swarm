@@ -545,7 +545,11 @@ returns `isError: true` with `repair_packet_ready: false`, the typed
 ineligibility reason, `attempt: null` and a machine-readable `next` object
 (`kind` one of `nothing_to_do`, `write_test_by_hand`, `change_policy`,
 `commit_then_refresh`, `await_producer_fact`; the `reason`; an `mcp` route or
-`null`; and, only for `write_test_by_hand`, `after_editing_tests`) — no attempt
+`null`; and, only for `write_test_by_hand`, `after_editing_tests`; a
+`seam_not_found` or `seam_ambiguous` refusal also carries `stub_route`, the
+`ripr agent stub --at FILE:LINE --kind FAMILY` command the shared stub resolver
+names, guidance that does not make the item repair-ready, omitted when the
+resolver names no route or the path would need shell quoting) — no attempt
 is created and no field is guessed, and `next` adds no verdict the shared gate
 did not produce. `isError` is true exactly when no transaction exists. The reasons
 the shared seam-level repair gate behind `ripr repair` contributes are

@@ -1737,7 +1737,7 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
         // sha256 hex digest. A partial document must not pass as complete.
         let value: serde_json::Value = serde_json::from_slice(&baseline_stdout)
             .map_err(|error| format!("help --json is not valid JSON: {error}"))?;
-        if value["schema_version"] != serde_json::json!(3) {
+        if value["schema_version"] != serde_json::json!(4) {
             return Err(format!(
                 "help --json schema_version moved: {}",
                 value["schema_version"]
@@ -11134,12 +11134,18 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
         );
         std::fs::remove_file(&out)?;
         for (omitted, diagnostic) in [
-            ("all", "agent receipt requires --verify-json <path>"),
+            (
+                "all",
+                "agent receipt requires --verify-json <path>; add `--verify-json <path>` to the command",
+            ),
             (
                 "--verify-json",
-                "agent receipt requires --verify-json <path>",
+                "agent receipt requires --verify-json <path>; add `--verify-json <path>` to the command",
             ),
-            ("--seam-id", "agent receipt requires --seam-id"),
+            (
+                "--seam-id",
+                "agent receipt requires --seam-id; add `--seam-id` to the command",
+            ),
             (
                 "--json",
                 "agent receipt requires --json (the supported output for this subcommand); add --json to the command",
@@ -13480,7 +13486,7 @@ fn config_validate_does_not_consume_root_flag_as_a_path() -> Result<(), String> 
             assert!(output.stdout.is_empty(), "args: {args:?}");
             assert_eq!(
                 String::from_utf8_lossy(&output.stderr).trim(),
-                "ripr: missing value for --root",
+                "ripr: missing value for --root; pass a value right after it",
                 "args: {args:?}"
             );
         }
@@ -17805,7 +17811,7 @@ fn baseline_update_removes_resolved_without_adopting_new_debt() -> Result<(), St
     assert_failure(&no_mode);
     let stderr = String::from_utf8_lossy(&no_mode.stderr);
     assert!(stderr.contains("--remove-resolved"));
-    assert!(stderr.contains("adopting new debt is not supported"));
+    assert!(stderr.contains("adopting new debt is not supported; pass `--remove-resolved` or `--migrate-legacy-identities`"));
 
     ignore_remove_dir_all(&workspace);
     Ok(())
@@ -29210,6 +29216,21 @@ fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
         assert_eq!(refused.status.code(), Some(3), "{refused:?}");
         let stderr = String::from_utf8_lossy(&refused.stderr);
         assert!(stderr.contains("no repository movement"), "{stderr}");
+        // #11597: exactly one typed line; the refusal that spends the budget
+        // is terminal, like the call after it, and earlier ones are retryable.
+        let expected = if refusal_number == 5 {
+            "ripr: refusal code=retry_budget_exhausted disposition=terminal"
+        } else {
+            "ripr: refusal code=awaiting_edit disposition=retryable"
+        };
+        assert_eq!(
+            stderr
+                .lines()
+                .filter(|line| line.starts_with("ripr: refusal code="))
+                .collect::<Vec<_>>(),
+            vec![expected],
+            "{stderr}"
+        );
         // Escalation starts at the second refusal, never on the first.
         assert_eq!(
             stderr.contains("retry budget for this attempt"),
@@ -29310,6 +29331,14 @@ fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
     let stopped_stderr = String::from_utf8_lossy(&stopped.stderr);
     assert!(
         stopped_stderr.contains("spent its after-phase retry budget"),
+        "{stopped_stderr}"
+    );
+    assert_eq!(
+        stopped_stderr
+            .lines()
+            .filter(|line| line.starts_with("ripr: refusal code="))
+            .collect::<Vec<_>>(),
+        vec!["ripr: refusal code=retry_budget_exhausted disposition=terminal"],
         "{stopped_stderr}"
     );
     // The recovery names a new attempt; the shared repair gate may withhold
@@ -34635,6 +34664,13 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
     );
     assert!(repair.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&repair.stderr);
+    // #11597: the held start carries its typed reason beside the prose.
+    assert!(
+        stderr.contains(
+            "ripr: refusal code=start_refused_uncommitted_target disposition=not_started"
+        ),
+        "{stderr}"
+    );
     assert!(
         stderr.contains(
             "No repair attempt started. Commit or stash `src/lib.rs`, then run `ripr repair "

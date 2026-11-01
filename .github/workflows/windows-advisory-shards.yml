@@ -109,6 +109,11 @@ jobs:
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 55
         shell: bash
+        env:
+          # Below the 360 s nextest terminate (.config/nextest.toml), so a stalled
+          # child tool build fails with its own captured stderr instead of an
+          # anonymous TIMEOUT row (#12035).
+          RIPR_TOOL_BUILD_TIMEOUT_SECS: "300"
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
