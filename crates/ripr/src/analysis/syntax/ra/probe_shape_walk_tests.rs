@@ -392,6 +392,15 @@ fn plain(p: *const u8) -> u8 {
 fn lookalike() {
     unsafe { my_unreachable_unchecked_total() };
 }
+fn project_function() {
+    unsafe { local::assert_unchecked(true) };
+}
+fn deferred() {
+    unsafe {
+        fn never_called() { std::hint::assert_unchecked(true) }
+        let _ = || core::hint::unreachable_unchecked();
+    }
+}
 "#;
     let facts = equivalent_file_facts(text)?;
     let labels: Vec<&str> = facts
@@ -410,7 +419,7 @@ fn lookalike() {
             .iter()
             .filter(|label| **label == "unsafe block")
             .count(),
-        2,
+        4,
         "{labels:?}"
     );
     Ok(())

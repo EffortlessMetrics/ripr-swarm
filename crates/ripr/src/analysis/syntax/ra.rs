@@ -1514,18 +1514,29 @@ fn enclosed_by_nested_fn_like(node: &ra_ap_syntax::SyntaxNode, body: &ast::Block
 /// Label of an `unsafe` block that contains an unchecked-assumption call.
 pub(crate) const UNCHECKED_ASSUMPTION_LABEL: &str = "unsafe block (unchecked assumption)";
 
-/// Whether the block calls `unreachable_unchecked` or `assert_unchecked` by
-/// path (bare, `hint::`, `std::hint::`, `core::hint::`). Parsed calls only: a
-/// string, comment or identifier that merely contains the name does not match.
+/// Whether the block itself calls `unreachable_unchecked` or
+/// `assert_unchecked`: bare (an imported name) or qualified through `hint`
+/// (`hint::`, `std::hint::`, `core::hint::`). A call under a different module
+/// (`local::assert_unchecked`) is a project function, and a call inside a
+/// nested `fn`, closure or `async` block does not run with the block. Parsed
+/// calls only: a string, comment or identifier that merely contains the name
+/// does not match. A bare name is taken as the imported intrinsic.
 fn block_calls_unchecked_assumption(block: &ast::BlockExpr) -> bool {
     block
         .syntax()
         .descendants()
         .filter_map(ast::CallExpr::cast)
+        .filter(|call| !enclosed_by_nested_fn_like(call.syntax(), block))
         .filter_map(|call| match call.expr()? {
-            ast::Expr::PathExpr(path) => path.path()?.segment()?.name_ref(),
+            ast::Expr::PathExpr(path) => path.path(),
             _ => None,
         })
+        .filter(|path| {
+            path.qualifier()
+                .and_then(|qualifier| qualifier.segment()?.name_ref())
+                .is_none_or(|module| module.text() == "hint")
+        })
+        .filter_map(|path| path.segment()?.name_ref())
         .any(|name| matches!(name.text(), "unreachable_unchecked" | "assert_unchecked"))
 }
 
