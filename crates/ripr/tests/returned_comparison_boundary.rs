@@ -942,6 +942,22 @@ fn a_qualified_rival_call_is_not_a_boundary_input() -> Result<(), String> {
 }
 
 #[test]
+fn an_integration_test_crate_relative_rival_import_is_not_a_boundary_input() -> Result<(), String> {
+    // #10046: in an integration test `crate::` names the test crate, so
+    // `use crate::rival::thr` binds the test's own rival, never the owner.
+    let rival = findings(
+        NEW,
+        OLD,
+        &format!(
+            "use crate::rival::thr;\n\n{RIVAL_MOD}{FAR_ONLY}\n#[test]\nfn other() {{\n    assert!(!thr(101));\n}}\n"
+        ),
+    )?;
+    let owner = family(&rival, "return_value")?;
+    assert_ne!(owner.class, ExposureClass::Exposed, "{owner:?}");
+    Ok(())
+}
+
+#[test]
 fn a_crate_qualified_owner_call_is_still_a_boundary_input() -> Result<(), String> {
     // #9218: a qualification that resolves to the owner's own module keeps
     // supplying its input (`thr::thr` names the owner crate's root `thr`).

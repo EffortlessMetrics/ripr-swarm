@@ -1011,17 +1011,35 @@ fn collect_body_shadow_facts(
         let mut pattern = String::new();
         let mut in_type = false;
         let mut initialized = false;
+        // A `:` ends the pattern only outside brackets: a struct-field
+        // pattern (`Foo { a: score }`) carries a `:` inside its braces
+        // and must keep binding `score` (fail closed).
+        let mut depth = 0usize;
         let mut next = token.next_token();
         while let Some(current) = next {
-            match current.kind() {
-                ra_ap_syntax::SyntaxKind::EQ => {
-                    initialized = true;
-                    break;
+            let kind = current.kind();
+            if depth == 0 && kind == ra_ap_syntax::SyntaxKind::EQ {
+                initialized = true;
+                break;
+            }
+            if kind == ra_ap_syntax::SyntaxKind::SEMICOLON {
+                break;
+            }
+            if depth == 0 && kind == ra_ap_syntax::SyntaxKind::COLON {
+                in_type = true;
+            } else {
+                match kind {
+                    ra_ap_syntax::SyntaxKind::L_PAREN
+                    | ra_ap_syntax::SyntaxKind::L_BRACK
+                    | ra_ap_syntax::SyntaxKind::L_CURLY => depth += 1,
+                    ra_ap_syntax::SyntaxKind::R_PAREN
+                    | ra_ap_syntax::SyntaxKind::R_BRACK
+                    | ra_ap_syntax::SyntaxKind::R_CURLY => depth = depth.saturating_sub(1),
+                    _ => {}
                 }
-                ra_ap_syntax::SyntaxKind::SEMICOLON => break,
-                ra_ap_syntax::SyntaxKind::COLON => in_type = true,
-                _ if !in_type => pattern.push_str(current.text()),
-                _ => {}
+                if !in_type {
+                    pattern.push_str(current.text());
+                }
             }
             next = current.next_token();
         }
@@ -4608,6 +4626,13 @@ mod shadow_fact_equivalence_tests {
         assert!(
             absent.iter().all(|binding| binding.name != "score"),
             "no `let` means no shadow fact: {absent:?}"
+        );
+        let (_, field) = parser_facts(
+            "fn probe() {\n    assert_eq!({ let Foo { a: score } = f(); score(1) }, 1);\n}\n",
+        )?;
+        assert!(
+            field.iter().any(|binding| binding.name == "score"),
+            "a struct-field pattern's `:` must not end the pattern: {field:?}"
         );
         Ok(())
     }

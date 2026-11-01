@@ -2486,6 +2486,17 @@ fn own_crate_names_of(
         if same_package && owner_package.is_none() {
             names.extend(index.package_names.iter().cloned());
         }
+        // `owner_package` is a path prefix, not a crate identifier: read the
+        // library's import names from the manifests through the package's
+        // default library root, only for an owner classified into the
+        // library (a binary's crate is never importable).
+        if same_package
+            && owner_crate == Some("lib")
+            && let Some(prefix) = owner_package.filter(|prefix| prefix.ends_with('/'))
+        {
+            let lib_root = PathBuf::from(format!("{prefix}src/lib.rs"));
+            names.extend(index.member_crates.import_names(&test.file, &lib_root));
+        }
         return names;
     };
     // An integration test imports only the package's library, never a
@@ -2743,6 +2754,7 @@ pub(super) fn name_bound_outside_owner_crate(
     {
         return true;
     }
+    let in_owner_crate = scope.file_segments.is_some();
     // Mirror `resolve_bare`: the nearest scope binding the name wins, and
     // only an explicit path it cannot place counts against admission.
     let Some(scope) = scopes.scopes.iter().find(|scope| {
@@ -2758,6 +2770,13 @@ pub(super) fn name_bound_outside_owner_crate(
             UseBinding::Opaque => return false,
         };
         path.first().is_some_and(|first| {
+            // `crate::`/`self::` name the owner's modules only from a file
+            // composed into the owner's own crate; from another crate (an
+            // integration test, a binary) they bind that crate's items.
+            let crate_relative = matches!(first.as_str(), "crate" | "self");
+            if crate_relative && !in_owner_crate {
+                return true;
+            }
             first != "crate"
                 && first != "self"
                 && first != "super"
