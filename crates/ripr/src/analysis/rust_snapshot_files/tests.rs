@@ -107,6 +107,17 @@ fn inline_repeated_redirected_and_parameterized_shapes_are_unresolved() {
 }
 
 #[test]
+fn a_macro_whose_first_argument_is_not_a_name_is_unresolved() {
+    // `assert_binary_snapshot!(".json", bytes)` names an extension, not a file.
+    let call = "insta::assert_binary_snapshot!(\".json\", bytes);";
+    let body = format!("fn t() {{ {call} }}");
+    assert_eq!(names("t", &["#[test]"], &body, call, FILE), None);
+    let unknown = "insta::assert_future_snapshot!(\"x\", v);";
+    let body = format!("fn t() {{ {unknown} }}");
+    assert_eq!(names("t", &["#[test]"], &body, unknown, FILE), None);
+}
+
+#[test]
 fn arguments_split_only_at_top_level_outside_strings() {
     assert_eq!(
         split_top_level("\"a,b\", f(x, y), [1, 2],"),
@@ -199,4 +210,20 @@ fn an_untracked_snapshot_is_not_one_ci_sees() -> Result<(), String> {
     assert!(unlisted.holds_any(&["record".to_string()]));
     assert_ne!(listing.identity(), unlisted.identity());
     Ok(())
+}
+
+#[test]
+fn an_unknown_listing_never_says_a_snapshot_is_missing() {
+    let names = ["record".to_string()];
+    let complete = SnapshotListing {
+        files: Vec::new(),
+        unknown: false,
+    };
+    let unknown = SnapshotListing {
+        files: Vec::new(),
+        unknown: true,
+    };
+    assert!(complete.certainly_lacks(&names));
+    assert!(!unknown.certainly_lacks(&names));
+    assert_ne!(complete.identity(), unknown.identity());
 }

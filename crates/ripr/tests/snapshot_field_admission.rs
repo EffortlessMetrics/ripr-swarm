@@ -254,6 +254,22 @@ fn an_untracked_expected_file_does_not_credit_the_return_seam() -> Result<(), St
     Ok(())
 }
 
+// `assert_binary_snapshot!` takes an extension first; its committed file is
+// named for the function, so it must keep credit.
+#[test]
+fn a_committed_binary_snapshot_keeps_the_return_seam_credit() -> Result<(), String> {
+    let fixture = Fixture::new(
+        "insta::assert_binary_snapshot!(\".json\", record.items.to_string().into_bytes());",
+        Some("2"),
+    )?;
+    assert_eq!(grip(&fixture.record()?), "strongly_gripped");
+    // Its file name is not resolved, so a missing file keeps today's grade
+    // rather than being guessed.
+    fixture.expected(None)?;
+    assert_eq!(grip(&fixture.record()?), "strongly_gripped");
+    Ok(())
+}
+
 // A shape whose file name is not certain keeps today's grade rather than
 // guessing a missing file.
 #[test]
