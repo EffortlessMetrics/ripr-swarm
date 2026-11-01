@@ -1600,12 +1600,13 @@ fn check_inner(
     if !quiet && let Some(note) = super::doctor::first_check_artifact_ignore_note(&input.root) {
         eprintln!("{}", terminal_safe(note));
     }
-    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
-        std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
-            std::io::stderr().is_terminal(),
-            crate::cli::progress::ProgressPolicy::STANDARD,
-        ))
-    });
+    let progress = (!crate::cli::progress::progress_silenced(quiet, format.is_machine_readable()))
+        .then(|| {
+            std::sync::Arc::new(crate::cli::progress::CliProgressSink::for_stderr(
+                std::io::stderr().is_terminal(),
+                crate::cli::progress::ProgressPolicy::STANDARD,
+            ))
+        });
     let progress_sink = progress
         .as_ref()
         .map(|sink| &**sink as &dyn crate::app::AnalysisProgressSink);

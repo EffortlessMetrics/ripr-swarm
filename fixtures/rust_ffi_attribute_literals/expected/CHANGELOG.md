@@ -180,3 +180,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_ffi_attribute_literals (15)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+
+Command:
+`cargo xtask goldens bless rust_ffi_attribute_literals --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
