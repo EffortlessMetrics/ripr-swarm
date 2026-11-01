@@ -103,6 +103,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "reports ci-summary",
     "reports gap-ledger",
     "reports index",
+    "reports kani",
     "reports ts-false-actionable",
     "reports ts-limitations",
     "rerun",
@@ -183,6 +184,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         | "reports ci-summary"
         | "reports gap-ledger"
         | "reports index"
+        | "reports kani"
         | "reports ts-false-actionable"
         | "reports ts-limitations" => REPORTS_HELP,
         "rerun" => RERUN_HELP,
@@ -1443,6 +1445,7 @@ mod tests {
     const DOCTOR_PARSER_RS: &str = include_str!("commands/doctor.rs");
     const GATE_PARSER_RS: &str = include_str!("commands/gate.rs");
     const INIT_PARSER_RS: &str = include_str!("commands/init.rs");
+    const KANI_REPORT_PARSER_RS: &str = include_str!("commands/kani_report.rs");
     const PILOT_PARSER_RS: &str = include_str!("commands/pilot.rs");
     const BASELINE_PARSER_RS: &str = include_str!("commands/baseline.rs");
     const CACHE_PARSER_RS: &str = include_str!("commands/cache.rs");
@@ -1727,6 +1730,7 @@ mod tests {
             CLI_COMMANDS_RS,
             &["parse_report_packet_index_options"],
         ),
+        ("reports kani", KANI_REPORT_PARSER_RS, &["parse_options"]),
         (
             "reports ts-false-actionable",
             CLI_COMMANDS_RS,

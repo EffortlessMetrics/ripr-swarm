@@ -182,6 +182,7 @@ Reports:
   ripr reports ci-packet [--root .]
   ripr reports ci-summary [--root .] [--base-ref main] >> "$GITHUB_STEP_SUMMARY"
   ripr reports gap-ledger (--records PATH | --repo-exposure PATH | --check-output PATH) [--out target/ripr/reports/gap-decision-ledger.json]
+  ripr reports kani --input PATH --binding PATH [--root .] [--out PATH] [--out-md PATH]
   ripr reports ts-limitations --check-output <path> [--out target/ripr/reports/typescript-limitations.json]
   ripr reports ts-false-actionable --corpus <path> [--out target/ripr/reports/typescript-false-actionable-audit.json]
   ripr receipt write --gap <canonical_gap_id> --verify-command "<cmd>" --status <verify_status> [--packet <packet_id>] [--out PATH] [--json]
