@@ -329,3 +329,104 @@ fn given_importorskip_of_an_always_present_module_then_the_file_stays_active() {
         );
     }
 }
+
+#[test]
+fn given_a_loop_over_an_empty_literal_then_its_assert_is_not_read() {
+    assert_eq!(
+        assertion_count("    for i in []:\n        assert f(i) == 21\n"),
+        0
+    );
+    assert_eq!(
+        assertion_count("    for i in [1]:\n        assert f(i) == 21\n"),
+        1
+    );
+}
+
+#[test]
+fn given_a_definite_exit_before_an_assert_then_the_assert_is_not_read() {
+    for exit in [
+        "return",
+        "raise RuntimeError('x')",
+        "pytest.skip('no')",
+        "pytest.fail('no')",
+        "pytest.exit('no')",
+        "pytest.xfail('no')",
+        "os._exit(0)",
+        "sys.exit(0)",
+        "exit()",
+        "self.skipTest('x')",
+    ] {
+        assert_eq!(
+            assertion_count(&format!("    {exit}\n    assert f(3) == 21\n")),
+            0,
+            "{exit}"
+        );
+    }
+    assert_eq!(assertion_count("    assert f(3) == 21\n    return\n"), 1);
+}
+
+#[test]
+fn given_a_conditional_or_nested_exit_then_a_later_assert_is_still_read() {
+    // (body, assertions read): `pytest.raises` is itself an exception assertion.
+    for (body, expected) in [
+        ("    if f(1):\n        return\n    assert f(3) == 21\n", 1),
+        (
+            "    with pytest.raises(SystemExit):\n        sys.exit(0)\n    assert f(3) == 21\n",
+            2,
+        ),
+        (
+            "    try:\n        sys.exit(0)\n    except SystemExit:\n        pass\n    assert f(3) == 21\n",
+            1,
+        ),
+    ] {
+        assert_eq!(assertion_count(body), expected, "{body}");
+    }
+}
+
+#[test]
+fn given_a_later_binding_of_a_test_name_then_the_earlier_definition_is_controlled() {
+    for source in [
+        "def test_p():\n    assert f(3) == 6\n\n\ndef test_p():\n    assert True\n",
+        "def test_p():\n    assert f(3) == 6\n\n\ntest_p = None\n",
+        "def test_p():\n    assert f(3) == 6\n\n\ndef test_q():\n    assert True\n\n\ntest_p = test_q\n",
+        "class TestP:\n    def test_a(self):\n        assert f(3) == 6\n\n    def test_a(self):\n        assert True\n",
+        "import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(f(3), 6)\n\n    def test_a(self):\n        pass\n",
+        "def test_p():\n    assert f(3) == 6\n\n\ndel test_p\n",
+        "def test_p():\n    assert f(3) == 6\n\n\nfor test_p in [1]:\n    pass\n",
+        "def test_p():\n    assert f(3) == 6\n\n\nwith open('x') as test_p:\n    pass\n",
+        "def test_p():\n    assert f(3) == 6\n\n\ntest_p = make_test_p_helper()\n",
+        // A quoted spelling is not a read of the earlier definition.
+        "def test_p():\n    assert f(3) == 6\n\n\ntest_p = factory('test_p')\n",
+        "def test_p():\n    assert f(3) == 6\n\n\nfrom other import test_p\n",
+        "def test_p():\n    assert f(3) == 6\n\n\nfrom other import helper as test_p\n",
+        "def test_p():\n    assert f(3) == 6\n\n\nimport other as test_p\n",
+        "def test_p():\n    assert f(3) == 6\n\n\nimport test_p.sub\n",
+        "def test_p():\n    assert f(3) == 6\n\n\n*test_p, = []\n",
+    ] {
+        let tests = parse(&format!("from m import f\n\n{source}"));
+        assert!(activation_control(&tests[0]).is_some(), "{source}");
+    }
+}
+
+#[test]
+fn given_distinct_or_wrapping_bindings_then_no_test_is_shadowed() {
+    for source in [
+        "def test_p():\n    assert f(3) == 6\n\n\ndef test_q():\n    assert f(3) == 6\n",
+        "def test_p():\n    assert f(3) == 6\n\n\ntest_p = pytest.mark.slow(test_p)\n",
+        "def test_p():\n    assert f(3) == 6\n\n\nhelper = None\n",
+        "def test_p():\n    assert f(3) == 6\n\n\ntest_p = wrap(test_p)\n",
+        "def test_p():\n    assert f(3) == 6\n\n\nfor test_p in [test_p]:\n    pass\n",
+        "def test_p():\n    assert f(3) == 6\n\n\nwith test_p() as test_p:\n    pass\n",
+        "def test_p():\n    assert f(3) == 6\n\n\ndel other\n",
+        // An empty literal iterable never rebinds the target.
+        "def test_p():\n    assert f(3) == 6\n\n\nfor test_p in []:\n    pass\n",
+        "def test_p():\n    assert f(3) == 6\n\n\nimport other\n",
+        "class TestP:\n    def test_a(self):\n        assert f(3) == 6\n\n\nclass TestP(TestP):\n    pass\n",
+    ] {
+        let tests = parse(&format!("import pytest\nfrom m import f\n\n{source}"));
+        assert!(
+            tests.iter().all(|test| activation_control(test).is_none()),
+            "{source}"
+        );
+    }
+}

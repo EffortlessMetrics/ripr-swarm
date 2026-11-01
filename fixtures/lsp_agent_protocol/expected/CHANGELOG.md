@@ -407,3 +407,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — lsp_agent_protocol (26)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless lsp_agent_protocol --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1,0 +1,9 @@
+diff --git a/src/typeofKind.ts b/src/typeofKind.ts
+index 0000000..1111111 100644
+--- a/src/typeofKind.ts
++++ b/src/typeofKind.ts
+@@ -1,3 +1,3 @@
+ export function isBulk(n: number): boolean {
+-  return n >= 100;
++  return n > 100;
+ }

@@ -1351,7 +1351,11 @@ fn shortfalls(page: &mut Page, r: &Receipts, bars: &[Bar]) -> Result<(), String>
         false_actionable.numerator,
         false_actionable.denominator,
         percent(false_actionable.rate),
-        false_cases.join(", "),
+        if false_cases.is_empty() {
+            "no case recorded".to_string()
+        } else {
+            false_cases.join(", ")
+        },
         authored_false_actionable.numerator,
         authored_false_actionable.denominator,
         percent(authored_false_actionable.rate)
@@ -2045,7 +2049,7 @@ fn agent_section(page: &mut Page, agent: &Value) -> Result<(), String> {
     page.line("## An agent using only ripr's help");
     page.blank();
     page.line(format!(
-        "One agent per crate was given a real test gap and only ripr's own help output, and was scored against a mutation answer key. This is one run per crate, not a rate. Evidence: {}.",
+        "One agent per crate was given a real test gap and only ripr's own help output, and was scored against a mutation answer key. This is one run per crate, not a rate. The last two columns are scripted, not agent behaviour: what the first `ripr check` writes (stdout plus stderr) and how many gaps `--format agent` names on the unfixed gap commit. Evidence: {}.",
         req_str(agent, "evidence", "agent-as-user")?
     ));
     page.blank();
@@ -2073,6 +2077,13 @@ fn agent_section(page: &mut Page, agent: &Value) -> Result<(), String> {
                 value("agent.ripr_commands_to_fix", repo),
                 value("agent.tool_steps_to_fix", repo),
                 value("agent.false_weak_findings_after_fix", repo),
+                value("agent.agent_format_gaps_before_fix", repo),
+                format!(
+                    "{} / {} / {}",
+                    value("agent.check_bytes_human", repo),
+                    value("agent.check_bytes_agent_format", repo),
+                    value("agent.check_bytes_json", repo)
+                ),
             ]
         })
         .collect();
@@ -2083,6 +2094,8 @@ fn agent_section(page: &mut Page, agent: &Value) -> Result<(), String> {
             "ripr commands to fix",
             "Tool steps to fix",
             "False weak findings after the fix",
+            "Gap or open lines `--format agent` names before the fix",
+            "First `check` bytes: human / agent / JSON",
         ],
         &rows,
     );

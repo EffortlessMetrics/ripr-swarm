@@ -373,6 +373,58 @@ fn probe_walk_full_facts_all_shape_categories() -> Result<(), String> {
     Ok(())
 }
 
+// #11549: only a parsed call to `unreachable_unchecked` / `assert_unchecked`
+// relabels an `unsafe` block; a string, comment or similarly named item does not.
+#[test]
+fn probe_walk_labels_unchecked_assumption_blocks_by_parsed_call_only() -> Result<(), String> {
+    let text = r#"
+fn assumes(x: u32) -> u32 {
+    if x == 0 { unsafe { std::hint::unreachable_unchecked() }; }
+    unsafe { core::hint::assert_unchecked(x > 0) };
+    x
+}
+fn plain(p: *const u8) -> u8 {
+    // unsafe { unreachable_unchecked() }
+    let note = "unreachable_unchecked";
+    let _ = note;
+    unsafe { *p }
+}
+fn lookalike() {
+    unsafe { my_unreachable_unchecked_total() };
+}
+fn project_function() {
+    unsafe { local::assert_unchecked(true) };
+}
+fn deferred() {
+    unsafe {
+        fn never_called() { std::hint::assert_unchecked(true) }
+        let _ = || core::hint::unreachable_unchecked();
+    }
+}
+"#;
+    let facts = equivalent_file_facts(text)?;
+    let labels: Vec<&str> = facts
+        .probe_shapes
+        .iter()
+        .filter(|shape| shape.kind == ProbeShapeKind::UnsafeBoundary)
+        .map(|shape| shape.text.as_str())
+        .collect();
+    let assumed = labels
+        .iter()
+        .filter(|label| **label == UNCHECKED_ASSUMPTION_LABEL)
+        .count();
+    assert_eq!(assumed, 2, "{labels:?}");
+    assert_eq!(
+        labels
+            .iter()
+            .filter(|label| **label == "unsafe block")
+            .count(),
+        4,
+        "{labels:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn probe_walk_full_facts_nested_return_targets_and_duplicate_shapes() -> Result<(), String> {
     let text = r#"

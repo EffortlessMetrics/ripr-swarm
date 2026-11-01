@@ -654,7 +654,7 @@ seam packet states the edit cage its repair will enforce — `allowed_edit_surfa
 derived from the same recommended target the cage authority consumes,
 `forbidden_files` (the production file whose behavior changed), and
 `must_not_change` with the explicit terminality warning — so the disclosure
-cannot drift from enforcement (#4330). The `next` snapshot recipes are single
+cannot drift from enforcement (#4330). A packet for a single relational predicate boundary (`<`, `<=`, `>`, `>=`) also carries an advisory `proof_obligation` (#11551): the written predicate and operands verbatim, boundary witness relations, a symbolic property skeleton and its limits. It changes neither the class nor whether a repair is offered, and any other shape omits it. The `next` snapshot recipes are single
 plain commands without a POSIX-only directory prefix; the loop's `ripr`
 commands create their own artifact directories. The
 prepared command pins the published exact attempt selector; a finished attempt

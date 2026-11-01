@@ -102,8 +102,11 @@ fn a_writer_anywhere_else_keeps_the_limit() -> Result<(), String> {
         "def test_wrap(f):\n    globals()[\"pytest\"] = f\n    return f\n\n\n@test_wrap\ndef test_wrapped():\n    pass\n",
     ] {
         let finding = classify_module(&module_with(other))?;
+        // Module-scope substitution forms (`fixture_substitution.rs`) may also
+        // speak as the stronger `mocked_module` limit; either withholds credit.
         assert!(
-            is_fixture_limited(&finding),
+            is_fixture_limited(&finding)
+                || finding.static_limit_kind == Some(StaticLimitKind::MockedModule),
             "{other:?} must keep the limit: {:?}",
             finding.evidence
         );

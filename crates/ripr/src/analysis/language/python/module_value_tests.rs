@@ -852,7 +852,12 @@ fn continuation_lines_cannot_hide_a_return_before_the_assertion() -> Check {
         let source = limit_test(body);
         let tests = tests_of(&[("tests/test_settings.py", &source)]);
         assert_eq!(tests.len(), 1, "the fixture must extract a test");
-        assert_eq!(tests[0].assertions.len(), 1, "keep the target assertion");
+        // The definite exit is read from the parsed statements, so the
+        // assertion after it is never extracted and earns no credit.
+        assert!(
+            tests[0].assertions.is_empty(),
+            "an assertion after a definite return must not be extracted"
+        );
         assert_abstains(&classify_limit(&source)?);
     }
     for body in [

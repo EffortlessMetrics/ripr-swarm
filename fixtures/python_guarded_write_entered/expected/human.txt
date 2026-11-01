@@ -19,9 +19,7 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:shapes/noter.py:Recorder.note:field_value:field_construction:self.last=fault
   Changed behavior: self.last = "fault"
-  Discriminator (observed, advisory): Related Python test reaches `note` with an `exact_value`
-    oracle. Static evidence suggests the changed behavior is observed under an exact-value
-    discriminator
+  Check (observed, advisory): Related Python test reaches `note` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check
   Related test: tests/test_noter.py:3 test_note
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator yes
@@ -42,7 +40,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_guarded_write_entered/input --diff <cwd>/fixtures/python_guarded_write_entered/diff.patch --mode fast probe:shapes_noter.py:python_preview:a00e0fc8
   ripr context --root <cwd>/fixtures/python_guarded_write_entered/input --diff <cwd>/fixtures/python_guarded_write_entered/diff.patch --mode fast --at probe:shapes_noter.py:python_preview:a00e0fc8
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `shapes/noter.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 More:
   Full evidence: rerun with --format human-full

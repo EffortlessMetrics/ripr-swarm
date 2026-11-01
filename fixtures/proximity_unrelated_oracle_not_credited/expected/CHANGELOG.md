@@ -85,3 +85,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (8)
+
+Reason:
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

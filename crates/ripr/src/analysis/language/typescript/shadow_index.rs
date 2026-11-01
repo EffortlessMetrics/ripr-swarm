@@ -23,9 +23,9 @@
 
 use super::oracle::is_safe_javascript_identifier;
 use super::related_tests::{
-    BodyWalkEvent, declaration_line_declared_names, declaration_scope_binds,
-    has_member_call_boundary, header_declares_identifier, is_javascript_identifier_char,
-    is_object_literal_key, params_bind_identifier, walk_body_lexical,
+    BodyWalkEvent, declaration_line_declarators, declaration_scope_binds, has_member_call_boundary,
+    header_declares_identifier, is_javascript_identifier_char, is_object_literal_key,
+    params_bind_identifier, walk_body_lexical,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -73,14 +73,17 @@ impl BodyShadowIndex {
         let scopes = walk_body_lexical(body_text, |event| match event {
             BodyWalkEvent::DeclarationLine {
                 line,
-                name_start,
+                line_start,
                 scope,
             } => {
-                for name in declaration_line_declared_names(line) {
+                for (name, offset) in declaration_line_declarators(line) {
                     declarations
                         .entry(name.to_string())
                         .or_default()
-                        .push(DeclaredName { name_start, scope });
+                        .push(DeclaredName {
+                            name_start: line_start + offset,
+                            scope,
+                        });
                 }
             }
             BodyWalkEvent::CodePosition { idx } => {

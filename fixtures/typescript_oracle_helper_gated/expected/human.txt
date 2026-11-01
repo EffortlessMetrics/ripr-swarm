@@ -24,8 +24,8 @@ Start here:
     `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or
     a `toThrow` form with an exact payload (string, object, or class reference)
   Related test: tests/pricing.test.ts:9 price is checked through helper
-  Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
-    discriminator `base == 0`; no actionable repair packet is emitted until verify, receipt, and
+  Next step — TypeScript preview advisory: add or strengthen a focused assertion for the missing
+    check `base == 0`; no actionable repair packet is emitted until verify, receipt, and
     edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -45,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_oracle_helper_gated/input --diff <cwd>/fixtures/typescript_oracle_helper_gated/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:0335115b
   ripr context --root <cwd>/fixtures/typescript_oracle_helper_gated/input --diff <cwd>/fixtures/typescript_oracle_helper_gated/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:0335115b
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

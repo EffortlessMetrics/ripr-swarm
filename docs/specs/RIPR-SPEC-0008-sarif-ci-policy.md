@@ -127,7 +127,7 @@ Every SARIF result should include:
 Finding fingerprints should prefer:
 
 ```text
-rule_id | finding_id | probe_id | normalized_file | line
+rule_id | finding_id | probe_id | normalized_file
 ```
 
 Seam fingerprints should prefer:
@@ -135,6 +135,15 @@ Seam fingerprints should prefer:
 ```text
 rule_id | normalized_file | identity_hash | ordinal
 ```
+
+The finding's display line is intentionally absent. When the producer's native
+finding/probe identity remains stable, moving the same changed behavior updates
+its physical location without creating a new fingerprint. Rust, Python and
+TypeScript retain their existing native identity rules and collision limits.
+The Perl projection uses the named-owner semantic payload described in
+[SPEC-0064](RIPR-SPEC-0064-perl-fact-packet-contract.md#ripr-derived-identities);
+unnamed or ambiguous owners retain an explicitly location-bound fallback.
+The renderer does not infer semantic identity from display text.
 
 A seam fingerprint is independent of the display line, the byte offset and the
 offset-derived `seam_id` (#11219), so an unrelated edit above a seam keeps its
@@ -158,6 +167,27 @@ is a different seam identity and opens a new alert; the fingerprint follows
 the seam's text and scope, not a tracked "same seam" across edits.
 `properties.seam_id` is unchanged.
 
+Both `partialFingerprints.riprFingerprintV1` and
+`fingerprints.riprFingerprintV1` carry the same string. File and rule segments
+remain part of identity: moving a finding to a different file or changing its
+exposure class is not a pure line move. Native exposure suppressions still
+match exact `finding.id` values, independently of SARIF fingerprint text.
+Distinct native filenames must remain distinct after path normalization. In
+particular, Unix `src/a\b.rs` and `src/a/b.rs` name different files; retaining a
+file segment alone does not establish this property. The native-filename
+control below covers equal producer IDs at different display lines, where a
+line-free fingerprint must still preserve the file boundary.
+
+Dropping the finding line changes existing fingerprint strings once, including
+stationary findings. The policy reader compares opaque strings and supplies no
+legacy alias, so an old SARIF baseline may report unchanged findings as new.
+Review and refresh that baseline after the transition. Perl's new native IDs
+also require reviewed replacement of old finding-ID selectors; an ambiguous old
+owner-based selector must never suppress either or both new behaviors by alias.
+Unmatched selectors remain unapplied with a visible warning. These contracts do
+not establish live code-scanning ingestion, producer digest correctness or
+universal collision freedom.
+
 `normalized_file` and the physical location `uri` do not depend on how
 `--root` is spelled: `.`, `./` and the checkout's absolute path render the
 same text, because an absolute root prefix is removed before rendering. A
@@ -168,8 +198,9 @@ For retained UTF-8 finding paths (`--format sarif`), separators follow the
 native host: Windows backslashes become `/`, while a literal backslash in a
 Unix filename remains part of that filename. In particular, `src/a\b.rs`
 on Unix must emit `src/a%5Cb.rs`, distinct from `src/a/b.rs`; its fingerprint
-retains the literal backslash too. Existing fingerprints for ordinary
-slash-separated paths remain unchanged. Repo-scoped seam construction still
+retains the literal backslash too. Path conversion leaves ordinary
+slash-separated file components unchanged; finding fingerprint migration is
+described above. Repo-scoped seam construction still
 normalizes backslashes before rendering; the renderer cannot restore native
 filename bytes already discarded by that producer.
 
@@ -333,6 +364,9 @@ Implemented renderer tests:
 - `crates/ripr/tests/sarif_uri_identity.rs::native_windows_separators_are_slashes`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_renders_findings_with_stable_rule_ids`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_renders_seams_with_stable_rule_ids`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_moves_locations_but_retains_file_and_rule_boundaries`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_seam_identity_is_line_independent_but_file_and_rule_bound`
+- `crates/ripr/src/output/sarif.rs::tests::sarif_finding_identity_keeps_distinct_native_unix_filenames` (`#[cfg(unix)]`: `src/a.rs` is a nested path on Windows, so this control does not run there; Windows separator conversion is pinned by `sarif_uri_identity.rs::native_windows_separators_are_slashes`)
 - `crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_finding_severity`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_uses_configured_seam_severity`
 - `crates/ripr/src/output/sarif.rs::tests::sarif_omits_off_seam_class`
@@ -349,12 +383,16 @@ Implemented renderer tests:
 - `crates/ripr/src/output/sarif.rs::tests::a_suppressed_finding_is_not_folded_into_an_active_one`
 - `crates/ripr/src/output/sarif.rs::tests::findings_without_a_line_are_never_folded`
 
-Implemented policy tests:
+Implemented policy tests (the `sarif_identity_*` controls need the Perl adapter and compile only with `cargo test -p xtask --features perl-identity`, run in the Perl lane so the shared workspace graph keeps the shipped feature set):
 
 - `xtask/src/main.rs::tests::sarif_policy_passes_when_no_new_results`
 - `xtask/src/main.rs::tests::sarif_policy_flags_new_warning_result`
 - `xtask/src/main.rs::tests::sarif_policy_ignores_note_when_threshold_warning`
 - `xtask/src/main.rs::tests::sarif_policy_missing_baseline_is_advisory_by_default`
+- `xtask/src/reports/sarif_identity_tests.rs::sarif_identity_preserves_perl_changes_and_supported_line_shifts`
+- `xtask/src/reports/sarif_identity_tests.rs::sarif_identity_keeps_native_suppression_exact_and_legacy_selector_stale`
+- `xtask/src/reports/sarif_identity_tests.rs::sarif_identity_legacy_finding_baselines_require_explicit_transition`
+- `xtask/src/reports/sarif_identity_tests.rs::sarif_identity_native_paths_survive_policy_baselines_and_line_moves`
 
 ## Implementation Mapping
 
