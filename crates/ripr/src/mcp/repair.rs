@@ -654,7 +654,12 @@ pub(super) fn verify_after_editing_tests() -> Value {
 /// The one machine-readable next step for a refused `ripr_prepare_repair`,
 /// derived from the same typed reason the shared gate produced. It adds no
 /// verdict: a terminal refusal never becomes a route the gate refused.
-fn refusal_next(reason: &str, class: &str, canonical_id: &str) -> Value {
+fn refusal_next(
+    reason: &str,
+    class: &str,
+    canonical_id: &str,
+    stub_route: Option<&(String, usize, &'static str)>,
+) -> Value {
     let gap_route = json!({
         "tool": "ripr_get_gap",
         "arguments": { "canonical_id": canonical_id },
@@ -691,13 +696,31 @@ fn refusal_next(reason: &str, class: &str, canonical_id: &str) -> Value {
             Value::Null,
         ),
     };
-    json!({
+    let mut next = json!({
         "kind": kind,
         "reason": reason,
         "detail": detail,
         "mcp": mcp,
         "after_editing_tests": verify,
-    })
+    });
+    // #11622: a seam the repair gate could not bind (`seam_not_found`) or
+    // could not choose (`seam_ambiguous`) still has the manual stub route
+    // `ripr repair` names: the shared resolver derives the test skeleton from
+    // the changed code. Guidance only: it grants no repair readiness. A path
+    // that would need shell quoting names no command rather than a wrong one.
+    if matches!(reason, "seam_not_found" | "seam_ambiguous")
+        && let Some((file, line, family)) = stub_route
+        && !file
+            .chars()
+            .any(|c| c.is_whitespace() || "'\"`$\\;&|<>()*?[]{}!#~".contains(c))
+    {
+        next["stub_route"] = json!({
+            "command": format!("ripr agent stub --at {file}:{line} --kind {family}"),
+            "run_from": "the repository root",
+            "note": "writes nothing without --write; derives a test skeleton from the changed code. Fill its todo!() values by hand, then re-check with after_editing_tests. This route does not make the item repair-ready.",
+        });
+    }
+    next
 }
 
 impl WorkspaceSession {
@@ -761,6 +784,7 @@ impl WorkspaceSession {
                         .and_then(Value::as_str)
                         .unwrap_or(""),
                     &item.canonical_id,
+                    item.stub_route.as_ref(),
                 ),
                 "recovery": if reason.starts_with("seam_") {
                     "the shared repair gate refused this seam and ripr_prepare_repair does not override it; calling it again or re-running ripr_refresh on an unchanged tree changes nothing. See `next` for the one route to take"
@@ -1193,7 +1217,7 @@ pub(super) mod tests {
     #[test]
     fn refusal_next_maps_each_reason_to_one_route() -> Result<(), String> {
         let check_route = |reason: &str, class: &str, kind: &str, verify: bool| {
-            let next = refusal_next(reason, class, "gap:x");
+            let next = refusal_next(reason, class, "gap:x", None);
             if next["kind"] != kind
                 || next["reason"] != reason
                 || next["after_editing_tests"].is_null() == verify
@@ -1239,13 +1263,55 @@ pub(super) mod tests {
             "await_producer_fact",
             false,
         )?;
-        let by_hand = refusal_next("seam_not_found", "weakly_exposed", "gap:x");
+        let by_hand = refusal_next("seam_not_found", "weakly_exposed", "gap:x", None);
         if by_hand["mcp"]["arguments"]["canonical_id"] != "gap:x"
             || by_hand["after_editing_tests"]["mcp"]["arguments"]["source"] != "worktree"
         {
             return Err(format!(
                 "by-hand route lost its gap or verify route: {by_hand}"
             ));
+        }
+        Ok(())
+    }
+
+    /// #11622: `seam_not_found` and `seam_ambiguous` carry the manual stub
+    /// route the shared resolver named; no other reason does, a missing route
+    /// stays absent, and a path needing shell quoting names no command.
+    #[test]
+    fn refusal_next_carries_the_stub_route_only_for_unbound_seams() -> Result<(), String> {
+        let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
+        for reason in ["seam_not_found", "seam_ambiguous"] {
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route));
+            if next["stub_route"]["command"]
+                != "ripr agent stub --at src/pricing.rs:88 --kind predicate"
+                || next["kind"] != "write_test_by_hand"
+            {
+                return Err(format!("{reason} lost the stub route: {next}"));
+            }
+        }
+        for reason in [
+            "seam_already_gripped",
+            "seam_gate_refused",
+            "seam_inventory_truncated",
+            "something_new",
+        ] {
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route));
+            if next.get("stub_route").is_some() {
+                return Err(format!("{reason} must not name a stub route: {next}"));
+            }
+        }
+        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", None)
+            .get("stub_route")
+            .is_some()
+        {
+            return Err("no resolver route means no stub_route".into());
+        }
+        let spaced = ("src/my file.rs".to_string(), 3_usize, "predicate");
+        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", Some(&spaced))
+            .get("stub_route")
+            .is_some()
+        {
+            return Err("a path needing quoting must not name a command".into());
         }
         Ok(())
     }
