@@ -498,7 +498,7 @@ fn stated_flags(prose: &str, ranges: &[(usize, usize)], gated: bool) -> Vec<Stri
             .unwrap_or("")
             .to_ascii_lowercase();
         let verb_ok = FLAG_VERBS.contains(&word.as_str())
-            || (word == "original" && original_flag_instruction(&before));
+            || (word == "original" && original_flag_instruction(before));
         let chained = FLAG_JOINERS.contains(&word.trim_end_matches(',')) || before.ends_with(',');
         let continues = chained
             && last_counted_end.is_some_and(|prev| {
