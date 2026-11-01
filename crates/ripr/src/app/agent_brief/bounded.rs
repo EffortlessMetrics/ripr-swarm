@@ -41,7 +41,7 @@ impl<'a> BoundedAgentBrief<'a> {
     ) -> Result<Self, String> {
         if working_set.seam_id.is_some() {
             return Err(
-                "streamed review selection does not accept an explicit seam-id scope".into(),
+                "streamed review selection does not accept an explicit seam-id scope; remove the seam-id scope, or request the brief without streaming".into(),
             );
         }
         Ok(Self {

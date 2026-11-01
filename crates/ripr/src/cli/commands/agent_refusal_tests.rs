@@ -575,7 +575,7 @@ fn agent_receipt_with_a_malformed_attempt_id_is_a_failure() -> Result<(), String
     let _ = std::fs::remove_dir_all(&root);
     match result {
         Err(CommandError::Failure(message))
-            if message == "repair attempt ID must start with `repair-attempt-`" =>
+            if message.starts_with("repair attempt ID must start with `repair-attempt-`") =>
         {
             Ok(())
         }

@@ -80,6 +80,7 @@ mod call_chain;
 mod caplog_text;
 mod classify;
 mod conditional_defs;
+mod conditional_expression;
 mod dataclass_default;
 mod deleted_lines;
 mod doctest_eval;
@@ -1862,6 +1863,9 @@ mod unreachable_assertion_tests;
 
 #[cfg(test)]
 mod arm_activation_tests;
+
+#[cfg(test)]
+mod conditional_expression_tests;
 
 #[cfg(test)]
 mod assertion_selection_tests;

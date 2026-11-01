@@ -554,7 +554,8 @@ fn table_does_not_vary(
     let Some(expected_value) = unvaried_column_value(&table.cases, &expected_name) else {
         return false;
     };
-    literals_equal(&operand_value, &expected_value) && literals_equal(&operand_value, replacement)
+    literals_equal(&operand_value, &expected_value) == Some(true)
+        && literals_equal(&operand_value, replacement) == Some(true)
 }
 
 fn arithmetic_rows_agree(
@@ -1320,7 +1321,7 @@ fn unvaried_column_value(cases: &[BTreeMap<String, String>], column: &str) -> Op
     let first = values.first()?.clone();
     values
         .iter()
-        .all(|value| literals_equal(value, &first))
+        .all(|value| literals_equal(value, &first) == Some(true))
         .then_some(first)
 }
 

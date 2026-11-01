@@ -139,6 +139,7 @@ mod freshness;
 mod options;
 mod preflight;
 mod rendering;
+mod run_chain;
 mod validation;
 
 use freshness::{producing_ripr_version, start_here_packet_version_freshness};
@@ -200,7 +201,37 @@ pub(crate) fn first_pr(args: &[String]) -> Result<(), String> {
     if options.check {
         check_first_pr(&repo, &options)
     } else {
+        if options.run_chain {
+            run_missing_artifact_chain(&repo, &options)?;
+        }
         write_first_pr(&repo, &options)
+    }
+}
+
+/// `--run-chain` (#11720): execute the missing-artifact chain before the
+/// ordinary composition. A root or Git preflight that already blocks gets no
+/// analysis run for it; the recovery packet below records that state.
+fn run_missing_artifact_chain(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
+    let root = resolve_path(repo, &options.root);
+    if let Some(selection) =
+        root_preflight_recovery(&root, options).or_else(|| git_preflight_recovery(&root, options))
+    {
+        println!(
+            "run-chain: not run; the root or Git preflight is blocked ({}). The start-here packet records the recovery.",
+            selection.to_json()["state"].as_str().unwrap_or("blocked")
+        );
+        return Ok(());
+    }
+    match run_chain::plan_chain(&root, options)? {
+        run_chain::ChainPlan::NotApplicable(reason) => {
+            println!("run-chain: not run; {reason}.");
+            Ok(())
+        }
+        run_chain::ChainPlan::Steps(steps) if steps.is_empty() => {
+            println!("run-chain: nothing to run; the chain artifacts already exist.");
+            Ok(())
+        }
+        run_chain::ChainPlan::Steps(steps) => run_chain::run_steps(&root, options, &steps),
     }
 }
 
@@ -236,6 +267,10 @@ fn omitted_base_resolution(
 /// `parse_options` and before any filesystem write.
 fn print_side_effect_disclosure(options: &FirstPrOptions) {
     println!("ripr first-pr - side effects and cost disclosure");
+    if options.run_chain {
+        print_run_chain_disclosure(options);
+        return;
+    }
     // first-pr composes existing artifacts; it runs no analysis, so it has
     // no analysis cache or diff-sized runtime to disclose.
     println!("  cost class:      artifact composition only; runs no analysis");
@@ -251,6 +286,27 @@ fn print_side_effect_disclosure(options: &FirstPrOptions) {
     println!("  git reads:       yes (base and head preflight)");
     println!("  network:         none");
     println!("  runtime hint:    seconds\n");
+}
+
+/// The `--run-chain` disclosure (#11720). Unlike the default, this
+/// invocation runs analysis, so it says so and names what it writes.
+fn print_run_chain_disclosure(options: &FirstPrOptions) {
+    println!(
+        "  cost class:      runs analysis for each missing artifact (repo-exposure scan, gap ledger, review cards); scales with repository size"
+    );
+    println!(
+        "  writes to:       each missing artifact ({}, {}, {}) and {}/",
+        DEFAULT_REPO_EXPOSURE,
+        options.gap_ledger,
+        options.review_comments,
+        options.out_dir.trim_end_matches('/')
+    );
+    println!("  cache location:  analysis caches as `ripr check`, under target/ripr/");
+    println!("  git reads:       yes (base and head preflight, diff for the review cards)");
+    println!("  network:         none");
+    println!(
+        "  runtime hint:    minutes on a large repository; steps whose artifact already exists are skipped\n"
+    );
 }
 
 fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
@@ -2696,6 +2752,20 @@ fn why_for_gap(kind: &str, language: Option<&str>) -> String {
 /// unbalanced quotes, a trailing escape, another program, or an unquoted
 /// shell operator (a redirect or a chained command writes elsewhere).
 fn ripr_command_words(command: &str) -> Option<Vec<(String, bool)>> {
+    let words = tokenize_command_words(command)?;
+    if words.first().map(|(word, _)| word.as_str()) != Some("ripr") {
+        return None;
+    }
+    let operator = words.iter().any(|(word, quoted)| {
+        !quoted && matches!(word.as_str(), ">" | ">>" | "|" | "&&" | "||" | ";")
+    });
+    (!operator).then_some(words)
+}
+
+/// Split a printed command into words, each with whether any part of it was
+/// quoted. `None` for unbalanced quotes or a trailing escape. Shell operators
+/// stay ordinary unquoted words: the caller decides what they mean.
+fn tokenize_command_words(command: &str) -> Option<Vec<(String, bool)>> {
     let mut words: Vec<(String, bool)> = Vec::new();
     let mut current = String::new();
     let mut quoted_word = false;
@@ -2735,13 +2805,7 @@ fn ripr_command_words(command: &str) -> Option<Vec<(String, bool)>> {
     if in_word {
         words.push((current, quoted_word));
     }
-    if words.first().map(|(word, _)| word.as_str()) != Some("ripr") {
-        return None;
-    }
-    let operator = words.iter().any(|(word, quoted)| {
-        !quoted && matches!(word.as_str(), ">" | ">>" | "|" | "&&" | "||" | ";")
-    });
-    (!operator).then_some(words)
+    Some(words)
 }
 
 /// Value of the last unquoted `flag` in a ripr command's words.
@@ -3290,11 +3354,22 @@ fn resolve_path(root: &Path, path: &str) -> PathBuf {
 }
 
 fn normalized_path(path: &Path) -> String {
-    path.display()
+    let text = path
+        .display()
         .to_string()
         .replace('\\', "/")
         .trim_end_matches('/')
-        .to_ascii_lowercase()
+        .to_ascii_lowercase();
+    // A Windows `canonicalize` yields a verbatim prefix (`//?/D:/...`,
+    // `//?/UNC/host/share`) that names the same directory as the plain form,
+    // so a ledger recorded canonically is not a foreign root.
+    match text.strip_prefix("//?/") {
+        Some(rest) => match rest.strip_prefix("unc/") {
+            Some(unc) => format!("//{unc}"),
+            None => rest.to_string(),
+        },
+        None => text,
+    }
 }
 
 /// The selected root first-pr displays are rendered against: `--root` as
@@ -3312,6 +3387,29 @@ fn repo_root() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_verbatim_prefixed_root_is_the_same_root_as_its_plain_form() {
+        use std::path::Path;
+        // Drive-letter spellings are assembled so no literal local path
+        // appears in the source (check-local-context).
+        let drive = "D";
+        let verbatim = format!(r"\\?\{drive}:\a\Repo\");
+        let plain = format!("{}:/a/repo", drive.to_ascii_lowercase());
+        assert_eq!(
+            super::normalized_path(Path::new(&verbatim)),
+            super::normalized_path(Path::new(&plain))
+        );
+        assert_eq!(
+            super::normalized_path(Path::new(r"\\?\UNC\host\share\r")),
+            super::normalized_path(Path::new(r"\\host\share\r"))
+        );
+        let other = format!(r"\\?\{drive}:\a\other");
+        assert_ne!(
+            super::normalized_path(Path::new(&other)),
+            super::normalized_path(Path::new(&plain))
+        );
+    }
+
     #[test]
     fn resolve_path_drops_the_roots_own_cur_dir() {
         // `--root .` used to render every emitted artifact as
@@ -6240,6 +6338,49 @@ mod tests {
         read_packet(&repo.join(DEFAULT_OUT_DIR).join(START_HERE_JSON))
     }
 
+    /// #11720: `--run-chain` runs the review cards only when the ordinary
+    /// selection would ask for them (the packet's `needed_when`).
+    #[test]
+    fn run_chain_gates_the_review_cards_on_the_ledger_naming_no_repair_start() -> Result<(), String>
+    {
+        let options = FirstPrOptions::default();
+        let planned_cards = |repo: &Path| -> Result<bool, String> {
+            match run_chain::plan_chain(repo, &options)? {
+                run_chain::ChainPlan::Steps(steps) => Ok(steps
+                    .iter()
+                    .any(|step| step.label == "review cards" && step.only_when_cards_needed)),
+                run_chain::ChainPlan::NotApplicable(reason) => Err(reason),
+            }
+        };
+
+        // A ledger that names a repair start: cards are missing but not needed.
+        let repair = temp_repo("first-pr-run-chain-gate-repair")?;
+        write_json(
+            &repair.join(DEFAULT_GAP_LEDGER),
+            ledger_with_repairable_gap(),
+        )?;
+        assert!(
+            planned_cards(&repair)?,
+            "the step is planned, conditionally"
+        );
+        assert!(!run_chain::review_cards_needed(&repair, &options));
+        cleanup(&repair)?;
+
+        // A ledger with no repair start: first-pr would ask for the cards.
+        let none = temp_repo("first-pr-run-chain-gate-none")?;
+        write_json(
+            &none.join(DEFAULT_GAP_LEDGER),
+            ledger_with_repo_scoped_gap_only(),
+        )?;
+        assert!(run_chain::review_cards_needed(&none, &options));
+        cleanup(&none)?;
+
+        // No ledger at all: nothing to decide from, so not needed.
+        let absent = temp_repo("first-pr-run-chain-gate-absent")?;
+        assert!(!run_chain::review_cards_needed(&absent, &options));
+        cleanup(&absent)
+    }
+
     /// #3905 negative (a): the `status == "missing"` filter. Repo exposure
     /// is present and the ledger is missing, while a valid cards file already
     /// exists, so the present cards must not be listed as also missing.
@@ -8161,9 +8302,10 @@ mod tests {
         let command = recommend(&|_| {})?
             .ok_or("a current, complete, producer-made TypeScript record must recommend")?;
         assert!(
-            command.starts_with(
-                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base 'HEAD~1' --root "
-            ) && command.ends_with(" --phase before"),
+            command.starts_with(&format!(
+                "ripr agent repair --gap-id gap:typescript:typescript_preview:2396aec1 --base {} --root ",
+                shell_arg("HEAD~1")
+            )) && command.ends_with(" --phase before"),
             "{command}"
         );
 
