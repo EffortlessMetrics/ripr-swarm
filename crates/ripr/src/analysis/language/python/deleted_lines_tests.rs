@@ -1352,8 +1352,8 @@ fn deleted_guard_header_view_covers_elif_else_while_nested_methods_and_decorator
     ];
     assert_eq!(old_view_line(new, old, "f", &removed, 3, &[]), Some(4));
     // A method in a class and a decorated function resolve their own header.
-    let new = "class C:\n    def m(self, total):\n        return total\n";
-    let old = "class C:\n    def m(self, total):\n        if total > 1:\n            total = 2\n        return total\n";
+    let new = "class Cart:\n    def m(self, total):\n        return total\n";
+    let old = "class Cart:\n    def m(self, total):\n        if total > 1:\n            total = 2\n        return total\n";
     let removed = [
         line(3, 3, "        if total > 1:"),
         line(4, 3, "            total = 2"),
