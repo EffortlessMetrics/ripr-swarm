@@ -17941,6 +17941,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::awaited_returned_and_expression_bodied_promise_assertions_stay_exposed",
   "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::floating_promise_assertions_supply_no_discriminator",
   "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::promise_all_wrapping_is_never_newly_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::floating_owner_assertion_beside_an_awaited_unrelated_one_stays_a_gap",
   "crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs::comparison_edit_reads_one_condition_changed_in_a_template_or_ternary",
   "crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs::comparison_edit_refuses_everything_but_one_bare_condition",
   "crates/ripr/src/analysis/language/typescript/tests/comparison_edit_tests.rs::inputs_both_comparisons_treat_alike_leave_the_edit_unreached",
@@ -18467,6 +18468,10 @@ id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::awaited_returned_and_expression_bodied_promise_assertions_stay_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::floating_promise_assertions_supply_no_discriminator",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::promise_all_wrapping_is_never_newly_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/floating_promise_tests.rs::floating_owner_assertion_beside_an_awaited_unrelated_one_stays_a_gap",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_isolate_mutation_provenance_and_dormant_values",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_retain_thrown_runner_mutation",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::skipped_suite_bindings_retain_evaluated_constructor_body",

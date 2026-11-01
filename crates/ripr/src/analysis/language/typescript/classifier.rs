@@ -5788,6 +5788,12 @@ fn unresolved_assertions_only(
 /// marker in either never counts. An unrelated callback, and other
 /// `Unresolved` causes (a shadowed `expect`, a no-op helper), stay actionable
 /// gaps.
+///
+/// A third shape is a floating `expect(<owner call>).resolves|rejects...`
+/// (#11535, RIPR-SPEC-0246 rule 4): jest-derived and conservative for vitest,
+/// where an un-awaited, un-returned assertion may not fail the test. Known
+/// over-demotions toward `static_unknown`: `expect.assertions(n)` tests, an
+/// expression-bodied subtest, and a function-reference callback.
 pub(super) fn body_asserts_in_unmodeled_callback(body: &str, owner_name: &str) -> bool {
     let masked = mask_comments_and_strings(body);
     floating_promise_assertion_on_owner(&masked, owner_name)

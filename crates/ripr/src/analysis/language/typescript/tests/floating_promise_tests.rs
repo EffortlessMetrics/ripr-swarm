@@ -111,6 +111,18 @@ fn promise_all_wrapping_is_never_newly_credited() -> Result<(), String> {
     // only that nothing is credited as `exposed`.
     let body = "test('t', async () => { await Promise.all([expect(Promise.resolve(f(100))).resolves.toBe(false)]); });";
     assert_eq!(assertion_count(&test_file(body)), 0);
-    assert_ne!(class_of("promise-all", body)?, ExposureClass::Exposed);
+    assert_eq!(class_of("promise-all", body)?, ExposureClass::StaticUnknown);
+    Ok(())
+}
+
+#[test]
+fn floating_owner_assertion_beside_an_awaited_unrelated_one_stays_a_gap() -> Result<(), String> {
+    let body = "test('t', async () => {\n  expect(Promise.resolve(f(100))).resolves.toBe(false);\n  await expect(Promise.resolve(1)).resolves.toBe(1);\n});";
+    assert_eq!(assertion_count(&test_file(body)), 1, "only the awaited one");
+    assert_eq!(
+        class_of("mixed", body)?,
+        ExposureClass::WeaklyExposed,
+        "mixed"
+    );
     Ok(())
 }

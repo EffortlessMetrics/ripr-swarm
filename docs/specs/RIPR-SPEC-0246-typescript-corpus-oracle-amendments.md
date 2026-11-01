@@ -143,7 +143,8 @@ runner nor awaited (it may settle after the test); a `.then` with a
 rejection handler (it can swallow the change), a chained or multi-line
 receiver, or a body that re-declares a receiver name; a subtest that is
 not awaited, not on the test's receiver, or skipped or todo (a todo
-failure does not fail the parent); and any body the rule 11 row reader
+failure does not fail the parent); an un-awaited, un-returned
+`expect(..).resolves|rejects..` statement (#11535); and any body the rule 11 row reader
 refuses. A subtest with no name, a non-literal name, or options without a
 name is also refused.
 
@@ -206,6 +207,16 @@ discriminator is not established either way, and a stop reason
 `gap_evidence_unresolved`. Any other unresolved cause (a
 shadowed `expect`, a no-op helper) stays `weakly_exposed`. Rule 4 removes an
 actionable gap and credits nothing.
+
+Rule 4 also covers a floating `expect(<owner call>).resolves|rejects..`
+statement with no `await` or `return` (#11535): it collects nothing and, with
+no other credited assertion, reads `static_unknown`. The rule is
+jest-derived and conservative for vitest. Known limits (accepted
+over-demotions): a test using `expect.assertions(n)`, an expression-bodied
+subtest, and a function-reference callback. A mixed test, with a floating
+assertion plus an awaited assertion on something unrelated, keeps a credited
+unrelated assertion and reads `weakly_exposed`: the floating assertion is
+not credited and the unrelated one does not bind the owner.
 
 The receiver is the call chain the `.then(` hangs from. When the `.then(`
 leads its own line (the prettier layout) the receiver runs back through the
