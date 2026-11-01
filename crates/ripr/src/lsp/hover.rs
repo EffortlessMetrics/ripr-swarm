@@ -1813,6 +1813,28 @@ mod seam_hover_tests {
     }
 
     #[test]
+    fn gap_diagnostic_hover_renders_the_python_stop_condition_in_plain_words() -> Result<(), String>
+    {
+        // The real producer sentence (pinned against the producer in
+        // `python_repair_card`'s drift test), rendered through the hover.
+        let mut diagnostic = sample_gap_diagnostic();
+        if let Some(data) = diagnostic.data.as_mut() {
+            data["repair_route"]["stop_conditions"] = serde_json::json!([
+                "Stop if the expected value for the missing discriminator is ambiguous."
+            ]);
+        }
+        let hover = diagnostic_hover_response(&diagnostic);
+        let md = extract_markup(&hover)?;
+        if !md.contains("Stop if the expected value for the missing check is ambiguous.") {
+            return Err(format!("plain stop condition missing from hover:\n{md}"));
+        }
+        if md.contains("missing discriminator") {
+            return Err(format!("jargon stop condition reached the hover:\n{md}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn gap_diagnostic_hover_projects_repair_route_with_preview_limits_first() -> Result<(), String>
     {
         let hover = diagnostic_hover_response(&sample_gap_diagnostic());
