@@ -39,6 +39,7 @@ mod evidence_promotion;
 mod evidence_quality;
 mod first_run;
 mod fixture_contracts;
+mod kani_lane;
 mod public_proof;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
@@ -14982,6 +14983,7 @@ fn check_output_contracts() -> Result<(), String> {
         "crates/ripr/src/domain/language.rs",
         "crates/ripr/src/domain/next_action.rs",
         "crates/ripr/src/domain/probe.rs",
+        "crates/ripr/src/domain/refusal_remedy.rs",
         "crates/ripr/src/domain/repair_card.rs",
         "crates/ripr/src/domain/summary.rs",
         "crates/ripr/src/domain/support.rs",
@@ -15130,6 +15132,7 @@ fn check_output_contracts() -> Result<(), String> {
             | "source_currentness"
             | "static_limit_kind"
             | "agent_card_refusal_kind"
+            | "refusal_remedy_kind"
             | "next_action_class" => {
                 require_contract_value(
                     "crates/ripr/src/domain/",

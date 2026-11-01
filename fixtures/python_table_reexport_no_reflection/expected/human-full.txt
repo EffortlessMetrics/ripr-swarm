@@ -46,7 +46,7 @@ Evidence
   - related test tests/test_table.py:5 test_silver_price_after_the_store_runs uses strong exact value oracle: assert price("silver") == 5
 
 Weakness
-  - Related Python test reaches `<module>` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator
+  - Related Python test reaches `<module>` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check
 
 Next step
   Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior

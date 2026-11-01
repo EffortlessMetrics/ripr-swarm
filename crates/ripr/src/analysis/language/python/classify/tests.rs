@@ -3000,6 +3000,87 @@ fn value_preserving_wrapper_around_owner_call_keeps_exposed() -> Result<(), Stri
     Ok(())
 }
 
+// RIPR-SPEC-0238 rule 30: an `==` over a coarse projection of the owner's
+// result (nullness, sign, remainder, class name, text length) is shared by the
+// old and new value, so it does not discriminate the changed return.
+const FEE_SOURCE: &str = "def f(x):\n    return x * 3\n";
+
+#[test]
+fn coarse_projection_of_owner_result_does_not_credit_exposed() -> Result<(), String> {
+    for body in [
+        "self.assertEqual(f(2) is None, False)",
+        "self.assertEqual(f(2) > 0, True)",
+        "assert f(3) % 3 == 0",
+        "self.assertEqual(f(2).__class__.__name__, 'int')",
+        "assert len(str(f(3))) == 1",
+        "assert all(f(2) > 0 for _ in range(2))",
+        "assert [f(2) > 0 for _ in range(2)] == [True, True]",
+        "self.assertEqual(f(2) > 0 if True else False, True)",
+    ] {
+        let finding = classify_case(
+            FEE_SOURCE,
+            &format!(
+                "import unittest\nfrom src.subject import f\n\nclass T(unittest.TestCase):\n    def test_f(self):\n        {body}\n"
+            ),
+            2,
+            "    return x * 2",
+            "    return x * 3",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn value_pinning_assertions_beside_a_coarse_projection_keep_exposed() -> Result<(), String> {
+    for body in [
+        "assert f(3) == 9",
+        "self.assertEqual(f(3), 9)",
+        "assert f(3) == 9 and f(3) % 3 == 0",
+        "assert f(3) + 1 == 10",
+    ] {
+        let finding = classify_case(
+            FEE_SOURCE,
+            &format!("from src.subject import f\n\ndef test_f():\n    {body}\n"),
+            2,
+            "    return x * 2",
+            "    return x * 3",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn length_of_a_changed_element_expression_does_not_credit_exposed() -> Result<(), String> {
+    let source = "def gen(n):\n    for i in range(n):\n        yield i * 3\n";
+    let tests =
+        |body: &str| format!("from src.subject import gen\n\ndef test_gen():\n    {body}\n");
+    for body in [
+        "assert len(list(gen(3))) == 3",
+        "assert gen(3).__class__.__name__ == 'generator'",
+    ] {
+        let finding = classify_case(
+            source,
+            &tests(body),
+            3,
+            "        yield i * 2",
+            "        yield i * 3",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    // The elements themselves are still pinned.
+    let finding = classify_case(
+        source,
+        &tests("assert list(gen(3)) == [0, 3, 6]"),
+        3,
+        "        yield i * 2",
+        "        yield i * 3",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
 /// Changed-line classification with both the old line and the new-side source
 /// threaded in, matching the production diff path.
 fn classify_edit_case(
@@ -3830,4 +3911,74 @@ fn truthiness_swap_fails_open_on_a_separating_default_or_a_branch_value_edit() -
     )?;
     assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
+}
+
+const OBJECT_BASE_TESTS: &str =
+    "from src.subject import Box\n\ndef test_double():\n    assert Box(2).double() == 4\n";
+
+// #11888 hardening: a class-header lookalike inside a multi-line string (or an
+// unlexable file) is data, so it keeps its probe; a real header does not.
+#[test]
+fn a_class_header_lookalike_inside_a_multiline_string_keeps_its_probe() {
+    let source = "class Box:\n    def double(self):\n        return self.value * 2\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), OBJECT_BASE_TESTS);
+    for in_string in [false, true] {
+        let no_behavior = super::PythonNoBehaviorContext {
+            new_line_in_multiline_string: in_string,
+            ..Default::default()
+        };
+        let finding = super::classify_change_full(
+            file,
+            1,
+            "class Box:",
+            Some("class Box(object):"),
+            &owners,
+            &tests,
+            no_behavior,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(finding.is_none(), !in_string, "in_string={in_string}");
+    }
+}
+
+// Pinned shapes the object-base allow-list must not widen to.
+#[test]
+fn object_base_class_change_pins_type_params_keywords_and_header_shapes() {
+    use super::super::no_behavior::is_annotation_only_def_change as noop;
+    assert!(noop("    class Inner(object):", "    class Inner:"));
+    assert!(noop("class A[T](object):", "class A[T]:"));
+    assert!(!noop("class A[T](object):", "class A[U]:"));
+    assert!(!noop("class A[T](object):", "class A:"));
+    assert!(!noop("class Box(object): pass", "class Box: pass"));
+    assert!(!noop("class Box(object,", "class Box("));
+    assert!(!noop(
+        "class Box(object, metaclass=Meta):",
+        "class Box(metaclass=Meta):"
+    ));
+    assert!(!noop(
+        "class Box(object, flag=True):",
+        "class Box(flag=True):"
+    ));
+    assert!(!noop("class Box(Base, object):", "class Box(Base):"));
+    assert!(!noop("class Box(object):", "class Box(Base):"));
+    // Indentation mismatch is a moved statement: the classify guard refuses it.
+    let source = "class Box:\n    def double(self):\n        return 1\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), OBJECT_BASE_TESTS);
+    assert!(
+        classify_change_with_old(
+            file,
+            1,
+            "    class Box:",
+            Some("class Box(object):"),
+            &owners,
+            &tests
+        )
+        .is_some()
+    );
 }

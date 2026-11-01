@@ -204,7 +204,7 @@ pub(crate) fn render_finding_digest_with_config(
         // A typed static limitation is the analyzer naming what it could not
         // bind, never an assertion a test could add.
         let label = if finding.class == ExposureClass::Exposed {
-            "Discriminator (observed, advisory)"
+            "Check (observed, advisory)"
         } else if missing.starts_with(TYPED_STATIC_LIMITATION_PREFIX)
             || ((matches!(
                 finding.class,
@@ -1866,8 +1866,8 @@ mod trim_field_period_tests {
     #[test]
     fn strips_a_single_trailing_period() {
         assert_eq!(
-            trim_field_period("add a co-located test so a discriminator exists."),
-            "add a co-located test so a discriminator exists"
+            trim_field_period("add a co-located test so an assertion can notice if it is wrong."),
+            "add a co-located test so an assertion can notice if it is wrong"
         );
     }
 

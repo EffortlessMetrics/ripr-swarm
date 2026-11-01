@@ -1,7 +1,0 @@
-crates/ripr/src/cli/commands/init.rs|cannot inspect {}: {err}
-crates/ripr/src/cli/commands/init.rs|cannot read existing {shown}: {err}
-crates/ripr/src/cli/commands/init.rs|cannot write {}: {} exists and is not a directory
-crates/ripr/src/cli/commands/init.rs|create {} failed: {err}
-crates/ripr/src/cli/commands/init.rs|existing {shown} is not a JSON object; nothing was written mcpServers existing {shown} has a `mcpServers` that
-crates/ripr/src/cli/commands/init.rs|render {shown} failed: {err}
-crates/ripr/src/cli/commands/init.rs|write {} failed: {err}

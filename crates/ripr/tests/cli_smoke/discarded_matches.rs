@@ -348,7 +348,9 @@ fn normalize_moved_repair_advisories(bytes: &[u8]) -> (Vec<u8>, usize) {
             let after = &rest[digits..];
             digits > 0
                 && (after.starts_with(&format!(" seam{COUNTED_REST}"))
-                    || after.starts_with(&format!(" seams{COUNTED_REST}")))
+                    || after.starts_with(&format!(" seams{COUNTED_REST}"))
+                    || after.starts_with(&format!(" spot{COUNTED_REST}"))
+                    || after.starts_with(&format!(" spots{COUNTED_REST}")))
         })
     };
     const OLD_NOT_READY: &str =

@@ -322,18 +322,28 @@ fn split_guard(pattern: &str) -> Option<(&str, bool)> {
 /// Whether `int`, `float`, `str` and `bool` still name the builtins: no
 /// parameter, assignment, `def`/`class`, import or star import of the file
 /// rebinds one, so a `case int()` class pattern means what it spells.
-fn builtin_classes_intact(owner: &PythonOwner, owner_source: &str) -> bool {
-    const BUILTINS: [&str; 4] = ["int", "float", "str", "bool"];
+pub(super) fn builtin_classes_intact(owner: &PythonOwner, owner_source: &str) -> bool {
+    builtin_names_intact(owner, owner_source, &["int", "float", "str", "bool"])
+}
+
+/// Whether every name in `builtins` still names the builtin in the owner's
+/// file (same rebinding rules as [`builtin_classes_intact`]).
+pub(super) fn builtin_names_intact(
+    owner: &PythonOwner,
+    owner_source: &str,
+    builtins: &[&str],
+) -> bool {
     if owner
         .parameters
         .iter()
-        .any(|parameter| BUILTINS.contains(&parameter.name.as_str()))
+        .any(|parameter| builtins.contains(&parameter.name.as_str()))
     {
         return false;
     }
     let lines: Vec<&str> = owner_source.lines().collect();
-    BUILTINS.iter().all(|name| {
+    builtins.iter().all(|name| {
         !lines.iter().any(|line| binds_name(line.trim(), name))
+            && !lines.iter().any(|line| patches_builtin(line.trim(), name))
             && !lines.iter().any(|line| {
                 let trimmed = line.trim();
                 let names_it = mentions_identifier(trimmed, name);
@@ -350,6 +360,25 @@ fn builtin_classes_intact(owner: &PythonOwner, owner_source: &str) -> bool {
                     .any(|prefix| trimmed.starts_with(prefix)))
                     || (trimmed.starts_with("from ") && trimmed.ends_with("import *"))
             })
+    })
+}
+
+/// Whether `line` rewrites the builtin `name` through the `builtins` module
+/// (`builtins.isinstance = f`, `setattr(builtins, ..)`), which no local binding
+/// shows (#12183). A line that mentions `builtins` together with `setattr` or
+/// `__dict__` is refused whatever it sets, because the written name may be
+/// computed; the guard then reads as unknown and keeps its credit.
+fn patches_builtin(line: &str, name: &str) -> bool {
+    if !mentions_identifier(line, "builtins") {
+        return false;
+    }
+    if line.contains("setattr") || line.contains("__dict__") {
+        return true;
+    }
+    let target = format!("builtins.{name}");
+    line.match_indices(&target).any(|(start, _)| {
+        let rest = line[start + target.len()..].trim_start();
+        rest.starts_with('=') && !rest.starts_with("==")
     })
 }
 
@@ -409,7 +438,7 @@ fn is_capture_name(text: &str) -> bool {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum ScalarKind {
+pub(super) enum ScalarKind {
     None,
     Bool,
     Int,
@@ -417,7 +446,7 @@ enum ScalarKind {
     Str,
 }
 
-fn scalar_kind(value: &str) -> Option<ScalarKind> {
+pub(super) fn scalar_kind(value: &str) -> Option<ScalarKind> {
     match value {
         "None" => return Some(ScalarKind::None),
         "True" | "False" => return Some(ScalarKind::Bool),

@@ -130,11 +130,12 @@ fn render_agent_card_refusal(
             "seam_id": options.seam_id,
             "message": message,
             "remedy_route": refusal_remedy_route(&options.root, &options.seam_id, kind),
+            "remedy": crate::domain::RefusalRemedy::from_prose(message),
         }
     });
     serde_json::to_string_pretty(&document)
         .map(|rendered| format!("{rendered}\n"))
-        .map_err(|error| format!("serialize agent card refusal document failed: {error}"))
+        .map_err(|error| format!("serialize agent card refusal document failed: {error}; report this as a ripr bug with the command you ran"))
 }
 
 /// The typed remedy route of one refusal kind: the opposite-remedy pairs the

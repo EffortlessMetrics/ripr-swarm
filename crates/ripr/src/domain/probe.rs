@@ -108,6 +108,18 @@ pub enum StopReason {
     /// the ambiguous name but cannot bind it to one workspace function.
     /// Classification is `static_unknown`. See RIPR-SPEC-0159 / #7272.
     HelperIdentityUnresolved,
+    /// The changed line is a compile-time assertion (`const _: () = assert!(..)`,
+    /// `static_assertions::const_assert!`). A violating edit fails to build; it
+    /// is not a test-kill question, so ripr states that instead of placing the
+    /// line in a function. Classification stays `static_unknown`, never
+    /// `exposed` (#11547).
+    CompileTimeInvariant,
+    /// The changed code states an unsafe contract the compiler does not
+    /// check: an `unsafe fn` (callers now carry a safety obligation) or an
+    /// unchecked assumption (`unreachable_unchecked`, `assert_unchecked`).
+    /// A safe-code test cannot discharge it. Classification stays
+    /// `static_unknown`, never `exposed` (#11549).
+    UnsafeObligation,
 }
 
 impl StopReason {
@@ -128,6 +140,8 @@ impl StopReason {
             StopReason::MacroReachUnresolved => "macro_reach_unresolved",
             StopReason::GapEvidenceUnresolved => "gap_evidence_unresolved",
             StopReason::HelperIdentityUnresolved => "helper_identity_unresolved",
+            StopReason::CompileTimeInvariant => "compile_time_invariant",
+            StopReason::UnsafeObligation => "unsafe_obligation",
         }
     }
 
@@ -188,6 +202,14 @@ impl StopReason {
             StopReason::HelperIdentityUnresolved => {
                 "ripr cannot tell which workspace function a test call names because that name \
                  is not unique"
+            }
+            StopReason::CompileTimeInvariant => {
+                "the changed line is a compile-time assertion, so a violating edit fails to \
+                 build instead of failing a test"
+            }
+            StopReason::UnsafeObligation => {
+                "the change adds or alters an unsafe contract (an unsafe function or an \
+                 unchecked assumption) that safe test code cannot discharge"
             }
         }
     }
@@ -979,6 +1001,10 @@ impl Finding {
     }
 }
 
+#[cfg(kani)]
+#[path = "probe_kani.rs"]
+mod kani_proofs;
+
 #[cfg(test)]
 mod tests {
     use super::{Probe, ProbeFamily};
@@ -1064,6 +1090,8 @@ mod tests {
             StopReason::MacroReachUnresolved,
             StopReason::GapEvidenceUnresolved,
             StopReason::HelperIdentityUnresolved,
+            StopReason::CompileTimeInvariant,
+            StopReason::UnsafeObligation,
         ] {
             let gloss = reason.describe();
             assert!(!gloss.contains("  "), "{}: {gloss}", reason.as_str());

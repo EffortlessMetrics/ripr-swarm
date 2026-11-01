@@ -19,9 +19,7 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Gap ID (for scripts): gap:python:src/pricing.py:tier:predicate_boundary:predicate:score>=50
   Changed behavior: if score >= 50:
-  Discriminator (observed, advisory): Related Python test reaches `tier` with an `exact_value`
-    oracle. Static evidence suggests the changed behavior is observed under an exact-value
-    discriminator
+  Check (observed, advisory): Related Python test reaches `tier` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check
   Related test (1 of 2 matched rows): tests/test_pricing.py:10 test_edge
   Next step — Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior
   Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator yes
