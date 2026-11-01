@@ -635,6 +635,54 @@ fn pilot_summary_discloses_the_repo_exposure_byte_bound_and_only_then() -> Resul
 }
 
 #[test]
+fn pilot_outcome_route_leaves_a_seam_limited_repo_exposure_file_for_a_full_baseline()
+-> Result<(), String> {
+    // #12150: `ripr outcome` refuses a seam-limited repo-exposure file, so
+    // the summary must not point its outcome command at that file.
+    let entries = [classified_in_owner(
+        SeamGripClass::WeaklyGripped,
+        "src/a.rs",
+        "a::clone",
+        10,
+    )];
+    let limit = crate::analysis::SeamLimitInfo {
+        analyzed: 1,
+        total: 7,
+        source: crate::analysis::SeamLimitSource::Default,
+    };
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.seam_limit = Some(&limit);
+    let limited: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    let next = &limited["next"];
+    let outcome = next["outcome_command"].as_str().unwrap_or_default();
+    assert!(outcome.contains("before.repo-exposure.json"), "{next}");
+    assert!(
+        next["before_snapshot_command"]
+            .as_str()
+            .is_some_and(|command| command.contains("before.repo-exposure.json")),
+        "{next}"
+    );
+    // Discriminating negative: an uncut run compares the pilot file itself.
+    context.seam_limit = None;
+    let exact: serde_json::Value =
+        serde_json::from_str(&render_pilot_summary_json(&entries, context))
+            .map_err(|err| err.to_string())?;
+    let next = &exact["next"];
+    assert!(next.get("before_snapshot_command").is_none(), "{next}");
+    assert!(
+        !next["outcome_command"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("before.repo-exposure.json"),
+        "{next}"
+    );
+    Ok(())
+}
+
+#[test]
 fn pilot_summary_md_marks_owner_counts_as_lower_bounds_after_a_seam_limit() {
     // #6602: a seam limit dropped classified seams before ranking, so a
     // function may have more seams than the kept slice shows.
