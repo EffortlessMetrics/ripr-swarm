@@ -100,7 +100,7 @@ pub(crate) fn baseline_create_report_from_gate_decision_json(
     json_text: &str,
 ) -> Result<BaselineCreateReport, String> {
     let value = serde_json::from_str::<Value>(json_text)
-        .map_err(|err| format!("parse gate-decision JSON failed: {err}"))?;
+        .map_err(|err| format!("parse gate-decision JSON failed: {err}; regenerate the input with the command that wrote it, then rerun"))?;
     baseline_create_report_from_gate_decision_value(source_report, created_at, &value)
 }
 
@@ -246,17 +246,17 @@ fn baseline_create_report_from_gate_decision_value(
     let schema_version = value
         .get("schema_version")
         .and_then(Value::as_str)
-        .ok_or_else(|| "gate-decision JSON missing schema_version".to_string())?;
+        .ok_or_else(|| "gate-decision JSON missing schema_version; regenerate the input with the command that wrote it, then rerun".to_string())?;
     if schema_version != SCHEMA_VERSION {
         return Err(format!(
-            "unsupported gate-decision schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`"
+            "unsupported gate-decision schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`; regenerate the input with the command that wrote it, then rerun"
         ));
     }
 
     let decisions = value
         .get("decisions")
         .and_then(Value::as_array)
-        .ok_or_else(|| "gate-decision JSON missing decisions array".to_string())?;
+        .ok_or_else(|| "gate-decision JSON missing decisions array; regenerate the input with the command that wrote it, then rerun".to_string())?;
     let mode = string_field(value.get("mode")).unwrap_or_else(|| "unknown".to_string());
     let root = string_field(value.get("root"));
     let subject_analyzer_version = string_field(value.pointer("/subject/analyzer_version"));
@@ -354,7 +354,7 @@ pub(crate) fn render_baseline_create_json(report: &BaselineCreateReport) -> Resu
         "warnings": report.warnings,
         "limits_note": LIMITS_NOTE,
     }))
-    .map_err(|err| format!("failed to render gate baseline JSON: {err}"))
+    .map_err(|err| format!("failed to render gate baseline JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn baseline_entry_count(report: &BaselineCreateReport) -> usize {
@@ -1094,7 +1094,7 @@ mod tests {
         );
         assert_eq!(
             err,
-            Err("unsupported gate-decision schema_version `9.9`; expected `0.1`".to_string())
+            Err("unsupported gate-decision schema_version `9.9`; expected `0.1`; regenerate the input with the command that wrote it, then rerun".to_string())
         );
     }
 }
