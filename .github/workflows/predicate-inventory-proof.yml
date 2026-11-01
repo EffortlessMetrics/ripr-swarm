@@ -4,33 +4,280 @@ on:
     branches: [codex/8547-stub-tail-proof]
     paths: [.github/workflows/predicate-inventory-proof.yml]
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: ripr-11358-proof
   cancel-in-progress: false
 jobs:
-  source:
+  proof:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 75
+    env:
+      BASIS: a7431a52d9a00e6a256be5ee2038ed1b5519f588
+      PATCH_BLOB: 5dfe0c02506a4b7155eee2a0c070942485afaaa1
+      DESTINATION: codex/11358-complete-stub-inventory-reuse
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           ref: a7431a52d9a00e6a256be5ee2038ed1b5519f588
+          path: build
+          fetch-depth: 0
           persist-credentials: false
-      - name: Retain exact source context, no build products
-        shell: bash
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: a7431a52d9a00e6a256be5ee2038ed1b5519f588
+          path: subject
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.95.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+        with:
+          workspaces: build -> target
+          shared-key: ripr-8547-focused
+          save-if: 'true'
+      - name: Bind source, storage and exact patch
+        working-directory: build
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          E="$RUNNER_TEMP/predicate-inventory-source"
-          mkdir -p "$E"
-          test "$(git rev-parse HEAD)" = a7431a52d9a00e6a256be5ee2038ed1b5519f588
-          git rev-parse HEAD HEAD^{tree} > "$E/identity.txt"
-          git archive --format=tar HEAD AGENTS.md .agents/skills docs/agent-context docs/PR_AUTOMATION.md docs/MERGE_FLOW.md changelog.d/README.md Cargo.toml Cargo.lock rust-toolchain.toml .cargo crates/ripr .github/workflows/rust-gates.yml > "$E/source.tar"
-          sha256sum "$E/source.tar" > "$E/source.sha256"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: always()
+          export EVIDENCE="$RUNNER_TEMP/predicate-reuse-evidence"
+          mkdir -p "$EVIDENCE" target
+          echo "EVIDENCE=$EVIDENCE" >> "$GITHUB_ENV"
+          echo "SUBJECT_ROOT=$(realpath ../subject)" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$BASIS"
+          test -z "$(git status --porcelain)"
+          git switch -c proof/11358-complete-guidance
+          git fetch --no-tags origin "$DESTINATION:refs/remotes/origin/$DESTINATION"
+          test "$(git rev-parse "origin/$DESTINATION")" = "$BASIS"
+          test "$(git merge-base origin/main HEAD)" = "$BASIS"
+          git diff --name-only origin/main...HEAD > "$EVIDENCE/base-paths.txt"
+          test ! -s "$EVIDENCE/base-paths.txt"
+          {
+            printf 'basis=%s\ncontroller=%s\nrun=%s\nattempt=%s\n' "$BASIS" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+            git rev-parse HEAD^{tree}
+            rustc +1.95.0 -Vv
+            uname -a; nproc; free -h; df -h . "$RUNNER_TEMP"
+            printf 'Owner: this job. Owned resources: build/target; frozen baseline at RUNNER_TEMP; separate subject; evidence/caches/fixtures at RUNNER_TEMP. Peak additional budget 18 GiB, reserve 5 GiB. No unrelated cleanup. Ephemeral products released when job ends; source and small raw proof retained in artifact.\n'
+          } > "$EVIDENCE/identity.txt"
+          python3 - <<'PY'
+          import shutil
+          assert shutil.disk_usage('.').free >= 23 * 1024**3, 'owned generation budget plus reserve unavailable'
+          PY
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/$PATCH_BLOB" > "$EVIDENCE/patch-blob.json"
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, os
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']); b=json.loads((e/'patch-blob.json').read_text())
+          assert b['sha']==os.environ['PATCH_BLOB'] and b['encoding']=='base64'
+          raw=base64.b64decode(b['content'])
+          assert hashlib.sha256(raw).hexdigest()=='3c8327407c24dca548a39f0cf81851983e586e56dc6d5ec4b6c2bd9edf7e6151'
+          patch=gzip.decompress(raw)
+          assert hashlib.sha256(patch).hexdigest()=='639ec6a39cf1951c91f8473200828ff089f86cbd5aae3a7f4346cf629b470bd9'
+          (e/'input.patch').write_bytes(patch)
+          PY
+          cat > "$RUNNER_TEMP/11358-run.sh" <<'SH'
+          run() {
+            local name="$1"; shift
+            printf '%q ' "$@" > "$EVIDENCE/$name.command"
+            set +e
+            timeout --signal=TERM --kill-after=30s 1200s "$@" > "$EVIDENCE/$name.stdout" 2> "$EVIDENCE/$name.stderr"
+            local code=$?
+            set -e
+            echo "$name exit=$code" | tee -a "$EVIDENCE/status.txt"
+            tail -n 20 "$EVIDENCE/$name.stdout"
+            if [ "$code" != 0 ]; then tail -n 80 "$EVIDENCE/$name.stderr"; return "$code"; fi
+          }
+          SH
+      - name: Compile the unchanged baseline and freeze its CLI
+        working-directory: build
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/11358-run.sh"
+          run baseline-build cargo +1.95.0 build --locked -p ripr --bin ripr
+          cp target/debug/ripr "$RUNNER_TEMP/ripr-11358-baseline"
+          sha256sum "$RUNNER_TEMP/ripr-11358-baseline" > "$EVIDENCE/baseline-binary.sha256"
+          run baseline-doctor cargo +1.95.0 run --locked -p xtask -- worktree doctor
+          run baseline-check-fast cargo +1.95.0 run --locked -p xtask -- check-fast
+      - name: Prepare only the reviewed six-file candidate
+        working-directory: build
+        run: |
+          set -euo pipefail
+          git apply --check "$EVIDENCE/input.patch"
+          git apply "$EVIDENCE/input.patch"
+          cargo +1.95.0 fmt --all
+          git diff --check
+          git add crates/ripr/src/analysis/mod.rs crates/ripr/src/analysis/seam_inventory.rs crates/ripr/src/analysis/file_guidance_inventory_tests.rs crates/ripr/src/app/test_stub.rs crates/ripr/src/app/test_stub_inventory_tests.rs changelog.d/11358-complete-stub-inventory-reuse.md
+          test -z "$(git diff --name-only)"
+          test "$(git diff --cached --name-only | wc -l)" = 6
+          git diff --cached --binary > "$EVIDENCE/candidate.patch"
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'perf(stub): reuse complete content-bound file guidance inventory (#11358)'
+          git rev-parse HEAD > "$EVIDENCE/candidate.sha"
+          git rev-parse HEAD^{tree} > "$EVIDENCE/candidate.tree"
+          git cat-file commit HEAD > "$EVIDENCE/candidate.commit"
+          git diff --name-only "$BASIS" HEAD > "$EVIDENCE/candidate-paths.txt"
+      - name: Execute the intended wrong-implementation control
+        working-directory: build
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('crates/ripr/src/analysis/seam_inventory.rs'); s=p.read_text()
+          old='inputs.complete_scope_reuse = Some(&identity);'
+          assert s.count(old)==1
+          p.write_text(s.replace(old,'inputs.complete_scope_reuse = Some(&identity).filter(|_| false);'))
+          PY
+          printf '%s\n' 'cargo +1.95.0 test --locked -p ripr --lib complete_guidance_reuses_memory_and_disk_without_index_or_evidence_work -- --nocapture --test-threads=1' > "$EVIDENCE/removal.command"
+          set +e
+          timeout --signal=TERM --kill-after=30s 1200s cargo +1.95.0 test --locked -p ripr --lib complete_guidance_reuses_memory_and_disk_without_index_or_evidence_work -- --nocapture --test-threads=1 > "$EVIDENCE/removal.stdout" 2> "$EVIDENCE/removal.stderr"
+          code=$?
+          set -e
+          echo "removal exit=$code" | tee -a "$EVIDENCE/status.txt"
+          git restore --source=HEAD -- crates/ripr/src/analysis/seam_inventory.rs
+          tail -n 30 "$EVIDENCE/removal.stdout" "$EVIDENCE/removal.stderr"
+          test "$code" = 101
+          grep -F 'running 1 test' "$EVIDENCE/removal.stdout"
+          grep -F 'memory reuse must skip index and evidence work' "$EVIDENCE/removal.stderr"
+          grep -F 'test result: FAILED. 0 passed; 1 failed;' "$EVIDENCE/removal.stdout"
+          git diff --exit-code
+      - name: Execute focused restored source and existing consumer controls
+        working-directory: build
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/11358-run.sh"
+          run complete-guidance cargo +1.95.0 test --locked -p ripr --lib file_guidance_inventory_tests -- --nocapture --test-threads=1
+          run stub-consumers cargo +1.95.0 test --locked -p ripr --lib app::test_stub -- --nocapture --test-threads=1
+          run task-first cargo +1.95.0 test --locked -p ripr --lib app::task_first -- --nocapture --test-threads=1
+          run bound-scope-controls cargo +1.95.0 test --locked -p ripr --lib bound_seams -- --nocapture --test-threads=1
+          run scoped-cache-controls cargo +1.95.0 test --locked -p ripr --lib seam_cache::scoped_inventory -- --nocapture --test-threads=1
+          run candidate-build cargo +1.95.0 build --locked -p ripr --bin ripr
+          sha256sum target/debug/ripr > "$EVIDENCE/candidate-binary.sha256"
+          git diff --exit-code
+          test "$(git rev-parse HEAD)" = "$(cat "$EVIDENCE/candidate.sha")"
+      - name: Publish only the native-tested candidate branch
+        working-directory: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin "refs/heads/$DESTINATION" | cut -f1)" = "$BASIS"
+          test -z "$(git status --porcelain)"
+          gh auth setup-git
+          git push origin "HEAD:refs/heads/$DESTINATION"
+          test "$(git ls-remote origin "refs/heads/$DESTINATION" | cut -f1)" = "$(cat "$EVIDENCE/candidate.sha")"
+          echo 'source branch retained; no PR readiness, qualification or merge implied' >> "$EVIDENCE/status.txt"
+      - name: Retain focused proof before longer measurement
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: predicate-inventory-source
-          path: ${{ runner.temp }}/predicate-inventory-source/
+          name: predicate-reuse-focused-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/predicate-reuse-evidence/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Measure separate-process advice and actual root-human repeats
+        working-directory: build
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, signal, subprocess, time
+          from pathlib import Path
+          e=Path(os.environ['EVIDENCE']); tmp=Path(os.environ['RUNNER_TEMP']); subject=Path(os.environ['SUBJECT_ROOT'])
+          bins={'baseline':tmp/'ripr-11358-baseline','candidate':Path('target/debug/ripr').resolve()}
+          digests={label:hashlib.sha256(binary.read_bytes()).hexdigest() for label,binary in bins.items()}
+          rows=[]; violations=[]
+          def run(label, name, argv, root, cache, expected, cap=240):
+              command=[str(bins[label])]+argv
+              started=time.perf_counter(); stopped=False
+              prefix=e/f'{label}-{name}'
+              with prefix.with_suffix('.stdout').open('wb') as out,prefix.with_suffix('.stderr').open('wb') as err:
+                  p=subprocess.Popen(command,cwd=root,env=dict(os.environ,RIPR_CACHE_DIR=str(cache),RIPR_REPO_EXPOSURE_LATENCY_TRACE='1'),stdout=out,stderr=err,start_new_session=True)
+                  try: code=p.wait(timeout=cap)
+                  except subprocess.TimeoutExpired:
+                      stopped=True; os.killpg(p.pid,signal.SIGTERM)
+                      try: code=p.wait(timeout=3)
+                      except subprocess.TimeoutExpired:
+                          os.killpg(p.pid,signal.SIGKILL); code=p.wait()
+              data=prefix.with_suffix('.stdout').read_bytes(); trace=prefix.with_suffix('.stderr').read_text(errors='replace')
+              row=dict(label=label,name=name,argv=command,root=str(root),cache=str(cache),seconds=time.perf_counter()-started,exit=code,stopped=stopped,cap=cap,stdout_bytes=len(data),stdout_sha256=hashlib.sha256(data).hexdigest(),binary_sha256=digests[label],os_page_cache='uncontrolled')
+              rows.append(row); (e/'measurements.json').write_text(json.dumps(rows,indent=2)+'\n'); print(json.dumps(row),flush=True)
+              if stopped or code!=expected or not data: violations.append(name+': incomplete/unexpected outcome for '+label)
+              return data,trace
+          fixture=tmp/'guidance-cli'; (fixture/'src').mkdir(parents=True); (fixture/'tests').mkdir()
+          source='pub fn discount(price: u32, qty: u32) -> u32 {\n    if qty > 10 { price * 2 } else { price }\n}\n'
+          weak='#[test]\nfn weak_at_boundary() { assert!(guidance_inventory::discount(10, 10) > 0); }\n'
+          strong='#[test]\nfn exact_at_boundary() { assert_eq!(guidance_inventory::discount(10, 10), 10); }\n'
+          (fixture/'Cargo.toml').write_text('[package]\nname="guidance_inventory"\nversion="0.1.0"\nedition="2024"\n[workspace]\n')
+          (fixture/'src/lib.rs').write_text(source); (fixture/'tests/weak.rs').write_text(weak)
+          subprocess.run(['git','init','-q'],cwd=fixture,check=True)
+          subprocess.run(['git','add','.'],cwd=fixture,check=True)
+          subprocess.run(['git','-c','user.name=Proof','-c','user.email=proof@localhost','commit','-qm','frozen test and production source'],cwd=fixture,check=True)
+          head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=fixture)
+          states=[('weak',3),('strong-edit',0),('weak-restored',3),('second-strong',0),('second-removed',3)]
+          for state,code in states:
+              (fixture/'tests/weak.rs').write_text(strong if state=='strong-edit' else weak)
+              extra=fixture/'tests/strong.rs'
+              if state=='second-strong': extra.write_text(strong)
+              elif extra.exists(): extra.unlink()
+              answers={}
+              for label in bins:
+                  cache=tmp/'guidance-cli-caches'/label
+                  for repeat in range(2):
+                      data,trace=run(label,f'advice-{state}-{repeat}',['agent','stub','--root',str(fixture),'--at','src/lib.rs:2','--kind','predicate','--json'],fixture,cache,code,30)
+                      d=json.loads(data); answers[(label,repeat)]=d
+                      assert d['state']==('refused' if code==3 else 'ready'), d
+                      if code==3: assert d['refusal']['kind']=='existing_test_weak_oracle' and 'weak_at_boundary' in d['refusal']['reason']
+                      else: assert d['written'] is False
+                      if label=='candidate' and repeat==1:
+                          assert 'persisted_result_reused' in trace, trace
+                          assert 'start_review_scope_files_' not in trace, trace
+              assert answers[('baseline',0)]==answers[('candidate',0)]==answers[('candidate',1)], state
+              assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=fixture)==head
+              assert (fixture/'src/lib.rs').read_text()==source
+          # Same frozen subject, fixed legend input, separate caches per binary
+          # and format. Each command is a new process; none is OS-cold evidence.
+          for fmt in ['json','human-full','human']:
+              outputs={}
+              for repeat in range(2):
+                  for label in bins:
+                      args=['check','--root',str(subject),'--diff',str(subject/'crates/ripr/examples/sample/example.diff'),'--format',fmt]
+                      if fmt=='human': args+=['--legend']
+                      data,trace=run(label,f'repository-{fmt}-{repeat}',args,subject,tmp/'guidance-root-caches'/label/fmt,0)
+                      outputs[(label,repeat)]=data
+                      if fmt=='json' and data:
+                          d=json.loads(data)
+                          assert d['findings'] and d['analysis_outcome']['analysis_complete'] is True
+                          assert not d['analysis_outcome']['outcome']['limitations']
+                      if label=='candidate' and fmt=='human' and repeat==1 and data:
+                          assert 'persisted_result_reused' in trace
+                          assert 'start_review_scope_files_' not in trace
+                  a,b=outputs[('baseline',repeat)],outputs[('candidate',repeat)]
+                  if a and b:
+                      same=(json.loads(a)==json.loads(b)) if fmt=='json' else a==b
+                      if not same: violations.append(f'repository {fmt} repeat {repeat}: output mismatch')
+          (e/'measurement-contract.json').write_text(json.dumps({'violations':violations,'source_head_unchanged':head.decode().strip(),'cache_condition':'separate initially empty per binary/format; repeat after first invocation','profile':'development; Rust 1.95.0','os_cold':False},indent=2)+'\n')
+          assert not violations, violations
+          PY
+      - name: Applicable policy and target compilation
+        working-directory: build
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/11358-run.sh"
+          run format cargo +1.95.0 fmt --all -- --check
+          run all-targets cargo +1.95.0 check --locked -p ripr --all-targets --all-features
+          run check-fast cargo +1.95.0 run --locked -p xtask -- check-fast
+          run precommit cargo +1.95.0 run --locked -p xtask -- precommit
+          git diff --exit-code
+      - name: Retain all terminal statuses and bounded raw evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: predicate-reuse-complete-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/predicate-reuse-evidence/
+            build/target/ripr/reports/check-fast*
+            build/target/ripr/reports/precommit*
           if-no-files-found: error
           retention-days: 14
