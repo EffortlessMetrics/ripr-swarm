@@ -1068,7 +1068,7 @@ fn match_arm_without_an_observing_assertion_is_not_a_repair_start() -> Result<()
 }
 
 #[test]
-fn match_arm_result_named_only_in_the_failure_message_is_not_a_repair_start() -> Result<(), String> {
+fn match_arm_result_only_in_the_failure_message_is_no_start() -> Result<(), String> {
     assert_no_start_at(
         "match-arm-message-only",
         ARM_OLD,
