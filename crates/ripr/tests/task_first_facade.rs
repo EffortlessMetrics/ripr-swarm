@@ -5689,6 +5689,10 @@ fn quiet_drops_narration_and_keeps_results_and_refusals() -> Result<(), String> 
         "control: loud continue narrates:\n{}",
         stderr_text(&loud_refusal)
     );
+    // Oracle: the quiet refusal stderr equals the loud one once only the
+    // suppressed phase narration is removed (roots and attempt ids differ per
+    // workspace, so both are normalized).
+    let loud_normalized = normalize_refusal_stderr(&stderr_text(&loud_refusal), &loud_arg, true);
     for (label, output) in [
         (
             "--quiet",
@@ -5725,6 +5729,11 @@ fn quiet_drops_narration_and_keeps_results_and_refusals() -> Result<(), String> 
             );
         }
         assert_refusal_stderr_has_prefix(&stderr);
+        assert_eq!(
+            normalize_refusal_stderr(&stderr, &quiet_arg, false),
+            loud_normalized,
+            "{label} must differ from loud only by the dropped narration:\n{stderr}"
+        );
     }
 
     let status = run_ripr(&quiet.root, &["status", "--root", &quiet_arg, "--quiet"])?;
@@ -5736,6 +5745,33 @@ fn quiet_drops_narration_and_keeps_results_and_refusals() -> Result<(), String> 
         "status --quiet changes nothing"
     );
     Ok(())
+}
+
+/// Replaces the workspace root and attempt ids with placeholders and, for the
+/// loud control only, drops the phase narration `--quiet` suppresses.
+fn normalize_refusal_stderr(stderr: &str, root_arg: &str, drop_narration: bool) -> Vec<String> {
+    stderr
+        .lines()
+        .filter(|line| {
+            !(drop_narration
+                && (line.starts_with("ripr: consuming attempt manifest")
+                    || line.starts_with("ripr: agent repair --phase after for attempt")))
+        })
+        .map(|line| {
+            let line = line.replace(root_arg, "<root>");
+            line.split_inclusive(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+                .map(|word| {
+                    let bare =
+                        word.trim_end_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '-'));
+                    if bare.starts_with("repair-attempt-") {
+                        format!("<attempt>{}", &word[bare.len()..])
+                    } else {
+                        word.to_string()
+                    }
+                })
+                .collect::<String>()
+        })
+        .collect()
 }
 
 fn assert_refusal_stderr_has_prefix(stderr: &str) {
