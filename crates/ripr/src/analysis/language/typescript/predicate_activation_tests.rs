@@ -221,6 +221,7 @@ fn evaluate_in(
         alias_map: None,
         workspace_root: Some(root),
         pin_facts: None,
+        equality_negation: false,
     };
     let activations: Vec<TypeScriptPredicateActivation> = candidates
         .iter()

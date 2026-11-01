@@ -641,6 +641,17 @@ boundary without changing the guards (#4104 E):
   stays unwitnessed. The repair packet's assertion shape asks for a value of
   the kind in place of the argument and never reuses the observed input, and
   the "inputs on one side of the boundary" wording is not used for this shape.
+- **Negated `typeof` kind test** (#12281): when the whole edit replaces the
+  guard's equality operator with its negation (`===` and `!==`, `==` and `!=`)
+  and changes no other token, every input takes the other branch. An observed
+  owner call whose argument at the guarded parameter's position is written as
+  a value of any readable kind then witnesses the change, so
+  `expect(resolveValue(42)).toBe(42)` against a flipped
+  `typeof input === "function"` reads `exposed` and offers no repair start. An
+  edit that changes the kind name, also changes another token, or swaps `===`
+  for `==` keeps the exact-kind rule above, and an argument whose kind the text
+  does not fix (an identifier with no resolved constant, a call) still
+  witnesses nothing.
 - **Faithful boundary discriminator** (#11256): a predicate's missing
   discriminator reads its comparison in code spans only, and a quoted operand
   is one operand whatever it holds. `arg !== "--"` and `mode === "a b"` are not

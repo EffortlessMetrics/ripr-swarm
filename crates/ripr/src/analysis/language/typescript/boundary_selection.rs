@@ -405,6 +405,80 @@ fn selected_text(new: &BoundaryLine, old: Option<&BoundaryLine>) -> Option<Strin
     }
 }
 
+/// The negated form of an equality operator: `===` and `!==`, `==` and `!=`.
+fn negated_equality(operator: &str) -> Option<&'static str> {
+    Some(match operator {
+        "===" => "!==",
+        "!==" => "===",
+        "==" => "!=",
+        "!=" => "==",
+        _ => return None,
+    })
+}
+
+/// `true` when the whole edit replaces exactly one equality operator of one
+/// admitted comparison with its negation (`typeof input === "function"` to
+/// `typeof input !== "function"`) and changes nothing else (#12281). Every
+/// input that evaluates such a comparison gets the opposite result, so the
+/// branch it takes flips for an input on either side of the comparison, not
+/// only for the value or kind the comparison names. A failed parse, a
+/// multi-token edit, an added or removed clause, or a site the boundary
+/// reader refuses all fail closed to `false`.
+pub(crate) fn typescript_changed_boundary_is_equality_negation(
+    file: &Path,
+    family: &ProbeFamily,
+    old_line: Option<&str>,
+    new_line: &str,
+) -> bool {
+    if *family != ProbeFamily::Predicate {
+        return false;
+    }
+    let Some(old_line) = old_line else {
+        return false;
+    };
+    let parse = |line: &str| {
+        let line = one_line_function_first_statement(line);
+        parse_on_worker(file, line, |file, line, allocator| {
+            parse_line(file, line, allocator)
+        })
+        .ok()
+        .flatten()
+    };
+    let (Some(new), Some(old)) = (parse(new_line), parse(old_line)) else {
+        return false;
+    };
+    if new.tokens.len() != old.tokens.len() || new.sites.len() != old.sites.len() {
+        return false;
+    }
+    let mut changed = new
+        .tokens
+        .iter()
+        .zip(&old.tokens)
+        .enumerate()
+        .filter(|(_, (new, old))| new.text != old.text);
+    let Some((index, (new_token, old_token))) = changed.next() else {
+        return false;
+    };
+    if changed.next().is_some()
+        || negated_equality(&old_token.text) != Some(new_token.text.as_str())
+    {
+        return false;
+    }
+    // The flipped operator must be the single operator of one comparison the
+    // boundary reader admits, never an operator nested inside another site.
+    let mut owning = new
+        .sites
+        .iter()
+        .filter(|site| site.first <= index && index <= site.last);
+    match (owning.next(), owning.next()) {
+        (Some(site), None) => {
+            !site.text.is_empty()
+                && swap_parts(&new, site).is_some_and(|(_, operator, _)| operator == new_token.text)
+        }
+        _ => false,
+    }
+}
+
 /// One changed comparison, never a literal, nested expression or unchanged
 /// neighbour. A failed parse or ambiguous edit retains the predicate refusal.
 pub(crate) fn typescript_changed_boundary_text<'a>(

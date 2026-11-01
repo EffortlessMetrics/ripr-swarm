@@ -1708,6 +1708,10 @@ pub(crate) struct TsBoundaryRowContext<'a> {
     pub(crate) workspace_root: Option<&'a Path>,
     /// RIPR-SPEC-0249 rule 1 class pins that read strong for this change.
     pub(crate) pin_facts: Option<&'a PinFacts>,
+    /// The whole edit negates one equality operator of the changed
+    /// comparison (#12281): every input that reaches it takes the other
+    /// branch, so a `typeof` guard is flipped by an input of any kind.
+    pub(crate) equality_negation: bool,
 }
 
 /// One related test's activation of the changed predicate boundary (#5527).
@@ -1787,6 +1791,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         alias_map,
         workspace_root,
         pin_facts,
+        equality_negation,
     } = *context;
     let (left, right, nullish_boundary) = match boundary {
         TsPredicateBoundary::NotPredicate => return TypeScriptPredicateActivation::NotApplicable,
@@ -1878,7 +1883,15 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             let witnessed = if let Some(operand) = left.strip_prefix("typeof ") {
                 // #11196: a `typeof <param> == "<kind>"` guard is witnessed by
                 // an input of that kind, never by the kind's name as a string.
-                typeof_kind_input_reaches_read_argument(&arguments, operand, right, owner)
+                // #12281: when the edit only negates the guard's operator, an
+                // input of any statically written kind takes the other branch.
+                typeof_kind_input_reaches_read_argument(
+                    &arguments,
+                    operand,
+                    right,
+                    owner,
+                    equality_negation,
+                )
             } else if nullish_boundary {
                 // #4104-E2 repair (review thread PRRT_kwDOSiSx0c6mUkkI):
                 // for a nullish-coalescing boundary only the NULLISH
@@ -4939,15 +4952,22 @@ fn last_identifier_segment(operand: &str) -> &str {
 /// `true` when the argument at the parameter a `typeof <param> == "<kind>"`
 /// guard reads is written as a value of exactly that kind (#11196): a function
 /// for `"function"`, a number literal for `"number"`. An input of another kind
-/// can still flip a changed operator, but it cannot tell an edited kind apart,
-/// and the kind's name as a string literal is a string input, not the kind it
-/// names. The parameter must be named by the owner's own signature, and a
-/// type assertion on the argument does not change the value it carries.
+/// cannot tell an edited kind apart, and the kind's name as a string literal
+/// is a string input, not the kind it names. The parameter must be named by
+/// the owner's own signature, and a type assertion on the argument does not
+/// change the value it carries.
+///
+/// `equality_negation` (#12281): when the whole edit negates the guard's
+/// equality operator, every input takes the other branch, so an argument
+/// written with any statically readable kind (`42` against `"function"`)
+/// witnesses the flip. An argument whose kind the text does not fix (an
+/// identifier, a call) still credits nothing.
 fn typeof_kind_input_reaches_read_argument(
     arguments: &[String],
     operand: &str,
     kind: &str,
     owner: &TypeScriptOwner,
+    equality_negation: bool,
 ) -> bool {
     let kind = kind.trim().trim_matches(['"', '\'']);
     let Some(position) = owner
@@ -4960,7 +4980,7 @@ fn typeof_kind_input_reaches_read_argument(
     arguments
         .get(position)
         .and_then(|argument| super::typeof_kind::literal_argument_typeof_kind(argument))
-        .is_some_and(|argument_kind| argument_kind == kind)
+        .is_some_and(|argument_kind| equality_negation || argument_kind == kind)
 }
 
 /// `true` when the boundary literal reaches the argument position the changed
@@ -7188,6 +7208,12 @@ pub(crate) fn classify_resolved_owner(
         typescript_changed_boundary_text(file, &probe_shape.family, old_line_text, line_text);
     let boundary_text = boundary_text.as_ref();
     let predicate_boundary = ts_predicate_boundary(&probe_shape, boundary_text);
+    let boundary_is_equality_negation = typescript_changed_boundary_is_equality_negation(
+        file,
+        &probe_shape.family,
+        old_line_text,
+        line_text,
+    );
     // #11256: a boundary operand no test call can set names its own limitation.
     let named_limitations_from_derived_operand: Vec<TypeScriptNamedLimitation> =
         derived_boundary_operand_limitation(owner, &predicate_boundary)
@@ -7205,6 +7231,7 @@ pub(crate) fn classify_resolved_owner(
             alias_map,
             workspace_root,
             pin_facts: Some(&pin_facts),
+            equality_negation: boundary_is_equality_negation,
         };
         ts_predicate_boundary_row_activation(&context, candidate)
     };

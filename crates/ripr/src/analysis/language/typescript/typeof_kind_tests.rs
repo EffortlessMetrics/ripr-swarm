@@ -106,3 +106,70 @@ fn literal_argument_kind_reads_only_what_the_text_fixes() {
         assert_eq!(literal_argument_typeof_kind(argument), None, "{argument}");
     }
 }
+
+/// #12281: an edit that only negates the guard's equality operator flips the
+/// branch for every input; any other edit keeps the kind-only witness.
+#[test]
+fn equality_negation_is_only_a_single_operator_flip() {
+    use super::typescript_changed_boundary_is_equality_negation as negation;
+    use crate::domain::ProbeFamily;
+    let file = std::path::Path::new("src/_utils.ts");
+    let old = "  return typeof input === \"function\" ? (input as any)() : input;";
+    for (old_line, new_line) in [
+        (
+            old,
+            "  return typeof input !== \"function\" ? (input as any)() : input;",
+        ),
+        (
+            "  if (typeof value != 'string') {",
+            "  if (typeof value == 'string') {",
+        ),
+        ("  if (count === 0) {", "  if (count !== 0) {"),
+    ] {
+        assert!(
+            negation(file, &ProbeFamily::Predicate, Some(old_line), new_line),
+            "{old_line} -> {new_line}"
+        );
+    }
+    for (old_line, new_line) in [
+        // the kind changes: an input of another kind takes the same branch
+        (
+            old,
+            "  return typeof input === \"object\" ? (input as any)() : input;",
+        ),
+        // operator and kind both change
+        (
+            old,
+            "  return typeof input !== \"object\" ? (input as any)() : input;",
+        ),
+        // `===` to `==` is not a negation
+        (
+            old,
+            "  return typeof input == \"function\" ? (input as any)() : input;",
+        ),
+        // a relational operator flip is not an equality negation
+        ("  if (count < 0) {", "  if (count >= 0) {"),
+        // the operator flip plus another edit elsewhere on the line
+        (
+            old,
+            "  return typeof input !== \"function\" ? (input as any)(1) : input;",
+        ),
+        // an unchanged line has no edit to read
+        (old, old),
+    ] {
+        assert!(
+            !negation(file, &ProbeFamily::Predicate, Some(old_line), new_line),
+            "{old_line} -> {new_line}"
+        );
+    }
+    let flipped = "  return typeof input !== \"function\" ? (input as any)() : input;";
+    // an added line has no prior operator, and a non-predicate family is not
+    // a comparison edit
+    assert!(!negation(file, &ProbeFamily::Predicate, None, flipped));
+    assert!(!negation(
+        file,
+        &ProbeFamily::ReturnValue,
+        Some(old),
+        flipped
+    ));
+}
