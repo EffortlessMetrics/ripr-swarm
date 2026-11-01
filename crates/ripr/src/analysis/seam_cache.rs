@@ -612,7 +612,7 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.129`: a repo predicate seam whose one-line `if` arms all hold the same
 /// statement no longer reads propagated, so it cannot read strongly gripped
 /// (#12053).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.129";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.131";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.

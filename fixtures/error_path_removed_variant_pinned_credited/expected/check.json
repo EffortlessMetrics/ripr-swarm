@@ -41,12 +41,12 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact error variant assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach parse_unit: unknown_unit_is_rejected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(UnitError::Blank)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(UnitError::Blank) (line 11)", "related test src/lib.rs:20 unknown_unit_is_rejected uses strong exact error variant oracle: assert_eq!(parse_unit(\"q\"), Err(UnitError::Unknown));", "source enum variant value UnitError::Unknown at line 21", "source function argument value raw = \"q\" at line 21", "missing discriminator UnitError::Blank: No exact error variant assertion for UnitError::Blank"],
+      "evidence_path": ["reach yes: Related tests appear to reach parse_unit: unknown_unit_is_rejected", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(UnitError::Blank)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact error variant assertion", "local flow reaches error variant: Result::Err(UnitError::Blank) (line 11)", "related test src/lib.rs:20 unknown_unit_is_rejected uses strong exact error variant oracle: assert_eq!(parse_unit(\"q\"), Err(UnitError::Unknown));", "source enum variant value UnitError::Unknown at line 21", "source function argument value raw = \"q\" at line 21"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(UnitError::Blank)","line":11}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches error variant: Result::Err(UnitError::Blank)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_unit: unknown_unit_is_rejected", "Strong oracle found: exact error variant assertion"],
-      "missing": ["Missing discriminator value: UnitError::Blank"],
+      "missing": [],
       "assertion_texts": {
         "21": "assert_eq!(parse_unit(\"q\"), Err(UnitError::Unknown));"
       },
@@ -64,11 +64,6 @@
           }
         ],
         "missing_discriminators": [
-          {
-            "value": "UnitError::Blank",
-            "reason": "No exact error variant assertion for UnitError::Blank",
-            "flow_sink": {"kind":"error_variant","text":"Result::Err(UnitError::Blank)","line":11}
-          }
         ]
       },
       "observed_values": [
@@ -84,11 +79,6 @@
         }
       ],
       "missing_discriminators": [
-        {
-          "value": "UnitError::Blank",
-          "reason": "No exact error variant assertion for UnitError::Blank",
-          "flow_sink": {"kind":"error_variant","text":"Result::Err(UnitError::Blank)","line":11}
-        }
       ],
       "related_tests_total": 1,
       "related_tests": [

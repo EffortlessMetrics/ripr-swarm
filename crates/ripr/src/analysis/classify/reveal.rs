@@ -368,6 +368,10 @@ pub(in crate::analysis) struct RevealOutcome {
     /// #9766: a credited assertion passed the fixture-receiver owner gate
     /// itself (see `ReturnOracleAdmission::fixture_receiver_pin`).
     pub(in crate::analysis) fixture_receiver_credited: bool,
+    /// #12110: a credited assertion pinned the variant the change removed on
+    /// an owner call selecting the changed arm, so the new variant's missing
+    /// exact assertion no longer stands for this probe.
+    pub(in crate::analysis) removed_variant_pin_credited: bool,
 }
 
 /// Summaries of the `no` observe/discriminate stages when no related test
@@ -411,6 +415,7 @@ pub(in crate::analysis) fn reveal_outcome(
             direct_rows: Vec::new(),
             owner_pin_credited: false,
             fixture_receiver_credited: false,
+            removed_variant_pin_credited: false,
         };
     }
 
@@ -482,6 +487,7 @@ pub(in crate::analysis) fn reveal_outcome(
         direct_rows,
         owner_pin_credited: analysis.owner_pin_credited,
         fixture_receiver_credited: analysis.fixture_receiver_credited,
+        removed_variant_pin_credited: analysis.removed_variant_pin_credited,
     }
 }
 
@@ -510,6 +516,8 @@ struct RevealAssertionAnalysis {
     matched_any: bool,
     /// #6692: some credited assertion pinned the owner's return value.
     owner_pin_credited: bool,
+    /// #12110: some credited assertion pinned the removed variant.
+    removed_variant_pin_credited: bool,
     /// #9766: some credited assertion passed the fixture-receiver gate itself.
     fixture_receiver_credited: bool,
     refused_context: bool,
@@ -2321,6 +2329,7 @@ fn analyze_related_assertions(
     let mut strongest_observation_confirmed = false;
     let mut matched_any = false;
     let mut owner_pin_credited = false;
+    let mut removed_variant_pin_credited = false;
     let mut fixture_receiver_credited = false;
     let mut refused_context = false;
     // For families that need token confirmation: start pessimistic and clear
@@ -2604,8 +2613,15 @@ fn analyze_related_assertions(
                 sibling_excluded,
                 removed_variant_selected: match_context.removed_variant_arm.is_some_and(
                     |(variant, selector)| {
+                        // The variant must sit in the compared operands, not in
+                        // a diagnostic message argument.
+                        let operands =
+                            crate::analysis::extract::assertion_oracle_text(&assertion.text);
                         matches!(assertion.kind, OracleKind::ExactErrorVariant)
-                            && contains_as_whole_word(&assertion.text, variant)
+                            && !match_context.owner_shadowed
+                            && operands
+                                .as_deref()
+                                .is_some_and(|text| contains_as_whole_word(text, variant))
                             && selector.mentioned_by(test)
                             && selector.observed_inputs(test).is_some()
                             && !selector.binds_owner_result(test)
@@ -2818,6 +2834,8 @@ fn analyze_related_assertions(
             // that matched, from a test that may supply the oracle, with the
             // pin surviving the reveal-side defeats. The missing-field
             // cleanup in `ClassifiedProbeEvidence::gather` reads this.
+            removed_variant_pin_credited |=
+                matched && credits_oracle && assertion_context.removed_variant_selected;
             owner_pin_credited |= matched
                 && credits_oracle
                 && !self_computed
@@ -3011,6 +3029,7 @@ fn analyze_related_assertions(
         strongest_observation_confirmed,
         matched_any,
         owner_pin_credited,
+        removed_variant_pin_credited,
         fixture_receiver_credited,
         refused_context,
         observation_unverified,

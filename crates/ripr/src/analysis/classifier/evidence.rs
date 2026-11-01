@@ -1316,6 +1316,17 @@ impl ClassifiedProbeEvidence {
                             )
                     })
             });
+        // #12110: an exact pin of the removed variant discriminates the
+        // change, so the new variant's missing exact assertion is obsolete.
+        if matches!(context.probe.family, ProbeFamily::ErrorPath)
+            && reveal.removed_variant_pin_credited
+        {
+            activation.missing_discriminators.retain(|fact| {
+                fact.flow_sink
+                    .as_ref()
+                    .is_none_or(|sink| sink.kind != FlowSinkKind::ErrorVariant)
+            });
+        }
         if matches!(context.probe.family, ProbeFamily::FieldConstruction)
             && (reveal.owner_pin_credited || element_field_pinned)
         {

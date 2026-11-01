@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_path_removed_variant_pinned_credited (2)
+
+Reason:
+RIPR-SPEC-0106: #12110 review fixes; pinned fixture no longer lists the already-credited discriminator as missing; diagnostic and shadowed negatives added
+
+Command:
+`cargo xtask goldens bless error_path_removed_variant_pinned_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

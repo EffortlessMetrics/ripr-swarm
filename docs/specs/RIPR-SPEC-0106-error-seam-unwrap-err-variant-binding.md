@@ -255,7 +255,10 @@ read later may remap the error); the assertion is an exact error-variant check
 and the owner call it compares passes an input the arm selector reads as
 selecting the changed arm (RIPR-SPEC-0229). A pin through an input that selects
 another arm, a test that only shares the file, and a payload-carrying change
-that needs the owner-return pin stay as before.
+that needs the owner-return pin stay as before. The removed variant is read
+from the compared operands, not a diagnostic message argument; a test that
+shadows the owner with a local callable never confirms; and a credited pin
+clears the new variant's obsolete missing-discriminator fact.
 
 ## Non-Goals
 
@@ -374,6 +377,8 @@ Tests in `crates/ripr/src/analysis/extract/oracles/` and
 | `error_path_removed_variant_pinned_credited` (fixture) | Part D positive |
 | `error_path_removed_variant_other_arm_not_credited` (fixture) | Part D other-arm negative |
 | `error_path_removed_variant_remapped_not_credited` (fixture) | Part D remapped-result negative |
+| `error_path_removed_variant_diagnostic_not_credited` (fixture) | Part D diagnostic-text negative |
+| `error_path_removed_variant_shadowed_not_credited` (fixture) | Part D shadowed-owner negative |
 
 ## Acceptance Examples
 
