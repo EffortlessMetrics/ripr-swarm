@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — compile_time_assert_stop_reason (2)
+
+Reason:
+RIPR-SPEC-0002: #11547 review: compile_time_invariant next step names the target, features and cfg that include the assertion
+
+Command:
+`cargo xtask goldens bless compile_time_assert_stop_reason --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

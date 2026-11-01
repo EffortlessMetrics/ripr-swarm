@@ -192,11 +192,23 @@ pub(in crate::analysis) fn missing_evidence(
 fn is_compile_time_assertion(expression: &str) -> bool {
     let text = expression.trim_start();
     if let Some(rest) = text.strip_prefix("const _") {
-        return rest.trim_start().starts_with(':') && text.contains("assert");
+        let Some((_, value)) = rest.split_once('=') else {
+            return false;
+        };
+        let value = value.trim_start();
+        let value = value.strip_prefix('{').map_or(value, str::trim_start);
+        return ["assert!", "assert_eq!", "assert_ne!", "debug_assert!"]
+            .iter()
+            .any(|macro_call| value.starts_with(macro_call));
     }
-    text.strip_prefix("static_assertions::")
-        .unwrap_or(text)
-        .starts_with("const_assert")
+    let name = text.strip_prefix("static_assertions::").unwrap_or(text);
+    let ident_end = name
+        .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .unwrap_or(name.len());
+    matches!(
+        &name[..ident_end],
+        "const_assert" | "const_assert_eq" | "const_assert_ne"
+    ) && name[ident_end..].starts_with('!')
 }
 
 pub(in crate::analysis) fn stop_reasons(
@@ -513,7 +525,7 @@ fn uncertainty_next_step(
                 "Identify which same-named helper the existing test calls before changing any test."
             }
             StopReason::CompileTimeInvariant => {
-                "Check the assertion by building the crate; a violating edit fails to compile, so no test observes it."
+                "Check the assertion by building with the target, features and cfg that include it (a gated assertion is not compiled otherwise); a violating edit fails to compile, so no test observes it."
             }
             StopReason::GapEvidenceUnresolved => {
                 "Inspect the refused assertion and whether it runs; an unreadable assertion is not an established missing test."
@@ -1461,6 +1473,7 @@ mod tests {
             "const _: () = assert!(N <= 16);",
             "const _: () = assert_eq!(N, 16);",
             "const _ : () = assert!(N <= 16);",
+            "const _: () = { assert!(N <= 16); };",
             "const_assert!(N <= 16);",
             "static_assertions::const_assert!(N <= 16);",
             "const_assert_eq!(N, 16);",
@@ -1473,6 +1486,11 @@ mod tests {
             "assert!(N <= 16);",
             "other::const_assert!(N <= 16);",
             "let const_assert = 1;",
+            "const _: () = register(\"assertion_table\");",
+            "const _: u32 = assertive();",
+            "const _: &str = \"assert!(x)\";",
+            "const_assert_ne_helper!(x);",
+            "const_assert_helper(x);",
         ] {
             assert!(!is_compile_time_assertion(text), "{text}");
         }

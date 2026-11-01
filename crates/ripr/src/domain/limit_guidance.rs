@@ -285,8 +285,9 @@ impl StopReason {
                  function; rename a same-named function only if the path is not enough."
             }
             StopReason::CompileTimeInvariant => {
-                "Check the compile-time assertion by building the crate; no test run observes \
-                 it, so do not add a test for it."
+                "Check the compile-time assertion by building with the target, features and \
+                 cfg that include it (a gated assertion is not compiled otherwise); no test \
+                 run observes it, so do not add a test for it."
             }
         }
     }
