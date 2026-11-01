@@ -93,7 +93,7 @@ Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  - Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change.
+  Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
   ripr explain --root <cwd>/fixtures/returned_comparison_rival_import/input --diff <cwd>/fixtures/returned_comparison_rival_import/diff.patch --mode fast probe:src_lib.rs:predicate:3fde5abd
   ripr context --root <cwd>/fixtures/returned_comparison_rival_import/input --diff <cwd>/fixtures/returned_comparison_rival_import/diff.patch --mode fast --at probe:src_lib.rs:predicate:3fde5abd
