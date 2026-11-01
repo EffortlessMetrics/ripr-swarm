@@ -311,6 +311,7 @@ impl<'a> RelativeKeyProjector<'a> {
     }
 }
 
+#[cfg(test)]
 pub(super) fn file_uris_relative_to_root<'a>(
     root: &Path,
     uris: impl IntoIterator<Item = &'a Uri>,
