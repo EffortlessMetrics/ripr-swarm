@@ -57365,33 +57365,6 @@ fn review_comments_cross_check_oracle_rejects_contract_drift() -> Result<(), Str
     Ok(())
 }
 
-/// Extracts the run-block lines of each `- name: <step>` whose name matches
-/// `step_name`, stopping at the next step (`- ` at the same indent).
-fn routed_rust_step_run_blocks(workflow: &str, step_name: &str) -> Vec<Vec<String>> {
-    let marker = format!("- name: {step_name}");
-    let mut blocks = Vec::new();
-    let mut current: Option<Vec<String>> = None;
-    for line in workflow.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("- name: ") {
-            if let Some(block) = current.take() {
-                blocks.push(block);
-            }
-            if trimmed == marker {
-                current = Some(Vec::new());
-            }
-            continue;
-        }
-        if let Some(block) = current.as_mut() {
-            block.push(line.to_string());
-        }
-    }
-    if let Some(block) = current.take() {
-        blocks.push(block);
-    }
-    blocks
-}
-
 /// ripr#1446: the routed Rust migration deleted roughly four hundred lines of
 /// workflow, so every removed command needs an explicit disposition rather than
 /// a line-count argument. This binds `docs/ci/routed-rust-command-disposition.md`
@@ -58376,96 +58349,6 @@ fn routed_rust_result_is_owned_by_exact_plan_and_execution_bytes() -> Result<(),
         }
         Ok(())
     })
-}
-
-fn validate_routed_rust_cache_boundary(workflow: &str) -> Result<(), String> {
-    if workflow.contains("Swatinem/rust-cache@") || workflow.contains("uses: actions/cache@") {
-        return Err(
-            "candidate jobs must use the restore-only cache action, not a combined cache action"
-                .to_string(),
-        );
-    }
-    let lines: Vec<&str> = workflow.lines().collect();
-    let mut restore_count = 0;
-    for (index, line) in lines.iter().enumerate() {
-        if line.contains("uses: actions/cache/restore@") {
-            restore_count += 1;
-            let end = lines[index + 1..]
-                .iter()
-                .position(|candidate| candidate.starts_with("      - "))
-                .map_or(lines.len(), |offset| index + 1 + offset);
-            let block = lines[index..end].join("\n");
-            if !block.contains(
-                "key: ripr-routed-rust-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}",
-            ) {
-                return Err(format!(
-                    "restore at line {} lacks the exact cache key",
-                    index + 1
-                ));
-            }
-            if !block.contains("!target/ripr/**") {
-                return Err(format!(
-                    "cache restore at line {} can restore stale RIPR evidence",
-                    index + 1
-                ));
-            }
-        }
-        if line.contains("uses: actions/cache/save@") {
-            return Err(format!(
-                "routed-rust must be restore-only; found cache save at line {}",
-                index + 1
-            ));
-        }
-    }
-    if restore_count != 3 {
-        return Err(format!(
-            "expected three restore-only caches and no save, found {restore_count} restores"
-        ));
-    }
-    Ok(())
-}
-
-fn validate_routed_rust_action_pins(workflow: &str) -> Result<(), String> {
-    let mut inspected = Vec::new();
-    for line in workflow.lines().map(str::trim) {
-        let action = line
-            .strip_prefix("- uses: ")
-            .or_else(|| line.strip_prefix("uses: "));
-        let Some(action) = action else {
-            continue;
-        };
-        if action.starts_with("./") {
-            continue;
-        }
-        inspected.push(action.to_string());
-        let (_, revision) = action
-            .split_once('@')
-            .ok_or_else(|| format!("third-party action `{action}` has no revision"))?;
-        let revision = revision.split_whitespace().next().unwrap_or_default();
-        if revision.len() != 40 || !revision.chars().all(|ch| ch.is_ascii_hexdigit()) {
-            return Err(format!(
-                "third-party action `{action}` must use a reviewed immutable 40-hex commit"
-            ));
-        }
-    }
-    if inspected.is_empty() {
-        return Err("the immutable-action oracle inspected zero third-party actions".to_string());
-    }
-    for required in [
-        "actions/checkout@",
-        "actions/download-artifact@",
-        "actions/upload-artifact@",
-        "actions/cache/restore@",
-        "dtolnay/rust-toolchain@",
-        "taiki-e/install-action@",
-    ] {
-        if !inspected.iter().any(|action| action.starts_with(required)) {
-            return Err(format!(
-                "the routed workflow must retain a reviewed pin for `{required}`"
-            ));
-        }
-    }
-    Ok(())
 }
 
 #[test]
