@@ -3607,7 +3607,7 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     // line, so pin that line: other blocks that name pass/fail authority only
     // render when their artifacts exist and must not satisfy this.
     let gate_authority_boundary = summary
-        .contains("advisory presentation only; `ripr gate evaluate` remains pass/fail authority");
+        .contains("advisory presentation only; `ripr gate evaluate` remains pass/fail authority when explicitly configured");
     let summary_step = generated_ci_advisory_summary_step(workflow);
     let summary_step_head = summary_step.is_some();
     let summary_invoke = summary_step.is_some_and(generated_ci_summary_step_has_executable_invoke);

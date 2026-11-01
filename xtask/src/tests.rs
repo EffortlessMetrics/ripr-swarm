@@ -19211,6 +19211,16 @@ RIPR is advisory static evidence. It does not edit source, generate tests, or ru
     );
     assert!(!no_gate_command.gate_authority_boundary);
 
+    // Unconditional gate authority (no explicit-configuration condition) must fail.
+    let unconditional = dogfood_generated_ci_cockpit_run_from_surfaces(
+        "unconditional-gate-authority",
+        command,
+        10,
+        workflow,
+        &summary.replace(" when explicitly configured", ""),
+    );
+    assert!(!unconditional.gate_authority_boundary);
+
     // Workflow text that still carries the retired shell cannot satisfy the
     // summary properties.
     let legacy = dogfood_generated_ci_cockpit_run_from_surfaces(
