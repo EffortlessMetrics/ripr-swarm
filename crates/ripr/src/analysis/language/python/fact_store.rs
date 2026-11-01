@@ -41,7 +41,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// lack that fact.
 /// `12`: each assertion records the outer callee of an independent nested
 /// call equality for per-finding exact reading (#9814). `11` entries lack it.
-pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "12";
+/// `13`: each file records pytest collection-config facts for uncollected tests (#11527). `12` entries lack them.
+pub(crate) const PYTHON_FILE_FACT_SCHEMA_VERSION: &str = "13";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. The parse
 /// already happened by store time, so exhausting the budget only skips the

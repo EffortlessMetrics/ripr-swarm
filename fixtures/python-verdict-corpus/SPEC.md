@@ -121,6 +121,15 @@ this repository's license, one per test library or library feature:
   independent reference function pin the value and are credited, as is an
   input both sides read (`n = make_input()`; `scale_input(n) == n * 2`). Labeled under
   Python 3.13.18 and pytest 9.2.0.
+- `authored-py-pytest-uncollected` and `authored-py-pytest-uncollected-config`:
+  RIPR-SPEC-0238 rule 24's collection exclusions (#11527). A test pytest never
+  collects cannot notice an edit, so it is a gap that abstains with
+  `static_unknown`: a class with `__test__ = False`, one that inherits it, a
+  module with `__test__ = False`, a file named by a conftest `collect_ignore`,
+  a file name that `python_files` leaves out, and a directory that `addopts`
+  `--ignore` skips. `__test__ = True` and a file that matches `python_files`
+  stay collected and are credited. The first subject keeps a benign
+  `testpaths = ["tests"]` in `pyproject.toml`, which must not move a verdict.
 - `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band
   abstentions (positional band within and outside the band, spread band,
   non-literal band, longer owner body, method owner, decorated owner). Every
