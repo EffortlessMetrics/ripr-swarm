@@ -825,6 +825,14 @@ next=COMMAND
   `--root` and the diff or base selectors, because a finding id does not
   resolve outside its run). It is absent when no gap is listed unless the
   shared canonical next action has an executable command.
+- `open=` replaces `stop=` when no gap is listed but a candidate-current
+  `weakly_exposed` or `reachable_unrevealed` finding is held only by the
+  reach-only `rust_transitive_reach_unresolved` limitation and still carries a
+  contributing related test with a `weak` or `smoke` oracle (#11825). It is not a
+  confirmed gap, so `gaps=` does not count it; the finding is listed in the gap
+  line shape (with `missing=-`), the weak test in its `tK` row, `limits=` still
+  counts it, and `next=` is the `ripr explain` drill-in. A limit with no such
+  row, or any other limit kind, keeps `stop=`.
 - Terminal states are one explicit line: `done=` (no weak or unobserved gap is
   left to fix from the test side, or no changed behavior was found in scope) or
   `stop=` (every finding is base-side or unresolved, all are suppressed by

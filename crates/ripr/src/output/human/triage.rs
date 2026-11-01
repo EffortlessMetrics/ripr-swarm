@@ -1673,6 +1673,42 @@ pub(super) fn is_static_limited(finding: &Finding) -> bool {
         )
 }
 
+/// A reach-only static limitation that still leaves a confirmed test-side
+/// weakness open (#11825).
+///
+/// `rust_transitive_reach_unresolved` says ripr cannot trace the call chain
+/// from a test to the changed owner. It says nothing about a related test whose
+/// own oracle is too weak to tell the old value from the new (`weak` or
+/// `smoke` strength, for example a smoke `is_ok()`).
+/// Such a finding is not a confirmed gap (reach is unresolved, so it stays out
+/// of `gaps=` and out of repair routing), but it is not "nothing is fixable
+/// from the test side" either. Terminal `stop=` projections must not claim it
+/// is. Other limitation kinds, and limits with no weak-assertion row, are
+/// unaffected.
+pub(super) fn limit_leaves_weak_assertion_open(finding: &Finding) -> bool {
+    finding.is_candidate_actionable()
+        && !is_preview_limited(finding)
+        && matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+        && finding.static_limit_kind == Some(StaticLimitKind::RustTransitiveReachUnresolved)
+        && weak_assertion_row(finding).is_some()
+}
+
+/// The first contributing related-test row whose oracle is too weak to tell
+/// the old value from the new (`weak` or `smoke`). Selected on the row's oracle
+/// strength, never on `miss`, which is display-only.
+pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
+    finding.related_tests.iter().find(|test| {
+        test.is_contributing()
+            && matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
+            )
+    })
+}
+
 pub(super) fn is_preview_limited(finding: &Finding) -> bool {
     finding
         .language_status
