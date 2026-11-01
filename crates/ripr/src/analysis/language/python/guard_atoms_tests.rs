@@ -199,6 +199,12 @@ fn a_for_body_over_an_empty_literal_never_runs() -> Result<(), String> {
         classify(touched, "        return item", &test_of("label([])", "2"))?,
         ExposureClass::Exposed
     );
+    // A condition that calls a method on the container may mutate it.
+    let popped = "def label(items):\n    if not items.pop():\n        pass\n    for item in items:\n        return item + 1\n";
+    assert_eq!(
+        classify(popped, "        return item", &test_of("label([])", "2"))?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }
 

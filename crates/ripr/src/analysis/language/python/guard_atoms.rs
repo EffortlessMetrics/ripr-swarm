@@ -342,9 +342,40 @@ fn pure_condition_mention(trimmed: &str, name: &str) -> bool {
         format!("{name} is None"),
         format!("not {name}"),
     ] {
-        rest = rest.replace(&form, "");
+        rest = strip_standalone_form(&rest, &form);
     }
     rest.trim() == name || !mentions_identifier(&rest, name)
+}
+
+/// Removes occurrences of `form` from `text` only when they stand alone: not
+/// part of a longer identifier and not followed by an attribute access,
+/// subscript or call (`.`, `[`, `(`) that could mutate the value
+/// (`not items.pop()` is not a pure test of `items`).
+fn strip_standalone_form(text: &str, form: &str) -> String {
+    let is_ident_char = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(offset) = text[cursor..].find(form) {
+        let start = cursor + offset;
+        let end = start + form.len();
+        let before_ok = text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_ident_char(c));
+        let after_ok = text[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| !(is_ident_char(c) || matches!(c, '.' | '[' | '(')));
+        out.push_str(&text[cursor..start]);
+        if before_ok && after_ok {
+            out.push(' ');
+        } else {
+            out.push_str(form);
+        }
+        cursor = end;
+    }
+    out.push_str(&text[cursor..]);
+    out
 }
 
 fn is_plain_name(text: &str) -> bool {

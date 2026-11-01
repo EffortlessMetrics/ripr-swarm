@@ -19571,6 +19571,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::a_negated_atom_and_a_string_or_number_truthiness_are_read",
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::a_literal_container_membership_guard_is_read",
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::an_isinstance_guard_is_read_for_builtin_classes",
+  "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::a_shadowed_isinstance_is_not_read_as_the_builtin",
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::a_for_body_over_an_empty_literal_never_runs",
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::unreadable_guard_shapes_keep_the_credit",
   "crates/ripr/src/analysis/language/python/guard_atoms_tests.rs::a_parenthesized_scalar_is_not_a_one_element_container",
