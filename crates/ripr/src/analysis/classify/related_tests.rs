@@ -9136,6 +9136,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             "type Names = Vec<u32>;\nimpl Counter for Names {}\n",
             "macro_rules! imp { ($t:ty) => { impl Counter for $t {} }; }\nimp!(Vec<u32>);\n",
             "impl<Item> Counter for Item {}\n",
+            "use crate::Counter as Alias;\nimpl Alias for Vec<u32> {}\n",
         ] {
             assert_eq!(
                 counter_default_fn_relation(body, Vec::new(), suffix),
@@ -9146,6 +9147,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         for suffix in [
             "struct Other;\nimpl Counter for Other {}\n",
             "impl Counter for Unit {}\n",
+            "trait OtherTrait { fn step(&self) -> u32; }\nuse crate::OtherTrait as Alias;\nimpl Alias for Vec<u32> {}\n",
         ] {
             assert_eq!(
                 counter_default_fn_relation(body, Vec::new(), suffix),
@@ -9173,6 +9175,39 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         assert!(rebound("use foo::*;\nfn t() {}", "pub struct Other;"));
         assert!(rebound("use foo::Vec;\nfn t() {}", "pub struct Other;"));
         assert!(rebound("struct Vec;\nfn t() {}", "pub struct Other;"));
+    }
+
+    /// #11236: a `Vec` shadow in a grandparent module still rebinds the std
+    /// name when the test module and its parent only inherit through
+    /// `use super::*;`. A parent that does not use that prelude does not pull
+    /// in the grandparent binding.
+    #[test]
+    fn std_name_rebinding_follows_grandparent_super_glob_chain() {
+        let rebound = |mod_rs: &str, inline_b: &str, module_a: &str| {
+            let mut index =
+                RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex::default());
+            with_source(&mut index, "src/a/b/t.rs", "use super::*;\nfn t() {}");
+            with_source(&mut index, "src/a/b/mod.rs", mod_rs);
+            with_source(&mut index, "src/a/b.rs", inline_b);
+            with_source(&mut index, "src/a.rs", module_a);
+            std_receiver::std_name_rebound_for_tests(&index, "src/a/b/t.rs", "Vec")
+        };
+        assert!(
+            rebound(
+                "use super::*;\n",
+                "use super::*;\npub mod b;",
+                "pub struct Vec;\npub mod b;"
+            ),
+            "grandparent declaration must rebind through chained super globs"
+        );
+        assert!(
+            !rebound(
+                "pub struct Other;\n",
+                "pub mod b;",
+                "pub struct Vec;\npub mod b;"
+            ),
+            "without a super glob on the parent, the grandparent must not rebind"
+        );
     }
 
     /// The relation of the nested out-of-line trait shape for a

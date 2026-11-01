@@ -1737,7 +1737,7 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
         // sha256 hex digest. A partial document must not pass as complete.
         let value: serde_json::Value = serde_json::from_slice(&baseline_stdout)
             .map_err(|error| format!("help --json is not valid JSON: {error}"))?;
-        if value["schema_version"] != serde_json::json!(3) {
+        if value["schema_version"] != serde_json::json!(4) {
             return Err(format!(
                 "help --json schema_version moved: {}",
                 value["schema_version"]
@@ -2675,12 +2675,14 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
                         )
                         .into());
                     }
+                    // Explain misses spell the listing `--format json` (#11844).
                     let listing = stderr
                         .split('`')
                         .find(|part| part.starts_with("ripr check "))
                         .ok_or_else(|| {
                             format!("selector miss omitted its retry command: {stderr}")
-                        })?;
+                        })?
+                        .replace(" --format json", " --json");
                     if listing != expected_listing || !stderr.contains("list available finding ids")
                     {
                         return Err(
@@ -27863,6 +27865,10 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
         recoveries.push((label, String::from_utf8_lossy(&missing.stderr).into_owned()));
     }
     for (label, stderr) in recoveries {
+        // The explain miss spells the listing `--format json` (#11844); the
+        // missing-selector hint keeps the `--json` alias. Both name the same
+        // scoped command, so compare on the alias spelling.
+        let stderr = stderr.replace(" --format json`", " --json`");
         if !stderr.contains(&format!("`{expected_listing}`")) {
             return Err(format!(
                 "{label} must name the scoped listing `{expected_listing}`:\n{stderr}"
@@ -29204,6 +29210,21 @@ fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
         assert_eq!(refused.status.code(), Some(3), "{refused:?}");
         let stderr = String::from_utf8_lossy(&refused.stderr);
         assert!(stderr.contains("no repository movement"), "{stderr}");
+        // #11597: exactly one typed line; the refusal that spends the budget
+        // is terminal, like the call after it, and earlier ones are retryable.
+        let expected = if refusal_number == 5 {
+            "ripr: refusal code=retry_budget_exhausted disposition=terminal"
+        } else {
+            "ripr: refusal code=awaiting_edit disposition=retryable"
+        };
+        assert_eq!(
+            stderr
+                .lines()
+                .filter(|line| line.starts_with("ripr: refusal code="))
+                .collect::<Vec<_>>(),
+            vec![expected],
+            "{stderr}"
+        );
         // Escalation starts at the second refusal, never on the first.
         assert_eq!(
             stderr.contains("retry budget for this attempt"),
@@ -29304,6 +29325,14 @@ fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
     let stopped_stderr = String::from_utf8_lossy(&stopped.stderr);
     assert!(
         stopped_stderr.contains("spent its after-phase retry budget"),
+        "{stopped_stderr}"
+    );
+    assert_eq!(
+        stopped_stderr
+            .lines()
+            .filter(|line| line.starts_with("ripr: refusal code="))
+            .collect::<Vec<_>>(),
+        vec!["ripr: refusal code=retry_budget_exhausted disposition=terminal"],
         "{stopped_stderr}"
     );
     // The recovery names a new attempt; the shared repair gate may withhold
@@ -34629,6 +34658,13 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
     );
     assert!(repair.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&repair.stderr);
+    // #11597: the held start carries its typed reason beside the prose.
+    assert!(
+        stderr.contains(
+            "ripr: refusal code=start_refused_uncommitted_target disposition=not_started"
+        ),
+        "{stderr}"
+    );
     assert!(
         stderr.contains(
             "No repair attempt started. Commit or stash `src/lib.rs`, then run `ripr repair "

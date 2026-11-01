@@ -119,7 +119,7 @@ Updated:
 ## Pending — rust_nested_use_dependency_glob (10)
 
 Reason:
-RIPR-SPEC-0117 #10046: PR call-value identity reads these nested-use owners unresolved (infection_unknown/warning) composed with current main
+RIPR-SPEC-0117 #10046: PR call-value identity reads these nested-use owners unresolved (infection_unknown/warning) composed with current main; RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
 
 Command:
 `cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`

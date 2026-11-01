@@ -1181,7 +1181,12 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
     // routed CI jobs set it, so `cargo build` writes there.
     ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
-        preparation::build(&["build", "-p", "ripr"])
+        // The build output goes straight to the console here, so the retry
+        // cannot read why it failed; it is Windows-only and bounded.
+        crate::run::retry_while_binary_busy(
+            |_| true,
+            || preparation::build(&["build", "-p", "ripr"]),
+        )
     })
 }
 
@@ -3096,11 +3101,12 @@ mod tests {
     #[test]
     fn isolated_default_target_sits_beside_the_shared_debug_dir_not_inside_it() {
         let shared = std::path::Path::new("/w/target/debug/ripr");
+        // `std::path::absolute` anchors a rootless Windows path to the current
+        // drive (`/w` gains a drive prefix), so the expectation goes through it too.
         assert_eq!(
             super::isolated_default_target_dir(shared),
-            Ok(std::path::PathBuf::from(
-                "/w/target/fixture-variants/default"
-            ))
+            std::path::absolute("/w/target/fixture-variants/default")
+                .map_err(|err| format!("resolve isolated default target: {err}"))
         );
         let missing = super::isolated_default_target_dir(std::path::Path::new("ripr"));
         assert_eq!(missing, Err("missing shared target root".to_string()));

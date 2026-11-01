@@ -2,7 +2,7 @@ use crate::domain::{OracleKind, OracleStrength, SymbolId};
 #[cfg(test)]
 use ra_ap_syntax::Edition;
 use ra_ap_syntax::{
-    AstNode, SourceFile, TextSize,
+    AstNode, SourceFile, SyntaxKind, TextSize,
     ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
 mod closure_callbacks;
@@ -88,20 +88,20 @@ pub(crate) fn rust_include_directives(
             .path()
             .map(|path| path.syntax().text_range().start())
             .unwrap_or(call_range.start());
-        let expression = slice_text(text, call_start, call_range.end());
-        let Some((callee, _)) = expression.split_once('!') else {
+        let Some(path) = macro_call.path() else {
             continue;
         };
-        if callee.trim() != "include" {
+        if !include_macro_callee_is_include(&path) {
             continue;
         }
+        let expression = slice_text(text, call_start, call_range.end());
         let attributes = macro_call
             .attrs()
             .map(|attr| attr.syntax().text().to_string())
             .collect::<Vec<_>>();
         directives.push(RustIncludeDirective {
             line: line_index.line(call_start),
-            literal_path: include_literal_path(&expression),
+            literal_path: include_literal_path_from_macro_call(&macro_call),
             is_file_level: !macro_call
                 .syntax()
                 .ancestors()
@@ -497,15 +497,43 @@ pub(crate) fn fn_name_binding_count(fn_text: &str, name: &str) -> Option<usize> 
     )
 }
 
-pub(super) fn include_literal_path(expression: &str) -> Option<PathBuf> {
-    let (_, arguments) = expression.split_once('!')?;
-    let arguments = arguments.trim();
-    let arguments = arguments.strip_suffix(';').unwrap_or(arguments).trim();
-    let inner = match (arguments.chars().next()?, arguments.chars().last()?) {
-        ('(', ')') | ('{', '}') | ('[', ']') => arguments.get(1..arguments.len() - 1)?.trim(),
+/// Whether a macro path names the standard `include!` builtin (including `r#include`
+/// and `std`/`core`/`alloc`-qualified spellings handled elsewhere in module-tree scans).
+pub(super) fn include_macro_callee_is_include(path: &ast::Path) -> bool {
+    let mut callee = path.syntax().text().to_string();
+    callee = callee.trim_start_matches("::").to_string();
+    for prefix in ["std::", "core::", "alloc::"] {
+        if let Some(rest) = callee.strip_prefix(prefix) {
+            callee = rest.to_string();
+            break;
+        }
+    }
+    callee.trim_start_matches("r#") == "include"
+}
+
+pub(super) fn include_literal_path_from_macro_call(call: &ast::MacroCall) -> Option<PathBuf> {
+    let tree = call.token_tree()?;
+    let tokens: Vec<_> = tree
+        .syntax()
+        .children_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    let (open, rest) = tokens.split_first()?;
+    let close = match open.kind() {
+        SyntaxKind::L_PAREN => SyntaxKind::R_PAREN,
+        SyntaxKind::L_CURLY => SyntaxKind::R_CURLY,
+        SyntaxKind::L_BRACK => SyntaxKind::R_BRACK,
         _ => return None,
     };
-    parse_rust_string_literal(inner).map(PathBuf::from)
+    let (literal, tail) = rest.split_first()?;
+    if literal.kind() != SyntaxKind::STRING {
+        return None;
+    }
+    if tail.iter().any(|token| token.kind() != close) {
+        return None;
+    }
+    parse_rust_string_literal(literal.text()).map(PathBuf::from)
 }
 
 pub(super) fn parse_rust_string_literal(literal: &str) -> Option<String> {
@@ -4451,10 +4479,16 @@ mod include_directive_tests {
 // include!("comment.rs");
 const SAMPLE: &str = "include!(\"string.rs\")";
 include!("plain.rs");
+r#include!("raw_name.rs");
+include /* ! nested /* block */ */ !("commented_name.rs");
+include!(/* path */ "commented_argument.rs" /* tail */);
 include!(r#"raw.rs"#);
 include!("escaped\\path.rs");
 include!("quoted\"file.rs");
 include!(concat!(env!("OUT_DIR"), "/generated.rs"));
+include!(env!("X"), "frag.rs");
+include_str!("sidecar.rs");
+preinclude!("not_include.rs");
 mod nested { include!("nested.rs"); }
 "###;
 
@@ -4468,15 +4502,29 @@ mod nested { include!("nested.rs"); }
             literals,
             vec![
                 PathBuf::from("plain.rs"),
+                PathBuf::from("raw_name.rs"),
+                PathBuf::from("commented_name.rs"),
+                PathBuf::from("commented_argument.rs"),
                 PathBuf::from("raw.rs"),
                 PathBuf::from("escaped\\path.rs"),
                 PathBuf::from("quoted\"file.rs"),
                 PathBuf::from("nested.rs")
             ]
         );
-        assert_eq!(directives.len(), 6);
-        assert!(directives[4].literal_path.is_none());
-        assert!(!directives[5].is_file_level);
+        assert_eq!(directives.len(), 10);
+        assert!(
+            directives
+                .iter()
+                .filter(|directive| directive.literal_path.is_none())
+                .count()
+                == 2,
+            "concat! and non-leading-literal arguments should lack a literal path"
+        );
+        let nested = directives
+            .iter()
+            .find(|directive| directive.literal_path.as_deref() == Some(Path::new("nested.rs")))
+            .ok_or_else(|| "nested include directive missing".to_string())?;
+        assert!(!nested.is_file_level);
         Ok(())
     }
 }

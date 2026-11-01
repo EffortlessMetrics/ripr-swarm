@@ -26,7 +26,7 @@ Start here:
   Related test: tests/discount.test.ts:3 applyDiscount applies discount when amount meets threshold (assertion too weak to tell the old behavior from the new)
   Next step — TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `amount == threshold`; the repair packet is complete (advisory: `ripr context --at
-    <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only)
+    <finding-id>` prints it; `ripr repair` covers Rust files only)
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;

@@ -344,7 +344,9 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
         }
         // ADR 0019: the domain gloss is the stop-reason owner. Do not invent
         // a second identity-unknown sentence here.
-        StopReason::HelperIdentityUnresolved => reason.describe(),
+        StopReason::HelperIdentityUnresolved | StopReason::CompileTimeInvariant => {
+            reason.describe()
+        }
     }
 }
 

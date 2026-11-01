@@ -4100,8 +4100,7 @@ fn missing_field_value_discriminator(
     // write from a kept one, so it does not confirm the assignment.
     let assigned_field_observed = |test: &TestSummary, assertion: &OracleFact| {
         assigned.as_ref().is_some_and(|(owner, path)| {
-            !super::propagation_witness::assertion_expects_default_like(&assertion.text)
-                && pushed_collection_compared_whole(owner, path, test, assertion, index)
+            assigned_field_read_confirms(owner, path, test, assertion, index)
         })
     };
     // #6578: the variant-field pattern rule's workspace scan depends only on
@@ -4233,6 +4232,24 @@ pub(in crate::analysis) fn assigned_field_of(
             })
         },
     )
+}
+
+/// RIPR-SPEC-0228, #11398: whether `assertion` confirms the changed write of
+/// `self.<path>` in `owner`: an `assert_eq!` that reads the whole field from
+/// the binding the test called `owner` on, after the call and under the
+/// pushed-literal binding rules ([`pushed_collection_compared_whole`]). A
+/// default-like expected value (`0`, `false`) cannot tell a deleted write
+/// from a kept one. This is the one read rule for a field write: the diff
+/// probe and the repository seam both ask it, so check and repair agree.
+pub(in crate::analysis) fn assigned_field_read_confirms(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    !super::propagation_witness::assertion_expects_default_like(&assertion.text)
+        && pushed_collection_compared_whole(owner, path, test, assertion, index)
 }
 
 /// #7131: the field collection path (`lines` for `self.lines.push(Line {
@@ -5264,6 +5281,15 @@ pub(in crate::analysis) fn computed_input_parameters(
     if !entry_called || chain_entry_rows(chain, related_tests, index).is_empty() {
         return Vec::new();
     }
+    // A hop argument computed over the caller's parameters is no longer
+    // unreadable when the entry rows bind all the way down: the binder folded
+    // each such argument exactly (`bind_helper_argument`), so the owner holds
+    // an exact row. Entry-call arguments stay as read above.
+    if computed.is_empty()
+        && !helper_transferred_rows(parameters, chain, related_tests, index).is_empty()
+    {
+        return Vec::new();
+    }
     for step in (0..chain.hops.len()).rev() {
         let hop = &chain.hops[step];
         let target_parameters: Vec<String> = if step == 0 {
@@ -5357,7 +5383,9 @@ fn helper_transferred_rows(
                 let Some(parameter) = target_parameters.get(index) else {
                     return Vec::new();
                 };
-                let Some(value) = bind_helper_argument(argument, &caller_parameters, row) else {
+                let Some(value) =
+                    bind_helper_argument(argument, &hop.caller, &caller_parameters, row)
+                else {
                     return Vec::new();
                 };
                 bound.push(ParameterValue {
@@ -5438,7 +5466,7 @@ pub(in crate::analysis) fn chain_row_transfer_stop(
                 !field.is_empty() && field.chars().all(|ch| ch.is_ascii_digit())
             });
             let bindable = receiver_index
-                || bind_helper_argument(argument, &caller_parameters, &row).is_some();
+                || bind_helper_argument(argument, &hop.caller, &caller_parameters, &row).is_some();
             (!bindable).then(|| trimmed.to_string())
         })
     })
@@ -5533,6 +5561,7 @@ fn let_governs_every_use(body: &str, name: &str) -> bool {
 /// transfer for that chain (#3296: named edge, no guessed value).
 fn bind_helper_argument(
     argument: &str,
+    caller: &FunctionSummary,
     caller_parameters: &[String],
     row: &[ParameterValue],
 ) -> Option<String> {
@@ -5551,17 +5580,61 @@ fn bind_helper_argument(
             .find(|cell| cell.parameter == RECEIVER_PSEUDO_PARAMETER)
             .and_then(|cell| super::helper_transfer::project_receiver_field(&cell.value, field));
     }
-    caller_parameters
+    let parameter_cell = |name: &str| {
+        caller_parameters
+            .iter()
+            .find(|parameter| parameter.as_str() == name)
+            .and_then(|parameter| {
+                row.iter()
+                    .find(|cell| cell.parameter == *parameter)
+                    // A constructed receiver string is read only through
+                    // `self.<index>`; it never binds as a parameter value.
+                    .filter(|cell| !super::helper_transfer::is_receiver_cell(&cell.value))
+                    .map(|cell| cell.value.clone())
+            })
+    };
+    if let Some(value) = parameter_cell(trimmed) {
+        return Some(value);
+    }
+    // RIPR-SPEC-0158 (hop edition): a closed integer expression over the
+    // caller's own wide integer parameters folds through the shared
+    // evaluator when each operand is a decimal row value, the caller never
+    // rebinds it and no step overflows.
+    super::argument_fold::folded_hop_argument(trimmed, |name| {
+        let value = parameter_cell(name)?;
+        (parameter_type_text(caller, name).is_some_and(|ty| is_wide_integer_type(&ty))
+            && !super::helper_transfer::caller_rebinds_parameter(&caller.body, name))
+        .then_some(value)
+    })
+}
+
+/// The declared type text of `function`'s parameter `name`, whitespace
+/// removed; `None` when no single-name parameter pattern matches.
+fn parameter_type_text(function: &FunctionSummary, name: &str) -> Option<String> {
+    let arguments = signature_arguments(function)?;
+    split_top_level_args(&arguments)
         .iter()
-        .find(|parameter| parameter.as_str() == trimmed)
-        .and_then(|parameter| {
-            row.iter()
-                .find(|cell| cell.parameter == *parameter)
-                // A constructed receiver string is read only through
-                // `self.<index>`; it never binds as a parameter value.
-                .filter(|cell| !super::helper_transfer::is_receiver_cell(&cell.value))
-                .map(|cell| cell.value.clone())
+        .find_map(|argument| {
+            let pattern = top_level_pattern(argument);
+            let bound = pattern.trim();
+            let bound = bound.strip_prefix("mut ").unwrap_or(bound).trim();
+            (bound == name).then(|| {
+                argument[pattern.len()..]
+                    .trim_start()
+                    .strip_prefix(':')
+                    .map(|ty| ty.split_whitespace().collect::<String>())
+            })?
         })
+}
+
+/// Integer types wide enough that a folded result below the evaluator's
+/// `i32::MAX` bound cannot overflow them. Narrow, aliased and generic types
+/// are not read.
+fn is_wide_integer_type(ty: &str) -> bool {
+    matches!(
+        ty,
+        "i32" | "i64" | "i128" | "isize" | "u32" | "u64" | "u128" | "usize"
+    )
 }
 
 /// The pseudo-parameter a method hop hands its callee for the receiver.
@@ -11036,7 +11109,16 @@ assert_eq!(input.amount, 100);"#
             )
         };
 
-        let computed = run(&chain_with("y + 1"), &test);
+        // RIPR-SPEC-0159 computed chain-edge argument: `y + 1` over the
+        // caller's own `u32` parameter folds exactly (9 + 1 = 10), so the
+        // owner holds a row on the boundary and nothing is unresolved.
+        let folded = run(&chain_with("y + 1"), &test);
+        assert_eq!(folded.unresolved_boundary, None);
+        assert!(folded.activation.missing_discriminators.is_empty());
+
+        // A constant the fold does not read keeps the computed argument
+        // unreadable.
+        let computed = run(&chain_with("y + LIMIT"), &test);
         assert!(computed.activation.missing_discriminators.is_empty());
         let reason = computed.unresolved_boundary.unwrap_or_default();
         assert!(
@@ -11054,7 +11136,7 @@ assert_eq!(input.amount, 100);"#
         // arguments: the computed hop is out of scope.
         let mut unrelated = test.clone();
         unrelated.calls[0].name = "other".to_string();
-        let unentered = run(&chain_with("y + 1"), &unrelated);
+        let unentered = run(&chain_with("y + LIMIT"), &unrelated);
         assert_eq!(unentered.unresolved_boundary, None);
     }
 

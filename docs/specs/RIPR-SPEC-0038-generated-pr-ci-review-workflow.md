@@ -49,6 +49,25 @@ truth, rerun hidden analysis to patch missing artifacts, edit source, generate
 tests, call providers, run mutation testing, publish inline comments, change
 branch protection, or change default CI blocking.
 
+The `Install ripr` step (shell `bash`, pinned by `defaults.run.shell`) installs
+the exact pinned release's prebuilt archive for the runner (#6245). Linux and
+macOS x64/ARM64 take the `tar.gz`; Windows x64 (`x86_64-pc-windows-msvc`) takes
+the `zip` containing `ripr.exe`. Targets, archive kinds and executable names
+come from `policy/distribution.toml`, bound by drift tests. The step:
+
+- verifies the published SHA-256 before extraction and extracts into
+  `$RUNNER_TEMP/ripr-bin`, then runs the selected executable by absolute path
+  and requires it to report the pinned version;
+- extracts the Windows zip with the `tar.exe` (bsdtar) that Windows ships,
+  addressed under `%SystemRoot%\System32` so Git for Windows' GNU `tar`, which
+  cannot read zip, and anything on `PATH` cannot stand in, and refuses any
+  entry that is not a flat root name (nested, absolute, drive-letter,
+  backslash, `..`) or is duplicated;
+- reaches `cargo install` only for a genuinely unmapped runner or an archive
+  that cannot be downloaded; a missing checksum, checksum mismatch, bad
+  archive, wrong payload or wrong reported version exits 1 with no fallback;
+- stops with an explicit unsupported error on Windows ARM64.
+
 The generated workflow must keep Rust-default behavior unchanged unless a later
 spec explicitly changes that default. Language-aware grouping is opt-in and
 appears only when configured language metadata includes more than Rust.
