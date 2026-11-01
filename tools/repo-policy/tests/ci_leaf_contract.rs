@@ -473,11 +473,35 @@ fn run_blocks(source: &str) -> Vec<String> {
         })
         .collect()
 }
+/// Steps added by a PR that are absent from the retained predecessor, allowed
+/// only as an exact (job, whole run block) match so any other added or altered
+/// step still fails the per-job equality below.
+const PR_OWNED_STEPS: &[(&str, &str)] = &[(
+    "release-proof",
+    "cargo test -p xtask --features perl-identity reports::sarif::identity_tests",
+)];
+fn without_pr_owned_steps(job_name: &str, scripts: Vec<String>) -> Vec<String> {
+    scripts
+        .into_iter()
+        .filter(|script| !PR_OWNED_STEPS.contains(&(job_name, script.as_str())))
+        .collect()
+}
+#[test]
+fn pr_owned_step_allowance_is_exact_and_job_scoped() {
+    let step = PR_OWNED_STEPS[0].1.to_owned();
+    let altered = format!("{step} --extra");
+    let kept = without_pr_owned_steps("release-proof", vec![step.clone(), altered.clone()]);
+    assert_eq!(kept, vec![altered.clone()]);
+    assert_eq!(
+        without_pr_owned_steps("other-job", vec![step.clone()]),
+        vec![step]
+    );
+}
 #[test]
 fn feature_command_action_and_manual_denominators_are_unchanged() -> TestResult {
     for (name, _) in JOBS {
         assert_eq!(
-            run_blocks(job(WORKFLOW, name)).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
+            without_pr_owned_steps(name, run_blocks(job(WORKFLOW, name))).iter().filter(|script| !script.contains("proptest_singleton/input/Cargo.toml") && !script.contains("owner_return_pin_json_real_literal/input/Cargo.toml")).map(|script| script.replace("  [ \"${CALLED:-false}\" != true ] || return 0\n", "").replace("cargo package -p ripr --no-verify\npackage_id=\"$(cargo pkgid -p ripr)\"\npackage_version=\"${package_id##*#}\"\ntest -n \"$package_version\"\n", "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\n")).collect::<Vec<_>>(),
             run_blocks(job(ORIGINAL, name)).iter().map(|script| script.replace(
                 "cargo package -p ripr --no-verify && tar xzf \"target/package/ripr-$(cargo pkgid -p ripr | sed 's/.*#//').crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$(cargo pkgid -p ripr | sed 's/.*#//')\" && rm Cargo.lock && cargo generate-lockfile",
                 "cargo package -p ripr --no-verify\npackage_version=\"$(cargo pkgid -p ripr | sed 's/.*#//')\"\ntar xzf \"target/package/ripr-$package_version.crate\" -C \"$RUNNER_TEMP\"\ncd \"$RUNNER_TEMP/ripr-$package_version\"\nrm Cargo.lock\ncargo generate-lockfile"
@@ -572,7 +596,7 @@ fn literal_runtime_commands_propagate_native_failure() -> TestResult {
             }
         }
     }
-    assert_eq!(count, 13, "nonempty payload denominator");
+    assert_eq!(count, 14, "nonempty payload denominator");
     Ok(())
 }
 
