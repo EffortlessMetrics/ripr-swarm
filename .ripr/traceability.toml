@@ -913,6 +913,8 @@ tests = [
   "crates/ripr/src/output/agent_seam_packets.rs::tests::packet_carries_shared_evidence_record_projection",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::packet_v2_carries_patterns_to_imitate_and_avoid",
   "crates/ripr/src/output/agent_seam_packets.rs::tests::packet_v2_recommends_inferred_test_file_when_no_related_test_exists",
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::packet_carries_advisory_proof_obligation_for_a_relational_boundary",
+  "crates/ripr/src/analysis/test_stub/tests.rs::proof_obligation_describes_a_single_relational_boundary_and_nothing_else",
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::weakly_gripped_seam_emits_warning_with_stable_code",
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::ungripped_and_reachable_unrevealed_emit_warning",
   "crates/ripr/src/lsp/diagnostics.rs::seam_diagnostic_tests::unknown_classes_emit_information",
@@ -1013,6 +1015,7 @@ code = [
   "crates/ripr/src/output/badge/summaries.rs",
   "crates/ripr/src/output/badge/test_efficiency.rs",
   "crates/ripr/src/output/agent_seam_packets.rs",
+  "crates/ripr/src/analysis/test_stub.rs",
   "crates/ripr/src/lsp/diagnostics.rs",
   "crates/ripr/src/lsp/config.rs",
   "crates/ripr/src/lsp/state.rs",
@@ -17825,6 +17828,8 @@ id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/owners_tests/tests.rs::nested_owner_records_whether_the_enclosing_body_calls_it",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::body_calls_owner_refuses_nested_function_the_enclosing_body_never_calls",
   "crates/ripr/src/analysis/language/python/derived_expectation_tests.rs::given_an_expectation_bound_from_the_owner_then_it_is_demoted",
   "crates/ripr/src/analysis/language/python/derived_expectation_tests.rs::given_an_expectation_rewritten_from_the_owner_then_it_is_demoted",
   "crates/ripr/src/analysis/language/python/derived_expectation_tests.rs::given_a_pytest_expectation_computed_from_the_owner_then_it_is_demoted",

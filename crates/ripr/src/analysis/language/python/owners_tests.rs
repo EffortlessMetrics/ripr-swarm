@@ -64,11 +64,13 @@ pub(super) fn collect_owners_from_statements(
         match stmt {
             Stmt::FunctionDef(function) => {
                 push_function_owner(stmt, owner_context, out);
-                if let Some(parent) = function_context
-                    && let Some(owner) = out.last_mut()
-                {
-                    owner.qualified_name = format!("{parent}.{}", function.name);
-                    owner.owner_kind = Some(OwnerKind::Function);
+                if let Some(parent) = function_context {
+                    let called = body_calls_nested_def(source, statements, &function.name);
+                    if let Some(owner) = out.last_mut() {
+                        owner.qualified_name = format!("{parent}.{}", function.name);
+                        owner.owner_kind = Some(OwnerKind::Function);
+                        owner.nested_called_by_parent = called;
+                    }
                 }
                 let parent_qualified = out
                     .last()
@@ -87,11 +89,13 @@ pub(super) fn collect_owners_from_statements(
             }
             Stmt::AsyncFunctionDef(function) => {
                 push_function_owner(stmt, owner_context, out);
-                if let Some(parent) = function_context
-                    && let Some(owner) = out.last_mut()
-                {
-                    owner.qualified_name = format!("{parent}.{}", function.name);
-                    owner.owner_kind = Some(OwnerKind::Function);
+                if let Some(parent) = function_context {
+                    let called = body_calls_nested_def(source, statements, &function.name);
+                    if let Some(owner) = out.last_mut() {
+                        owner.qualified_name = format!("{parent}.{}", function.name);
+                        owner.owner_kind = Some(OwnerKind::Function);
+                        owner.nested_called_by_parent = called;
+                    }
                 }
                 let parent_qualified = out
                     .last()
@@ -197,6 +201,53 @@ struct PythonOwnerContext<'a> {
     class_context: Option<&'a str>,
     imports: &'a [PythonImport],
     module_constants: &'a [PythonModuleConstant],
+}
+
+/// Whether the statements that run when the enclosing function runs call the
+/// nested def `name` by name (#12141). `statements` is the enclosing body: the
+/// nested defs and classes in it are excluded, so a call from an unused
+/// sibling def, from the nested body itself or from a class body is not an
+/// edge from the enclosing function. A spaced call (`inner (n)`) counts. A
+/// body that rebinds the name (assignment, walrus, `for`, `as`, `import`)
+/// is fail-closed: the call may reach a different binding. Returning or
+/// passing the def without calling it is not a call.
+fn body_calls_nested_def(source: &str, statements: &[Stmt], name: &str) -> bool {
+    let executed = statements
+        .iter()
+        .filter(|stmt| {
+            !matches!(
+                stmt,
+                Stmt::FunctionDef(_) | Stmt::AsyncFunctionDef(_) | Stmt::ClassDef(_)
+            )
+        })
+        .map(|stmt| text_for_range(source, stmt.range()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let ident = |ch: char| ch == '_' || ch.is_alphanumeric();
+    let mut calls = false;
+    let mut rebinds = false;
+    for (idx, _) in executed.match_indices(name) {
+        let end = idx + name.len();
+        let bounded = super::static_limits::python_callee_start_has_boundary(&executed, idx)
+            && executed[end..].chars().next().is_none_or(|ch| !ident(ch));
+        if !bounded {
+            continue;
+        }
+        let after = executed[end..].trim_start_matches([' ', '\t']);
+        let before = executed[..idx].trim_end_matches([' ', '\t']);
+        if after.starts_with('(') && super::related_tests::is_bare_call_site(&executed, idx) {
+            calls = true;
+        } else if (after.starts_with('=') && !after.starts_with("=="))
+            || after.starts_with(":=")
+            || matches!(
+                before.rsplit(char::is_whitespace).next(),
+                Some("as" | "for" | "import")
+            )
+        {
+            rebinds = true;
+        }
+    }
+    calls && !rebinds
 }
 
 fn owner_from_function(
@@ -338,6 +389,7 @@ fn owner_from_function(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 
@@ -442,6 +494,7 @@ fn owner_from_class(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 
@@ -481,6 +534,7 @@ pub(super) fn module_owner(
         foreign_writes: Default::default(),
         version_conditional: false,
         cli_subcommand: None,
+        nested_called_by_parent: false,
     }
 }
 
