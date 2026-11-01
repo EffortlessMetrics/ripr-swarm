@@ -233,28 +233,8 @@ impl OwnedProcess {
         }
         #[cfg(all(unix, not(windows)))]
         {
-            use std::os::unix::process::CommandExt as _;
-            let mut command = command;
             let group_owned = crate::analysis::cancellation::owns_process_groups();
-            if group_owned {
-                // Opt-in belongs to the MCP attempt, including captured workers.
-                // Public CLI/exporter callers keep their original group policy.
-                ensure_group_observation_supported()?;
-                command.process_group(0);
-            }
-            let child = command.spawn()?;
-            Ok(Self {
-                child,
-                group_owned,
-                custody_lost: false,
-                group_settled: false,
-                #[cfg(all(test, unix, not(windows)))]
-                test_group_kills: 0,
-                #[cfg(test)]
-                test_direct_kills: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-                #[cfg(test)]
-                injected_kill_failure: None,
-            })
+            Self::spawn_with_group(command, group_owned)
         }
         #[cfg(not(any(windows, unix)))]
         {
@@ -265,6 +245,56 @@ impl OwnedProcess {
             let child = command.spawn()?;
             Ok(Self::from_child(child))
         }
+    }
+
+    /// Spawn with explicit descendant containment for an owned execution.
+    ///
+    /// The installed ordinary-test journey uses this entry point outside an
+    /// analysis cancellation scope. On supported Unix platforms it creates a
+    /// fresh process group and retains the existing prereap PID custody. This
+    /// replaces any caller-prepared group setting. Windows uses the same Job
+    /// Object setup as [`Self::spawn`]. Platforms without those containment
+    /// primitives refuse before spawning. The default [`Self::spawn`] behavior
+    /// and its caller-prepared group settings remain unchanged.
+    pub fn spawn_isolated(command: Command) -> std::io::Result<Self> {
+        #[cfg(all(unix, not(windows)))]
+        {
+            Self::spawn_with_group(command, true)
+        }
+        #[cfg(windows)]
+        {
+            Self::spawn(command)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = command;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "isolated process execution requires descendant containment",
+            ))
+        }
+    }
+
+    #[cfg(all(unix, not(windows)))]
+    fn spawn_with_group(mut command: Command, group_owned: bool) -> std::io::Result<Self> {
+        use std::os::unix::process::CommandExt as _;
+        if group_owned {
+            ensure_group_observation_supported()?;
+            command.process_group(0);
+        }
+        let child = command.spawn()?;
+        Ok(Self {
+            child,
+            group_owned,
+            custody_lost: false,
+            group_settled: false,
+            #[cfg(test)]
+            test_group_kills: 0,
+            #[cfg(test)]
+            test_direct_kills: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            #[cfg(test)]
+            injected_kill_failure: None,
+        })
     }
 
     #[cfg(windows)]

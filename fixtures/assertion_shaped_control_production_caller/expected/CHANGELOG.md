@@ -527,3 +527,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_caller (35)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_caller --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

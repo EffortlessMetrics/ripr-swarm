@@ -101,6 +101,17 @@ Environment variables:
                                  the budget and write all seams (may produce very large files).
                                  When the budget is applied, both artifacts include a
                                  limitations[] disclosure naming the env var and a repair route.
+  RIPR_PILOT_REPO_EXPOSURE_BYTES Byte budget for the entries in repo-exposure.json. Default:
+                                 8000000 (the entry count alone let it reach 13 MB). A cut sets
+                                 run_status limited_repo_exposure_bytes, reports the rendered
+                                 and total counts in limitations[] and pilot-summary.json, and
+                                 `ripr outcome` refuses the file. Set to 0 to write every entry.
+  RIPR_PILOT_PACKET_BUDGET      Maximum packets in the pilot packet file. Default: 3, with
+                                 actionable packets first, so the file stays small enough to
+                                 read. Set to 0 to write every packet (often 2-4 MB). When the
+                                 bound cuts, limitations[] reports packets_emitted and
+                                 packets_eligible. The `ripr check` packet format is unaffected
+                                 and writes the full set.
   RIPR_REPO_EXPOSURE_SEAM_LIMIT Maximum gaps analyzed and ranked in one pilot run.
                                  Default: the pilot seam budget (2000), so pilot does not
                                  classify seams it would not rank; `ripr check` keeps 10000.
@@ -202,7 +213,7 @@ findings. `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
   ripr check
-  ripr check --base origin/main --json --quiet   (--json alone still prints progress)
+  ripr check --base origin/main --json --quiet   (--json on a pipe is already quiet; --quiet also silences a terminal)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
@@ -399,12 +410,15 @@ Progress:
   throttled `still active after <elapsed class>` heartbeats. Non-TTY
   / CI output is newline-delimited with no control sequences. A TTY
   may reuse one line and stays silent for sub-threshold flashes.
-  Machine formats (json, sarif, github) keep stdout byte-clean;
-  they do not disable stderr progress. Unknown totals never become a
+  Machine formats (json, sarif, github) keep stdout byte-clean. With json,
+  sarif, badge-* or agent selected and stderr not a terminal, the
+  stream is off by default; `RIPR_PROGRESS=1` restores it. A terminal and
+  the human formats keep it. Unknown totals never become a
   percentage or ETA. Progress does not mean analysis is faster or
-  that the command will succeed. `--quiet` turns this stream off; agents
-  and scripts reading json should pass it. Setting `RIPR_QUIET` to anything
-  but empty, `0` or `false` does the same.
+  that the command will succeed. `--quiet` turns this stream off; so does
+  setting `RIPR_QUIET` to anything but empty, `0` or `false`. `repair` and
+  `continue` accept `--quiet` too and drop their progress narration and
+  `wrote <path>` lines; refusal prose is never suppressed.
 
 Environment variables:
   RIPR_MAX_DIFF_CHANGED_RUST_LINES        Maximum added plus removed Rust diff lines
@@ -464,9 +478,13 @@ Environment variables:
                                           Default: 1000000 (1 MB).
   RIPR_QUIET                              Silence the stderr `ripr progress:` stream
                                           like --quiet (check, explain, context,
-                                          pilot). Any value except empty, 0 or
-                                          false silences it; stdout, exit codes and
-                                          errors are unchanged.
+                                          pilot, repair, continue). Any value except
+                                          empty, 0 or false silences it; stdout, exit
+                                          codes and errors are unchanged.
+  RIPR_PROGRESS                           Keep the `ripr progress:` stream for a
+                                          machine format on a non-terminal stderr,
+                                          where it is off by default. Any value
+                                          except empty, 0 or false restores it.
   RIPR_GIT_TIMEOUT                        Cooperative deadline in seconds for each
                                           git invocation in the diff-load path. A
                                           git command that exceeds the deadline is
@@ -527,7 +545,7 @@ Exit status:
 "#;
 pub(super) const EXPLAIN_HELP: &str = r#"Print why ripr flagged a specific change.
 
-Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--quiet] <finding-id|file:line>
+Usage: ripr explain [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] [--format human|agent] [--quiet] <finding-id|file:line>
 
 Options:
   --root PATH  Workspace root. Defaults to the current directory, then
@@ -539,6 +557,11 @@ Options:
                `--root .` or a finding ID; with
                --from or --diff, a selector naming no file is anchored to that
                directory).
+  --format F   human (default) or agent. agent prints the selected finding as
+               compact `check --format agent` lines (one record, its related
+               test, and an explicit done=/open=/stop= terminal line plus
+               next=<ripr context command>), static advisory only. For the
+               JSON packet use `ripr context --at <finding-id>`.
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
                error reporting.

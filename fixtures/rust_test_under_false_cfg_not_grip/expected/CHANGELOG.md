@@ -217,3 +217,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_test_under_false_cfg_not_grip (19)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+
+Command:
+`cargo xtask goldens bless rust_test_under_false_cfg_not_grip --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

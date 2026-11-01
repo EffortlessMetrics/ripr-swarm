@@ -539,3 +539,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — infect_value_returned (45)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless infect_value_returned --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

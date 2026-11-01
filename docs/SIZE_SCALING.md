@@ -104,12 +104,15 @@ byte-identical. A difference is reported, not failed: the two are different
 builds.
 
 The nightly `warm-ab` job in `size-scaling.yml` runs
-`cargo xtask warm-ab --baseline-ref <ref> --candidate-ref <ref> --pins <id=commit,...>`,
+`cargo xtask warm-ab --baseline-ref <ref> --candidate-ref <ref> --pins <id=commit,...> --external-pins <corpus ids>`,
 which builds the candidate release binary at the run's commit and the baseline at
 the newest first-parent commit at least 24 hours older (`baseline_ref` and
 `candidate_ref` override both for `workflow_dispatch`), makes a worktree and diff
 for each pin, and runs the A/B on two pins, each a fixed commit of this repository whose tree and diff do not
-drift with main:
+drift with main, and on the external pins (#11876): `--external-pins rust-analyzer,tokio,servo` names entries of the
+scoreboard corpus in `benchmarks/dx_scoreboard/scoreboards.toml`, each cloned at its pinned commit and timed on
+the diff the scoreboard row measures (`base_sha` when set, else the commit's parent). An id the corpus does not
+declare is an error, and a pin id may not be used by both lists:
 
 | Pin | Commit | Shape |
 |---|---|---|
@@ -121,7 +124,7 @@ build as baseline: it must fail the `xtask-tests` pin. Run locally on 2026-10-26
 test on the #10489 shape (about 31 s against about 64 s).
 
 Not claimed: wall time only; a regression under the ratio or the noise floor
-passes; two pinned diffs do not cover other shapes of change. The default
+passes; two pinned diffs of this repository and one pinned change for each external repository do not cover other shapes of change. The external pins have no recorded negative control yet; it is the same pre-fix `candidate_ref` dispatch, run after the step first lands. The default
 baseline is the newest first-parent commit at least 24 hours older than the
 candidate, so the detection window is a single night: if one nightly run is
 missed, skipped or never acted on, the next baseline can be the regression

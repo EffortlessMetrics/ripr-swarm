@@ -1,0 +1,6 @@
+# Registers the omitted-actionable-packet disclosure test (#12064).
+[[extend]]
+id = "RIPR-SPEC-0091"
+tests = [
+  "crates/ripr/src/output/agent_seam_packets.rs::tests::pilot_packet_bound_counts_omitted_actionable_packets",
+]

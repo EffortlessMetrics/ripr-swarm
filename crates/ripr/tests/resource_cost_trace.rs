@@ -48,6 +48,30 @@ fn run_ripr(args: &[&str], trace: Option<&str>) -> Result<Run, String> {
     })
 }
 
+/// Stages that can carry an elapsed-time heartbeat, and the elapsed classes the
+/// producer buckets into. Mirrors `stage_token` and `elapsed_class` in
+/// `crates/ripr/src/cli/progress.rs`; the heartbeat is only emitted for
+/// non-terminal stages.
+const HEARTBEAT_STAGES: &[&str] = &["loading_input", "analyzing", "building_output"];
+const HEARTBEAT_CLASSES: &[&str] = &["2s", "5s", "10s", "30s", "1m", "2m", "5m", "10m"];
+
+/// The progress reporter's elapsed-time heartbeat, matched against the exact
+/// producer shape `ripr progress: <stage> still active after <class>` (see
+/// `format_heartbeat_line`). It depends on how long a run takes, not on the
+/// trace switch, so a slow run can emit it while a fast one does not and the
+/// stderr comparison must not treat its presence as a difference (#12114). The
+/// match is exact on purpose: a heartbeat line with appended text, an unknown
+/// stage or an unknown class stays compared (#12136).
+fn is_timing_heartbeat(line: &str) -> bool {
+    let Some(payload) = line.strip_prefix("ripr progress: ") else {
+        return false;
+    };
+    let Some((stage, class)) = payload.split_once(" still active after ") else {
+        return false;
+    };
+    HEARTBEAT_STAGES.contains(&stage) && HEARTBEAT_CLASSES.contains(&class)
+}
+
 fn receipts(stderr: &str) -> Vec<&str> {
     stderr
         .lines()
@@ -149,9 +173,14 @@ fn tracing_off_leaves_stdout_and_stderr_byte_identical() -> Result<(), String> {
             !line.starts_with(RECEIPT_PREFIX)
                 && !line.starts_with(FAMILY_RECEIPT_PREFIX)
                 && !line.starts_with(phase_prefix)
+                && !is_timing_heartbeat(line)
         })
         .collect();
-    let untraced_other: Vec<&str> = untraced.stderr.lines().collect();
+    let untraced_other: Vec<&str> = untraced
+        .stderr
+        .lines()
+        .filter(|line| !is_timing_heartbeat(line))
+        .collect();
     if traced_other != untraced_other {
         return Err(format!(
             "stderr gained a line outside the trace family\nuntraced:\n{}\ntraced:\n{}",
@@ -352,4 +381,29 @@ fn assert_stdout_is_the_document(traced: &Run) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+#[test]
+fn the_heartbeat_filter_ignores_only_the_exact_timing_heartbeat() {
+    for stage in HEARTBEAT_STAGES {
+        for class in HEARTBEAT_CLASSES {
+            let line = format!("ripr progress: {stage} still active after {class}");
+            assert!(is_timing_heartbeat(&line), "exact heartbeat: {line}");
+        }
+    }
+    // Anything else must stay compared, including near-misses a regression
+    // could produce.
+    for line in [
+        "ripr progress: building_output [repo]",
+        "ripr: unrelated diagnostic",
+        "warning: still active after 2s in some other family",
+        "ripr progress: building_output still active after 2s extra diagnostic",
+        "ripr progress: building_output still active after 2s ",
+        "ripr progress: made_up_stage still active after 2s",
+        "ripr progress: building_output still active after 7s",
+        "ripr progress: building_output still active after ",
+        "ripr progress: completed still active after 2s",
+    ] {
+        assert!(!is_timing_heartbeat(line), "must stay compared: {line}");
+    }
 }

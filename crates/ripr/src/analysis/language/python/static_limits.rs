@@ -262,7 +262,10 @@ pub(super) fn static_limit_for_focused_change(
     for candidate in related_candidates
         .iter()
         .filter(|candidate| candidate.relation.uses_oracle())
-        .filter(|candidate| test_has_mocked_module(candidate.test))
+        .filter(|candidate| {
+            test_has_mocked_module(candidate.test)
+                || candidate.test.constant_rebinding.fixture_substitution
+        })
     {
         match literal_patch_calls(
             candidate.test,
@@ -823,7 +826,18 @@ pub(super) fn is_simple_python_identifier(value: &str) -> bool {
 /// `patch` and `monkeypatch.setattr`, so they are the same runtime
 /// substitution limit (#4565).
 pub(super) fn test_has_mocked_module(test: &PythonTest) -> bool {
-    test.decorators.iter().any(|decorator| {
+    text_has_mocked_module(&test.decorators, &test.body_text, &test.imports)
+}
+
+/// [`test_has_mocked_module`] over the decorator names, body text and imports
+/// of any code that runs around a test (a fixture, a setup hook), so a
+/// fixture is judged by the same substitution forms as a test body.
+pub(super) fn text_has_mocked_module(
+    decorators: &[String],
+    body_text: &str,
+    imports: &[PythonImport],
+) -> bool {
+    decorators.iter().any(|decorator| {
         ["patch", "patch.object", "patch.multiple"]
             .iter()
             .any(|form| decorator == form || decorator.ends_with(&format!(".{form}")))
@@ -838,9 +852,9 @@ pub(super) fn test_has_mocked_module(test: &PythonTest) -> bool {
     .iter()
     .any(|call| {
         if call.starts_with("patch") {
-            body_calls_patch(&test.body_text, call, &test.imports)
+            body_calls_patch(body_text, call, imports)
         } else {
-            body_calls_at_name_boundary(&test.body_text, call)
+            body_calls_at_name_boundary(body_text, call)
         }
     })
 }
@@ -1747,6 +1761,7 @@ pub(super) mod tests {
             foreign_writes: Default::default(),
             version_conditional: false,
             cli_subcommand: None,
+            nested_called_by_parent: false,
         }
     }
 

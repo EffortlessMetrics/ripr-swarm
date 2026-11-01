@@ -545,6 +545,11 @@ pub(super) struct PythonTestRebinding {
     /// One import and one argument-free test with no definition-time
     /// expressions; only bounded dunder truthiness consumes this fact.
     pub(super) plain_test_module: bool,
+    /// A fixture, setup hook or class decorator that reaches the test
+    /// substitutes the owner or its module (`fixture_substitution.rs`), so the
+    /// test may assert on a stand-in rather than the changed code. Filled by
+    /// the workspace pass.
+    pub(super) fixture_substitution: bool,
     /// The test module's own scalar-literal constants: bound once at module
     /// scope, never `global`-rebound or attribute-assigned (#10707). Shared by
     /// every test of the module.
@@ -599,6 +604,7 @@ pub(super) fn python_test_rebinding(
         implicit_reach: false,
         header_reach: false,
         plain_test_module: false,
+        fixture_substitution: false,
         module_constants: Arc::default(),
         foreign_attributes: Arc::default(),
     }

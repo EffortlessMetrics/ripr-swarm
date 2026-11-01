@@ -866,13 +866,11 @@ fn capture_repository_state(
     let untracked = git_bytes(&root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
     let ignored = ignored_inventory(&root, &policy)?;
 
-    let (mut inventory, mut ambiguous) =
-        inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS)?;
-    if policy.expects_python_tool_caches() {
-        let tracked_paths = nul_records(&tracked).collect::<Result<BTreeSet<_>, _>>()?;
-        inventory
-            .retain(|path, _| tracked_paths.contains(path.as_str()) || !is_python_tool_cache(path));
-    }
+    let python_tool_caches = policy.expects_python_tool_caches();
+    let (inventory, mut ambiguous) =
+        inventory_paths(&tracked, &untracked, &ignored, MAX_CAPTURE_PATHS, |path| {
+            python_tool_caches && is_python_tool_cache(path)
+        })?;
     if trace_spans {
         trace_persist_latency(
             &format!("{span_prefix}_git_inventory"),
@@ -1212,12 +1210,13 @@ fn collect_nul_records(bytes: &[u8], records: &mut BTreeSet<Vec<u8>>) {
 
 /// Whether `path` is interpreter or test-runner cache output that running the
 /// project's Python tests writes: compiled bytecode under a `__pycache__`
-/// directory, files inside the pytest, mypy and ruff cache directories that
-/// are neither source, bytecode nor importable extensions (`.so`, `.pyd`,
-/// `.pth`), and coverage data at the repository root. Matching is by path
-/// shape only; callers must keep tracked paths observed, so a tracked file
-/// with a cache-like name is never exempted. Importable source never matches:
-/// a `.py`/`.pyi` file anywhere (including inside a cache directory), and a
+/// directory, files inside the pytest, mypy, ruff, hypothesis and htmlcov
+/// cache directories that are neither source, bytecode nor importable
+/// extensions (`.so`, `.pyd`, `.pth`), and coverage data at the repository
+/// root (`.coverage*`, `coverage.xml`). Matching is by path shape only;
+/// callers must keep tracked paths observed, so a tracked file with a
+/// cache-like name is never exempted. Importable source never matches: a
+/// `.py`/`.pyi` file anywhere (including inside a cache directory), and a
 /// sourceless `.pyc` outside `__pycache__` (Python imports it directly).
 ///
 /// Accepted residual (#10801): a hash-based pyc is loaded when its source hash
@@ -1225,7 +1224,13 @@ fn collect_nul_records(bytes: &[u8], records: &mut BTreeSet<Vec<u8>>) {
 /// could compile modified production source into `__pycache__` and leave the
 /// `.py` untouched, invisible to the cage.
 fn is_python_tool_cache(path: &str) -> bool {
-    const TOOL_CACHE_DIRS: [&str; 3] = [".pytest_cache", ".mypy_cache", ".ruff_cache"];
+    const TOOL_CACHE_DIRS: [&str; 5] = [
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".hypothesis",
+        "htmlcov",
+    ];
     let components = path.split('/').collect::<Vec<_>>();
     let Some((file, parents)) = components.split_last() else {
         return false;
@@ -1237,7 +1242,8 @@ fn is_python_tool_cache(path: &str) -> bool {
         const IMPORTABLE: [&str; 5] = [".py", ".pyi", ".so", ".pyd", ".pth"];
         return !IMPORTABLE.iter().any(|ext| file.ends_with(ext));
     }
-    parents.is_empty() && (*file == ".coverage" || file.starts_with(".coverage."))
+    parents.is_empty()
+        && (*file == ".coverage" || file.starts_with(".coverage.") || *file == "coverage.xml")
 }
 
 /// Whether `path` is inside a Vitest cache directory under a `node_modules`
@@ -1264,22 +1270,27 @@ fn inventory_paths(
     untracked: &[u8],
     ignored: &[u8],
     max_paths: usize,
+    mut exempt_untracked_or_ignored: impl FnMut(&str) -> bool,
 ) -> Result<(BTreeMap<String, bool>, bool), String> {
     let mut inventory = BTreeMap::new();
     let mut case_keys = BTreeSet::new();
     let mut ambiguous = false;
-    for (path_index, (raw_path, ignored_path)) in nul_records(tracked)
-        .map(|path| (path, false))
-        .chain(nul_records(untracked).map(|path| (path, false)))
-        .chain(nul_records(ignored).map(|path| (path, true)))
-        .enumerate()
+    let mut captured_paths = 0usize;
+    for (raw_path, ignored_path, from_tracked) in nul_records(tracked)
+        .map(|path| (path, false, true))
+        .chain(nul_records(untracked).map(|path| (path, false, false)))
+        .chain(nul_records(ignored).map(|path| (path, true, false)))
     {
-        if path_index >= max_paths {
+        let raw_path = raw_path?;
+        let path = normalize_repo_relative_path(Path::new(&raw_path))?;
+        if !from_tracked && exempt_untracked_or_ignored(&path) {
+            continue;
+        }
+        if captured_paths >= max_paths {
             ambiguous = true;
             break;
         }
-        let raw_path = raw_path?;
-        let path = normalize_repo_relative_path(Path::new(&raw_path))?;
+        captured_paths += 1;
         if !case_keys.insert(crate::output::path::path_identity_key_on(
             Path::new(&path),
             false,
@@ -3745,7 +3756,7 @@ mod tests {
     #[test]
     fn ignored_inventory_path_limit_fails_closed_for_ignored_entries() -> Result<(), String> {
         let ignored = b"target/a\0target/b\0target/c\0";
-        let (inventory, ambiguous) = inventory_paths(&[], &[], ignored, 2)?;
+        let (inventory, ambiguous) = inventory_paths(&[], &[], ignored, 2, |_: &str| false)?;
         assert!(ambiguous);
         assert_eq!(inventory.len(), 2);
         assert!(inventory.values().all(|ignored_path| *ignored_path));
@@ -4142,6 +4153,95 @@ mod tests {
             EditCageVerdictStatus::Compliant,
             "{verdict:?}"
         );
+        Ok(())
+    }
+
+    fn ignored_inventory_bytes(paths: &[&str]) -> Vec<u8> {
+        paths
+            .iter()
+            .flat_map(|path| path.bytes().chain(std::iter::once(b'\0')))
+            .collect()
+    }
+
+    /// #10801: ignored Python cache paths are exempt before the capture cap, so
+    /// a large `__pycache__` tree does not make the cage incomparable.
+    #[test]
+    fn python_tool_cache_exemption_skips_ignored_paths_before_capture_cap() -> Result<(), String> {
+        let ignored = ignored_inventory_bytes(&[
+            "__pycache__/a.pyc",
+            "__pycache__/b.pyc",
+            "__pycache__/c.pyc",
+        ]);
+        const CAP: usize = 2;
+        let (_, ambiguous_without_exemption) =
+            inventory_paths(&[], &[], &ignored, CAP, |_: &str| false)?;
+        assert!(ambiguous_without_exemption);
+        let (inventory, ambiguous_with_exemption) =
+            inventory_paths(&[], &[], &ignored, CAP, is_python_tool_cache)?;
+        assert!(!ambiguous_with_exemption);
+        assert!(inventory.is_empty());
+        Ok(())
+    }
+
+    /// #10801: hypothesis, htmlcov and root coverage.xml are test-run output;
+    /// nested coverage.xml and importable source inside a cache dir stay observed.
+    #[test]
+    fn python_tool_cache_extended_directories_and_root_coverage_xml() -> Result<(), String> {
+        assert!(is_python_tool_cache(".hypothesis/examples/x"));
+        assert!(is_python_tool_cache("htmlcov/index.html"));
+        assert!(is_python_tool_cache("coverage.xml"));
+        assert!(!is_python_tool_cache("pkg/coverage.xml"));
+        assert!(!is_python_tool_cache(".hypothesis/evil.py"));
+
+        let verdict = python_verdict(
+            "python-cache-extended",
+            "",
+            &[
+                (".hypothesis/examples/x", "data"),
+                ("htmlcov/index.html", "<html></html>"),
+                ("coverage.xml", "<coverage></coverage>"),
+                ("tests/test_pricing.py", "def test_a():\n    assert 1\n"),
+            ],
+        )?;
+        assert_eq!(
+            verdict.status,
+            EditCageVerdictStatus::Compliant,
+            "{verdict:?}"
+        );
+
+        assert_violates(
+            &python_verdict(
+                "python-cache-nested-coverage-xml",
+                "",
+                &[("pkg/coverage.xml", "x")],
+            )?,
+            &["pkg/coverage.xml"],
+        );
+        assert_violates(
+            &python_verdict(
+                "python-cache-hypothesis-source",
+                "",
+                &[(".hypothesis/evil.py", "x = 1\n")],
+            )?,
+            &[".hypothesis/evil.py"],
+        );
+        Ok(())
+    }
+
+    /// #10801: a tracked hypothesis example file stays observed like other caches.
+    #[test]
+    fn python_tool_cache_exemption_keeps_tracked_hypothesis_file_observed() -> Result<(), String> {
+        let (fixture, policy) = python_fixture("python-cache-tracked-hypothesis", "")?;
+        write_fixture_file(&fixture, ".hypothesis/examples/tracked", "v1")?;
+        git_ok(&fixture.root, &["add", "-f", "."])?;
+        git_ok(
+            &fixture.root,
+            &["commit", "-qm", "track hypothesis example"],
+        )?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        write_fixture_file(&fixture, ".hypothesis/examples/tracked", "v2")?;
+        let verdict = evaluate_repository_edit_cage(&baseline)?;
+        assert_violates(&verdict, &[".hypothesis/examples/tracked"]);
         Ok(())
     }
 
@@ -5085,11 +5185,20 @@ mod tests {
 
     #[test]
     fn inventory_flags_non_ascii_case_pairs_as_ambiguous() {
-        let (_, ambiguous) =
-            inventory_paths("\u{c9}.rs\0\u{e9}.rs\0".as_bytes(), b"", b"", 10).unwrap_or_default();
+        let (_, ambiguous) = inventory_paths(
+            "\u{c9}.rs\0\u{e9}.rs\0".as_bytes(),
+            b"",
+            b"",
+            10,
+            |_: &str| false,
+        )
+        .unwrap_or_default();
         assert!(ambiguous);
         let (_, distinct) =
-            inventory_paths("\u{e9}.rs\0e.rs\0".as_bytes(), b"", b"", 10).unwrap_or_default();
+            inventory_paths("\u{e9}.rs\0e.rs\0".as_bytes(), b"", b"", 10, |_: &str| {
+                false
+            })
+            .unwrap_or_default();
         assert!(!distinct);
     }
 

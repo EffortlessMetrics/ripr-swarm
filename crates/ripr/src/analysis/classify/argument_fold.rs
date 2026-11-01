@@ -27,6 +27,9 @@ pub(super) struct FoldScope<'a> {
     /// The line the test starts on: a declaration folds only when that
     /// position can see it.
     test_line: usize,
+    /// Exact input owned by a current registered property receipt. Ordinary
+    /// `String::new()` calls never establish this value on their own.
+    property_singleton: Option<(&'a str, &'a str)>,
 }
 
 impl<'a> FoldScope<'a> {
@@ -38,6 +41,7 @@ impl<'a> FoldScope<'a> {
                 .get(&test.file)
                 .map(|facts| facts.data().source.as_ref()),
             test_line: test.start_line,
+            property_singleton: index.proptest_singleton_value(test),
         }
     }
 
@@ -46,7 +50,15 @@ impl<'a> FoldScope<'a> {
         Self {
             file_source: Some(file_source),
             test_line,
+            property_singleton: None,
         }
+    }
+
+    /// The closed empty-string profile passes its typed singleton by shared
+    /// borrow. No constructor, cast, dereference, or other expression folds.
+    pub(super) fn property_argument(self, argument: &str) -> Option<String> {
+        let (name, value) = self.property_singleton?;
+        (argument.trim().strip_prefix('&').map(str::trim) == Some(name)).then(|| value.to_owned())
     }
 
     /// The decimal value of the one `const`/`static` the file declares as
@@ -251,6 +263,78 @@ pub(super) fn folded_argument(
     // Arithmetic over literals alone (`10 * 2`) names no binding; activation
     // keeps reading it as before.
     if !resolved {
+        return None;
+    }
+    match evaluate_initializer(&expression, &inputs) {
+        EvalOutcome::Exact {
+            value: TypedValue::Index(value),
+            ..
+        } => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+/// The decimal value a chain-edge argument computes over the hop caller's own
+/// parameters (`add_fee(items * 10)`), when `read` answers each parameter the
+/// expression names with a decimal row value the caller keeps intact.
+///
+/// Only decimal literals, such parameter names, `+ - * / %` and parentheses
+/// are read; a call, method, field, cast, suffixed literal, constant, unary
+/// sign, or any name `read` refuses leaves the argument unread. The shared
+/// evaluator folds it, so an overflow, an underflow, a division by zero or a
+/// result at its bound also leaves it unread. An expression naming no
+/// parameter is not this reading.
+pub(super) fn folded_hop_argument(
+    argument: &str,
+    mut read: impl FnMut(&str) -> Option<String>,
+) -> Option<String> {
+    let text = argument.trim();
+    if text.is_empty()
+        || !text.chars().all(|ch| {
+            ch.is_ascii_alphanumeric()
+                || ch == '_'
+                || ch.is_whitespace()
+                || matches!(ch, '+' | '-' | '*' | '/' | '%' | '(' | ')')
+        })
+    {
+        return None;
+    }
+    let mut inputs = ExactInputs::new();
+    let mut expression = String::new();
+    let mut named = false;
+    let mut rest = text;
+    while let Some(ch) = rest.chars().next() {
+        if !(ch.is_ascii_alphanumeric() || ch == '_') {
+            expression.push(ch);
+            rest = &rest[ch.len_utf8()..];
+            continue;
+        }
+        let end = rest
+            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+            .unwrap_or(rest.len());
+        let (token, after) = rest.split_at(end);
+        rest = after;
+        if token.starts_with(|ch: char| ch.is_ascii_digit()) {
+            if !is_decimal(token) {
+                return None;
+            }
+        } else {
+            // `f(items)` applies a name; it is no operand.
+            if rest.trim_start().starts_with('(') {
+                return None;
+            }
+            if !inputs.contains_key(token) {
+                let value = read(token)?;
+                if !is_decimal(&value) {
+                    return None;
+                }
+                inputs.insert(token.to_string(), value);
+            }
+            named = true;
+        }
+        expression.push_str(token);
+    }
+    if !named {
         return None;
     }
     match evaluate_initializer(&expression, &inputs) {
@@ -627,5 +711,38 @@ mod tests {
         // A file with no position for the test reads nothing.
         assert_eq!(fold_at(parent, 0, body, "BASE + 1"), None);
         assert_eq!(fold_at(parent, 99, body, "BASE + 1"), None);
+    }
+
+    #[test]
+    fn a_hop_argument_folds_only_over_readable_caller_parameters() {
+        let read = |name: &str| match name {
+            "items" => Some("3".to_string()),
+            "big" => Some("2000000000".to_string()),
+            "text" => Some("\"3\"".to_string()),
+            _ => None,
+        };
+        let fold = |argument: &str| folded_hop_argument(argument, read);
+        assert_eq!(fold("items * 10").as_deref(), Some("30"));
+        assert_eq!(fold("(items + 1) * 2").as_deref(), Some("8"));
+        assert_eq!(fold("items - 3 + items").as_deref(), Some("3"));
+        for refused in [
+            "10 * 3",
+            "items - 4",
+            "items / (items - 3)",
+            "big * 2",
+            "-items",
+            "items * 10u32",
+            "items * 1_0",
+            "items.pow(2)",
+            "items as u8",
+            "items * other",
+            "items * LIMIT",
+            "text + 1",
+            "items(2)",
+            "items * f(1)",
+            "",
+        ] {
+            assert_eq!(fold(refused), None, "{refused}");
+        }
     }
 }

@@ -433,7 +433,7 @@ pub(crate) fn render_pr_review_front_panel_json(
         warnings: &report.warnings,
         limits: LIMITS.to_vec(),
     })
-    .map_err(|err| format!("render PR review front panel JSON failed: {err}"))
+    .map_err(|err| format!("render PR review front panel JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_pr_review_front_panel_markdown(report: &PrReviewFrontPanelReport) -> String {
