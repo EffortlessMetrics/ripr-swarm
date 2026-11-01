@@ -434,7 +434,7 @@ fn normalize_repo_relative_path(path: &str) -> String {
 /// is never hand-edited), so the next step names both routes.
 fn field_refusal(location: &str, problem: &str) -> String {
     format!(
-        "python repair-trust binding: {location}: {problem}; fix the selection manifest field, or for a retained record start a new attempt with `ripr agent repair --seam-id <id> --phase before`, repeating the original `--root`, `--python-repair-trust-manifest`, `--python-repair-trust-attempt`, `--edit-authorized` and `--edit-authority <identity>` flags"
+        "python repair-trust binding: {location}: {problem}; fix the offending manifest field, or for a retained record start a new attempt with `ripr agent repair --seam-id <id> --phase before`, repeating the original `--root`, `--python-repair-trust-manifest`, `--python-repair-trust-attempt`, `--edit-authorized` and `--edit-authority <identity>` flags"
     )
 }
 
