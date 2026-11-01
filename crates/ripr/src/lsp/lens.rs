@@ -19,6 +19,9 @@ use super::uri::{file_uri_for_path, file_uris_match};
 /// - N == 0 uses "no related tests found" + the class label, not the
 ///   forbidden unexercised-synonym that belongs to runtime mutation tooling.
 use super::{REFRESH_COMMAND, state::AnalysisSnapshot};
+use crate::analysis_outcome::{
+    AnalysisLimitationKind, AnalysisStage, normalize_portable_analysis_path,
+};
 use crate::domain::{ExposureClass, Finding, LanguageStatus};
 use std::path::Path;
 use std::time::Duration;
@@ -198,6 +201,36 @@ fn lens_line(snapshot: &AnalysisSnapshot, finding: &Finding) -> u32 {
 /// The resolved command refreshes saved-workspace analysis through the existing
 /// registered server command. Its title keeps the cached advisory distinct from
 /// the explicit action. No arguments or resolve round-trip are needed.
+/// Honest advisory when the Rust adapter recorded a parse failure for this file.
+const PARSE_FAILED_LENS_TITLE: &str =
+    "ripr: related tests unknown, this file did not parse · fix the syntax error and save";
+
+fn finding_portable_path(finding: &Finding, root: &Path) -> Option<String> {
+    let file = &finding.probe.location.file;
+    let relative = if file.is_absolute() {
+        file.strip_prefix(root).ok()?.to_path_buf()
+    } else {
+        file.clone()
+    };
+    normalize_portable_analysis_path(relative.to_string_lossy().as_ref()).ok()
+}
+
+/// True when `snapshot.analysis_outcome` carries a language-adapter producer
+/// failure limitation for the same portable path as `finding`.
+fn file_parse_failed(snapshot: &AnalysisSnapshot, finding: &Finding) -> bool {
+    let Some(finding_path) = finding_portable_path(finding, &snapshot.root) else {
+        return false;
+    };
+    let Some(outcome) = snapshot.analysis_outcome.as_ref() else {
+        return false;
+    };
+    outcome.limitations.iter().any(|limitation| {
+        limitation.kind == AnalysisLimitationKind::ProducerFailure
+            && limitation.producer_stage == AnalysisStage::LanguageAdapter
+            && limitation.path.as_deref() == Some(finding_path.as_str())
+    })
+}
+
 fn finding_to_code_lens(
     snapshot: &AnalysisSnapshot,
     finding: &Finding,
@@ -208,10 +241,12 @@ fn finding_to_code_lens(
         start: Position { line, character: 0 },
         end: Position { line, character: 0 },
     };
-    let title = format!(
-        "{} · refresh saved workspace",
+    let body = if file_parse_failed(snapshot, finding) {
+        PARSE_FAILED_LENS_TITLE.to_string()
+    } else {
         related_test_lens_title(finding, age)
-    );
+    };
+    let title = format!("{body} · refresh saved workspace");
     CodeLens {
         range,
         command: Some(Command {
@@ -334,6 +369,11 @@ pub(super) fn lens_title_is_static_language_clean(title: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis_outcome::{
+        AnalysisIdentity, AnalysisLimitation, AnalysisLimitationKind, AnalysisOutcome,
+        AnalysisOutcomeCounts, AnalysisOutcomeKind, AnalysisRecovery, AnalysisRecoveryKind,
+        AnalysisStage,
+    };
     use crate::app::Mode;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, LanguageStatus,
@@ -425,6 +465,39 @@ mod tests {
             alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
         }
+    }
+
+    fn language_adapter_producer_failure_limitation(
+        path: &str,
+    ) -> Result<AnalysisLimitation, String> {
+        let recovery = AnalysisRecovery::new(
+            AnalysisRecoveryKind::InspectFailure,
+            "Fix the syntax error and save the file.",
+        )?;
+        AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::LanguageAdapter,
+            recovery,
+        )
+        .with_path(path)
+    }
+
+    fn snapshot_with_parse_failure_limitation(
+        root: &str,
+        findings: Vec<Finding>,
+        limitation: AnalysisLimitation,
+    ) -> Result<AnalysisSnapshot, String> {
+        let mut snapshot = make_snapshot_with_findings(root, findings);
+        snapshot.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity::default(),
+            AnalysisOutcomeCounts {
+                finding_count: snapshot.findings.len() as u64,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![limitation],
+        )?);
+        Ok(snapshot)
     }
 
     fn make_snapshot_with_findings(root: &str, findings: Vec<Finding>) -> AnalysisSnapshot {
@@ -1001,6 +1074,106 @@ mod tests {
                     cmd.title
                 ));
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_failed_file_lens_title_is_honest_not_zero_related_tests() -> Result<(), String> {
+        let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+        let limitation = language_adapter_producer_failure_limitation("src/lib.rs")?;
+        let snapshot =
+            snapshot_with_parse_failure_limitation("/workspace", vec![finding], limitation)?;
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let title = lenses
+            .first()
+            .and_then(|lens| lens.command.as_ref())
+            .map(|command| command.title.clone())
+            .ok_or("expected one parse-failed lens")?;
+        if title.contains("no related tests found") {
+            return Err(format!(
+                "parse-failed file must not claim no related tests found: {title}"
+            ));
+        }
+        if !title.contains("did not parse") {
+            return Err(format!(
+                "parse-failed file lens must cite parse failure: {title}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_failed_limitation_on_other_file_leaves_lens_unchanged() -> Result<(), String> {
+        let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+        let limitation = language_adapter_producer_failure_limitation("src/other.rs")?;
+        let snapshot =
+            snapshot_with_parse_failure_limitation("/workspace", vec![finding], limitation)?;
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+        let lenses = code_lens_response(&uri, Some(&snapshot));
+        let title = lenses
+            .first()
+            .and_then(|lens| lens.command.as_ref())
+            .map(|command| command.title.clone())
+            .ok_or("expected one lens")?;
+        if !title.contains("no related tests found") {
+            return Err(format!(
+                "limitation on another file must not change src/lib.rs lens: {title}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_failed_lens_unchanged_for_non_matching_limitation() -> Result<(), String> {
+        let finding = make_finding("src/lib.rs", 10, ExposureClass::WeaklyExposed, 0, None);
+        let recovery = AnalysisRecovery::new(
+            AnalysisRecoveryKind::InspectFailure,
+            "Inspect the typed limitation before retrying.",
+        )?;
+        let wrong_stage = AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerFailure,
+            AnalysisStage::DiffParse,
+            recovery.clone(),
+        )
+        .with_path("src/lib.rs")?;
+        let snapshot_wrong_stage = snapshot_with_parse_failure_limitation(
+            "/workspace",
+            vec![finding.clone()],
+            wrong_stage,
+        )?;
+        let wrong_kind = AnalysisLimitation::new(
+            AnalysisLimitationKind::ProducerTimeout,
+            AnalysisStage::LanguageAdapter,
+            recovery,
+        )
+        .with_path("src/lib.rs")?;
+        let snapshot_wrong_kind =
+            snapshot_with_parse_failure_limitation("/workspace", vec![finding], wrong_kind)?;
+        let uri = parse_uri("file:///workspace/src/lib.rs")?;
+        for snapshot in [snapshot_wrong_stage, snapshot_wrong_kind] {
+            let lenses = code_lens_response(&uri, Some(&snapshot));
+            let title = lenses
+                .first()
+                .and_then(|lens| lens.command.as_ref())
+                .map(|command| command.title.clone())
+                .ok_or("expected one lens")?;
+            if !title.contains("no related tests found") {
+                return Err(format!(
+                    "non-matching limitation must keep zero-count lens: {title}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_failed_lens_title_is_static_language_clean() -> Result<(), String> {
+        if !lens_title_is_static_language_clean(PARSE_FAILED_LENS_TITLE) {
+            return Err(format!(
+                "parse-failed lens title must pass static-language guard: {PARSE_FAILED_LENS_TITLE}"
+            ));
         }
         Ok(())
     }
