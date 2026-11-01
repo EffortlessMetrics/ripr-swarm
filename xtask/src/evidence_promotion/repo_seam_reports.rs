@@ -40,10 +40,19 @@ type SeamKey = (String, u64, u64, String);
 
 #[derive(Debug, PartialEq, Eq)]
 struct JudgedSeam {
+    /// The owning function; a seam that moved to another owner at the same
+    /// position is a different seam.
+    owner: String,
+    /// The mutated expression text at the seam.
+    expression: String,
     grip_class: String,
     stages: Vec<(String, String)>,
-    related_tests: Vec<(String, String, String)>,
+    related_tests: Vec<RelatedTest>,
 }
+
+/// A related test as judged: name, file, line, oracle strength, relation
+/// reason. File and line are kept so a test that moved is a difference.
+type RelatedTest = (String, String, u64, String, String);
 
 fn string_field(value: &Value, field: &str) -> String {
     value
@@ -76,7 +85,7 @@ fn judged_seams(report: &Value) -> Result<BTreeMap<SeamKey, JudgedSeam>, String>
             })
             .unwrap_or_default();
         stages.sort();
-        let mut related_tests: Vec<(String, String, String)> = seam
+        let mut related_tests: Vec<RelatedTest> = seam
             .get("related_tests")
             .and_then(Value::as_array)
             .map(|tests| {
@@ -85,6 +94,8 @@ fn judged_seams(report: &Value) -> Result<BTreeMap<SeamKey, JudgedSeam>, String>
                     .map(|test| {
                         (
                             string_field(test, "name"),
+                            string_field(test, "file"),
+                            test.get("line").and_then(Value::as_u64).unwrap_or(0),
                             string_field(test, "oracle_strength"),
                             string_field(test, "relation_reason"),
                         )
@@ -94,6 +105,8 @@ fn judged_seams(report: &Value) -> Result<BTreeMap<SeamKey, JudgedSeam>, String>
             .unwrap_or_default();
         related_tests.sort();
         let entry = JudgedSeam {
+            owner: string_field(seam, "owner"),
+            expression: string_field(seam, "expression"),
             grip_class: string_field(seam, "grip_class"),
             stages,
             related_tests,
@@ -129,6 +142,18 @@ pub(super) fn compare_reports(
             ));
             continue;
         };
+        if stored.owner != fresh.owner {
+            violations.push(format!(
+                "{case_label}: seam at {location} is committed with owner `{}` but the current analyzer reports `{}`",
+                stored.owner, fresh.owner
+            ));
+        }
+        if stored.expression != fresh.expression {
+            violations.push(format!(
+                "{case_label}: seam at {location} is committed with expression `{}` but the current analyzer reports `{}`",
+                stored.expression, fresh.expression
+            ));
+        }
         if stored.grip_class != fresh.grip_class {
             violations.push(format!(
                 "{case_label}: seam at {location} is committed as grip_class `{}` but the current analyzer reports `{}`",
@@ -143,7 +168,7 @@ pub(super) fn compare_reports(
         }
         if stored.related_tests != fresh.related_tests {
             violations.push(format!(
-                "{case_label}: seam at {location} committed related tests (name, oracle_strength, relation_reason) {:?} differ from the current analyzer's {:?}",
+                "{case_label}: seam at {location} committed related tests (name, file, line, oracle_strength, relation_reason) {:?} differ from the current analyzer's {:?}",
                 stored.related_tests, fresh.related_tests
             ));
         }
@@ -287,8 +312,11 @@ mod tests {
                 "grip_class": grip,
                 "evidence": {"reach": "yes", "activate": "yes", "propagate": propagate,
                              "observe": "yes", "discriminate": "yes"},
+                "owner": "src/lib.rs::check",
+                "expression": "a > b",
                 "related_tests": [
-                    {"name": "pins_it", "oracle_strength": strength,
+                    {"name": "pins_it", "file": "tests/t.rs", "line": 12,
+                     "oracle_strength": strength,
                      "relation_reason": "direct_owner_call"}
                 ]
             }]
@@ -318,6 +346,33 @@ mod tests {
             // oracle of a related test changes.
             (report("strongly_gripped", "yes", "none"), "related tests"),
         ] {
+            let found = compare_reports("case", &committed, &fresh);
+            assert_eq!(found.len(), 1, "{needle}: {found:?}");
+            assert!(found[0].contains(needle), "{needle}: {found:?}");
+        }
+    }
+
+    #[test]
+    fn a_changed_owner_expression_or_test_location_is_a_difference() {
+        let committed = report("strongly_gripped", "yes", "strong");
+        type Edit = fn(&mut Value);
+        let edits: [(&str, Edit); 4] = [
+            ("owner", |r| {
+                r["seams"][0]["owner"] = json!("src/lib.rs::other")
+            }),
+            ("expression", |r| {
+                r["seams"][0]["expression"] = json!("a >= b")
+            }),
+            ("related tests", |r| {
+                r["seams"][0]["related_tests"][0]["line"] = json!(99)
+            }),
+            ("related tests", |r| {
+                r["seams"][0]["related_tests"][0]["file"] = json!("tests/moved.rs")
+            }),
+        ];
+        for (needle, edit) in edits {
+            let mut fresh = committed.clone();
+            edit(&mut fresh);
             let found = compare_reports("case", &committed, &fresh);
             assert_eq!(found.len(), 1, "{needle}: {found:?}");
             assert!(found[0].contains(needle), "{needle}: {found:?}");
