@@ -4,7 +4,7 @@
 //! The full `read_reader_with_limit` drives `std::io::Read::take` and
 //! `Vec::read_to_end`, whose capacity-probing loops are not tractable for CBMC
 //! (a 4-byte slice reader exceeds 15 minutes), so the limit arithmetic that
-//! decides acceptance is proven directly on its extracted pure functions,
+//! decides acceptance is verified directly on its extracted pure functions,
 //! which the production reader calls.
 
 use super::{exceeds_limit, read_cap, whole_mib};
