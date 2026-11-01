@@ -40,19 +40,20 @@ to a conflicting PR produces no usable qualification subject — the run dies
 without posting a fresh required check. Resolve conflicts first, then re-fire
 the label.
 
-Label events can also reuse a stale merge ref built against an older base:
-GitHub does not recompute the ref on a draft-to-ready route or a re-route.
-Pushing to the branch (a synchronize event) forces a fresh ref, so after main
-moves under a PR, merge main into the branch and push instead of toggling the
-label alone. Distrust a re-routed gate until a fetched
-`refs/pull/<N>/merge` shows the expected base as an ancestor
+Label events can reuse a merge ref built against an older base. Inspect the
+actual job checkout, its parents and tree against the reviewed candidate and
+required integration basis. Reconcile a material mismatch or conflict; main
+moving alone does not require restacking or repeating unaffected proof. Do not
+relabel a run's older checkout as execution of a newer combined tree
 ([LEARNINGS: combined-tree rules](../LEARNINGS.md)).
 
 ## Writer guards before every push
 
-- Judge another writer's activity from the commits API, never from `updatedAt`
-  on the PR: bot sweeps and label churn pollute the timestamp.
-- Treat four hours as the activity window for convergence ownership.
+- Reconcile the current head, owner's disposition, active work or qualification
+  and any accepted handoff. Commit author dates are object metadata, not push
+  times; PR `updatedAt` also includes bot and label activity. A claim aged four
+  hours prompts inspection, never automatic takeover; inspect sooner when other
+  evidence warrants it. Preserve unknown custody.
 - Run `git ls-remote origin refs/heads/<branch>` before every push; it must
   equal the head you recorded. A mismatch means someone moved the branch —
   fetch and reconcile, never force.
@@ -61,20 +62,30 @@ label alone. Distrust a re-routed gate until a fetched
 
 ## Merge mechanics
 
-Merge with the normal protected squash (`gh pr merge --squash`). The protection
-here is one required check with `strict: false`, so a behind-only branch stays
-valid and an old-head green check does not expire.
-
-A `BLOCKED` merge state while the required check is green and threads are
-resolved is usually GitHub's recompute lag, not a policy wall. The documented
-route is `gh pr merge --squash --auto --delete-branch`, which queues the merge
-until the state settles ([LEARNINGS: BLOCKED is recompute lag](../LEARNINGS.md)).
-When the CLI still refuses, the REST endpoint is the sanctioned fallback:
+After current-head substantive review, addressed findings, applicable proof and
+all live required checks are established, use an ordinary protected squash with
+the exact current PR head as the expected SHA. Confirm that the current required
+`Ripr Rust Small Result` is successful for the applicable qualification and
+required app, and assess all other required checks and review obligations. Read
+the current requirements rather than assuming a fixed protection configuration.
+A behind-only branch does not itself invalidate unaffected proof; a green
+old-head check does not qualify a new head. Do not arm auto-merge or bypass a
+rule. For example, after independently establishing those conditions:
 
 ```bash
-gh api --method PUT repos/EffortlessMetrics/ripr-swarm/pulls/<N>/merge \
-  -f merge_method=squash
+gh api --method PUT "repos/EffortlessMetrics/ripr-swarm/pulls/$pr_number/merge" \
+  -f merge_method=squash -f sha="$expected_head"
 ```
+
+Set `expected_head` to the verified full current PR head; do not omit it or use
+an unguarded fallback. The API's expected-SHA check protects the head, but the
+review and check observations are not atomic with the mutation. Native
+protection and final judgment remain necessary.
+
+`BLOCKED` is a state to investigate, not proof of recompute lag or permission
+to enqueue. Reconcile current review, checks and applicable rules; preserve any
+actual refusal. If the head moves, refresh the review and affected proof before
+another guarded operation.
 
 After any `gh` error, verify the actual PR and merge state through the API
 before retrying: a non-zero merge exit is ambiguous, and a merge that actually
@@ -91,9 +102,9 @@ close, including inside sentences that say the opposite.
 
 ## Ownership before working a PR
 
-Before pushing, relabeling or editing a PR you did not open, read its commits
-API for another convergence actor inside the activity window. Both fleets work
-the same repository, and one wave raced eleven of fourteen lanes this way.
+Before pushing, relabeling or editing a PR you did not open, reconcile its
+current head, owner disposition, active work and accepted handoff. Both fleets
+work the same repository, and one wave raced eleven of fourteen lanes this way.
 When a race is confirmed, yield: preserve proven work under new branch refs,
 leave a handback comment that names the head, evidence and resume condition,
 and move to another claim. Deleting or overwriting a raced candidate is not a

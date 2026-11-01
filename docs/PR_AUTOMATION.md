@@ -195,27 +195,29 @@ actor records its claim:
   timestamp>`, or reuse an existing owned-convergence comment by editing it.
   Keep one current claim comment per actor, edited at transitions — the same
   discipline as the PR-native continuation record above.
-- Treat any other actor's claim younger than 4 hours as ownership. While a
-  live claim is held, do not push to the branch, re-bless, or change labels.
-  This coordinates writers; it does not replace `stackable = false`,
-  `blocked_by`, review or qualification routes.
-- A claim alone does not keep ownership. Judge liveness from actual activity
-  (next subsection), and record a stale-claim takeover in the claim comment
-  you edit in.
+- Respect an existing actor's claim and any active work. While ownership is
+  held, do not push to the branch, re-bless, or change labels without an
+  accepted handoff. This coordinates writers; it does not replace
+  `stackable = false`, `blocked_by`, review or qualification routes.
+- A claim aged four hours warrants reconciliation, not automatic takeover;
+  reconcile sooner when other evidence warrants it. Check the
+  owner's disposition, current head, active qualification and accepted handoff
+  (next subsection); if activity or custody is unknown, preserve ownership
+  until the responsible owner or coordinator resolves it.
 - Before every push, run the runbook's writer guard: `git ls-remote` the head
   branch and reconcile a mismatch instead of pushing over it.
 
 ### Judging activity
 
-The commits API is the truth signal: `commit.author.date` from
-`GET /repos/{owner}/{repo}/pulls/{number}/commits` shows the last real push.
-`updatedAt` is bot-polluted — any comment, label edit, review submission, or
-linked check event advances it with no writer action — so it overstates
-activity and can never establish that an actor went idle. Every PR sampled on
-the 2026-10-31 open board showed `updatedAt` minutes past its last commit
-(for example #11499: last commit 11:58:00Z, `updatedAt` 12:09:54Z). Use
-author dates and claim comments to judge activity; do not declare a rival
-idle from `updatedAt`.
+Commit author dates are object metadata, not publication timestamps or proof
+that a writer has released custody: an old commit can be pushed now, and an
+author date can be in the future. PR `updatedAt` can also reflect bots, labels,
+reviews or checks rather than writer activity. Use neither timestamp alone to
+declare a writer idle or transfer a claim. Reconcile the current head and the
+owner's latest disposition, including active tests or qualification, unique
+uncommitted work and any accepted handoff. An aged claim can prompt that
+inspection; it does not authorize replacement. Unknown activity or custody
+remains unknown until the responsible owner or coordinator resolves it.
 
 ### Yield on contact
 
