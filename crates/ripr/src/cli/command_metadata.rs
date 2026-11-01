@@ -3604,4 +3604,28 @@ mod tests {
         }
         Ok(())
     }
+
+    /// #11597: the repair/continue `stop_states` (the `help --json` surface)
+    /// name every refusal code of the typed enum, so a new code cannot ship
+    /// without them.
+    #[test]
+    fn repair_and_continue_stop_states_name_every_refusal_code() -> Result<(), String> {
+        let stop_text = metadata()
+            .iter()
+            .filter(|row| {
+                row.example.starts_with("ripr repair ") || row.example.starts_with("ripr continue")
+            })
+            .flat_map(|row| row.stop_states.iter().copied())
+            .collect::<Vec<_>>()
+            .join("\n");
+        for code in crate::app::task_first::RepairRefusalCode::ALL {
+            if !stop_text.contains(code.as_str()) {
+                return Err(format!(
+                    "repair/continue stop_states do not name `{}`",
+                    code.as_str()
+                ));
+            }
+        }
+        Ok(())
+    }
 }
