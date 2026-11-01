@@ -59,11 +59,22 @@ impl Repo {
     }
 
     fn ripr(&self, args: &[&str]) -> Result<Output, String> {
-        Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .current_dir(&self.0)
-            .args(args)
-            .output()
-            .map_err(|e| e.to_string())
+        // On Windows a sibling test that rebuilds the binary can leave it
+        // briefly missing, which surfaces as NotFound at launch; retry only that.
+        let mut attempt = 0;
+        loop {
+            let launched = Command::new(env!("CARGO_BIN_EXE_ripr"))
+                .current_dir(&self.0)
+                .args(args)
+                .output();
+            match launched {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && attempt < 20 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                other => return other.map_err(|e| e.to_string()),
+            }
+        }
     }
 
     fn check_text(&self) -> Result<String, String> {

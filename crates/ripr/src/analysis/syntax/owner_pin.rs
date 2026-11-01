@@ -1300,6 +1300,15 @@ fn macro_binding_sites_in_tree(
                 {
                     continue;
                 }
+                // RIPR-SPEC-0369: an exact verification-prelude glob exports no
+                // assertion macro, so it cannot rebind a trusted name.
+                if item.star_token().is_some()
+                    && is_assertion_free_prelude_glob(&item)
+                    && !drop_in_shadowed(root, external)
+                    && drop_in_verified(root)
+                {
+                    continue;
+                }
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
                     let line = line_of(node);
@@ -1529,8 +1538,9 @@ fn drop_in_crates(name: &str) -> &'static [&'static str] {
     }
 }
 
-fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
-    let crates = drop_in_crates(name);
+/// The full path segments a use tree names, outermost first: ancestors' paths
+/// joined, so `{prelude::*}` inside `use krate::{..}` reads `["krate", "prelude"]`.
+fn use_tree_segments(item: &ast::UseTree) -> Vec<String> {
     // Ancestor trees run inner to outer; reverse each path, then the whole.
     let mut segments: Vec<String> = item
         .syntax()
@@ -1549,6 +1559,31 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
         })
         .collect();
     segments.reverse();
+    segments
+}
+
+/// RIPR-SPEC-0369: glob imports of verification-framework preludes whose
+/// published export lists (checked against creusot-std 0.14.0, vstd
+/// 0.0.0-2026-10-25-0158 and prusti-contracts 0.3.3) contain no macro named
+/// like a trusted assertion, so the glob cannot rebind `assert_eq!` and its
+/// kin. Each entry is the exact glob path; the crate must also resolve to the
+/// registry package (`drop_in_verified`) and not be shadowed.
+const ASSERTION_FREE_PRELUDE_GLOBS: &[&[&str]] = &[
+    &["creusot_std", "prelude"],
+    &["vstd", "prelude"],
+    &["prusti_contracts"],
+];
+
+fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
+    let segments = use_tree_segments(item);
+    ASSERTION_FREE_PRELUDE_GLOBS
+        .iter()
+        .any(|glob| segments.iter().map(String::as_str).eq(glob.iter().copied()))
+}
+
+fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
+    let crates = drop_in_crates(name);
+    let segments = use_tree_segments(item);
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
     matches!(
         segments.as_slice(),
@@ -3512,6 +3547,53 @@ fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
         source_file |= ast::SourceFile::can_cast(node.kind());
     }
     (!source_file).then_some(AssertionContextRefusal::NestedItem)
+}
+
+/// The unevaluated `cfg` gates on the `fn name` whose `fn` keyword is on
+/// `line`, and on every item that encloses it, with whitespace removed (#9643).
+///
+/// `None` unless the function is found uniquely and every gating attribute is
+/// a plain `#[cfg(..)]` whose test-build availability is unestablished: a gate
+/// that is provably off, or a `cfg_attr` or unreadable one, is not a gate this
+/// can compare. A function with no gate returns an empty list.
+pub(crate) fn unestablished_cfg_gates_of_fn(
+    source: &str,
+    name: &str,
+    line: usize,
+) -> Option<BTreeSet<String>> {
+    let parse = parse_clean_source_file(source)?;
+    let lines = LineIndex::new(source);
+    let mut found = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|fn_name| fn_name.text() == name)
+                && function
+                    .fn_token()
+                    .is_some_and(|token| lines.line(token.text_range().start()) == line)
+        });
+    let function = found.next()?;
+    if found.next().is_some() {
+        return None;
+    }
+    let mut gates = BTreeSet::new();
+    for node in function.syntax().ancestors() {
+        for attr in node.children().filter_map(ast::Attr::cast) {
+            let text = attr.syntax().text().to_string();
+            match attribute_test_build_availability(&text) {
+                Some(true) => {}
+                None if text.starts_with("#[cfg(") => {
+                    gates.insert(text.chars().filter(|ch| !ch.is_whitespace()).collect());
+                }
+                _ => return None,
+            }
+        }
+    }
+    Some(gates)
 }
 
 /// Attributes a pinned test may carry: `#[test]` itself, and the
