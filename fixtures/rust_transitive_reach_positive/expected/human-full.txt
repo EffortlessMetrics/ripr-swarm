@@ -40,8 +40,8 @@ Weakness
   - No detected boundary input for the changed predicate
 
 Stop reasons:
-  - a candidate test path exists but passes through calls ripr only matched by name (transitive_reach_unresolved)
-    Next: Call the changed owner directly from a test if tests can name it; if the path runs through private helpers ripr only matched by name, the edge can stay unresolved even with an exact assertion.
+  - ripr could not establish whether a test reaches this change through internal calls (transitive_reach_unresolved)
+    Next: Call the changed owner directly from a test if tests can name it; if it is private or reached only through private helpers, ripr cannot finish the call chain, so the edge can stay unresolved even with an exact assertion.
 
 Static limitation
   rust_integration_public_api_path_unresolved — An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.

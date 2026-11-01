@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -41,7 +41,7 @@
+ }
+ 
+ fn macro_shadow_inner(x: i64) -> i64 {
+-    x + x
++    x * 3
+ }
+ 
+ pub fn twin(x: i64) -> i64 {

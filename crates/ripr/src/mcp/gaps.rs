@@ -224,13 +224,13 @@ impl RepairReadiness {
     pub(crate) fn reason(&self) -> &'static str {
         match self.ineligibility {
             Some("not_candidate_actionable") => {
-                "the producer did not establish the changed source as candidate-current, so no repair target is actionable (#3281)"
+                "the producer did not establish the changed source as candidate-current, so no repair target is actionable"
             }
             Some("missing_discriminator") => {
                 "the producer did not establish a discriminator for the changed behavior (no normalized discriminator, or a producer-named missing discriminator on a finding that is not weakly exposed)"
             }
             Some("discriminator_not_populated_for_language") => {
-                "the producer named no missing discriminator but has not populated a normalized discriminator for this language's findings yet, so the discriminator gate cannot be established from available producer facts; repair stays unavailable until the language producer populates canonical gaps (#5268)"
+                "the producer named no missing discriminator but has not populated a normalized discriminator for this language's findings yet, so the discriminator gate cannot be established from available producer facts; repair stays unavailable until the language producer populates canonical gaps"
             }
             Some("static_limitation") => {
                 "the producer withheld this finding's canonical gap behind a typed static limitation on the finding itself; the limitation, not the language, explains why no normalized discriminator is established"
@@ -286,6 +286,12 @@ pub(crate) struct GapItem {
     /// (#7464).
     pub(crate) list_summary: Value,
     list_summary_bytes: usize,
+    /// The `ripr agent stub --at FILE:LINE --kind FAMILY` location the shared
+    /// stub resolver (`stub_route_location`, the owner `ripr check` and
+    /// `ripr repair` use) names for this finding, if any. A refused
+    /// `ripr_prepare_repair` carries it in `next` for `seam_not_found` and
+    /// `seam_ambiguous` (#11622); it is not part of any served document.
+    pub(crate) stub_route: Option<(String, usize, &'static str)>,
     /// Complete bounded evidence document (without the per-request snapshot
     /// binding and links, which are injected at serve time). The repair
     /// projection reads `changed_behavior` and the discriminator from it.
@@ -305,6 +311,10 @@ pub(crate) struct GapItem {
     /// projection time so the limitation read re-uses the one vocabulary
     /// (`describe`/`next_step`) instead of re-deriving it.
     static_limit: Option<crate::domain::StaticLimitKind>,
+    /// The producer limit's reason as the CLI and LSP surfaces word it for this
+    /// finding's probe family (`describe_for_family`), so the MCP reason cannot
+    /// drift from them (#11821).
+    static_limit_reason: Option<String>,
 }
 
 impl GapItem {
@@ -364,12 +374,16 @@ impl GapItem {
             language,
             list_summary,
             list_summary_bytes,
+            stub_route: crate::app::test_stub::stub_route_location(finding, root),
             evidence_core,
             evidence_bytes,
             candidate_actionable: finding.is_candidate_actionable(),
             evidence_sha256,
             repair_readiness,
             static_limit: finding.static_limit_kind,
+            static_limit_reason: finding
+                .static_limit_kind
+                .map(|kind| kind.describe_for_family(&finding.probe.family).into_owned()),
         })
     }
 
@@ -414,7 +428,10 @@ impl GapItem {
             json!({
                 "kind": kind_token,
                 "stage": "producer_static_limit",
-                "reason": kind.describe(),
+                "reason": self
+                    .static_limit_reason
+                    .clone()
+                    .unwrap_or_else(|| kind.describe().to_string()),
                 "recovery": kind.next_step(),
                 "retryable": false,
                 "prohibited_claim": "any exposure verdict or repair route stronger than the producer's typed static limitation: no `exposed` grip, no repair-ready item, and no runtime outcome is claimed",
@@ -503,7 +520,7 @@ impl GapItem {
                         "snapshot": format!("ripr://snapshot/{snapshot_id}"),
                         "gap": format!("ripr://gap/{}", self.canonical_id),
                         "repair_attempt": Value::Null,
-                        "repair_attempt_note": "ripr://repair-attempt/{attempt_id} binds once ripr_prepare_repair creates the session transaction for this item (#3090)",
+                        "repair_attempt_note": "ripr://repair-attempt/{attempt_id} binds once ripr_prepare_repair creates the session transaction for this item",
                     }),
                 );
                 object

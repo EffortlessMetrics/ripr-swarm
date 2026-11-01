@@ -1,0 +1,138 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/typescript_private_method_unknown/input",
+  "config_path": "<cwd>/fixtures/typescript_private_method_unknown/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"typescript","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:48d84ea994c8821b","base_revision":null,"input_identity":"sha256:34536e693098bba543727ae1c5f30f35d2c11e1d78468dfac91a875e9385ce61","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_counter.ts:typescript_preview:1aa358b1",
+      "canonical_gap_id": "gap:typescript:typescript_preview:1aa358b1",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (TypeScript)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "discriminator_not_established", "summary": "whether a test checks this behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_counter.ts:typescript_preview:1aa358b1",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/counter.ts",
+        "line": 3,
+        "expression": "    return value >= 50 ? 55 : 0;",
+        "owner": "typescript:src/counter.ts::#limit"
+       },
+      "ripr": {
+        "reach": {"state":"unknown","confidence":"low","summary":"0 related test(s) found for owner `#limit`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"unknown","confidence":"low","summary":"Strongest extracted oracle kind: `unknown` (rank 0)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter: the changed owner is a `#private` class member no test can call by name; discriminate unknown (RIPR-SPEC-0243)."}
+       },
+      "evidence_path": ["reach unknown: 0 related test(s) found for owner `#limit`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation unknown: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator unknown: TypeScript preview adapter: the changed owner is a `#private` class member no test can call by name; discriminate unknown (RIPR-SPEC-0243)."],
+      "flow_sinks": [
+      ],
+      "evidence": ["owner: #limit", "gap_state: advisory", "actionability_category: private_member_reach_unknown", "why_not_actionable: reach into the private member through public callers is not established; no related-test path or missing assertion is inferred", "repair_route: establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test", "missing_actionability_fields: related_test_or_observer", "evidence_needed_to_promote: modeled public-to-private reach and an observer of the changed behavior", "raw_evidence_ref: file=src/counter.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_counter.ts:typescript_preview:1aa358b1;owner=#limit", "typescript_package_confidence: none", "typescript_package_limitation: typescript_package_root_unresolved", "typescript_package_limitation: typescript_test_runner_unresolved"],
+      "missing": ["`#limit` is a `#private` class member, so no test can call it by name; whether a test reaches it through a public method of the class is not established either way.", "TypeScript preview actionability `advisory` / `private_member_reach_unknown`: reach into the private member through public callers is not established; no related-test path or missing assertion is inferred. Repair route: establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 0,
+      "related_tests": [
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "predicate changed at src/counter.ts:3: `return value >= 50 ? 55 : 0;`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "unknown",
+        "oracle_strength": "none",
+        "owner": "#limit",
+        "owner_kind": "method",
+        "probe_family": "predicate",
+        "related_test": null,
+        "repair_packet_ready": false,
+        "repair_route": "establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test",
+        "verify": {
+          "command": null
+        },
+        "why_not_actionable": "reach into the private member through public callers is not established; no related-test path or missing assertion is inferred"
+      },
+      "preview_actionability": {
+        "actionability_category": "private_member_reach_unknown",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "modeled public-to-private reach and an observer of the changed behavior",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "related_test_or_observer"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/counter.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 3,
+            "owner": "#limit",
+            "raw": "file=src/counter.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_counter.ts:typescript_preview:1aa358b1;owner=#limit",
+            "sample": null,
+            "source_id": "probe:src_counter.ts:typescript_preview:1aa358b1"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "establish reach through a public caller before selecting an assertion shape; a private member cannot be called directly from a test",
+        "unlock_condition": null,
+        "why_not_actionable": "reach into the private member through public callers is not established; no related-test path or missing assertion is inferred"
+      },
+      "stop_reasons": ["transitive_reach_unresolved"],
+      "oracle_kind": "unknown",
+      "oracle_strength": "none",
+      "recommended_next_step": "TypeScript preview advisory: the changed owner is a `#private` class member, so no test can reference it directly and reach through a public method is not established; no new assertion is needed on that evidence, and no repair packet is emitted.",
+      "suggested_next_action": "TypeScript preview advisory: the changed owner is a `#private` class member, so no test can reference it directly and reach through a public method is not established; no new assertion is needed on that evidence, and no repair packet is emitted.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "method",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": ["src/counter.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ]
+}

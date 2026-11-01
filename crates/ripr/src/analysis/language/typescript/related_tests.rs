@@ -145,12 +145,37 @@ impl ReExportIndex {
     /// `alias_map` is forwarded to `normalized_relative_import_module` so that
     /// tsconfig.json-aliased sources (e.g. `@/owner`) can be followed through
     /// re-exports when `resolve_tsconfig_paths` is enabled.
+    #[cfg(test)]
     pub(crate) fn build(
         workspace_files: &[PathBuf],
         sources: &HashMap<PathBuf, String>,
         workspace_root: &Path,
         alias_map: Option<&TsAliasMap>,
         is_test: impl Fn(&Path) -> bool,
+    ) -> Self {
+        Self::build_with_known_facts(
+            workspace_files,
+            sources,
+            workspace_root,
+            alias_map,
+            is_test,
+            &HashMap::new(),
+        )
+    }
+
+    /// [`Self::build`] with the export facts the caller already derived this
+    /// run. The process-lifetime facts cache clears itself at its entry bound,
+    /// so on a workspace larger than that bound a lookup here re-parses every
+    /// file the clear dropped (VS Code: ~3,300 of 5,300 files, 55 s on a warm
+    /// run). A `known` entry is the facts of exactly the source in `sources`,
+    /// from a clean parse; a file without one falls back to the cache.
+    pub(crate) fn build_with_known_facts(
+        workspace_files: &[PathBuf],
+        sources: &HashMap<PathBuf, String>,
+        workspace_root: &Path,
+        alias_map: Option<&TsAliasMap>,
+        is_test: impl Fn(&Path) -> bool,
+        known: &HashMap<PathBuf, ModuleExportFacts>,
     ) -> Self {
         let mut entries: HashMap<(String, String), (String, String)> = HashMap::new();
         let mut star_edges: HashSet<(String, String)> = HashSet::new();
@@ -191,12 +216,14 @@ impl ReExportIndex {
             // that file instead of every non-test source in the workspace.
             // Facts depend on the workspace root and the tsconfig alias map,
             // both carried by the cache key.
-            let Some(file_facts) = super::extraction_cache::export_facts_cached(
-                relative,
-                source.as_str(),
-                workspace_root,
-                alias_map,
-            ) else {
+            let Some(file_facts) = known.get(relative).cloned().or_else(|| {
+                super::extraction_cache::export_facts_cached(
+                    relative,
+                    source.as_str(),
+                    workspace_root,
+                    alias_map,
+                )
+            }) else {
                 indexed_modules.remove(&module);
                 continue;
             };
