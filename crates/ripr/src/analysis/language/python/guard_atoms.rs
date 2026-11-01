@@ -22,7 +22,7 @@
 //! reader can evaluate: whether a test raises is not a literal input.
 
 use super::PythonOwner;
-use super::arm_activation::{ScalarKind, builtin_classes_intact, scalar_kind};
+use super::arm_activation::{ScalarKind, builtin_names_intact, scalar_kind};
 use super::boundary::{CallRow, canonical_decimal, literal_elements, resolve_operand};
 use super::guard_activation::{
     compare_literal_values, condition_holds, keyword_outside_quotes, parameter_rebound_before,
@@ -208,7 +208,18 @@ impl Reader<'_> {
         if !self.stable(name) || self.row.elements.contains_key(name) {
             return None;
         }
-        let value = resolve_operand(name, self.row, self.constants)?;
+        // An owner parameter shadows a same-named module constant, so its
+        // value is the call row's binding or nothing.
+        let value = if self
+            .owner
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name == name)
+        {
+            self.row.bindings.get(name)?.value.clone()
+        } else {
+            resolve_operand(name, self.row, self.constants)?
+        };
         scalar_kind(&value)?;
         Some(value)
     }
@@ -287,7 +298,11 @@ impl Reader<'_> {
             return None;
         };
         let value = self.scalar(subject.trim())?;
-        if !builtin_classes_intact(self.owner, self.owner_source) {
+        if !builtin_names_intact(
+            self.owner,
+            self.owner_source,
+            &["isinstance", "int", "float", "str", "bool"],
+        ) {
             return None;
         }
         let kind = scalar_kind(&value)?;
