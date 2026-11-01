@@ -298,7 +298,10 @@ jobs:
     # with its own test red). Legacy trigger only; the callable path takes its
     # selection from `inputs.run_vscode`, which the trusted caller owns.
     # Every classification failure selects the job: an unknown diff must run
-    # the proof, not skip it.
+    # the proof, not skip it. The `vscode` condition therefore selects unless
+    # this job affirmatively outputs `false`, so a failed or timed-out
+    # selection job (empty output) also runs the e2e. This job runs whenever
+    # the legacy `merge-ready` request does, so an empty output means failure.
     name: vscode surface
     if: >-
       !contains(toJSON(inputs), '"subject_sha"') &&
@@ -355,7 +358,7 @@ jobs:
     if: >-
       always() && !cancelled() &&
       ((contains(toJSON(inputs), '"subject_sha"') && needs.source-identity.result == 'success' && inputs.run_vscode) ||
-      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') || contains(github.event.pull_request.labels.*.name, 'vscode') || needs.vscode-selection.outputs.selected == 'true')))
+      (!contains(toJSON(inputs), '"subject_sha"') && (github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'merge-ready') && (github.event.action == 'labeled' && github.event.label.name == 'merge-ready'))) && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci') || contains(github.event.pull_request.labels.*.name, 'vscode') || needs.vscode-selection.outputs.selected != 'false')))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
