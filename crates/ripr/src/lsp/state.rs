@@ -1916,7 +1916,7 @@ fn invalidate_incremental_document_state(state: &mut DocumentState) -> Quarantin
 pub(super) struct DocumentStore {
     pub(super) documents: BTreeMap<Uri, DocumentState>,
     /// Workspace-relative keys already resolved for open `.rs` candidates,
-    /// keyed by URI with the root they were resolved against (#11763). Each
+    /// keyed by URI; each entry is valid only for the root recorded with it (#11763). Each
     /// resolution canonicalizes the root and the candidate, so recomputing
     /// every document on every refresh made N `didOpen`s cost O(N^2)
     /// filesystem calls. An entry is dropped on reopen, close, save and
