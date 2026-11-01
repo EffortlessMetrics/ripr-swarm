@@ -3139,7 +3139,7 @@ pub(in crate::analysis) fn trait_dispatch_ambiguity_pointer(
     owner_name: &str,
 ) -> String {
     format!(
-        "{}owner `{}` is called from {} of the {} `{}` impls in this crate ({}); ripr cannot tell whether any test reaches one of these impls. \
+        "{}owner `{}` is called from {} of the {} `{}` impls in this crate ({}); ripr cannot tell which of the calling impls, if any, a test reaches. \
          Inspect the tests that format or compare these types to judge whether this change is observed.",
         TRAIT_DISPATCH_AMBIGUITY_PREFIX,
         owner_name,

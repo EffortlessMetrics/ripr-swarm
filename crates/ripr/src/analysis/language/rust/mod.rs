@@ -1577,8 +1577,8 @@ fn apply_rust_no_static_path_limit(
     }
 }
 
-/// RIPR-SPEC-0114 (#11719): the owner is called from several impls of one
-/// implicit-dispatch trait method, so ripr names the ambiguity and lists
+/// RIPR-SPEC-0114 (#11719): the owner is called from an impl of an
+/// implicit-dispatch trait method the crate implements more than once, so ripr names the ambiguity and lists
 /// candidate impls instead of guessing one. No witness test, no reach
 /// credit, no related-test relation, no class change.
 fn apply_rust_trait_dispatch_ambiguity_limit(

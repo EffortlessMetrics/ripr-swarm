@@ -1510,8 +1510,17 @@ fn an_owner_called_from_several_fmt_impls_names_the_dispatch_ambiguity() -> Resu
         .ok_or("no ambiguity line")?;
     assert!(
         line.contains("owner `pad` is called from 2 of the 2 `fmt` impls in this crate (A, B)")
-            && line.contains("cannot tell whether any test reaches one of these impls"),
+            && line.contains("cannot tell which of the calling impls, if any, a test reaches"),
         "{line}"
+    );
+    // The message names the crate's impls, not the callers, as the several.
+    assert!(
+        finding.evidence.iter().any(|line| {
+            line == crate::analysis::classify::RUST_TRAIT_DISPATCH_AMBIGUITY_MESSAGE
+                && line.contains("the crate has several impls of that method")
+        }),
+        "{:?}",
+        finding.evidence
     );
     // No witness test is named and no runtime claim is made.
     assert!(
