@@ -35,8 +35,8 @@ use super::facts::{OracleFact, RustIndex, TestSummary};
 /// Directories the walk never enters. They hold no committed snapshot.
 const SKIPPED_DIRS: [&str; 4] = [".git", ".ripr", "target", "node_modules"];
 
-/// More `.snap` files than this and the listing is unknown rather than
-/// partial.
+/// More `.snap` files than this, or any directory the walk cannot read, and
+/// the listing is unknown rather than partial.
 const LISTING_LIMIT: usize = 20_000;
 
 /// Text in the test file that can redirect or rename snapshot files. Any of
@@ -77,7 +77,7 @@ struct ListedSnapshot {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct SnapshotListing {
     files: Vec<ListedSnapshot>,
-    /// Truncated walk, or a committed-history overlay that disagrees with the
+    /// Incomplete walk (size limit or an unreadable directory), or a committed-history overlay that disagrees with the
     /// working tree about a snapshot input: the listing cannot say a file is
     /// absent.
     unknown: bool,
@@ -142,18 +142,24 @@ impl SnapshotListing {
     }
 }
 
-/// Walk `directory` for `*.snap` files; `true` when the limit stopped it.
+/// Walk `directory` for `*.snap` files; `true` when the listing is
+/// incomplete: the limit stopped it, or a directory or entry could not be
+/// enumerated (a searchable but unlistable directory still lets insta open its
+/// named file, so an unreadable place must never read as "no snapshot").
 fn collect(root: &Path, directory: &Path, out: &mut Vec<String>) -> bool {
     let Ok(entries) = std::fs::read_dir(directory) else {
-        return false;
+        return true;
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return true;
+        };
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
         let Ok(kind) = entry.file_type() else {
-            continue;
+            return true;
         };
         if kind.is_dir() {
             if SKIPPED_DIRS.contains(&name) {
@@ -290,8 +296,10 @@ fn snapshot_call(text: &str, file_source: &str) -> Option<SnapshotCall> {
     let bang = text.find("snapshot!")? + "snapshot!".len() - 1;
     let before = &text[..bang];
     let start = before
-        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
-        .map_or(0, |index| index + 1);
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_' || *c == ':'))
+        .map_or(0, |(index, c)| index + c.len_utf8());
     let path = &before[start..];
     let macro_name = path.rsplit("::").next()?;
     if !macro_name.starts_with("assert_") || path.matches("::").count() > 1 {
@@ -299,7 +307,7 @@ fn snapshot_call(text: &str, file_source: &str) -> Option<SnapshotCall> {
     }
     match path.strip_suffix(macro_name) {
         Some("insta::") => {}
-        Some("") if file_source.contains("insta") => {}
+        Some("") if imports_from_insta(file_source, macro_name) => {}
         _ => return None,
     }
     let rest = text[bang + 1..].trim_start();
@@ -321,6 +329,23 @@ fn snapshot_call(text: &str, file_source: &str) -> Option<SnapshotCall> {
     Some(SnapshotCall {
         macro_name: macro_name.to_string(),
         arguments,
+    })
+}
+
+/// `true` when `source` imports `macro_name` from `insta` (by name or glob)
+/// and defines no macro of that name, so a bare `assert_snapshot!` is insta's
+/// and not a local assertion that checks an explicit value.
+fn imports_from_insta(source: &str, macro_name: &str) -> bool {
+    if source.contains(&format!("macro_rules! {macro_name}")) {
+        return false;
+    }
+    source.split(';').any(|statement| {
+        let statement = statement.trim_start();
+        let statement = statement.strip_prefix("pub ").unwrap_or(statement);
+        statement
+            .strip_prefix("use insta")
+            .filter(|rest| rest.starts_with("::") || rest.starts_with(' '))
+            .is_some_and(|rest| rest.contains(macro_name) || rest.contains('*'))
     })
 }
 

@@ -603,6 +603,36 @@ caller-walk tests in `classifier/evidence.rs` (including the six-hop bound),
 `checkout-tax-self-computed-expected` and `ledger-sku-variant-unsafe`
 verdict-corpus rows.
 
+## File-backed snapshot with no committed expected file (#12189)
+
+A file-backed `insta` assertion compares a value with a committed `.snap`
+file. With no such file it fails on its first run, so it cannot be the
+discriminator that would notice a wrong value. The repo-seam grader therefore
+does not count that assertion as discriminating (the seam reads
+`weakly_gripped`, as the field seam already did), but only when the absence is
+certain:
+
+- the assertion is the one `insta::assert_*snapshot!` call in the test's own
+  body, unnamed or named by a string literal, on a macro whose first argument
+  is a name (`assert_binary_snapshot!` is not resolved);
+- an unqualified macro counts only when the file imports it from `insta` and
+  defines no macro of that name;
+- the test file has no `snapshot_path`, `glob!` or `INSTA_` text and the test
+  is not case-driven;
+- the workspace `.snap` listing is complete (readable, under its size limit,
+  and without a differing committed-history snapshot input) and no tracked
+  `.snap` carries the test's snapshot name, allowing a module prefix, a `-N`
+  counter and an `@suffix`.
+
+Any other shape keeps its grade. An untracked `.snap` is not one CI sees
+(#7708). The listing is part of the analysis cache key.
+
+Proof: `snapshot_without_an_expected_file_cannot_close_the_return_seam`,
+`an_untracked_expected_file_does_not_credit_the_return_seam`,
+`a_committed_binary_snapshot_keeps_the_return_seam_credit`, the resolver tests in
+`rust_snapshot_files/tests.rs`, and `rust_field_snapshot_missing_expected_not_promoted`
+in the honesty corpus.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/classify/reveal.rs` unit tests for all new families.
