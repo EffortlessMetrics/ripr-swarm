@@ -29140,6 +29140,25 @@ fn hover_and_lens_prose_uses_plain_words() -> Result<(), String> {
 }
 
 #[test]
+fn hover_stage_summary_label_colon_prose_uses_plain_words() -> Result<(), String> {
+    // The pairing-missing summary puts producer prose after a label colon.
+    // A colon rule that leaves the tail verbatim would show "discriminator"
+    // in the hover again (delta review of #12258).
+    let mut finding = fix_route_rust_finding();
+    finding.ripr.reveal.discriminate.summary = "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator".to_string();
+    let markdown = finding_hover_markdown_for(&finding)?;
+    let row = markdown
+        .lines()
+        .find(|line| line.contains("unconfirmed"))
+        .ok_or_else(|| format!("no discriminate row in hover:\n{markdown}"))?;
+    let summary = row.split_once(": ").map_or("", |(_, summary)| summary);
+    if !jargon_words(summary).is_empty() {
+        return Err(format!("jargon in hover stage summary: {row}"));
+    }
+    Ok(())
+}
+
+#[test]
 fn hover_discriminator_row_agrees_with_weakly_exposed_lens() -> Result<(), String> {
     let finding = fix_route_rust_finding();
     let markdown = finding_hover_markdown_for(&finding)?;
