@@ -32,8 +32,9 @@ pub struct Summary {
     pub infection_unknown: usize,
     pub propagation_unknown: usize,
     pub static_unknown: usize,
-    /// Distinct (file, line, expression) keys that carry findings of more than
-    /// one class (#11554). Raw `findings` and the class buckets still count
+    /// Distinct analysed (file, line, expression) keys that carry unsuppressed
+    /// findings of more than one class (#11554): changed expressions in diff
+    /// mode, repository seams' expressions in repo mode. Raw `findings` and the class buckets still count
     /// every probe; this says how many expressions received conflicting
     /// verdicts from different probe families. Zero is not rendered.
     pub conflicting_expressions: usize,

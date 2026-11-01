@@ -219,7 +219,8 @@
             }
           }
         },
-        "suppressed_by_policy": { "type": "integer", "minimum": 0 }
+        "suppressed_by_policy": { "type": "integer", "minimum": 0 },
+        "conflicting_expressions": { "type": "integer", "minimum": 1 }
       }
     },
     "analysis_outcome_projection": {

@@ -8,12 +8,24 @@ pub(crate) fn summarize_findings(changed_rust_files: usize, findings: &[Finding]
         ..Summary::default()
     };
 
+    for finding in findings {
+        summary.increment_exposure_class(&finding.class);
+    }
+    summary.conflicting_expressions = conflicting_expression_count(findings.iter());
+
+    summary
+}
+
+/// Expressions (file, line, text) whose findings carry more than one class
+/// (#11554). Takes an iterator so a caller can exclude suppressed findings.
+pub(crate) fn conflicting_expression_count<'a>(
+    findings: impl Iterator<Item = &'a Finding>,
+) -> usize {
     let mut classes_by_expression: std::collections::BTreeMap<
         _,
         Vec<&crate::domain::ExposureClass>,
     > = std::collections::BTreeMap::new();
     for finding in findings {
-        summary.increment_exposure_class(&finding.class);
         let classes = classes_by_expression
             .entry(finding.expression_key())
             .or_default();
@@ -21,12 +33,10 @@ pub(crate) fn summarize_findings(changed_rust_files: usize, findings: &[Finding]
             classes.push(&finding.class);
         }
     }
-    summary.conflicting_expressions = classes_by_expression
+    classes_by_expression
         .values()
         .filter(|classes| classes.len() > 1)
-        .count();
-
-    summary
+        .count()
 }
 
 #[cfg(test)]
@@ -174,5 +184,27 @@ mod tests {
         assert_eq!(summary.findings, 3);
         assert_eq!(summary.weakly_exposed, 2);
         assert_eq!(summary.infection_unknown, 1);
+    }
+
+    // The count is per expression, not a flag: two conflicting expressions
+    // count 2, and a third single-class expression adds nothing.
+    #[test]
+    fn conflicting_expressions_are_counted_per_expression() {
+        let at = |class: ExposureClass, expression: &str| {
+            let mut found = finding(class);
+            found.probe.expression = expression.to_string();
+            found
+        };
+        let findings = [
+            at(ExposureClass::InfectionUnknown, "a > b"),
+            at(ExposureClass::WeaklyExposed, "a > b"),
+            at(ExposureClass::NoStaticPath, "c < d"),
+            at(ExposureClass::Exposed, "c < d"),
+            at(ExposureClass::Exposed, "e == f"),
+        ];
+        assert_eq!(summarize_findings(1, &findings).conflicting_expressions, 2);
+        // A policy that suppresses one side of each conflict leaves none.
+        let unsuppressed = [&findings[1], &findings[3], &findings[4]];
+        assert_eq!(conflicting_expression_count(unsuppressed.into_iter()), 0);
     }
 }
