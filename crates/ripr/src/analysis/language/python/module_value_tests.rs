@@ -2843,3 +2843,86 @@ fn a_module_receiver_still_reaches_a_submodule_reexported_from_the_package_init(
     )?);
     Ok(())
 }
+
+const RATES_RECEIVER_TEST: &str =
+    "import shapes.rates.table as t\n\n\ndef test_gold():\n    assert t.lookup(\"gold\") == 10\n";
+const RATES_TABLE_NEW: &str = "RATE_TABLE = {\"gold\": 11, \"silver\": 5}";
+
+fn rates_receiver_with_inits(shapes_init: &str, rates_init: &str) -> Result<Finding, String> {
+    let source = rates_table_source(RATES_TABLE_OLD, "");
+    let others = [
+        ("shapes/__init__.py", shapes_init),
+        ("shapes/rates/__init__.py", rates_init),
+    ];
+    classify_shapes_rates_table(
+        &source,
+        &others,
+        RATES_RECEIVER_TEST,
+        RATES_TABLE_OLD,
+        RATES_TABLE_NEW,
+    )
+}
+
+#[test]
+fn a_nested_or_unpacked_init_binding_of_the_submodule_name_refuses_the_receiver() -> Check {
+    let shadowing_inits = [
+        "try:\n    from .table import lookup as table\nexcept ImportError:\n    table = None\n",
+        "if True:\n    table = alternate_table\n",
+        "if flag:\n    pass\nelse:\n    table = 1\n",
+        "table, other = alternate_table, 1\n",
+        "[other, table] = pair\n",
+        "other, *table = pair\n",
+        "del table\n",
+        "for table in tables:\n    pass\n",
+        "with opener() as table:\n    pass\n",
+        "while go():\n    table = 1\n",
+        "try:\n    pass\nexcept ImportError as table:\n    pass\n",
+        "if flag:\n    from .other import *\n",
+        "match command:\n    case other:\n        pass\n",
+    ];
+    for init in shadowing_inits {
+        assert_not_credited(&rates_receiver_with_inits("", init)?);
+    }
+    Ok(())
+}
+
+#[test]
+fn a_nested_init_binding_of_other_names_keeps_the_receiver_credited() -> Check {
+    let benign_inits = [
+        "try:\n    from .other import thing\nexcept ImportError:\n    thing = None\n",
+        "if flag:\n    other = 1\n",
+        "other, extra = 1, 2\n",
+        "for item in tables:\n    pass\n",
+        "def configure():\n    table = 1\n",
+        "class Holder:\n    table = 1\n",
+        "if flag:\n    from . import table\n",
+    ];
+    for init in benign_inits {
+        assert_credited(&rates_receiver_with_inits("", init)?);
+    }
+    Ok(())
+}
+
+#[test]
+fn an_ancestor_package_init_rebinding_a_path_segment_refuses_the_receiver() -> Check {
+    for shapes_init in [
+        "rates = alternate_rates\n",
+        "if flag:\n    rates = alternate_rates\n",
+        "from .elsewhere import *\n",
+    ] {
+        assert_not_credited(&rates_receiver_with_inits(shapes_init, "")?);
+    }
+    Ok(())
+}
+
+#[test]
+fn an_ancestor_package_init_binding_other_names_keeps_the_receiver_credited() -> Check {
+    for shapes_init in [
+        "other = 1\n",
+        "from . import rates\n",
+        "if flag:\n    extra = 1\n",
+    ] {
+        assert_credited(&rates_receiver_with_inits(shapes_init, "")?);
+    }
+    Ok(())
+}

@@ -815,6 +815,34 @@ impl<'a> ForeignIndex<'a> {
                 )
             })
             .unwrap_or_default();
+        // A dotted import traverses every ancestor package attribute: an
+        // ancestor `__init__.py` that rebinds the next path segment (or is
+        // opaque) means no receiver along this module path is certain.
+        let ancestor_refuses = {
+            let mut refuses = false;
+            let mut directory = own.parent();
+            while let Some(current) = directory {
+                let Some(parent) = current.parent() else {
+                    break;
+                };
+                let segment = current.file_name().and_then(|name| name.to_str());
+                let init_path = parent.join("__init__.py");
+                if let Some(indexed) = self
+                    .files
+                    .iter()
+                    .find(|indexed| indexed.file == init_path.as_path())
+                    && (indexed.init_submodule_receiver_opaque
+                        || segment
+                            .is_none_or(|segment| indexed.init_submodule_shadows.contains(segment)))
+                {
+                    refuses = true;
+                    break;
+                }
+                directory = Some(parent);
+            }
+            refuses
+        };
+        let init_submodule_receiver_opaque = init_submodule_receiver_opaque || ancestor_refuses;
         ForeignWrites {
             attributes: WrittenWords::held_by_others(&totals.attributes, &excluded.attributes),
             dynamic_words: WrittenWords::held_by_others(
@@ -1627,22 +1655,16 @@ fn init_stmt_shadows_submodule(
     match statement {
         Stmt::Assign(assign) => {
             for target in &assign.targets {
-                if let Expr::Name(name) = target {
-                    shadows.insert(name.id.to_string());
-                }
+                init_target_names(target, shadows);
             }
             false
         }
         Stmt::AnnAssign(assign) => {
-            if let Expr::Name(name) = assign.target.as_ref() {
-                shadows.insert(name.id.to_string());
-            }
+            init_target_names(assign.target.as_ref(), shadows);
             false
         }
         Stmt::AugAssign(assign) => {
-            if let Expr::Name(name) = assign.target.as_ref() {
-                shadows.insert(name.id.to_string());
-            }
+            init_target_names(assign.target.as_ref(), shadows);
             false
         }
         Stmt::FunctionDef(function) => {
@@ -1690,8 +1712,118 @@ fn init_stmt_shadows_submodule(
             }
             false
         }
+        Stmt::Delete(delete) => {
+            for target in &delete.targets {
+                init_target_names(target, shadows);
+            }
+            false
+        }
+        Stmt::For(for_stmt) => {
+            init_target_names(&for_stmt.target, shadows);
+            init_block_shadows(&for_stmt.body, shadows)
+                || init_block_shadows(&for_stmt.orelse, shadows)
+        }
+        Stmt::AsyncFor(for_stmt) => {
+            init_target_names(&for_stmt.target, shadows);
+            init_block_shadows(&for_stmt.body, shadows)
+                || init_block_shadows(&for_stmt.orelse, shadows)
+        }
+        Stmt::While(while_stmt) => {
+            init_block_shadows(&while_stmt.body, shadows)
+                || init_block_shadows(&while_stmt.orelse, shadows)
+        }
+        Stmt::If(if_stmt) => {
+            init_block_shadows(&if_stmt.body, shadows)
+                || init_block_shadows(&if_stmt.orelse, shadows)
+        }
+        Stmt::With(with_stmt) => {
+            for item in &with_stmt.items {
+                if let Some(target) = &item.optional_vars {
+                    init_target_names(target, shadows);
+                }
+            }
+            init_block_shadows(&with_stmt.body, shadows)
+        }
+        Stmt::AsyncWith(with_stmt) => {
+            for item in &with_stmt.items {
+                if let Some(target) = &item.optional_vars {
+                    init_target_names(target, shadows);
+                }
+            }
+            init_block_shadows(&with_stmt.body, shadows)
+        }
+        Stmt::Try(try_stmt) => init_try_shadows(
+            &try_stmt.body,
+            &try_stmt.handlers,
+            &try_stmt.orelse,
+            &try_stmt.finalbody,
+            shadows,
+        ),
+        Stmt::TryStar(try_stmt) => init_try_shadows(
+            &try_stmt.body,
+            &try_stmt.handlers,
+            &try_stmt.orelse,
+            &try_stmt.finalbody,
+            shadows,
+        ),
+        // Capture patterns bind names without a target expression; treat the
+        // whole initializer as opaque rather than enumerate them.
+        Stmt::Match(_) => true,
         _ => false,
     }
+}
+
+/// Collect every plain name a binding or `del` target introduces, through
+/// tuple, list and starred unpacking. Attribute and subscript targets bind
+/// no module-scope name.
+fn init_target_names(target: &Expr, shadows: &mut std::collections::BTreeSet<String>) {
+    match target {
+        Expr::Name(name) => {
+            shadows.insert(name.id.to_string());
+        }
+        Expr::Tuple(tuple) => {
+            for element in &tuple.elts {
+                init_target_names(element, shadows);
+            }
+        }
+        Expr::List(list) => {
+            for element in &list.elts {
+                init_target_names(element, shadows);
+            }
+        }
+        Expr::Starred(starred) => init_target_names(&starred.value, shadows),
+        _ => {}
+    }
+}
+
+/// Walk a nested block of a package initializer at module scope; true when a
+/// nested star import or other opaque statement makes the initializer opaque.
+fn init_block_shadows(block: &[Stmt], shadows: &mut std::collections::BTreeSet<String>) -> bool {
+    block
+        .iter()
+        .any(|statement| init_stmt_shadows_submodule(statement, shadows))
+}
+
+fn init_try_shadows(
+    body: &[Stmt],
+    handlers: &[ast::ExceptHandler],
+    orelse: &[Stmt],
+    finalbody: &[Stmt],
+    shadows: &mut std::collections::BTreeSet<String>,
+) -> bool {
+    if init_block_shadows(body, shadows) {
+        return true;
+    }
+    for handler in handlers {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        if let Some(name) = &handler.name {
+            shadows.insert(name.to_string());
+        }
+        if init_block_shadows(&handler.body, shadows) {
+            return true;
+        }
+    }
+    init_block_shadows(orelse, shadows) || init_block_shadows(finalbody, shadows)
 }
 
 /// Whether one `from … import …` in a package initializer binds a name that
