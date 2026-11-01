@@ -659,6 +659,7 @@ fn refusal_next(
     class: &str,
     canonical_id: &str,
     stub_route: Option<&(String, usize, &'static str)>,
+    terminal_static_limit: Option<&Value>,
 ) -> Value {
     let gap_route = json!({
         "tool": "ripr_get_gap",
@@ -696,6 +697,23 @@ fn refusal_next(
             Value::Null,
         ),
     };
+    // #11622: an `infection_unknown` predicate item with a typed producer
+    // static limit is terminal for this tool: the limit is a fact about the
+    // finding, so "write a test, then re-check" and "refresh again" are both
+    // false hopes. The marker replaces those routes with the limitation read.
+    if let Some(limit) = terminal_static_limit {
+        return json!({
+            "kind": "terminal_static_limit",
+            "reason": reason,
+            "detail": "ripr named a typed static limit on this predicate finding (`static_limit`); ripr_prepare_repair has no repair route for it and a refresh on unchanged input will not change it. Read the limitation, do not retry this tool",
+            "static_limit": limit,
+            "mcp": {
+                "tool": "ripr_get_top_limitation",
+                "arguments": { "canonical_id": canonical_id },
+            },
+            "after_editing_tests": Value::Null,
+        });
+    }
     let mut next = json!({
         "kind": kind,
         "reason": reason,
@@ -785,6 +803,7 @@ impl WorkspaceSession {
                         .unwrap_or(""),
                     &item.canonical_id,
                     item.stub_route.as_ref(),
+                    item.terminal_static_limit().as_ref(),
                 ),
                 "recovery": if reason.starts_with("seam_") {
                     "the shared repair gate refused this seam and ripr_prepare_repair does not override it; calling it again or re-running ripr_refresh on an unchanged tree changes nothing. See `next` for the one route to take"
@@ -1217,7 +1236,7 @@ pub(super) mod tests {
     #[test]
     fn refusal_next_maps_each_reason_to_one_route() -> Result<(), String> {
         let check_route = |reason: &str, class: &str, kind: &str, verify: bool| {
-            let next = refusal_next(reason, class, "gap:x", None);
+            let next = refusal_next(reason, class, "gap:x", None, None);
             if next["kind"] != kind
                 || next["reason"] != reason
                 || next["after_editing_tests"].is_null() == verify
@@ -1263,7 +1282,7 @@ pub(super) mod tests {
             "await_producer_fact",
             false,
         )?;
-        let by_hand = refusal_next("seam_not_found", "weakly_exposed", "gap:x", None);
+        let by_hand = refusal_next("seam_not_found", "weakly_exposed", "gap:x", None, None);
         if by_hand["mcp"]["arguments"]["canonical_id"] != "gap:x"
             || by_hand["after_editing_tests"]["mcp"]["arguments"]["source"] != "worktree"
         {
@@ -1281,7 +1300,7 @@ pub(super) mod tests {
     fn refusal_next_carries_the_stub_route_only_for_unbound_seams() -> Result<(), String> {
         let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
         for reason in ["seam_not_found", "seam_ambiguous"] {
-            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route));
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None);
             if next["stub_route"]["command"]
                 != "ripr agent stub --at src/pricing.rs:88 --kind predicate"
                 || next["kind"] != "write_test_by_hand"
@@ -1295,23 +1314,59 @@ pub(super) mod tests {
             "seam_inventory_truncated",
             "something_new",
         ] {
-            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route));
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None);
             if next.get("stub_route").is_some() {
                 return Err(format!("{reason} must not name a stub route: {next}"));
             }
         }
-        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", None)
+        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", None, None)
             .get("stub_route")
             .is_some()
         {
             return Err("no resolver route means no stub_route".into());
         }
         let spaced = ("src/my file.rs".to_string(), 3_usize, "predicate");
-        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", Some(&spaced))
-            .get("stub_route")
-            .is_some()
+        if refusal_next(
+            "seam_not_found",
+            "weakly_exposed",
+            "gap:x",
+            Some(&spaced),
+            None,
+        )
+        .get("stub_route")
+        .is_some()
         {
             return Err("a path needing quoting must not name a command".into());
+        }
+        Ok(())
+    }
+
+    /// #11622: a terminal static limit replaces the test-by-hand and verify
+    /// routes with the limitation read; without it the same reason keeps the
+    /// ordinary route.
+    #[test]
+    fn refusal_next_marks_a_terminal_static_limit() -> Result<(), String> {
+        let limit = json!({ "kind": "unsupported_syntax", "reason": "r", "recovery": "s" });
+        let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
+        let terminal = refusal_next(
+            "seam_not_found",
+            "infection_unknown",
+            "gap:x",
+            Some(&route),
+            Some(&limit),
+        );
+        if terminal["kind"] != "terminal_static_limit"
+            || terminal["static_limit"] != limit
+            || terminal["mcp"]["tool"] != "ripr_get_top_limitation"
+            || terminal["mcp"]["arguments"]["canonical_id"] != "gap:x"
+            || !terminal["after_editing_tests"].is_null()
+            || terminal.get("stub_route").is_some()
+        {
+            return Err(format!("terminal marker drifted: {terminal}"));
+        }
+        let ordinary = refusal_next("seam_not_found", "infection_unknown", "gap:x", None, None);
+        if ordinary["kind"] != "write_test_by_hand" || ordinary.get("static_limit").is_some() {
+            return Err(format!("no limit must keep the ordinary route: {ordinary}"));
         }
         Ok(())
     }

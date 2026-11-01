@@ -544,7 +544,10 @@ phase), the shared non-claims, and the resource links. An ineligible item
 returns `isError: true` with `repair_packet_ready: false`, the typed
 ineligibility reason, `attempt: null` and a machine-readable `next` object
 (`kind` one of `nothing_to_do`, `write_test_by_hand`, `change_policy`,
-`commit_then_refresh`, `await_producer_fact`; the `reason`; an `mcp` route or
+`commit_then_refresh`, `await_producer_fact`, or `terminal_static_limit` for an
+`infection_unknown` predicate item that carries a typed producer static limit —
+then `static_limit` holds the limit and `mcp` names `ripr_get_top_limitation`,
+with no edit-and-recheck route; the `reason`; an `mcp` route or
 `null`; and, only for `write_test_by_hand`, `after_editing_tests`; a
 `seam_not_found` or `seam_ambiguous` refusal also carries `stub_route`, the
 `ripr agent stub --at FILE:LINE --kind FAMILY` command the shared stub resolver
