@@ -10861,6 +10861,7 @@
       "language": "rust",
       "tier": "pure",
       "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-proximity-other-function.json",
+      "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/proximity-other-function",
       "vector": "repo_exposure_proximity_test_pinning_another_function_cannot_grade_a_match_arm_up",
       "assertions": [
         {
