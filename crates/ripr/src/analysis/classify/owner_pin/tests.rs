@@ -710,6 +710,76 @@ fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
     ));
 }
 
+/// #8782: a bare variant names the owner's enum value only when exactly one
+/// non-aliased `use` of that enum's glob or of the variant brings it in, the
+/// enum has one declaration, and nothing else can bind the spelling.
+#[test]
+fn imported_enum_variant_value_admits_only_the_single_unambiguous_import() {
+    const ENUM: &str = "pub enum Rule {\n    None,\n    Upper,\n    Tagged(u32),\n}\n";
+    let decide = |name: &str, test_file: &str| {
+        let index = index(&[(HELPERS, ENUM), (LIB, test_file)]);
+        imported_enum_variant_value(name, "Rule", Path::new(LIB), &index)
+    };
+    let glob = "use crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n";
+    assert!(decide("Upper", glob));
+    assert!(decide(
+        "Upper",
+        "use crate::Rule::Upper;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    // A prelude spelling, a tuple variant and an unknown name are refused.
+    assert!(!decide("None", glob));
+    assert!(!decide("Tagged", glob));
+    assert!(!decide("Missing", glob));
+    // No import, an aliased import, a second import and a macro are refused.
+    assert!(!decide(
+        "Upper",
+        "#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::Upper as Top;\n#[test]\nfn t() {}\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\nuse crate::Rule::Upper;\n#[test]\nfn t() {}\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\nuse other::Upper;\n#[test]\nfn t() {}\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\nmacro_rules! m { () => {}; }\n#[test]\nfn t() {}\n"
+    ));
+    // A local item of the same spelling shadows the glob.
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\n#[test]\nfn t() { let Upper = 1; }\n"
+    ));
+    // A second glob (file-wide use scan) or a same-named parameter keeps the
+    // spelling ambiguous.
+    assert!(!decide(
+        "Upper",
+        "use std::cmp::Ordering::*;\nuse crate::Rule::*;\n#[test]\nfn t() { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\n#[test]\nfn t(Upper: u32) { assert_eq!(Upper.apply(1), 1); }\n"
+    ));
+    assert!(!decide(
+        "Upper",
+        "use crate::Rule::*;\n#[test]\nfn t() { let f = |Upper| Upper; f(1); }\n"
+    ));
+    // Two declarations of the enum make it ambiguous.
+    let two = index(&[(HELPERS, ENUM), (LIB, glob), ("src/other.rs", ENUM)]);
+    assert!(!imported_enum_variant_value(
+        "Upper",
+        "Rule",
+        Path::new(LIB),
+        &two
+    ));
+}
+
 /// #7172: per-assertion unit-struct pin admission must not rescan the
 /// workspace. `ASSERTIONS` admissions over one `FILLER_FILES`-file index
 /// share one run-scoped [`OwnerPinSyntax`], exactly as production shares
@@ -13536,6 +13606,24 @@ fn comparison_macro_imports_must_name_the_macro_as_a_direct_item_of_its_crate() 
     assert!(!imported("use float_cmp::approx_eq::other;\n"));
     assert!(!imported("use float_cmp::{inner::approx_eq};\n"));
     assert!(!imported("use float_cmp::{inner::{x, approx_eq, y}};\n"));
+}
+
+/// The crate roots a file imports are read through any whitespace or comment
+/// between the keyword and the path, so a spelling cannot hide a glob import.
+#[test]
+fn imported_crate_roots_read_through_whitespace_and_comments() {
+    for source in [
+        "use mac::*;",
+        "use\tmac::*;",
+        "use\nmac::*;",
+        "use/* note */mac::*;",
+        "use /* note */ mac::*;",
+        "extern\ncrate\nmac;",
+    ] {
+        let mut roots = BTreeSet::new();
+        imported_crate_roots(source, &mut roots);
+        assert!(roots.contains("mac"), "{source:?}: {roots:?}");
+    }
 }
 
 #[test]

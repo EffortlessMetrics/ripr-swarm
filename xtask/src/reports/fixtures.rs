@@ -4167,9 +4167,9 @@ mod tests {
         let gripped = line(&format!("{} but", transitional::SEAM_GRIPPED));
         let untied_list = transitional::NO_SEAM_UNTIED_SURFACES;
         let gripped_list = transitional::NO_SEAM_GRIPPED_SURFACES;
-        if untied_list.len() != 43 || gripped_list.len() != 93 {
+        if untied_list.len() != 44 || gripped_list.len() != 92 {
             return Err(format!(
-                "expected 43 untied and 93 gripped surfaces, got {} and {}",
+                "expected 44 untied and 92 gripped surfaces, got {} and {}",
                 untied_list.len(),
                 gripped_list.len()
             ));
