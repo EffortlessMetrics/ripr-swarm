@@ -2877,6 +2877,83 @@ pub(crate) enum ContinueSelection {
     Ambiguous { candidates: Vec<String> },
 }
 
+/// Tally of the attempts an implicit `ripr continue` sees. The newest attempt
+/// is tracked so a repeated `continue` after a confirmed finish reports that
+/// attempt's already-complete status instead of refusing (#11597); that route
+/// is only open when the newest creation time is unique, the attempt finished,
+/// and no prepared or trust-bound attempt exists anywhere in the store.
+#[derive(Default)]
+struct ContinueTally {
+    eligible: Vec<String>,
+    prepared: usize,
+    terminal: usize,
+    trust_bound: usize,
+    latest_ms: Option<u64>,
+    latest_count: usize,
+    latest_finished: Option<RepairAttemptId>,
+}
+
+impl ContinueTally {
+    fn add(&mut self, manifest: &RepairAttemptManifest) {
+        let created = manifest.created_unix_ms;
+        if self.latest_ms.is_none_or(|ms| created > ms) {
+            self.latest_ms = Some(created);
+            self.latest_count = 1;
+            self.latest_finished = matches!(manifest.state, RepairAttemptState::ReadyToFinish)
+                .then(|| manifest.repair_attempt_id.clone());
+        } else if self.latest_ms == Some(created) {
+            self.latest_count += 1;
+            self.latest_finished = None;
+        }
+        match manifest.state {
+            RepairAttemptState::AwaitingEdit => {
+                // The façade passes no edit authorization, so a trust-bound
+                // attempt can never continue on this route: the after phase
+                // would refuse it. Exclude it from implicit selection and name
+                // the advanced route instead. The binding is an immutable
+                // manifest fact, so this filter cannot go stale between
+                // selection and the after phase. An explicitly named bound
+                // attempt still proceeds into the shared after selection,
+                // whose refusal names the missing signals.
+                if find_manifest_artifact_by_role(
+                    manifest,
+                    crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
+                )
+                .is_some()
+                {
+                    self.trust_bound += 1;
+                } else if crate::app::repair_attempt::after_refusal_budget_exhausted(manifest) {
+                    // #8726: a spent retry budget refuses the after phase, so
+                    // the attempt is ended, not a continue candidate.
+                    self.terminal += 1;
+                } else {
+                    self.eligible
+                        .push(manifest.repair_attempt_id.as_str().to_string());
+                }
+            }
+            RepairAttemptState::Prepared => self.prepared += 1,
+            RepairAttemptState::ReadyToFinish
+            | RepairAttemptState::Stale
+            | RepairAttemptState::Incomparable
+            | RepairAttemptState::Failed => self.terminal += 1,
+        }
+    }
+
+    /// The attempt an implicit already-complete report may name, if any.
+    fn already_complete_candidate(&self) -> Option<&RepairAttemptId> {
+        match (
+            &self.latest_finished,
+            self.latest_count,
+            self.prepared,
+            self.trust_bound,
+            self.eligible.is_empty(),
+        ) {
+            (Some(id), 1, 0, 0, true) => Some(id),
+            _ => None,
+        }
+    }
+}
+
 /// Resolve the attempt `ripr continue` acts on. An explicit ID loads
 /// directly, like the advanced route; without one, exactly one awaiting
 /// attempt must be visible — several require selection and a corrupt row
@@ -2923,65 +3000,10 @@ pub(crate) fn select_continue_attempt(
             report: Box::new(report),
         });
     }
-    let mut eligible = Vec::new();
-    let mut prepared = 0usize;
-    let mut terminal = 0usize;
-    let mut trust_bound = 0usize;
-    // The newest attempt, when it alone carries the latest creation time and
-    // finished: a repeated `continue` after a confirmed finish reports that
-    // attempt's already-complete status instead of refusing (#11597).
-    let mut latest_ms: Option<u64> = None;
-    let mut latest_count = 0usize;
-    let mut latest_finished: Option<RepairAttemptId> = None;
+    let mut tally = ContinueTally::default();
     for entry in inventory_repair_attempts_from(root, None)? {
         match entry {
-            RepairAttemptInventoryEntry::Valid(manifest) => {
-                let created = manifest.created_unix_ms;
-                if latest_ms.is_none_or(|ms| created > ms) {
-                    latest_ms = Some(created);
-                    latest_count = 1;
-                    latest_finished = matches!(manifest.state, RepairAttemptState::ReadyToFinish)
-                        .then(|| manifest.repair_attempt_id.clone());
-                } else if latest_ms == Some(created) {
-                    latest_count += 1;
-                    latest_finished = None;
-                }
-                match manifest.state {
-                    RepairAttemptState::AwaitingEdit => {
-                        // The façade passes no edit authorization, so a
-                        // trust-bound attempt can never continue on this
-                        // route: the after phase would refuse it. Exclude it
-                        // from implicit selection and name the advanced
-                        // route instead. The binding is an immutable
-                        // manifest fact, so this filter cannot go stale
-                        // between selection and the after phase. An
-                        // explicitly named bound attempt still proceeds
-                        // into the shared after selection, whose refusal
-                        // names the missing signals.
-                        if find_manifest_artifact_by_role(
-                            &manifest,
-                            crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE,
-                        )
-                        .is_some()
-                        {
-                            trust_bound += 1;
-                        } else if crate::app::repair_attempt::after_refusal_budget_exhausted(
-                            &manifest,
-                        ) {
-                            // #8726: a spent retry budget refuses the after phase,
-                            // so the attempt is ended, not a continue candidate.
-                            terminal += 1;
-                        } else {
-                            eligible.push(manifest.repair_attempt_id.as_str().to_string());
-                        }
-                    }
-                    RepairAttemptState::Prepared => prepared += 1,
-                    RepairAttemptState::ReadyToFinish
-                    | RepairAttemptState::Stale
-                    | RepairAttemptState::Incomparable
-                    | RepairAttemptState::Failed => terminal += 1,
-                }
-            }
+            RepairAttemptInventoryEntry::Valid(manifest) => tally.add(&manifest),
             RepairAttemptInventoryEntry::Invalid { directory, error } => {
                 return Err(format!(
                     "continue selection refused: attempt row `{directory}` is invalid: {error}"
@@ -2989,6 +3011,14 @@ pub(crate) fn select_continue_attempt(
             }
         }
     }
+    let already_complete_id = tally.already_complete_candidate().cloned();
+    let ContinueTally {
+        eligible,
+        prepared,
+        terminal,
+        trust_bound,
+        ..
+    } = tally;
     if eligible.len() > 1 {
         return Ok(ContinueSelection::Ambiguous {
             candidates: eligible,
@@ -3000,7 +3030,7 @@ pub(crate) fn select_continue_attempt(
                 .map_err(|error| format!("continue selection: {error}"))?,
         }),
         None => {
-            if let (Some(id), 1, 0, 0) = (latest_finished, latest_count, prepared, trust_bound) {
+            if let Some(id) = already_complete_id {
                 let report = build_agent_attempt_status(root, root, None, &id)?;
                 if matches!(
                     report.attempt.status_class,
@@ -4574,6 +4604,70 @@ pub(crate) mod tests {
             after_refusal_history: Vec::new(),
             terminal_artifacts: Vec::new(),
         })
+    }
+
+    fn tally_of(
+        attempts: &[(char, RepairAttemptState, u64, bool)],
+    ) -> Result<ContinueTally, String> {
+        let mut tally = ContinueTally::default();
+        for (tail, state, created, bound) in attempts {
+            let mut manifest = awaiting(*tail, "seam1", "head1", *created)?;
+            manifest.state = state.clone();
+            if *bound {
+                manifest
+                    .artifacts
+                    .push(crate::app::repair_attempt::RepairAttemptArtifact {
+                        role: crate::app::python_repair_binding::BINDING_ARTIFACT_ROLE.to_string(),
+                        path: "binding.json".to_string(),
+                        sha256: "0".repeat(64),
+                        bytes: 2,
+                    });
+            }
+            tally.add(&manifest);
+        }
+        Ok(tally)
+    }
+
+    /// #11597: the implicit already-complete route is open only when the
+    /// newest creation time is unique and finished, with no prepared,
+    /// trust-bound or eligible attempt anywhere in the store.
+    #[test]
+    fn implicit_already_complete_is_fail_closed_on_every_other_attempt() -> Result<(), String> {
+        use RepairAttemptState::{AwaitingEdit, Failed, Prepared, ReadyToFinish};
+        let id = |tail: char| format!("repair-attempt-{}", tail.to_string().repeat(24));
+        // Positive: a lone newest finished attempt, older terminal ones ignored.
+        let open = tally_of(&[('a', Failed, 1, false), ('b', ReadyToFinish, 2, false)])?;
+        assert_eq!(
+            open.already_complete_candidate()
+                .map(|id| id.as_str().to_string()),
+            Some(id('b'))
+        );
+        // Tied newest creation times: no attempt is the newest.
+        let tied = tally_of(&[
+            ('a', ReadyToFinish, 5, false),
+            ('b', ReadyToFinish, 5, false),
+        ])?;
+        assert!(tied.already_complete_candidate().is_none());
+        // A newer prepared attempt is the newest and not finished.
+        let newer_prepared =
+            tally_of(&[('a', ReadyToFinish, 1, false), ('b', Prepared, 2, false)])?;
+        assert!(newer_prepared.already_complete_candidate().is_none());
+        // An older prepared attempt still blocks the report.
+        let older_prepared =
+            tally_of(&[('a', Prepared, 1, false), ('b', ReadyToFinish, 2, false)])?;
+        assert!(older_prepared.already_complete_candidate().is_none());
+        // An older trust-bound attempt blocks it too.
+        let older_bound =
+            tally_of(&[('a', AwaitingEdit, 1, true), ('b', ReadyToFinish, 2, false)])?;
+        assert_eq!(older_bound.trust_bound, 1);
+        assert!(older_bound.already_complete_candidate().is_none());
+        // An older eligible awaiting attempt means continue proceeds instead.
+        let older_eligible = tally_of(&[
+            ('a', AwaitingEdit, 1, false),
+            ('b', ReadyToFinish, 2, false),
+        ])?;
+        assert!(older_eligible.already_complete_candidate().is_none());
+        Ok(())
     }
 
     #[test]
