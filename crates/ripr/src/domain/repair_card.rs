@@ -68,13 +68,19 @@ impl Default for RepairCardBudget {
 impl RepairCardBudget {
     pub fn validate(&self) -> Result<(), String> {
         if self.max_detail_items == 0 {
-            return Err("max_detail_items must be greater than zero".to_string());
+            return Err(
+                "max_detail_items must be greater than zero; set it to a positive item count"
+                    .to_string(),
+            );
         }
         if self.max_serialized_bytes == 0 {
-            return Err("max_serialized_bytes must be greater than zero".to_string());
+            return Err(
+                "max_serialized_bytes must be greater than zero; set it to a positive byte count"
+                    .to_string(),
+            );
         }
         if self.max_inline_detail_bytes == 0 {
-            return Err("max_inline_detail_bytes must be greater than zero".to_string());
+            return Err("max_inline_detail_bytes must be greater than zero; set it to a positive byte count".to_string());
         }
         Ok(())
     }
@@ -512,21 +518,21 @@ mod tests {
                     max_detail_items: 0,
                     ..RepairCardBudget::default()
                 },
-                "max_detail_items must be greater than zero",
+                "max_detail_items must be greater than zero; set it to a positive item count",
             ),
             (
                 RepairCardBudget {
                     max_serialized_bytes: 0,
                     ..RepairCardBudget::default()
                 },
-                "max_serialized_bytes must be greater than zero",
+                "max_serialized_bytes must be greater than zero; set it to a positive byte count",
             ),
             (
                 RepairCardBudget {
                     max_inline_detail_bytes: 0,
                     ..RepairCardBudget::default()
                 },
-                "max_inline_detail_bytes must be greater than zero",
+                "max_inline_detail_bytes must be greater than zero; set it to a positive byte count",
             ),
         ];
         for (budget, expected) in cases {
@@ -545,3 +551,6 @@ mod tests {
         assert!(summary.omission_classes.is_empty());
     }
 }
+
+#[cfg(kani)]
+mod kani_proofs;

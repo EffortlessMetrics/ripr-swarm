@@ -76,7 +76,7 @@ Python repair card (preview/advisory)
     - Verify success alone is not a gap-closure receipt.
 
 Next step
-  Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `message "negative value: must be at most zero"`
+  Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `message "negative value: must be at most zero"`
 Drill in:
   ripr explain --root <cwd>/fixtures/python_message_pin_local_no_exposed_credit/input --diff <cwd>/fixtures/python_message_pin_local_no_exposed_credit/diff.patch --mode fast probe:src_check.py:python_preview:0f3004f4
   ripr context --root <cwd>/fixtures/python_message_pin_local_no_exposed_credit/input --diff <cwd>/fixtures/python_message_pin_local_no_exposed_credit/diff.patch --mode fast --at probe:src_check.py:python_preview:0f3004f4

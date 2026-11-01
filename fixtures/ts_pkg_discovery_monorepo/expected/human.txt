@@ -19,9 +19,9 @@ Start here:
   Static exposure: exposed (severity: info, confidence 0.60)
   Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
   Changed behavior: return `tok-${userId}`;
-  Discriminator (observed, advisory): Related test reaches `createToken` with an `exact_value`
-    oracle. Static evidence suggests the changed behavior is observed under an exact-value or
-    exact-error-variant discriminator
+  Check (observed, advisory): Related test reaches `createToken` with an `exact_value` oracle.
+    Static evidence suggests the changed behavior is observed under an exact-value or
+    exact-error-variant check
   Related test: packages/auth/tests/token.test.ts:3 createToken returns prefixed token
   Next step — TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes

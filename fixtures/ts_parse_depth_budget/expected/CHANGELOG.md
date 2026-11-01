@@ -472,7 +472,7 @@ Updated:
 ## Pending — ts_parse_depth_budget (39)
 
 Reason:
-RIPR-SPEC-0122: plain wording for seam and state token in the check digest
+RIPR-SPEC-0246: plain wording for TypeScript preview check text (#11619)
 
 Command:
 `cargo xtask goldens bless ts_parse_depth_budget --reason "..."`

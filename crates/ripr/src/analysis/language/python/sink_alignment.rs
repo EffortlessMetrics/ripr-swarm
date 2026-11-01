@@ -1,4 +1,5 @@
 use super::assertion_selection::PythonAssertionFocus;
+use super::coarse_projection::{element_only_change, owner_call_only_in_coarse_projection};
 use super::effect_alignment::{
     ChangedEffect, EffectReads, calls_owner_through_module, expected_computed_through_owner,
 };
@@ -7,7 +8,7 @@ use super::probe_shape::classify_probe_shape;
 use super::related_tests::TestLookup;
 use super::related_tests::{
     oracle_operand_calls, oracle_operand_names, oracle_operand_protocol_entry,
-    owner_module_callees, owner_result_locals,
+    owner_method_bound_locals, owner_module_callees, owner_result_locals, setup_bound_receivers,
 };
 use super::source_facts::parse_module_result;
 use super::wrapped_call::owner_call_only_inside_opaque_wrapper;
@@ -281,7 +282,7 @@ fn oracle_solely_subscripts_unchanged_dict_key(oracle: &str, changed_keys: &[Str
 
 /// `text` with the contents of its quoted strings blanked out; keeps byte offsets so the
 /// caller can still index the original. Escapes inside strings are honoured.
-fn blank_quoted_strings(text: &str) -> String {
+pub(super) fn blank_quoted_strings(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut quote: Option<char> = None;
     let mut escaped = false;
@@ -1086,6 +1087,35 @@ pub(super) fn classify_sink_alignment_prepared(
     // `obj.attr == value` field assertions). Non-attribute changed lines (returns,
     // method calls, comparisons) are not gated and keep prior behavior.
     let attribute_assignment = parse_attribute_assignment(line_text);
+    // For a method owner, the value+attr co-observation path additionally
+    // requires the asserted attribute receiver to be bound to the owner:
+    // the same instance the owner method ran on (a local bound to an owner
+    // construction and called with the method, or a setup/fixture receiver
+    // bound likewise). A same value on a foreign receiver (`conn.status`
+    // for changed `self.status` on `Session`) is token coincidence, not
+    // observation of the changed sink. Non-method owners keep prior
+    // behavior, as their receiver binding is not modeled here.
+    let attribute_receiver_bound = |unit: &AlignmentUnit<'_>, attr: &str| -> bool {
+        if !is_method_owner {
+            return true;
+        }
+        let (Some(test), Some(class), Some(method)) = (
+            unit.test,
+            owner_class_token.as_ref(),
+            method_name_token.as_ref(),
+        ) else {
+            return false;
+        };
+        let receivers = asserted_attribute_receivers(&unit.text, attr);
+        if receivers.is_empty() {
+            return false;
+        }
+        let bound = owner_method_bound_locals(test, owner, class, method);
+        let setup = setup_bound_receivers(test, owner, class, method);
+        receivers
+            .iter()
+            .any(|receiver| bound.contains(receiver) || setup.contains(receiver))
+    };
     let change_only_credit_ok = |unit: &AlignmentUnit<'_>| match attribute_assignment {
         None => true,
         Some((receiver, attr, rhs)) => {
@@ -1096,7 +1126,8 @@ pub(super) fn classify_sink_alignment_prepared(
             observes(unit, &qualified)
                 || (!value_tokens.is_empty()
                     && observes(unit, &value_tokens)
-                    && observes(unit, &attr_token))
+                    && observes(unit, &attr_token)
+                    && attribute_receiver_bound(unit, attr))
         }
     };
     // Changed-element identity for a dict-literal field-construction change (#1290).
@@ -1173,17 +1204,47 @@ pub(super) fn classify_sink_alignment_prepared(
                 || (!owner.decorators.iter().any(|name| name == "async_def")
                     && !owner.term_facts.may_yield()))
     };
+    let element_only_edit = element_only_change(old_line_text, line_text);
+    // The module-call branch names the owner by the spellings its test imports
+    // (`f`, `m.f`), which the identity tokens do not carry.
+    let coarse_owner_names = |unit: &AlignmentUnit<'_>| {
+        let mut names = owner_reference_tokens.clone();
+        if let Some(test) = unit.test {
+            names.extend(owner_module_callees(test, owner));
+        }
+        names
+    };
     let gates_ok = |unit: &AlignmentUnit<'_>| {
         helper_owner_supported(unit)
             && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
             && !expected_computed_through_owner(&unit.text, &owner_reference_tokens)
             && !owner_call_only_inside_opaque_wrapper(&unit.text, &owner_reference_tokens)
+            && !owner_call_only_in_coarse_projection(
+                &unit.text,
+                &coarse_owner_names(unit),
+                element_only_edit,
+            )
             && !assertion_calls_stand_in(unit, owner)
     };
     // A mock assertion credits only through the effect branch, where it pins
     // the arguments of the very call the changed line makes.
+    // A field write by an owner that returns only the implicit `None` is not
+    // observable through the call's result: an assertion that merely names the
+    // owner call (`check(rec.last, rec.note("error"))`) compares `None` and the
+    // field it read, in whatever order. Only the effect branch, which reads the
+    // field after the completed call, may credit (#10178). Dunder owners keep
+    // their protocol reading (`__enter__` hands back its own result).
+    let result_cannot_observe_write = matches!(
+        effect,
+        Some(ChangedEffect::SelfField { .. } | ChangedEffect::ModuleField { .. })
+    ) && owner.term_facts.returns_no_value()
+        && !(owner.name.starts_with("__") && owner.name.ends_with("__"));
     let gates_ok = |unit: &AlignmentUnit<'_>| !unit.effect_only && gates_ok(unit);
+    // The branches that read the call's result (name, method, alias, protocol
+    // entry, module call). The changed-token branch reads the written field
+    // itself and keeps `gates_ok` alone.
+    let result_gates_ok = |unit: &AlignmentUnit<'_>| !result_cannot_observe_write && gates_ok(unit);
     // What each related test can read of the changed effect, with its owner
     // identity, is a per-test fact: built once, then checked per assertion.
     let effect_reads = per_related_test(|unit: &AlignmentUnit<'_>| {
@@ -1213,7 +1274,7 @@ pub(super) fn classify_sink_alignment_prepared(
         ("direct", "strong_oracle_observes_owner_name", &|unit| {
             observes_imported_owner(unit, &identity_tokens)
                 && (method_owner_identity(unit) || free_fn_module_identity(unit))
-                && gates_ok(unit)
+                && result_gates_ok(unit)
         }),
         (
             "direct",
@@ -1224,7 +1285,7 @@ pub(super) fn classify_sink_alignment_prepared(
                     .is_some_and(|token| observes(unit, std::slice::from_ref(token)))
                     && binds_method_receiver(unit)
                     && !asserts_foreign_receiver(unit)
-                    && gates_ok(unit)
+                    && result_gates_ok(unit)
             },
         ),
         ("alias", "strong_oracle_observes_import_alias", &|unit| {
@@ -1233,17 +1294,21 @@ pub(super) fn classify_sink_alignment_prepared(
             // the owner (#8247). Without source facts the pooled set stands.
             let own_aliases = unit.test.map(owner_aliases_in);
             observes_imported_owner(unit, own_aliases.as_deref().unwrap_or(&alias_tokens))
-                && gates_ok(unit)
+                && result_gates_ok(unit)
         }),
         (
             "direct",
             "strong_oracle_observes_owner_protocol_entry",
-            &|unit| protocol_entry_observed(unit) && method_owner_identity(unit) && gates_ok(unit),
+            &|unit| {
+                protocol_entry_observed(unit)
+                    && method_owner_identity(unit)
+                    && result_gates_ok(unit)
+            },
         ),
         (
             "direct",
             "strong_oracle_observes_owner_call_through_module",
-            &|unit| module_call_observed(unit) && gates_ok(unit),
+            &|unit| module_call_observed(unit) && result_gates_ok(unit),
         ),
         // Gate the changed-sink-token path with the same free-function module
         // identity as the direct/alias paths: a same-named free function from a
@@ -1299,6 +1364,60 @@ pub(super) fn classify_sink_alignment_prepared(
         alignment_reason: alignment_reason.to_string(),
         credited,
     }
+}
+
+/// Receivers of `.attr` reads in an assertion text: the trailing
+/// identifier chain before each `.{attr}` (`conn.status` -> `conn`,
+/// `self.session.status` -> `self.session`), plus the first argument of a
+/// `getattr(recv, "attr")` read. An inline construction (`Session().status`)
+/// yields the callee with a `()` marker, which matches no bound local: a
+/// fresh instance is not the instance the owner method ran on.
+fn asserted_attribute_receivers(text: &str, attr: &str) -> Vec<String> {
+    let mut receivers = Vec::new();
+    let needle = format!(".{attr}");
+    for (dot, _) in text.match_indices(&needle) {
+        let after = &text[dot + needle.len()..];
+        if after.starts_with(|ch: char| ch == '_' || ch.is_ascii_alphanumeric()) {
+            continue;
+        }
+        let before = text[..dot].trim_end();
+        let receiver = if before.ends_with(')') {
+            // Keep only the callee head before the argument list.
+            let head = before[..before.rfind('(').unwrap_or(before.len())].trim_end();
+            let start = head
+                .char_indices()
+                .rev()
+                .find(|(_, ch)| !(*ch == '_' || ch.is_ascii_alphanumeric() || *ch == '.'))
+                .map_or(0, |(idx, ch)| idx + ch.len_utf8());
+            format!("{}()", &head[start..])
+        } else {
+            let start = before
+                .char_indices()
+                .rev()
+                .find(|(_, ch)| !(*ch == '_' || ch.is_ascii_alphanumeric() || *ch == '.'))
+                .map_or(0, |(idx, ch)| idx + ch.len_utf8());
+            before[start..].to_string()
+        };
+        if !receiver.is_empty() && !receivers.contains(&receiver) {
+            receivers.push(receiver);
+        }
+    }
+    let getattr_needle = "getattr(";
+    for (idx, _) in text.match_indices(&getattr_needle) {
+        let rest = &text[idx + getattr_needle.len()..];
+        if !rest.contains(&format!("\"{attr}\"")) && !rest.contains(&format!("'{attr}'")) {
+            continue;
+        }
+        let first_arg: String = rest
+            .trim_start()
+            .chars()
+            .take_while(|ch| *ch == '_' || ch.is_ascii_alphanumeric() || *ch == '.')
+            .collect();
+        if !first_arg.is_empty() && !receivers.contains(&first_arg) {
+            receivers.push(first_arg);
+        }
+    }
+    receivers
 }
 
 /// Memoize a fact that depends only on the related test holding an
@@ -1704,6 +1823,20 @@ mod helper_origin_tests {
     use super::*;
     use std::collections::BTreeMap;
     use std::path::PathBuf;
+
+    #[test]
+    fn asserted_receivers_after_multibyte_text_do_not_panic() {
+        // A multibyte char before the receiver is a delimiter; the receiver
+        // start must advance past the whole char, not into its UTF-8 bytes.
+        assert_eq!(
+            asserted_attribute_receivers("assert '\u{e9}conn.status' == 'active'", "status"),
+            vec!["conn".to_string()]
+        );
+        assert_eq!(
+            asserted_attribute_receivers("assert '\u{e9}Session().status' == 'active'", "status"),
+            vec!["Session()".to_string()]
+        );
+    }
 
     #[test]
     fn helper_fallback_keeps_one_origin_and_prefers_reported_raw_text() -> Result<(), String> {

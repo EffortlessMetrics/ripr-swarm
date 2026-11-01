@@ -6,7 +6,7 @@ use super::{NameScopes, name_scope::name_scopes_in_tree, parse_clean_source_file
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use ra_ap_syntax::{
     AstNode, AstPtr, Parse, SourceFile, TextRange,
-    ast::{self, HasName},
+    ast::{self, HasAttrs, HasGenericParams, HasName},
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -61,6 +61,13 @@ pub(crate) struct SourceScopes {
     pub(crate) modules: Vec<ModuleScope>,
 }
 
+/// The fragment memo trades memory for CPU only for small, repeated fragments
+/// (assertion operands, synthetic helper bodies). Larger texts and entries past
+/// the cap are parsed transiently, so a repo-scale scan cannot grow the memo
+/// with every distinct test body.
+const FRAGMENT_MEMO_MAX_TEXT_BYTES: usize = 2048;
+const FRAGMENT_MEMO_MAX_ENTRIES: usize = 4096;
+
 #[derive(Default)]
 pub(crate) struct SourceSyntaxMemos {
     files: Mutex<BTreeMap<PathBuf, SnapshotSlot>>,
@@ -83,6 +90,11 @@ impl std::fmt::Debug for SourceSyntaxMemos {
 
 impl SourceSyntaxMemos {
     pub(crate) fn parse_fragment(&self, text: &str) -> Option<Parse<SourceFile>> {
+        // Large texts are parsed transiently and the memo stops growing at its
+        // entry cap, so a repo-scale scan cannot accumulate every distinct body.
+        if text.len() > FRAGMENT_MEMO_MAX_TEXT_BYTES {
+            return parse_clean_source_file(text);
+        }
         // Parse outside the index-wide lock; the first stored entry wins so
         // concurrent callers converge on one shared green tree.
         if let Ok(fragments) = self.fragments.lock()
@@ -92,7 +104,15 @@ impl SourceSyntaxMemos {
         }
         let parse = parse_clean_source_file(text);
         match self.fragments.lock() {
-            Ok(mut fragments) => fragments.entry(text.to_string()).or_insert(parse).clone(),
+            Ok(mut fragments) => {
+                if let Some(existing) = fragments.get(text) {
+                    return existing.clone();
+                }
+                if fragments.len() < FRAGMENT_MEMO_MAX_ENTRIES {
+                    fragments.insert(text.to_string(), parse.clone());
+                }
+                parse
+            }
             Err(_) => parse,
         }
     }
@@ -331,6 +351,79 @@ impl SourceSnapshot {
         }
     }
 
+    /// Whether `function` is a directly callable inherent associated fn of
+    /// `ty`: its parent is the item list of an inherent `impl` that sits at
+    /// module level (not inside a block or const), neither it nor its impl or
+    /// enclosing modules carries a `cfg` other than `cfg(test)` (availability is
+    /// unestablished), and no generic parameter of the fn or the impl is spelled
+    /// `ty` (that name would then be a type variable, not the owner). `None`
+    /// when the declaration is ambiguous or the file does not parse.
+    pub(crate) fn inherent_factory_declaration_is_authoritative(
+        &self,
+        function: &FunctionSummary,
+        ty: &str,
+    ) -> Option<bool> {
+        let item = self.declaration(function)?;
+        // `r#Widget` and `Widget` are one identifier; compare their canonical form.
+        let unraw = |text: &str| text.strip_prefix("r#").unwrap_or(text).to_string();
+        let ty = unraw(ty);
+        let spelled = |list: Option<ast::GenericParamList>| {
+            list.into_iter()
+                .flat_map(|list| list.generic_params())
+                .any(|param| match param {
+                    ast::GenericParam::TypeParam(param) => {
+                        param.name().is_some_and(|name| unraw(name.text()) == ty)
+                    }
+                    ast::GenericParam::ConstParam(param) => {
+                        param.name().is_some_and(|name| unraw(name.text()) == ty)
+                    }
+                    ast::GenericParam::LifetimeParam(_) => false,
+                })
+        };
+        let unestablished_cfg = |node: &dyn HasAttrs| {
+            node.attrs().any(|attr| {
+                // Token text without trivia, so a comment between `cfg` and `(`
+                // cannot hide the predicate; raw identifiers are canonicalized.
+                let text: String = attr
+                    .syntax()
+                    .descendants_with_tokens()
+                    .filter_map(|element| element.into_token())
+                    .filter(|token| !token.kind().is_trivia())
+                    .map(|token| unraw(token.text()))
+                    .collect();
+                (text.starts_with("#[cfg(") || text.starts_with("#[cfg_attr("))
+                    && text != "#[cfg(test)]"
+            })
+        };
+        let Some(list) = item.syntax().parent().and_then(ast::AssocItemList::cast) else {
+            return Some(false);
+        };
+        let Some(imp) = list.syntax().parent().and_then(ast::Impl::cast) else {
+            return Some(false);
+        };
+        if imp.trait_().is_some()
+            || spelled(item.generic_param_list())
+            || spelled(imp.generic_param_list())
+        {
+            return Some(false);
+        }
+        if unestablished_cfg(&item) || unestablished_cfg(&imp) {
+            return Some(false);
+        }
+        for ancestor in imp.syntax().ancestors().skip(1) {
+            if let Some(module) = ast::Module::cast(ancestor.clone()) {
+                if unestablished_cfg(&module) {
+                    return Some(false);
+                }
+            } else if !(ast::ItemList::can_cast(ancestor.kind())
+                || ast::SourceFile::can_cast(ancestor.kind()))
+            {
+                return Some(false);
+            }
+        }
+        Some(true)
+    }
+
     pub(crate) fn name_scopes(&self, caller: &TestSummary) -> Option<Arc<NameScopes>> {
         let key = (caller.name.clone(), caller.start_line, caller.end_line);
         let compute = || {
@@ -464,6 +557,27 @@ mod tests {
                 .root_impl_lines()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn fragment_memo_is_bounded_by_entry_count_and_text_size() -> Result<(), String> {
+        let memos = SourceSyntaxMemos::default();
+        let len = |memos: &SourceSyntaxMemos| {
+            memos
+                .fragments
+                .lock()
+                .map(|m| m.len())
+                .map_err(|e| e.to_string())
+        };
+        let large = format!("fn big() {{ {} }}", "let a = 1; ".repeat(300));
+        assert!(large.len() > FRAGMENT_MEMO_MAX_TEXT_BYTES);
+        assert!(memos.parse_fragment(&large).is_some());
+        assert_eq!(len(&memos)?, 0);
+        for n in 0..FRAGMENT_MEMO_MAX_ENTRIES + 10 {
+            assert!(memos.parse_fragment(&format!("fn f{n}() {{}}")).is_some());
+        }
+        assert_eq!(len(&memos)?, FRAGMENT_MEMO_MAX_ENTRIES);
+        Ok(())
     }
 
     #[test]

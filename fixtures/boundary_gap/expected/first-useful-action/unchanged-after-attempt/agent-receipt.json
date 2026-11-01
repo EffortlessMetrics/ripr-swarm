@@ -1,6 +1,6 @@
 {
   "analysis_outcome": null,
-  "analysis_outcome_error": "Analysis outcome artifact /tmp/ripr-wsl-main/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/analysis-outcome.json is unavailable: No such file or directory (os error 2).",
+  "analysis_outcome_error": "<analysis_outcome_error>",
   "analysis_outcome_status": "missing",
   "inputs": {
     "after": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
@@ -10,17 +10,17 @@
   "provenance": {
     "after_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/after.repo-exposure.json",
-      "sha256": "sha256:40d2fd24410bdfa15d3bbf85a21080e4f3ba5fd407f8aa971048d3065f7118d7"
+      "sha256": "sha256:0b099faa05bc5ac0a736fd0246bed36327a7ba2b0648acc33d2dfc78fe9133cf"
     },
     "after_class": "weakly_gripped",
     "before_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/before.repo-exposure.json",
-      "sha256": "sha256:40d2fd24410bdfa15d3bbf85a21080e4f3ba5fd407f8aa971048d3065f7118d7"
+      "sha256": "sha256:0b099faa05bc5ac0a736fd0246bed36327a7ba2b0648acc33d2dfc78fe9133cf"
     },
     "before_class": "weakly_gripped",
     "command_template_version": "0.1",
     "config_fingerprint": null,
-    "generated_at": "unix_ms:1793436714175",
+    "generated_at": "<generated_at>",
     "limits": {
       "runtime_adequacy_claim": false,
       "runtime_mutation_execution": false,
@@ -28,11 +28,11 @@
     },
     "movement": "unchanged",
     "repo_root": ".",
-    "ripr_version": "0.11.0",
+    "ripr_version": "<ripr_version>",
     "seam_id": "67fc764ba37d77bd",
     "verify_artifact": {
       "path": "fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/agent-verify.json",
-      "sha256": "sha256:90d542cee3a6ae7ff06b55a70671806de8f19c7a883a4ad9bb430cb992fc3415"
+      "sha256": "sha256:e7877cc03b0989245d2e5d912a811228022046576c5e962b47f9c41e479149d7"
     },
     "workflow_artifact": null
   },
@@ -44,7 +44,6 @@
     "evidence_delta": [],
     "file": "src/lib.rs",
     "grip_class": null,
-    "guidance_note": null,
     "line": 2,
     "seam_id": "67fc764ba37d77bd",
     "seam_kind": "predicate_boundary"
@@ -53,20 +52,16 @@
   "summary": {
     "next_action": {
       "kind": "unchanged",
-      "recommended_action": "This receipt is not review evidence because its status is `incomplete` (Analysis outcome artifact /tmp/ripr-wsl-main/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/analysis-outcome.json is unavailable: No such file or directory (os error 2)); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.",
+      "recommended_action": "Add the missing discriminator or stronger assertion named by the packet.",
       "summary": "Static grip did not improve."
     },
-    "next_recommendation": "This receipt is not review evidence because its status is `incomplete` (Analysis outcome artifact /tmp/ripr-wsl-main/fixtures/boundary_gap/expected/first-useful-action/unchanged-after-attempt/analysis-outcome.json is unavailable: No such file or directory (os error 2)); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.",
+    "next_recommendation": "Add or strengthen the missing discriminator named by the seam packet, then rerun agent verify.",
     "receipt_state": "receipt_movement_unchanged",
     "remaining_gap": "Static grip class did not move."
   },
   "test_changed": null,
   "tool": "ripr",
   "verification": {
-    "commands_run": [],
-    "non_claims": [
-      "static_only_assurance"
-    ],
-    "status": "verification_not_run"
+    "commands_run": []
   }
 }

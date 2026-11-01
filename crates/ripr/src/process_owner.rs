@@ -145,12 +145,18 @@ impl PollBackoff {
         delay
     }
 
-    /// Sleep for the next delay, never past `deadline` when one is given.
-    pub(crate) fn sleep(&mut self, deadline: Option<Instant>) {
+    /// Next poll delay after applying an optional deadline clamp at `now`.
+    pub(crate) fn clamped_delay(&mut self, deadline: Option<Instant>, now: Instant) -> Duration {
         let mut delay = self.next_delay();
         if let Some(deadline) = deadline {
-            delay = delay.min(deadline.saturating_duration_since(Instant::now()));
+            delay = delay.min(deadline.saturating_duration_since(now));
         }
+        delay
+    }
+
+    /// Sleep for the next delay, never past `deadline` when one is given.
+    pub(crate) fn sleep(&mut self, deadline: Option<Instant>) {
+        let delay = self.clamped_delay(deadline, Instant::now());
         if !delay.is_zero() {
             std::thread::sleep(delay);
         }
@@ -227,28 +233,8 @@ impl OwnedProcess {
         }
         #[cfg(all(unix, not(windows)))]
         {
-            use std::os::unix::process::CommandExt as _;
-            let mut command = command;
             let group_owned = crate::analysis::cancellation::owns_process_groups();
-            if group_owned {
-                // Opt-in belongs to the MCP attempt, including captured workers.
-                // Public CLI/exporter callers keep their original group policy.
-                ensure_group_observation_supported()?;
-                command.process_group(0);
-            }
-            let child = command.spawn()?;
-            Ok(Self {
-                child,
-                group_owned,
-                custody_lost: false,
-                group_settled: false,
-                #[cfg(all(test, unix, not(windows)))]
-                test_group_kills: 0,
-                #[cfg(test)]
-                test_direct_kills: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-                #[cfg(test)]
-                injected_kill_failure: None,
-            })
+            Self::spawn_with_group(command, group_owned)
         }
         #[cfg(not(any(windows, unix)))]
         {
@@ -259,6 +245,56 @@ impl OwnedProcess {
             let child = command.spawn()?;
             Ok(Self::from_child(child))
         }
+    }
+
+    /// Spawn with explicit descendant containment for an owned execution.
+    ///
+    /// The installed ordinary-test journey uses this entry point outside an
+    /// analysis cancellation scope. On supported Unix platforms it creates a
+    /// fresh process group and retains the existing prereap PID custody. This
+    /// replaces any caller-prepared group setting. Windows uses the same Job
+    /// Object setup as [`Self::spawn`]. Platforms without those containment
+    /// primitives refuse before spawning. The default [`Self::spawn`] behavior
+    /// and its caller-prepared group settings remain unchanged.
+    pub fn spawn_isolated(command: Command) -> std::io::Result<Self> {
+        #[cfg(all(unix, not(windows)))]
+        {
+            Self::spawn_with_group(command, true)
+        }
+        #[cfg(windows)]
+        {
+            Self::spawn(command)
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = command;
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "isolated process execution requires descendant containment",
+            ))
+        }
+    }
+
+    #[cfg(all(unix, not(windows)))]
+    fn spawn_with_group(mut command: Command, group_owned: bool) -> std::io::Result<Self> {
+        use std::os::unix::process::CommandExt as _;
+        if group_owned {
+            ensure_group_observation_supported()?;
+            command.process_group(0);
+        }
+        let child = command.spawn()?;
+        Ok(Self {
+            child,
+            group_owned,
+            custody_lost: false,
+            group_settled: false,
+            #[cfg(test)]
+            test_group_kills: 0,
+            #[cfg(test)]
+            test_direct_kills: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            #[cfg(test)]
+            injected_kill_failure: None,
+        })
     }
 
     #[cfg(windows)]
@@ -894,17 +930,57 @@ mod tests {
         );
     }
 
-    /// A deadline already in the past makes the backoff sleep return at
-    /// once instead of sleeping the scheduled delay past it.
+    /// Deadline clamping is asserted on the computed delay, not wall-clock sleep
+    /// (see #10592).
     #[test]
-    fn poll_backoff_sleep_never_passes_the_deadline() {
+    fn poll_backoff_clamped_delay_respects_deadline() {
+        let now = Instant::now();
+
+        let mut past_deadline = PollBackoff::new();
+        for _ in 0..8 {
+            let _ = past_deadline.next_delay();
+        }
+        assert_eq!(
+            past_deadline.clamped_delay(Some(now), now),
+            Duration::ZERO,
+            "a deadline already in the past must clamp to zero"
+        );
+
+        let mut no_deadline = PollBackoff::new();
+        assert_eq!(
+            no_deadline.clamped_delay(None, now),
+            POLL_BACKOFF_FIRST,
+            "without a deadline the scheduled delay is returned"
+        );
+
+        let mut near_deadline = PollBackoff::new();
+        for _ in 0..8 {
+            let _ = near_deadline.next_delay();
+        }
+        let remaining = Duration::from_millis(10);
+        assert_eq!(
+            near_deadline.clamped_delay(Some(now + remaining), now),
+            remaining,
+            "a near deadline must clamp the scheduled ceiling delay"
+        );
+    }
+
+    /// Mutant guard: returning the scheduled delay while ignoring the deadline
+    /// would fail the past-deadline case above.
+    #[test]
+    fn poll_backoff_clamped_delay_deadline_clamp_is_load_bearing() {
+        let now = Instant::now();
         let mut backoff = PollBackoff::new();
         for _ in 0..8 {
             let _ = backoff.next_delay();
         }
-        let started = Instant::now();
-        backoff.sleep(Some(started));
-        assert!(started.elapsed() < POLL_BACKOFF_CEILING / 2);
+        let clamped = backoff.clamped_delay(Some(now), now);
+        assert_eq!(clamped, Duration::ZERO);
+        assert_eq!(POLL_BACKOFF_CEILING, Duration::from_millis(50));
+        assert_ne!(
+            POLL_BACKOFF_CEILING, clamped,
+            "ignoring the deadline would return the ceiling delay"
+        );
     }
 
     /// Normal completion, captured output and pipe teardown through the

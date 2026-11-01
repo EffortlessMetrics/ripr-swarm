@@ -25,8 +25,8 @@ Start here:
     before routing a repair packet
   Related test: tests/signals.test.ts:26 renders summary snapshot
   Next step — TypeScript preview advisory: add an exact-value assertion alongside the snapshot for
-    missing discriminator `return value == `summary:${status.trim()}``; no actionable repair packet
-    is emitted until verify, receipt, and edit-boundary fields are available
+    the missing check `return value == `summary:${status.trim()}``; no actionable repair packet is
+    emitted until verify, receipt, and edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -45,15 +45,15 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_jest_vitest_assertion_facts/input --diff <cwd>/fixtures/typescript_jest_vitest_assertion_facts/diff.patch --mode fast probe:src_signals.ts:typescript_preview:8ca5702a
   ripr context --root <cwd>/fixtures/typescript_jest_vitest_assertion_facts/input --diff <cwd>/fixtures/typescript_jest_vitest_assertion_facts/diff.patch --mode fast --at probe:src_signals.ts:typescript_preview:8ca5702a
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 Hidden:
   6 lower-priority finding(s) omitted from default human output (TypeScript preview: 6).
-    - src/signals.ts:2 (exposed); kind: predicate; reason: Related test reaches `applyDiscount` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+    - src/signals.ts:2 (exposed); kind: predicate; reason: Related test reaches `applyDiscount` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
     - src/signals.ts:13 (weak); kind: predicate; reason: Related test reaches `isReady` with a smoke-only oracle; replace or augment the truthiness check with an exact-value assertion for the changed discriminator before routing a…
-    - src/signals.ts:17 (exposed); kind: side_effect; reason: Related test reaches `notifyStatus` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
-    - src/signals.ts:21 (exposed); kind: side_effect; reason: Related test reaches `notifyLiteral` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
-    - src/signals.ts:25 (exposed); kind: return_value; reason: Related test reaches `loadProfile` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
+    - src/signals.ts:17 (exposed); kind: side_effect; reason: Related test reaches `notifyStatus` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
+    - src/signals.ts:21 (exposed); kind: side_effect; reason: Related test reaches `notifyLiteral` with a `mock_expectation` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
+    - src/signals.ts:25 (exposed); kind: return_value; reason: Related test reaches `loadProfile` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check.
     - src/signals.ts:29 (weak); kind: side_effect; reason: Related test reaches `notifyAudit` with bounded mock payload evidence `expect(record).toHaveBeenCalledWith("audit")`; keep the item advisory until mock-shape actionability can…
   Hidden classes:
     exposed = tests appear to notice the change

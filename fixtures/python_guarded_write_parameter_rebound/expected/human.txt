@@ -28,7 +28,7 @@ Start here:
   Suggested test: test_note
   Test node: tests/test_noter.py::test_note
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_guarded_write_parameter_rebound/input && python -m pytest tests/test_noter.py::test_note) (high)
-  Next step — Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `self.last == "fault"`
+  Next step — Python preview: strengthen the existing related test with a field/object assertion for the missing check `self.last == "fault"`
   Evidence: reach yes · infection yes · propagation weak · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -47,7 +47,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_guarded_write_parameter_rebound/input --diff <cwd>/fixtures/python_guarded_write_parameter_rebound/diff.patch --mode fast probe:shapes_noter.py:python_preview:a00e0fc8
   ripr context --root <cwd>/fixtures/python_guarded_write_parameter_rebound/input --diff <cwd>/fixtures/python_guarded_write_parameter_rebound/diff.patch --mode fast --at probe:shapes_noter.py:python_preview:a00e0fc8
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `shapes/noter.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `shapes/noter.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

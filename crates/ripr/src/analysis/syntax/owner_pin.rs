@@ -167,6 +167,12 @@ pub(crate) enum AssertionContextRefusal {
     DuplicateSpellingOneRuns,
     /// The invocation sits where it may not run: names the construct.
     ConditionalPath(&'static str),
+    /// The invocation sits in the closure a model-checking runner
+    /// (`loom::model`, `shuttle::check_*`) takes. Whether and how often the
+    /// runner calls it is the runner's contract, which ripr does not read, so
+    /// this is a limit of ripr's reading, not a shape that can keep the
+    /// assertion from running (#11543).
+    ModelCheckClosure,
     /// The test body's only `return` is the whole body of a root
     /// `if <condition> { return; }` before the invocation: whether the
     /// invocation runs depends on the condition, held here as written.
@@ -405,6 +411,18 @@ pub(crate) enum MacroBindingKind {
     /// `#[macro_use]` on an `extern crate` or a module ripr did not resolve
     /// to an indexed file; the text is the item it is attached to.
     MacroUse(String),
+    /// A plain crate-root `#[macro_use] extern crate` that selects this
+    /// macro name. `krate` is the source crate identifier, not its local alias.
+    /// This records syntax only; it does not establish any exported macro.
+    ExternMacroUse { item: String, krate: String },
+    /// The classifier bound an `ExternMacroUse` to a selected local library
+    /// with a plain unconditional exported definition of this macro name.
+    /// Negative-only evidence: the macro's behavior is still unexpanded.
+    MacroUseExport {
+        item: String,
+        exporter: std::path::PathBuf,
+        line: usize,
+    },
     /// A glob import from outside the workspace and the manifest-verified
     /// standard crates (`std`, `core`; `alloc` stays foreign, #8388); the
     /// text is its path.
@@ -440,6 +458,8 @@ impl MacroBindingKind {
             Self::Unparsed
                 | Self::NoImplicitPrelude
                 | Self::MacroUse(_)
+                | Self::ExternMacroUse { .. }
+                | Self::MacroUseExport { .. }
                 | Self::ForeignGlob(_)
                 | Self::ArgumentAttribute { .. }
                 | Self::BodyBindsAny { .. }
@@ -1025,7 +1045,17 @@ fn macro_binding_sites_in_tree(
                         .syntax()
                         .parent()
                         .is_some_and(|parent| ast::ExternCrate::can_cast(parent.kind()));
-                    ambiguous.extend(all(line, MacroBindingKind::MacroUse(item), extern_crate));
+                    let mut sites =
+                        all(line, MacroBindingKind::MacroUse(item.clone()), extern_crate);
+                    for (name, site) in &mut sites {
+                        if let Some(krate) = literal_macro_use_crate(&attr, name) {
+                            site.kind = MacroBindingKind::ExternMacroUse {
+                                item: item.clone(),
+                                krate,
+                            };
+                        }
+                    }
+                    ambiguous.extend(sites);
                     continue;
                 }
             }
@@ -1300,6 +1330,15 @@ fn macro_binding_sites_in_tree(
                 {
                     continue;
                 }
+                // RIPR-SPEC-0369: an exact verification-prelude glob exports no
+                // assertion macro, so it cannot rebind a trusted name.
+                if item.star_token().is_some()
+                    && is_assertion_free_prelude_glob(&item)
+                    && !drop_in_shadowed(root, external)
+                    && drop_in_verified(root)
+                {
+                    continue;
+                }
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
                     let line = line_of(node);
@@ -1529,8 +1568,9 @@ fn drop_in_crates(name: &str) -> &'static [&'static str] {
     }
 }
 
-fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
-    let crates = drop_in_crates(name);
+/// The full path segments a use tree names, outermost first: ancestors' paths
+/// joined, so `{prelude::*}` inside `use krate::{..}` reads `["krate", "prelude"]`.
+fn use_tree_segments(item: &ast::UseTree) -> Vec<String> {
     // Ancestor trees run inner to outer; reverse each path, then the whole.
     let mut segments: Vec<String> = item
         .syntax()
@@ -1549,6 +1589,31 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
         })
         .collect();
     segments.reverse();
+    segments
+}
+
+/// RIPR-SPEC-0369: glob imports of verification-framework preludes whose
+/// published export lists (checked against creusot-std 0.14.0, vstd
+/// 0.0.0-2026-10-25-0158 and prusti-contracts 0.3.3) contain no macro named
+/// like a trusted assertion, so the glob cannot rebind `assert_eq!` and its
+/// kin. Each entry is the exact glob path; the crate must also resolve to the
+/// registry package (`drop_in_verified`) and not be shadowed.
+const ASSERTION_FREE_PRELUDE_GLOBS: &[&[&str]] = &[
+    &["creusot_std", "prelude"],
+    &["vstd", "prelude"],
+    &["prusti_contracts"],
+];
+
+fn is_assertion_free_prelude_glob(item: &ast::UseTree) -> bool {
+    let segments = use_tree_segments(item);
+    ASSERTION_FREE_PRELUDE_GLOBS
+        .iter()
+        .any(|glob| segments.iter().map(String::as_str).eq(glob.iter().copied()))
+}
+
+fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
+    let crates = drop_in_crates(name);
+    let segments = use_tree_segments(item);
     let segments: Vec<&str> = segments.iter().map(String::as_str).collect();
     matches!(
         segments.as_slice(),
@@ -1954,6 +2019,134 @@ fn is_exported_macro(definition: &SyntaxNode) -> bool {
         });
     }
     ast::MacroDef::cast(definition.clone()).is_none_or(|item| item.visibility().is_some())
+}
+
+/// A plain, unconditional crate-root import selecting `name`. Conditional
+/// attributes, nested imports and unknown selector syntax supply no witness.
+/// The broad `MacroUse` ambiguity remains, so absence here proves no safety.
+fn literal_macro_use_crate(attr: &ast::Attr, name: &str) -> Option<String> {
+    let item = attr.syntax().parent().and_then(ast::ExternCrate::cast)?;
+    let file = item.syntax().parent().and_then(ast::SourceFile::cast)?;
+    if item
+        .attrs()
+        .filter(|attribute| {
+            attribute
+                .simple_name()
+                .is_some_and(|name| unraw(&name) == "macro_use")
+        })
+        .count()
+        != 1
+        || file
+            .attrs()
+            .any(|attribute| !macro_declaration_inert_attribute(&attribute))
+        || item.attrs().any(|attribute| {
+            !macro_declaration_inert_attribute(&attribute)
+                && attribute
+                    .simple_name()
+                    .is_none_or(|name| unraw(&name) != "macro_use")
+        })
+    {
+        return None;
+    }
+    let selects = if let Some(atom) = attr.as_simple_atom() {
+        unraw(&atom) == "macro_use"
+    } else if let Some((called, tree)) = attr.as_simple_call() {
+        if unraw(&called) != "macro_use" {
+            return None;
+        }
+        let tokens = tree
+            .syntax()
+            .children_with_tokens()
+            .filter(|element| !element.kind().is_trivia())
+            .map(|element| element.into_token())
+            .collect::<Option<Vec<_>>>()?;
+        if tokens.first()?.kind() != ra_ap_syntax::SyntaxKind::L_PAREN
+            || tokens.last()?.kind() != ra_ap_syntax::SyntaxKind::R_PAREN
+        {
+            return None;
+        }
+        let mut identifier = true;
+        let mut found = false;
+        for token in &tokens[1..tokens.len() - 1] {
+            if identifier {
+                if token.kind() != ra_ap_syntax::SyntaxKind::IDENT {
+                    return None;
+                }
+                found |= unraw(token.text()) == name;
+            } else if token.kind() != ra_ap_syntax::SyntaxKind::COMMA {
+                return None;
+            }
+            identifier = !identifier;
+        }
+        found
+    } else {
+        false
+    };
+    let source = item.name_ref()?;
+    let krate = unraw(source.text()).to_string();
+    (selects && krate != "self").then_some(krate)
+}
+
+/// Built-in metadata that preserves the surrounding declaration. Unknown
+/// attributes (including `cfg`/`cfg_attr`) stay outside the plain-export slice.
+fn macro_declaration_inert_attribute(attr: &ast::Attr) -> bool {
+    attr.simple_name().is_some_and(|name| {
+        matches!(
+            unraw(&name),
+            "allow"
+                | "warn"
+                | "deny"
+                | "forbid"
+                | "doc"
+                | "no_std"
+                | "no_core"
+                | "no_implicit_prelude"
+        )
+    })
+}
+
+/// Literal unconditional `#[macro_export] macro_rules!` declarations directly
+/// in a library root. This is an existence witness, never an export inventory:
+/// modules, reexports, conditional/generated declarations and macro bodies are
+/// intentionally not followed. A missing name cannot establish its absence.
+pub(crate) fn literal_root_macro_exports(source: &str) -> BTreeMap<String, usize> {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return BTreeMap::new();
+    };
+    let file = parse.tree();
+    if file
+        .attrs()
+        .any(|attr| !macro_declaration_inert_attribute(&attr))
+    {
+        return BTreeMap::new();
+    }
+    let lines = LineIndex::new(source);
+    file.syntax()
+        .children()
+        .filter_map(ast::MacroRules::cast)
+        .filter(|rules| {
+            let mut exported = false;
+            let plain = rules.attrs().all(|attr| {
+                if attr
+                    .as_simple_atom()
+                    .is_some_and(|name| unraw(&name) == "macro_export")
+                {
+                    exported = true;
+                    true
+                } else {
+                    macro_declaration_inert_attribute(&attr)
+                }
+            });
+            plain && exported
+        })
+        .filter_map(|rules| {
+            let name = rules.name()?;
+            Some((
+                unraw(name.text()).to_string(),
+                lines.line(name.syntax().text_range().start()),
+            ))
+        })
+        .collect()
 }
 
 /// What a macro definition's body may bind wherever it expands (#5991).
@@ -2964,6 +3157,9 @@ fn admitted_assertions(
                 .iter()
                 .map(|call| {
                     eager_path(call.clone(), function, false, first_return).map_err(|construct| {
+                        if construct == MODEL_CHECK_CLOSURE {
+                            return AssertionContextRefusal::ModelCheckClosure;
+                        }
                         match (construct == EARLIER_RETURN)
                             .then(|| sole_return_guard(function))
                             .flatten()
@@ -3229,6 +3425,7 @@ pub(crate) fn err_return_guard_key(condition: &str) -> String {
 }
 
 const EARLIER_RETURN: &str = "a block that an earlier `return` can skip";
+const MODEL_CHECK_CLOSURE: &str = "a closure a model-checking runner calls";
 
 /// The condition of `if <condition> { return; }` when that `return` is the
 /// only one the test body holds outside closures and nested items, the
@@ -3512,6 +3709,53 @@ fn item_context_refusal(item: &SyntaxNode) -> Option<AssertionContextRefusal> {
         source_file |= ast::SourceFile::can_cast(node.kind());
     }
     (!source_file).then_some(AssertionContextRefusal::NestedItem)
+}
+
+/// The unevaluated `cfg` gates on the `fn name` whose `fn` keyword is on
+/// `line`, and on every item that encloses it, with whitespace removed (#9643).
+///
+/// `None` unless the function is found uniquely and every gating attribute is
+/// a plain `#[cfg(..)]` whose test-build availability is unestablished: a gate
+/// that is provably off, or a `cfg_attr` or unreadable one, is not a gate this
+/// can compare. A function with no gate returns an empty list.
+pub(crate) fn unestablished_cfg_gates_of_fn(
+    source: &str,
+    name: &str,
+    line: usize,
+) -> Option<BTreeSet<String>> {
+    let parse = parse_clean_source_file(source)?;
+    let lines = LineIndex::new(source);
+    let mut found = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|fn_name| fn_name.text() == name)
+                && function
+                    .fn_token()
+                    .is_some_and(|token| lines.line(token.text_range().start()) == line)
+        });
+    let function = found.next()?;
+    if found.next().is_some() {
+        return None;
+    }
+    let mut gates = BTreeSet::new();
+    for node in function.syntax().ancestors() {
+        for attr in node.children().filter_map(ast::Attr::cast) {
+            let text = attr.syntax().text().to_string();
+            match attribute_test_build_availability(&text) {
+                Some(true) => {}
+                None if text.starts_with("#[cfg(") => {
+                    gates.insert(text.chars().filter(|ch| !ch.is_whitespace()).collect());
+                }
+                _ => return None,
+            }
+        }
+    }
+    Some(gates)
 }
 
 /// Attributes a pinned test may carry: `#[test]` itself, and the
@@ -5018,6 +5262,9 @@ fn eager_path(
                 return eager_path(call.syntax().clone(), function, true, first_return);
             }
             let Some(spawn) = spawned_thread_reaching_test(&closure, function) else {
+                if model_check_closure(&closure) {
+                    return Err(MODEL_CHECK_CLOSURE);
+                }
                 return Err("a closure ripr cannot see invoked exactly once");
             };
             return eager_path(spawn, function, true, first_return);
@@ -5906,6 +6153,44 @@ const STATEMENT_MACROS: &[&str] = &[
     "writeln",
 ];
 
+/// Whether `closure` is the first argument of a spelled-out model-checking
+/// runner call: `loom::model(..)` or `shuttle::check*(.., ..)`. The match is
+/// on the written path only, so a local `mod loom` is misread as the runner;
+/// that only turns a refusal into a disclosed limit and credits nothing.
+fn model_check_closure(closure: &ast::ClosureExpr) -> bool {
+    let expression = unparenthesized(closure);
+    let Some(args) = expression.parent().and_then(ast::ArgList::cast) else {
+        return false;
+    };
+    if args
+        .args()
+        .next()
+        .map(|first| first.syntax().clone())
+        .as_ref()
+        != Some(&expression)
+    {
+        return false;
+    }
+    let Some(call) = args.syntax().parent().and_then(ast::CallExpr::cast) else {
+        return false;
+    };
+    let Some(ast::Expr::PathExpr(path)) = call.expr() else {
+        return false;
+    };
+    let text: String = path
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    let text = text.trim_start_matches("::");
+    text == "loom::model"
+        || text
+            .strip_prefix("shuttle::")
+            .is_some_and(|rest| rest == "check" || rest.starts_with("check_"))
+}
+
 /// The `std::thread::scope(..)` call that runs `closure`, its only argument.
 fn scope_invocation(closure: &ast::ClosureExpr, function: &ast::Fn) -> Option<ast::CallExpr> {
     if closure_parameters(closure) != Some(1) {
@@ -6478,5 +6763,135 @@ mod process_names_scan_tests {
         };
         assert_eq!(admitted("a"), Some(0), "{:?}", pins.functions.keys());
         assert_eq!(admitted("b"), Some(1), "{:?}", pins.functions.keys());
+    }
+}
+
+#[cfg(test)]
+mod prelude_glob_audit_tests {
+    use super::ASSERTION_FREE_PRELUDE_GLOBS;
+
+    /// RIPR-SPEC-0369: a trusted prelude glob is credited only when its crate
+    /// is locked at an audited version. A glob whose crate has no audit row
+    /// would keep credit on the manifest proof alone (fail-open), and an audit
+    /// row no glob uses is dead trust; both directions must agree (#12049).
+    #[test]
+    fn every_trusted_prelude_glob_has_an_audit_row_and_back() {
+        let mut roots: Vec<&str> = ASSERTION_FREE_PRELUDE_GLOBS
+            .iter()
+            .filter_map(|glob| glob.first().copied())
+            .collect();
+        roots.sort_unstable();
+        roots.dedup();
+        let mut audited = crate::analysis::facts::drop_in::audited_prelude_crates();
+        audited.sort_unstable();
+        // A second audited version of one crate is a second row, not a second glob.
+        audited.dedup();
+        assert!(!roots.is_empty(), "the trusted glob list must not be empty");
+        assert_eq!(
+            roots, audited,
+            "trusted prelude glob roots and audited-version rows drifted"
+        );
+    }
+
+    /// #12049: the spec's glob column names the full glob path, not only its
+    /// crate segment, so `vstd::*` cannot stand in for `vstd::prelude::*`.
+    #[test]
+    fn spec_glob_column_matches_the_full_trusted_glob_paths() {
+        use std::collections::BTreeSet;
+        let spec = include_str!(
+            "../../../../../docs/specs/RIPR-SPEC-0369-verus-macro-region-and-verification-prelude-globs.md"
+        );
+        let spec_globs: BTreeSet<String> = spec
+            .lines()
+            .filter(|line| line.starts_with("| `"))
+            .filter_map(|line| line.split('|').map(str::trim).nth(1))
+            .map(|cell| cell.trim_matches('`').to_string())
+            .collect();
+        let code_globs: BTreeSet<String> = ASSERTION_FREE_PRELUDE_GLOBS
+            .iter()
+            .map(|glob| format!("{}::*", glob.join("::")))
+            .collect();
+        assert!(
+            !code_globs.is_empty(),
+            "the trusted glob list must not be empty"
+        );
+        assert_eq!(
+            spec_globs, code_globs,
+            "RIPR-SPEC-0369 glob column and ASSERTION_FREE_PRELUDE_GLOBS drifted"
+        );
+    }
+}
+
+#[cfg(test)]
+mod literal_macro_export_tests {
+    use super::*;
+
+    const EXPORT: &str = "#[macro_export]\nmacro_rules! assert_eq { ($($t:tt)*) => {} }\n";
+
+    #[test]
+    fn only_a_plain_unconditional_root_declaration_supplies_an_export_witness() {
+        assert_eq!(
+            literal_root_macro_exports(EXPORT).get("assert_eq"),
+            Some(&2)
+        );
+        assert!(
+            literal_root_macro_exports(&EXPORT.replace("assert_eq", "r#assert_eq"))
+                .contains_key("assert_eq")
+        );
+        for source in [
+            EXPORT.replace("#[macro_export]", ""),
+            format!("#[cfg(all())]\n{EXPORT}"),
+            format!("#![cfg(all())]\n{EXPORT}"),
+            format!("mod nested {{ {EXPORT} }}"),
+            format!("#[custom]\n{EXPORT}"),
+            EXPORT.replace("#[macro_export]", "#[cfg_attr(all(), macro_export)]"),
+            EXPORT.replace("#[macro_export]", "#[macro_export(local_inner_macros)]"),
+            "pub use other::assert_eq;".to_string(),
+            format!("macro_rules! emit {{ () => {{ {EXPORT} }}; }}"),
+            format!("{EXPORT} fn broken("),
+        ] {
+            assert!(literal_root_macro_exports(&source).is_empty(), "{source}");
+        }
+    }
+
+    #[test]
+    fn macro_use_records_the_source_crate_only_for_selected_plain_imports() {
+        for (source, selected) in [
+            ("#[macro_use] extern crate other;", true),
+            ("#[macro_use] extern crate other as renamed;", true),
+            (
+                "#[macro_use(r#assert_eq, unrelated,)] extern crate r#other;",
+                true,
+            ),
+            ("#[macro_use(unrelated)] extern crate other;", false),
+            ("#[cfg(all())] #[macro_use] extern crate other;", false),
+            ("#[cfg_attr(all(), macro_use)] extern crate other;", false),
+            (
+                "#[macro_use(assert_eq)] #[macro_use(unrelated)] extern crate other;",
+                false,
+            ),
+            ("mod inner { #[macro_use] extern crate other; }", false),
+            ("#[macro_use] mod other;", false),
+        ] {
+            let sites = trusted_macro_binding_sites(
+                source,
+                &BTreeSet::new(),
+                &["assert_eq"],
+                &|_, _| false,
+                &|_| false,
+            );
+            assert!(
+                !sites.is_empty(),
+                "the original ambiguity must remain: {source}"
+            );
+            assert_eq!(
+                sites.iter().any(|(_, site)| matches!(
+                    &site.kind,
+                    MacroBindingKind::ExternMacroUse { krate, .. } if krate == "other"
+                )),
+                selected,
+                "{source}"
+            );
+        }
     }
 }

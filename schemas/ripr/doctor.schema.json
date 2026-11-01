@@ -255,6 +255,26 @@
           "description": "Whether the effective configuration enables this language; null when the configuration could not be loaded, so enablement is unknown rather than disabled.",
           "$ref": "#/$defs/nullable_boolean",
           "type": ["boolean", "null"]
+        },
+        "availability_state": {
+          "description": "The shared language-availability state, added within schema 0.4 and therefore optional so earlier 0.4 documents stay valid; the producer always emits it. `null` when the configuration could not be loaded (enablement unknown). Availability never means the adapter ran or that the support tier moved.",
+          "enum": [
+            "detected_compiled_enabled",
+            "detected_compiled_disabled",
+            "detected_not_compiled",
+            "configured_enabled_not_detected",
+            "configured_enabled_but_unavailable",
+            "auto_detected_enabled",
+            "supported_but_no_current_scope",
+            "adapter_ran_with_limitations",
+            "not_enabled",
+            null
+          ]
+        },
+        "remediation": {
+          "description": "Ordered remediation steps for the availability state, added within schema 0.4 and therefore optional; the producer always emits it, empty when none applies.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
         }
       }
     },

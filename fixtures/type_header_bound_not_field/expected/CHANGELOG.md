@@ -136,7 +136,7 @@ Updated:
 ## Pending — type_header_bound_not_field (11)
 
 Reason:
-RIPR-SPEC-0122: plain wording for seam and state token in the check digest
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
 
 Command:
 `cargo xtask goldens bless type_header_bound_not_field --reason "..."`

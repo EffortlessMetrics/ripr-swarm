@@ -107,7 +107,7 @@ pub(crate) fn reconcile(
             .any(|limitation| limitation.kind == AnalysisLimitationKind::LanguageScopeUnsupported)
     {
         return Err(
-            "language reconcile: unsupported changed source has no top-level limitation"
+            "language reconcile: unsupported changed source has no top-level limitation; report this as a ripr bug with the command and workspace shape"
                 .to_string(),
         );
     }

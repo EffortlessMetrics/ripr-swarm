@@ -292,15 +292,17 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
     }
     // The assertion fact's text is a trimmed statement of the body; locate it
     // (or its first line) to read the mentions in their real lexical scope.
-    let at = source.find(anchor).or_else(|| {
-        let first = anchor.split('\n').next()?.trim();
-        if first.is_empty() {
-            None
-        } else {
-            source.find(first)
+    let (at, len, partial) = match source.find(anchor) {
+        Some(at) => (at, anchor.len(), false),
+        None => {
+            let first = anchor.split('\n').next()?.trim();
+            if first.is_empty() {
+                return None;
+            }
+            (source.find(first)?, first.len(), true)
         }
-    })?;
-    let span = &source[at..at + anchor.len()];
+    };
+    let span = source.get(at..at.checked_add(len)?)?;
     let mut mentions = 0usize;
     for offset in identifier_offsets(span, name) {
         let at = at + offset;
@@ -314,7 +316,9 @@ pub(in crate::analysis) fn oracle_owner_call_is_shadowed(
             return Some(false);
         }
     }
-    if mentions == 0 {
+    // Only the first line of the statement was located, so the later lines were
+    // not read: an all-shadowed first line cannot establish the whole statement.
+    if mentions == 0 || partial {
         return None;
     }
     Some(true)

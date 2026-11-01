@@ -25,8 +25,8 @@ Start here:
     routing a repair packet
   Related test: tests/lib.test.ts:3 price
   Next step — TypeScript preview advisory: add an exact-value assertion alongside the snapshot for
-    missing discriminator `return value == amount - 20`; no actionable repair packet is emitted
-    until verify, receipt, and edit-boundary fields are available
+    the missing check `return value == amount - 20`; no actionable repair packet is emitted until
+    verify, receipt, and edit-boundary fields are available
   Evidence: reach yes · infection unknown · propagation unknown · observation weak · discriminator weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -45,7 +45,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/typescript_snapshot_hidden_second_call/input --diff <cwd>/fixtures/typescript_snapshot_hidden_second_call/diff.patch --mode fast probe:src_lib.ts:typescript_preview:c712a282
   ripr context --root <cwd>/fixtures/typescript_snapshot_hidden_second_call/input --diff <cwd>/fixtures/typescript_snapshot_hidden_second_call/diff.patch --mode fast --at probe:src_lib.ts:typescript_preview:c712a282
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full
