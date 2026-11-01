@@ -93,8 +93,24 @@ pub(crate) fn discover_harnesses(files: &[(String, String)]) -> Vec<Harness> {
     let mut found = Vec::new();
     for (file, text) in files {
         let mut pending = false;
+        let mut in_raw_string = false;
         for line in text.lines() {
             let trimmed = line.trim();
+            // Text inside a `r#"..."#` literal is fixture data (for example the
+            // test-style fixtures that mention `#[kani::proof]`), not a harness.
+            if in_raw_string {
+                if trimmed.contains("\"#") {
+                    in_raw_string = false;
+                }
+                continue;
+            }
+            if let Some(open) = trimmed.find("r#\"") {
+                if !trimmed[open + 3..].contains("\"#") {
+                    in_raw_string = true;
+                    pending = false;
+                    continue;
+                }
+            }
             if trimmed.starts_with("#[kani::proof") {
                 pending = true;
                 continue;
@@ -439,6 +455,14 @@ mod tests {
         let found = discover_harnesses(&[("x.rs".to_string(), source.to_string())]);
         let names: Vec<&str> = found.iter().map(|harness| harness.name.as_str()).collect();
         assert_eq!(names, vec!["one", "two"]);
+    }
+
+    #[test]
+    fn discovery_ignores_harness_text_inside_raw_string_fixtures() {
+        let source = "let f = r#\"\n#[kani::proof]\nfn fixture_only() {}\n\"#;\n\n#[kani::proof]\nfn real() {}\n";
+        let found = discover_harnesses(&[("x.rs".to_string(), source.to_string())]);
+        let names: Vec<&str> = found.iter().map(|harness| harness.name.as_str()).collect();
+        assert_eq!(names, vec!["real"]);
     }
 
     #[test]
