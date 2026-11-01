@@ -16765,10 +16765,12 @@ Field contract:
 - `inputs.gap_ledger` - optional. Present with gap-ledger packet mode so
   reviewers and agents can trace the packet back to the artifact that owned
   projection eligibility.
-- `packets_total` — number of actionable packets emitted. Equals the
-  count of headline-eligible seams plus opaque seams (which emit
-  `inspect_static_limitation`). Strongly-gripped, intentional, and
-  suppressed seams produce no packet.
+- `packets_total` — number of packets in `packets[]` (the rendered array
+  length). Unbounded, that is the count of headline-eligible seams plus
+  opaque seams (which emit `inspect_static_limitation`); strongly-gripped,
+  intentional, and suppressed seams produce no packet. In a bounded pilot
+  document it is the number written, which is smaller than the eligible
+  count that `limitations[].packets_eligible` reports.
 - `packets[].task` — `"write_targeted_test"` for headline-eligible
   seams; `"inspect_static_limitation"` for opaque seams. Future
   versions may add tasks like `"strengthen_oracle"` or

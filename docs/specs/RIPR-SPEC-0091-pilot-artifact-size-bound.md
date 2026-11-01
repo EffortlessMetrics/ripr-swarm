@@ -127,7 +127,8 @@ routes as repo-exposure. A configured but inactive pilot budget does not change
 that identity. When both independent caps fire, packet limitations name both
 cuts and controls, with the outer inventory total. Packet admission remains independent
 of cap attribution: `packets_total` equals the rendered `packets` array length,
-which may be smaller than `seams_analyzed`.
+which may be smaller than `seams_analyzed`, and, when the packet bound cuts,
+smaller than the eligible count in `limitations[].packets_eligible`.
 
 When neither cap is applied, `"run_status": "complete"` is emitted with no
 cap limitation (mirroring the existing `repo-exposure.json` contract from
