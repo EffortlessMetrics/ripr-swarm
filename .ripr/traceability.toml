@@ -1558,6 +1558,7 @@ tests = [
   "crates/ripr/src/output/pilot/tests.rs::pilot_language_routes_state_follows_rust_seams_and_discovered_languages",
   "crates/ripr/src/output/pilot/tests.rs::pilot_renderers_show_language_routes_only_without_rust_seams",
   "crates/ripr/src/output/pilot/tests.rs::pilot_headline_names_supported_language_check_route_when_no_rust_seams",
+  "crates/ripr/src/output/pilot/tests.rs::pilot_markdown_python_preview_matches_terminal_unscanned_gate",
   "crates/ripr/src/cli/commands/pilot.rs::tests::pilot_python_preview_counts_uncommitted_python_change",
   "crates/ripr/src/cli/commands/pilot.rs::tests::pilot_python_preview_follows_working_tree_when_edit_restores_base",
   "crates/ripr/src/output/pilot/tests.rs::pilot_names_rust_exclusion_instead_of_silently_ranking_nothing",
