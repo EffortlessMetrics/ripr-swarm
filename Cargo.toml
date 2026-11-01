@@ -20,6 +20,8 @@ homepage = "https://github.com/EffortlessMetrics/ripr/"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# `cfg(kani)` is set only by `cargo kani` (RIPR-SPEC-0370).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 const_item_interior_mutations = "deny"
 function_casts_as_integer = "deny"
 unused_must_use = "deny"
@@ -27,9 +29,6 @@ unused_must_use = "deny"
 # carves out an unsafe island, this keeps unsafe operations inside an
 # unsafe fn from skipping the explicit `unsafe { ... }` block.
 unsafe_op_in_unsafe_fn = "deny"
-# Kani bounded-model-checking harnesses are `#[cfg(kani)]`; declare the cfg so
-# normal builds do not warn about an unexpected cfg.
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 # Panic-safety policy: clippy is the fast IDE rail for panic-family code shapes;
 # `cargo xtask check-no-panic-family` is the authoritative semantic gate that
