@@ -16913,7 +16913,13 @@ Field contract:
   exceed the number of that group's seams in the file.
   A bounded document carries no `artifact` identity, so `ripr outcome` and
   `ripr agent verify` refuse it by name rather than comparing it. Entries that
-  fit the budget change nothing. `pilot-summary.json` carries
+  fit the budget change nothing. A seam-limit cut (`limitations[]` category
+  `pilot_seam_budget_applied` or `repo_seam_limit_applied`, `run_status:
+  "seam_limit_applied"`) is the same class (#12150): `seams[]` is a prefix of
+  the inventory, so `ripr outcome`, `ripr agent verify` and `ripr calibrate
+  cargo-mutants` refuse it by name and control
+  (`RIPR_PILOT_SEAM_BUDGET` / `RIPR_REPO_EXPOSURE_SEAM_LIMIT`) through the same
+  shared predicate. `pilot-summary.json` carries
   `repo_exposure_byte_bound` (`seams_rendered`, `seams_total`,
   `seam_bytes_rendered`, `byte_budget`, `source`, `control`), `null` when
   nothing was cut. The budget counts entry bytes plus the 2-byte `,\n`

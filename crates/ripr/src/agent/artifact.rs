@@ -529,6 +529,12 @@ pub(crate) fn validate_repo_exposure_artifact(
         if is_byte_bounded_repo_exposure(raw) {
             return byte_bounded_repo_exposure_refusal(&subject);
         }
+        if let Ok(document) = serde_json::from_str::<Value>(raw) {
+            let cut = crate::output::repo_exposure::seam_limit_cut_controls(&document);
+            if !cut.is_empty() {
+                return seam_limited_repo_exposure_refusal(&subject, &cut);
+            }
+        }
         if is_unversioned_repo_exposure(raw) {
             return legacy_repo_exposure_refusal(root, &subject);
         }
@@ -547,6 +553,14 @@ pub(crate) fn validate_repo_exposure_artifact(
         limitations.as_ref(),
     ) {
         return Err(byte_bounded_repo_exposure_refusal(&subject));
+    }
+    // #12150: a seam-capped file is a prefix of the inventory; same class.
+    let cut = crate::output::repo_exposure::seam_limit_cut_controls_from_parts(
+        run_status.as_deref(),
+        limitations.as_ref(),
+    );
+    if !cut.is_empty() {
+        return Err(seam_limited_repo_exposure_refusal(&subject, &cut));
     }
     if schema_version != crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION {
         return Err(format!(
@@ -1131,6 +1145,14 @@ fn is_byte_bounded_repo_exposure(raw: &str) -> bool {
     serde_json::from_str::<Value>(raw).is_ok_and(|document| {
         crate::output::repo_exposure::is_byte_bounded_repo_exposure(&document)
     })
+}
+
+fn seam_limited_repo_exposure_refusal(subject: &str, controls: &[&str]) -> String {
+    format!(
+        "{subject} is a seam-limited repo-exposure file (its seams[] is a prefix of the inventory cut by {}, so a seam missing from it cannot be compared; {})",
+        controls.join(" and "),
+        crate::output::repo_exposure::seam_limit_cut_repair(controls)
+    )
 }
 
 fn byte_bounded_repo_exposure_refusal(subject: &str) -> String {
@@ -2147,11 +2169,35 @@ mod tests {
             .err()
             .ok_or("a seam-capped and byte-bounded file must not validate")?;
         assert!(both_refusal.contains("byte-bounded"), "{both_refusal}");
+        // #12150: a seam cap alone is refused by its own name and control.
         let seam_cap_only = both.replace("pilot_repo_exposure_byte_bound_applied", "other");
         let capped = validate_repo_exposure_artifact(root, &seam_cap_only, "before")
             .err()
-            .ok_or("a file without artifact identity must not validate")?;
+            .ok_or("a seam-capped file must not validate")?;
         assert!(!capped.contains("byte-bounded"), "{capped}");
+        assert!(capped.contains("seam-limited"), "{capped}");
+        assert!(capped.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{capped}");
+        let inventory_cap =
+            seam_cap_only.replace("pilot_seam_budget_applied", "repo_seam_limit_applied");
+        let inventory = validate_repo_exposure_artifact(root, &inventory_cap, "before")
+            .err()
+            .ok_or("an inventory-capped file must not validate")?;
+        assert!(
+            inventory.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT=0"),
+            "{inventory}"
+        );
+        // Negative: a declined-files status is not a seam cut and keeps the
+        // generic refusal.
+        let declined = seam_cap_only
+            .replace("seam_limit_applied", "limited_declined_files")
+            .replace("pilot_seam_budget_applied", "rust_files_declined");
+        let declined_refusal = validate_repo_exposure_artifact(root, &declined, "before")
+            .err()
+            .ok_or("a file without artifact identity must not validate")?;
+        assert!(
+            !declined_refusal.contains("seam-limited"),
+            "{declined_refusal}"
+        );
         // Discriminating negative: the same shape with another status keeps the
         // generic malformed-artifact refusal, so the new branch is not a catch-all.
         let other = bounded.replace("limited_repo_exposure_bytes", "complete");

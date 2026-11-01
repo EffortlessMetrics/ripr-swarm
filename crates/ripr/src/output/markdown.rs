@@ -605,9 +605,36 @@ pub(crate) fn powershell_command(command: &str) -> Option<String> {
 /// the Windows-form translation is testable on any machine (the
 /// `shell_arg_for` / `human_path_text` pattern, #4378).
 fn powershell_command_for(command: &str, windows_form: bool) -> Option<String> {
+    // A leading `NAME=value ` assignment scopes one environment variable to
+    // the command in Bash (#12150). PowerShell has no such prefix: translate
+    // the rest, then set the variable around it and restore the prior value.
+    if let Some((name, value, rest)) = split_leading_env_assignment(command) {
+        let line = powershell_command_for(rest, windows_form)?;
+        return Some(format!(
+            "$riprPriorEnv = $env:{name}; $env:{name} = '{value}'; try {{ {line} }} finally {{ $env:{name} = $riprPriorEnv }}"
+        ));
+    }
     let (command, lifted) = lift_control_arguments(command)?;
     let line = powershell_command_lifted(&command, windows_form)?;
     restore_control_arguments(line, &lifted)
+}
+
+/// Split one leading Bash `NAME=value ` environment assignment off `command`.
+/// Only an upper-case identifier and a bare `[0-9A-Za-z_.-]` value are
+/// recognised, so a quoted or expanding value stays unsupported rather than
+/// being translated by guesswork.
+fn split_leading_env_assignment(command: &str) -> Option<(&str, &str, &str)> {
+    let (assignment, rest) = command.split_once(' ')?;
+    let (name, value) = assignment.split_once('=')?;
+    let name_ok = name.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_');
+    let value_ok = !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'));
+    (name_ok && value_ok).then_some((name, value, rest.trim_start()))
 }
 
 fn powershell_command_lifted(command: &str, windows_form: bool) -> Option<String> {
@@ -1678,6 +1705,24 @@ mod tests {
             "ripr x > 'out'\"$(printf '\\033')\"'.json'",
             // trailing junk after a segment
             "ripr x \"$(printf '\\033')\"y",
+        ] {
+            assert_eq!(powershell_command(command), None, "{command}");
+        }
+    }
+
+    #[test]
+    fn powershell_command_scopes_a_leading_environment_assignment() {
+        let line = powershell_command("RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 ripr check --root .")
+            .unwrap_or_default();
+        assert_eq!(
+            line,
+            "$riprPriorEnv = $env:RIPR_REPO_EXPOSURE_SEAM_LIMIT; $env:RIPR_REPO_EXPOSURE_SEAM_LIMIT = '0'; try { ripr check --root . } finally { $env:RIPR_REPO_EXPOSURE_SEAM_LIMIT = $riprPriorEnv }"
+        );
+        // A quoted or expanding value is not guessed at.
+        for command in [
+            "RIPR_X='a b' ripr check",
+            "RIPR_X=$HOME ripr check",
+            "lower=0 ripr check",
         ] {
             assert_eq!(powershell_command(command), None, "{command}");
         }
