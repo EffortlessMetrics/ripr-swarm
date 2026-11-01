@@ -92,7 +92,7 @@ fn write_text_file(path: &Path, rendered: &str) -> Result<(), String> {
     crate::atomic_file::ensure_relative_output_contained(path)?;
     output::file_write::write(path, rendered.as_bytes()).map_err(|err| {
         format!(
-            "write output {} failed: {err}",
+            "write output {} failed: {err}; check you can write to that path, then rerun",
             output::outcome::display_path(path)
         )
     })
@@ -153,6 +153,8 @@ pub(super) use doctor::doctor;
 
 #[path = "commands/gate.rs"]
 mod gate;
+#[cfg(kani)]
+mod gate_exit_kani;
 pub(super) use gate::gate;
 
 #[path = "commands/init.rs"]
@@ -3328,7 +3330,10 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // looked like a hang. The same stderr-only stage lines `ripr check`
     // projects disclose the work without touching machine stdout. The
     // `--from` artifact path runs no pipeline and wires no sink.
-    let progress = (!crate::cli::progress::progress_silenced(quiet)).then(|| {
+    // `explain` has no machine output format (its stdout is the human or
+    // markdown explanation), so only `--quiet` / `RIPR_QUIET` silence it; the
+    // machine-format default that `check` and `pilot` adopt has nothing to key on.
+    let progress = (!crate::cli::progress::progress_silenced(quiet, false)).then(|| {
         crate::cli::progress::CliProgressSink::for_stderr(
             std::io::IsTerminal::is_terminal(&std::io::stderr()),
             crate::cli::progress::ProgressPolicy::STANDARD,
@@ -3837,15 +3842,15 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--records"])),
-            Err("missing value for --records".to_string())
+            Err("missing value for --records; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--repo-exposure"])),
-            Err("missing value for --repo-exposure".to_string())
+            Err("missing value for --repo-exposure; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&["gap-ledger", "--check-output"])),
-            Err("missing value for --check-output".to_string())
+            Err("missing value for --check-output; pass a value right after it".to_string())
         );
         assert_eq!(
             reports(&args(&[
@@ -3906,7 +3911,7 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["ts-limitations", "--check-output"])),
-            Err("missing value for --check-output".to_string())
+            Err("missing value for --check-output; pass a value right after it".to_string())
         );
     }
 
@@ -3986,7 +3991,7 @@ mod tests {
         );
         assert_eq!(
             reports(&args(&["ts-false-actionable", "--corpus"])),
-            Err("missing value for --corpus".to_string())
+            Err("missing value for --corpus; pass a value right after it".to_string())
         );
     }
 
@@ -4972,7 +4977,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_operations_options(&args(&[])),
-            Err("policy operations requires --policy-readiness <path>".to_string())
+            Err("policy operations requires --policy-readiness <path>; add `--policy-readiness <path>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_operations_options(&args(&["--policy-readiness", ""])),
@@ -4984,7 +4989,9 @@ mod tests {
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&[])),
-            Err("policy promote requires --to <mode>".to_string())
+            Err(
+                "policy promote requires --to <mode>; add `--to <mode>` to the command".to_string()
+            )
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "strict"])),
@@ -5002,7 +5009,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "visible-only"])),
-            Err("policy promote requires --operations <path>".to_string())
+            Err("policy promote requires --operations <path>; add `--operations <path>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_promotion_options(&args(&["--to", "visible-only", "--operations", ""])),
@@ -5017,7 +5024,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&[])),
-            Err("policy preview-promote requires --language <language>".to_string())
+            Err("policy preview-promote requires --language <language>; add `--language <language>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&["--language", "ruby"])),
@@ -5035,7 +5042,7 @@ mod tests {
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&["--language", "typescript"])),
-            Err("policy preview-promote requires --class <class>".to_string())
+            Err("policy preview-promote requires --class <class>; add `--class <class>` to the command".to_string())
         );
         assert_eq!(
             parse_policy_preview_promotion_options(&args(&[
@@ -5084,7 +5091,10 @@ mod tests {
         );
         assert_eq!(
             parse_policy_history_options(&args(&[])),
-            Err("policy history requires --current <path>".to_string())
+            Err(
+                "policy history requires --current <path>; add `--current <path>` to the command"
+                    .to_string()
+            )
         );
         assert_eq!(
             parse_policy_history_options(&args(&["--current", ""])),
@@ -7875,11 +7885,11 @@ language = "rust"
     fn init_requires_root_value() {
         assert_eq!(
             init(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             init(&args(&["--ci"])),
-            Err("missing value for --ci".to_string())
+            Err("missing value for --ci; pass a value right after it".to_string())
         );
     }
 
@@ -8284,6 +8294,9 @@ language = "rust"
         assert!(workflow.contains("RIPR_UPLOAD_SARIF"));
         assert!(workflow.contains("RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}"));
         assert!(workflow.contains("RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}"));
+        assert!(
+            workflow.contains("RIPR_PILOT_TIMEOUT_MS: ${{ vars.RIPR_PILOT_TIMEOUT_MS || '' }}")
+        );
         assert!(workflow.contains("RIPR_COMMENT_MODE: ${{ vars.RIPR_COMMENT_MODE || 'off' }}"));
         assert!(workflow.contains("pull-requests: write"));
         assert!(workflow.contains("run: ripr reports ci-packet --root ."));
@@ -8336,6 +8349,36 @@ language = "rust"
             assert!(!surface.contains("--adopt-new"));
             assert!(!surface.contains("--out .ripr/gate-baseline.json"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn generated_workflow_label_events_neither_cancel_pushes_nor_run_in_advisory_mode()
+    -> Result<(), String> {
+        let workflow = generated_github_actions_workflow();
+        // A label gets its own concurrency group, so it cannot cancel a push run (#11753).
+        assert!(workflow.contains(
+            "-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}\n  cancel-in-progress: true"
+        ));
+        // The job skips label events unless a waiver-reading gate mode is set.
+        let condition = workflow
+            .lines()
+            .find(|line| {
+                line.trim_start()
+                    .starts_with("if: ${{ (github.event.action != 'labeled'")
+            })
+            .ok_or("missing label-event job condition")?;
+        assert!(
+            condition.contains("github.event.action != 'unlabeled'"),
+            "{condition}"
+        );
+        assert!(
+            condition
+                .contains("vars.RIPR_GATE_MODE != '' && vars.RIPR_GATE_MODE != 'visible-only'"),
+            "{condition}"
+        );
+        // Push, open and reopen runs stay unconditional: the `on:` types are unchanged.
+        assert!(workflow.contains("types: [opened, synchronize, reopened, labeled, unlabeled]"));
         Ok(())
     }
 
@@ -8534,8 +8577,8 @@ language = "rust"
         // The DX bar from #5409: a workflow an adopter can read in one sitting.
         let line_count = workflow.lines().count();
         assert!(
-            line_count <= 181,
-            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, and #11145 added the failed-SARIF-upload explanation"
+            line_count <= 216,
+            "generated workflow is {line_count} lines; #5409 set 150, the summary comment step took it to 165, #4452 added step env bindings, #11145 added the failed-SARIF-upload explanation, #11753 added the label-event job condition, #11205 added the optional pilot-timeout binding, and #6245 added the Windows x64 zip route and fail-closed archive checks to the install step"
         );
 
         assert!(workflow.contains("RIPR_UPLOAD_SARIF: \"true\""));
@@ -8956,23 +8999,23 @@ language = "rust"
     fn explain_requires_values_for_value_flags() {
         assert_eq!(
             explain(&args(&["--root"])),
-            Err("missing value for --root".to_string())
+            Err("missing value for --root; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--diff"])),
-            Err("missing value for --diff".to_string())
+            Err("missing value for --diff; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--perl-facts"])),
-            Err("missing value for --perl-facts".to_string())
+            Err("missing value for --perl-facts; pass a value right after it".to_string())
         );
         assert_eq!(
             explain(&args(&["--suppression-policy"])),
-            Err("missing value for --suppression-policy".to_string())
+            Err("missing value for --suppression-policy; pass a value right after it".to_string())
         );
     }
 

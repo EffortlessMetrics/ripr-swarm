@@ -1,0 +1,70 @@
+name: Kani (bounded model checking)
+
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  pull_request:
+    types: [labeled]
+    paths:
+      - "crates/ripr/src/**"
+      - "xtask/src/kani_lane.rs"
+      - ".github/workflows/kani.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Only a `merge-ready` labeled request shares this group, so a re-applied label
+# supersedes the older run for the same PR. Every other pull_request event gets
+# a unique group: its jobs are skipped and it can neither cancel nor replace a
+# pending merge-ready run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event_name == 'pull_request' && !(github.event.action == 'labeled' && github.event.label.name == 'merge-ready')) && github.run_id || 'run' }}
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'merge-ready') }}
+
+# Kani lane (RIPR-SPEC-0371): bounded model checking of pure cores.
+#
+# "Lighter, later, tighter" (docs/CI.md): this is not a required check and does
+# not run on ordinary pushes or PR updates. It runs nightly, on dispatch, and
+# when `merge-ready` is applied to a PR that touches ripr source (the `paths`
+# filter above). Kani compiles the whole `ripr` library for verification, so a
+# run is minutes, not seconds.
+#
+# The pass/fail contract lives in `cargo xtask kani`, not in shell: a missing
+# tool, a missing verdict, an unreachable `cover!` or zero harnesses fails the
+# job. Nothing passes by absence.
+
+jobs:
+  kani:
+    name: kani
+    if: github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'merge-ready')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: ripr-kani-0.68.0-${{ runner.os }}
+          cache-directories: ~/.kani
+          cache-bin: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install pinned kani-verifier
+        run: |
+          cargo install --locked kani-verifier --version 0.68.0
+          cargo kani setup
+
+      - name: Run Kani harnesses
+        run: cargo xtask kani
+
+      - name: Upload Kani report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ripr-kani
+          path: target/ripr/reports/kani.md
+          if-no-files-found: warn

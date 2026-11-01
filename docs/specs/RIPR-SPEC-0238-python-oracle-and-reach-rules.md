@@ -226,6 +226,34 @@ as strong for one credit branch only; its table row is unchanged.
    other operator (`int('1') == 1 < parse('x')`) also assigns
    `relational_check` / weak: the operand the owner result sits in may be
    compared only by the other operator.
+   An expectation computed from the code under test is the same emptiness
+   behind a binding or a rewrite (#11531). Once workspace owners and tests are
+   known, an exact comparison of two operands is also weak when the workspace
+   owners at the root of one side's value (after reading the test's local assignments, the
+   `setUp`/`setUpClass`/`setup_method` attributes and class attributes of its
+   class and same-file bases, module constants and fixture bodies) are reached
+   by the other side's calls, closed over the owners' own bodies (a forwarder
+   `def g(x): return f(x)`): `self.expected = f(2)` then
+   `assertEqual(f(2), self.expected)`, `EXP = f(2)`, `e = f(2)`,
+   `assertEqual(f(2), g(2))`, `assertEqual(f(2), f(2) + 0)` and
+   `assertEqual(f(2), f(1) * 2)`; so is a side that is an owner call minus,
+   divided by, or xor-ed with the same call (`f(2) - f(2)`). The read is over
+   the expression text, not a form allow-list, so an unrecognized expression
+   that mentions the owner demotes; a literal, an independent name, or a call
+   of a function unrelated to the other side keeps its credit. Only a call at
+   the root of a side's value counts: a call inside the arguments of an owner
+   call is an input of that call, neither a root nor expanded through bindings,
+   so an input both sides read (`n = make_n()` then `f(n) == n * 2`,
+   `parse(t) == reference_parse(t)`) keeps its credit. A dotted call resolves
+   to an owner only through an imported name, `self`/`cls`, or a receiver the
+   test built from an owner call; `d.get('k')`, `''.join(..)` and `f(x).get(..)`
+   do not match a same-named owner. Known limits, all keeping credit rather
+   than demoting: bindings and forwarder bodies are followed to a fixed depth
+   of four; a test file that does not parse contributes no bindings; owner
+   matching is by name, so same-named methods of different classes reached
+   through an imported or `self` receiver are not told apart. The pass is
+   `derived_expectation.rs`, pinned by `derived_expectation_tests.rs` and the
+   `py-derived-*` corpus cases.
 2. **A trivial message pattern is a broad error.** A `pytest.raises`
    `match=` value, or an `assertRaisesRegex` expected-regex argument,
    that is a string literal (any `r`, `b` or `u` prefix) whose content is
@@ -1021,7 +1049,14 @@ mutant calibrates the rule; ripr reports only the static shape.
     `py-trap-swallowed-assert`, #9691; the `py-unrun-*` cases add `if 0:`,
     `if None:` and `while False:` dead arms, tuple, bare and
     `builtins.AssertionError` handlers, and the live `else` arm, `else` and
-    `finally` blocks and `fail`-calling handler that stay credited).
+    `finally` blocks and `fail`-calling handler that stay credited). An
+    assertion after a definite exit in the same statement list (`return`,
+    `raise`, `pytest.skip`/`fail`/`exit`/`xfail`, `sys.exit`, `os._exit`,
+    `self.skipTest`) or in a `for` over an empty literal is dead too, and a
+    test definition rebound later in the same scope (a second `def` of the
+    name, `name = None`) is never collected, so it carries an activation
+    control (`py-trap-exit-before-assert`, `py-trap-shadowed-test`; the
+    `py-trap-conditional-exit` control stays credited).
 24. **A test the collector skips is activation-controlled.** A parametrize
     decorator over an empty literal table (`[]` or `()`) and an
     unconditional module-level `pytest.importorskip(...)`,
@@ -1240,6 +1275,30 @@ mutant calibrates the rule; ripr reports only the static shape.
     `weakly_exposed`. The `py-nested-independent-outer-owner` corpus case
     retains the credit; `py-nested-repeated-inner-owner` and
     `py-nested-idempotent-owner` retain the negative controls.
+
+30. **A coarse projection of the owner's result pins no value.** An
+    assertion credits a changed owner only when it reads the result itself.
+    When every call of the owner in the assertion sits under a projection
+    that an edit commonly leaves unchanged, the assertion keeps its
+    `exact_value` kind but earns no `exposed` credit (`weakly_exposed`, the
+    same fail-closed reading as an opaque wrapper): a comparison, `is` or
+    `not` result used as a value in an operand (`assertEqual(f(2) > 0, True)`,
+    `assertEqual(f(2) is None, False)`), a numeric remainder (`assert f(3) % 3 == 0`; string formatting is not one),
+    `.__class__` or `.__name__` of the result, `len(str(f(x)))` or
+    `len(repr(f(x)))`, and `len(...)` directly over the owner's result (through
+    `list`, `tuple`, `sorted`, `reversed`) when the edit replaces only the element
+    expression of a `yield` or comprehension, so the element count cannot
+    move. A direct operand beside such a read (`assert f(3) == 6 and f(3) % 3
+    == 0`), a top-level `>` boundary, other arithmetic and a `len` over an
+    edit that can change the count keep their verdict. A first `==` operand
+    that holds the owner's value at an input the edit leaves fixed is a
+    separate problem and is not read here. The walk follows comprehensions,
+    generator expressions, set and dict literals, conditional expressions and
+    lambda bodies, so `assert all(f(2) > 0 for _ in xs)` is coarse while
+    `assert [f(x) for x in xs] == [6]` is a direct read. A shape the walk does
+    not follow that mentions the owner counts as a direct read: the demotion
+    needs proof that every owner call is coarse, so an unknown shape never
+    invents one.
 
 ### Verdict ladder
 
@@ -1746,6 +1805,12 @@ and the test is `tests/test_subject.py`, which imports each owner from
     parametrize mark keeps only the mark's cases, and the fixture stays
     unresolved: `static_unknown`, `unresolved_pytest_fixture` (today
     `exposed`, a false credit for off-boundary rows).
+
+43. Owner `def f(x): return x * 3`, changed from `x * 2`: tests
+    `self.assertEqual(f(2) > 0, True)`, `assert f(3) % 3 == 0` and
+    `assert len(str(f(3))) == 1` are each `weakly_exposed` (today `exposed`;
+    `py-coarse-sign`, `py-coarse-residue`, `py-coarse-text-length`), and
+    `assert f(3) == 6` stays `exposed` (`py-coarse-exact-control`).
 
 ## Test Mapping
 

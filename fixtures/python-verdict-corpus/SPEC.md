@@ -46,9 +46,9 @@ this repository's license, one per test library or library feature:
 - `authored-py-pytest-blocks`: multi-line replacement blocks, where the
   behavior change is the second line of a block that also rewrites the
   comment above it (#7556).
-- `authored-py-pytest-guard-arms`: RIPR-SPEC-0260 examples 1 to 5, one module
+- `authored-py-pytest-guard-arms`: RIPR-SPEC-0260 examples 1 to 7, one module
   per example so the guard, the observed input and the edited arm are the only
-  variables (an `or` guard, a rebound parameter, `True == 1`).
+  variables (an `or` guard, a rebound parameter, `True == 1`, an `is None` guard no input enters and its taken control).
 - `authored-py-pytest-self-reach`: RIPR-SPEC-0201 examples 1 to 6, the
   same-class transitive-reach limitation, including the six-hop chain, a class
   of the same name in another module and a test that calls the helper
@@ -113,11 +113,24 @@ this repository's license, one per test library or library feature:
   `else` arm, an `else` or `finally` block beside a swallowing `try`, a handler
   that calls `pytest.fail`, `xfail(False, reason=...)` and
   `unittest.skipUnless(True, ...)` keep the test active and are credited.
+- `authored-py-unittest-derived`: RIPR-SPEC-0238 rule 1's computed expectations (#11531).
+  An exact comparison whose expected side is built from the owner passes on any
+  edit, so it is a gap: a `setUp` attribute, class attribute, module constant or
+  local bound to the owner's call, a forwarder that returns the owner, the owner
+  minus itself, and a pytest assert against a local. A literal expectation and an
+  independent reference function pin the value and are credited, as is an
+  input both sides read (`n = make_input()`; `scale_input(n) == n * 2`). Labeled under
+  Python 3.13.18 and pytest 9.2.0.
 - `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band
   abstentions (positional band within and outside the band, spread band,
   non-literal band, longer owner body, method owner, decorated owner). Every
   case reads `static_unknown`; the outside-band edit is the one case whose
   test catches the change.
+- `authored-py-pytest-coarse`: RIPR-SPEC-0238 rule 30's coarse projections of
+  an owner's result, one owner per case, each `x * 2` edited to `x * 3`: a
+  sign (`assertEqual(f(2) > 0, True)`), a remainder (`assert f(3) % 3 == 0`)
+  and a digit count (`assert len(str(f(3))) == 1`) are gaps, and
+  `assert f(3) == 6` is the credited control.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's

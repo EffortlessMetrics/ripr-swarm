@@ -94,3 +94,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — same_crate_trait_impl_same_leaf_doctest_control (8)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+
+Command:
+`cargo xtask goldens bless same_crate_trait_impl_same_leaf_doctest_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

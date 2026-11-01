@@ -172,24 +172,23 @@ use super::{
     parse_file_policy_allowlist, parse_gh_pr_status_args, parse_gh_pr_status_pull_request,
     parse_inline_array, parse_mutation_calibration_args, parse_mutation_outcomes_json,
     parse_pr_triage_pull_requests, parse_reason, parse_repo_badge_artifact_options,
-    parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts,
-    parse_required_status_contexts, parse_ripr_swarm_args, parse_ripr_swarm_plan_args,
-    parse_sarif_policy_args, parse_sarif_policy_results, parse_static_language_allowlist,
-    parse_targeted_test_outcome_args, pin_report_packet_index_generated_at,
-    pr_actionable_delta_front_panel_from_inputs, pr_body_from_input_text,
-    pr_body_template_missing_error, pr_body_template_missing_lines, pr_body_validation_warning,
-    pr_checks_summary, pr_ready_json, pr_ready_markdown, pr_ready_next_action, pr_ready_status,
-    pr_sensitive_file_reason, pr_shape_report_body, pr_shape_warnings, pr_summary_body,
-    pr_title_family, pr_triage_findings, pr_triage_json, pr_triage_markdown,
-    pr_triage_queue_dispositions, precommit_report_body, public_badge_basis_violations,
-    public_contract_rows, read_badge_artifact_diff_governed, read_json_value,
-    read_lsp_cockpit_json_value, read_mutation_input_json, read_repo_exposure_summary_artifact,
-    receipt_json, receipt_specs, receipt_status_from_reports, repo_badge_artifact_command_args,
-    repo_badge_artifact_jobs, repo_badge_artifact_stdout_from_output,
-    repo_badge_artifact_timeout_ms_from_env, repo_badge_artifacts_summary_markdown,
-    repo_exposure_authenticated_cache_load, repo_exposure_cache_family_store_from_stderr,
-    repo_exposure_file_fact_cache_from_stderr, repo_exposure_latency_json,
-    repo_exposure_latency_markdown, repo_exposure_latency_run,
+    parse_repo_exposure_static_seams, parse_repo_exposure_summary_counts, parse_ripr_swarm_args,
+    parse_ripr_swarm_plan_args, parse_sarif_policy_args, parse_sarif_policy_results,
+    parse_static_language_allowlist, parse_targeted_test_outcome_args,
+    pin_report_packet_index_generated_at, pr_actionable_delta_front_panel_from_inputs,
+    pr_body_from_input_text, pr_body_template_missing_error, pr_body_template_missing_lines,
+    pr_body_validation_warning, pr_checks_summary, pr_ready_json, pr_ready_markdown,
+    pr_ready_next_action, pr_ready_status, pr_sensitive_file_reason, pr_shape_report_body,
+    pr_shape_warnings, pr_summary_body, pr_title_family, pr_triage_findings, pr_triage_json,
+    pr_triage_markdown, pr_triage_queue_dispositions, precommit_report_body,
+    public_badge_basis_violations, public_contract_rows, read_badge_artifact_diff_governed,
+    read_json_value, read_lsp_cockpit_json_value, read_mutation_input_json,
+    read_repo_exposure_summary_artifact, receipt_json, receipt_specs, receipt_status_from_reports,
+    repo_badge_artifact_command_args, repo_badge_artifact_jobs,
+    repo_badge_artifact_stdout_from_output, repo_badge_artifact_timeout_ms_from_env,
+    repo_badge_artifacts_summary_markdown, repo_exposure_authenticated_cache_load,
+    repo_exposure_cache_family_store_from_stderr, repo_exposure_file_fact_cache_from_stderr,
+    repo_exposure_latency_json, repo_exposure_latency_markdown, repo_exposure_latency_run,
     repo_exposure_latency_run_from_output, repo_exposure_latency_status,
     repo_exposure_latency_status_reasons, repo_exposure_latency_trace,
     repo_exposure_normalized_output, repo_exposure_parity_leg_receipts, repo_exposure_parity_run,
@@ -7597,13 +7596,13 @@ jobs:
   dependency-review:
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8363,14 +8362,14 @@ fn workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count() {
 jobs:
   dependency-review:
     steps:
-      - uses: actions/dependency-review-action@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -8379,7 +8378,7 @@ jobs:
         workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
 
     assert!(violations.iter().any(|violation| {
-        violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
+        violation.contains("uses `actions/dependency-review-action@` 2 time(s), allowed 1")
     }));
 }
 
@@ -28195,6 +28194,7 @@ fn triage_pr(number: u64, title: &str, files: &[&str]) -> PrTriagePullRequest {
         review_decision: String::new(),
         labels: Vec::new(),
         files: files.iter().map(|file| file.to_string()).collect(),
+        checks_rollup_available: true,
         checks: vec![PrTriageCheck {
             name: "rust".to_string(),
             status: "COMPLETED".to_string(),
@@ -28316,10 +28316,6 @@ fn parse_gh_pr_status_reads_view_json() -> Result<(), String> {
     assert_eq!(pr.checks.len(), 2);
     assert_eq!(pr.reviews.len(), 1);
     assert_eq!(pr.reviews[0].author, "droid");
-    assert_eq!(
-        parse_required_status_contexts(r#"["rust","msrv","rust"]"#)?,
-        vec!["msrv".to_string(), "rust".to_string()]
-    );
     Ok(())
 }
 
@@ -28328,7 +28324,10 @@ fn gh_pr_status_readiness_selects_safe_next_action() {
     let contexts = vec!["rust".to_string()];
     let clean = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
     let clean_readiness = gh_pr_status_readiness(&clean, &contexts, true, Vec::new());
-    assert_eq!(clean_readiness.safe_next_action, "merge");
+    assert_eq!(
+        clean_readiness.safe_next_action,
+        "inspect final merge gates"
+    );
 
     let pending = gh_pr_status_pr(vec![gh_pr_status_check("rust", "IN_PROGRESS", "")]);
     let pending_readiness = gh_pr_status_readiness(&pending, &contexts, true, Vec::new());
@@ -28351,6 +28350,75 @@ fn gh_pr_status_readiness_selects_safe_next_action() {
         gh_pr_safe_next_action(&behind, &behind_readiness),
         "inspect integration"
     );
+}
+
+#[test]
+fn gh_pr_status_unknown_required_checks_are_not_passed_or_classified() -> Result<(), String> {
+    let pending = gh_pr_status_pr(vec![gh_pr_status_check("rust", "IN_PROGRESS", "")]);
+    let readiness = gh_pr_status_readiness(&pending, &[], false, Vec::new());
+    assert!(readiness.required_checks_outstanding.is_empty());
+    assert_eq!(readiness.pending_checks.len(), 1);
+    assert_eq!(readiness.safe_next_action, "wait");
+    let markdown = gh_pr_status_markdown(&pending, &[], &readiness);
+    assert!(markdown.contains("Required-check classification and completeness are unknown"));
+    let json: Value = serde_json::from_str(&gh_pr_status_json(&pending, &[], &readiness))
+        .map_err(|error| error.to_string())?;
+    assert_eq!(json["required_contexts_available"], false);
+    assert_eq!(json["pending_checks"].as_array().map(Vec::len), Some(1));
+
+    let clean = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
+    let readiness = gh_pr_status_readiness(&clean, &[], false, Vec::new());
+    assert_eq!(readiness.safe_next_action, "inspect final merge gates"); // advisory, not merge authority
+    assert!(gh_pr_status_markdown(&clean, &[], &readiness).contains("completeness are unknown"));
+    Ok(())
+}
+
+#[test]
+fn gh_pr_status_rejects_missing_rollup_and_waits_on_unknown_check_states() -> Result<(), String> {
+    let mut fixture = gh_pr_status_subject_fixture("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    for value in [Value::Null, serde_json::json!({})] {
+        fixture["statusCheckRollup"] = value;
+        parse_gh_pr_status_pull_request(&fixture.to_string())
+            .err()
+            .ok_or("invalid rollup was accepted")?;
+    }
+    fixture
+        .as_object_mut()
+        .ok_or("fixture object")?
+        .remove("statusCheckRollup");
+    parse_gh_pr_status_pull_request(&fixture.to_string())
+        .err()
+        .ok_or("missing rollup was accepted")?;
+    fixture["statusCheckRollup"] = serde_json::json!([]);
+    let empty = parse_gh_pr_status_pull_request(&fixture.to_string())?;
+    let empty_readiness = gh_pr_status_readiness(&empty, &[], false, Vec::new());
+    assert_eq!(
+        empty_readiness.safe_next_action,
+        "inspect final merge gates"
+    );
+    assert!(
+        gh_pr_status_markdown(&empty, &[], &empty_readiness).contains("completeness are unknown")
+    );
+    for (name, status, conclusion) in [
+        ("rust", "UNKNOWN", ""),
+        ("rust", "COMPLETED", ""),
+        ("", "COMPLETED", "SUCCESS"),
+        ("rust", "", "SUCCESS"),
+    ] {
+        let pr = gh_pr_status_pr(vec![gh_pr_status_check(name, status, conclusion)]);
+        let readiness = gh_pr_status_readiness(&pr, &[], false, Vec::new());
+        assert_eq!(
+            readiness.safe_next_action, "wait",
+            "{name} {status} {conclusion}"
+        );
+        assert!(
+            readiness
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("unknown"))
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -28414,7 +28482,7 @@ fn gh_pr_status_behind_preserves_failure_and_wait_routes() {
 fn gh_pr_status_behind_does_not_hide_a_conflict_or_grant_merge() {
     let contexts = vec!["rust".to_string()];
     for (state, expected) in [
-        ("CLEAN", "merge"),
+        ("CLEAN", "inspect final merge gates"),
         ("BEHIND", "inspect integration"),
         ("DIRTY", "inspect failure"),
         ("UNKNOWN", "wait"),
@@ -28490,7 +28558,7 @@ fn gh_pr_status_markdown_reports_reviews_checks_and_action() {
     let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
     let markdown = gh_pr_status_markdown(&pr, &contexts, &readiness);
     assert!(markdown.contains("# GitHub PR Status"));
-    assert!(markdown.contains("safe next action: `merge`"));
+    assert!(markdown.contains("safe next action: `inspect final merge gates`"));
     assert!(markdown.contains("## Required Checks Outstanding"));
     assert!(markdown.contains("## Reviews"));
     assert!(markdown.contains("droid/review"));
@@ -28513,7 +28581,7 @@ fn gh_pr_status_json_reports_merge_readiness_packet() -> Result<(), String> {
     assert_eq!(json["merge_state"], "CLEAN");
     assert_eq!(json["behind_main"], false);
     assert_eq!(json["review_decision"], "APPROVED");
-    assert_eq!(json["safe_next_action"], "merge");
+    assert_eq!(json["safe_next_action"], "inspect final merge gates");
     assert_eq!(
         json["advisory_checks"][0],
         "droid/review (status=COMPLETED, conclusion=SUCCESS)"
@@ -28641,6 +28709,31 @@ fn pr_triage_queue_dispositions_name_actionable_queue_state() {
         dispositions.get(&6).map(String::as_str),
         Some("close_duplicate")
     );
+}
+
+#[test]
+fn pr_triage_merge_candidate_requests_final_gate_inspection_on_both_surfaces() -> Result<(), String>
+{
+    let pr = triage_pr(1, "devex: ready", &["xtask/src/main.rs"]);
+    let prs = std::slice::from_ref(&pr);
+    let today = days_from_civil(2026, 5, 14);
+    let expected = "Inspect current final merge gates, reviews, proof and findings, then decide on a normal server-enforced merge if the scope remains canonical.";
+    let markdown = pr_triage_markdown(prs, &[], today);
+    let row = markdown
+        .lines()
+        .find(|row| row.starts_with("| #1 |"))
+        .ok_or("missing candidate row")?;
+    assert!(row.contains("merge_candidate"), "{row}");
+    assert!(row.contains(expected), "{row}");
+    let json: Value = serde_json::from_str(&pr_triage_json(prs, &[], today, "fixture"))
+        .map_err(|err| err.to_string())?;
+    assert_eq!(json["mode"], "advisory");
+    assert_eq!(
+        json["queue_disposition"][0]["disposition"],
+        "merge_candidate"
+    );
+    assert_eq!(json["queue_disposition"][0]["recommended_action"], expected);
+    Ok(())
 }
 
 #[test]
@@ -29359,18 +29452,28 @@ fn policy_checker_facade_in_subprocess() -> Result<(), String> {
 }
 
 fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
+    // Each phase is announced on stderr before it starts. When the child outlives
+    // its tool-build deadline the parent's diagnostic carries this stream, so a
+    // stall names the check it was inside instead of an anonymous TIMEOUT (#12035).
+    fn phase(name: &str, check: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        eprintln!("policy facade phase: {name}");
+        check()
+    }
     with_repo_cwd(|| {
-        check_static_language()?;
-        check_no_panic_family()?;
-        check_allow_attributes()?;
-        check_local_context()?;
-        check_file_policy()?;
-        assert_packet_coverage_report()?;
-        check_executable_files()?;
-        check_workflows()?;
-        check_droid_review_config()?;
-        check_process_policy()?;
-        check_network_policy()
+        phase("check_static_language", check_static_language)?;
+        phase("check_no_panic_family", check_no_panic_family)?;
+        phase("check_allow_attributes", check_allow_attributes)?;
+        phase("check_local_context", check_local_context)?;
+        phase("check_file_policy", check_file_policy)?;
+        phase(
+            "assert_packet_coverage_report",
+            assert_packet_coverage_report,
+        )?;
+        phase("check_executable_files", check_executable_files)?;
+        phase("check_workflows", check_workflows)?;
+        phase("check_droid_review_config", check_droid_review_config)?;
+        phase("check_process_policy", check_process_policy)?;
+        phase("check_network_policy", check_network_policy)
     })
 }
 
@@ -49101,8 +49204,13 @@ fn vscode_host_diagnostics_contract_violations(job: &str) -> Vec<String> {
     if upload.contains("if: always()") || upload.contains("if: success()") {
         violations.push("diagnostics upload must not run on success".to_string());
     }
-    if !upload.contains("actions/upload-artifact@v7") {
-        violations.push("diagnostics upload must use actions/upload-artifact@v7".to_string());
+    // The repo pins first-party actions to a commit SHA with the major in the
+    // trailing comment (`actions/upload-artifact@<sha> # v7.x.y`).
+    let pinned_v7 = upload
+        .lines()
+        .any(|line| line.contains("actions/upload-artifact@") && line.contains("# v7"));
+    if !pinned_v7 {
+        violations.push("diagnostics upload must use actions/upload-artifact v7".to_string());
     }
     if !upload.contains("target/ripr/vscode-test-host-diagnostics/") {
         violations
@@ -54294,7 +54402,7 @@ fn gh_pr_status_current_review_subject_control() -> Result<(), String> {
         "current_head"
     );
     let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
-    assert_eq!(readiness.safe_next_action, "merge");
+    assert_eq!(readiness.safe_next_action, "inspect final merge gates");
     assert!(readiness.warnings.is_empty());
     Ok(())
 }
@@ -54511,7 +54619,7 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
     assert!(markdown.contains("not evidence of review completion"));
     assert!(markdown.contains("not attributed to the current head"));
     assert_eq!(
-        readiness.safe_next_action, "merge",
+        readiness.safe_next_action, "inspect final merge gates",
         "advisory provider disclosure must not silently become a new gate"
     );
     Ok(())
@@ -54520,7 +54628,13 @@ fn gh_pr_status_provider_quota_observations_preserve_evidence() -> Result<(), St
 #[test]
 fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Result<(), String> {
     for (status, conclusion, review, expected) in [
-        ("COMPLETED", "SUCCESS", "APPROVED", "merge"),
+        (
+            "COMPLETED",
+            "SUCCESS",
+            "APPROVED",
+            "inspect final merge gates",
+        ),
+        ("EMPTY", "", "APPROVED", "inspect final merge gates"),
         ("IN_PROGRESS", "", "APPROVED", "wait"),
         ("COMPLETED", "FAILURE", "APPROVED", "inspect failure"),
         (
@@ -54540,37 +54654,39 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
         });
         let mut last = first.clone();
         last["reviewDecision"] = serde_json::json!(review);
-        last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
-        last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        if status == "EMPTY" {
+            last["statusCheckRollup"] = serde_json::json!([]);
+        } else {
+            last["statusCheckRollup"][0]["status"] = serde_json::json!(status);
+            last["statusCheckRollup"][0]["conclusion"] = serde_json::json!(conclusion);
+        }
         let mut reads = 0;
-        let observation = super::gh_pr_status_snapshot::collect_current(
-            42,
-            || {
-                reads += 1;
-                super::collect_gh_pr_status_json_with(42, |program, args| {
-                    assert_eq!(program, "gh");
-                    if args.first().is_some_and(|arg| arg == "api") {
-                        return Ok(gh_pr_status_identity_response(if reads == 1 {
-                            &first
-                        } else {
-                            &last
-                        }));
-                    }
-                    assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
-                    let fields = args[4].split(',').collect::<Vec<_>>();
-                    assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
-                    Ok(if reads == 1 {
-                        first.to_string()
+        let observation = super::gh_pr_status_snapshot::collect_current(42, || {
+            reads += 1;
+            super::collect_gh_pr_status_json_with(42, |program, args| {
+                assert_eq!(program, "gh");
+                if args.first().is_some_and(|arg| arg == "api") {
+                    assert_eq!(args.get(1).map(String::as_str), Some("graphql"));
+                    assert!(
+                        args.iter()
+                            .all(|arg| !arg.contains("protection") && !arg.contains("rulesets"))
+                    );
+                    return Ok(gh_pr_status_identity_response(if reads == 1 {
+                        &first
                     } else {
-                        last.to_string()
-                    })
+                        &last
+                    }));
+                }
+                assert_eq!(&args[..4], ["pr", "view", "42", "--json"]);
+                let fields = args[4].split(',').collect::<Vec<_>>();
+                assert!(fields.contains(&"headRefOid") && !fields.contains(&"baseRefOid"));
+                Ok(if reads == 1 {
+                    first.to_string()
+                } else {
+                    last.to_string()
                 })
-            },
-            |target| {
-                assert_eq!(target, "main");
-                Ok(vec!["rust".to_string()])
-            },
-        )?;
+            })
+        })?;
         assert_eq!(reads, 2);
         let pr = parse_gh_pr_status_pull_request(&observation.pr.to_string())?;
         let readiness = gh_pr_status_readiness(
@@ -54584,7 +54700,9 @@ fn gh_pr_status_final_snapshot_drives_the_real_readiness_and_renderers() -> Resu
             serde_json::from_str(&gh_pr_status_json(&pr, &observation.contexts, &readiness))
                 .map_err(|error| error.to_string())?;
         assert_eq!(json["safe_next_action"], expected);
+        assert_eq!(json["required_contexts_available"], false);
         let markdown = gh_pr_status_markdown(&pr, &observation.contexts, &readiness);
+        assert!(markdown.contains("Required-check classification and completeness are unknown"));
         assert!(markdown.contains(&format!("safe next action: `{expected}`")));
         assert!(markdown.contains("1111111111111111111111111111111111111111"));
         assert!(markdown.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
@@ -55468,5 +55586,208 @@ fn routed_rust_docs_gate_runs_capability_registry_checks() -> Result<(), String>
             ));
         }
     }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_unknown_check_is_not_a_pass_or_merge_candidate() -> Result<(), String> {
+    let prs = parse_pr_triage_pull_requests(
+        r#"[{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[{"__typename":"CheckRun","name":"rust","status":"COMPLETED","conclusion":""}]}]"#,
+    )?;
+    assert_eq!(prs.len(), 1);
+    let today = days_from_civil(2026, 5, 14);
+    let findings = pr_triage_findings(&prs, today);
+    let markdown = pr_triage_markdown(&prs, &findings, today);
+    let value: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+        .map_err(|err| err.to_string())?;
+    assert_eq!(value["open_prs"][0]["checks_summary"], "1 unknown");
+    assert_eq!(
+        value["queue_disposition"][0]["disposition"],
+        "needs_fresh_validation"
+    );
+    assert!(markdown.contains("1 unknown"));
+    assert!(markdown.contains("unknown checks:"));
+    let expected_action = "Wait for checks, inspect failures or unknown evidence, or update the PR body with actual commands run.";
+    assert_eq!(
+        value["queue_disposition"][0]["recommended_action"],
+        expected_action
+    );
+    let queue = markdown
+        .split_once("\n## Queue Disposition\n\n")
+        .ok_or("missing queue")?
+        .1
+        .split_once("\n## Open PRs\n\n")
+        .ok_or("missing open PRs")?
+        .0;
+    assert!(
+        queue
+            .lines()
+            .any(|row| row.starts_with("| #42 |") && row.contains(expected_action))
+    );
+    assert!(!markdown.contains("1 passed"));
+    Ok(())
+}
+
+#[test]
+fn pr_triage_parsed_check_states_reach_reports_and_queue() -> Result<(), String> {
+    let today = days_from_civil(2026, 5, 14);
+    for (check, summary, disposition) in [
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"SUCCESS"}),
+            "1 passed",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"NEUTRAL"}),
+            "1 neutral/skipped",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"SKIPPED"}),
+            "1 neutral/skipped",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":"FUTURE"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"COMPLETED","conclusion":""}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"COMPLETED","conclusion":"SUCCESS"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"name":"rust","status":"MYSTERY","conclusion":"SUCCESS"}),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"SUCCESS"}),
+            "1 passed",
+            "merge_candidate",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"PENDING"}),
+            "1 pending",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"context":"ci","state":"FAILURE"}),
+            "1 failed",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"IN_PROGRESS"}),
+            "1 pending",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!({"status":"COMPLETED","conclusion":"FAILURE"}),
+            "1 failed",
+            "needs_fresh_validation",
+        ),
+        (
+            serde_json::json!(null),
+            "1 unknown",
+            "needs_fresh_validation",
+        ),
+    ] {
+        let fixture = serde_json::json!([{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[check]}]);
+        let prs = parse_pr_triage_pull_requests(&fixture.to_string())?;
+        let findings = pr_triage_findings(&prs, today);
+        let markdown = pr_triage_markdown(&prs, &findings, today);
+        let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+            .map_err(|e| e.to_string())?;
+        assert_eq!(json["open_prs"][0]["checks_summary"], summary, "{fixture}");
+        assert_eq!(
+            json["queue_disposition"][0]["disposition"], disposition,
+            "{fixture}"
+        );
+        assert_eq!(
+            pr_triage_queue_dispositions(&prs, &[])[0].disposition,
+            disposition,
+            "{fixture}"
+        );
+        assert!(markdown.contains(summary), "{fixture}");
+        if summary == "1 unknown" {
+            assert!(markdown.contains("unknown checks:"), "{fixture}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_rollup_availability_is_not_conflated_with_empty() -> Result<(), String> {
+    let today = days_from_civil(2026, 5, 14);
+    for (rollup, expected, available) in [
+        (None, "unknown rollup", false),
+        (Some(serde_json::json!(null)), "unknown rollup", false),
+        (Some(serde_json::json!({})), "unknown rollup", false),
+        (Some(serde_json::json!([])), "none", true),
+    ] {
+        let mut fixture = serde_json::json!({"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN"});
+        if let Some(rollup) = rollup {
+            fixture["statusCheckRollup"] = rollup;
+        }
+        let prs = parse_pr_triage_pull_requests(&serde_json::json!([fixture]).to_string())?;
+        let findings = pr_triage_findings(&prs, today);
+        let markdown = pr_triage_markdown(&prs, &findings, today);
+        let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+            .map_err(|e| e.to_string())?;
+        assert_eq!(json["open_prs"][0]["checks_summary"], expected);
+        assert_eq!(json["open_prs"][0]["checks_rollup_available"], available);
+        assert_eq!(
+            json["queue_disposition"][0]["disposition"],
+            "needs_fresh_validation"
+        );
+        assert_eq!(
+            pr_triage_queue_dispositions(&prs, &[])[0].disposition,
+            "needs_fresh_validation"
+        );
+        assert!(markdown.contains(expected));
+        assert!(markdown.contains(if available {
+            "no check rollup entries returned"
+        } else {
+            "check rollup missing or malformed"
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn pr_triage_mixed_rollup_keeps_unknown_visible_alongside_other_results() -> Result<(), String> {
+    let fixture = serde_json::json!([{"number":42,"title":"fix: issue","body":"Validation\n- cargo xtask check-pr","isDraft":false,"mergeStateStatus":"CLEAN","statusCheckRollup":[
+        {"name":"success","status":"COMPLETED","conclusion":"SUCCESS"},
+        {"name":"skip","status":"COMPLETED","conclusion":"SKIPPED"},
+        {"name":"pending","status":"IN_PROGRESS","conclusion":""},
+        {"name":"failure","status":"COMPLETED","conclusion":"FAILURE"},
+        {"name":"unknown","status":"COMPLETED","conclusion":"FUTURE"}
+    ]}]);
+    let prs = parse_pr_triage_pull_requests(&fixture.to_string())?;
+    let today = days_from_civil(2026, 5, 14);
+    let findings = pr_triage_findings(&prs, today);
+    let markdown = pr_triage_markdown(&prs, &findings, today);
+    let json: Value = serde_json::from_str(&pr_triage_json(&prs, &findings, today, "fixture"))
+        .map_err(|e| e.to_string())?;
+    let summary = "1 failed, 1 pending, 1 unknown, 1 neutral/skipped, 1 passed";
+    assert_eq!(json["open_prs"][0]["checks_summary"], summary);
+    assert_eq!(
+        json["queue_disposition"][0]["disposition"],
+        "needs_fresh_validation"
+    );
+    assert!(markdown.contains(summary));
+    assert!(markdown.contains("unknown checks: unknown"));
+    assert!(json["findings"].as_array().unwrap().iter().any(|f| {
+        f["details"].as_array().unwrap().iter().any(|d| {
+            d.as_str()
+                .is_some_and(|d| d.contains("unknown checks: unknown"))
+        })
+    }));
     Ok(())
 }

@@ -1,0 +1,6 @@
+# Registers the repo-seam identical inline-arm propagation test (#12053) under RIPR-SPEC-0108.
+[[extend]]
+id = "RIPR-SPEC-0108"
+tests = [
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::identical_inline_arm_predicate_seam_does_not_propagate_but_differing_arms_do",
+]

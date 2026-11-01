@@ -39,7 +39,7 @@ jobs:
     steps:
       # Full history, like the Linux test lanes: base-resolving tests refuse
       # on a shallow clone (#10344).
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ inputs.candidate_sha || github.sha }}
           fetch-depth: 0
@@ -77,9 +77,29 @@ jobs:
         shell: bash
         run: cargo xtask check-covered-by
 
+      # Nested-build tests (#10847). nextest runs every test in its own process,
+      # so the build memoized in a OnceLock (`candidate_binary` in
+      # xtask/tests/common/ripr_help.rs, `ripr_fixture_binary` in
+      # xtask/src/reports/fixtures.rs) is paid once per test, not once per run.
+      # On a cold runner the first of those `cargo build -p ripr` calls compiles
+      # the whole crate (the guide contract uses `--jobs 1`) while every other
+      # such test, and the policy tests' own cargo spawns, block on the target
+      # directory lock until the 360 s kill fires (run 41258971406: 10 TIMEOUT
+      # rows, all nested cargo). Building the same default-feature ripr here,
+      # before the clock starts on any test, leaves each spawn a no-op build.
+      - name: Warm the ripr build the nested-cargo tests spawn
+        timeout-minutes: 25
+        shell: bash
+        run: cargo build -p ripr --locked
+
       # File redirect, not `| tee`: see windows-advisory.yml. The shard's real
-      # cargo status is recorded and replayed so a failed test still fails the
-      # job, and the log is uploaded even when it does.
+      # cargo status is recorded so a failed test still fails the job, and the log
+      # is uploaded even when it does. The log is also streamed to the step output
+      # as nextest writes it (`tail -F`, which also waits for the file; stopped after
+      # the status is recorded), and the Summarize and Upload steps run under `always()`. This is intended to leave
+      # the SLOW rows and the log so far from a shard that wedges until the job cap
+      # (#12092); that is not yet observed on Windows, and it cannot help if the
+      # runner itself stops reporting.
       #
       # Shard 3 of run 39854834481 outlived GNU `timeout` and the step cap and the
       # job was cancelled with no log. The cause is not established. nextest now
@@ -94,11 +114,18 @@ jobs:
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 55
         shell: bash
+        env:
+          # Below the 360 s nextest terminate (.config/nextest.toml), so a stalled
+          # child tool build fails with its own captured stderr instead of an
+          # anonymous TIMEOUT row (#12035).
+          RIPR_TOOL_BUILD_TIMEOUT_SECS: "300"
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
           cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 -E "not $ACL_TESTS" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
+          tail -n +1 -F target/shard-$shard.log &
+          tail_pid=$!
           winpid=$(cat "/proc/$nextest_pid/winpid" 2> /dev/null | tr -cd 0-9 || true)
           (
             set +e
@@ -121,7 +148,7 @@ jobs:
           wait "$watchdog_pid"
           if [ -f target/shard-$shard.watchdog ]; then status=124; fi
           printf '%s\n' "$status" > target/shard-$shard.status
-          cat target/shard-$shard.log
+          sleep 5; kill "$tail_pid" > /dev/null 2>&1
           exit "$status"
 
       # pwsh starts with both privileges disabled and its children inherit that,
@@ -146,7 +173,7 @@ jobs:
       # nextest colors its status rows; strip the escapes for the filter only, the
       # uploaded log stays raw.
       - name: Summarize failures
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         shell: bash
         run: |
           { echo "### Shard ${{ matrix.shard }} of 4"; echo "cargo nextest exit status: $(cat target/shard-${{ matrix.shard }}.status 2>/dev/null || echo missing)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/shard-${{ matrix.shard }}.log 2>/dev/null | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -154,8 +181,8 @@ jobs:
           [ ! -f target/acl.status ] || { echo "### Real-ACL tests (pwsh, shard 1)"; echo "cargo nextest exit status: $(cat target/acl.status)"; echo; echo '```'; sed -E 's/\x1b\[[0-9;]*m//g' target/acl.log | grep -aE "^\s*(FAIL|SIGABRT|SIGSEGV|TIMEOUT|LEAK)|Summary" | sort -u | head -20; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload shard logs
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-shard-${{ matrix.shard }}
           path: |
@@ -173,7 +200,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ inputs.candidate_sha || github.sha }}
           persist-credentials: false
@@ -195,7 +222,7 @@ jobs:
 
       - name: Upload doctest logs
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-doctests
           path: |

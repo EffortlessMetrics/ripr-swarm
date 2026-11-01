@@ -691,9 +691,10 @@ fn render_analysis_outcome_disclosure(out: &mut String, output: &CheckOutput, pl
     // a partial run with findings gets the scope caveat instead. #4952: the
     // EOL-only churn disclosure does not scope the analysis down, so the
     // incomplete-scope hedges stay off when it is the only limitation.
-    let scoped_down = outcome.limitations.iter().any(|limitation| {
-        limitation.kind != crate::analysis_outcome::AnalysisLimitationKind::EolOnlyChurn
-    });
+    let scoped_down = outcome
+        .limitations
+        .iter()
+        .any(|limitation| !limitation.kind.is_advisory_disclosure());
     if scoped_down {
         if output.findings.is_empty() {
             out.push_str(
@@ -7722,7 +7723,7 @@ mod tests {
 
         assert!(
             flattened.ends_with(
-                "add a co-located test that reaches and observes the changed behavior so a discriminator exists"
+                "add a co-located test that reaches and observes the changed behavior so an assertion can notice if it is wrong"
             ),
             "digest must keep the remedy; got:\n{digest}"
         );

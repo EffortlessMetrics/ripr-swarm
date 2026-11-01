@@ -506,6 +506,7 @@ and single-platform CI was the root cause enabling both.
 - **`Linux Nextest Shards`** (`linux-nextest-shards.yml`, manual `workflow_dispatch` only) runs the required Rust test step as four `cargo nextest --partition count:N/4` jobs on hosted 4-core runners and reports each shard's build and run seconds and JUnit test count and checks the four partitions are a disjoint cover of the workspace test list, so the wall-clock of a sharded step can be measured (#10341; the hosted required route now shards, see `Rust Test Shards`). It is advisory, not wired to pull requests, and does not replace `Ripr Rust Small Result`.
 - **`Windows Advisory Shards`** (`windows-advisory-shards.yml`, manual `workflow_dispatch` only) runs the same workspace tests as four `cargo nextest --partition count:N/4` jobs plus a doctest job, each with its own log artifact and failure summary, so a Windows test failure is attributable to a shard without a 75-minute single step (#9272). The four tests that need a real directory deny ACL are excluded from those bash partitions and run in a `shell: pwsh` step of shard 1 (20-minute step timeout, own `acl.log` and `acl.status`), because Git for Windows bash enables backup and restore privileges that bypass the deny. It is advisory and does not replace the nightly lane.
 - **`Windows Watchdog Qualification`** (`windows-watchdog-qualification.yml`, manual `workflow_dispatch` only) extracts the shard workflow's shipped test step, shortens only its timer to 12 seconds and runs it against a native fixture process tree in three cells: mapped, a primary-only-kill mutation that must fail the descendant check, and forced-missing mapping. It checks root identity, primary reaping, descendant termination, an unowned sentinel and uploaded receipts. It qualifies only the shortened bound (#9272).
+- **`Pilot Measure`** (`pilot-measure.yml`, manual `workflow_dispatch` only) builds a release `ripr` on a hosted runner, runs `ripr pilot` on this repository with default budgets and reports the byte sizes of `repo-exposure.json`, `agent-seam-packets.json` and the output tree, the exit code and each document's `run_status` in the job summary, then runs `ripr check --format agent --committed` on the pinned humantime commit plus the fortnight gap patch from `docs/AGENT_AS_USER_RUNS.md` and prints whether the terminal state is `open=` or `stop=`. It asserts nothing and never fails on a size or finding; the pilot output uploads as a 7-day `pilot-measure` artifact. It exists so #11951 (packet size target) and #12058 (humantime `open=`) can be confirmed on a current-main release binary.
 - **Test steps run under `windows-advisory-run`** (#9272, #9660). The
   `--no-default-features` test step and both workspace runs go through
   `cargo xtask windows-advisory-run`, which owns the cargo process tree (a Job
@@ -672,6 +673,33 @@ normalization behavior surfaced only on a maintainer's local run.
   labeled `macos-ci` or `full-ci` when `merge-ready` is applied (same guard
   shape as the merge-ready label flow in #4984/#8327; add `macos-ci` first,
   `merge-ready` last, and re-apply `merge-ready` for a later head).
+
+### Advisory Kani Lane
+
+`.github/workflows/kani.yml` (RIPR-SPEC-0371) runs Kani bounded model checking
+over pure cores. It follows "lighter, later, tighter": it is not a required
+check and does not run on ordinary pushes or PR updates.
+
+- **What runs.** `cargo xtask kani`, which runs `cargo kani -p ripr` over every
+  `#[kani::proof]` harness (harnesses live in `#[cfg(kani)]` modules next to the
+  code they prove; `crates/ripr/src/kani_smoke.rs` is the lane's own smoke
+  harness) with `kani-verifier` pinned to 0.68.0, installed with `cargo install
+  --locked` and `cargo kani setup`, cached through `Swatinem/rust-cache`
+  (`~/.kani` and the cargo bin directory).
+- **Contract.** Per harness the report (`target/ripr/reports/kani.md`) says
+  `VERIFIED` (within the harness's documented `kani::assume` bounds), `FAILED`
+  (counterexample, or an unreachable `kani::cover!` that makes the proof
+  vacuous) or `NOT-ESTABLISHED` (tool missing, timeout, no verdict). Anything
+  but `VERIFIED` fails the job, and so does a missing tool or zero harnesses
+  (`--allow-empty` is a local-only opt-out). Nothing passes by absence.
+- **Not a claim.** A `VERIFIED` row is a bounded check of a pure core. It is not a
+  full-program proof, not a runtime-mutation result and not evidence about code
+  a harness does not call.
+- **Selection.** A daily schedule, `workflow_dispatch`, and `merge-ready` on a
+  pull request that touches `crates/ripr/src/**`, `xtask/src/kani_lane.rs` or the
+  workflow (same guard shape as the merge-ready label flow; re-apply
+  `merge-ready` for a later head). Kani compiles the whole `ripr` library, so a
+  run takes minutes and several GB of memory.
 
 ### Advisory Printed-Command Paste Lane
 
@@ -963,6 +991,7 @@ only the proof unique to it, the non-default `lang-perl` feature:
 ```bash
 cargo check -p ripr --features lang-perl
 cargo test -p ripr --features lang-perl --lib analysis::language::perl
+cargo test -p xtask --features perl-identity reports::sarif::identity_tests
 ```
 
 On pushes to `main` or `master` and on pull requests labeled `release-check`
@@ -1179,6 +1208,8 @@ npm run package
 xvfb-run -a npm run test:e2e
 ```
 
+On a pull request, the legacy `CI` workflow's `vscode` job runs under the `merge-ready` request when the PR changes `editors/vscode/**` or `.github/workflows/ci.yml` (the `vscode surface` job classifies the diff and selects on any classification failure), or when the PR carries the `vscode` or `full-ci` label. Other PRs skip it. It runs on every push to `main` and on manual dispatch. A skipped `vscode` check on a PR that touches the extension is therefore a defect, not a pass (#12122).
+
 The `test:e2e` step launches a headless VS Code instance via `@vscode/test-electron`, activates the extension in a fixture Rust workspace, and runs the smoke test suite. `xvfb-run` provides the virtual display required on Linux CI runners. The runner pins host user-data at `target/ripr/vscode-test-user-data` (logs under `logs/`). If the host fails — including before Mocha starts — it copies a size-capped, redacted log subset into `target/ripr/vscode-test-host-diagnostics/`. The vscode job uploads that directory only on `failure()`, with 5-day retention. Diagnostic collection cannot change the original test exit status and is not a root-cause fix.
 
 The VS Code extension build and extension publish workflows use Node 24. This
@@ -1363,6 +1394,7 @@ EM self-hosted runners.
 | `coverage.yml` | `em-ci-small` | `rust-heavy-medium` |
 | `test-analytics.yml` | `em-ci-small` | `rust-medium` |
 | `future-clippy.yml` | `em-ci-small` | `rust-medium` |
+| `kani.yml` | GitHub-hosted | `ubuntu-latest` |
 | `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
 | `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
 | `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
@@ -1466,8 +1498,11 @@ a later release does not change CI behavior until you regenerate. It
 downloads that release's prebuilt binary from the `EffortlessMetrics/ripr`
 GitHub Release and checks it against the release's published SHA-256, which
 takes seconds instead of the minutes `cargo install` spends compiling. A
-checksum mismatch fails the step. On a runner with no prebuilt archive
-(Windows), or when the download fails, it falls back to
+checksum mismatch, a missing checksum, or a malformed archive fails the step
+instead of falling back. Windows x64 installs the release's `zip` (extracted
+with the `tar.exe` that Windows ships, then `ripr.exe` is run by absolute path);
+Windows ARM64 is reported as unsupported. On a runner with no prebuilt archive
+(for example Linux ARM32), or when the download fails, it falls back to
 `cargo install ripr --version <that version> --locked`, which needs a Rust
 toolchain on the runner; on a runner without `cargo` the step fails and says
 to install Rust or add a toolchain step. A development build newer than the
@@ -1593,6 +1628,13 @@ and ripr's own default-branch detection elsewhere. A checkout without
 `fetch-depth: 0` can still lack history; `ripr check` then names the repair.
 The Action prints the report to the job log. For the summary comment, inline
 comments, SARIF upload and artifacts, use the generated workflow above.
+
+The Action's `Install ripr` step follows the same contract as the generated
+workflow's (#6245): Windows x64 installs the release `zip` (extracted with the
+`tar.exe` under `%SystemRoot%\System32`, flat-root listing only), Windows ARM64
+stops with an explicit unsupported error, a missing or mismatched checksum, bad
+archive or wrong payload exits 1 with no `cargo install` fallback, and the
+installed `ripr` must report exactly the requested version.
 
 ### PR Test Guidance Annotations
 
@@ -1779,10 +1821,10 @@ configure the workflow, so changing a mode never means editing the file:
   `RIPR SARIF upload failed` warning to the run page. Set `"false"` to stop
   trying; the job summary, annotations and artifacts do not depend on it.
 
-Pilot deadline (#11205). `RIPR_PILOT_TIMEOUT_MS` is optional and not in the
-generated file. Add it to
-the workflow `env:` (positive milliseconds) when `ripr pilot` stops at its
-deadline on a large repository. The `ripr reports ci-packet` pilot step then
+Pilot deadline (#11205). Set the optional `RIPR_PILOT_TIMEOUT_MS` repository
+variable (positive milliseconds) when `ripr pilot` stops at its deadline on a
+large repository. The generated workflow passes it through its `env:`. The
+`ripr reports ci-packet` pilot step then
 passes it as an explicit `ripr pilot --timeout-ms` hard limit, with no
 automatic extension; unset keeps pilot's 30 s default plus its automatic
 extension, and a non-numeric or zero value is refused. When the pilot packet
@@ -1791,6 +1833,9 @@ deadline as the cause of the missing artifacts, the effect, and this next
 step (#11205). Per-file facts computed before the deadline are written to
 `target/ripr/cache`, so restoring that directory between runs lets the retry
 resume.
+The workflow only forwards the variable; it takes effect with a ripr release
+that reads it, and a workflow pinned to an older release ignores it without
+error.
 
 Permissions and job settings:
 
@@ -1803,8 +1848,11 @@ Permissions and job settings:
   scanning.
 - `labeled` and `unlabeled` re-run the gate when a waiver label such as
   `ripr-waive` is added or removed, since the gate reads labels from the event.
-  Any label change re-runs the job, and the concurrency group cancels the
-  superseded run.
+  The job runs for them only when `RIPR_GATE_MODE` is set to a mode other than
+  `visible-only`; in advisory (unset) and `visible-only` mode an unrelated label
+  does nothing. `labeled` and `unlabeled` each use their own concurrency group,
+  so a label never cancels an analysis in flight for a push or the other label
+  event.
 - Every run step is bash (`$'\t'` in the publish loop), so `defaults.run.shell`
   pins bash; the steps still parse if the job moves to `windows-latest`, whose
   default shell is PowerShell.
@@ -1836,9 +1884,11 @@ Steps:
   checkout, so the cleanup never discards it.
 - **Install ripr** pins the version whose commands the steps use; an unpinned
   install takes the newest release, whose CLI may not match. It downloads that
-  release's prebuilt binary and checks it against the published SHA-256, falls
-  back to `cargo install` where there is no prebuilt binary, and fails with the
-  fix when the runner has no cargo. The summary step reads this step's outcome
+  release's prebuilt binary (a zip on Windows x64) and checks it against the
+  published SHA-256 before extracting it, falls back to `cargo install` only
+  where there is no prebuilt binary, and fails with the fix when the runner has
+  no cargo. An integrity or archive rejection never falls back, and Windows
+  ARM64 is an explicit unsupported error. The summary step reads this step's outcome
   by its id.
 - **actions/cache** restores ripr's analysis cache. Entries are keyed on file
   contents, configuration, and the ripr version, so an entry that no longer

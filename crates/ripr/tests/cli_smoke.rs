@@ -203,7 +203,13 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn run_ripr(args: &[&str]) -> Output {
     let bin = env!("CARGO_BIN_EXE_ripr");
-    Command::new(bin).args(args).output().unwrap()
+    // #11598: piped stderr plus a machine format is silent by default; the
+    // smoke suite keeps the stream on so its progress assertions stay real.
+    Command::new(bin)
+        .args(args)
+        .env("RIPR_PROGRESS", "1")
+        .output()
+        .unwrap()
 }
 
 #[cfg(feature = "lang-rust")]
@@ -1737,7 +1743,7 @@ fn help_json_is_deterministic_across_roots_env_and_side_effect_free() -> Result<
         // sha256 hex digest. A partial document must not pass as complete.
         let value: serde_json::Value = serde_json::from_slice(&baseline_stdout)
             .map_err(|error| format!("help --json is not valid JSON: {error}"))?;
-        if value["schema_version"] != serde_json::json!(3) {
+        if value["schema_version"] != serde_json::json!(4) {
             return Err(format!(
                 "help --json schema_version moved: {}",
                 value["schema_version"]
@@ -2675,12 +2681,14 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
                         )
                         .into());
                     }
+                    // Explain misses spell the listing `--format json` (#11844).
                     let listing = stderr
                         .split('`')
                         .find(|part| part.starts_with("ripr check "))
                         .ok_or_else(|| {
                             format!("selector miss omitted its retry command: {stderr}")
-                        })?;
+                        })?
+                        .replace(" --format json", " --json");
                     if listing != expected_listing || !stderr.contains("list available finding ids")
                     {
                         return Err(
@@ -11132,12 +11140,18 @@ fn agent_receipt_attempt_flag_selects_one_attempt_and_refusals_name_ids()
         );
         std::fs::remove_file(&out)?;
         for (omitted, diagnostic) in [
-            ("all", "agent receipt requires --verify-json <path>"),
+            (
+                "all",
+                "agent receipt requires --verify-json <path>; add `--verify-json <path>` to the command",
+            ),
             (
                 "--verify-json",
-                "agent receipt requires --verify-json <path>",
+                "agent receipt requires --verify-json <path>; add `--verify-json <path>` to the command",
             ),
-            ("--seam-id", "agent receipt requires --seam-id"),
+            (
+                "--seam-id",
+                "agent receipt requires --seam-id; add `--seam-id` to the command",
+            ),
             (
                 "--json",
                 "agent receipt requires --json (the supported output for this subcommand); add --json to the command",
@@ -13478,7 +13492,7 @@ fn config_validate_does_not_consume_root_flag_as_a_path() -> Result<(), String> 
             assert!(output.stdout.is_empty(), "args: {args:?}");
             assert_eq!(
                 String::from_utf8_lossy(&output.stderr).trim(),
-                "ripr: missing value for --root",
+                "ripr: missing value for --root; pass a value right after it",
                 "args: {args:?}"
             );
         }
@@ -16966,7 +16980,7 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     // A newer push cancels the older run of the same PR, so two runs never
     // publish the same inline cards (#4448).
     assert!(workflow.contains(
-        "\nconcurrency:\n  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"
+        "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.event.action || 'run' }}\n  cancel-in-progress: true\n"
     ));
     // The prebuilt install needs no third-party toolchain or cache action.
     assert!(!workflow.contains("dtolnay/rust-toolchain"));
@@ -17487,7 +17501,10 @@ fn baseline_create_from_check_baselines_a_whole_repo_artifact_and_refuses_a_scop
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains("not a whole-repository run"), "{stderr}");
-    assert!(stderr.contains("--candidate-tree HEAD^{tree}"), "{stderr}");
+    assert!(
+        stderr.contains("--candidate-tree $(git rev-parse HEAD^{tree})"),
+        "{stderr}"
+    );
     assert!(!refused_out.exists(), "no baseline is written on refusal");
 
     ignore_remove_dir_all(&workspace);
@@ -17803,7 +17820,7 @@ fn baseline_update_removes_resolved_without_adopting_new_debt() -> Result<(), St
     assert_failure(&no_mode);
     let stderr = String::from_utf8_lossy(&no_mode.stderr);
     assert!(stderr.contains("--remove-resolved"));
-    assert!(stderr.contains("adopting new debt is not supported"));
+    assert!(stderr.contains("adopting new debt is not supported; pass `--remove-resolved` or `--migrate-legacy-identities`"));
 
     ignore_remove_dir_all(&workspace);
     Ok(())
@@ -27863,6 +27880,10 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
         recoveries.push((label, String::from_utf8_lossy(&missing.stderr).into_owned()));
     }
     for (label, stderr) in recoveries {
+        // The explain miss spells the listing `--format json` (#11844); the
+        // missing-selector hint keeps the `--json` alias. Both name the same
+        // scoped command, so compare on the alias spelling.
+        let stderr = stderr.replace(" --format json`", " --json`");
         if !stderr.contains(&format!("`{expected_listing}`")) {
             return Err(format!(
                 "{label} must name the scoped listing `{expected_listing}`:\n{stderr}"
@@ -28611,6 +28632,56 @@ fn repair_route_before(root: &Path) -> Result<String, Box<dyn std::error::Error>
         .ok_or_else(|| format!("before phase printed no attempt command:\n{stderr}").into())
 }
 
+/// #11598: `RIPR_QUIET` reaches the direct `ripr agent repair` phases: the
+/// narration and `wrote` lines drop, while the result (the attempt command)
+/// still prints. The control run without it narrates.
+#[test]
+fn ripr_quiet_env_drops_agent_repair_before_narration_but_keeps_the_result()
+-> Result<(), Box<dyn std::error::Error>> {
+    let run = |quiet: bool| -> Result<String, Box<dyn std::error::Error>> {
+        let root = repair_route_workspace(if quiet {
+            "agent repair quiet env"
+        } else {
+            "agent repair loud env"
+        })?;
+        let root_arg = root.to_string_lossy().into_owned();
+        let args = [
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            root_arg.as_str(),
+            "--seam-id",
+            REPAIR_ROUTE_SEAM,
+            "--phase",
+            "before",
+        ];
+        let output = if quiet {
+            run_ripr_with_env(&args, &[("RIPR_QUIET", "1")])
+        } else {
+            run_ripr(&args)
+        };
+        assert_success(&output);
+        Ok(String::from_utf8_lossy(&output.stderr).into_owned())
+    };
+    let loud = run(false)?;
+    assert!(
+        loud.contains("ripr: wrote "),
+        "control must narrate: {loud}"
+    );
+    let quiet = run(true)?;
+    assert!(!quiet.contains("ripr: wrote "), "{quiet}");
+    assert!(
+        !quiet.contains("agent repair --phase before for"),
+        "{quiet}"
+    );
+    assert!(
+        quiet.contains("ripr: attempt next command: "),
+        "the result must survive quiet: {quiet}"
+    );
+    Ok(())
+}
+
 fn repair_route_next(report: &serde_json::Value) -> (String, String) {
     let text = |pointer: &str| {
         report
@@ -29204,6 +29275,21 @@ fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
         assert_eq!(refused.status.code(), Some(3), "{refused:?}");
         let stderr = String::from_utf8_lossy(&refused.stderr);
         assert!(stderr.contains("no repository movement"), "{stderr}");
+        // #11597: exactly one typed line; the refusal that spends the budget
+        // is terminal, like the call after it, and earlier ones are retryable.
+        let expected = if refusal_number == 5 {
+            "ripr: refusal code=retry_budget_exhausted disposition=terminal"
+        } else {
+            "ripr: refusal code=awaiting_edit disposition=retryable"
+        };
+        assert_eq!(
+            stderr
+                .lines()
+                .filter(|line| line.starts_with("ripr: refusal code="))
+                .collect::<Vec<_>>(),
+            vec![expected],
+            "{stderr}"
+        );
         // Escalation starts at the second refusal, never on the first.
         assert_eq!(
             stderr.contains("retry budget for this attempt"),
@@ -29304,6 +29390,14 @@ fn repeated_no_movement_refusals_keep_history_and_stop_at_the_retry_budget()
     let stopped_stderr = String::from_utf8_lossy(&stopped.stderr);
     assert!(
         stopped_stderr.contains("spent its after-phase retry budget"),
+        "{stopped_stderr}"
+    );
+    assert_eq!(
+        stopped_stderr
+            .lines()
+            .filter(|line| line.starts_with("ripr: refusal code="))
+            .collect::<Vec<_>>(),
+        vec!["ripr: refusal code=retry_budget_exhausted disposition=terminal"],
         "{stopped_stderr}"
     );
     // The recovery names a new attempt; the shared repair gate may withhold
@@ -34629,6 +34723,13 @@ fn repair_refuses_uncommitted_inline_target_before_writing_artifacts_and_status_
     );
     assert!(repair.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&repair.stderr);
+    // #11597: the held start carries its typed reason beside the prose.
+    assert!(
+        stderr.contains(
+            "ripr: refusal code=start_refused_uncommitted_target disposition=not_started"
+        ),
+        "{stderr}"
+    );
     assert!(
         stderr.contains(
             "No repair attempt started. Commit or stash `src/lib.rs`, then run `ripr repair "
