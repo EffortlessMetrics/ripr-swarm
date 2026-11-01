@@ -151,20 +151,37 @@ pub fn candidate_binary() -> Result<PathBuf, String> {
         .get_or_init(|| {
             // Always ask Cargo to select/build the current candidate. An existing
             // target/debug/ripr or an ambient PATH binary is not identity evidence.
-            let mut command = cargo();
-            command.args([
-                "build",
-                "-p",
-                "ripr",
-                "--bin",
-                "ripr",
-                "--locked",
-                "--offline",
-                "--jobs",
-                "1",
-                "--message-format=json",
-            ]);
-            let output = require_success(run(command)?, "candidate ripr build")?;
+            // Windows refuses to replace `ripr.exe` while a test running in
+            // parallel holds it (`Access is denied`, os error 5); the compile
+            // is done by then, so repeat the link step for about a minute.
+            let mut attempt = 1;
+            let output = loop {
+                let mut command = cargo();
+                command.args([
+                    "build",
+                    "-p",
+                    "ripr",
+                    "--bin",
+                    "ripr",
+                    "--locked",
+                    "--offline",
+                    "--jobs",
+                    "1",
+                    "--message-format=json",
+                ]);
+                match require_success(run(command)?, "candidate ripr build") {
+                    Err(error)
+                        if cfg!(windows)
+                            && attempt < 12
+                            && error.contains("failed to remove file")
+                            && error.contains("Access is denied") =>
+                    {
+                        attempt += 1;
+                        std::thread::sleep(Duration::from_secs(5));
+                    }
+                    other => break other?,
+                }
+            };
             let mut executables = BTreeSet::new();
             for line in output
                 .stdout
