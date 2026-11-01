@@ -31,6 +31,19 @@ Verification note: This update also restores two previously stale full-human Nex
 ## Pending — python_dunder_truthiness_replaced_test (3)
 
 Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless python_dunder_truthiness_replaced_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_dunder_truthiness_replaced_test (4)
+
+Reason:
 RIPR-SPEC-0238: shadowed duplicate test now carries the later-binding activation control
 
 Command:

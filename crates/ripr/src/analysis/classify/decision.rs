@@ -562,6 +562,9 @@ fn weakly_exposed_guidance_for_family(family: &ProbeFamily) -> &'static str {
     }
 }
 
+#[cfg(kani)]
+mod kani_proofs;
+
 #[cfg(test)]
 mod tests {
     use super::*;

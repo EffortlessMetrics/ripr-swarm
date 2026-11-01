@@ -16,7 +16,7 @@ pub(super) fn validate_selected_command_root(packet: &Value, root: &Path) -> Res
     };
     if context.get("authority").and_then(Value::as_str) != Some("advisory_display_only") {
         return Err(
-            "selected command context has missing or invalid display authority".to_string(),
+            "selected command context has missing or invalid display authority; regenerate the input with the command that wrote it, then rerun".to_string(),
         );
     }
     for step in ["verify", "receipt"] {
@@ -24,7 +24,7 @@ pub(super) fn validate_selected_command_root(packet: &Value, root: &Path) -> Res
             .get(step)
             .filter(|forms| forms.is_object())
             .ok_or_else(|| {
-                format!("selected command context {step} forms are missing or not an object")
+                format!("selected command context {step} forms are missing or not an object; regenerate the input with the command that wrote it, then rerun")
             })?;
         for field in ["bash", "powershell", "recovery"] {
             if !forms
@@ -43,7 +43,7 @@ pub(super) fn validate_selected_command_root(packet: &Value, root: &Path) -> Res
     let carried_root = Path::new(cwd);
     if !carried_root.is_absolute() {
         return Err(
-            "selected command context directory is not a bounded absolute path".to_string(),
+            "selected command context directory is not a bounded absolute path; regenerate the input with the command that wrote it, then rerun".to_string(),
         );
     }
     // A multiline physical root is valid data, but its producer withholds
@@ -56,13 +56,13 @@ pub(super) fn validate_selected_command_root(packet: &Value, root: &Path) -> Res
         })
     {
         return Err(
-            "selected command context multiline directory requires withheld shell forms"
+            "selected command context multiline directory requires withheld shell forms; regenerate the input with the command that wrote it, then rerun"
                 .to_string(),
         );
     }
     let current = root
         .canonicalize()
-        .map_err(|error| format!("selected repository directory is unavailable: {error}"))?;
+        .map_err(|error| format!("selected repository directory is unavailable: {error}; regenerate the input with the command that wrote it, then rerun"))?;
     let carried = carried_root
         .canonicalize()
         .map_err(|error| format!("selected command context directory is unavailable: {error}"))?;
@@ -79,9 +79,9 @@ pub(super) fn validate_start_here_packet(
     markdown_path: &Path,
 ) -> Result<Value, String> {
     let text = fs::read_to_string(json_path)
-        .map_err(|err| format!("missing or unreadable {}: {err}", json_path.display()))?;
+        .map_err(|err| format!("missing or unreadable {}: {err}; regenerate the input with the command that wrote it, then rerun", json_path.display()))?;
     let packet: Value = serde_json::from_str(&text)
-        .map_err(|err| format!("{} is not valid JSON: {err}", json_path.display()))?;
+        .map_err(|err| format!("{} is not valid JSON: {err}; regenerate the input with the command that wrote it, then rerun", json_path.display()))?;
     let mut violations = Vec::new();
     expect_string(&packet, "schema_version", SCHEMA_VERSION, &mut violations);
     expect_string(&packet, "tool", "ripr", &mut violations);
@@ -120,7 +120,7 @@ pub(super) fn validate_start_here_packet(
         Ok(packet)
     } else {
         Err(format!(
-            "first-pr start-here contract violations:\n{}",
+            "first-pr start-here contract violations:\n{}; regenerate the input with the command that wrote it, then rerun",
             violations
                 .iter()
                 .map(|violation| format!("- {violation}"))

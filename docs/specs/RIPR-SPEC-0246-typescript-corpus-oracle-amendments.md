@@ -201,8 +201,8 @@ and its body holds an `expect(` (or a `node:assert` call, `assert.` or
 an `forEach(async` call that is tied to the owner (the owner is called in
 that span or in the statement's receiver before it) (the forms rule 2
 refuses; comments and string contents are ignored), the finding reads
-`static_unknown` instead of `weakly_exposed`, with a missing note saying the
-discriminator is not established either way, and a stop reason
+`static_unknown` instead of `weakly_exposed`, with a missing note saying whether
+a test checks the changed behavior is not established either way, and a stop reason
 `gap_evidence_unresolved`. Any other unresolved cause (a
 shadowed `expect`, a no-op helper) stays `weakly_exposed`. Rule 4 removes an
 actionable gap and credits nothing.

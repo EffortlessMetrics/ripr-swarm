@@ -1347,6 +1347,34 @@ pub(crate) fn expect_assertion_from_expression(
         oracle_strength = OracleStrength::Weak;
     }
 
+    // A top-level asymmetric matcher (`expect.any(String)`, `expect.anything()`,
+    // `expect.stringMatching(..)`, `expect.not.*`, `expect.objectContaining(..)`)
+    // matches a family of values, not the one the changed behavior produces, so
+    // the equality matcher that carries it is a partial check, not `exact_value`.
+    if !negated
+        && matches!(matcher, "toBe" | "toEqual" | "toStrictEqual")
+        && outer_call
+            .arguments
+            .first()
+            .is_some_and(is_top_level_asymmetric_matcher_argument)
+    {
+        oracle_kind = OracleKind::RelationalCheck;
+        oracle_strength = OracleStrength::Weak;
+    }
+    // An equality on a derived property of the changed value (`typeof f(x)`,
+    // `[f(x)].length`) observes the value's kind or a constant container size,
+    // which the changed behavior need not move; it is not an exact value check.
+    if !negated
+        && matches!(matcher, "toBe" | "toEqual" | "toStrictEqual")
+        && expect_call
+            .arguments
+            .first()
+            .is_some_and(is_derived_property_observation)
+    {
+        oracle_kind = OracleKind::RelationalCheck;
+        oracle_strength = OracleStrength::Weak;
+    }
+
     // RIPR-SPEC-0243 rule 2 (#8712): a negated matcher earns capped credit —
     // exact and relational matchers read `relational_check` / weak, the smoke
     // list stays smoke, `toThrow*` reads `broad_error` / weak with no exact
@@ -2824,6 +2852,57 @@ fn bigint_zero_is_falsy(literal: &str) -> bool {
         (literal, 10)
     };
     u128::from_str_radix(digits, radix) != Ok(0)
+}
+
+/// True when the argument is a call rooted at the runner's `expect` namespace
+/// (`expect.any(..)`, `expect.not.stringContaining(..)`, ...): a Jest/Vitest
+/// asymmetric matcher. Parentheses and TS wrappers do not hide it.
+pub(crate) fn is_top_level_asymmetric_matcher_argument(arg: &Argument<'_>) -> bool {
+    let Some(expression) = arg.as_expression() else {
+        return false;
+    };
+    let mut current = expression.get_inner_expression();
+    let mut descended = false;
+    loop {
+        match current {
+            Expression::CallExpression(call) => {
+                descended = true;
+                current = call.callee.get_inner_expression();
+            }
+            Expression::StaticMemberExpression(member) => {
+                descended = true;
+                current = member.object.get_inner_expression();
+            }
+            Expression::Identifier(ident) => {
+                return descended && ident.name.as_str() == "expect";
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// `typeof <expr>` or `<array literal>.length`: the asserted value is the
+/// kind of the changed value or the size of a literal wrapper around it, not
+/// the value itself. A spread element makes the length data-dependent, so only
+/// a spread-free literal counts as constant.
+pub(crate) fn is_derived_property_observation(arg: &Argument<'_>) -> bool {
+    let Some(expression) = arg.as_expression() else {
+        return false;
+    };
+    match expression.get_inner_expression() {
+        Expression::UnaryExpression(unary) => unary.operator == oxc_ast::ast::UnaryOperator::Typeof,
+        Expression::StaticMemberExpression(member) => {
+            member.property.name.as_str() == "length"
+                && matches!(
+                    member.object.get_inner_expression(),
+                    Expression::ArrayExpression(array)
+                        if array.elements.iter().all(|element| {
+                            !matches!(element, oxc_ast::ast::ArrayExpressionElement::SpreadElement(_))
+                        })
+                )
+        }
+        _ => false,
+    }
 }
 
 /// RIPR-SPEC-0243 rule 9 (#8713): true when the matcher's single argument is

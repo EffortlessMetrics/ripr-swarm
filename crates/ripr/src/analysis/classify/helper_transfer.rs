@@ -4366,7 +4366,15 @@ mod tests {
     // the source once; a different name or package set is a new scan.
     #[test]
     fn scoped_import_answer_scans_once_per_distinct_query() {
-        let source = "fn parse(x: u8) -> u8 { x }\nfn t() { parse(1); other(2); }\n";
+        // #9217: `macro_may_define_item_named` skips `MacroSites::scan` when
+        // the source has no `!`. Keep a bang so this pin still measures
+        // scan-once-per-distinct-query, not the skip. The unused
+        // `macro_rules!` does not rebind `parse` or `other`.
+        let source = concat!(
+            "macro_rules! unused { () => {}; }\n",
+            "fn parse(x: u8) -> u8 { x }\n",
+            "fn t() { parse(1); other(2); }\n",
+        );
         let plain = index_with_tests(vec![], vec![]);
         let mut with_package = index_with_tests(vec![], vec![]);
         with_package.package_names = ["serde".to_string()].into_iter().collect();

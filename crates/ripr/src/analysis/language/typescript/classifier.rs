@@ -3577,9 +3577,12 @@ fn ts_observed_local_owner_call_arguments(
         .strip_prefix("await ")
         .map(str::trim)
         .unwrap_or(initializer.trim());
-    // The initializer must be one owner call spanning the whole text.
+    // The initializer must be one owner call spanning the whole text. A call
+    // nested in its arguments (`price(price(6000, 0), 7)`, #7470) is allowed:
+    // the matches come back in text order and the span check below pins the
+    // first one as the outermost call, whose arguments the assertion observes.
     let argument_lists = owner_call_arguments(stripped, owner_name, owner_receivers);
-    if argument_lists.len() != 1 {
+    if argument_lists.is_empty() {
         return None;
     }
     let after_name = if let Some(rest) = stripped.strip_prefix(owner_name) {
@@ -7390,7 +7393,7 @@ pub(crate) fn classify_resolved_owner(
             StageState::Unknown,
             StageState::Unknown,
             vec![format!(
-                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); the discriminator is not established either way.",
+                "Related tests reach `{}` but hold assertion-like code the TypeScript extractor could not resolve (a `.then` with a rejection handler or an async `forEach` callback); whether a test checks the changed behavior is not established either way.",
                 owner.name
             )],
         )
@@ -9642,7 +9645,7 @@ fn module_entry_reach_summary(
     };
     if discriminator_unknown {
         return format!(
-            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so the discriminator is not established either way.",
+            "Related tests reach `{}` only through {scope} callers ({}); static evidence cannot confirm whether the changed behavior reaches their assertions, so whether a test checks the changed behavior is not established either way.",
             owner.name, entries
         );
     }
