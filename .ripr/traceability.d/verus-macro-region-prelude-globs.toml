@@ -5,12 +5,15 @@ id = "RIPR-SPEC-0369"
 name = "verus macro region limit and verification prelude globs"
 spec = "docs/specs/RIPR-SPEC-0369-verus-macro-region-and-verification-prelude-globs.md"
 tests = [
+  "crates/ripr/src/analysis/facts/drop_in.rs::spec_audited_version_table_matches_the_code_authority",
+  "crates/ripr/src/analysis/facts/drop_in.rs::a_nested_workspace_is_judged_by_its_own_lockfile",
   "crates/ripr/src/analysis/probes/macro_definition.rs::verus_regions_cover_the_token_tree_and_ignore_lookalikes",
   "crates/ripr/src/analysis/probes/macro_definition.rs::a_verus_region_braces_in_comments_strings_and_chars_do_not_unbalance_it",
   "crates/ripr/src/analysis/probes/macro_definition.rs::an_unclosed_verus_region_runs_to_the_end_and_a_mixed_line_is_unowned",
   "crates/ripr/src/analysis/probes/diff.rs::verus_region_lines_seed_one_static_unknown_not_expression_probes",
   "crates/ripr/src/analysis/language/rust/probes.rs::verus_region_limit_names_the_region_and_changes_nothing_else",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::verification_prelude_globs_keep_assertion_credit_only_for_plain_registry_crates",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::verification_prelude_globs_credit_only_audited_locked_versions",
   "crates/ripr/src/analysis/probes/repo.rs::repo_mode_verus_region_seeds_no_expression_probes",
   "crates/ripr/src/analysis/language/rust/mod.rs::repo_analysis_excludes_verus_region_and_keeps_sibling_fn",
 ]
@@ -21,6 +24,8 @@ code = [
   "crates/ripr/src/analysis/language/rust/probes.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
   "crates/ripr/src/analysis/syntax/owner_pin.rs",
+  "crates/ripr/src/analysis/facts/drop_in.rs",
+  "crates/ripr/src/analysis/workspace/assertion_dependency/registry.rs",
 ]
 metrics = [
   "unit_test_pass_rate",

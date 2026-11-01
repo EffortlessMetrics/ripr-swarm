@@ -2687,6 +2687,47 @@ mod top_limitation_parity_tests {
     }
 
     #[test]
+    fn a_base_side_finding_is_never_offered_as_a_repair_route_on_any_surface() -> Result<(), String>
+    {
+        // #11821: a finding whose source is not a candidate edit target
+        // (`base_deleted`) must not become a stronger route on any surface.
+        let mut finding = test_finding()?;
+        finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+
+        let item = GapItem::from_finding(&finding, Path::new("."))?;
+        let document = item.limitation_document("snap");
+        let kind = document
+            .pointer("/limitation/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("no limitation kind: {document}"))?;
+        assert_eq!(kind, "not_candidate_actionable");
+        assert_ne!(
+            document
+                .pointer("/limitation/stage")
+                .and_then(Value::as_str),
+            Some("none"),
+            "a base-side item must carry a limitation on MCP"
+        );
+
+        let cli = crate::output::human::render_finding(&finding);
+        assert!(
+            cli.contains("base_deleted \u{2014} base-side evidence, not a candidate edit target"),
+            "the CLI must say the source is not a candidate edit target:\n{cli}"
+        );
+
+        let hover = hover_text(&finding);
+        assert!(
+            hover.contains("no bounded repair instruction available"),
+            "hover must not offer a repair instruction for a base-side item:\n{hover}"
+        );
+        assert!(
+            !hover.contains("ripr repair"),
+            "hover must not offer a repair command for a base-side item:\n{hover}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_limited_finding_never_reads_as_repair_ready_on_any_surface() -> Result<(), String> {
         let mut finding = test_finding()?;
         finding.static_limit_kind = Some(StaticLimitKind::UnsupportedSyntax);
