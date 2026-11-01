@@ -971,6 +971,8 @@ The copyable self-hosted proof runbook is in
 Use it to record CX43 primary proof, CPX42/CX53 fallback proof, or the bounded
 runner availability blocker without exposing runner tokens or secrets.
 
+The protected `Ripr Rust Small Result` job also reads the `vscode` extension e2e check for the exact admitted head on `merge-ready` requests (#12122). `ci.yml` owns selection; a skipped `vscode` check means the job was not selected and is ignored. The newest executed `github-actions` `vscode` check for that head decides: success passes; failure, cancellation or a timeout fails the Result; a check still running is awaited for up to 20 minutes; none present means not selected. Main, manual-dispatch and merge-group results do not read it. The Result job's timeout is 30 minutes to cover that wait.
+
 The routed lane runs the existing Rust/product command surface without release
 package or publish dry-run steps. Each required lane invokes the shared
 `cargo xtask precommit` gate table after the cargo build/test steps and keeps

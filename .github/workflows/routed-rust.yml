@@ -532,7 +532,7 @@ jobs:
     needs: [admission, route, detect-docs-only, rust-cx43, rust-cpx42, rust-cx53, rust-github, rust-github-tests, docs-gate]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - name: Recheck initially admitted eligibility
         id: eligibility
@@ -637,6 +637,39 @@ jobs:
           why=before_check
           trap 'rc=$?; [ "$rc" -eq 0 ] || echo "::error::eligibility recheck refused at stage $why (exit $rc) for PR #$PR_NUMBER head $EXPECTED_HEAD"; [ "$rc" -eq 0 ] || [ "$why" != admission_binding ] || [ "$GITHUB_RUN_ATTEMPT" -le 1 ] || { [ "$EVENT_NAME" = merge_group ] && echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Re-queue the pull request to qualify a new merge group (#8858)." || echo "::error::this is attempt $GITHUB_RUN_ATTEMPT but the admitted request was minted by attempt 1: a re-run cannot pass. Remove and re-add merge-ready to start a fresh run (#8858)."; }' EXIT
           current_eligibility
+      - name: Read the extension e2e check for the admitted head
+        id: vscode
+        if: needs.admission.result == 'success' && needs.admission.outputs.status == 'admitted' && github.event_name == 'pull_request' && github.event.label.name == 'merge-ready'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
+        run: |
+          set -euo pipefail
+          # #12122: ci.yml owns selection of the `vscode` extension e2e (its
+          # `vscode surface` job). A skipped `vscode` check means the job was not
+          # selected for that run, so only an executed check can block. The
+          # newest executed check for this exact head decides, so a re-run that
+          # passes clears an earlier infrastructure failure. A check still
+          # running is awaited for a bounded time; a missing one is not selected.
+          [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::admitted head is not a full SHA"; exit 1; }
+          deadline=$((SECONDS + 1200))
+          while :; do
+            raw=$(gh api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode check runs for $EXPECTED_HEAD"; exit 1; }
+            newest=$(jq -s -c '[.[] | select(.app.slug == "github-actions" and .conclusion != "skipped")] | sort_by(.started_at // "9999") | last // {}' <<<"$raw") || { echo "::error::could not classify vscode check runs"; exit 1; }
+            status=$(jq -r '.status // "none"' <<<"$newest")
+            conclusion=$(jq -r '.conclusion // ""' <<<"$newest")
+            url=$(jq -r '.html_url // ""' <<<"$newest")
+            case "$status" in
+              none) echo "No executed vscode check for $EXPECTED_HEAD: the extension e2e was not selected."; exit 0 ;;
+              completed)
+                if [ "$conclusion" = success ]; then echo "vscode check succeeded for $EXPECTED_HEAD: $url"; exit 0; fi
+                echo "::error::vscode extension e2e concluded '$conclusion' for $EXPECTED_HEAD: $url"; exit 1 ;;
+            esac
+            if [ "$SECONDS" -ge "$deadline" ]; then echo "::error::vscode extension e2e still $status after the wait for $EXPECTED_HEAD: $url"; exit 1; fi
+            echo "vscode check is $status for $EXPECTED_HEAD; waiting"
+            sleep 30
+          done
       - name: Summarize routed result
         if: always()
         env:
@@ -684,6 +717,7 @@ jobs:
           DOCS_GATE_RESULT: ${{ needs.docs-gate.result }}
           WORKFLOW_REF: ${{ github.ref }}
           ELIGIBILITY_RESULT: ${{ steps.eligibility.outcome }}
+          VSCODE_CHECK_RESULT: ${{ steps.vscode.outcome }}
         run: |
           status=pass message="selected implementation job succeeded"
           if [ "$EVENT_NAME" = "pull_request" ] && [ "${LABEL_NAME,,}" != "merge-ready" ]; then message="not a merge-ready request; named Merge-ready Nonrequest, never the required context"
@@ -694,6 +728,7 @@ jobs:
           elif [ "$ADMISSION_RESULT" != "success" ]; then status=fail; message="candidate admission result was $ADMISSION_RESULT: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif [ "$ADMISSION_STATUS" != "admitted" ] && [ "$ADMISSION_STATUS" != "not_applicable" ]; then status=fail; message="candidate admission status was ${ADMISSION_STATUS:-missing}: ${ADMISSION_REASON:-unknown} — ${ADMISSION_DETAIL:-refresh the exact PR/head evidence and retry}"
           elif { [ "$EVENT_NAME" = pull_request ] || [ "$EVENT_NAME" = merge_group ]; } && [ "$ELIGIBILITY_RESULT" != success ]; then status=fail; message="live eligibility no longer established for the initially admitted head/request"
+          elif [ "$EVENT_NAME" = pull_request ] && [ "$VSCODE_CHECK_RESULT" != success ]; then status=fail; message="the selected VS Code extension e2e did not succeed for the admitted head (see the vscode check step)"
           elif [ "$DOCS_DETECT_RESULT" != "success" ]; then
             status=fail
             message="docs-surface detection result was $DOCS_DETECT_RESULT"
