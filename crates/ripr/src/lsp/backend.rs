@@ -1107,16 +1107,28 @@ impl Backend {
         RefreshAttemptOutcome::Published
     }
 
-    fn open_rust_index_paths_for_root(&self, root: &Path) -> std::collections::BTreeSet<PathBuf> {
-        let Ok(documents) = self.quarantine.documents.lock() else {
+    fn invalidate_rust_index_key(&self, uri: &Uri) {
+        if let Ok(mut documents) = self.quarantine.documents.lock() {
+            documents.invalidate_rust_index_key(uri);
+        }
+    }
+
+    fn invalidate_rust_index_keys_for_events(&self, changes: &[FileEvent]) {
+        if let Ok(mut documents) = self.quarantine.documents.lock() {
+            for event in changes {
+                documents.invalidate_rust_index_keys_under(&event.uri);
+            }
+        }
+    }
+
+    pub(super) fn open_rust_index_paths_for_root(
+        &self,
+        root: &Path,
+    ) -> std::collections::BTreeSet<PathBuf> {
+        let Ok(mut documents) = self.quarantine.documents.lock() else {
             return Default::default();
         };
-        // One batch per refresh: the root and each directory are canonicalized
-        // once, not once per open document (#11763).
-        super::uri::file_uris_relative_to_root(root, documents.documents.keys())
-            .into_iter()
-            .filter(|path| path.extension().is_some_and(|extension| extension == "rs"))
-            .collect()
+        documents.open_rust_index_paths(root)
     }
 
     pub(super) async fn report_refresh_failure_after(
@@ -6329,6 +6341,7 @@ impl LanguageServer for Backend {
             self.verbose_params_bytes(&params),
         )
         .await;
+        self.invalidate_rust_index_keys_for_events(&params.changes);
         let changes = self.watched_file_change_kinds(&params.changes);
         if changes.config_changed {
             self.reload_repository_config().await;
@@ -6768,6 +6781,9 @@ impl LanguageServer for Backend {
                 .await;
             return;
         }
+        // Only the saved document's own resolution can change; a deduplicated
+        // save returned above and leaves every cached key warm.
+        self.invalidate_rust_index_key(&uri);
         match digest {
             Some(digest) => self.record_saved_content_digest_and_advance(&uri, digest),
             None => self.advance_workspace_revision(),
