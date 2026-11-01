@@ -65,11 +65,10 @@ fn any_outcome() -> ObservedOutcome {
     value
 }
 
-/// Satisfaction is never claimed by a failure-like state, and the two states
-/// that do claim it are mutually exclusive with `instrument_failure`. The exact
+/// Satisfaction is never claimed by a failure-like state. The exact
 /// membership table is deliberately not restated here: a harness that rebuilds
-/// the production `match` proves a copy, so the table stays covered by unit
-/// tests and only the safety direction is proven.
+/// the production `match` only checks a copy, so the table stays covered by
+/// unit tests and this harness verifies the safety direction only.
 #[kani::proof]
 fn failure_like_states_never_claim_satisfaction() {
     let state = any_result_state();
