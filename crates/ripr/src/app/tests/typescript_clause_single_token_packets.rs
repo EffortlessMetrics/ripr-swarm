@@ -173,3 +173,25 @@ fn added_comparison_clause_starts_no_repair() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Positive control: a pure operand swap with the mirrored operator is the same
+/// boundary written the other way round, so it keeps naming its clause.
+#[test]
+fn pure_operand_swap_names_its_clause() -> Result<(), String> {
+    let check = check_typescript("swap", "total >= 100 && ok", "100 <= total && ok")?;
+    if !check.names_discriminator("100 == total") {
+        return Err(format!("expected `100 == total`: {}", check.finding));
+    }
+    Ok(())
+}
+
+/// Discriminating negative: exchanging operands without mirroring the operator
+/// flips the predicate and must not name a boundary.
+#[test]
+fn unmirrored_operand_exchange_starts_no_repair() -> Result<(), String> {
+    let check = check_typescript("flip", "total >= 100 && ok", "100 >= total && ok")?;
+    if check.names_any_comparison() || check.packet_ready() || check.class() == Some("exposed") {
+        return Err(format!("flipped swap named a clause: {}", check.finding));
+    }
+    Ok(())
+}

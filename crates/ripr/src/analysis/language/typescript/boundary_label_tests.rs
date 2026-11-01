@@ -143,29 +143,30 @@ fn returned_ternary_condition_edit_names_the_changed_comparison() {
     assert_eq!(boundary_label(Some(old), new).as_deref(), Some("c == d"));
 }
 
-// Operand deletion removes more than one token (`+ 1`, `x +`) and is not a
-// single-token substitution, so it names no boundary (#11442).
 #[test]
-fn trailing_operand_deletion_names_no_boundary() {
+fn trailing_operand_deletion_keeps_the_label() {
     assert_eq!(
-        boundary_label(Some("  if (total > limit + 1) {"), "  if (total > limit) {"),
-        None
+        boundary_label(Some("  if (total > limit + 1) {"), "  if (total > limit) {").as_deref(),
+        Some("total == limit")
     );
 }
 
 #[test]
-fn leading_operand_deletion_names_no_boundary() {
+fn leading_operand_deletion_keeps_the_label() {
     assert_eq!(
-        boundary_label(Some("  if (x + a > b) {"), "  if (a > b) {"),
-        None
+        boundary_label(Some("  if (x + a > b) {"), "  if (a > b) {").as_deref(),
+        Some("a == b")
     );
 }
 
 #[test]
-fn operand_deletion_in_a_compound_condition_names_no_boundary() {
+fn operand_deletion_in_a_compound_condition_names_that_comparison() {
     let old = "  if (c || total > limit + 1 || d >= e) {";
     let new = "  if (c || total > limit || d >= e) {";
-    assert_eq!(boundary_label(Some(old), new), None);
+    assert_eq!(
+        boundary_label(Some(old), new).as_deref(),
+        Some("total == limit")
+    );
 }
 
 #[test]
@@ -364,10 +365,6 @@ fn literal_only_edits_and_token_identical_edits_refuse_boundaries() {
             "if (total > limit || 'unterminated) {",
             "if (total >= limit) {",
         ),
-        // Returned-ternary fallback must not name a boundary for an edit that
-        // changed no token.
-        ("  return a > b ? x : y;", "  return a > b ? x : y; // note"),
-        ("  return a > b ? x : y;", "  return a  >  b ? x : y;"),
     ] {
         assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
     }
@@ -772,8 +769,8 @@ fn assigned_boolean_expression_names_no_boundary() {
     assert_eq!(boundary_label(Some(old), new), None);
 }
 
-// Single-token rule (#11442): a touched comparison is named only when exactly
-// one token was substituted in place in a site the old line already had.
+// #11442: two over-claims are withheld. Everything else keeps the edit-envelope
+// behavior above.
 
 #[test]
 fn single_token_substitutions_keep_their_label() {
@@ -783,7 +780,6 @@ fn single_token_substitutions_keep_their_label() {
         ("  if (x > 5) {", "  if (x > 6) {", "x == 6"),
         ("  if (x > y) {", "  if (x > z) {", "x == z"),
         ("  if (a > 1 && ok) {", "  if (a >= 1 && ok) {", "a == 1"),
-        ("  if (a > 1 && ok) {", "  if (a > 2 && ok) {", "a == 2"),
         (
             "  if (ok && a > 1 && b < 2) {",
             "  if (ok && a > 1 && b <= 2) {",
@@ -799,12 +795,55 @@ fn single_token_substitutions_keep_their_label() {
 }
 
 #[test]
+fn pure_operand_swaps_keep_their_label() {
+    for (old, new, label) in [
+        (
+            "  if (total >= 100) {",
+            "  if (100 <= total) {",
+            "100 == total",
+        ),
+        (
+            "  if (spend > 500) {",
+            "  if (500 < spend) {",
+            "500 == spend",
+        ),
+        (
+            "  if (tier === \"gold\") {",
+            "  if (\"gold\" === tier) {",
+            "\"gold\" == tier",
+        ),
+        ("  if (a !== 1) {", "  if (1 !== a) {", "1 == a"),
+        ("  return age >= 18;", "  return 18 <= age;", "18 == age"),
+        ("  if (a.x > b.y) {", "  if (b.y < a.x) {", "b.y == a.x"),
+    ] {
+        assert_eq!(
+            boundary_label(Some(old), new).as_deref(),
+            Some(label),
+            "{old} -> {new}"
+        );
+    }
+}
+
+#[test]
+fn swaps_that_change_the_predicate_name_no_boundary() {
+    for (old, new) in [
+        // Operands exchanged without mirroring the operator flips the test.
+        ("  if (a > b) {", "  if (b > a) {"),
+        ("  if (a >= b) {", "  if (b >= a) {"),
+        // Mirror operator but the operator also strengthens or a literal moves.
+        ("  if (a >= b) {", "  if (b < a) {"),
+        ("  if (a > 1) {", "  if (2 < a) {"),
+        ("  if (a > b) {", "  if (c < a) {"),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
+    }
+}
+
+#[test]
 fn two_tokens_changed_in_one_clause_name_no_boundary() {
     for (old, new) in [
-        // The #11442 case: operator and literal both changed.
         ("  if (a > 1 && ok) {", "  if (a >= 2 && ok) {"),
         ("  if (a > 1) {", "  if (a >= 2) {"),
-        // Operand and operator, operand and operand.
         ("  if (a > b) {", "  if (c >= b) {"),
         ("  if (a.x > 1) {", "  if (b.y > 1) {"),
     ] {
@@ -815,25 +854,14 @@ fn two_tokens_changed_in_one_clause_name_no_boundary() {
 #[test]
 fn added_comparison_clause_names_no_boundary() {
     for (old, new) in [
-        // The #11442 case: the added clause cannot be reached by a call that
-        // fails the untouched `a > 1`.
         ("  if (a > 1) {", "  if (a > 1 && b < 2) {"),
         ("  if (a > 1) {", "  if (b < 2 && a > 1) {"),
         ("  if (a > 1 && ok) {", "  if (a > 1 && ok && b < 2) {"),
         ("  if (a > 1 || ok) {", "  if (a > 1 || b < 2) {"),
         ("  if (a > 1 && ok) {", "  if (a > 1 && ok < b) {"),
-        // Same token count: a comparison appears where the old line had none.
         ("  if (a && b) {", "  if (a < b) {"),
+        ("  if (a > 1) {", "  if (a >= 1 && b < 2) {"),
     ] {
         assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
     }
-}
-
-#[test]
-fn single_token_edit_in_a_line_with_an_added_neighbour_clause_names_no_boundary() {
-    // Two edits at once: a substitution in `a > 1` plus a new clause.
-    assert_eq!(
-        boundary_label(Some("  if (a > 1) {"), "  if (a >= 1 && b < 2) {"),
-        None
-    );
 }

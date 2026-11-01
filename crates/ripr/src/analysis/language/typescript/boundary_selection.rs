@@ -24,6 +24,34 @@ struct BoundaryLine {
     direct: bool,
 }
 
+fn operand_delimiter(text: &str) -> bool {
+    COMPARISON_OPERATORS.contains(&text)
+        || matches!(
+            text,
+            "??" | "&&"
+                | "||"
+                | "=>"
+                | "?"
+                | ":"
+                | "="
+                | "("
+                | ")"
+                | "{"
+                | "}"
+                | "["
+                | "]"
+                | ","
+                | ";"
+                | "return"
+                | "if"
+                | "else"
+                | "while"
+                | "for"
+                | "case"
+                | "yield"
+        )
+}
+
 fn ungroup<'a>(mut expression: &'a Expression<'a>) -> &'a Expression<'a> {
     while let Expression::ParenthesizedExpression(group) = expression {
         expression = &group.expression;
@@ -230,44 +258,130 @@ fn parse_line(file: &Path, line: &str, allocator: &Allocator) -> Option<Boundary
     None
 }
 
+fn mirrored_operator(operator: &str) -> Option<&'static str> {
+    Some(match operator {
+        ">" => "<",
+        "<" => ">",
+        ">=" => "<=",
+        "<=" => ">=",
+        "==" => "==",
+        "===" => "===",
+        "!=" => "!=",
+        "!==" => "!==",
+        _ => return None,
+    })
+}
+
+fn swap_parts<'a>(
+    line: &'a BoundaryLine,
+    site: &BoundarySite,
+) -> Option<(Vec<&'a str>, &'a str, Vec<&'a str>)> {
+    let tokens = &line.tokens[site.first..=site.last];
+    let mut operators = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| COMPARISON_OPERATORS.contains(&token.text.as_str()));
+    let (index, operator) = operators.next()?;
+    if operators.next().is_some() {
+        return None;
+    }
+    let left: Vec<&str> = tokens[..index].iter().map(|t| t.text.as_str()).collect();
+    let right: Vec<&str> = tokens[index + 1..]
+        .iter()
+        .map(|t| t.text.as_str())
+        .collect();
+    Some((left, operator.text.as_str(), right))
+}
+
+/// A pure operand swap: the site's operands exchange places around its single
+/// comparison operator, which becomes its mirror (unchanged for equality), so
+/// the predicate is the same boundary written the other way round. Anything
+/// else (`a > b` -> `b > a`, a swap plus another edit) is not a swap.
+fn operand_swap(new: &BoundaryLine, old: &BoundaryLine, site: &BoundarySite) -> bool {
+    if new.tokens.len() != old.tokens.len() {
+        return false;
+    }
+    let Some(prior) = old
+        .sites
+        .iter()
+        .find(|prior| prior.first == site.first && prior.last == site.last)
+    else {
+        return false;
+    };
+    let (Some((new_left, new_op, new_right)), Some((old_left, old_op, old_right))) =
+        (swap_parts(new, site), swap_parts(old, prior))
+    else {
+        return false;
+    };
+    !new_left.is_empty()
+        && !new_right.is_empty()
+        && new_left == old_right
+        && new_right == old_left
+        && mirrored_operator(old_op) == Some(new_op)
+}
+
 fn selected_text(new: &BoundaryLine, old: Option<&BoundaryLine>) -> Option<String> {
     let touched: Vec<&BoundarySite> = if let Some(old) = old {
-        // Token-identical edits (comments, whitespace) changed no behavior, so
-        // the returned-ternary fallback below must not name a boundary either.
-        if old.tokens.len() == new.tokens.len()
-            && old
-                .tokens
-                .iter()
-                .zip(&new.tokens)
-                .all(|(a, b)| a.text == b.text)
-        {
+        let shared = new.tokens.len().min(old.tokens.len());
+        let prefix = (0..shared)
+            .take_while(|&i| new.tokens[i].text == old.tokens[i].text)
+            .count();
+        if prefix == new.tokens.len() && new.tokens.len() == old.tokens.len() {
             return None;
         }
-        // Name a comparison only when exactly one token was substituted in
-        // place (#11442): same token count, one differing token, and the same
-        // comparison site already existing in the old line. Two tokens in one
-        // clause, an added comparison clause, or a removed/reordered clause
-        // cannot be steered to one boundary, so they keep the refusal.
-        let changed: Vec<usize> = if new.tokens.len() == old.tokens.len() {
-            (0..new.tokens.len())
-                .filter(|&i| new.tokens[i].text != old.tokens[i].text)
-                .collect()
-        } else {
-            Vec::new()
-        };
-        match changed.as_slice() {
-            [index] => new
-                .sites
-                .iter()
-                .filter(|site| site.first <= *index && *index <= site.last)
-                .filter(|site| {
-                    old.sites
-                        .iter()
-                        .any(|prior| prior.first == site.first && prior.last == site.last)
-                })
-                .collect(),
-            _ => Vec::new(),
+        let suffix = (0..shared - prefix)
+            .take_while(|&back| {
+                new.tokens[new.tokens.len() - 1 - back].text
+                    == old.tokens[old.tokens.len() - 1 - back].text
+            })
+            .count();
+        let end = new.tokens.len() - suffix;
+        // #11442: an added comparison clause may not be independently
+        // steerable, so it names no boundary.
+        if new.sites.len() > old.sites.len() {
+            return None;
         }
+        // #11442: more than one token replaced by more than zero tokens inside
+        // one clause is not a single discriminator, unless it is a pure
+        // operand swap of one comparison.
+        let replaced_old = old.tokens.len() - suffix - prefix;
+        let replaced_new = end - prefix;
+        let multi_token_replacement =
+            replaced_old > 0 && replaced_new > 0 && replaced_old.max(replaced_new) > 1;
+        let removed_delimiter = old.tokens[prefix..old.tokens.len() - suffix]
+            .iter()
+            .any(|token| operand_delimiter(&token.text));
+        new.sites
+            .iter()
+            .filter(|site| {
+                // Two edits may surround an unchanged comparison. The edit
+                // envelope alone cannot claim that middle comparison changed.
+                if multi_token_replacement && !operand_swap(new, old, site) {
+                    return false;
+                }
+                let site_tokens = &new.tokens[site.first..=site.last];
+                let unchanged_inside_edit = old.tokens[prefix..old.tokens.len() - suffix]
+                    .windows(site_tokens.len())
+                    .any(|window| {
+                        window
+                            .iter()
+                            .zip(site_tokens)
+                            .all(|(old, new)| old.text == new.text)
+                    });
+                if unchanged_inside_edit {
+                    return false;
+                }
+                if prefix == end {
+                    if removed_delimiter {
+                        site.first < prefix && prefix <= site.last
+                    } else {
+                        site.first <= prefix && prefix <= site.last + 1
+                    }
+                } else {
+                    prefix <= site.last && end > site.first
+                }
+            })
+            .collect()
     } else {
         new.sites.iter().collect()
     };
