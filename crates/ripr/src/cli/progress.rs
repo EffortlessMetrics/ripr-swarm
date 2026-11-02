@@ -54,6 +54,17 @@ impl ProgressPolicy {
 /// through every drill-in command).
 pub(crate) const QUIET_ENV: &str = "RIPR_QUIET";
 
+/// Prefix of every stderr progress line this sink formats. New commands must
+/// go through [`format_stage_line`] / [`format_heartbeat_line`] (or this
+/// constant) rather than restating the literal at the call site (#12103).
+pub(crate) const PROGRESS_PREFIX: &str = "ripr progress: ";
+
+/// Prefix of every `wrote <path>` narration line. The source-scan plus catalog
+/// runtime guard in `quiet_narration_guard` / `cli_progress` fail when a new
+/// command formats this literal outside the shared sink (#12103). #11955 owns
+/// which lines count as narration.
+pub(crate) const WROTE_PREFIX: &str = "ripr: wrote ";
+
 /// Environment switch that keeps (forces) the stderr progress stream when a
 /// machine format is selected and stderr is not a terminal, where progress is
 /// otherwise off by default (#11598). `--quiet` and `RIPR_QUIET` still win.
@@ -171,7 +182,7 @@ pub(crate) fn format_stage_line(
     scope: AnalysisProgressScope,
 ) -> String {
     format!(
-        "ripr progress: {} [{}]",
+        "{PROGRESS_PREFIX}{} [{}]",
         stage_token(stage),
         scope_token(scope)
     )
@@ -179,7 +190,7 @@ pub(crate) fn format_stage_line(
 
 pub(crate) fn format_heartbeat_line(stage: AnalysisProgressStage, class: &str) -> String {
     format!(
-        "ripr progress: {} still active after {class}",
+        "{PROGRESS_PREFIX}{} still active after {class}",
         stage_token(stage)
     )
 }
@@ -199,7 +210,10 @@ pub(crate) fn tty_overwrite(line: &str, previous_width: usize) -> (String, usize
 /// Fail closed: a projected line may only carry closed tokens and elapsed
 /// classes. Absolute paths, percents, ETAs, and source text are rejected.
 pub(crate) fn progress_line_is_safe(line: &str) -> bool {
-    if !line.starts_with("ripr progress: ") {
+    if line.starts_with(WROTE_PREFIX) {
+        return false;
+    }
+    if !line.starts_with(PROGRESS_PREFIX) {
         return false;
     }
     if line.len() > 80 {
@@ -212,7 +226,7 @@ pub(crate) fn progress_line_is_safe(line: &str) -> bool {
     if lowered.contains('%') || lowered.contains("eta") {
         return false;
     }
-    let payload = &line["ripr progress: ".len()..];
+    let payload = &line[PROGRESS_PREFIX.len()..];
     payload.chars().all(|ch| {
         ch.is_ascii_lowercase() || ch.is_ascii_digit() || matches!(ch, '_' | ' ' | '[' | ']' | ':')
     })
@@ -651,6 +665,56 @@ pub(crate) fn try_emit_notice(message: &str) -> bool {
 mod tests {
     use super::*;
     use std::sync::Mutex as StdMutex;
+
+    /// #12103: the production sink formats `ripr progress:` only through
+    /// [`PROGRESS_PREFIX`]. A restated literal in `format_stage_line` or
+    /// `format_heartbeat_line` would bypass that constant.
+    #[test]
+    fn progress_prefix_is_the_only_formatted_progress_literal_in_this_sink() {
+        let production = production_source(include_str!("progress.rs"));
+        let hits = production.match_indices("\"ripr progress:").count();
+        assert_eq!(
+            hits, 1,
+            "PROGRESS_PREFIX must be the only production `ripr progress:` string literal"
+        );
+        assert!(
+            production.contains("pub(crate) const PROGRESS_PREFIX"),
+            "the remaining literal must be the PROGRESS_PREFIX definition"
+        );
+        assert!(
+            production.contains("{PROGRESS_PREFIX}"),
+            "stage/heartbeat formatters must interpolate PROGRESS_PREFIX"
+        );
+        assert!(
+            format_stage_line(
+                AnalysisProgressStage::Analyzing,
+                AnalysisProgressScope::Diff
+            )
+            .starts_with(PROGRESS_PREFIX),
+            "stage lines must start with PROGRESS_PREFIX"
+        );
+        assert!(
+            format_heartbeat_line(AnalysisProgressStage::Analyzing, "2s")
+                .starts_with(PROGRESS_PREFIX),
+            "heartbeat lines must start with PROGRESS_PREFIX"
+        );
+        let wrote_hits = production.match_indices("\"ripr: wrote ").count();
+        assert_eq!(
+            wrote_hits, 1,
+            "WROTE_PREFIX must be the only production `ripr: wrote ` string literal"
+        );
+        assert!(
+            !progress_line_is_safe(&format!("{WROTE_PREFIX}target/ripr/example.json")),
+            "wrote narration carries paths and must not pass the progress-line safety gate"
+        );
+    }
+
+    fn production_source(src: &str) -> String {
+        match src.find("#[cfg(test)]") {
+            Some(index) => src[..index].to_string(),
+            None => src.to_string(),
+        }
+    }
 
     /// #11580: `RIPR_QUIET` silences progress for any value but the explicit
     /// off spellings; unset keeps it.
