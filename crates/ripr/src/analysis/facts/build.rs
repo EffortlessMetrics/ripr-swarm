@@ -192,21 +192,15 @@ fn build_index_from_paths_with_cache_and_adapters(
     let cache = RepoFileFactCache::at(root);
     // Each batch is read only when the shared loop asks for it, so the
     // previous batch's bytes are dropped before the next read.
-    let mut batches = Vec::new();
-    for chunk in paths.chunks(PARSE_BATCH_FILES) {
-        batches.push(StreamedBatch::read(root, chunk, consumed.as_deref_mut())?);
-    }
-    build_index_with_file_fact_cache_batches(
-        root,
-        batches.into_iter().map(Ok),
-        adapter,
-        fallback,
-        &cache,
-        || match attribution {
+    let batches = paths
+        .chunks(PARSE_BATCH_FILES)
+        .map(|chunk| StreamedBatch::read(root, chunk, consumed.as_deref_mut()));
+    build_index_with_file_fact_cache_batches(root, batches, adapter, fallback, &cache, || {
+        match attribution {
             MissAttribution::Named => cache.known_file_paths(),
             MissAttribution::Skipped => KnownFilePaths::default(),
-        },
-    )
+        }
+    })
 }
 
 fn build_index_with_file_fact_cache(
