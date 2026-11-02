@@ -509,19 +509,26 @@ mod tests {
     }
 
     #[test]
-    fn typed_ids_reject_cross_class_parse() {
-        assert!(matches!(
-            InstructionSemanticId::parse("instruction-instance:deadbeef"),
-            Err(_)
-        ));
-        assert!(matches!(
-            InstructionInstanceId::parse("instruction-semantic:deadbeef"),
-            Err(_)
-        ));
-        assert!(matches!(
-            InstructionSemanticId::parse("gap:67f9714ba37b3967"),
-            Err(_)
-        ));
+    fn typed_ids_reject_cross_class_parse() -> Result<(), String> {
+        match InstructionSemanticId::parse("instruction-instance:deadbeef") {
+            Err(_) => {}
+            Ok(value) => {
+                return Err(format!("expected parse failure, got {value:?}"));
+            }
+        }
+        match InstructionInstanceId::parse("instruction-semantic:deadbeef") {
+            Err(_) => {}
+            Ok(value) => {
+                return Err(format!("expected parse failure, got {value:?}"));
+            }
+        }
+        match InstructionSemanticId::parse("gap:67f9714ba37b3967") {
+            Err(_) => {}
+            Ok(value) => {
+                return Err(format!("expected parse failure, got {value:?}"));
+            }
+        }
+        Ok(())
     }
 
     #[test]

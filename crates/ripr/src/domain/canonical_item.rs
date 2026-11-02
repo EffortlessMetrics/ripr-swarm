@@ -113,19 +113,26 @@ mod tests {
     }
 
     #[test]
-    fn probe_and_action_ids_reject_as_canonical_item() {
-        assert!(matches!(
-            CanonicalItemId::from_canonical_gap_id("probe:demo"),
-            Err(_)
-        ));
-        assert!(matches!(
-            CanonicalItemId::from_gap_id_alias("action:demo"),
-            Err(_)
-        ));
-        assert!(matches!(
-            CanonicalItemId::from_canonical_gap_id("seam:demo"),
-            Err(_)
-        ));
+    fn probe_and_action_ids_reject_as_canonical_item() -> Result<(), String> {
+        match CanonicalItemId::from_canonical_gap_id("probe:demo") {
+            Err(_) => {}
+            Ok(value) => {
+                return Err(format!("expected parse failure, got {value:?}"));
+            }
+        }
+        match CanonicalItemId::from_gap_id_alias("action:demo") {
+            Err(_) => {}
+            Ok(value) => {
+                return Err(format!("expected parse failure, got {value:?}"));
+            }
+        }
+        match CanonicalItemId::from_canonical_gap_id("seam:demo") {
+            Err(_) => {}
+            Ok(value) => {
+                return Err(format!("expected failure, got {value:?}"));
+            }
+        }
+        Ok(())
     }
 
     #[test]
