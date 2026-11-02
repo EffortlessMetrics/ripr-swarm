@@ -30,8 +30,9 @@ use super::seam_cache::{
     CLASSIFIED_SEAM_STORE_FAILURE_PATH, CORPUS_FINGERPRINT_STORE_FAILURE_PATH, CacheLoad,
     CachedSeamLimitInfo, CorpusFingerprintLookup, FileFactCacheStats, FileFactStoreError,
     FileFactStoreStage, FilesContentHashBuilder, RepoCorpusFingerprintCache, RepoSeamCacheKey,
-    RepoSeamFactCache, WorkspaceKeyContext, classified_seam_cache_store_limit,
-    compact_classified_seam_cache_store_limit, corpus_fingerprint,
+    RepoSeamFactCache, WorkspaceKeyContext, claim_base_untrusted_reason_emission,
+    classified_seam_cache_store_limit, compact_classified_seam_cache_store_limit,
+    corpus_fingerprint,
 };
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
@@ -426,7 +427,11 @@ fn inventory_classified_seams_report_collect(
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
-                eprintln!("ripr: repo seam cache entry ignored ({reason})");
+                // #12432: a run-stable base-class reason reports once per
+                // base per process; ordinary per-entry reasons always print.
+                if claim_base_untrusted_reason_emission(&reason) {
+                    eprintln!("ripr: repo seam cache entry ignored ({reason})");
+                }
             }
         }
     }
@@ -491,7 +496,11 @@ fn inventory_classified_seams_report_collect(
             trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
             // Advisory: surface the reason so operators can see why a
             // warm path degraded to cold. Never fail analysis.
-            eprintln!("ripr: repo seam cache entry ignored ({reason})");
+            // #12432: a run-stable base-class reason reports once per base
+            // per process; ordinary per-entry reasons always print.
+            if claim_base_untrusted_reason_emission(&reason) {
+                eprintln!("ripr: repo seam cache entry ignored ({reason})");
+            }
         }
     }
     let compute_started = Instant::now();
@@ -862,7 +871,9 @@ pub(crate) fn inventory_seam_grip_class_counts_at_with_config(
         CacheLoad::Hit(cached) => return Ok(cached),
         CacheLoad::Miss => {}
         CacheLoad::CorruptIgnored { reason } => {
-            eprintln!("ripr: repo seam count cache entry ignored ({reason})");
+            if claim_base_untrusted_reason_emission(&reason) {
+                eprintln!("ripr: repo seam count cache entry ignored ({reason})");
+            }
         }
     }
     let counts = inventory_seam_grip_class_counts_from_state_with_config(&state, config)?;
@@ -912,7 +923,9 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
                     "corrupt_ignored",
                     cache_started.elapsed(),
                 );
-                eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
+                if claim_base_untrusted_reason_emission(&reason) {
+                    eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
+                }
             }
         }
     }
@@ -948,7 +961,9 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
                 "corrupt_ignored",
                 cache_started.elapsed(),
             );
-            eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
+            if claim_base_untrusted_reason_emission(&reason) {
+                eprintln!("ripr: compact repo seam cache entry ignored ({reason})");
+            }
         }
     }
 
@@ -2007,7 +2022,7 @@ mod bound_inventory_reuse {
 mod persisted_bound_inventory {
     use super::{
         FileFactCacheStats, RepoSeamCacheKey, ScopedClassifiedSeamInventory, SeamLimitInfo,
-        trace_latency_phase,
+        claim_base_untrusted_reason_emission, trace_latency_phase,
     };
     use crate::analysis::seam_cache::{
         CacheLoad, CachedSeamLimitInfo, PersistedScopedInventory, PersistedSeamLimit,
@@ -2030,7 +2045,9 @@ mod persisted_bound_inventory {
                     "persisted_result_corrupt_ignored",
                     Duration::ZERO,
                 );
-                eprintln!("ripr: scoped inventory cache entry ignored ({reason})");
+                if claim_base_untrusted_reason_emission(&reason) {
+                    eprintln!("ripr: scoped inventory cache entry ignored ({reason})");
+                }
                 None
             }
         }

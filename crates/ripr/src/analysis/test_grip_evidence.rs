@@ -422,6 +422,32 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
     evidence_for_seam_with_context(seam, &context)
 }
 
+/// Whether a test that pins another function lends this seam no oracle
+/// (#12060 match arms, #12434 predicate boundaries). Both kinds read a value
+/// another indexed function also produces, so an assertion on that function
+/// says nothing about the owner's branch.
+///
+/// A predicate boundary refuses only when some related test is tied to the
+/// owner by a relation that establishes reach. With no such test every
+/// related test is proximity-only, activation stays unknown, and stripping
+/// the lent oracle would move the seam from `activation_unknown` to
+/// `reachable_unrevealed` (rule 4 of seam classification), claiming tests run
+/// a seam nothing is seen calling. Callers pass the complete relation set,
+/// never a rank-limited or per-test slice, so every entry point agrees.
+fn refuses_other_function_oracle(
+    seam: &RepoSeam,
+    relations: impl IntoIterator<Item = RelationReason>,
+    owner_is_function: bool,
+) -> bool {
+    match seam.kind() {
+        SeamKind::MatchArm => true,
+        SeamKind::PredicateBoundary => relations
+            .into_iter()
+            .any(|reason| reason.establishes_reach(owner_is_function)),
+        _ => false,
+    }
+}
+
 /// #12060: the related tests as the stage evidence should read them. A match
 /// arm names an enum variant other functions also return, so a test related
 /// to the owner only by file or module cannot confirm the arm through an
@@ -429,15 +455,16 @@ pub(crate) fn evidence_for_seam(seam: &RepoSeam, index: &RustIndex) -> TestGripE
 /// owner (`assert_eq!(reduce(..), Reduction::Over(..))` for an arm of
 /// `consume`). Repo relation also ties such a test by assertion affinity,
 /// because the assertion names the arm's variant, so that tie is refused
-/// the same way. `ripr check` refuses the same assertion per assertion
-/// (RIPR-SPEC-0094, #11552); the repo seam must agree.
+/// the same way. A predicate boundary in the owner (`wait < 5` in `consume`)
+/// is refused alike (#12434). `ripr check` refuses the same assertion per
+/// assertion (RIPR-SPEC-0094, #11552); the repo seam must agree.
 fn credited_related_tests<'a>(
-    seam: &RepoSeam,
     context: &CompactGripContext<'_>,
     owner_fn: Option<&FunctionSummary>,
     related: &[(&'a TestSummary, RelationReason)],
+    refuse_other_function_oracle: bool,
 ) -> Vec<std::borrow::Cow<'a, TestSummary>> {
-    let owner_reach = (seam.kind() == SeamKind::MatchArm)
+    let owner_reach = refuse_other_function_oracle
         .then(|| owner_fn.map(|owner| context.transitive_reach.owner_reach(&owner.name)))
         .flatten();
     related
@@ -486,7 +513,12 @@ fn evidence_for_seam_with_context(
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
-    let credited_views = credited_related_tests(seam, context, owner_fn, &related_reasons);
+    let refuse = refuses_other_function_oracle(
+        seam,
+        related_reasons.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
+    let credited_views = credited_related_tests(context, owner_fn, &related_reasons, refuse);
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);
@@ -2285,7 +2317,14 @@ pub(crate) fn compact_evidence_for_seam(
         .take(COMPACT_RELATED_TEST_LIMIT)
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
-    let credited_views = credited_related_tests(seam, context, owner_fn, &limited_reasons);
+    // The gate reads every ranked relation, not the rank-limited slice, so the
+    // compact view agrees with the full one (#12434).
+    let refuse = refuses_other_function_oracle(
+        seam,
+        related_reasons.iter().map(|(_, reason)| *reason),
+        owner_fn.is_some(),
+    );
+    let credited_views = credited_related_tests(context, owner_fn, &limited_reasons, refuse);
     let credited: Vec<&TestSummary> = credited_views.iter().map(AsRef::as_ref).collect();
     let propagate = propagate_evidence(seam, &credited, owner_fn, context.index, pin_syntax);
     let observe = observe_evidence(&credited);

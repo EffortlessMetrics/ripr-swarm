@@ -5998,6 +5998,47 @@ mod tests {
         Ok(())
     }
 
+    /// #6919: withheld signals that disable crate-root routing in the full index
+    /// must not leave named mode routing a withheld crate root by path alone.
+    #[test]
+    fn dependent_scope_named_routing_matches_full_for_withheld_gaps() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let gauge_test = "#[test]\nfn gauge_pins_both_arms() {\n    \
+                          assert_eq!(scope_a::quarble_gauge(true), true);\n    \
+                          assert_eq!(scope_a::quarble_gauge(false), false);\n}\n";
+        let private_glob = "use proptest::prelude::*;\n\npub fn unrelated() -> u8 {\n    1\n}\n";
+
+        let assert_named_equals_full =
+            |e_source: &str, extra: &[(&str, &str)]| -> Result<(), String> {
+                let root = temp_root("dependent-scope-6919")?;
+                write_dependent_scope_workspace(&root, e_source)?;
+                for (path, source) in extra {
+                    write(&root.join(path), source)?;
+                }
+                write(&root.join("a/tests/gauge_tests.rs"), gauge_test)?;
+                let (full, _, _) = scoped_findings(&root, DependentScopeMode::Full)?;
+                let (named, _, _) = scoped_findings(&root, DependentScopeMode::NameAdmitted)?;
+                assert_eq!(
+                    named, full,
+                    "name-admitted findings must equal the full closure's for {e_source:?}"
+                );
+                Ok(())
+            };
+
+        assert_named_equals_full(private_glob, &[("e/src/broken.rs", "fn broken( {")])?;
+        assert_named_equals_full(
+            &format!(
+                "{private_glob}\n#[/*c*/ cfg_attr(unix, path = \"unix.rs\")]\nmod platform;\n"
+            ),
+            &[],
+        )?;
+        assert_named_equals_full(
+            &format!("{private_glob}\n#[\u{00a0}path = \"unix.rs\"]\nmod platform;\n"),
+            &[],
+        )?;
+        Ok(())
+    }
+
     /// #5320: a changed root-package file has no package prefix, so the
     /// related-test package guard does not apply and any indexed test may
     /// relate by name. The full selection stays.
