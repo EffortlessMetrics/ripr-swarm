@@ -17,12 +17,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub(crate) use adapters::{
-    AdapterInput, repo_adapter_input, retain_classified_seams, retain_finding_projection,
+    AdapterInput, from_classified_seam_with_input, from_finding_with_input, repo_adapter_input,
+    retain_classified_seams, retain_finding_projection,
 };
 #[cfg(test)]
-pub(crate) use adapters::{
-    from_classified_seam, from_classified_seam_with_input, from_finding, from_finding_with_input,
-};
+pub(crate) use adapters::{from_classified_seam, from_finding};
 #[cfg(test)]
 pub(crate) use parity::{ParityDisposition, ParityReport, compare_pair, pair_by_portable_id};
 pub(in crate::analysis) use relations::RelationWitness;

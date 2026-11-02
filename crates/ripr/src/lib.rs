@@ -71,6 +71,7 @@ mod build_commit_record;
 mod build_identity;
 // Staged RepairAttempt edit-cage contract. #3163 connects the repository
 // baseline/delta producer before any public receipt projection consumes it.
+mod change_verification_plan_digest;
 #[cfg_attr(
     not(test),
     expect(
