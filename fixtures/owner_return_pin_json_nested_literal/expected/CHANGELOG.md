@@ -265,15 +265,3 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
-
-## Pending — owner_return_pin_json_nested_literal (22)
-
-Reason:
-RIPR-SPEC-0240: #10162 indirect-owner item scope decisions remap owner-return-pin fixtures to static_unknown (rebase #12368 onto main)
-
-Command:
-`cargo xtask goldens bless owner_return_pin_json_nested_literal --reason "..."`
-
-Updated:
-- `expected/check.json`
-- `expected/human.txt`
