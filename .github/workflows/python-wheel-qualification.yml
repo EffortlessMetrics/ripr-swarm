@@ -166,7 +166,7 @@ jobs:
             cat "${selection}" >> "${GITHUB_OUTPUT}"
           fi
 
-  # Run the unchanged dev/test source contract alongside the release build.
+  # Run the source contract and stage its ordinary-test runner beside the release build.
   # Both producers remain mandatory; consumption waits for both to succeed.
   source-contract:
     needs: applicability
@@ -174,6 +174,9 @@ jobs:
     name: Python package source contract
     timeout-minutes: ${{ contains(toJSON(inputs), '"subject_sha"') && 8 || 20 }}
     runs-on: ubuntu-22.04
+    outputs:
+      ordinary_runner_sha256: ${{ steps.ordinary_runner.outputs.runner_sha256 }}
+      ordinary_source_tree: ${{ steps.ordinary_runner.outputs.source_tree }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -196,6 +199,59 @@ jobs:
           set -euo pipefail
           cargo xtask check-release-targets
           cargo test -p xtask --locked policy::distribution:: -- --nocapture
+
+      - name: Stage the exact-source ordinary integration runner
+        id: ordinary_runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="${GITHUB_WORKSPACE}/target/ripr/python-ordinary-runner"
+          mkdir -p "$(dirname "${evidence}")"
+          mkdir "${evidence}"
+          checkout_head="$(git rev-parse HEAD)"
+          test "${checkout_head}" = "${CANDIDATE_SHA,,}"
+          source_tree="$(git rev-parse 'HEAD^{tree}')"
+          rustc --version --verbose > "${evidence}/rustc.txt"
+          cargo --version --verbose > "${evidence}/cargo.txt"
+          set +e
+          cargo test -p ripr --locked --test boundary_gap_closure --no-run --message-format=json \
+            > "${evidence}/cargo-build.jsonl" 2> "${evidence}/cargo-build.stderr"
+          build_status=$?
+          set -e
+          printf '%s\n' "${build_status}" > "${evidence}/build-exit-status.txt"
+          cat "${evidence}/cargo-build.stderr"
+          test "${build_status}" -eq 0
+          runner="$(jq -ers '
+            [.[] | select(.reason == "compiler-artifact"
+              and .target.name == "boundary_gap_closure" and .target.kind == ["test"]
+              and .profile.test == true and (.executable | type) == "string")]
+            | if length == 1 then .[0].executable
+              else error("expected exactly one boundary_gap_closure test executable") end
+          ' "${evidence}/cargo-build.jsonl")"
+          test -f "${runner}"
+          test -x "${runner}"
+          install -m 755 "${runner}" "${evidence}/boundary_gap_closure"
+          runner_sha256="$(sha256sum "${evidence}/boundary_gap_closure" | awk '{print $1}')"
+          checkout_after="$(git rev-parse HEAD)"
+          test "${checkout_after}" = "${checkout_head}"
+          git diff --exit-code HEAD -- > "${evidence}/source-diff.txt"
+          jq -n --arg candidate_sha "${checkout_head}" --arg candidate_tree "${source_tree}" \
+            --arg runner_sha256 "${runner_sha256}" --arg compiler_artifact "${runner}" \
+            '{candidate_sha:$candidate_sha, candidate_tree:$candidate_tree,
+              runner_sha256:$runner_sha256, compiler_artifact:$compiler_artifact,
+              test_selector:"ordinary_daily_loop::ordinary_loop_preserves_production_subject_and_native_outcome",
+              claim:"test runner only; the analyzer must come from the installed wheel"}' \
+            > "${evidence}/runner-receipt.json"
+          printf 'runner_sha256=%s\nsource_tree=%s\n' "${runner_sha256}" "${source_tree}" >> "${GITHUB_OUTPUT}"
+
+      - name: Retain ordinary runner source and build evidence
+        if: ${{ always() && steps.ordinary_runner.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ripr-python-ordinary-runner-${{ env.CANDIDATE_SHA }}
+          path: target/ripr/python-ordinary-runner/
+          if-no-files-found: error
+          retention-days: 7
 
   build-wheel:
     needs: applicability
@@ -560,6 +616,8 @@ jobs:
       RIPR_PYTHON_VERSION: ${{ needs.build-wheel.outputs.python_version }}
       EXPECTED_PAYLOAD_SHA256: ${{ needs.build-wheel.outputs.payload_sha256 }}
       EXPECTED_WHEEL_SHA256: ${{ needs.build-wheel.outputs.wheel_sha256 }}
+      EXPECTED_ORDINARY_RUNNER_SHA256: ${{ needs.source-contract.outputs.ordinary_runner_sha256 }}
+      EXPECTED_ORDINARY_SOURCE_TREE: ${{ needs.source-contract.outputs.ordinary_source_tree }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -744,6 +802,119 @@ jobs:
               and (.why | contains("empty result is not Rust-grade clean")))
           ' "${disabled_json}" >/dev/null
           echo "PROJECT_FIXTURE=${fixture}" >> "${GITHUB_ENV}"
+
+      - name: Download the ordinary test runner for the installed pip consumer
+        if: ${{ matrix.client == 'pip' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: ripr-python-ordinary-runner-${{ env.CANDIDATE_SHA }}
+          path: ordinary-runner
+
+      # Installation and the Python journey above stay Rust-free. This later
+      # toolchain is only for the ordinary fixture's real native project tests.
+      - name: Provision Rust only for the ordinary fixture native test
+        if: ${{ matrix.client == 'pip' }}
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Run the strict installed ordinary journey
+        id: ordinary
+        if: ${{ matrix.client == 'pip' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="${GITHUB_WORKSPACE}/ordinary-evidence"
+          mkdir "${output}"
+          trap 'hook_status=$?; printf "%s\n" "${hook_status}" > "${output}/hook-exit-status.txt"' EXIT
+          test ! -e "${GITHUB_WORKSPACE}/.git"
+          test ! -e "${GITHUB_WORKSPACE}/Cargo.toml"
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
+          [[ "${EXPECTED_ORDINARY_SOURCE_TREE}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${EXPECTED_ORDINARY_RUNNER_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          [[ "${EXPECTED_PAYLOAD_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          test -n "${RIPR_NATIVE_VERSION}"
+          [[ "${CONSUMER_EXECUTABLE}" = /* ]]
+          test -x "${CONSUMER_EXECUTABLE}"
+          runner="${GITHUB_WORKSPACE}/ordinary-runner/boundary_gap_closure"
+          selector='ordinary_daily_loop::ordinary_loop_preserves_production_subject_and_native_outcome'
+          expected_version="ripr ${RIPR_NATIVE_VERSION} (${CANDIDATE_SHA,,})"
+          test "$(sha256sum "${runner}" | awk '{print $1}')" = "${EXPECTED_ORDINARY_RUNNER_SHA256}"
+          jq -e --arg sha "${CANDIDATE_SHA,,}" --arg tree "${EXPECTED_ORDINARY_SOURCE_TREE}" \
+            --arg digest "${EXPECTED_ORDINARY_RUNNER_SHA256}" --arg selector "${selector}" \
+            '.candidate_sha == $sha and .candidate_tree == $tree
+              and .runner_sha256 == $digest and .test_selector == $selector' \
+            ordinary-runner/runner-receipt.json > /dev/null
+          jq -e --arg sha "${CANDIDATE_SHA,,}" --arg tree "${EXPECTED_ORDINARY_SOURCE_TREE}" \
+            --arg digest "${EXPECTED_PAYLOAD_SHA256}" --arg wheel "${EXPECTED_WHEEL_SHA256}" \
+            '.candidate_sha == $sha and .candidate_tree == $tree
+              and .wheel.installed_payload_sha256 == $digest and .wheel.sha256 == $wheel' \
+            evidence/wheel-receipt.json > /dev/null
+          cp ordinary-runner/runner-receipt.json evidence/wheel-receipt.json "${output}/"
+          chmod +x "${runner}"
+          native_cargo="$(rustup which --toolchain 1.95.0 cargo)"
+          native_rustc="$(rustup which --toolchain 1.95.0 rustc)"
+          native_path="$(dirname "${native_cargo}"):${CONSUMER_PATH}"
+          "${native_cargo}" --version --verbose > "${output}/cargo.txt"
+          "${native_rustc}" --version --verbose > "${output}/rustc.txt"
+          grep -E '^cargo 1\.95\.0 ' "${output}/cargo.txt"
+          grep -E '^rustc 1\.95\.0 ' "${output}/rustc.txt"
+          scratch="${RUNNER_TEMP}/ordinary-native-fixtures"
+          mkdir "${scratch}"
+          journey="${output}/journey"
+          ordinary_env=(env -i HOME="${HOME}" PATH="${native_path}" TMPDIR="${scratch}"
+            RUSTC="${native_rustc}" RUSTUP_TOOLCHAIN=1.95.0 CARGO_NET_OFFLINE=true CARGO_TERM_COLOR=never
+            RIPR_ORDINARY_MODE=installed RIPR_ORDINARY_INSTALLED_BINARY="${CONSUMER_EXECUTABLE}"
+            RIPR_ORDINARY_EXPECTED_SHA256="${EXPECTED_PAYLOAD_SHA256}"
+            RIPR_ORDINARY_EXPECTED_VERSION="${expected_version}" RIPR_ORDINARY_EVIDENCE_DIR="${journey}")
+          jq -n --arg candidate_sha "${CANDIDATE_SHA,,}" --arg runner "${runner}" \
+            --arg runner_sha256 "${EXPECTED_ORDINARY_RUNNER_SHA256}" --arg binary "${CONSUMER_EXECUTABLE}" \
+            --arg payload_sha256 "${EXPECTED_PAYLOAD_SHA256}" --arg version "${expected_version}" \
+            --arg selector "${selector}" --arg evidence "${journey}" \
+            '{candidate_sha:$candidate_sha, runner:$runner, runner_sha256:$runner_sha256,
+              mode:"installed", installed_binary:$binary, payload_sha256:$payload_sha256,
+              full_version:$version, selector:$selector, evidence:$evidence}' > "${output}/invocation.json"
+          "${ordinary_env[@]}" "${runner}" "${selector}" --exact --list > "${output}/selected-tests.txt"
+          test "$(grep -Fxc "${selector}: test" "${output}/selected-tests.txt")" -eq 1
+          test "$(grep -Ec ': (test|benchmark)$' "${output}/selected-tests.txt")" -eq 1
+          set +e
+          "${ordinary_env[@]}" "${runner}" "${selector}" --exact --nocapture \
+            > "${output}/runner.stdout" 2> "${output}/runner.stderr"
+          native_status=$?
+          set -e
+          printf '%s\n' "${native_status}" > "${output}/native-exit-status.txt"
+          cat "${output}/runner.stdout" "${output}/runner.stderr"
+          test "${native_status}" -eq 0
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "${output}/runner.stdout"
+          resolved="$(realpath "${CONSUMER_EXECUTABLE}")"
+          jq -e --arg binary "${resolved}" --arg digest "sha256:${EXPECTED_PAYLOAD_SHA256}" \
+            --arg version "${expected_version}" \
+            '.resolved_binary == $binary and .sha256 == $digest and .full_version == $version' \
+            "${journey}/admitted.json" > /dev/null
+          jq -e '.state == "completed" and .input_kind == "admitted_installed_executable"
+            and .disposable_roots_removed == true and .positive_native.selected == 1
+            and .positive_native.executed == 1 and .positive_native.passed == 1
+            and .positive_native.failed == 0 and .positive_native.ignored == 0
+            and .positive_native.native_exit_code == 0' "${journey}/completed.json" > /dev/null
+          for command in "${journey}"/command-*; do
+            test -s "${command}/command.json"
+            test -s "${command}/result.json"
+            test -f "${command}/stdout"
+            test -f "${command}/stderr"
+          done
+          test "$(sha256sum "${runner}" | awk '{print $1}')" = "${EXPECTED_ORDINARY_RUNNER_SHA256}"
+          test "$(sha256sum "${CONSUMER_EXECUTABLE}" | awk '{print $1}')" = "${EXPECTED_PAYLOAD_SHA256}"
+          test -z "$(find "${scratch}" -mindepth 1 -print -quit)"
+          test ! -e "${PLANTED_MARKER}"
+
+      - name: Retain installed ordinary identities, logs, and native outcomes
+        if: ${{ always() && matrix.client == 'pip' && steps.ordinary.outcome != 'skipped' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ripr-python-ordinary-installed-${{ env.CANDIDATE_SHA }}
+          path: ordinary-evidence/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Reinstall and uninstall cleanly
         shell: bash
