@@ -11151,6 +11151,7 @@ tests = [
   "crates/ripr/src/cli/rerun.rs::tests::human_rerun_report_names_current_state_only_boundary",
   "crates/ripr/src/cli/rerun.rs::tests::human_rerun_report_names_explicit_static_movement",
   "crates/ripr/src/cli/rerun.rs::tests::canonical_gap_records_preserve_multiple_anchored_scopes",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::diff_scoped_shared_preparation_serves_two_rust_scopes_once",
   "crates/ripr/src/cli/rerun.rs::tests::canonical_gap_duplicate_projection_deduplicates_scope_and_commands",
   "crates/ripr/src/cli/rerun.rs::tests::canonical_gap_conflicting_receipt_commands_remain_explicit",
   "crates/ripr/src/cli/rerun.rs::tests::failed_root_canonicalizations_do_not_compare_equal",

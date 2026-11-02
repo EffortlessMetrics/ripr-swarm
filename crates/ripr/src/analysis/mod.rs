@@ -146,11 +146,13 @@ pub(crate) use seam_inventory::file_fact_store_failure_rows;
 #[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
-    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, FileSeamIndex,
-    PilotInventoryDefault, REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory,
-    ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
-    apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
-    classify_seams_in_files_at_with_config, diff_only_rust_files,
+    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+    DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
+    PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
+    REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
+    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
+    classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
+    diff_only_rust_files, evaluate_diff_scoped_classified_seams_from_prepared,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
@@ -158,9 +160,9 @@ pub(crate) use seam_inventory::{
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config,
     inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config,
-    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
-    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
-    workspace_cache_key_at_with_config,
+    prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
+    scoped_file_seams, seam_kind_for_probe_family,
+    workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
@@ -173,6 +175,7 @@ pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
 pub(crate) use workspace::apply_module_graph_evidence;
+pub(crate) use workspace::changed_source_files_absent_from_worktree;
 pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
 pub(crate) use workspace::is_test_surface_path;
