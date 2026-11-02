@@ -1215,6 +1215,116 @@ pub(crate) fn validate_cross_language_oracle_graph_fixture_corpus_at(
     Ok(())
 }
 
+const DOTNET_EVIDENCE_CONTRACT_CORPUS_ROOT: &str = "fixtures/dotnet-evidence-contract-corpus";
+const DOTNET_EVIDENCE_CONTRACT_REQUIRED_CASES: &[&str] = &[
+    "multi_targeting_disjoint_contexts",
+    "generated_member_requires_generator_scope",
+    "csharp_overload_signatures_separate",
+    "property_probe_excludes_backing_field",
+    "theory_registration_without_activation",
+    "cross_language_call_without_edge",
+    "fsharp_inference_unresolved",
+    "visualbasic_late_binding",
+    "package_reference_without_lock",
+    "mstest_language_scoped_identities",
+    "reject_synthetic_dotnet_semantic_language",
+    "reject_unresolved_target_universal_claim",
+];
+
+pub(crate) fn validate_dotnet_evidence_contract_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new(DOTNET_EVIDENCE_CONTRACT_CORPUS_ROOT);
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                ".NET evidence contract fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    let spec_path = root.join("SPEC.md");
+    if spec_path.exists() {
+        let body = read_text_lossy(&spec_path)?;
+        if !body.contains("RIPR-SPEC-0393") {
+            violations.push(".NET evidence contract SPEC.md must name RIPR-SPEC-0393".to_string());
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !body.contains(heading) {
+                violations.push(format!(
+                    ".NET evidence contract SPEC.md must contain the `{heading}` section"
+                ));
+            }
+        }
+    }
+    let corpus_path = root.join("corpus.json");
+    if !corpus_path.exists() {
+        return Ok(());
+    }
+    let raw = read_text_lossy(&corpus_path)?;
+    let value: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(value) => value,
+        Err(error) => {
+            violations.push(format!(
+                ".NET evidence contract corpus.json is invalid JSON: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    let Some(kind) = value.get("kind").and_then(|v| v.as_str()) else {
+        violations.push(".NET evidence contract corpus must declare kind".to_string());
+        return Ok(());
+    };
+    if kind != "dotnet_evidence_contract_corpus" {
+        violations.push(format!(
+            ".NET evidence contract corpus kind must be dotnet_evidence_contract_corpus, got {kind}"
+        ));
+    }
+    let Some(spec) = value.get("spec").and_then(|v| v.as_str()) else {
+        violations.push(".NET evidence contract corpus must declare spec".to_string());
+        return Ok(());
+    };
+    if !spec.contains("RIPR-SPEC-0393") {
+        violations.push(format!(
+            ".NET evidence contract corpus spec must reference RIPR-SPEC-0393, got {spec}"
+        ));
+    }
+    let Some(cases) = value.get("cases").and_then(|v| v.as_array()) else {
+        violations.push(".NET evidence contract corpus must declare a cases array".to_string());
+        return Ok(());
+    };
+    let mut seen = BTreeSet::<String>::new();
+    for (index, case) in cases.iter().enumerate() {
+        let Some(id) = case.get("id").and_then(|v| v.as_str()) else {
+            violations.push(format!(".NET evidence contract case {index} is missing id"));
+            continue;
+        };
+        if !seen.insert(id.to_string()) {
+            violations.push(format!(".NET evidence contract case {id} is duplicated"));
+        }
+        let Some(expect) = case.get("expect").and_then(|v| v.as_str()) else {
+            violations.push(format!(
+                ".NET evidence contract case {id} is missing expect"
+            ));
+            continue;
+        };
+        if expect != "accept" && expect != "reject" {
+            violations.push(format!(
+                ".NET evidence contract case {id} expect must be accept or reject, got {expect}"
+            ));
+        }
+    }
+    for required in DOTNET_EVIDENCE_CONTRACT_REQUIRED_CASES {
+        if !seen.contains(*required) {
+            violations.push(format!(
+                ".NET evidence contract corpus is missing case {required}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_bun_ub_cross_language_dogfood_fixture_corpus(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {

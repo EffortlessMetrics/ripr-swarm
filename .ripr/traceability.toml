@@ -604,6 +604,8 @@ tests = [
   "crates/ripr/src/analysis/seam_cache/semantic_identity_tests.rs::same_generation_classified_builds_coexist_without_replaying_each_other",
   "crates/ripr/src/analysis/test_grip_evidence/tests/warm_entrypoint.rs::evidence_entrypoint_dispatches_warm_at_1000_but_not_999",
   "crates/ripr/src/analysis/test_grip_evidence/tests/warm_entrypoint.rs::evidence_entrypoint_cancelled_1000_pays_zero_warm_scans",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::cancelled_evidence_pass_releases_provisional_shared_grips",
+  "crates/ripr/src/output/shared_grip_consumer_matrix_tests.rs::shared_grip_consumer_matrix_projects_without_reinterning",
   "crates/ripr/src/analysis/test_grip_evidence/tests/module_extraction.rs::module_extraction_controls",
   "crates/ripr/src/analysis/test_grip_evidence/tests/module_extraction.rs::module_extraction_repair_card_keeps_indexed_unit_target",
   "crates/ripr/src/analysis/test_grip_evidence/related_tests/visibility.rs::tests::module_extraction_visibility_requires_ordinary_module_placement",
@@ -13900,6 +13902,12 @@ tests = [
   "crates/ripr/src/app/progress.rs::tests::cancelled_token_through_check_emits_cancelled_not_completed",
   "crates/ripr/src/cli/progress.rs::tests::non_tty_stage_lines_are_newline_delimited_and_path_free",
   "crates/ripr/src/cli/progress.rs::tests::unknown_totals_never_render_as_percentage_or_eta",
+  "crates/ripr/src/cli/progress.rs::tests::known_seam_totals_render_processed_n_of_total_without_slash_or_percent",
+  "crates/ripr/src/cli/progress.rs::tests::heartbeat_repeats_last_honest_units_without_slash",
+  "crates/ripr/src/cli/progress.rs::tests::oversized_unit_token_is_omitted_rather_than_rendered_unsafe",
+  "crates/ripr/src/app/progress.rs::tests::repo_inventory_with_progress_forwards_honest_seam_units",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::evidence_for_seams_reports_honest_units_to_the_inventory_listener",
+  "crates/ripr/src/analysis/inventory_progress.rs::tests::nested_listeners_restore_the_outer_reporter",
   "crates/ripr/src/cli/progress.rs::tests::tty_short_run_does_not_flash_completed",
   "crates/ripr/src/cli/progress.rs::tests::tty_short_failure_still_projects_failed",
   "crates/ripr/src/cli/progress.rs::tests::tty_and_non_tty_share_stage_tokens",
@@ -13946,6 +13954,8 @@ code = [
   "crates/ripr/src/cli/commands/check.rs",
   "crates/ripr/src/cli/commands/pilot.rs",
   "crates/ripr/src/analysis/resource_cost.rs",
+  "crates/ripr/src/analysis/inventory_progress.rs",
+  "crates/ripr/src/analysis/test_grip_evidence.rs",
   "crates/ripr/src/cli/commands/pilot_timings.rs",
   "crates/ripr/src/cli/help/core.rs",
 ]
@@ -15157,6 +15167,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_test_module_shadow_of_the_receiver_refuses_a_method_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_same_name_type_outside_the_test_module_does_not_shadow",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_same_line_sibling_module_does_not_shadow",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_same_line_sibling_module_import_does_not_refuse_sibling_test",
   "crates/ripr/tests/clone_field_whole_equality.rs::a_test_module_shadow_of_the_receiver_is_not_exposed",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_macro_generated_test_module_shadow_of_the_receiver_refuses_the_clone_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_nested_production_module_does_not_shadow_its_own_owner_pin",
@@ -15170,6 +15181,7 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::the_indexed_helper_assertion_is_the_admitted_one",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::only_producer_credited_helper_calls_lend_an_assertion",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::a_helper_scoped_assert_eq_binding_refuses_the_loan",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::a_one_line_helper_scoped_assert_eq_binding_refuses_the_loan",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::a_borrowed_assertion_takes_neither_the_path_nor_the_let_bound_pin",
   "crates/ripr/src/analysis/classify/owner_pin/tests/helper_pins.rs::a_helper_that_names_the_owner_twice_lends_nothing",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_out_of_line_parent_module_shadow_of_the_receiver_refuses_the_pin",
@@ -19535,6 +19547,12 @@ tests = [
   "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_equivalent_binding_edits_keep_degenerate_literals",
   "crates/ripr/tests/framework_oracle_limit.rs::a_fixture_receiver_shape_that_differs_keeps_the_finding",
   "crates/ripr/tests/framework_oracle_limit.rs::fixture_receiver_gate_does_not_lend_propagation_to_a_forwarding_entry_pin",
+  "crates/ripr/tests/indirect_owner_limit.rs::an_unused_macro_definition_naming_the_owner_keeps_the_gap",
+  "crates/ripr/tests/indirect_owner_limit.rs::an_invoked_macro_definition_naming_the_owner_keeps_the_limit",
+  "crates/ripr/tests/indirect_owner_limit.rs::a_forwarded_macro_invocation_keeps_the_limit",
+  "crates/ripr/tests/indirect_owner_limit.rs::a_comment_separated_macro_invocation_keeps_the_limit",
+  "crates/ripr/tests/indirect_owner_limit.rs::an_include_expansion_keeps_a_local_macro_live",
+  "crates/ripr/tests/indirect_owner_limit.rs::a_path_module_keeps_a_local_macro_live",
   "crates/ripr/tests/operator_call_credit.rs::block_statements_followed_by_minus_stay_unrelated",
   "crates/ripr/tests/operator_call_credit.rs::standalone_add_assign_keeps_typed_operand_and_unique_impl_gates",
   "crates/ripr/tests/proximity_oracle_credit.rs::unrelated_same_file_assertion_cannot_supply_the_oracle",
@@ -21374,6 +21392,20 @@ outputs = [
 ]
 metrics = [
   "unit_test_pass_rate",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0401"
+name = "R preview package testthat numerical data boundaries"
+spec = "docs/specs/RIPR-SPEC-0401-r-preview-package-testthat-numerical-data-boundaries.md"
+tests = []
+fixtures = []
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0401-r-preview-package-testthat-numerical-data-boundaries.md",
+]
+metrics = [
+  "r_preview_contract_registered",
 ]
 
 [[behavior]]
