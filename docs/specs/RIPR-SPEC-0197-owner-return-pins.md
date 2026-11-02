@@ -691,7 +691,7 @@ wrong credits.
      whitespace inside a macro matcher and a prelude name can each put
      another value under the name, so any of them refuses. Items a derive
      or attribute proc macro emits stay invisible, as for every other rule.
-     An item- or statement-position macro whose definition is not in the
+     An item-position macro whose definition is not in the
      indexed workspace text may emit unread items, so any such invocation
      in the workspace refuses (#7160).
      An inline receiver `T::f(..).name(..)` is typed exactly as

@@ -139,11 +139,16 @@ impl MacroSites {
             Self::Parsed {
                 definitions,
                 invocations,
-            } => invocations.iter().any(|(macro_name, _, _, _, qualified)| {
-                let local_for_unqualified =
-                    !qualified && definitions.iter().any(|(defined, _)| defined == macro_name);
-                !local_for_unqualified && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str())
-            }),
+            } => invocations
+                .iter()
+                .any(|(macro_name, _, item_position, _, qualified)| {
+                    if !item_position {
+                        return false;
+                    }
+                    let local_for_unqualified =
+                        !qualified && definitions.iter().any(|(defined, _)| defined == macro_name);
+                    !local_for_unqualified && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str())
+                }),
         }
     }
 
@@ -500,6 +505,9 @@ mod tests {
         assert!(!file_has_non_local_defining_macro_invocation(
             "#[test]\nfn t() { assert_eq!(1, 1); }\n"
         ));
+        assert!(!file_has_non_local_defining_macro_invocation(
+            "#[test]\nfn t() { log::info!(\"x\"); }\n"
+        ));
     }
 
     #[test]
@@ -507,6 +515,18 @@ mod tests {
         assert!(file_has_non_local_defining_macro_invocation(
             "macro_rules! reexport_max { () => {}; }\ndependency::reexport_max!();\n"
         ));
+    }
+
+    #[test]
+    fn authored_spec_confirm_fixture_has_no_non_local_item_macro_refusal_input() {
+        let src = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/rust-verdict-corpus/subjects/authored-spec-confirm/src/lib.rs.txt"
+        ));
+        assert!(
+            !file_has_non_local_defining_macro_invocation(src),
+            "unexpected #7160 refusal trigger in authored-spec-confirm"
+        );
     }
 
     #[test]

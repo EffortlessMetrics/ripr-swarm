@@ -14778,7 +14778,7 @@ struct UnitStructFacts {
     /// Some file's `macro_rules!` matcher takes an `:ident` or `:tt`
     /// fragment, which could declare any name it is given.
     macro_takes_name: bool,
-    /// Some file invokes a macro at item or statement position whose
+    /// Some file invokes a macro at item position whose
     /// definition is outside the indexed file text (#7160).
     external_defining_macro: bool,
     /// Files whose masked source mentions `macro_rules!`: only these can
