@@ -4327,12 +4327,10 @@ fn initializer_names_impl_type(
     };
     match (segments.as_slice(), next) {
         ([ty], Some(b'{')) => *ty == impl_type,
-        // Tuple-struct call, or a free function whose indexed return type is
-        // the owner type (an empty `ty` asks the factory for a free fn).
-        ([ty], Some(b'(')) => *ty == impl_type || factory("", ty),
-        ([ty, name], Some(b'(')) => {
-            *ty == impl_type && (is_variant_name(name) || factory(ty, name))
-        }
+        // Tuple-struct call or a free function head; a bare `Ty()` is never
+        // the type literal `Ty` when a same-named function could run (#8917).
+        ([ty], Some(b'(')) => factory("", ty),
+        ([ty, name], Some(b'(')) => *ty == impl_type && factory(ty, name),
         ([ty, name], _) => *ty == impl_type && is_variant_name(name),
         _ => false,
     }
@@ -4383,6 +4381,14 @@ fn inherent_constructor_names(index: &RustIndex, ty: &str) -> Vec<String> {
 /// `ty`: positive index evidence for a free-function receiver such as
 /// `fixture().method()`. A same-named function, trait or method declaration
 /// fails closed.
+/// A module-level `fn name` exists (body or not), regardless of return type.
+fn free_function_declared(index: &RustIndex, name: &str) -> bool {
+    index
+        .functions()
+        .iter()
+        .any(|function| function.name == name && function.item.container == FunctionContainer::Free)
+}
+
 fn free_fn_returns_type(index: &RustIndex, name: &str, ty: &str) -> bool {
     // `r#fixture` and `fixture` are one identifier, so a raw-named nested fn
     // shadows the file-level helper.
@@ -4443,6 +4449,17 @@ fn base_type_name(name: &str) -> &str {
     name.split('<').next().unwrap_or(name).trim()
 }
 
+/// The trait name in `impl <this> for Ty`, with generic arguments stripped
+/// from every path segment before the final `::` component is read (#8917).
+fn impl_trait_name_from_path(trait_path: &str) -> &str {
+    let without_generics = trait_path.split('<').next().unwrap_or(trait_path);
+    without_generics
+        .rsplit("::")
+        .next()
+        .unwrap_or(without_generics)
+        .trim()
+}
+
 /// Receiver constructor authority from the index. An inherent declaration of
 /// `name` is judged by its declared return type alone. With none, `default`
 /// is credited only by positive evidence of `impl Default for ty` or a unique
@@ -4467,8 +4484,7 @@ fn associated_constructor_names_own_type(
                 && matches!(&function.item.container,
                     FunctionContainer::TraitImpl { trait_path, self_ty }
                         if base_type_name(self_ty) == ty
-                            && base_type_name(trait_path.rsplit("::").next().unwrap_or(trait_path))
-                                == trait_name)
+                            && impl_trait_name_from_path(trait_path) == trait_name)
         })
     };
     match name {
@@ -4483,8 +4499,21 @@ fn associated_constructor_names_own_type(
 }
 
 /// Exactly one struct/enum/union named `ty` in the workspace, carrying
-/// `#[derive(.. Default ..)]`.
+/// `#[derive(.. Default ..)]` or `#[cfg_attr(.., derive(.. Default ..))]`.
 fn type_derives_default(index: &RustIndex, ty: &str) -> bool {
+    if let Ok(cache) = index.call_identity_memos.type_derives_default.lock()
+        && let Some(found) = cache.get(ty)
+    {
+        return *found;
+    }
+    let computed = type_derives_default_uncached(index, ty);
+    if let Ok(mut cache) = index.call_identity_memos.type_derives_default.lock() {
+        cache.insert(ty.to_string(), computed);
+    }
+    computed
+}
+
+fn type_derives_default_uncached(index: &RustIndex, ty: &str) -> bool {
     let mut found = Vec::new();
     for (path, facts) in index.files().iter() {
         let source = &facts.data().source;
@@ -4498,17 +4527,21 @@ fn type_derives_default(index: &RustIndex, ty: &str) -> bool {
             if adt.name().is_none_or(|name| name.text() != ty) {
                 continue;
             }
-            let derives = ast::HasAttrs::attrs(&adt).any(|attr| {
-                let text = attr.syntax().text().to_string();
-                text.trim_start().starts_with("#[derive(")
-                    && text
-                        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                        .any(|word| word == "Default")
-            });
+            let derives = ast::HasAttrs::attrs(&adt).any(attr_derives_default);
             found.push(derives);
         }
     }
     matches!(found.as_slice(), [true])
+}
+
+fn attr_derives_default(attr: ast::Attr) -> bool {
+    let text = attr.syntax().text().to_string();
+    let text = text.trim_start();
+    if !(text.starts_with("#[derive(") || text.starts_with("#[cfg_attr(")) {
+        return false;
+    }
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|word| word == "Default")
 }
 
 /// CamelCase final segment (`Circle`), read as an enum tuple variant.
@@ -5251,15 +5284,33 @@ fn inherent_receiver_call_resolves_with(
     let factory = |ty: &str, name: &str| {
         index.is_some_and(|index| {
             if ty.is_empty() {
-                // A free-function receiver head: `fixture().method()`.
-                free_fn_returns_type(index, name, impl_type)
+                let head = name;
+                if test_module_rebinds_free_function(index, test, head) {
+                    return false;
+                }
+                if free_fn_returns_type(index, head, impl_type) {
+                    return true;
+                }
+                if free_function_declared(index, head) {
+                    return false;
+                }
+                head == impl_type
             } else {
-                associated_constructor_names_own_type(
+                if associated_constructor_names_own_type(
                     index,
                     ty,
                     name,
                     owner_local.then_some(test.file.as_path()),
-                )
+                ) {
+                    return true;
+                }
+                is_variant_name(name)
+                    && !index.functions().iter().any(|function| {
+                        function.name == name
+                            && matches!(&function.item.container,
+                                FunctionContainer::Inherent { self_ty }
+                                    if base_type_name(self_ty) == ty)
+                    })
             }
         })
     };
@@ -5608,7 +5659,10 @@ fn scoped_receiver_names_type(
     let text = mask_comments_and_strings(&receiver.syntax().text().to_string());
     initializer_is_one_head_expr(&text)
         && initializer_names_impl_type(&text, impl_type, &|ty, name| {
-            factory(ty, name) && (!ty.is_empty() || !enclosing_fn_binds(call, name))
+            factory(ty, name)
+                && !enclosing_fn_rebinds_type_name(call, impl_type)
+                && (!ty.is_empty()
+                    || (!enclosing_fn_binds(call, name) && !enclosing_module_binds(call, name)))
         })
 }
 
@@ -5621,6 +5675,21 @@ fn use_item_binds(item: &ast::Use, name: &str) -> bool {
             || ast::NameRef::cast(node.clone()).is_some_and(|bound| bare(bound.text().to_string()))
             || ast::Name::cast(node).is_some_and(|bound| bare(bound.text().to_string()))
     })
+}
+
+/// Like [`use_item_binds`], but ignores `use self::*` / `use super::*` that
+/// only reach the immediate parent module (#8917 free-fixture rebind).
+fn use_item_rebinds_free_function_head(item: &ast::Use, name: &str) -> bool {
+    if !use_item_binds(item, name) {
+        return false;
+    }
+    let compact: String = item
+        .syntax()
+        .text()
+        .to_string()
+        .split_whitespace()
+        .collect();
+    !matches!(compact.as_str(), "useself::*;" | "usesuper::*;")
 }
 
 /// Whether the function enclosing `call` binds `name` by pattern or `use`, so
@@ -5643,6 +5712,62 @@ fn enclosing_fn_binds(call: &SyntaxNode, name: &str) -> bool {
                     .filter_map(ast::Use::cast)
                     .any(|item| use_item_binds(&item, name))
         })
+}
+
+/// Whether the enclosing function declares a type alias spelled `ty`.
+fn enclosing_fn_rebinds_type_name(call: &SyntaxNode, ty: &str) -> bool {
+    call.ancestors()
+        .find_map(ast::Fn::cast)
+        .is_some_and(|function| {
+            function
+                .syntax()
+                .descendants()
+                .filter_map(ast::TypeAlias::cast)
+                .any(|alias| alias.name().is_some_and(|name| name.text() == ty))
+        })
+}
+
+/// Whether the test's enclosing module (in the indexed file) imports `name`
+/// or a glob that may rebind a crate-root free function of the same name.
+fn test_module_rebinds_free_function(index: &RustIndex, test: &TestSummary, name: &str) -> bool {
+    let Some(tree) = index
+        .source_syntax
+        .get(index, &test.file)
+        .and_then(|s| s.tree())
+    else {
+        return true;
+    };
+    let Some(function) = tree
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .find(|function| {
+            function
+                .name()
+                .is_some_and(|bound| bound.text() == test.name)
+        })
+    else {
+        return false;
+    };
+    enclosing_module_binds(function.syntax(), name)
+}
+
+/// Whether a parent module item list imports or globs `name` before the call
+/// is resolved, so a crate-root free function of the same name may not run.
+fn enclosing_module_binds(call: &SyntaxNode, name: &str) -> bool {
+    let Some(function) = call.ancestors().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    function.syntax().ancestors().skip(1).any(|ancestor| {
+        ast::Module::cast(ancestor).is_some_and(|module| {
+            module.item_list().is_some_and(|list| {
+                list.syntax().children().any(|node| {
+                    ast::Use::cast(node)
+                        .is_some_and(|item| use_item_rebinds_free_function_head(&item, name))
+                })
+            })
+        })
+    })
 }
 
 fn visible_receiver_binding_names_type(
@@ -5736,7 +5861,11 @@ fn visible_receiver_binding_names_type(
                     let text = mask_comments_and_strings(&initializer.syntax().text().to_string());
                     initializer_is_one_head_expr(&text)
                         && (initializer_names_impl_type(&text, impl_type, &|ty, name| {
-                            factory(ty, name) && (!ty.is_empty() || !enclosing_fn_binds(call, name))
+                            factory(ty, name)
+                                && !enclosing_fn_rebinds_type_name(call, impl_type)
+                                && (!ty.is_empty()
+                                    || (!enclosing_fn_binds(call, name)
+                                        && !enclosing_module_binds(call, name)))
                         })
                             // A bare type name is a value only for a verified
                             // unit struct, not a same-spelled constant/import.
@@ -5903,16 +6032,7 @@ fn type_derives_default_in_file(index: &RustIndex, ty: &str, test_file: &Path) -
             .syntax()
             .parent()
             .is_some_and(|parent| ast::SourceFile::can_cast(parent.kind()));
-        found.push(
-            at_root
-                && ast::HasAttrs::attrs(&adt).any(|attr| {
-                    let text = attr.syntax().text().to_string();
-                    text.trim_start().starts_with("#[derive(")
-                        && text
-                            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                            .any(|word| word == "Default")
-                }),
-        );
+        found.push(at_root && ast::HasAttrs::attrs(&adt).any(attr_derives_default));
     }
     matches!(found.as_slice(), [true])
 }
@@ -13587,6 +13707,34 @@ let r = try_parse_summary(\"x\");",
     /// parameter names its declared type only with an index that can read the
     /// file's imports (see the index-backed parameter test), so this
     /// index-less probe still refuses it.
+    #[test]
+    fn use_item_rebinds_free_function_head_ignores_parent_globs() {
+        assert!(
+            crate::analysis::syntax::parse_clean_source_file("use ext::fixture;\n")
+                .and_then(|parse| {
+                    parse
+                        .tree()
+                        .syntax()
+                        .descendants()
+                        .find_map(ast::Use::cast)
+                        .map(|item| use_item_rebinds_free_function_head(&item, "fixture"))
+                })
+                .is_some_and(|rebinds| rebinds)
+        );
+        assert!(
+            crate::analysis::syntax::parse_clean_source_file("use super::*;\n")
+                .and_then(|parse| {
+                    parse
+                        .tree()
+                        .syntax()
+                        .descendants()
+                        .find_map(ast::Use::cast)
+                        .map(|item| use_item_rebinds_free_function_head(&item, "read_as_object"))
+                })
+                .is_some_and(|rebinds| !rebinds)
+        );
+    }
+
     #[test]
     fn inherent_receiver_corpus_boundary_and_live_scope() {
         for (body, method, ty, expected) in [
