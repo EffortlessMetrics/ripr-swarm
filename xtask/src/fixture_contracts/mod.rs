@@ -1899,7 +1899,7 @@ pub(crate) const TYPESCRIPT_PREVIEW_REPAIR_LOOP_REQUIRED_CASES: &[(&str, &str)] 
         "unanchored_relation_holds_advisory",
     ),
     (
-        "typescript_table_case_already_observed_unchanged",
+        "typescript_load_profile_already_observed_unchanged",
         "already_observed_unchanged",
     ),
     (

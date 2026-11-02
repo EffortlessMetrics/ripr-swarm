@@ -415,14 +415,14 @@
       "reason": "The unchanged case proves separately labeled JavaScript preview evidence stays useful without creating repair work. The test bare-calls applyDiscount with no import anchor (#4103 shape 1), so exposure credit is withheld at weakly_exposed and the gap is advisory with an incomplete packet contract, while the exact-value oracle classification (exact_value/strong) survives. must_not_claim_already_observed guards against a spurious terminal already_observed promotion."
     },
     {
-      "id": "typescript_table_case_already_observed_unchanged",
+      "id": "typescript_load_profile_already_observed_unchanged",
       "source_fixture": "fixtures/typescript_jest_vitest_assertion_facts",
-      "source_finding_id": "probe:src_signals.ts:typescript_preview:7878a956",
+      "source_finding_id": "probe:src_signals.ts:typescript_preview:a68ad559",
       "language": "typescript",
       "language_status": "preview",
       "classification": "exposed",
-      "changed_owner": "applyDiscount",
-      "probe_family": "predicate",
+      "changed_owner": "loadProfile",
+      "probe_family": "return_value",
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
       "gap_state": "already_observed",
@@ -430,15 +430,15 @@
       "static_limit_kind": null,
       "repair_packet_ready": false,
       "authority_boundary": "preview_advisory_only",
-      "expected_test_or_observer_shape": "no new test repair; inline table row binds expected value 140 under an exact-value oracle",
+      "expected_test_or_observer_shape": "no new test repair; related exact-value assertion already observes the changed return",
       "verify_command": "npx --no-install jest tests/signals.test.ts",
       "verify_result": "not_run",
-      "receipt_command": "ripr agent receipt --source fixtures/typescript_jest_vitest_assertion_facts --out target/ripr/reports/typescript-table-case-already-observed-preview-receipt.json",
+      "receipt_command": "ripr agent receipt --source fixtures/typescript_jest_vitest_assertion_facts --out target/ripr/reports/typescript-load-profile-already-observed-preview-receipt.json",
       "receipt_state": "unchanged_no_repair_packet",
       "outcome": "already_observed_unchanged",
       "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted",
       "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
-      "operator_note": "Positive repair-loop control: a table-driven inline literal row can legitimately stay already_observed without issuing repair work.",
+      "operator_note": "Positive repair-loop control: a single related exact-value assertion legitimately stays already_observed without issuing repair work.",
       "must_not_change": [
         "production behavior",
         "public API",
@@ -447,7 +447,7 @@
         "default gate or badge policy"
       ],
       "raw_evidence_refs": [
-        "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json#probe:src_signals.ts:typescript_preview:7878a956"
+        "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json#probe:src_signals.ts:typescript_preview:a68ad559"
       ],
       "non_claims": [
         "no provider calls",
@@ -461,7 +461,7 @@
         "no RIPR Zero authority",
         "no support-tier promotion"
       ],
-      "reason": "Retains a live already_observed path in the repair-loop corpus so future regressions cannot silently drop the terminal no-action signal when a strong exact oracle truly observes the changed behavior."
+      "reason": "Retains a live already_observed path in the repair-loop corpus on a single related exact-value oracle, so future regressions cannot silently drop the terminal no-action signal when strong observation is real."
     },
     {
       "id": "typescript_dynamic_oracle_spurious_already_observed_guard",
