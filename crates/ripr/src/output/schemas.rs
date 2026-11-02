@@ -375,6 +375,11 @@ mod tests {
         let table = command_to_version_table(&doc)?;
         let required_rows = [
             (
+                "`ripr context --json`",
+                crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                "output::json::context_packet::CONTEXT_PACKET_VERSION_CONTRACT",
+            ),
+            (
                 "`ripr diff --json`",
                 live_diff_report_schema_version()?,
                 "crates/ripr/src/output/diff_report.rs DiffReport.schema_version",
