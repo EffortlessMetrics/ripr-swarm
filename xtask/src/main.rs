@@ -14544,22 +14544,22 @@ fn check_rust_source_role_authority() -> Result<(), String> {
             "#5563 source-text guard strips test modules from production text it scans for miss-based eligibility; it decides no analysis role",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/mod.rs",
             "starts_with(\"tests",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/mod.rs",
             "contains(\"/tests/\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/mod.rs",
             "ends_with(\"_test.rs\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
         (
-            "crates/ripr/src/output/review_comments.rs",
+            "crates/ripr/src/output/review_comments/mod.rs",
             "ends_with(\"_tests.rs\")",
             "display grouping of test-like files inside the rendered review comment; grouping only, findings are already selected",
         ),
