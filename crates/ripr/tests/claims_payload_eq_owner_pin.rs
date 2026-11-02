@@ -108,6 +108,46 @@ fn claims_payload_equality_credits_only_on_a_verified_claims_import() -> Result<
             "assert_some_eq!(half(8), 4);",
             true,
         ),
+        // A comment after the finished statement leaves the invocation intact:
+        // still credited. A comment between the call and its `;` is the
+        // documented fail-closed boundary and is not credited.
+        result_case(
+            "a_trailing_block_comment_after_the_statement",
+            import,
+            "assert_ok_eq!(checked_div(17, 5), 3); /* (kept) */",
+            true,
+        ),
+        result_case(
+            "a_block_comment_between_the_call_and_its_semicolon",
+            import,
+            "assert_ok_eq!(checked_div(17, 5), 3) /* (kept) */;",
+            false,
+        ),
+        result_case(
+            "a_trailing_line_comment_after_the_statement",
+            import,
+            "assert_ok_eq!(checked_div(17, 5), 3); // (kept)",
+            true,
+        ),
+        // Text that only looks like the invocation is not a statement.
+        result_case(
+            "invocation_inside_a_line_comment",
+            import,
+            "// assert_ok_eq!(checked_div(17, 5), 3);",
+            false,
+        ),
+        result_case(
+            "invocation_inside_a_block_comment_line",
+            import,
+            "/*\nassert_ok_eq!(checked_div(17, 5), 3);\n*/",
+            false,
+        ),
+        result_case(
+            "invocation_inside_a_string_literal",
+            import,
+            "let _text = \"assert_ok_eq!(checked_div(17, 5), 3);\";",
+            false,
+        ),
         // One thing changed from the credited twin, below.
         result_case("no_import_at_all", "", ok, false),
         result_case(
@@ -253,8 +293,11 @@ fn claims_payload_equality_credits_only_on_a_verified_claims_import() -> Result<
         );
         // RIPR-SPEC-0231 example 42: a refusal keeps the macro limitation, so
         // the unverified macro is disclosed rather than silently dropped.
-        // A renamed macro is not a claims name at all, so it names no limitation.
-        if !case.credited && case.name != "renamed_import" {
+        // A renamed macro is not a claims name at all, and text inside a comment
+        // or a string literal is no statement, so none of them names a limitation.
+        let no_statement =
+            case.name == "renamed_import" || case.name.starts_with("invocation_inside_a_");
+        if !case.credited && !no_statement {
             assert_eq!(
                 outcome.limit.as_deref(),
                 Some("rust_macro_wrapped_assertion_unresolved"),
