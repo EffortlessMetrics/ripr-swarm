@@ -239,6 +239,11 @@ note = "pnpm monorepo whose package is packages/remeda; the commit edits package
 # was warm (about four runs). The ceilings are a regression gate set above the
 # measured second run (48.6 s, 457 MiB on 4 cores), not the 2 s target; tighten
 # them as the steady-state costs come down.
+#
+# The 2026-11-01 hosted nightly recorded this row's warm check as `incomplete`
+# (`partial_with_limitations`), so its 4.7 s / 345 MiB are not admissible values
+# and the ceilings stay at their local calibration until the row completes
+# (#12052; workspace-walk accounting is #11984).
 [[corpus]]
 id = "vscode-typescript"
 url = "https://github.com/microsoft/vscode"
@@ -255,6 +260,14 @@ ceilings = { "speed.warm_check_ms" = 90000, "speed.warm_check_peak_rss_mb" = 102
 # reported zero findings because the changed file was never discovered. Measured
 # on 4 cores: 16.1 s cold, 2.6 s warm, 62 MiB. The ceilings are a regression
 # gate above those numbers, not a claim that the 2 s bar is met.
+#
+# Not yet a usable speed row (#12052). The truncation is reported as
+# `partial_with_limitations` (`diff_scope_oversized` plus unindexed test
+# files), and a warm-check sample is admitted only from a complete analysis, so
+# both hosted nightlies of 2026-11-01 recorded this row's `speed.warm_check_*`
+# as `incomplete` ("analysis is not complete") and the ceilings read as
+# "not established". The measured 1.0 s / 60 MiB are not admissible values, so
+# the ceilings stay at their local calibration until the row can complete.
 [[corpus]]
 id = "typescript-compiler"
 url = "https://github.com/microsoft/TypeScript"
