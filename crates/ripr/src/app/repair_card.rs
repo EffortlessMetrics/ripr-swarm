@@ -603,6 +603,30 @@ mod tests {
     }
 
     #[test]
+    fn canonical_next_action_json_keeps_seam_wording_while_human_uses_spot() -> Result<(), String> {
+        let instruction = instruction(FixInstructionState::Unavailable);
+        let readiness = ready_readiness();
+        let input = base_input(&instruction, &readiness);
+        let card = build_repair_card(&input)?;
+        let canonical = card
+            .canonical_next_action
+            .as_ref()
+            .ok_or_else(|| "the card must mint a canonical action".to_string())?;
+        let human = crate::output::next_action::render_next_action_human(canonical);
+        assert!(
+            human.contains("names this spot"),
+            "human card text must use spot:\n{human}"
+        );
+        let json = serde_json::to_string(canonical)
+            .map_err(|error| format!("serialize canonical next action: {error}"))?;
+        assert!(
+            json.contains("names this seam"),
+            "JSON must keep producer seam wording:\n{json}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn ready_card_projects_authority_facts_verbatim() -> Result<(), String> {
         let instruction = instruction(FixInstructionState::FixSiteReady);
         let readiness = ready_readiness();
