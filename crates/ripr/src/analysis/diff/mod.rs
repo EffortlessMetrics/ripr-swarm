@@ -16,7 +16,7 @@ pub(crate) use load::{
 };
 pub(crate) use load::{
     another_base_candidate, is_shallow_repository, load_diff_core,
-    load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
+    load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
     resolve_effective_base_core,
 };
