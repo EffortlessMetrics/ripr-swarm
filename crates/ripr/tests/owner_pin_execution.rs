@@ -1685,6 +1685,58 @@ fn drop_in_crate_admission_matches_cargo_resolution() -> Result<(), String> {
     Ok(())
 }
 
+/// A glob import may bind `pretty_assertions` from an out-of-line module
+/// when the crate is not a dependency, so the qualified call earns no oracle
+/// (#7641).
+#[test]
+fn glob_imported_module_refuses_qualified_drop_in_assertions() -> Result<(), String> {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/owner_return_pin_direct");
+    let production = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+        .map_err(|error| error.to_string())?;
+    let manifest = std::fs::read_to_string(fixture.join("input/Cargo.toml"))
+        .map_err(|error| error.to_string())?;
+    let scratch = Scratch::create()?;
+    let root = scratch.0.join("ws");
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    let write =
+        |path: PathBuf, text: &str| std::fs::write(path, text).map_err(|error| error.to_string());
+    write(
+        root.join("Cargo.toml"),
+        &format!("{manifest}\n[workspace]\n"),
+    )?;
+    write(
+        root.join("src/helpers.rs"),
+        "pub mod pretty_assertions {\n    #[macro_export]\n    macro_rules! noop_eq {\n        ($a:expr, $b:expr) => {};\n    }\n    pub use noop_eq as assert_eq;\n}\n",
+    )?;
+    write(
+        root.join("src/lib.rs"),
+        &format!(
+            "{production}\nmod helpers;\n#[cfg(test)]\nmod tests {{\n    use super::*;\n    use helpers::*;\n    #[test]\n    fn checks() {{\n        pretty_assertions::assert_eq!(weight(4), 12);\n    }}\n}}\n"
+        ),
+    )?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(fixture.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let json: serde_json::Value =
+        serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+            .map_err(|error| error.to_string())?;
+    let findings = json["findings"].as_array().ok_or("missing findings")?;
+    assert_eq!(findings.len(), 1);
+    assert_ne!(
+        findings[0]["classification"].as_str(),
+        Some("exposed"),
+        "{}",
+        findings[0]["classification"]
+    );
+    Ok(())
+}
+
 /// A test in one workspace member that imports the owner from another
 /// member (`use pricing::score;`) pins it only when the manifests bind that
 /// crate name to the owner's package. When the dependency under that key is
