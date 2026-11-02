@@ -776,9 +776,14 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
         let converted = pilot_ranking_to_input(value)?;
         return parse_ingest(&converted, config);
     }
+    if value["schema_version"].as_str() == Some(super::REPORT_SCHEMA_VERSION) {
+        let converted = super::repair_funnel_to_input(value)?;
+        return parse_ingest(&converted, config);
+    }
     if value["schema_version"].as_str() != Some(INPUT_SCHEMA_VERSION) {
         return Err(format!(
-            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, `{PILOT_RANKING_SCHEMA_VERSION}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines"
+            "schema_version must be one of `{INPUT_SCHEMA_VERSION}`, `{FIRST_RUN_SCHEMA_VERSION}`, `{MUTATION_SPOT_CHECK_SCHEMA_VERSION}`, `{RUST_CORPUS_SMOKE_SCHEMA_VERSION}`, `{PILOT_RANKING_SCHEMA_VERSION}`, `{}`, or `{FIRST_RUN_ROW_SCHEMA_VERSION}` JSON Lines",
+            super::REPORT_SCHEMA_VERSION
         ));
     }
     let source = value["source"]

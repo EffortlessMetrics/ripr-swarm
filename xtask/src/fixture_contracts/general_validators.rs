@@ -1777,6 +1777,41 @@ pub(crate) fn validate_blind_journey_contract_fixture_corpus(
     validate_blind_journey_contract_fixture_corpus_at(&root.join("corpus.json"), violations)
 }
 
+pub(crate) fn validate_repair_funnel_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/repair_funnel");
+    for required in ["SPEC.md", "controls/corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "repair funnel fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    let spec_path = root.join("SPEC.md");
+    if spec_path.exists() {
+        let body = read_text_lossy(&spec_path)?;
+        if !body.contains("RIPR-SPEC-0377") {
+            violations
+                .push("repair funnel SPEC.md must name its RIPR-SPEC-0377 decision".to_string());
+        }
+    }
+    match crate::reports::repair_funnel_report_value() {
+        Ok(report) => {
+            if !report.control_failures.is_empty() {
+                violations.push(format!(
+                    "repair funnel controls corpus failed: {}",
+                    report.control_failures.join("; ")
+                ));
+            }
+        }
+        Err(error) => violations.push(format!("repair funnel projection failed: {error}")),
+    }
+    Ok(())
+}
+
 fn validate_blind_journey_contract_fixture_corpus_at(
     path: &Path,
     violations: &mut Vec<String>,

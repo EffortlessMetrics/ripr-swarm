@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0377"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0377-first-hour-repair-funnel-projection.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Issue #6308 joins install/first-run and repair-attempt verification/movement receipts into one versioned first-hour repair funnel and dx-scoreboard repair ingest without executing new governed attempts or claiming release readiness."

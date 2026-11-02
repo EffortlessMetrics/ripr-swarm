@@ -53,6 +53,7 @@ mod path_inventory;
 mod release_scope;
 pub(crate) mod release_server;
 mod repair_card_usability;
+mod repair_funnel;
 mod repo;
 #[cfg(test)]
 mod reverse_authorization;
@@ -174,6 +175,9 @@ pub(crate) use release_ledger::release_ledger;
 pub(crate) use release_negative::release_negative_corpus;
 pub(crate) use release_scope::release_scope;
 pub(crate) use repair_card_usability::repair_card_usability_report;
+pub(crate) use repair_funnel::{
+    REPORT_SCHEMA_VERSION, repair_funnel_report, repair_funnel_report_value, repair_funnel_to_input,
+};
 pub(crate) use repo::{
     actionable_gap_outcomes_report, agent_seam_packets_report, evidence_health_report,
     evidence_quality_scorecard_report, evidence_quality_trend_report, lane1_evidence_audit_report,
