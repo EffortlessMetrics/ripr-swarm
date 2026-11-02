@@ -9,6 +9,68 @@ use crate::domain::{Probe, ProbeFamily};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+#[test]
+fn removed_kani_source_preserves_external_include_refusal() -> Result<(), String> {
+    let path = PathBuf::from("src/proof.rs");
+    let source = "#[kani::proof]\nfn proof() {}\n";
+    let mut index = RustIndex::default();
+    index.insert_file(
+        path.clone(),
+        RaRustSyntaxAdapter.summarize_file(&path, source)?,
+        true,
+    );
+    index.include_targets.insert(path.clone());
+    let context = crate::config::KaniAnalysisContext {
+        profile: "kani_ordinary_proof_v1".into(),
+        source: path,
+        tests: false,
+    };
+    crate::analysis::facts::normalize_reconstructed_source_roles(
+        &mut index,
+        Path::new("."),
+        &[],
+        Some(&context),
+    )?;
+    let changes = crate::analysis::diff::parse_unified_diff(
+        "diff --git a/src/proof.rs b/src/proof.rs\n--- a/src/proof.rs\n+++ b/src/proof.rs\n@@ -1,4 +1,2 @@\n #[kani::proof]\n-fn proof() {\n-    assert!(1 < 2);\n-}\n+fn proof() {}\n",
+    );
+    let changed = changes.first().ok_or("missing native include diff")?;
+    let old = super::classify::old_source(&index, changed)
+        .ok_or("old native source did not reconstruct")?;
+    let rebuilt =
+        super::classify::removed_type_bounds(Path::new("."), &[], &index, Some(&old), changed)
+            .old_index
+            .ok_or("old native index missing")?;
+    let inventory = rebuilt
+        .kani_source_inventory
+        .as_ref()
+        .ok_or("old native refusal missing")?;
+    assert!(inventory.harnesses.is_empty());
+    assert!(
+        inventory
+            .limitations
+            .iter()
+            .any(|limit| limit.code == "included_source_unit_unsupported")
+    );
+    assert_eq!(
+        rebuilt
+            .functions()
+            .iter()
+            .map(|function| (function.name.as_str(), function.source_role))
+            .collect::<Vec<_>>(),
+        vec![(
+            "proof",
+            crate::analysis::facts::FunctionSourceRole::ProofHarness
+        )],
+        "refused native context must retain the unconditional proof-harness floor"
+    );
+    assert!(
+        rebuilt.tests().is_empty(),
+        "proof refusal cannot register a test"
+    );
+    Ok(())
+}
+
 fn probes(source: &str, changed: ChangedFile) -> Result<Vec<Probe>, String> {
     let facts = RaRustSyntaxAdapter.summarize_file(&changed.path, source)?;
     let index = RustIndex::from_owned(OwnedRustIndex {
@@ -831,8 +893,14 @@ fn inline_bound_owner_cannot_admit_shared_runtime_or_type_expressions() -> Resul
             });
             let admitted = if removed {
                 let old = super::classify::old_source(&index, &changed);
-                super::classify::removed_type_bounds(Path::new("."), &[], old.as_deref(), &changed)
-                    .lines
+                super::classify::removed_type_bounds(
+                    Path::new("."),
+                    &[],
+                    &index,
+                    old.as_deref(),
+                    &changed,
+                )
+                .lines
             } else {
                 super::classify::added_type_bound_lines(&index, &changed)
             };
@@ -909,8 +977,13 @@ fn removed_inline_test_bound_preserves_old_test_exclusion() -> Result<(), String
                 ..Default::default()
             });
             let old = super::classify::old_source(&index, &changed);
-            let admission =
-                super::classify::removed_type_bounds(Path::new("."), &[], old.as_deref(), &changed);
+            let admission = super::classify::removed_type_bounds(
+                Path::new("."),
+                &[],
+                &index,
+                old.as_deref(),
+                &changed,
+            );
             assert!(
                 admission.lines[subject_index],
                 "old inline item did not reach declaration admission: {item}"

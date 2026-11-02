@@ -154,6 +154,9 @@ pub struct RustIndex {
     pub(crate) include_targets: BTreeSet<PathBuf>,
     pub harness_subjects: Vec<HarnessSubjectFact>,
     pub harness_limitations: Vec<HarnessLimitationFact>,
+    /// Derived from the current source and declared context after raw-cache
+    /// reads; never serialized into the reusable parser fact cache.
+    pub kani_source_inventory: Option<super::kani::KaniSourceInventory>,
     pub(crate) workspace_authority: Option<WorkspaceRootAuthority>,
     /// Per-analysis call-identity memos (#7716 residual): one workspace
     /// shape pass and one identity per owner definition. The index is

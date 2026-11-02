@@ -194,10 +194,11 @@ pub(crate) fn inventory_seams_at_with_config(
     // Index the full set so `find_owner_function` can resolve owners
     // even when the seam appears in a file the production filter
     // includes but tests reference.
-    let index = rust_index::build_index_with_test_harnesses(
+    let index = rust_index::build_index_with_kani_context(
         root,
         &rust_files,
         harness_registrations(config),
+        config.languages().rust.kani.as_ref(),
     )?;
     Ok(inventory_seams_from_index(&production_files, &index))
 }
@@ -817,10 +818,11 @@ pub(crate) fn inventory_classified_seams_uncached_with_config(
     trace_latency_phase("filter_production_files", "ok", filter_started.elapsed());
 
     let index_started = Instant::now();
-    let mut index = match rust_index::build_index_with_test_harnesses(
+    let mut index = match rust_index::build_index_with_kani_context(
         root,
         &rust_files,
         harness_registrations(config),
+        config.languages().rust.kani.as_ref(),
     ) {
         Ok(index) => {
             trace_latency_phase("build_index", "ok", index_started.elapsed());
@@ -1007,10 +1009,11 @@ fn inventory_seam_grip_class_counts_uncached_with_config(
         .cloned()
         .collect();
 
-    let mut index = rust_index::build_index_with_test_harnesses(
+    let mut index = rust_index::build_index_with_kani_context(
         root,
         &rust_files,
         harness_registrations(config),
+        config.languages().rust.kani.as_ref(),
     )?;
     rust_index::apply_oracle_policy(&mut index, config.oracles());
     let seams = inventory_seams_from_index(&production_files, &index);
@@ -3413,10 +3416,11 @@ impl OwnedWorkspaceState {
         // The fold is in input order, and `files_content_hash` folds sorted
         // paths, so the two compare only for sorted input.
         debug_assert!(self.files.windows(2).all(|pair| pair[0] <= pair[1]));
-        let cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses(
+        let cached = rust_index::build_index_from_paths_with_kani_context(
             &self.workspace_root,
             &self.files,
             harness_registrations(config),
+            config.languages().rust.kani.as_ref(),
         )?;
         if cached.files_content_hash != self.files_content_hash {
             return Err(format!(
@@ -3499,10 +3503,11 @@ impl FileSeamIndex {
         config: &RiprConfig,
         files: &[PathBuf],
     ) -> Result<Self, String> {
-        let cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses(
+        let cached = rust_index::build_index_from_paths_with_kani_context(
             root,
             files,
             harness_registrations(config),
+            config.languages().rust.kani.as_ref(),
         )?;
         let mut index = cached.index;
         rust_index::apply_oracle_policy(&mut index, config.oracles());

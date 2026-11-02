@@ -1125,6 +1125,47 @@ The selected source corpus participates in cache identity, and this setting is
 finding-affecting config for artifact/receipt comparison. Rerun analysis after
 changing it; do not reuse an old excluded-source receipt as complete evidence.
 
+#### Declared Kani source context
+
+To inventory ordinary `#[kani::proof]` declarations in one source unit and its
+inline modules, opt into the bounded source profile:
+
+```toml
+[languages.rust.kani]
+profile = "kani_ordinary_proof_v1"
+source = "src/lib.rs"
+tests = false
+```
+
+All three keys are required. `source` is an exact repository-relative `.rs`
+path, normalized like other relative paths. `tests` declares the native
+target's `cfg(test)` value; it does not select or run Cargo tests. The profile
+also declares `cfg(kani)` true and `cfg(kani_host)` false. Feature, target,
+editor and other custom predicates stay unknown.
+
+`ripr check --format json` emits an independent `kani_source_inventory` with
+source identities, indexed-text digest, declared cfg applicability and named
+limitations. The MCP snapshot resource carries the same captured records.
+Native selection is unknown, native execution is not observed and functional
+protection is not established. An admitted proof supplies neither an ordinary
+test count nor assertion-helper credit and is excluded from production seams.
+
+This first profile handles clean canonical source only. Local `kani` bindings,
+globs, opaque expansions, include fragments, conditional proof attributes,
+contract harnesses, block-local proofs and function-body inner attributes stay
+limitations. Out-of-line modules are not expanded. Native modifiers are retained
+without interpreting panic, unwind, stubs or contracts. The configured source
+must be in the analysis's selected file set; the setting does not expand scope
+or override discovery exclusions. Native contexts bypass the dependent-package
+narrowing optimization while retaining the normal hard scope limits.
+
+Context changes invalidate artifact/seam-cache identity. Remove the table to
+restore ordinary indexing. Exact proof attributes still receive the
+unconditional proof-source role and unevaluated-proof disclosure; this table
+adds declared context and captured identities. See [the source-role contract](specs/RIPR-SPEC-0153-rust-source-role.md#declared-ordinary-kani-source-context-10686)
+for the acceptance boundary; this configuration does not install, select or
+execute Kani.
+
 `[languages.python]` and `[languages.typescript]` configure the preview
 adapters. Each admits one override:
 

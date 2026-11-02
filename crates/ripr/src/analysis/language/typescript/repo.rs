@@ -191,6 +191,7 @@ pub(super) fn analyze_repo_with_limit(
     Ok(LanguageRepoResult {
         value_origins: Default::default(),
         findings: selection.findings,
+        kani_source_inventory: None,
         harness_projections: Vec::new(),
         production_files: selection.production_files,
         skipped_files: selection.skipped_files,

@@ -982,6 +982,9 @@ impl FileFacts {
 ///   attribute (RIPR-SPEC-0367): neither an executable test nor a
 ///   production seam, so it adds no `TestFact`, no assertion credit and no
 ///   production probe.
+/// - `KaniProofHarness` refines that source-only role with an explicitly
+///   declared native context. `KaniProofLocal` excludes nested functions
+///   from ordinary evidence without declaring another harness.
 /// - `Production` is ordinary non-evidence source and remains a
 ///   production-subject candidate. Production-subject *eligibility* is
 ///   still the consumer-side composition of this role with the file-level
@@ -1033,6 +1036,12 @@ pub enum FunctionSourceRole {
     /// credit and seeds no production probe. A changed harness is disclosed
     /// as `proof_harness_not_evaluated`; ripr does not evaluate proofs.
     ProofHarness,
+    /// Canonical ordinary Kani proof in an explicitly declared native source
+    /// context. Source evidence only: never a Cargo test or assertion donor.
+    KaniProofHarness,
+    /// Function nested inside an admitted proof body. It shares that source
+    /// role, without becoming an independently selected native harness.
+    KaniProofLocal,
 }
 
 impl FunctionSourceRole {
@@ -1046,6 +1055,18 @@ impl FunctionSourceRole {
     /// the file-level `SourceRole` instead of widening this predicate.
     pub fn is_evidence_role(self) -> bool {
         !matches!(self, Self::Production)
+    }
+
+    /// A proof declaration, with or without a declared native context.
+    /// Nested proof-local functions are not independent harnesses.
+    pub fn is_proof_harness(self) -> bool {
+        matches!(self, Self::ProofHarness | Self::KaniProofHarness)
+    }
+
+    /// Verification source is not ordinary test evidence, including local
+    /// functions whose role comes from an enclosing admitted proof.
+    pub fn is_proof_source(self) -> bool {
+        self.is_proof_harness() || self == Self::KaniProofLocal
     }
 
     /// Whether functions with this role register executable `TestFact`s —

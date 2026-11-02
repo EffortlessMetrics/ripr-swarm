@@ -664,6 +664,17 @@ pub(crate) fn render_with_config(
     } else {
         out.push('\n');
     }
+    if let Some(inventory) = &output.kani_source_inventory {
+        let serialized = serde_json::to_string(inventory).unwrap_or_else(|error| {
+            format!(
+                "{{\"serialization_error\":{}}}",
+                Value::String(error.to_string())
+            )
+        });
+        out.push_str(",\n  \"kani_source_inventory\": ");
+        out.push_str(&serialized);
+        out.push('\n');
+    }
     // Additive advisory field — emitted only when the repository registered
     // test harnesses (#3532, `[analysis.test_harnesses]`) and the run
     // carried harness facts. Absent otherwise, so repositories without
@@ -1957,6 +1968,7 @@ mod harness_projection_tests {
     fn output_with(projections: Vec<TestHarnessProjection>) -> CheckOutput {
         CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: projections,
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),

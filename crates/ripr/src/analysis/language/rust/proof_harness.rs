@@ -1,6 +1,7 @@
 //! RIPR-SPEC-0367: a proof harness is verification source, not a test and not
 //! a production seam. The role itself is assigned by the facts normalizer
-//! (`FunctionSourceRole::ProofHarness`); this module only discloses it:
+//! (`ProofHarness` or the declared-context `KaniProofHarness`); this module
+//! only discloses it:
 //!
 //! - an edit to a harness yields a typed run limitation naming
 //!   `proof_harness_not_evaluated` instead of production probes;
@@ -10,8 +11,7 @@
 //! Nothing here adds credit, changes a class, or reads a verifier result.
 
 use crate::analysis::diff::ChangedFile;
-use crate::analysis::facts::{FunctionSourceRole, RustIndex};
-use crate::analysis::rust_index;
+use crate::analysis::facts::RustIndex;
 use crate::analysis_outcome::{
     AnalysisLimitation, AnalysisLimitationKind, AnalysisRecovery, AnalysisRecoveryKind,
     AnalysisStage,
@@ -44,7 +44,7 @@ pub(super) fn harness_calling_owner(index: &RustIndex, owner_name: &str) -> Opti
     index
         .functions()
         .iter()
-        .filter(|function| function.source_role == FunctionSourceRole::ProofHarness)
+        .filter(|function| function.source_role.is_proof_harness())
         .filter(|function| function.calls.iter().any(|call| call.name == owner_name))
         .map(|function| HarnessPointer {
             name: function.name.clone(),
@@ -90,11 +90,19 @@ pub(super) fn edit_limitations<'a>(
 ) -> Result<Vec<AnalysisLimitation>, String> {
     let mut limitations = Vec::new();
     for file in changed {
-        let harnesses: BTreeSet<(usize, &str)> = file
-            .added_lines
+        // A nested local is verification source, but it is not itself a
+        // harness declaration. Disclose the enclosing proof when its body
+        // changes, even when the nearest owner is a KaniProofLocal.
+        let harnesses: BTreeSet<(usize, &str)> = index
+            .functions()
             .iter()
-            .filter_map(|line| rust_index::find_owner_function(index, &file.path, line.line))
-            .filter(|function| function.source_role == FunctionSourceRole::ProofHarness)
+            .filter(|function| {
+                function.file == file.path
+                    && function.source_role.is_proof_harness()
+                    && file.added_lines.iter().any(|line| {
+                        function.start_line <= line.line && line.line <= function.end_line
+                    })
+            })
             .map(|function| (function.start_line, function.name.as_str()))
             .collect();
         if harnesses.is_empty() {

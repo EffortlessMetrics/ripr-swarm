@@ -1439,6 +1439,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     }
     let mut harness_projections: Vec<crate::analysis::harness_projection::TestHarnessProjection> =
         Vec::new();
+    let mut kani_source_inventory = None;
     let deleted_file_count = parsed_diff.deleted_file_count;
     let submodule_file_count = parsed_diff.submodule_file_count;
     let renamed_file_count = parsed_diff.renamed_file_count;
@@ -1547,6 +1548,7 @@ fn run_pipeline_for_diff_text_with_language_config(
         limitations.extend(result.limitations);
         partial_scope = result.partial_scope.clone();
         harness_projections.extend(result.harness_projections);
+        kani_source_inventory = result.kani_source_inventory;
         rust_diagnostic_origins = result.rust_diagnostic_origins;
         rust_consumed_sources = result.rust_consumed_sources;
         value_origins.extend(result.value_origins);
@@ -2332,6 +2334,7 @@ fn run_pipeline_for_diff_text_with_language_config(
     Ok(AnalysisResult {
         value_origins,
         harness_projections,
+        kani_source_inventory,
         analysis_outcome,
         summary: summary_result,
         findings,
@@ -2474,6 +2477,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
     let mut rust_harness_projections: Vec<
         crate::analysis::harness_projection::TestHarnessProjection,
     > = Vec::new();
+    let mut kani_source_inventory = None;
     // Internal per-language accounting (#6470). Derived from the same
     // outcomes as the public `language_runs`, which stays the
     // non-success-only projection.
@@ -2505,6 +2509,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
             language_runs.extend(outcome.compat_run());
             repo_language_aggregate.record(outcome);
             rust_harness_projections = result.harness_projections;
+            kani_source_inventory = result.kani_source_inventory;
             rust_diagnostic_origins = result.rust_diagnostic_origins;
             rust_consumed_sources = result.rust_consumed_sources;
             value_origins.extend(result.value_origins);
@@ -2625,6 +2630,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
 
     Ok(AnalysisResult {
         value_origins,
+        kani_source_inventory,
         harness_projections: rust_harness_projections,
         analysis_outcome: None,
         summary: summary_result,
@@ -3111,6 +3117,7 @@ fn untouched_preview_result() -> LanguageDiffResult {
         value_origins: Default::default(),
         findings: Vec::new(),
         harness_projections: Vec::new(),
+        kani_source_inventory: None,
         changed_files: 0,
         candidate_line_count: 0,
         changed_files_by_language: Vec::new(),

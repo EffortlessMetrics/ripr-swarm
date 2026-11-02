@@ -451,6 +451,10 @@ impl SourceCustody {
 /// committed: refresh replaces the whole snapshot, never mutates it.
 pub(crate) struct Snapshot {
     pub(crate) snapshot_id: String,
+    /// The exact producer capture, never reconstructed from live config or
+    /// source while serving a retained snapshot.
+    pub(crate) kani_source_inventory:
+        Option<crate::analysis::harness_projection::KaniSourceInventory>,
     pub(crate) outcome: AnalysisOutcome,
     pub(crate) items: Vec<GapItem>,
     /// The committed findings the evidence projections read (`ripr_get_gap`
@@ -611,10 +615,17 @@ impl Snapshot {
         items.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
 
         let scope = ScopeFacts::from_output(output);
-        let snapshot_id = snapshot_identity(&outcome, &items, &scope, source, custody.commitment())
-            .map_err(|error| {
-                AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
-            })?;
+        let snapshot_id = snapshot_identity(
+            &outcome,
+            &items,
+            &scope,
+            source,
+            custody.commitment(),
+            output.kani_source_inventory.as_ref(),
+        )
+        .map_err(|error| {
+            AttemptFailure::new(CODE_ANALYSIS_FAILED, error, "retry with ripr_refresh")
+        })?;
         let profile_identity = format!(
             "mcp:{}:profile:diff:draft",
             root_identity.unwrap_or("root:unavailable")
@@ -639,6 +650,7 @@ impl Snapshot {
 
         Ok(Self {
             snapshot_id,
+            kani_source_inventory: output.kani_source_inventory.clone(),
             outcome,
             items,
             findings: output.findings.clone(),
@@ -692,6 +704,7 @@ fn snapshot_identity(
     scope: &ScopeFacts,
     source: RefreshSource,
     custody_commitment: Option<&str>,
+    kani_source_inventory: Option<&crate::analysis::harness_projection::KaniSourceInventory>,
 ) -> Result<String, String> {
     let outcome_digest = outcome.semantic_digest()?;
     let item_ids = items
@@ -725,6 +738,10 @@ fn snapshot_identity(
     // outcome's own diff-byte identity cannot see such an edit.
     if let Some(commitment) = custody_commitment {
         payload["consumed_source_commitment"] = json!(commitment);
+    }
+    if let Some(inventory) = kani_source_inventory {
+        payload["kani_source_inventory"] = serde_json::to_value(inventory)
+            .map_err(|error| format!("serialize native source inventory: {error}"))?;
     }
     let bytes = serde_json::to_vec(&payload)
         .map_err(|error| format!("serialize snapshot identity: {error}"))?;
@@ -1301,7 +1318,7 @@ impl WorkspaceSession {
                 "retry with ripr_refresh",
             )
         })?;
-        let document = json!({
+        let mut document = json!({
             "schema_version": SNAPSHOT_SCHEMA_VERSION,
             "snapshot_id": snapshot.snapshot_id,
             "outcome": outcome,
@@ -1335,6 +1352,16 @@ impl WorkspaceSession {
                 "item entries are identities and locations, not evidence; read one item through ripr_get_gap or ripr://gap/{canonical_id}",
             ],
         });
+        if let Some(inventory) = &snapshot.kani_source_inventory {
+            document["kani_source_inventory"] =
+                serde_json::to_value(inventory).map_err(|error| {
+                    AttemptFailure::new(
+                        CODE_ANALYSIS_FAILED,
+                        format!("serialize native source inventory: {error}"),
+                        "retry with ripr_refresh",
+                    )
+                })?;
+        }
         bounded_document(document, RECOVERY_SNAPSHOT_TOO_LARGE)
     }
 
@@ -2517,6 +2544,7 @@ mod tests {
         Ok(crate::app::CheckOutput {
             value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
             mode: crate::app::Mode::Draft,
@@ -2553,6 +2581,158 @@ mod tests {
             desired_source: RefreshSource::Committed,
             superseded_order: std::collections::VecDeque::new(),
         })
+    }
+
+    #[test]
+    fn kani_source_inventory_cli_and_mcp_share_real_producer_capture() -> Result<(), String> {
+        const SOURCE: &str = include_str!(
+            "../../tests/data/source-role-corpus/cases/kani_source_context/src/lib.rs"
+        );
+        const CONFIG: &str =
+            include_str!("../../tests/data/source-role-corpus/cases/kani_source_context/ripr.toml");
+        let corpus = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data/source-role-corpus/cases/kani_source_context");
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let temporary = std::env::temp_dir();
+        std::fs::create_dir_all(&temporary).map_err(|error| error.to_string())?;
+        let root = temporary.join(format!("ripr-kani-mcp-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+        struct OwnedRoot(PathBuf);
+        impl Drop for OwnedRoot {
+            fn drop(&mut self) {
+                if !std::thread::panicking() {
+                    let _ = std::fs::remove_dir_all(&self.0);
+                }
+            }
+        }
+        let fixture = OwnedRoot(root);
+        std::fs::create_dir(fixture.0.join("src")).map_err(|error| error.to_string())?;
+        for path in ["Cargo.toml", "src/lib.rs", "input.diff", "ripr.toml"] {
+            std::fs::copy(corpus.join(path), fixture.0.join(path))
+                .map_err(|error| error.to_string())?;
+        }
+        let run = |configuration: &str| {
+            let config = crate::config::tests_only_parse(configuration)?;
+            crate::app::check_workspace_with_config(
+                crate::app::CheckInput {
+                    root: fixture.0.clone(),
+                    diff_file: Some(fixture.0.join("input.diff")),
+                    ..Default::default()
+                },
+                &config,
+            )
+        };
+        let first = run(CONFIG)?;
+        assert!(
+            crate::output::human::render(&first)
+                .contains("6 declarations in src/lib.rs; source limitations: 1.")
+        );
+        let cli: Value = serde_json::from_str(&crate::output::json::render(&first))
+            .map_err(|error| error.to_string())?;
+        assert_eq!(cli["kani_source_inventory"]["native_selection"], "unknown");
+        assert_eq!(
+            cli["kani_source_inventory"]["native_execution"],
+            "not_observed"
+        );
+        assert_eq!(
+            cli["kani_source_inventory"]["functional_protection"],
+            "not_established"
+        );
+        assert_eq!(
+            cli["kani_source_inventory"]["harnesses"]
+                .as_array()
+                .map(Vec::len),
+            Some(6)
+        );
+        let boundary: Vec<_> = first
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding
+                    .probe
+                    .owner
+                    .as_ref()
+                    .is_some_and(|owner| owner.0 == "src/lib.rs::boundary")
+            })
+            .collect();
+        assert!(
+            !boundary.is_empty(),
+            "premise: the production boundary still produces a finding"
+        );
+        assert!(
+            boundary
+                .iter()
+                .flat_map(|finding| &finding.related_tests)
+                .any(|test| test.name == "ordinary"),
+            "premise: ordinary evidence for the production boundary is retained"
+        );
+        assert!(
+            first
+                .findings
+                .iter()
+                .flat_map(|finding| &finding.related_tests)
+                .all(|test| test.name == "ordinary")
+        );
+        let snapshot = Snapshot::from_output(&first, Some("root:kani-source"))
+            .map_err(|failure| failure.detail)?;
+        let first_id = snapshot.snapshot_id.clone();
+        let session = WorkspaceSession {
+            last_good: Some(Arc::new(snapshot)),
+            ..Default::default()
+        };
+        let second = run(&CONFIG.replace("tests = false", "tests = true"))?;
+        assert_eq!(
+            serde_json::to_value(&first.findings).map_err(|error| error.to_string())?,
+            serde_json::to_value(&second.findings).map_err(|error| error.to_string())?,
+            "native cfg cannot add a functional discriminator"
+        );
+        let second_snapshot = Snapshot::from_output(&second, Some("root:kani-source"))
+            .map_err(|failure| failure.detail)?;
+        assert_ne!(
+            first_id, second_snapshot.snapshot_id,
+            "declared context must bind snapshot identity even when findings agree"
+        );
+        std::fs::write(
+            fixture.0.join("src/lib.rs"),
+            format!("{SOURCE}\n// changed native source identity\n"),
+        )
+        .map_err(|error| error.to_string())?;
+        let edited = run(CONFIG)?;
+        let edited_snapshot = Snapshot::from_output(&edited, Some("root:kani-source"))
+            .map_err(|failure| failure.detail)?;
+        assert_ne!(
+            first_id, edited_snapshot.snapshot_id,
+            "equal-result source edits must move native inventory identity"
+        );
+        let retained = session
+            .snapshot_document(&first_id)
+            .map_err(|failure| failure.detail)?;
+        assert_eq!(
+            retained["kani_source_inventory"], cli["kani_source_inventory"],
+            "serving MCP must preserve the captured context and bytes after live edits"
+        );
+        let plain = run("[languages]\nenabled = ['rust']\n")?;
+        let plain_json: Value = serde_json::from_str(&crate::output::json::render(&plain))
+            .map_err(|error| error.to_string())?;
+        assert!(plain_json.get("kani_source_inventory").is_none());
+        let plain_snapshot = Snapshot::from_output(&plain, Some("root:kani-source"))
+            .map_err(|failure| failure.detail)?;
+        let plain_id = plain_snapshot.snapshot_id.clone();
+        let plain_session = WorkspaceSession {
+            last_good: Some(Arc::new(plain_snapshot)),
+            ..Default::default()
+        };
+        assert!(
+            plain_session
+                .snapshot_document(&plain_id)
+                .map_err(|failure| failure.detail)?
+                .get("kani_source_inventory")
+                .is_none()
+        );
+        Ok(())
     }
 
     fn expect_code(result: Result<Value, AttemptFailure>, code: &str) -> Result<(), String> {
@@ -2979,6 +3159,7 @@ mod tests {
         let output = crate::app::CheckOutput {
             value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
             mode: crate::app::Mode::Draft,
@@ -3060,6 +3241,7 @@ mod tests {
         let output = crate::app::CheckOutput {
             value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
             mode: crate::app::Mode::Draft,
@@ -5062,6 +5244,7 @@ mod tests {
                 &snapshot.scope,
                 RefreshSource::Worktree,
                 commitment,
+                None,
             )
         };
         let none = id(None)?;
@@ -5151,6 +5334,7 @@ mod tests {
                 &original_items,
                 &snapshot.scope,
                 RefreshSource::Committed,
+                None,
                 None,
             )?;
             assert_eq!(snapshot.snapshot_id, original_id);

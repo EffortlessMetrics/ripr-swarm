@@ -300,6 +300,7 @@ impl LanguageAdapter for PerlAdapter {
             skipped_files: 0,
             // Perl has no harness registry: the projection is empty, as
             // for every non-Rust adapter (#3532).
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             limitations,
             rust_diagnostic_origins: Default::default(),
@@ -356,6 +357,7 @@ impl LanguageAdapter for PerlAdapter {
             skipped_files: 0,
             // Perl has no harness registry: the projection is empty, as
             // for every non-Rust adapter (#3532).
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             partial_reason,
             file_accounting: Default::default(),

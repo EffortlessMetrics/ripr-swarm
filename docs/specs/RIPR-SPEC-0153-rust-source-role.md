@@ -162,6 +162,93 @@ not establish test-only role.
 Attribute-driven membership is authoritative; filenames, imports,
 and macro suffixes never classify.
 
+### Declared ordinary Kani source context (#10686)
+
+The optional `[languages.rust.kani]` table selects the closed
+`kani_ordinary_proof_v1` source profile. It requires one repository-relative
+Rust `source` unit and an explicit Boolean `tests`. Absence preserves ordinary
+indexing, including the unconditional `ProofHarness` floor and
+`proof_harness_not_evaluated` disclosure from RIPR-SPEC-0367. This is a
+declaration of the native analysis context, not discovery
+of an installed verifier, a Cargo target, or a successful native build.
+
+The facts owner admits exact `#[kani::proof]` free, synchronous, nongeneric,
+zero-parameter functions with implicit unit return in that source unit and its
+inline modules. It binds the existing parser symbol, file, function line span,
+module path, source-preserving attributes, and SHA-256 of the indexed UTF-8
+source. The normal parser strips a UTF-8 BOM; this digest explicitly names
+indexed text, not a raw native capture. Distinct module identities stay
+distinct. Missing indexed source, ambiguous identity, non-UTF-8 or fallback
+syntax produces a named limitation without admission.
+
+The declared native target profile sets `kani = true`, `kani_host = false`,
+and `test = tests`. The shared cfg owner evaluates Boolean combinations and
+file, inline-module (including inner), and function attributes. Features,
+platform predicates, editor predicates such as `kani_ra`, and other custom
+atoms remain unknown. A record's `enabled`, `disabled`, or `unknown`
+applicability is relative to this declaration. Every record still carries
+`native_selection = unknown`, `native_execution = not_observed`, and
+`functional_protection = not_established` at inventory level. Native type
+checking, actual selection and execution are outside this profile.
+
+The new `KaniProofHarness` and `KaniProofLocal` function roles are source
+evidence only. They create no `TestFact`, Cargo selector, ordinary test count,
+assertion-helper credit, functional discriminator, or production seam. A
+conflicting ordinary `#[test]` registration is withheld with a limitation.
+Nested functions in an admitted proof body receive the local role without
+becoming independent proof declarations. An ambiguous nested source identity
+refuses the enclosing admission. Native source edits do not become affirmative
+ordinary-test-edit disclosures. Unrelated production functions and ordinary
+tests retain their roles.
+
+An admitted `KaniProofHarness` retains the proof-aware owner and edit
+disclosures of the unconditional role. A changed nested local names the
+enclosing proof through that same run limitation; it is not an independent
+harness declaration. Removing the context reconstructs the ordinary roles,
+including `ProofHarness`, instead of leaving native roles behind or turning
+an exact proof attribute back into production source.
+
+The review-comment route reads individual Git source objects without full
+include-composition authority. A changed source unit with apparent native roles
+therefore leaves its ordinary-test-edit disclosure unresolved, including an
+attribute-only role change; it cannot assert that tests are unchanged. A
+separately established ordinary test edit remains affirmative.
+
+Admission refuses local or imported `kani` bindings, globs, item macros,
+macro definitions, and opaque attributes or derives that could inject a
+binding in the surrounding scope. A body-local name does not bind its outer
+proof attribute. The first profile does not expand out-of-line modules,
+includes, aliases, conditional proof attributes, block-local declarations,
+function-body inner attributes, or arbitrary procedural wrappers. An indexed
+include fragment cannot become an independent source unit through this
+profile. Contract harnesses remain named unsupported forms. Recognized native
+modifiers (including expected panic, unwind and stubs) remain source text with
+`native_modifier_semantics_unmodeled`; they grant no contract, panic, bound,
+domain, adequacy, non-vacuity or protection semantics.
+
+This phase runs after ordinary role composition and harness registration and
+before helper credit in loaded, uncached and streaming builders. Raw file-fact
+caches precede it and store no native generation. Any old or requested native
+context forces reconstruction from raw facts during in-memory index reuse.
+Removed source is normalized from reconstructed old bytes with the same
+declared context; external include refusals survive reconstruction. The
+context participates in check-artifact and classified seam-cache identity.
+Configured native analysis uses the existing bounded full file selection
+instead of the dependent-package optimization whose secondary indexes lack
+this context. Existing hard scope limits remain in force.
+
+`CheckOutput.kani_source_inventory`, CLI JSON's optional
+`kani_source_inventory`, and the MCP snapshot resource carry the same typed
+capture. MCP binds it into snapshot identity and serves captured facts after
+live source/config changes. Unconfigured outputs omit the field. A short
+human summary identifies the source-only boundary. There is no new MCP tool,
+native execution lane, or support-tier claim. This source/context subset does
+not close #10686's discriminator and contract requirements.
+
+Acceptance is mapped by `.ripr/traceability.d/10686-kani-source-context.toml`.
+The retained corpus and literal counterexamples test these source contracts;
+ordinary Rust tests are not native-verifier evidence.
+
 For the existing workspace wrapper-macro alias rule, a direct automatic
 `src/bin/<name>.rs` target uses its own root alias for `#[crate::test]`
 (#10141). Manifest authority must confirm automatic binary discovery and

@@ -98,6 +98,8 @@ pub(crate) struct LanguageDiffResult {
     /// Test-harness registry projections (#3532): what each exact
     /// registration established for this run. Empty without registrations.
     pub(crate) harness_projections: Vec<crate::analysis::harness_projection::TestHarnessProjection>,
+    pub(crate) kani_source_inventory:
+        Option<crate::analysis::harness_projection::KaniSourceInventory>,
     pub(crate) changed_files: usize,
     /// Number of distinct changed source lines for which the adapter
     /// generated at least one probe. This is a producer fact, not a proxy for
@@ -198,6 +200,8 @@ pub(crate) struct LanguageRepoResult {
     /// Test-harness registry projections (#3532); empty without
     /// registrations.
     pub(crate) harness_projections: Vec<crate::analysis::harness_projection::TestHarnessProjection>,
+    pub(crate) kani_source_inventory:
+        Option<crate::analysis::harness_projection::KaniSourceInventory>,
     pub(crate) production_files: usize,
     /// Number of discovered-language files intentionally excluded as generated
     /// source. The pipeline records this as a partial run disclosure.

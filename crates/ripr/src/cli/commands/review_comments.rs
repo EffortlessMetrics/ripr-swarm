@@ -3447,6 +3447,98 @@ mod tests {
     }
 
     #[test]
+    fn review_comments_kani_include_role_cannot_claim_unchanged_tests() -> Result<(), String> {
+        use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
+        let root = unique_command_test_dir("review-kani-include-role");
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        let configuration = "[languages.rust.kani]\nprofile = 'kani_ordinary_proof_v1'\nsource = 'src/fragment.rs'\ntests = true\n";
+        for (path, text) in [
+            (
+                "Cargo.toml",
+                "[package]\nname='kani_include'\nversion='0.1.0'\nedition='2024'\n[workspace]\n",
+            ),
+            ("src/lib.rs", "include!(\"fragment.rs\");\n"),
+            ("ripr.toml", configuration),
+        ] {
+            std::fs::write(root.join(path), text).map_err(|error| error.to_string())?;
+        }
+        let before = "#[test]\n#[kani::proof]\nfn mixed() {\n    assert!(true);\n}\n#[test]\nfn ordinary() {\n    assert!(true);\n}\n";
+        std::fs::write(root.join("src/fragment.rs"), before).map_err(|error| error.to_string())?;
+        fixture_git_ok(&root, &["init", "-q"])?;
+        for (key, value) in [
+            ("user.name", "Review fixture"),
+            ("user.email", "review@example.invalid"),
+            ("commit.gpgsign", "false"),
+        ] {
+            fixture_git_ok(&root, &["config", "--local", key, value])?;
+        }
+        fixture_git_ok(&root, &["add", "."])?;
+        fixture_git_ok(&root, &["commit", "-qm", "before"])?;
+        let mixed_edit = before.replacen("assert!(true)", "assert!(false)", 1);
+        std::fs::write(root.join("src/fragment.rs"), &mixed_edit)
+            .map_err(|error| error.to_string())?;
+        fixture_git_ok(&root, &["commit", "-qam", "mixed edit"])?;
+        let config = crate::config::tests_only_parse(configuration)?;
+        let diff = load_review_comments_diff(&root, "HEAD^", "HEAD")?;
+        let changes = analysis::diff_test_changes(&root, "HEAD", &diff, &config, 2, u64::MAX);
+        assert!(changes.files.is_empty());
+        assert!(
+            changes.unresolved,
+            "isolated native role lost include uncertainty"
+        );
+        let out = root.join("target/ripr/review/comments.json");
+        review_comments_with_diff_loader_at_with_ceiling(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "HEAD^",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| Ok(diff.clone()),
+            Instant::now,
+            GuidancePayloadCeiling {
+                max_index_files: 16,
+                max_payload_bytes: 1024 * 1024,
+            },
+        )?;
+        let report: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&out).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(report["summary"]["unchanged_tests"], false);
+
+        // An ordinary test edit in the same source unit remains affirmative.
+        std::fs::write(
+            root.join("src/fragment.rs"),
+            mixed_edit.replace("assert!(true)", "assert!(false)"),
+        )
+        .map_err(|error| error.to_string())?;
+        fixture_git_ok(&root, &["commit", "-qam", "ordinary edit"])?;
+        let diff = load_review_comments_diff(&root, "HEAD^", "HEAD")?;
+        let changes = analysis::diff_test_changes(&root, "HEAD", &diff, &config, 2, u64::MAX);
+        assert!(!changes.unresolved);
+        assert_eq!(changes.files, [PathBuf::from("src/fragment.rs")]);
+        let completed = mixed_edit.replace("assert!(true)", "assert!(false)");
+        for source in [completed.replace("#[kani::proof]\n", ""), completed] {
+            std::fs::write(root.join("src/fragment.rs"), source)
+                .map_err(|error| error.to_string())?;
+            fixture_git_ok(&root, &["commit", "-qam", "native attribute edit"])?;
+            let diff = load_review_comments_diff(&root, "HEAD^", "HEAD")?;
+            let changes = analysis::diff_test_changes(&root, "HEAD", &diff, &config, 2, u64::MAX);
+            assert!(changes.files.is_empty());
+            assert!(
+                changes.unresolved,
+                "attribute-only role changes cannot assert unchanged tests"
+            );
+        }
+        remove_fixture_tree(&root)
+    }
+
+    #[test]
     fn review_comments_disclosure_bounds_head_blobs_beyond_dirty_worktree() -> Result<(), String> {
         use crate::testing::fixture_git::{fixture_git_ok, remove_fixture_tree};
         let root = unique_command_test_dir("review-test-disclosure-head-budget");

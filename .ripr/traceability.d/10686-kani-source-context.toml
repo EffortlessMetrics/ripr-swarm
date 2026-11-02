@@ -1,0 +1,56 @@
+# Ordinary source/context subset only. Native execution and discriminator
+# semantics remain outside this claim; authored tests are not native evidence.
+[[extend]]
+id = "RIPR-SPEC-0153"
+code = [
+  "crates/ripr/src/analysis/facts/kani.rs",
+  "crates/ripr/src/analysis/facts/cfg_predicates.rs",
+  "crates/ripr/src/analysis/facts/mod.rs",
+  "crates/ripr/src/analysis/facts/model.rs",
+  "crates/ripr/src/analysis/language/rust/proof_harness.rs",
+  "crates/ripr/src/analysis/probes/classify.rs",
+  "crates/ripr/src/analysis/probes/diff.rs",
+  "crates/ripr/src/analysis/test_changes.rs",
+  "crates/ripr/src/analysis/harness_projection.rs",
+  "crates/ripr/src/mcp/workspace.rs",
+]
+tests = [
+  "crates/ripr/src/analysis/facts/kani/tests.rs::ordinary_kani_source_has_separate_identity_and_no_test_or_seam_membership",
+  "crates/ripr/src/analysis/facts/kani/tests.rs::native_cfg_is_declared_and_unknown_atoms_never_become_host_truth",
+  "crates/ripr/src/analysis/facts/kani/tests.rs::canonical_proof_cannot_donate_assertions_or_keep_conflicting_test_registration",
+  "crates/ripr/src/analysis/facts/kani/tests.rs::source_provider_and_opaque_context_counterexamples_withhold_admission",
+  "crates/ripr/src/analysis/facts/kani/tests.rs::unsupported_native_forms_stay_limitations_and_modifiers_give_no_credit",
+  "crates/ripr/src/analysis/facts/kani/tests.rs::proof_only_edits_and_removed_proofs_never_seed_production_probes",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_kani_source_preserves_external_include_refusal",
+  "crates/ripr/src/cli/commands/review_comments.rs::review_comments_kani_include_role_cannot_claim_unchanged_tests",
+  "crates/ripr/src/mcp/workspace.rs::kani_source_inventory_cli_and_mcp_share_real_producer_capture",
+  "crates/ripr/tests/proof_harness_limit.rs::declared_context_keeps_proof_disclosure_and_real_test_priority",
+  "crates/ripr/tests/proof_harness_limit.rs::declared_context_keeps_harness_and_local_edits_out_of_production",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0367"
+code = [
+  "crates/ripr/src/analysis/facts/model.rs",
+  "crates/ripr/src/analysis/language/rust/proof_harness.rs",
+  "crates/ripr/src/analysis/test_changes.rs",
+]
+tests = [
+  "crates/ripr/tests/proof_harness_limit.rs::declared_context_keeps_proof_disclosure_and_real_test_priority",
+  "crates/ripr/tests/proof_harness_limit.rs::declared_context_keeps_harness_and_local_edits_out_of_production",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0140"
+code = ["crates/ripr/src/config.rs", "crates/ripr/src/config/model.rs"]
+tests = [
+  "crates/ripr/src/config/kani_tests.rs::kani_context_is_explicit_closed_and_path_normalized",
+  "crates/ripr/src/config/kani_tests.rs::kani_context_binds_artifact_and_seam_cache_identity",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0005"
+code = ["crates/ripr/src/analysis/facts/mod.rs", "crates/ripr/src/analysis/seam_inventory.rs"]
+tests = [
+  "crates/ripr/src/analysis/facts/kani/tests.rs::native_context_cache_rebuilds_on_remove_flip_revert_and_provider_edits",
+]

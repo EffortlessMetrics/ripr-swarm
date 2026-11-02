@@ -2511,6 +2511,7 @@ fn test_case_admitted(tests: &str) -> Vec<String> {
         &mut index,
         Path::new(""),
         &[],
+        None,
     );
     assert!(promoted.is_ok(), "{promoted:?}");
     let pin = establish(&index, "weight", "x * 3");

@@ -100,6 +100,22 @@ impl Repo {
         }
         serde_json::from_slice(&output.stdout).map_err(|e| format!("report is not JSON: {e}"))
     }
+
+    fn native_report(&self) -> Result<serde_json::Value, String> {
+        write(
+            &self.root.join("ripr.toml"),
+            "[languages]\nenabled = ['rust']\n\n[languages.rust.kani]\nprofile = 'kani_ordinary_proof_v1'\nsource = 'src/lib.rs'\ntests = false\n",
+        )?;
+        let report = self.report()?;
+        assert_eq!(
+            report["kani_source_inventory"]["harnesses"]
+                .as_array()
+                .map(Vec::len),
+            Some(1),
+            "premise: one harness was admitted through the declared source context: {report}"
+        );
+        Ok(report)
+    }
 }
 
 impl Drop for Repo {
@@ -254,6 +270,99 @@ fn a_test_path_wins_over_the_harness() -> Result<(), String> {
     for finding in on_owner {
         assert_ne!(finding["classification"], "no_static_path", "{finding}");
         assert_ne!(finding["static_limit_kind"], LIMIT, "{finding}");
+    }
+    Ok(())
+}
+
+/// Admitting a native context refines source identity without losing the
+/// unconditional proof disclosure or letting a harness replace a real test.
+#[test]
+fn declared_context_keeps_proof_disclosure_and_real_test_priority() -> Result<(), String> {
+    for tests in ["", TEST_MODULE] {
+        let source = lib("kani::proof", ">", "100", tests);
+        let repo = Repo::new(
+            &source,
+            &one_line_diff(
+                2,
+                "    if x >= 100 { 100 } else { x }",
+                "    if x > 100 { 100 } else { x }",
+            ),
+        )?;
+        let report = repo.native_report()?;
+        let on_owner: Vec<_> = findings(&report)?
+            .iter()
+            .filter(|finding| finding["probe"]["line"] == 2)
+            .collect();
+        assert!(!on_owner.is_empty(), "premise: changed owner: {report}");
+        for finding in on_owner {
+            if tests.is_empty() {
+                assert_eq!(finding["classification"], "no_static_path", "{finding}");
+                assert_eq!(finding["static_limit_kind"], LIMIT, "{finding}");
+                let step = finding["recommended_next_step"]
+                    .as_str()
+                    .unwrap_or_default();
+                assert!(
+                    step.contains("proof harness `limit_never_exceeds`"),
+                    "{step}"
+                );
+                assert!(step.contains("does not evaluate proofs"), "{step}");
+                assert!(
+                    finding["related_tests"]
+                        .as_array()
+                        .is_none_or(|related| related.is_empty()),
+                    "native source is not ordinary test evidence: {finding}"
+                );
+            } else {
+                assert_ne!(finding["classification"], "no_static_path", "{finding}");
+                assert_ne!(finding["static_limit_kind"], LIMIT, "{finding}");
+                assert!(
+                    finding["related_tests"].as_array().is_some_and(|related| {
+                        related
+                            .iter()
+                            .any(|test| test["name"] == "caps_at_one_hundred")
+                    }),
+                    "premise: ordinary test evidence remains present: {finding}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Nested locals stay source-only; edits disclose their enclosing proof,
+/// without presenting the local function as another native harness.
+#[test]
+fn declared_context_keeps_harness_and_local_edits_out_of_production() -> Result<(), String> {
+    let source = lib("kani::proof", ">", "101", "").replace(
+        "        let x: u32 = kani::any();",
+        "        fn local(x: u32) -> bool { x < 10 }\n        let x: u32 = kani::any();\n        let _ = local(x);",
+    );
+    for (before, after) in [
+        (
+            "        assert!(limit(x) <= 100);",
+            "        assert!(limit(x) <= 101);",
+        ),
+        (
+            "        fn local(x: u32) -> bool { x < 9 }",
+            "        fn local(x: u32) -> bool { x < 10 }",
+        ),
+    ] {
+        let line = source
+            .lines()
+            .position(|line| line == after)
+            .ok_or("changed source line missing")?
+            + 1;
+        let repo = Repo::new(&source, &one_line_diff(line, before, after))?;
+        let report = repo.native_report()?;
+        assert!(
+            findings(&report)?.is_empty(),
+            "verification source must seed no production probe: {report}"
+        );
+        assert_eq!(run_limitation_details(&report).len(), 1, "{report}");
+        assert_eq!(
+            report["analysis_outcome"]["analysis_complete"], false,
+            "{report}"
+        );
     }
     Ok(())
 }

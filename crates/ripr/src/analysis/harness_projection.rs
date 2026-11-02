@@ -10,6 +10,8 @@
 pub use crate::analysis::facts::{HarnessLimitationFact, HarnessSubjectFact};
 #[cfg(test)]
 pub use crate::analysis::facts::{HarnessSelectorCapability, HarnessSubjectClaim};
+// Native source inventory is separate from every executable test projection.
+pub use crate::analysis::facts::KaniSourceInventory;
 use std::path::PathBuf;
 
 /// What one registration established for one analysis run.

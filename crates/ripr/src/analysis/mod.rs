@@ -1054,6 +1054,7 @@ pub struct AnalysisResult {
     /// subject identity, selector capability, and typed limitations.
     /// Empty when the repository has no registrations.
     pub harness_projections: Vec<harness_projection::TestHarnessProjection>,
+    pub kani_source_inventory: Option<harness_projection::KaniSourceInventory>,
     /// Producer-owned completeness and limitation facts. Diff/worktree
     /// pipelines populate this; repo-scope analysis has no diff denominator.
     pub(crate) analysis_outcome: Option<crate::analysis_outcome::AnalysisOutcome>,

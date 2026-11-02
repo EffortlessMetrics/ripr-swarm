@@ -622,6 +622,20 @@ fn render_header_summary(output: &CheckOutput, config: &RiprConfig, plain: bool)
         out.push_str("\n\n");
     }
     render_language_file_breakdown(&mut out, output);
+    if let Some(inventory) = &output.kani_source_inventory {
+        let limitations = inventory.limitations.len()
+            + inventory
+                .harnesses
+                .iter()
+                .map(|harness| harness.limitations.len())
+                .sum::<usize>();
+        out.push_str(&format!(
+            "\nKani source inventory: {} declarations in {}; source limitations: {}. Native selection unknown; execution not observed; functional protection not established. See JSON for declared cfg applicability.\n",
+            inventory.harnesses.len(),
+            crate::output::path::human_path(&inventory.context.source),
+            limitations,
+        ));
+    }
     out
 }
 
@@ -1440,6 +1454,7 @@ mod tests {
     fn render_includes_summary_counts_and_empty_findings_message() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1504,6 +1519,7 @@ mod tests {
         )?;
         Ok(CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1750,6 +1766,7 @@ mod tests {
     fn header_names_the_loaded_config_path() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -1796,6 +1813,7 @@ mod tests {
             let root = PathBuf::from(root_text);
             let output = CheckOutput {
                 value_origins: Default::default(),
+                kani_source_inventory: None,
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -1834,6 +1852,7 @@ mod tests {
     fn untracked_only_note_names_the_staging_repair() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1888,6 +1907,7 @@ mod tests {
     fn untracked_note_escapes_control_bytes_in_named_paths() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1927,6 +1947,7 @@ mod tests {
     fn tracked_only_note_qualifies_the_worktree_remedy() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -1967,6 +1988,7 @@ mod tests {
     fn ignored_only_committed_read_names_force_intent_to_add() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2016,6 +2038,7 @@ mod tests {
     fn combined_untracked_and_ignored_note_names_both_repairs() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2061,6 +2084,7 @@ mod tests {
     fn summary_header_keeps_the_unknown_classes_separate() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2123,6 +2147,7 @@ mod tests {
         suppressed.id = "suppressed-finding".to_string();
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2174,6 +2199,7 @@ mod tests {
     fn summary_header_names_every_class_with_its_canonical_token() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2284,6 +2310,7 @@ mod tests {
         )?;
         Ok(CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2556,6 +2583,7 @@ mod tests {
         )?;
         Ok(CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2627,6 +2655,7 @@ mod tests {
         let finding_id = finding.id.clone();
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2787,6 +2816,7 @@ mod tests {
         let finding_id = finding.id.clone();
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -2834,6 +2864,7 @@ mod tests {
         let finding_id = finding.id.clone();
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -3232,6 +3263,7 @@ mod tests {
         ] {
             let output = CheckOutput {
                 value_origins: Default::default(),
+                kani_source_inventory: None,
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),
@@ -3280,6 +3312,7 @@ mod tests {
     fn render_replaces_hidden_block_with_more_when_nothing_is_omitted() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -3328,6 +3361,7 @@ mod tests {
         }
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -3998,6 +4032,7 @@ mod tests {
     fn render_omits_language_breakdown_for_rust_only_run() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -4040,6 +4075,7 @@ mod tests {
     fn render_emits_language_breakdown_when_non_rust_files_counted() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -4121,6 +4157,7 @@ mod tests {
             .collect::<Vec<_>>();
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -4175,6 +4212,7 @@ mod tests {
 
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -4214,6 +4252,7 @@ mod tests {
     fn bounded_human_output_reports_missing_scope_as_start_here_state() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -4381,6 +4420,7 @@ mod tests {
     fn empty_live_output(no_scope_provided: bool) -> CheckOutput {
         CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -4570,6 +4610,7 @@ mod tests {
             .push("suggested_verify_command: npm test -- pricing".to_string());
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5512,6 +5553,7 @@ mod tests {
     fn single_finding_output(finding: Finding) -> CheckOutput {
         CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5617,6 +5659,7 @@ mod tests {
 
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5666,6 +5709,7 @@ mod tests {
         second.probe.location.line = 8;
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5786,6 +5830,7 @@ mod tests {
         second.probe.location.line = 8;
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5859,6 +5904,7 @@ mod tests {
         let finding_id = finding.id.clone();
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5916,6 +5962,7 @@ mod tests {
         second.probe.location.line = 8;
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -5982,6 +6029,7 @@ mod tests {
         second.probe.location.line = 8;
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -6094,6 +6142,7 @@ mod tests {
         let location = finding.probe.location.file.display().to_string();
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -6147,6 +6196,7 @@ mod tests {
         let finding_id = finding.id.clone();
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -6192,6 +6242,7 @@ mod tests {
     fn human_output_discloses_limited_partial_scope_run_state() -> Result<(), String> {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -6283,6 +6334,7 @@ mod tests {
         };
         CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -6395,6 +6447,7 @@ mod tests {
         // raw path stays on the scope record.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -8574,6 +8627,7 @@ mod tests {
         let count = findings.len();
         CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -8741,6 +8795,7 @@ mod tests {
     fn render_emits_preview_disclosure_when_typescript_files_in_scope() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -8788,6 +8843,7 @@ mod tests {
     fn render_emits_preview_disclosure_when_python_files_in_scope() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -8845,6 +8901,7 @@ mod tests {
     fn render_omits_preview_disclosure_for_pure_rust_scope() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -8883,6 +8940,7 @@ mod tests {
         // The file_count in the advisory must appear verbatim in the disclosure line.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -8925,6 +8983,7 @@ mod tests {
         // says the files were not analyzed.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -9020,6 +9079,7 @@ mod tests {
         // render_emits_singular_perl_disclosure_when_adapter_disabled.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -9097,6 +9157,7 @@ mod tests {
         .map_err(|err| format!("write Cargo.toml: {err}"))?;
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -9178,6 +9239,7 @@ mod tests {
         // `no_scope_provided: true` must emit the guidance note.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9234,6 +9296,7 @@ mod tests {
         // is honest: that diff really had no probes.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9275,6 +9338,7 @@ mod tests {
         // behavior is covered") rather than any runtime claim.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9318,6 +9382,7 @@ mod tests {
         // does NOT provide scope) and not the repo-exposure check format.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9358,6 +9423,7 @@ mod tests {
         // Primary case: findings exist but none are exposed/weak/reachable.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9415,6 +9481,7 @@ mod tests {
     ) -> CheckOutput {
         CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9563,6 +9630,7 @@ mod tests {
         };
         let output_with = |findings: Vec<Finding>| CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9630,6 +9698,7 @@ mod tests {
         // Also fires for infection_unknown / propagation_unknown / static_unknown classes.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9688,6 +9757,7 @@ mod tests {
         duplicate_finding.related_tests.push(related_test);
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9750,6 +9820,7 @@ mod tests {
         };
         let output = |findings: Vec<Finding>| CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             unlinked_python_tests: None,
             untracked_working_tree_source_paths: Vec::new(),
@@ -9844,6 +9915,7 @@ mod tests {
         finding.ripr.reach.state = StageState::Yes;
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9891,6 +9963,7 @@ mod tests {
         );
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9931,6 +10004,7 @@ mod tests {
         // Do NOT emit the all-no-path note.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -9970,6 +10044,7 @@ mod tests {
     fn render_omits_all_no_path_disclosure_when_weakly_exposed_finding_exists() {
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -10010,6 +10085,7 @@ mod tests {
         // The all-no-path disclosure must NOT fire here.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -10044,6 +10120,7 @@ mod tests {
         // The count shown must be the no-path/unknown total (= findings), not probes.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -10084,6 +10161,7 @@ mod tests {
         // Verify the disclosure does not use forbidden mutation-testing vocabulary.
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.2".to_string(),
             tool: "ripr".to_string(),
@@ -10134,6 +10212,7 @@ mod tests {
         };
         let output = CheckOutput {
             value_origins: Default::default(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             schema_version: "0.1".to_string(),
             tool: "ripr".to_string(),
@@ -10206,6 +10285,7 @@ mod tests {
         let render_one = |advisory: PreviewLanguageAdvisory| {
             render(&CheckOutput {
                 value_origins: Default::default(),
+                kani_source_inventory: None,
                 harness_projections: Vec::new(),
                 schema_version: "0.1".to_string(),
                 tool: "ripr".to_string(),

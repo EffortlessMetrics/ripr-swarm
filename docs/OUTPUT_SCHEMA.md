@@ -3002,6 +3002,34 @@ subject and one dynamic-name limitation:
 An absent `test_harnesses` array means the repository has no harness
 registrations; it is never a claim that custom harnesses do not exist.
 
+### `kani_source_inventory` (top-level additive advisory, #10686)
+
+An explicit `[languages.rust.kani]` context adds this separate source inventory
+to check JSON and the MCP snapshot resource. Unconfigured outputs omit it.
+The closed shape is defined by `schemas/ripr/check.schema.json`.
+
+| Field | Meaning |
+| --- | --- |
+| `context` | Required `profile = kani_ordinary_proof_v1`, repository-relative Rust `source`, and Boolean `tests` declaration. |
+| `indexed_source_digest` | `sha256:` digest of indexed UTF-8 source, or `null` when the source was unavailable or inadmissible before hashing; the parser strips a UTF-8 BOM. |
+| `harnesses[]` | Exact parser `symbol`, `file`, `function_name`, `module_path`, function `start_line`/`end_line`, source-preserving `attributes`, declared `applicability`, and per-declaration `limitations`. |
+| `limitations[]` | Source-level `file`, optional `line` (explicit `null` when unavailable), and named `code`. |
+| `native_selection` | Always `unknown`. |
+| `native_execution` | Always `not_observed`. |
+| `functional_protection` | Always `not_established`. |
+
+Applicability is `enabled`, `disabled`, or `unknown` under the declared target
+context, never observed verifier selection. Harness records do not populate
+`test_harnesses`, ordinary test counts, Cargo selectors or functional protection.
+The human summary counts both source-level and per-declaration limitations.
+MCP preserves the captured inventory and binds it into snapshot identity.
+The existing `proof_harness_not_evaluated` owner and edit disclosures also
+apply to admitted declarations; a nested local edit discloses its enclosing
+proof without adding a harness record.
+See [configuration](CONFIGURATION.md#declared-kani-source-context) and the
+[source-role contract](specs/RIPR-SPEC-0153-rust-source-role.md#declared-ordinary-kani-source-context-10686)
+for admission and limitations. This field does not import native results.
+
 ### `source_subject` (top-level additive, #4544)
 
 When a gap ledger derived from this check output would name at least one

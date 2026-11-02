@@ -2304,6 +2304,9 @@ impl RustAdapter {
         if !dependent_package_roots.is_empty()
             && full_selection < analyzable_rust_files.len()
             && scope_mode.narrows(full_selection, narrow_limit)
+            // The reach-only secondary indexes have no declared native
+            // context. Use the existing bounded full selection for this profile.
+            && rust_config.kani.is_none()
         {
             let seeded_changed_files = analyzable_changed_files
                 .iter()
@@ -2412,16 +2415,18 @@ impl RustAdapter {
         // post-processing re-runs once over the merged index. Without an
         // admission probe the main build is the only build, as before.
         let cached = match admission_core {
-            Some(core) => rust_index::reuse_cached_index_with_loaded_files(
+            Some(core) => rust_index::reuse_cached_index_with_kani_context(
                 core,
                 &options.root,
                 &loaded_files,
                 &options.test_harnesses,
+                rust_config.kani.as_ref(),
             )?,
-            None => rust_index::build_analysis_index_from_loaded_files(
+            None => rust_index::build_analysis_index_with_kani_context(
                 &options.root,
                 &loaded_files,
                 &options.test_harnesses,
+                rust_config.kani.as_ref(),
             )?,
         };
         #[cfg(test)]
@@ -2990,6 +2995,7 @@ impl RustAdapter {
         Ok(LanguageDiffResult {
             value_origins: value_origins.into_inner().unwrap_or_default(),
             findings,
+            kani_source_inventory: index.kani_source_inventory.clone(),
             harness_projections: super::super::harness_projection::projections_from_index(
                 &index,
                 &options.test_harnesses,
@@ -3503,10 +3509,11 @@ impl RustAdapter {
                 Ok((file.clone(), bytes))
             })
             .collect::<Result<Vec<_>, String>>()?;
-        let cached = rust_index::build_analysis_index_from_loaded_files(
+        let cached = rust_index::build_analysis_index_with_kani_context(
             &options.root,
             &loaded_rust_files,
             &options.test_harnesses,
+            rust_config.kani.as_ref(),
         )?;
         #[cfg(test)]
         {
@@ -3628,6 +3635,7 @@ impl RustAdapter {
         Ok(LanguageRepoResult {
             value_origins: value_origins.into_inner().unwrap_or_default(),
             findings,
+            kani_source_inventory: index.kani_source_inventory.clone(),
             harness_projections: super::super::harness_projection::projections_from_index(
                 &index,
                 &options.test_harnesses,

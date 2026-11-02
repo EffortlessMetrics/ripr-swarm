@@ -99,11 +99,63 @@
       "type": "array",
       "items": { "$ref": "#/$defs/test_harness" }
     },
+    "kani_source_inventory": { "$ref": "#/$defs/kani_source_inventory" },
     "source_subject": { "$ref": "#/$defs/source_subject" },
     "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" }
   },
   "$defs": {
     "nullable_string": { "type": ["string", "null"] },
+    "kani_source_inventory": {
+      "description": "Declared ordinary Kani source context and source-bound declarations; neither native selection nor execution nor functional protection is established.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["context", "indexed_source_digest", "harnesses", "limitations", "native_selection", "native_execution", "functional_protection"],
+      "properties": {
+        "context": { "$ref": "#/$defs/kani_source_context" },
+        "indexed_source_digest": { "type": ["string", "null"], "pattern": "^sha256:[a-f0-9]{64}$" },
+        "harnesses": { "type": "array", "items": { "$ref": "#/$defs/kani_harness_source" } },
+        "limitations": { "type": "array", "items": { "$ref": "#/$defs/kani_source_limitation" } },
+        "native_selection": { "const": "unknown" },
+        "native_execution": { "const": "not_observed" },
+        "functional_protection": { "const": "not_established" }
+      }
+    },
+    "kani_source_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "source", "tests"],
+      "properties": {
+        "profile": { "const": "kani_ordinary_proof_v1" },
+        "source": { "type": "string", "minLength": 1 },
+        "tests": { "type": "boolean" }
+      }
+    },
+    "kani_harness_source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["symbol", "file", "function_name", "module_path", "start_line", "end_line", "applicability", "attributes", "limitations"],
+      "properties": {
+        "symbol": { "type": "string", "minLength": 1 },
+        "file": { "type": "string", "minLength": 1 },
+        "function_name": { "type": "string", "minLength": 1 },
+        "module_path": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "start_line": { "type": "integer", "minimum": 1 },
+        "end_line": { "type": "integer", "minimum": 1 },
+        "applicability": { "enum": ["enabled", "disabled", "unknown"] },
+        "attributes": { "type": "array", "items": { "type": "string" } },
+        "limitations": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "kani_source_limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line", "code"],
+      "properties": {
+        "file": { "type": "string", "minLength": 1 },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "code": { "type": "string", "minLength": 1 }
+      }
+    },
     "canonical_next_action": {
       "description": "Bounded primary next action from the shared selector (canonical_next_action.v1, #7258). Present on the public navigation-aware `ripr check --format json` adapter. Absent from the generic JSON renderer and unbounded pr-evidence path, which lack navigation/provenance context and must not invent a committed-source default or executable route.",
       "type": "object",

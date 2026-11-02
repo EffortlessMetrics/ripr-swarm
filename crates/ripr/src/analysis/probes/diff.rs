@@ -205,7 +205,11 @@ pub(crate) fn probes_for_file_with_relations(
     let removed_attribute_lines = old_source
         .map(attribute_continuation_lines)
         .unwrap_or_default();
-    let removed_bounds = removed_type_bounds(root, registrations, old_source, changed);
+    let kani_context = index
+        .kani_source_inventory
+        .as_ref()
+        .map(|inventory| &inventory.context);
+    let removed_bounds = removed_type_bounds(root, registrations, index, old_source, changed);
     let old_test_module_ranges = removed_bounds
         .old_index
         .as_ref()
@@ -642,7 +646,11 @@ pub(crate) fn probes_for_file_with_relations(
         // line coincidences. External file context retains the index composer
         // authority used by the existing test-evidence exclusion.
         // Other families keep their existing candidate-coordinate handling.
-        let is_test_evidence = if removed_bounds.lines[removed_index]
+        // Native source roles are reconstructed on the old bytes for every
+        // removed family. Candidate line positions cannot identify a deleted
+        // proof or a production function that moved into its former location.
+        let is_test_evidence = if kani_context.is_some()
+            || removed_bounds.lines[removed_index]
             || removed_bounds.field_declarations[removed_index]
         {
             file_is_composed_test_evidence(index, &changed.path)

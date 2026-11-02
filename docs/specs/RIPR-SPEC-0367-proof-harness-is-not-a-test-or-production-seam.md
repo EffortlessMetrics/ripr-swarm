@@ -112,6 +112,12 @@ test-evidence role.
 
 ### Claim boundary
 
+The declared ordinary Kani source context (RIPR-SPEC-0153) refines an admitted
+harness to `KaniProofHarness` without removing these disclosures. Its nested
+`KaniProofLocal` functions stay outside ordinary test evidence and production
+probes; an edit to one discloses the enclosing harness, not another harness.
+Without the optional context, the existing `ProofHarness` floor remains.
+
 Static only. The role and the limitation say a harness exists and is not
 evaluated. They do not say it passed, was run, covers the changed line, or is
 sufficient, and they never raise a class toward `exposed`. Contract attributes
@@ -175,7 +181,9 @@ dialects are out of scope here.
   `owner_called_by_a_proof_harness_is_limited_not_credited`,
   `harness_only_edit_seeds_no_probe_and_names_the_limitation`,
   `lookalike_attribute_path_is_not_a_proof_harness`,
-  `a_test_path_wins_over_the_harness`.
+  `a_test_path_wins_over_the_harness`,
+  `declared_context_keeps_proof_disclosure_and_real_test_priority`,
+  `declared_context_keeps_harness_and_local_edits_out_of_production`.
 - `crates/ripr/src/domain/limit_guidance.rs`:
   `static_limit_kinds_all_is_a_gap_free_ordinal_sequence`.
 - `fixtures/rust-verdict-corpus/cases/proof-harness-calls-owner-no-test.json`.

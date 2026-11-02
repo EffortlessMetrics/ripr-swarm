@@ -102,9 +102,14 @@ pub(super) fn old_source(
 pub(super) fn removed_type_bounds(
     root: &Path,
     registrations: &[crate::config::TestHarnessRegistration],
+    source_index: &RustIndex,
     old_source: Option<&str>,
     changed: &crate::analysis::diff::ChangedFile,
 ) -> RemovedTypeBounds {
+    let kani_context = source_index
+        .kani_source_inventory
+        .as_ref()
+        .map(|inventory| &inventory.context);
     let unavailable = || RemovedTypeBounds {
         lines: vec![false; changed.removed_lines.len()],
         field_declarations: vec![false; changed.removed_lines.len()],
@@ -118,10 +123,11 @@ pub(super) fn removed_type_bounds(
     };
     let lines = cancellable_type_bound_lines(source, &changed.removed_lines);
     let field_declarations = declarations::field_declaration_lines(source, &changed.removed_lines);
-    if !lines
-        .iter()
-        .chain(&field_declarations)
-        .any(|admitted| *admitted)
+    if kani_context.is_none()
+        && !lines
+            .iter()
+            .chain(&field_declarations)
+            .any(|admitted| *admitted)
     {
         return unavailable();
     }
@@ -130,10 +136,16 @@ pub(super) fn removed_type_bounds(
     };
     let mut old_index = RustIndex::default();
     old_index.insert_file(changed.path.clone(), facts, true);
+    // External include ambiguity is a refusal premise, not a source-local
+    // role. Do not turn a refused fragment into a standalone native unit
+    // merely because reconstruction parsed only this one file.
+    old_index.include_parents = source_index.include_parents.clone();
+    old_index.include_targets = source_index.include_targets.clone();
     if crate::analysis::facts::normalize_reconstructed_source_roles(
         &mut old_index,
         root,
         registrations,
+        kani_context,
     )
     .is_err()
     {

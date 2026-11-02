@@ -16,6 +16,15 @@ directories verbatim through `facts::build_index`.
 | `naming_lookalike` | confirmed naming convention vs unconfirmed lookalike (`src/price_test.rs`) | naming convention promoted to role authority |
 | `cfg_variants` | plain, nested-conjunct, and negated `cfg(test)` forms | test-first-only or "any token named test" cfg recognition |
 | `direct_cfg_helpers` | direct function test gates, inline control, and production alternatives | standalone `cfg(test)` helper mistaken for production; helper fabricated as executable test |
+| `kani_source_context` | explicit native source profile, mixed ordinary test and proofs, cfg modes, distinct inline identities | proof counted as Cargo test, source-only proof creating a production seam or functional credit |
+
+The Kani case runs through `facts::kani::tests` with its explicit context,
+and the real `CheckOutput`/CLI JSON/MCP capture test in `mcp/workspace.rs`.
+Its source is authored conformance input, not a captured native execution.
+The ordinary, cache, old-side and public projection tests establish only the
+source/context contract. Kani result import and genuine native captures have
+their separate ownership; this case neither invokes Kani nor supplies proof
+of functional protection, adequacy or non-vacuity.
 
 ## Mutation discrimination
 

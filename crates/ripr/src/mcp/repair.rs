@@ -1244,6 +1244,7 @@ pub(super) mod tests {
         Ok(crate::app::CheckOutput {
             value_origins: Default::default(),
             schema_version: crate::app::CHECK_OUTPUT_SCHEMA_VERSION.to_string(),
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             tool: "ripr".to_string(),
             mode: crate::app::Mode::Draft,

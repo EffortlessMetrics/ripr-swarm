@@ -1032,3 +1032,12 @@ surface = "repo"
 classification = "metadata"
 reason = "Per-PR count-policy allowlist rows merged into policy/process_allowlist.txt and policy/network_allowlist.txt so parallel PRs do not append to the same list tail."
 covered_by = ["cargo xtask check-process-policy", "cargo xtask check-network-policy"]
+
+[[allow]]
+glob = "crates/ripr/tests/data/source-role-corpus/cases/kani_source_context/ripr.toml"
+kind = "source_role_corpus_fixture"
+owner = "analysis/source-role"
+surface = "fixtures"
+classification = "fixture"
+reason = "#10686: explicit [languages.rust.kani] context consumed by the kani_source_context source-role corpus case."
+covered_by = ["cargo xtask check-file-policy"]

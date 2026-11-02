@@ -39,6 +39,8 @@ pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+mod kani;
+pub use kani::KaniSourceInventory;
 mod local_test_alias;
 mod macro_generated_tests;
 pub(crate) mod macro_visibility;
@@ -70,7 +72,7 @@ pub(crate) use test_styles::BUILT_IN_TEST_ATTRIBUTE_PATHS;
 
 use std::path::{Path, PathBuf};
 
-use crate::config::TestHarnessRegistration;
+use crate::config::{KaniAnalysisContext, TestHarnessRegistration};
 
 /// Normalize local roles in reconstructed source with the same authorities as
 /// ordinary indexing. External composition is intentionally supplied separately
@@ -79,6 +81,7 @@ pub(crate) fn normalize_reconstructed_source_roles(
     index: &mut RustIndex,
     root: &Path,
     registrations: &[TestHarnessRegistration],
+    kani_context: Option<&KaniAnalysisContext>,
 ) -> Result<(), String> {
     parameterized_tests::promote_explicit_test_case_functions(index);
     index.refresh_memberships()?;
@@ -87,6 +90,7 @@ pub(crate) fn normalize_reconstructed_source_roles(
     proptest::register_proptest_tests(index, root)?;
     index.refresh_memberships()?;
     harness_registry::apply_registrations(index, root, registrations);
+    kani::apply_context(index, kani_context)?;
     index.finalize()
 }
 
@@ -102,6 +106,15 @@ pub fn build_index_with_test_harnesses(
     root: &Path,
     files: &[PathBuf],
     registrations: &[TestHarnessRegistration],
+) -> Result<model::RustIndex, String> {
+    build_index_with_kani_context(root, files, registrations, None)
+}
+
+pub(crate) fn build_index_with_kani_context(
+    root: &Path,
+    files: &[PathBuf],
+    registrations: &[TestHarnessRegistration],
+    kani_context: Option<&KaniAnalysisContext>,
 ) -> Result<model::RustIndex, String> {
     let mut index = index_phase("index_parse", || build::build_index(root, files))?;
     index_phase("index_parameterized_tests", || {
@@ -139,6 +152,9 @@ pub fn build_index_with_test_harnesses(
     index_phase("index_harness_registry", || {
         harness_registry::apply_registrations(&mut index, root, registrations);
         Ok(())
+    })?;
+    index_phase("index_kani_source", || {
+        kani::apply_context(&mut index, kani_context)
     })?;
     // #6648: doc examples rustdoc runs. After composition, whose module
     // edges decide which files belong to the library.
@@ -180,7 +196,7 @@ pub(crate) fn build_index_from_loaded_files_with_cache_and_test_harnesses(
     files: &[(PathBuf, Vec<u8>)],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
-    build_cached_index_with_test_harnesses(root, files, registrations, MissAttribution::Named)
+    build_cached_index_with_test_harnesses(root, files, registrations, None, MissAttribution::Named)
 }
 
 /// [`build_index_from_loaded_files_with_cache_and_test_harnesses`] for
@@ -191,7 +207,22 @@ pub(crate) fn build_analysis_index_from_loaded_files(
     files: &[(PathBuf, Vec<u8>)],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
-    build_cached_index_with_test_harnesses(root, files, registrations, MissAttribution::Skipped)
+    build_analysis_index_with_kani_context(root, files, registrations, None)
+}
+
+pub(crate) fn build_analysis_index_with_kani_context(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+    kani_context: Option<&KaniAnalysisContext>,
+) -> Result<build::CachedRustIndex, String> {
+    build_cached_index_with_test_harnesses(
+        root,
+        files,
+        registrations,
+        kani_context,
+        MissAttribution::Skipped,
+    )
 }
 
 /// Reuse an already-built cached index as the index for `files` (#8547):
@@ -202,16 +233,29 @@ pub(crate) fn build_analysis_index_from_loaded_files(
 /// changed, parsed facts are returned without another build or post-parse
 /// pass. Run-scoped manifest/export authority and dependent query memos are
 /// refreshed because auxiliary inputs need not be among the indexed files.
+#[cfg(test)]
 pub(crate) fn reuse_cached_index_with_loaded_files(
-    mut cached: build::CachedRustIndex,
+    cached: build::CachedRustIndex,
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
+    reuse_cached_index_with_kani_context(cached, root, files, registrations, None)
+}
+
+pub(crate) fn reuse_cached_index_with_kani_context(
+    mut cached: build::CachedRustIndex,
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+    kani_context: Option<&KaniAnalysisContext>,
+) -> Result<build::CachedRustIndex, String> {
     // Provider, target and runner configuration can change with unchanged
     // Rust bytes. Rebuild the post-parse authority from cached raw facts; do
     // not reuse a formerly admitted or formerly refused property generation.
-    if !cached.index.proptest_receipts.is_empty()
+    if cached.index.kani_source_inventory.is_some()
+        || kani_context.is_some()
+        || !cached.index.proptest_receipts.is_empty()
         || cached.index.files().iter().any(|(_, file)| {
             file.unresolved_property_macros.iter().any(|property| {
                 matches!(
@@ -225,6 +269,7 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
             root,
             files,
             registrations,
+            kani_context,
             MissAttribution::Skipped,
         );
     }
@@ -279,6 +324,7 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
             root,
             files,
             registrations,
+            kani_context,
             MissAttribution::Skipped,
         );
     }
@@ -323,6 +369,7 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
                 root,
                 files,
                 registrations,
+                kani_context,
                 MissAttribution::Skipped,
             );
         }
@@ -332,19 +379,20 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
         hash.push(path, bytes);
     }
     cached.files_content_hash = hash.finish();
-    post_process_cached_index(cached, root, registrations)
+    post_process_cached_index(cached, root, registrations, kani_context)
 }
 
 fn build_cached_index_with_test_harnesses(
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
     registrations: &[TestHarnessRegistration],
+    kani_context: Option<&KaniAnalysisContext>,
     attribution: MissAttribution,
 ) -> Result<build::CachedRustIndex, String> {
     let cached = index_phase("index_cached_parse", || {
         build::build_index_from_loaded_files_with_cache(root, files, attribution)
     })?;
-    post_process_cached_index(cached, root, registrations)
+    post_process_cached_index(cached, root, registrations, kani_context)
 }
 
 /// Every post-parse phase, shared by the loaded and streaming builders so
@@ -353,6 +401,7 @@ fn post_process_cached_index(
     mut cached: build::CachedRustIndex,
     root: &Path,
     registrations: &[TestHarnessRegistration],
+    kani_context: Option<&KaniAnalysisContext>,
 ) -> Result<build::CachedRustIndex, String> {
     index_phase("index_parameterized_tests", || {
         parameterized_tests::promote_explicit_test_case_functions(&mut cached.index);
@@ -387,6 +436,9 @@ fn post_process_cached_index(
         harness_registry::apply_registrations(&mut cached.index, root, registrations);
         Ok(())
     })?;
+    index_phase("index_kani_source", || {
+        kani::apply_context(&mut cached.index, kani_context)
+    })?;
     // #6648: doc examples rustdoc runs. After composition, whose module
     // edges decide which files belong to the library.
     index_phase("index_doctests", || {
@@ -409,15 +461,25 @@ fn post_process_cached_index(
 /// (issue #4996): identical post-processing over an index built from
 /// on-demand reads, so production inventory never retains the whole raw
 /// source corpus.
+#[cfg(test)]
 pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses(
     root: &Path,
     paths: &[PathBuf],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
+    build_index_from_paths_with_kani_context(root, paths, registrations, None)
+}
+
+pub(crate) fn build_index_from_paths_with_kani_context(
+    root: &Path,
+    paths: &[PathBuf],
+    registrations: &[TestHarnessRegistration],
+    kani_context: Option<&KaniAnalysisContext>,
+) -> Result<build::CachedRustIndex, String> {
     let cached = index_phase("index_cached_parse", || {
         build::build_index_from_paths_with_cache(root, paths, MissAttribution::Named)
     })?;
-    post_process_cached_index(cached, root, registrations)
+    post_process_cached_index(cached, root, registrations, kani_context)
 }
 
 // The Cargo-validated file-wide harness evidence grant (#3608) is shared

@@ -303,7 +303,7 @@ fn reconstructed(fixture: &Fixture, files: &[(PathBuf, Vec<u8>)]) -> Result<Rust
         decoded.owned_file(Path::new(PROPERTY_PATH)),
         raw.owned_file(Path::new(PROPERTY_PATH))
     );
-    normalize_reconstructed_source_roles(&mut raw, &fixture.0, &[])?;
+    normalize_reconstructed_source_roles(&mut raw, &fixture.0, &[], None)?;
     // Local normalization intentionally leaves external composition to its
     // caller. Even an admitted receipt cannot supply owner reach without it.
     assert!(raw.execution_context(Path::new(PROPERTY_PATH)).is_none());
@@ -592,7 +592,7 @@ fn original_empty_property_receipts_survive_index_paths_and_revoke_on_unchanged_
     let mut reconstructed: RustIndex =
         serde_json::from_value(wire).map_err(|error| error.to_string())?;
     assert!(reconstructed.proptest_receipts.is_empty());
-    normalize_reconstructed_source_roles(&mut reconstructed, &fixture.0, &[])?;
+    normalize_reconstructed_source_roles(&mut reconstructed, &fixture.0, &[], None)?;
     compose_fixture_source_roles(&mut reconstructed, &fixture.0);
     reconstructed.finalize()?;
     assert_eq!(snapshot(&reconstructed, true)?, expected);

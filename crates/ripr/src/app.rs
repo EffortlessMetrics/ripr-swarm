@@ -273,6 +273,9 @@ pub struct CheckOutput {
     /// has no registrations, so every existing consumer output is
     /// unchanged.
     pub harness_projections: Vec<crate::analysis::harness_projection::TestHarnessProjection>,
+    /// Declared native proof source facts, independently of Cargo tests and
+    /// all protection verdicts. Absent without the explicit Kani profile.
+    pub kani_source_inventory: Option<crate::analysis::harness_projection::KaniSourceInventory>,
     /// Tool identifier.
     pub tool: String,
     /// Mode used for this analysis.

@@ -564,6 +564,7 @@ impl TypeScriptAdapter {
             return Ok(LanguageDiffResult {
                 value_origins: Default::default(),
                 findings: Vec::new(),
+                kani_source_inventory: None,
                 harness_projections: Vec::new(),
                 changed_files: 0,
                 candidate_line_count: 0,
@@ -1812,6 +1813,7 @@ impl TypeScriptAdapter {
         Ok(LanguageDiffResult {
             value_origins: Default::default(),
             findings,
+            kani_source_inventory: None,
             harness_projections: Vec::new(),
             changed_files: changed_count,
             candidate_line_count: 0,
