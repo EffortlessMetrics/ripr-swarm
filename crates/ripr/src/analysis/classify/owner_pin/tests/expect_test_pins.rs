@@ -8,6 +8,8 @@
 
 use super::*;
 use crate::analysis::facts::drop_in::{DropInManifests, temp_workspace};
+use crate::analysis::syntax::macro_binding_candidates;
+use crate::analysis::syntax::parse_clean_source_file;
 use crate::analysis::syntax::parser_oracles_for_function;
 use crate::domain::{OracleKind, OracleStrength};
 
@@ -32,8 +34,10 @@ fn render_admitted(tests: &str, root: Option<&Path>) -> Vec<String> {
     admitted_texts(&index, &pin)
 }
 
-fn render_test(imports: &str, body: &str) -> String {
-    format!("use demo::render;\n{imports}\n#[test]\nfn renders() {{\n    {body}\n}}\n")
+fn render_test(imports: &str, module_setup: &str, body: &str) -> String {
+    format!(
+        "use demo::render;\n{imports}\n{module_setup}\n#[test]\nfn renders() {{\n    {body}\n}}\n"
+    )
 }
 
 #[test]
@@ -53,6 +57,7 @@ fn an_inline_expect_comparison_pins_behind_a_verified_import() -> Result<(), Str
     let mut outcomes = Vec::new();
     let grouped = render_test(
         "use expect_test::{expect, expect_file};",
+        "",
         "expect![[\"w12\"]].assert_eq(&render(4));",
     );
     let grouped = render_admitted(&grouped, Some(&plain)).len();
@@ -66,7 +71,7 @@ fn an_inline_expect_comparison_pins_behind_a_verified_import() -> Result<(), Str
             "expect_file![\"w.txt\"].assert_eq(&render(4));",
         ),
     ] {
-        let tests = render_test(import, body);
+        let tests = render_test(import, "", body);
         outcomes.push((
             body,
             render_admitted(&tests, Some(&plain)).len(),
@@ -135,10 +140,10 @@ fn an_inline_expect_comparison_pins_behind_a_verified_import() -> Result<(), Str
             "expect![[\"w12\"]].assert_eq(&render(4));",
         ),
     ] {
-        let tests = render_test(imports, body);
+        let tests = render_test(imports, "", body);
         refused.push((tests.clone(), render_admitted(&tests, Some(&plain))));
     }
-    let should_panic = render_test(import, "expect![[\"w12\"]].assert_eq(&render(4));")
+    let should_panic = render_test(import, "", "expect![[\"w12\"]].assert_eq(&render(4));")
         .replace("#[test]\n", "#[test]\n#[should_panic]\n");
     let should_panic = render_admitted(&should_panic, Some(&plain));
     let _ = std::fs::remove_dir_all(&plain);
@@ -153,6 +158,55 @@ fn an_inline_expect_comparison_pins_behind_a_verified_import() -> Result<(), Str
         assert!(admitted.is_empty(), "{tests}: {admitted:?}");
     }
     assert!(should_panic.is_empty());
+    Ok(())
+}
+
+/// #7901: `.expect("..")` inside an untrusted macro's arguments is not an
+/// `expect!` binding site, so a verified import still admits the pin.
+#[test]
+fn macro_candidates_ignore_method_expect_in_untrusted_arguments() -> Result<(), String> {
+    let source = r#"use expect_test::expect;
+macro_rules! lazy_static { ($($t:tt)*) => { $($t)* }; }
+lazy_static! { static ref CFG: u32 = load().expect("ok"); }
+"#;
+    let parse =
+        parse_clean_source_file(source).ok_or_else(|| "fixture source must parse".to_string())?;
+    let candidates = macro_binding_candidates(&parse.tree());
+    assert!(
+        candidates.may_bind("expect"),
+        "verified import must still record the name"
+    );
+    let sites = crate::analysis::syntax::trusted_macro_binding_sites(
+        source,
+        &std::collections::BTreeSet::new(),
+        &["expect"],
+        &|_, _| false,
+        &|_| false,
+    );
+    assert!(
+        sites.iter().all(|(_, site)| !matches!(
+            site.kind,
+            crate::analysis::syntax::MacroBindingKind::MacroArgument(_)
+        )),
+        "method `.expect` must not be a macro-argument binding site: {sites:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn method_expect_inside_untrusted_macro_arguments_does_not_block_pins() -> Result<(), String> {
+    let plain = temp_workspace(
+        "expect-test-method-expect",
+        &[("Cargo.toml", &manifest("expect-test = \"1\""))],
+    )?;
+    let import = "use expect_test::expect;";
+    let setup = "macro_rules! lazy_static { ($($t:tt)*) => { $($t)* }; }";
+    let module_setup = "lazy_static! { static ref CFG: u32 = 1u32.expect(\"ok\"); }";
+    let body = "expect![[\"w12\"]].assert_eq(&render(4));";
+    let tests = render_test(&format!("{setup}\n{import}"), module_setup, body);
+    let admitted = render_admitted(&tests, Some(&plain));
+    let _ = std::fs::remove_dir_all(&plain);
+    assert_eq!(admitted.len(), 1, "{admitted:?}");
     Ok(())
 }
 

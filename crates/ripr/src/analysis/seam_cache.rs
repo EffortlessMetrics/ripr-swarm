@@ -1188,7 +1188,7 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.52`: an inline `unwrap_err` / `expect_err` equality against a named
 /// variant is an `ExactErrorVariant` oracle fact (#12266); `1.51` facts keep
 /// it `exact_value`.
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.52";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.53";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5434,7 +5434,7 @@ mod tests {
         // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.52");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.53");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
