@@ -645,24 +645,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           EXPECTED_HEAD: ${{ needs.admission.outputs.head }}
+          REQUEST_AT: ${{ github.event.pull_request.updated_at }}
+          REQUEST_SELECTION: ${{ format('{0} full-ci={1} vscode={2}', github.event.pull_request.base.sha, contains(github.event.pull_request.labels.*.name, 'full-ci'), contains(github.event.pull_request.labels.*.name, 'vscode')) }}
         run: |
           set -euo pipefail
           # #12122: ci.yml owns selection of the `vscode` extension e2e. Its
           # `vscode surface` job ends non-skipped only for a merge-ready request,
-          # and every `vscode` check of that workflow run lives in the same
-          # check suite. A skipped `vscode` check therefore means "not selected"
-          # only when the request's own `vscode surface` succeeded and the skip
-          # is in its suite: a skipped check from an earlier nonrequest event is
-          # in another suite and can never stand in for it. The surface check
-          # must also belong to the ci.yml run for this same label event: created
-          # within 30s of this run's creation on either side, newest wins (both
-          # runs are created at the event time, not the runner queue), so an
-          # earlier request's suite is not read. No such check yet means
-          # ci.yml has not got that far: wait, then fail closed. In the suite,
-          # the newest executed check (highest id) decides, so a passing re-run
-          # clears an earlier infrastructure failure; a running one is awaited.
-          # Reads retry because one transient API error must not cost a 45
-          # minute re-run.
+          # and every `vscode` check of a run lives in that run's check suite. A
+          # skipped `vscode` check means "not selected" only when the request's
+          # own surface succeeded and the skip is in its suite.
+          # The surface must belong to the ci.yml run for this label event (#12236):
+          # that run titles itself `CI merge-ready request <head> <request time>
+          # <base> full-ci=<bool> vscode=<bool>`, every input of its vscode
+          # selection, from the event payload; this run reads the same values, so
+          # an earlier request's suite, which may have selected differently, is
+          # not read. Distinct runs with one title (same inputs, one second) are
+          # refused. Every surface check for the head is considered.
+          # Residual (#12252): no per-event id is shared by the two workflows, so
+          # an identical-title earlier run passing while this request's run was
+          # invisible and then failed nondeterministically is read; its selection
+          # inputs are identical. An earlier failed or cancelled run fails the
+          # Result (safe); a deterministic failure stays red.
+          # No surface yet: wait, then fail closed. In the suite the newest
+          # executed check decides, so a passing re-run clears an infrastructure
+          # failure and a running one is awaited. Reads retry so one API error
+          # does not cost a 45 minute re-run.
           [[ "$EXPECTED_HEAD" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::admitted head is not a full SHA"; exit 1; }
           api() {
             local attempt
@@ -672,22 +679,35 @@ jobs:
             done
             return 1
           }
-          run_created=$(api "repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at) || { echo "::error::could not read this run's creation time"; exit 1; }
-          run_epoch=$(date -u -d "$run_created" +%s) || { echo "::error::could not parse this run's creation time $run_created"; exit 1; }
+          [ -n "$REQUEST_AT" ] || { echo "::error::this run has no request time to bind the vscode surface to"; exit 1; }
+          request_title="CI merge-ready request $EXPECTED_HEAD $REQUEST_AT $REQUEST_SELECTION"
+          declare -A run_title=()
           deadline=$((SECONDS + 1200))
           while :; do
             surface_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode%20surface&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode surface check runs for $EXPECTED_HEAD"; exit 1; }
             vscode_raw=$(api --paginate "repos/$REPOSITORY/commits/$EXPECTED_HEAD/check-runs?check_name=vscode&filter=all&per_page=100" --jq '.check_runs[]') || { echo "::error::could not read vscode check runs for $EXPECTED_HEAD"; exit 1; }
             surface='{}'
+            matched_runs=''
             while IFS= read -r candidate; do
               [ -n "$candidate" ] || continue
               candidate_run=$(jq -r '(.html_url // "") | try (capture("/runs/(?<r>[0-9]+)/") | .r) catch empty' <<<"$candidate")
               [ -n "$candidate_run" ] || continue
-              candidate_created=$(api "repos/$REPOSITORY/actions/runs/$candidate_run" --jq .created_at) || { echo "::error::could not read the creation time of run $candidate_run"; exit 1; }
-              candidate_epoch=$(date -u -d "$candidate_created" +%s) || { echo "::error::could not parse creation time $candidate_created of run $candidate_run"; exit 1; }
-              delta=$((candidate_epoch - run_epoch)); [ "$delta" -ge 0 ] || delta=$((-delta))
-              if [ "$delta" -le 30 ]; then surface=$candidate; break; fi
-            done < <(jq -s -c '[.[] | select(.app.slug == "github-actions" and .conclusion != "skipped")] | sort_by(.id) | reverse | .[0:5][]' <<<"$surface_raw")
+              if [ -z "${run_title[$candidate_run]+set}" ]; then
+                run_title[$candidate_run]=$(api "repos/$REPOSITORY/actions/runs/$candidate_run" --jq .display_title) || { echo "::error::could not read the title of run $candidate_run"; exit 1; }
+              fi
+              candidate_title=${run_title[$candidate_run]}
+              if [ "$candidate_title" = "$request_title" ]; then
+                [ "$surface" != '{}' ] || surface=$candidate
+                case " $matched_runs " in *" $candidate_run "*) ;; *) matched_runs="$matched_runs $candidate_run" ;; esac
+              fi
+            done < <(jq -s -c '[.[] | select(.app.slug == "github-actions" and .conclusion != "skipped")] | sort_by(.id) | reverse | .[]' <<<"$surface_raw")
+            # The title has one-second resolution, so two label events on one head
+            # in the same second share it. Distinct ci.yml runs with this exact
+            # title cannot be told apart: refuse rather than read either suite.
+            if [ "$(wc -w <<<"$matched_runs")" -gt 1 ]; then
+              echo "::error::more than one ci.yml run ($matched_runs ) carries the request title '$request_title'; the vscode surface cannot be bound to this request. Remove and re-add merge-ready."
+              exit 1
+            fi
             state=$(jq -r '.status // "none"' <<<"$surface")
             if [ "$state" = completed ]; then
               surface_conclusion=$(jq -r '.conclusion // ""' <<<"$surface")
