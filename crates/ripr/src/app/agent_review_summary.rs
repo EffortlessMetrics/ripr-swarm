@@ -684,6 +684,44 @@ mod tests {
     }
 
     #[test]
+    fn agent_review_summary_fresh_repo_uses_plain_early_state_copy() -> Result<(), String> {
+        use super::report::FRESH_REVIEW_SUMMARY_HEADLINE;
+
+        let root = unique_agent_review_summary_test_dir("fresh-plain")?;
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+
+        let report = build_agent_review_summary_report(&root, Path::new("."));
+        let json = render_agent_review_summary_json(&report)?;
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("parse review summary JSON: {err}"))?;
+        assert_eq!(
+            value["reviewer_summary"]["headline"].as_str(),
+            Some(FRESH_REVIEW_SUMMARY_HEADLINE)
+        );
+        assert_eq!(
+            value["reviewer_summary"]["what_changed"].as_str(),
+            Some(FRESH_REVIEW_SUMMARY_HEADLINE)
+        );
+
+        let markdown = render_agent_review_summary_markdown(&report);
+        assert!(
+            markdown.contains(FRESH_REVIEW_SUMMARY_HEADLINE),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("producer analysis outcome is unavailable"),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains("Movement: missing_artifact"),
+            "{markdown}"
+        );
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
     fn agent_review_summary_markdown_names_review_focus_and_limits() -> Result<(), String> {
         let root = unique_agent_review_summary_test_dir("markdown")?;
         write_complete_artifacts(&root)?;

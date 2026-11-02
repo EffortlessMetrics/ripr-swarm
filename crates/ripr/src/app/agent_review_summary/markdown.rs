@@ -1,5 +1,6 @@
 use super::report::{
-    NO_ANALYSIS_YET, review_summary_before_analysis_artifact, reviewer_summary_headline_markdown,
+    FRESH_REVIEW_SUMMARY_HEADLINE, NO_ANALYSIS_YET, review_summary_before_analysis_artifact,
+    review_summary_is_fresh_early_state, reviewer_summary_headline_markdown,
 };
 use super::types::AgentReviewSummaryReport;
 use crate::output::markdown::{PowershellForm, command_shell_disclosure, powershell_form};
@@ -23,7 +24,12 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
     }
     let before_analysis =
         review_summary_before_analysis_artifact(&report.surfaces, report.analysis_outcome.as_ref());
-    if before_analysis && report.static_movement.state == "missing_artifact" {
+    let fresh = review_summary_is_fresh_early_state(
+        &report.surfaces,
+        report.analysis_outcome.as_ref(),
+        &report.static_movement,
+    );
+    if fresh {
         rendered.push_str("Movement: nothing to compare yet.\n");
         rendered.push_str(&format!("Receipt: {NO_RECEIPT_BEFORE_REPAIR}\n"));
     } else {
@@ -42,6 +48,11 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
                 "incomplete"
             }
         )),
+        None if fresh => {
+            rendered.push_str(&format!(
+                "Analysis outcome: {FRESH_REVIEW_SUMMARY_HEADLINE}\n"
+            ));
+        }
         None if before_analysis => {
             rendered.push_str(&format!("Analysis outcome: {NO_ANALYSIS_YET}\n"));
         }
@@ -83,7 +94,9 @@ pub(crate) fn render_agent_review_summary_markdown(report: &AgentReviewSummaryRe
         &report.surfaces,
     );
     rendered.push_str(&format!("{headline}\n\n"));
-    let what_changed = if before_analysis {
+    let what_changed = if fresh {
+        FRESH_REVIEW_SUMMARY_HEADLINE.to_string()
+    } else if before_analysis {
         NO_ANALYSIS_YET.to_string()
     } else {
         report.reviewer_summary.what_changed.clone()

@@ -61,7 +61,7 @@
   },
   "reviewer_summary": {
     "evidence": "Run agent receipt after verify to create review evidence.",
-    "headline": "Review packet is incomplete for unknown seam: producer analysis outcome is unavailable.",
+    "headline": "Nothing to review yet: no repair has been run.",
     "remaining": "Run the next command listed by agent status.",
     "reviewer_should_inspect": [
       "target/ripr/reports/agent-receipt.json",
@@ -70,7 +70,7 @@
       "target/ripr/reports/operator-cockpit.json",
       "target/ripr/reports/repo-exposure.json"
     ],
-    "what_changed": "No producer-backed completeness result is available; static review evidence cannot be treated as complete."
+    "what_changed": "Nothing to review yet: no repair has been run."
   },
   "root": "repo root",
   "schema_version": "0.1",
