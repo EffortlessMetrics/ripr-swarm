@@ -211,7 +211,9 @@ then a Perl corpus without a ledger scores rows without the coverage gate.
   and its expected rows agree with its labels row by row.
 - A Perl case is refused without a pinned packet under `packets/`, and an
   edited packet is refused without its edits; a packet or producer outside
-  the Perl corpus is refused.
+  the Perl corpus is refused. For `edited_producer`, `check` replays
+  `perl_facts.edits` on the named base producer packet and refuses stale
+  edited bytes or fingerprints (#9062).
 - A packet case counts `unresolved_subject` findings on its anchor; a case
   without a packet does not.
 - Producer and edited-packet rates are reported apart, and a summary rebuilt
@@ -254,6 +256,9 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `committed_perl_corpus_is_valid_and_covers_each_test_library`
 - `perl_expected_rows_agree_with_corpus_labels`
 - `validator_holds_perl_packets_to_their_pins_and_provenance`
+- `committed_perl_edited_producer_packets_replay_from_base_cases`
+- `stale_edited_producer_packet_fails_edit_replay`
+- `producer_pin_move_without_edited_packet_refresh_fails_replay`
 - `validator_refuses_perl_facts_and_a_producer_outside_the_perl_corpus`
 - `packet_findings_count_while_their_subject_is_unresolved_and_others_do_not`
 - `report_keeps_edited_packet_rates_apart_from_producer_rates`
@@ -269,8 +274,10 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `xtask/src/reports/verdict_corpus.rs` owns the `--language` selection
   and the Rust-only replay label rules; RIPR-SPEC-0219's `check-all` owns
   corpus discovery and per-language run and report paths. It also owns the
-  Perl packet validation, the `--perl-facts` run and the provenance rates;
-  `xtask/src/reports/fixtures.rs` builds the `lang-perl` binary.
+  Perl packet validation, the `--perl-facts` run   and the provenance rates;
+  `xtask/src/reports/verdict_corpus_perl_edit_replay.rs` replays
+  `edited_producer` packet edits (#9062); `xtask/src/reports/fixtures.rs` builds
+  the `lang-perl` binary.
 - `fixtures/<language>-verdict-corpus/` holds each language's corpus.
 
 ## Metrics

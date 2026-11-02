@@ -50,7 +50,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-0235-ex01-sink-unconfirmed.json",
-    "sha256": "6071c7e1fb899f0bc6c845e202e0097a47584a12f0a7fabca05e691b8b7b1e56",
+    "sha256": "ed94a66dc4b6438e02cad571e55e2ff6440282f1dd04d30e20d3771b33af894d",
     "provenance": "edited_producer",
     "edits": "Started from the producer packet of perl-testmore-tier-far-from-boundary, then in oracles where {\"oracle_id\": \"oracle:t/qualified.t:is:130-198\"} set {\"observed_sink\": null}; the packet fingerprint was recomputed."
   },

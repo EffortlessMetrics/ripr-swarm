@@ -20,17 +20,17 @@
   "dynamic_boundaries": [
     {
       "boundary_id": "boundary:runner:t/ledger.t",
-      "kind": "missing_test_runner",
-      "file_id": "file:t/ledger.t",
-      "owner_id": null,
-      "range": {
-        "start_line": 0,
-        "start_column": 0,
-        "end_line": 0,
-        "end_column": 0
-      },
       "confidence": "high",
-      "provenance_refs": []
+      "file_id": "file:t/ledger.t",
+      "kind": "missing_test_runner",
+      "owner_id": null,
+      "provenance_refs": [],
+      "range": {
+        "end_column": 0,
+        "end_line": 0,
+        "start_column": 0,
+        "start_line": 0
+      }
     }
   ],
   "files": [
@@ -107,7 +107,7 @@
       "evidence_refs": [],
       "kind": "partial_inference",
       "limitation_id": "change-behavior-hint-partial",
-      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped, but a die/return/comparison token inside a string literal can still be misclassified (a robust fix needs tokenization)."
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped and single-line \"...\" / '...' literal contents cannot drive classification, but tokens inside heredocs, multi-line strings, q{}/qq{} and other quote-like operators, regex literals, or trailing comments are still scanned as code and can be misclassified."
     }
   ],
   "oracles": [
@@ -175,7 +175,7 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "like(dies { Ledger::withdraw(10, 20) }, qr/insufficient funds/, 'overdrawing names the reason')",
-      "kind": "predicate_boundary_assertion",
+      "kind": "exception_observer",
       "observed_sink": null,
       "oracle_id": "oracle:t/ledger.t:like:311-406",
       "provenance_refs": [
@@ -187,27 +187,7 @@
         "start_column": 0,
         "start_line": 11
       },
-      "strength": "weak_broad",
-      "target_owner_id": null,
-      "test_id": "test:t/ledger.t"
-    },
-    {
-      "confidence": "medium",
-      "expected_expression": null,
-      "expression": "dies { Ledger::withdraw(10, 20) }, qr/insufficient funds/, 'overdrawing names the reason'",
-      "kind": "exception_observer",
-      "observed_sink": null,
-      "oracle_id": "oracle:t/ledger.t:dies:316-405",
-      "provenance_refs": [
-        "prov:oracle_extraction:file:t/ledger.t"
-      ],
-      "range": {
-        "end_column": 94,
-        "end_line": 11,
-        "start_column": 5,
-        "start_line": 11
-      },
-      "strength": "weak_broad",
+      "strength": "strong_exact",
       "target_owner_id": null,
       "test_id": "test:t/ledger.t"
     },
@@ -255,7 +235,7 @@
       "confidence": "medium",
       "expected_expression": null,
       "expression": "isnt(Ledger::fee(100), 0, 'fees are charged')",
-      "kind": "exact_return_assertion",
+      "kind": "smoke_ok",
       "observed_sink": null,
       "oracle_id": "oracle:t/ledger.t:isnt:469-514",
       "provenance_refs": [
@@ -267,7 +247,7 @@
         "start_column": 0,
         "start_line": 15
       },
-      "strength": "strong_exact",
+      "strength": "weak_smoke",
       "target_owner_id": null,
       "test_id": "test:t/ledger.t"
     },
@@ -487,7 +467,7 @@
       }
     }
   ],
-  "packet_fingerprint": "sha256:c2943a995e498aa1a54b5feaa581f7456bcb9565026fc9bf7d3bde75de06641d",
+  "packet_fingerprint": "sha256:855066ab8a76a009071746155475d7487b2385bc1c7ec4714ccfd648d49c95c1",
   "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
   "packet_status": "partial",
   "producer": {
@@ -502,7 +482,8 @@
       "verify_commands",
       "limitations",
       "provenance",
-      "test_facts"
+      "test_facts",
+      "oracle_matcher_grading"
     ],
     "name": "perl-lsp",
     "version": "0.17.0"

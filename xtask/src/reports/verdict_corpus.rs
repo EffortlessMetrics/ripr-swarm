@@ -1554,6 +1554,11 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
         }
         violations.extend(subject_violations(subject, dir));
     }
+    let cases_by_id: BTreeMap<&str, &Case> = corpus
+        .cases
+        .iter()
+        .map(|case| (case.case_id.as_str(), case))
+        .collect();
     let mut ids = BTreeSet::new();
     for case in &corpus.cases {
         if !ids.insert(case.case_id.as_str()) {
@@ -1565,7 +1570,12 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
                 case.case_id
             ));
         }
-        violations.extend(perl_facts_violations(case, is_perl_corpus(dir), dir));
+        violations.extend(perl_facts_violations(
+            case,
+            is_perl_corpus(dir),
+            dir,
+            &cases_by_id,
+        ));
         match subjects.get(case.subject_id.as_str()) {
             Some(subject) => violations.extend(case_violations(case, subject, dir)),
             None => violations.push(format!(
@@ -1630,7 +1640,12 @@ fn fact_producer_violations(producer: Option<&FactProducer>, is_perl: bool) -> V
 /// A Perl case must carry a packet whose bytes match its pin, under
 /// `packets/`; an edited packet must say what was edited and a producer
 /// packet must not. No other corpus's case takes a packet.
-pub(crate) fn perl_facts_violations(case: &Case, is_perl: bool, dir: &Path) -> Vec<String> {
+pub(crate) fn perl_facts_violations(
+    case: &Case,
+    is_perl: bool,
+    dir: &Path,
+    cases_by_id: &BTreeMap<&str, &Case>,
+) -> Vec<String> {
     let id = &case.case_id;
     let Some(facts) = &case.perl_facts else {
         return if is_perl {
@@ -1674,6 +1689,16 @@ pub(crate) fn perl_facts_violations(case: &Case, is_perl: bool, dir: &Path) -> V
             "case `{id}` names edits but calls its packet the producer's output; mark it edited_producer"
         )),
         _ => {}
+    }
+    if facts.provenance == PacketProvenance::EditedProducer {
+        violations.extend(
+            super::verdict_corpus_perl_edit_replay::edited_producer_packet_violations(
+                id,
+                facts,
+                dir,
+                cases_by_id,
+            ),
+        );
     }
     violations
 }
