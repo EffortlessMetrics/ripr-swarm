@@ -9795,7 +9795,8 @@ JSON shape:
           "name": "applies_discount_above_threshold",
           "file": "tests/pricing.rs",
           "line": 18
-        }
+        },
+        "proposed_target": null
       },
       "llm_guidance": {
         "prompt": "Write one focused Rust test for the missing equality boundary. Place it near tests/pricing.rs::applies_discount_above_threshold. Do not change production code. Preserve existing fixture style. Verify with ripr agent verify.",
@@ -9919,6 +9920,13 @@ Field contract:
   object adds a directly navigable `file:line` when the related-test location
   is resolved. On the gap-ledger card path `file` and `line` may be `null`
   when the supplied repair route names only the related test.
+- `comments[].suggested_test.proposed_target` - producer-owned new-test
+  proposal `{proposal_kind, file, owner, provenance}` projected from
+  `new_test_target`, or `null` when the producer has no governed proposal.
+  `proposal_kind` is `inline_unit` or `integration`; `provenance` is
+  `producer_owned`. This is not an existing test: `related_test` remains the
+  existing-test object, and the gate prefers that object when both are
+  present. `recommended_file` is not a proposal.
 - `comments[].suggested_test.recommended_file` /
   `comments[].suggested_test.recommended_name` - strings on working-set cards
   (`not_applicable` on non-actionable cards). On `--gap-ledger` cards they are
@@ -11082,6 +11090,14 @@ Field contract:
   caller, generic evidence-vector position is not treated as seam identity,
   and path/line is not manufactured into an exact inspection selector. The
   `authority_boundary` is `static_ripr_evidence_only`.
+- `decisions[].repair_route.repair_target` - tagged target or `null`. Kinds
+  are `related_test` (existing test `{name, file, line}`), `proposed`
+  (`{proposal_kind, file, owner, provenance}` for a producer-owned
+  InlineUnit or Integration new-test proposal), and `production_caller`.
+  `proposed` is not `related_test`: RIPR has not observed a test at that
+  location. An existing related test wins over a proposal. A missing or
+  ungoverned proposal stays `null`; the gate does not invent one from
+  `recommended_file`.
 - `decisions[].repair_route.analysis_outcome_command` is optional and copied
   unchanged from a review card. Older cards and GapRecord routes omit it. It
   is not a route-completeness or repair-eligibility requirement; Markdown

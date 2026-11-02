@@ -160,6 +160,7 @@ pub(crate) fn perl_gap_record_for(finding: &Finding) -> Option<GapRecord> {
             None
         },
         inspection_command: None,
+        proposed_target: None,
         stop_conditions,
     };
 

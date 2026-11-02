@@ -1,5 +1,13 @@
 # Golden Output Changes
 
+## Pending — proposed repair-target projection (#3162)
+
+PR-guidance working-set cards now emit `suggested_test.proposed_target`
+(`null` when the producer has no governed proposal). Re-hashed
+`pr-guidance/exact-line/comments.json` into the gate-decision subject
+`content_hash` fields that consume that file. Repair-target kind remains
+`related_test` on these fixtures.
+
 ## Pending — foreign embedded type cache generation (#10684)
 
 The portable unchanged-attempt snapshots follow corpus cache generation 1.121

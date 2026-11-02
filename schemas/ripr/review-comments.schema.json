@@ -1437,6 +1437,39 @@
               ]
             }
           }
+        },
+        "proposed_target": {
+          "description": "Producer-owned new-test proposal. Null when the producer has no governed proposal. Distinct from related_test; an existing related test still wins at the gate.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "proposal_kind",
+            "file",
+            "owner",
+            "provenance"
+          ],
+          "properties": {
+            "proposal_kind": {
+              "enum": [
+                "inline_unit",
+                "integration"
+              ]
+            },
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "owner": {
+              "type": "string",
+              "minLength": 1
+            },
+            "provenance": {
+              "const": "producer_owned"
+            }
+          }
         }
       }
     },
