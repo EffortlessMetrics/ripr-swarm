@@ -22,6 +22,29 @@ struct BoundaryLine {
     sites: Vec<BoundarySite>,
     returned_condition: Option<Vec<String>>,
     direct: bool,
+    /// Token span `(first, last)` of the comparison that is the line's whole
+    /// condition: the root expression, or the test of a root conditional,
+    /// with only `!` and parentheses around it (#12281). `None` when any
+    /// other operator (`&&`, `||`, a nested conditional) surrounds it.
+    whole_condition: Option<(usize, usize)>,
+}
+
+/// The comparison that decides the whole condition of `root`, with only `!`
+/// and parentheses stripped: the root itself, or the test of a root
+/// conditional. Any logical, nested conditional or other wrapper fails
+/// closed to `None` (#12281).
+fn whole_condition_comparison<'a>(root: &'a Expression<'a>) -> Option<&'a Expression<'a>> {
+    let mut expression = ungroup(root);
+    if let Expression::ConditionalExpression(conditional) = expression {
+        expression = ungroup(&conditional.test);
+    }
+    while let Expression::UnaryExpression(unary) = expression {
+        if unary.operator.as_str() != "!" {
+            return None;
+        }
+        expression = ungroup(&unary.argument);
+    }
+    comparison(expression).then_some(expression)
 }
 
 fn operand_delimiter(text: &str) -> bool {
@@ -226,6 +249,16 @@ fn parse_line(file: &Path, line: &str, allocator: &Allocator) -> Option<Boundary
             ),
             _ => None,
         };
+        let whole_condition = whole_condition_comparison(root).and_then(|expression| {
+            let span = expression.span();
+            let first = tokens
+                .iter()
+                .position(|token| token.start >= span.start as usize)?;
+            let last = tokens
+                .iter()
+                .rposition(|token| token.end <= span.end as usize)?;
+            Some((first, last))
+        });
         let mut pending = vec![root];
         let mut sites = Vec::new();
         while let Some(expression) = pending.pop() {
@@ -253,6 +286,7 @@ fn parse_line(file: &Path, line: &str, allocator: &Allocator) -> Option<Boundary
             sites,
             returned_condition,
             direct: comparison(root),
+            whole_condition,
         });
     }
     None
@@ -405,6 +439,149 @@ fn selected_text(new: &BoundaryLine, old: Option<&BoundaryLine>) -> Option<Strin
     }
 }
 
+/// `true` when `line` is a complete, self-contained `if (...)`,
+/// `} else if (...)`, `while (...)` header or a `return ...;` statement:
+/// parentheses and brackets balance on the line (outside string literals),
+/// a `return` ends with `;`, and the line ends in no operator or opener that
+/// would continue the expression on the next line (#12281 review). Any other
+/// line (a bare expression, a continuation, a declaration, a one-line
+/// function) fails closed to `false`.
+fn self_contained_condition_line(line: &str) -> bool {
+    let text = line.trim();
+    let head = text.trim_start_matches('}').trim_start();
+    let head = head.strip_prefix("else").map_or(head, str::trim_start);
+    let keyword = ["if (", "if(", "while (", "while(", "return "]
+        .into_iter()
+        .find(|keyword| head.starts_with(keyword));
+    let Some(keyword) = keyword else {
+        return false;
+    };
+    if keyword == "return " && !text.ends_with(';') {
+        return false;
+    }
+    const CONTINUATIONS: [&str; 17] = [
+        "&&", "||", "??", "?", ":", ",", "(", "[", "+", "-", "*", "/", "%", "=", "!", "<", ">",
+    ];
+    if CONTINUATIONS.iter().any(|end| text.ends_with(end)) || text.ends_with(['|', '&']) {
+        return false;
+    }
+    let mut depth_paren = 0_i64;
+    let mut depth_bracket = 0_i64;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if let Some(open) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == open {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' => depth_paren += 1,
+            ')' => depth_paren -= 1,
+            '[' => depth_bracket += 1,
+            ']' => depth_bracket -= 1,
+            _ => {}
+        }
+        if depth_paren < 0 || depth_bracket < 0 {
+            return false;
+        }
+    }
+    quote.is_none() && depth_paren == 0 && depth_bracket == 0
+}
+
+/// The negated form of an equality operator: `===` and `!==`, `==` and `!=`.
+fn negated_equality(operator: &str) -> Option<&'static str> {
+    Some(match operator {
+        "===" => "!==",
+        "!==" => "===",
+        "==" => "!=",
+        "!=" => "==",
+        _ => return None,
+    })
+}
+
+/// `true` when the whole edit replaces exactly one equality operator of one
+/// admitted comparison with its negation (`typeof input === "function"` to
+/// `typeof input !== "function"`) and changes nothing else (#12281). Every
+/// input that evaluates such a comparison gets the opposite result, so the
+/// branch it takes flips for an input on either side of the comparison, not
+/// only for the value or kind the comparison names. The comparison must be
+/// the line's whole condition, with only `!` and parentheses around it: a
+/// clause joined by `&&` / `||` or nested in another conditional may never be
+/// evaluated, or its flip may not change the outcome, for a given input. A
+/// failed parse, a multi-token edit, an added or removed clause, a compound
+/// condition, or a site the boundary reader refuses all fail closed to
+/// `false`.
+pub(crate) fn typescript_changed_boundary_is_equality_negation(
+    file: &Path,
+    family: &ProbeFamily,
+    old_line: Option<&str>,
+    new_line: &str,
+) -> bool {
+    if *family != ProbeFamily::Predicate {
+        return false;
+    }
+    let Some(old_line) = old_line else {
+        return false;
+    };
+    // The changed line alone is parsed, so a continuation line of a
+    // multi-line condition (`flag &&` above, `typeof input !== "function"`
+    // here) would read as a whole condition. Only a self-contained header
+    // line can carry the whole condition (#12281 review).
+    if !self_contained_condition_line(old_line) || !self_contained_condition_line(new_line) {
+        return false;
+    }
+    let parse = |line: &str| {
+        let line = one_line_function_first_statement(line);
+        parse_on_worker(file, line, |file, line, allocator| {
+            parse_line(file, line, allocator)
+        })
+        .ok()
+        .flatten()
+    };
+    let (Some(new), Some(old)) = (parse(new_line), parse(old_line)) else {
+        return false;
+    };
+    if new.tokens.len() != old.tokens.len() || new.sites.len() != old.sites.len() {
+        return false;
+    }
+    let mut changed = new
+        .tokens
+        .iter()
+        .zip(&old.tokens)
+        .enumerate()
+        .filter(|(_, (new, old))| new.text != old.text);
+    let Some((index, (new_token, old_token))) = changed.next() else {
+        return false;
+    };
+    if changed.next().is_some()
+        || negated_equality(&old_token.text) != Some(new_token.text.as_str())
+    {
+        return false;
+    }
+    // The flipped operator must be the single operator of one comparison the
+    // boundary reader admits, never an operator nested inside another site.
+    let mut owning = new
+        .sites
+        .iter()
+        .filter(|site| site.first <= index && index <= site.last);
+    match (owning.next(), owning.next()) {
+        (Some(site), None) => {
+            !site.text.is_empty()
+                && new.whole_condition == Some((site.first, site.last))
+                && old.whole_condition == Some((site.first, site.last))
+                && swap_parts(&new, site).is_some_and(|(_, operator, _)| operator == new_token.text)
+        }
+        _ => false,
+    }
+}
+
 /// One changed comparison, never a literal, nested expression or unchanged
 /// neighbour. A failed parse or ambiguous edit retains the predicate refusal.
 pub(crate) fn typescript_changed_boundary_text<'a>(
@@ -449,4 +626,79 @@ pub(crate) fn typescript_changed_boundary_text<'a>(
     } else {
         Cow::Owned(selected)
     }
+}
+
+/// The source offset of the first statement of the outermost function body
+/// in `program`, or `None` when no body exists or the outermost body is
+/// empty. Parameter default values are walked before the body, so a default
+/// that holds its own function makes this the default's body: the caller
+/// then sees a statement on another line and fails closed.
+fn first_body_statement_start(program: &oxc_ast::ast::Program<'_>) -> Option<usize> {
+    struct First {
+        seen: bool,
+        start: Option<usize>,
+    }
+    impl<'a> oxc_ast_visit::Visit<'a> for First {
+        fn visit_function_body(&mut self, it: &oxc_ast::ast::FunctionBody<'a>) {
+            if self.seen {
+                return;
+            }
+            self.seen = true;
+            self.start = if it.directives.is_empty() {
+                it.statements
+                    .first()
+                    .map(|statement| statement.span().start as usize)
+            } else {
+                None
+            };
+        }
+    }
+    let mut first = First {
+        seen: false,
+        start: None,
+    };
+    oxc_ast_visit::Visit::visit_program(&mut first, program);
+    first.start
+}
+
+/// `true` when the changed source `line` (1-based, module coordinates) is
+/// where the first statement of `owner`'s own body starts (#12281 re-review).
+/// A guard only flips the outcome for every test input when every call
+/// evaluates it: an earlier statement may return, throw, branch or loop
+/// first, and a guard nested in a block, loop or callback may never run. The
+/// owner's recorded source is parsed as a function, a class member or an
+/// expression; anything that does not parse, an empty body, a body with
+/// directives, or a first statement on another line fails closed to `false`.
+pub(crate) fn typescript_changed_line_is_first_body_statement(
+    owner: &TypeScriptOwner,
+    line: usize,
+) -> bool {
+    let Some(source) = owner.source_text.as_deref() else {
+        return false;
+    };
+    if line < owner.start_line {
+        return false;
+    }
+    let wrappers: [(&str, &str); 3] = [("", ""), ("class __ripr_owner__ { ", " }"), ("(", ");")];
+    for (prefix, suffix) in wrappers {
+        let wrapped = format!("{prefix}{source}{suffix}");
+        let start = parse_on_worker(&owner.file, &wrapped, move |file, text, allocator| {
+            let parsed = Parser::new(allocator, text, source_type_for(file)).parse();
+            if parsed.panicked || !parsed.errors.is_empty() {
+                return None;
+            }
+            Some(first_body_statement_start(&parsed.program))
+        });
+        let Ok(Some(start)) = start else {
+            continue;
+        };
+        let Some(start) = start.and_then(|start| start.checked_sub(prefix.len())) else {
+            return false;
+        };
+        let Some(before) = source.get(..start) else {
+            return false;
+        };
+        return owner.start_line + before.matches('\n').count() == line;
+    }
+    false
 }

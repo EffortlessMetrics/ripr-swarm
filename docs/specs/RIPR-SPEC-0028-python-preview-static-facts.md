@@ -242,12 +242,15 @@ mock expectations, and custom `assert_*` helpers.
     receivers do not qualify by an `assert` prefix or constructor suffix. Defaults and annotations are executable expressions,
     and all formatted strings retain the veto because their executable expressions
     are hidden from this token scan. Non-ASCII identifiers also retain the veto:
-    this scan does not implement Python's NFKC identifier normalization. Everything else keeps the credit withheld: any other
-    patch-like call or reference or alias (`patch*`, `setattr`, `delattr`,
-    `monkeypatch.context()`, `mocker.spy`, `swap = ..`, `partial(..)`,
-    `yield from [swap := ..]`), any string outside a docstring that contains
-    `patch`, `mock`, `setattr`, `delattr`, `setitem`, `delitem`, `spy` or
-    `monkey`, any use of `getattr`, `__getattribute__`, `getfixturevalue`,
+    this scan does not implement Python's NFKC identifier normalization. Patch-route
+    calls (`patch`, `setattr`, `delattr`, `patch.object`, `patch.dict`, `patch.multiple`,
+    and similar) fail closed only when their arguments name the callee or owner or hide
+    the target; the same call patching another symbol in the module does not withhold
+    credit. Everything else keeps the credit withheld: any other patch-like reference
+    or alias (`swap = ..`, unauthenticated environment/mock use, `monkeypatch.context()`,
+    `mocker.spy`, `partial(..)`, `yield from [swap := ..]`), any string outside a
+    docstring that contains `patch`, `mock`, `setattr`, `delattr`, `setitem`, `delitem`,
+    `spy` or `monkey`, any use of `getattr`, `__getattribute__`, `getfixturevalue`,
     `__import__`, `__builtins__`, `builtins`, `__self__`, `partial`,
     `setitem`, `delitem`, `spy`, `context` or `syspath_prepend`, a string
     argument with a backslash, an f-string, adjacent literals, `*args` /

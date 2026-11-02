@@ -33,7 +33,16 @@ const PINS: &[Pin] = &[
         "1.95.0",
         "035fceb3c12fb0c6a9461b52775e16473133e591",
         None,
-        4,
+        3,
+    ),
+    (
+        // #12252: the extension e2e moved out of ci.yml into the reusable workflow.
+        "vscode-e2e.yml",
+        "dtolnay/rust-toolchain",
+        "1.95.0",
+        "035fceb3c12fb0c6a9461b52775e16473133e591",
+        None,
+        1,
     ),
     (
         "dx-scoreboard.yml",
