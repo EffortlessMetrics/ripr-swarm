@@ -2182,6 +2182,16 @@ keys); do not take the next number.
   production `check` path; fixtures `ts_table_row_expected_credit` and
   `ts_table_row_expected_refused` pin the credited and refused sets.
 
+- #12253 (rule 11, quoted words): the table-row text guard refuses `eval`,
+  `with`, `Function`, `arguments` and `this` as code. A text that parses is
+  judged on its syntax tree (identifiers, property names, `this`,
+  `new.target`, `with`), so the same words in a title, string or comment no
+  longer unresolve the table; a text that does not parse keeps the
+  whole-word check, which refuses them anywhere. Unit
+  `row_text_guard_refuses_hidden_mutation_routes_outside_quotes`; fixture
+  `ts_table_row_quoted_words_credited` pins a credited quoted-word title and a
+  refused real `this`.
+
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row
   `ts-trap-empty-table` moves from credited to gap.

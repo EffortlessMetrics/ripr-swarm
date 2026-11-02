@@ -34,6 +34,59 @@ pub(crate) fn statement_list_has_dynamic_code(list_text: &str) -> bool {
         || list_text.contains("\\u")
 }
 
+const HIDDEN_ROUTE_WORDS: [&str; 5] = ["eval", "with", "Function", "arguments", "this"];
+
+/// Whether `text` names a route that can rewrite row data behind the
+/// literal table: `eval`, `with`, `Function`, `arguments` or `this`, or
+/// `new.target`. Decided on a real parse when the text parses (so a word
+/// inside a string, template text or comment is not a route), and on the
+/// whole-word substring check, which refuses the words anywhere, when it
+/// does not.
+fn has_hidden_mutation_route(text: &str) -> bool {
+    let substring = || {
+        HIDDEN_ROUTE_WORDS
+            .iter()
+            .any(|word| super::match_object_guard::whole_word_count(text, word) > 0)
+    };
+    let allocator = oxc_allocator::Allocator::default();
+    let parsed = oxc_parser::Parser::new(&allocator, text, oxc_span::SourceType::ts()).parse();
+    if parsed.panicked || !parsed.errors.is_empty() {
+        return substring();
+    }
+    let mut finder = HiddenRouteFinder(false);
+    oxc_ast_visit::Visit::visit_program(&mut finder, &parsed.program);
+    finder.0
+}
+
+/// Sets its flag on any identifier-like name in [`HIDDEN_ROUTE_WORDS`]
+/// (references, bindings, labels and property names, so `globalThis.eval`
+/// is a route), on `this`, on `new.target`/`import.meta` and on `with`.
+struct HiddenRouteFinder(bool);
+
+impl<'a> oxc_ast_visit::Visit<'a> for HiddenRouteFinder {
+    fn visit_identifier_name(&mut self, it: &oxc_ast::ast::IdentifierName<'a>) {
+        self.0 |= HIDDEN_ROUTE_WORDS.contains(&it.name.as_str());
+    }
+    fn visit_identifier_reference(&mut self, it: &oxc_ast::ast::IdentifierReference<'a>) {
+        self.0 |= HIDDEN_ROUTE_WORDS.contains(&it.name.as_str());
+    }
+    fn visit_binding_identifier(&mut self, it: &oxc_ast::ast::BindingIdentifier<'a>) {
+        self.0 |= HIDDEN_ROUTE_WORDS.contains(&it.name.as_str());
+    }
+    fn visit_label_identifier(&mut self, it: &oxc_ast::ast::LabelIdentifier<'a>) {
+        self.0 |= HIDDEN_ROUTE_WORDS.contains(&it.name.as_str());
+    }
+    fn visit_this_expression(&mut self, _it: &oxc_ast::ast::ThisExpression) {
+        self.0 = true;
+    }
+    fn visit_meta_property(&mut self, _it: &oxc_ast::ast::MetaProperty<'a>) {
+        self.0 = true;
+    }
+    fn visit_with_statement(&mut self, _it: &oxc_ast::ast::WithStatement<'a>) {
+        self.0 = true;
+    }
+}
+
 /// The one guard every row-table entry path runs on its whole call text
 /// (registration plus callback) before a row literal is substituted.
 ///
@@ -42,19 +95,19 @@ pub(crate) fn statement_list_has_dynamic_code(list_text: &str) -> bool {
 /// not follow: `eval`, `Function`, `with`, `arguments`, `this`, `new.target`,
 /// and any backslash outside a string or template (`\u` identifier escapes)
 /// are refused wherever they appear in code, and so is a `/` that could open
-/// a regular expression. The lexer pass skips quoted text and comments, but
-/// the whole-word backstop below does not: those words are refused even
-/// inside strings and comments, so a title such as `"this works"` or
-/// `"handles input with spaces"` is deliberately over-refused (fail closed).
+/// a regular expression. The lexer pass skips quoted text and comments, and so
+/// does the syntax-tree backstop below when the text parses, so a title such
+/// as `"this works"` or `"handles input with spaces"` resolves (#12253); text
+/// that does not parse keeps the whole-word check, which refuses those words
+/// even inside strings and comments.
 /// Fails closed on anything it cannot lex.
 pub(crate) fn row_text_is_inert(text: &str) -> bool {
-    // Lexer-independent backstop: the same words anywhere, even in a string,
-    // so a lexing gap (an odd regex or quote) cannot hide one.
-    if ["eval", "with", "Function", "arguments", "this"]
-        .iter()
-        .any(|word| super::match_object_guard::whole_word_count(text, word) > 0)
-        || text.contains("\\u")
-    {
+    // Lexer-independent backstop, so a lexing gap (an odd regex or quote)
+    // cannot hide a mutation route. A text that parses is judged on its
+    // syntax tree, where quoted text and comments are not code (#12253); a
+    // text that does not parse keeps the substring check, which refuses the
+    // words anywhere.
+    if text.contains("\\u") || has_hidden_mutation_route(text) {
         return false;
     }
     #[derive(Clone, Copy, PartialEq)]
@@ -594,6 +647,12 @@ mod tests {
             "test.each([{ a: 1 }])(\"plain title\", (t) => { expect(f(t.a)).toBe(1); })",
             "test(`${t.a} -> x`, () => { expect(f(t.a)).toBe(1); // note\n })",
             "test(\"x\", () => { /* a note */ expect(f(t.a)).toBe(1); })",
+            // Words in a title, a string or a comment are not code (#12253).
+            "(t) => { expect(f(t.a, \"this\")).toBe(t.out); }",
+            "test(\"handles input with spaces\", (t) => { expect(f(t.a)).toBe(t.out); })",
+            "test.each([[1, \"a\"]])(\"works with empty input\", (t) => { expect(f(t)).toBe(1); })",
+            "test(\"x\", (t) => { // eval(this) in a note\n expect(f(t.a)).toBe(t.out); })",
+            "test(`arguments ${t.a} this`, (t) => { expect(f(t.a)).toBe(t.out); })",
         ] {
             assert!(super::row_text_is_inert(ok), "{ok}");
         }
@@ -613,9 +672,12 @@ mod tests {
             "typeof /'a/, (t) => { expect(f(t.a, eval(\"t.out=3\"), \"it's\")).toBe(t.out); }, typeof /\"a/",
             "typeof /'a/, (t) => { expect(f(t.a, arguments[0].out = 3, \"it's\")).toBe(t.out); }, typeof /\"a/",
             "typeof /'a/, (t) => { with (t) { expect(f(a, \"it's\")).toBe(out); } }, typeof /\"a/",
-            "(t) => { expect(f(t.a, \"this\")).toBe(t.out); }",
-            "test(\"handles input with spaces\", (t) => { expect(f(t.a)).toBe(t.out); })",
             "(t) => { expect(f(`${arguments[0]}`)).toBe(t.out); }",
+            // A route in code stays refused wherever the words also appear in text.
+            "test(\"this and eval\", (t) => { expect(f(t.a, eval(\"1\"))).toBe(t.out); })",
+            "test(\"x\", (t) => { expect(f(t.a, globalThis.eval(\"1\"))).toBe(t.out); })",
+            "test(\"x\", (t) => { expect(f(t.a, this.x)).toBe(t.out); }) // with",
+            "test(\"x\", function (t) { return arguments.length; })",
         ] {
             assert!(!super::row_text_is_inert(bad), "{bad}");
         }
