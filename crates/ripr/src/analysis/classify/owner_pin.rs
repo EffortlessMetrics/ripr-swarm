@@ -4887,6 +4887,27 @@ impl OwnerReturnPin {
         self.admits_spelled(test, assertion, index, imports_foreign, syntax, "assert_eq")
     }
 
+    /// RIPR-SPEC-0197 claims payload equality: whether `assert_ok_eq!(call,
+    /// literal)` or `assert_some_eq!(call, literal)` pins the owner under every
+    /// gate [`Self::admits`] applies to the unwrapped `assert_eq!` pin, on a
+    /// verified `use claims::..` import under the macro's own name. The text
+    /// only nominates the macro; this decision (import, direction, literal
+    /// expected operand, owner identity) is the only authority, so a refusal
+    /// leaves the oracle `unknown`.
+    pub(in crate::analysis) fn admits_claims_payload_eq(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+        imports_foreign: ForeignImport<'_>,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        CLAIMS_EQ_MACROS.into_iter().any(|name| {
+            claims_eq_operands(&assertion.text, name).is_some()
+                && self.admits_spelled(test, assertion, index, imports_foreign, syntax, name)
+        })
+    }
+
     /// #8051: whether a bare `debug_assert_eq!` would pin the owner under
     /// every gate [`Self::admits`] applies to `assert_eq!`. It runs only
     /// where debug assertions are on, so this is never credit: the
@@ -4981,19 +5002,35 @@ impl OwnerReturnPin {
         // guard reads only its condition, never a macro inside its body,
         // since the syntax gate admits the guard's path, not the body's.
         let is_guard = err_return_guard_twin(&assertion.text).is_some();
+        // RIPR-SPEC-0197 claims payload equality pins: `assert_ok_eq!(call,
+        // literal)` is its own reading, never the `assert_eq!` ones below. Its
+        // operands are read once here; a shape that is not exactly one plain
+        // two-operand invocation refuses (fail closed).
+        let claims_eq = matches!(spelling, "assert_ok_eq" | "assert_some_eq");
+        let claims_operands = if claims_eq {
+            match claims_eq_operands(&assertion.text, spelling) {
+                Some(operands) if !is_guard => Some(operands),
+                _ => return false,
+            }
+        } else {
+            None
+        };
         // A nested `format!` is read only as a rendered scalar pin, and a
         // nested `vec!` only as a single-element index.
-        let renders = !is_guard && is_assert_eq_over(&assertion.text, spelling, "format");
-        let indexes = !is_guard && is_assert_eq_over(&assertion.text, spelling, "vec");
+        let renders =
+            !claims_eq && !is_guard && is_assert_eq_over(&assertion.text, spelling, "format");
+        let indexes =
+            !claims_eq && !is_guard && is_assert_eq_over(&assertion.text, spelling, "vec");
         let reads_assert_eq = renders
             || indexes
-            || (!is_guard
+            || (!claims_eq
+                && !is_guard
                 && if spelling == "assert_eq" {
                     is_plain_or_std_macro(&assertion.text, spelling)
                 } else {
                     is_plain_macro(&assertion.text, spelling)
                 });
-        let equality = if reads_assert_eq {
+        let equality = if reads_assert_eq || claims_eq {
             None
         } else {
             equality_condition_operands(&assertion.text)
@@ -5066,6 +5103,34 @@ impl OwnerReturnPin {
             };
             substituted_expected = expected;
             (call, substituted_expected.as_str(), call_text)
+        } else if let Some([first, second]) = claims_operands {
+            // The macro panics unless `first` holds the named variant and
+            // compares that payload with `second`, so it reads as
+            // `assert_eq!(first.unwrap(), second)` (the unwrapped pin) and only
+            // on the verified `use claims::..` import under its own name, in a
+            // test's own file (a doc example is its own crate).
+            let imported = doctest.is_none()
+                && index.files().get(&test.file).is_some_and(|facts| {
+                    source_imported_claims_macros(&facts.source).contains(&spelling)
+                });
+            // The opposite exit panics the macro before any comparison, so
+            // only a pin on the macro's own variant reads.
+            let direction = matches!(
+                (spelling, unwrap_wrapper),
+                ("assert_ok_eq", Some("Ok")) | ("assert_some_eq", Some("Some"))
+            );
+            // Only a literal expected operand is a discriminator.
+            if !imported
+                || !direction
+                || helper_arguments::expected_literal(second, index).is_none()
+            {
+                return false;
+            }
+            let Some(call) = self.awaited_call_shape(poll_context, first, &self.name) else {
+                return false;
+            };
+            unwrapped = true;
+            (call, second, Some(first))
         } else if reads_assert_eq {
             let Some(operands) = assertion_comparison_operands(&assertion.text) else {
                 return false;
@@ -6963,6 +7028,94 @@ fn bound_owner_initializer<'a>(
     test.body.get(equals + 1..end)
 }
 
+/// The claims macros that compare an `Ok`/`Some` payload with an expected
+/// operand (RIPR-SPEC-0197 claims payload equality pins).
+const CLAIMS_EQ_MACROS: [&str; 2] = ["assert_ok_eq", "assert_some_eq"];
+
+/// Whether `text` is exactly one plain `assert_ok_eq!(..)` /
+/// `assert_some_eq!(..)` statement. Text only nominates a candidate; the
+/// owner pin's verified-import decision grades it.
+pub(in crate::analysis) fn is_claims_payload_eq_text(text: &str) -> bool {
+    CLAIMS_EQ_MACROS
+        .into_iter()
+        .any(|name| claims_eq_operands(text, name).is_some())
+}
+
+/// Single-line plain `assert_ok_eq!(..)` / `assert_some_eq!(..)` statements of
+/// `test` that extraction did not list. Extraction stays text-only and lists
+/// no oracle for these macros (RIPR-SPEC-0120), so reveal nominates them here
+/// as `unknown` / none candidates and keeps one only when the owner pin
+/// admits it. A multi-line invocation is not nominated (fail closed).
+pub(in crate::analysis) fn claims_payload_eq_candidates(test: &TestSummary) -> Vec<OracleFact> {
+    if !CLAIMS_EQ_MACROS.iter().any(|name| test.body.contains(name)) {
+        return Vec::new();
+    }
+    test.body
+        .lines()
+        .enumerate()
+        .filter_map(|(offset, line)| {
+            let text = line.trim();
+            let at = test.start_line + offset;
+            // The invocation alone, with its statement `;`: a trailing comment
+            // is not part of the key the syntax admission looks up.
+            let masked = mask_comments_and_strings(text);
+            let close = masked.rfind(')')?;
+            let terminated = masked[close + 1..].contains(';');
+            let mut call = text.get(..=close)?.to_string();
+            if terminated {
+                call.push(';');
+            }
+            let text = call.as_str();
+            (is_claims_payload_eq_text(text) && !test.assertions.iter().any(|fact| fact.line == at))
+                .then(|| OracleFact {
+                    line: at,
+                    text: text.to_string(),
+                    kind: crate::domain::OracleKind::Unknown,
+                    strength: crate::domain::OracleStrength::None,
+                    observed_tokens: crate::analysis::extract::extract_identifier_tokens(text),
+                    ok_value_observed: None,
+                })
+        })
+        .collect()
+}
+
+/// RIPR-SPEC-0197 claims payload equality: the two compared operands of one
+/// plain `assert_ok_eq!(left, right[, message..])` / `assert_some_eq!(..)`
+/// invocation named `spelling`. `left` is evaluated once and must hold the
+/// named variant; its payload is compared with `right`. Message arguments
+/// decide nothing. `None` for a path-qualified invocation, extra
+/// invocations in the statement or fewer than two arguments, so the caller
+/// refuses. The caller verifies the `claims` import.
+fn claims_eq_operands<'a>(text: &'a str, spelling: &str) -> Option<[&'a str; 2]> {
+    if !is_plain_macro(text, spelling) {
+        return None;
+    }
+    let masked = mask_comments_and_strings(text);
+    let start = masked.find(spelling)?;
+    let after_bang = masked[start + spelling.len()..]
+        .trim_start()
+        .strip_prefix('!')?
+        .trim_start();
+    let open = masked.len() - after_bang.len();
+    if masked.as_bytes().get(open) != Some(&b'(') {
+        return None;
+    }
+    let close = matching_close(&masked, open, b'(', b')')?;
+    // Whatever follows the call is at most the statement's `;`.
+    if !masked[close + 1..]
+        .trim()
+        .trim_start_matches(';')
+        .trim()
+        .is_empty()
+    {
+        return None;
+    }
+    match split_top_level_arguments(&text[open + 1..close])?.as_slice() {
+        [left, right, ..] => Some([left.trim(), right.trim()]),
+        _ => None,
+    }
+}
+
 /// The claims macro name and operand call when `operand` is exactly
 /// `assert_ok!(<call>)` or `assert_some!(<call>)`: each evaluates its operand
 /// once, panics on the other variant and yields the payload, so a passing
@@ -7732,7 +7885,9 @@ const TEST_SCOPED_TRUSTED_MACROS: &[&str] = &[
     "assert_err",
     "assert_none",
     "assert_ok",
+    "assert_ok_eq",
     "assert_some",
+    "assert_some_eq",
     "expect",
     "expect_file",
 ];

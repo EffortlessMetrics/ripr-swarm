@@ -1,0 +1,13 @@
+# Registers the claims payload equality owner-pin controls (#12304) under
+# RIPR-SPEC-0197 and RIPR-SPEC-0231 rule 10.
+[[extend]]
+id = "RIPR-SPEC-0197"
+tests = [
+  "crates/ripr/tests/claims_payload_eq_owner_pin.rs::claims_payload_equality_credits_only_on_a_verified_claims_import",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0231"
+tests = [
+  "crates/ripr/tests/claims_payload_eq_owner_pin.rs::claims_payload_equality_credits_only_on_a_verified_claims_import",
+]
