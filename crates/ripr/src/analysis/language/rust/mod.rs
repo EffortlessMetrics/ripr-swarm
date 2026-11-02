@@ -2517,7 +2517,9 @@ impl RustAdapter {
             let manifest_dir_prefixes =
                 crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
             let dependency_adjacency = workspace::PathDependencyAdjacency::build(
-                &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
+                &crate::analysis::seam_cache::path_dependencies::workspace_graph_provenance(
+                    &options.root,
+                ),
             );
             (manifest_dir_prefixes, Some(dependency_adjacency))
         } else {
@@ -3538,7 +3540,9 @@ impl RustAdapter {
         let manifest_dir_prefixes =
             crate::analysis::seam_cache::workspace_manifest_dir_prefixes(&options.root);
         let dependency_adjacency = workspace::PathDependencyAdjacency::build(
-            &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
+            &crate::analysis::seam_cache::path_dependencies::workspace_graph_provenance(
+                &options.root,
+            ),
         );
         let unindexed_manifests = BTreeSet::new();
         let dependency_edges = classify::DependencyEdgeContext {
