@@ -446,6 +446,24 @@ pub(crate) fn ts_changed_value_is_observed(
                 // scanning for a qualifying assertion.
                 continue;
             }
+            // RIPR-SPEC-0258 rule 3: a snapshot serializes only the value it names,
+            // so on an effect seam it confirms only when it names the owner
+            // call's result (or a local bound once to it). A snapshot of an
+            // unrelated value, or of an expression the allowlist does not
+            // read, neither confirms here nor falls through to the
+            // side-channel reading below.
+            if assertion.oracle_kind == OracleKind::Snapshot {
+                if ts_snapshot_subject_is_owner_result(
+                    candidate,
+                    assertion,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                ) {
+                    return true;
+                }
+                continue;
+            }
             // (1) Effect-shape oracle kinds confirm unconditionally: these ARE
             // effect observers (mock call expectation, snapshot, whole-object
             // equality capturing persisted state). This decision keys ONLY on
@@ -8921,6 +8939,26 @@ pub(crate) fn ts_dropped_term_witness(
     } else {
         DroppedTermWitness::Unknown
     }
+}
+
+/// RIPR-SPEC-0258 rule 3: `true` only when the snapshot's asserted subject is
+/// the whole result of one owner call, or a local bound once to it. Allowlist:
+/// anything else (an unrelated value, a member or call on the result, a spy's
+/// recorded calls) is not read and earns no snapshot credit.
+fn ts_snapshot_subject_is_owner_result(
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    assertion: &TypeScriptAssertion,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
+        return false;
+    }
+    let receivers =
+        unshadowed_owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+    let names = ts_owner_call_names(candidate, owner, alias_map, workspace_root);
+    ts_observed_owner_call_arguments(candidate.test, assertion, &names, owner, &receivers).is_some()
 }
 
 /// The value assertions of a related test that see the owner's returned

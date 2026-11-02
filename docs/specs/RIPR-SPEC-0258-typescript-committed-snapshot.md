@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #6654 (TypeScript corpus cases scored false after RIPR-SPEC-0243)
+- #12465 (snapshot subject binding on effect seams)
 
 Linked PRs:
 
@@ -185,6 +186,23 @@ its value and the file writes it unescaped. The body must name
 string or comment also names the matcher. A template, an identifier, a
 concatenation, a comment before the literal, a second argument, and every
 Vitest hint keep the RIPR-SPEC-0243 reading.
+
+**Rule 3. On an effect seam a snapshot must name the owner result (#12465).**
+A snapshot serializes only the value it names, whether its expected text is
+inline (RIPR-SPEC-0247 rule 3) or a committed entry (rule 1). For a
+`SideEffect` or `CallDeletion` seam the observation guard therefore confirms
+a `snapshot` assertion only when its asserted subject is on an allowlist: the
+whole result of one owner call (`expect(owner(x))`, `expect(await owner(x))`,
+or the same through an owner-module namespace receiver or rename local), or a
+local bound once to such a call that the test does not rewrite or pass on.
+Any other subject, including an unrelated local, a literal, a member or call
+on the result and a spy's recorded calls, earns no snapshot credit and is not
+read as a side-channel observation either, so the finding keeps the weak
+reading. This mirrors the Rust subject binding (#8120/#8121). Value seams
+already require the observed expression to reference the owner and are
+unchanged. The oracle grade (`snapshot` / strong) is unchanged; only its
+confirmation of the effect seam is bound to the subject. Fail-closed: a
+subject the allowlist cannot read costs a missed credit, never a false one.
 
 A matcher with a property-matcher argument, any other hint, `.not`, an inline
 snapshot without a literal and every refused shape keep their
