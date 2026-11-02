@@ -376,6 +376,98 @@ fn shared_previous_generation_still_suppresses_unchanged_publish() -> Result<(),
 }
 
 #[test]
+fn refresh_plan_and_rollback_lookup_read_the_quarantine_overlay() -> Result<(), String> {
+    let quarantined = test_uri("file:///workspace/src/gen_0.rs")?;
+    let stable = test_uri("file:///workspace/src/gen_1.rs")?;
+    let overlay_only = test_uri("file:///workspace/src/gen_overlay_only.rs")?;
+    let quarantined_diagnostics = vec![generation_diagnostic(0, 0)];
+    let stable_diagnostics = vec![generation_diagnostic(1, 0)];
+    let mut by_uri = BTreeMap::new();
+    by_uri.insert(quarantined.clone(), quarantined_diagnostics.clone());
+    by_uri.insert(stable.clone(), stable_diagnostics.clone());
+    let generation = DiagnosticsGeneration::from_map(by_uri);
+    let previous = CommittedDiagnostics::from_generation_with_cleared(
+        generation.clone(),
+        [quarantined.clone(), overlay_only.clone()],
+    );
+
+    let previous_uris = previous.uris();
+    if !previous_uris.contains(&quarantined)
+        || !previous_uris.contains(&stable)
+        || !previous_uris.contains(&overlay_only)
+    {
+        return Err(
+            "refresh planning must enumerate generation keys and overlay-only keys together"
+                .to_string(),
+        );
+    }
+    if previous.get(&quarantined) != Some(&[] as &[Diagnostic]) {
+        return Err(
+            "effective lookup for a quarantined URI must be the empty overlay, not the generation"
+                .to_string(),
+        );
+    }
+    if previous.get(&stable) != Some(stable_diagnostics.as_slice()) {
+        return Err("unquarantined URI lookup must still read the shared generation".to_string());
+    }
+    if previous.get(&overlay_only) != Some(&[] as &[Diagnostic]) {
+        return Err("overlay-only URI lookup must be empty".to_string());
+    }
+
+    let plan = diagnostic_refresh_plan(
+        &previous,
+        vec![
+            DiagnosticBatch {
+                uri: quarantined.clone(),
+                diagnostics: quarantined_diagnostics,
+            },
+            DiagnosticBatch {
+                uri: stable.clone(),
+                diagnostics: stable_diagnostics.clone(),
+            },
+        ],
+    );
+    if plan.publish_batches.len() != 1
+        || plan.publish_batches[0].uri != quarantined
+        || plan.unchanged_uri_count != 1
+    {
+        return Err(
+            "overlay-cleared URI must republish; unquarantined matching URI must stay suppressed"
+                .to_string(),
+        );
+    }
+    if !plan.clear_uris.contains(&overlay_only) || plan.clear_uris.contains(&stable) {
+        return Err(
+            "overlay-only previous URI must be cleared; generation URI still in current must not"
+                .to_string(),
+        );
+    }
+
+    let mut rollback_uris = previous.uris();
+    rollback_uris.extend(plan.current_uris.iter().cloned());
+    for uri in rollback_uris {
+        let raw = previous.get(&uri).unwrap_or(&[]);
+        if uri == quarantined || uri == overlay_only {
+            if !raw.is_empty() {
+                return Err(format!(
+                    "rollback lookup must restore the empty overlay for {}",
+                    uri.as_str()
+                ));
+            }
+        } else if uri == stable && raw != stable_diagnostics.as_slice() {
+            return Err(
+                "rollback lookup must restore the generation payload for the stable URI"
+                    .to_string(),
+            );
+        }
+    }
+    if !previous.generation().ptr_eq(&generation) {
+        return Err("planning against an overlay must still share the base generation".to_string());
+    }
+    Ok(())
+}
+
+#[test]
 fn replacing_shared_clone_with_a_deep_map_clone_fails_the_sharing_control() -> Result<(), String> {
     let (service, _socket) = LspService::new(|client| Backend::new(client, PathBuf::from(".")));
     let backend = service.inner();
