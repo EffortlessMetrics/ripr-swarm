@@ -413,6 +413,16 @@ impl DecodedPath {
     }
 }
 
+/// Native identity of one git path token under `core.quotePath=true`.
+///
+/// C-quoted tokens decode octal and backslash escapes the same way the
+/// unified-diff parser does (#3601, #3609). Unquoted tokens pass through.
+pub(crate) fn native_path_from_git_token(raw: &str) -> PathBuf {
+    parse_diff_path_token(raw)
+        .map(|decoded| decoded.as_path().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from(raw.trim().trim_matches('"')))
+}
+
 fn parse_diff_path_token(raw: &str) -> Option<DecodedPath> {
     let raw = raw.trim_end_matches('\r');
     if let Some(quoted) = raw.strip_prefix('"') {
@@ -1284,6 +1294,15 @@ mod tests {
         // byte-for-byte, on every platform.
         let decoded = parse_new_path_marker("+++ \"b/caf\\303\\251.rs\"");
         assert_eq!(decoded, Some(PathBuf::from("café.rs")));
+        assert_eq!(
+            native_path_from_git_token("\"venv/caf\\303\\251.py\""),
+            PathBuf::from("venv/café.py"),
+            "numstat C-quoted tokens must decode to the same native identity"
+        );
+        assert_eq!(
+            native_path_from_git_token("src/plain.py"),
+            PathBuf::from("src/plain.py")
+        );
     }
 
     #[cfg(unix)]
