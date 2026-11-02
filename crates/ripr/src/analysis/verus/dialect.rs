@@ -3,6 +3,10 @@
 //! Operates only on text inside `verus! { .. }` token trees discovered by
 //! `analysis::probes::macro_definition::verus_regions`. No rust-analyzer, no
 //! macro expansion, and no solver.
+//!
+//! Trust boundaries are inferred from item attributes on the header only; `assume`
+//! / `admit` calls inside a proof body are not scanned in v1 and remain
+//! `Checked` until a later slice adds body-aware trust detection.
 
 use crate::analysis::probes::verus_region_line_spans;
 
