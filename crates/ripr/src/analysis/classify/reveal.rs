@@ -6259,7 +6259,7 @@ mod tests {
             let line = 2 + lines.lines().count();
             let test = TestSummary {
                 start_line: 1,
-                attrs,
+                attrs: attrs.into(),
                 ..test_with_body_assertions(
                     "t",
                     &body,
@@ -6437,7 +6437,7 @@ mod tests {
         };
         assert!(confirms(&test));
         let panicking = TestSummary {
-            attrs: vec!["#[should_panic]".to_string()],
+            attrs: vec!["#[should_panic]".to_string()].into(),
             ..test.clone()
         };
         assert!(!confirms(&panicking));
@@ -7027,12 +7027,12 @@ mod tests {
             start_line: 19,
             end_line: 25,
             body: Default::default(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         }];
         let touched =
             crate::analysis::classify::DiffTouchedTests::from_changed_files(&files, &tests);
@@ -7578,12 +7578,12 @@ mod tests {
             start_line: line,
             end_line: line + 3,
             body: Default::default(),
-            calls,
+            calls: calls.into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         };
         let calling = test("calls_owner", 1, vec![call("truncate")]);
         let other_call = test("calls_other", 5, vec![call("clear")]);
@@ -10145,12 +10145,12 @@ return Err(\"typed pin\".into());
             start_line: 1,
             end_line: 3,
             body: "score();".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions,
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         }
     }
 

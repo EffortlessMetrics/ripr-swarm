@@ -157,7 +157,7 @@ fn check_registered_terminal_matcher_guard_twins(
             assert_eq!(test.name, subject.name);
             assert_eq!(test.file, subject.file);
             let line_shift = usize::from(helper_callback);
-            for calls in [&subject.calls, &test.calls] {
+            for calls in [&*subject.calls, &*test.calls] {
                 assert!(
                     calls
                         .iter()
@@ -257,7 +257,7 @@ fn check_registered_guard_boundary(
         assert_eq!(test.name, subject.name);
         assert_eq!(test.file, subject.file);
         let shift = usize::from(helper_callback);
-        for calls in [&subject.calls, &test.calls] {
+        for calls in [&*subject.calls, &*test.calls] {
             assert!(
                 calls
                     .iter()
@@ -406,7 +406,7 @@ fn registered_terminal_matcher_controls_reject_discarded_opaque_and_inert_inputs
                 return Err("negative control TestFact missing".into());
             }
             let test = tests.first().ok_or("negative control TestFact missing")?;
-            for calls in [&subject.calls, &test.calls] {
+            for calls in [&*subject.calls, &*test.calls] {
                 assert!(calls.iter().any(|call| call.name == "score"));
             }
             for facts in [&subject.assertions, &test.assertions] {
@@ -3050,14 +3050,14 @@ fn demote_harness_target_functions_drops_differently_named_test_facts()
         start_line: 10,
         end_line: 20,
         body: "assert_eq!(1, 1);".into(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         returns: Vec::new(),
-        literals: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
         source_role: FunctionSourceRole::TestAttribute,
-        attrs: vec!["#[test]".to_string()],
+        attrs: vec!["#[test]".to_string()].into(),
         impl_attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         item: Default::default(),
         impl_context: Default::default(),
     };
@@ -3067,12 +3067,12 @@ fn demote_harness_target_functions_drops_differently_named_test_facts()
         start_line: 10,
         end_line: 20,
         body: "assert_eq!(1, 1);".into(),
-        calls: Vec::new(),
+        calls: crate::analysis::facts::SharedFactSlice::empty(),
         assertions: Vec::new(),
-        literals: Vec::new(),
-        attrs: vec!["#[test]".to_string()],
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: vec!["#[test]".to_string()].into(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
     };
     let file_facts = FileFacts {
         path: target.to_path_buf(),
@@ -5066,7 +5066,7 @@ fn registered_negated_blocks_keep_twins_and_failure_macros_require_authority()
                 assert_eq!(tests.len(), 1);
                 let test = tests.first().ok_or("terminal failure TestFact missing")?;
                 let shift = usize::from(helper_callback);
-                for calls in [&subject.calls, &test.calls] {
+                for calls in [&*subject.calls, &*test.calls] {
                     assert!(
                         calls
                             .iter()

@@ -432,6 +432,48 @@ fn membership_fixture(path: &Path) -> Result<FileFacts, String> {
 }
 
 #[test]
+fn executable_test_common_payload_shares_one_backing_allocation() -> Result<(), String> {
+    let path = PathBuf::from("tests/shared_payload.rs");
+    let facts = membership_fixture(&path)?;
+    let function = facts
+        .functions
+        .iter()
+        .find(|function| function.source_role == FunctionSourceRole::TestAttribute)
+        .ok_or("missing executable test function")?;
+    let test = facts.tests.first().ok_or("missing executable test")?;
+    assert_eq!(function.name, test.name);
+    assert!(function.calls.shared_storage_with(&test.calls));
+    assert!(function.literals.shared_storage_with(&test.literals));
+    assert!(function.attrs.shared_storage_with(&test.attrs));
+    assert!(
+        function
+            .nested_fn_names
+            .shared_storage_with(&test.nested_fn_names)
+    );
+    assert!(
+        function
+            .let_bindings
+            .shared_storage_with(&test.let_bindings)
+    );
+    assert_ne!(
+        test.assertions.len(),
+        0,
+        "test-only assertions stay distinct"
+    );
+    let mut index = RustIndex::default();
+    index.insert_file(path, facts, true);
+    index.finalize()?;
+    let function = index
+        .functions()
+        .iter()
+        .find(|function| function.source_role == FunctionSourceRole::TestAttribute)
+        .ok_or("missing indexed function")?;
+    let test = index.tests().first().ok_or("missing indexed test")?;
+    assert!(function.calls.shared_storage_with(&test.calls));
+    Ok(())
+}
+
+#[test]
 fn file_function_membership_retains_only_handle_capacity() -> Result<(), String> {
     let path = PathBuf::from("src/membership.rs");
     let facts = membership_fixture(&path)?;
@@ -651,6 +693,9 @@ fn spare_by_field(index: &RustIndex) -> std::collections::BTreeMap<&'static str,
     fn spare_str(text: &String) -> usize {
         text.capacity() - text.len()
     }
+    fn spare_shared<T>(slice: &crate::analysis::facts::SharedFactSlice<T>) -> usize {
+        slice.spare_capacity()
+    }
     let mut spare_of = std::collections::BTreeMap::new();
     let mut note = |label: &'static str, slots: usize| {
         *spare_of.entry(label).or_insert(0) += slots;
@@ -663,13 +708,13 @@ fn spare_by_field(index: &RustIndex) -> std::collections::BTreeMap<&'static str,
     note("test_records", spare(&index.test_facts.records));
     for fact in index.function_facts.iter() {
         note("fn.name", spare_str(&fact.name));
-        note("fn.calls", spare(&fact.calls));
+        note("fn.calls", spare_shared(&fact.calls));
         note("fn.returns", spare(&fact.returns));
-        note("fn.literals", spare(&fact.literals));
-        note("fn.attrs", spare(&fact.attrs));
+        note("fn.literals", spare_shared(&fact.literals));
+        note("fn.attrs", spare_shared(&fact.attrs));
         note("fn.impl_attrs", spare(&fact.impl_attrs));
-        note("fn.nested_fn_names", spare(&fact.nested_fn_names));
-        note("fn.let_bindings", spare(&fact.let_bindings));
+        note("fn.nested_fn_names", spare_shared(&fact.nested_fn_names));
+        note("fn.let_bindings", spare_shared(&fact.let_bindings));
         for call in &fact.calls {
             note("fn.call.name", spare_str(&call.name));
         }
@@ -694,12 +739,12 @@ fn spare_by_field(index: &RustIndex) -> std::collections::BTreeMap<&'static str,
     }
     for fact in index.test_facts.iter() {
         note("test.name", spare_str(&fact.name));
-        note("test.calls", spare(&fact.calls));
+        note("test.calls", spare_shared(&fact.calls));
         note("test.assertions", spare(&fact.assertions));
-        note("test.literals", spare(&fact.literals));
-        note("test.attrs", spare(&fact.attrs));
-        note("test.nested_fn_names", spare(&fact.nested_fn_names));
-        note("test.let_bindings", spare(&fact.let_bindings));
+        note("test.literals", spare_shared(&fact.literals));
+        note("test.attrs", spare_shared(&fact.attrs));
+        note("test.nested_fn_names", spare_shared(&fact.nested_fn_names));
+        note("test.let_bindings", spare_shared(&fact.let_bindings));
         for call in &fact.calls {
             note("test.call.name", spare_str(&call.name));
         }
@@ -774,52 +819,57 @@ fn finishing_an_index_releases_the_spare_capacity_the_builders_left() -> Result<
         .ok_or("missing binding")?;
     let literal = test.literals.first().cloned().ok_or("missing literal")?;
     let function = facts.functions.first_mut().ok_or("missing function")?;
-    function.attrs.push("#[inline]".into());
+    function.attrs.make_mut().push("#[inline]".into());
     function.impl_attrs.push("#[cfg(test)]".into());
-    function.nested_fn_names.push("inner".into());
-    function.let_bindings.push(binding);
-    function.literals.push(literal.clone());
+    function.nested_fn_names.make_mut().push("inner".into());
+    function.let_bindings.make_mut().push(binding);
+    function.literals.make_mut().push(literal.clone());
     function.returns.push(ReturnFact {
         line: 1,
         text: "input.len()".into(),
     });
     function.name.reserve_exact(8);
-    function.calls.reserve_exact(8);
+    function.calls.make_mut().reserve_exact(8);
     function.returns.reserve_exact(8);
-    function.literals.reserve_exact(8);
-    function.attrs.reserve_exact(8);
+    function.literals.make_mut().reserve_exact(8);
+    function.attrs.make_mut().reserve_exact(8);
     function.impl_attrs.reserve_exact(8);
-    function.nested_fn_names.reserve_exact(8);
-    function.let_bindings.reserve_exact(8);
-    for call in &mut function.calls {
+    function.nested_fn_names.make_mut().reserve_exact(8);
+    function.let_bindings.make_mut().reserve_exact(8);
+    for call in function.calls.make_mut().iter_mut() {
         call.name.reserve_exact(8);
     }
     for ret in &mut function.returns {
         ret.text.reserve_exact(8);
     }
-    for literal in &mut function.literals {
+    for literal in function.literals.make_mut().iter_mut() {
         literal.value.reserve_exact(8);
     }
-    for attr in function.attrs.iter_mut().chain(&mut function.impl_attrs) {
+    for attr in function
+        .attrs
+        .make_mut()
+        .iter_mut()
+        .chain(function.impl_attrs.iter_mut())
+    {
         attr.reserve_exact(8);
     }
-    for name in &mut function.nested_fn_names {
+    for name in function.nested_fn_names.make_mut().iter_mut() {
         name.reserve_exact(8);
     }
-    for binding in &mut function.let_bindings {
+    for binding in function.let_bindings.make_mut().iter_mut() {
         binding.name.reserve_exact(8);
     }
     let test = facts.tests.first_mut().ok_or("missing test")?;
-    test.attrs.push("#[ignore]".into());
-    test.nested_fn_names.push("helper".into());
+    test.attrs.make_mut().push("#[ignore]".into());
+    test.nested_fn_names.make_mut().push("helper".into());
     test.name.reserve_exact(8);
-    test.calls.reserve_exact(8);
+    test.calls.make_mut().reserve_exact(8);
     test.assertions.reserve_exact(8);
-    test.literals.reserve_exact(8);
-    test.attrs.reserve_exact(8);
-    test.nested_fn_names.reserve_exact(8);
-    test.let_bindings.reserve_exact(8);
-    for call in &mut test.calls {
+    test.literals.make_mut().reserve_exact(8);
+    test.attrs.make_mut().reserve_exact(8);
+    test.nested_fn_names.make_mut().reserve_exact(8);
+    test.let_bindings.make_mut().reserve_exact(8);
+    for call in test.calls.make_mut().iter_mut() {
         call.name.reserve_exact(8);
     }
     for assertion in &mut test.assertions {
@@ -830,16 +880,16 @@ fn finishing_an_index_releases_the_spare_capacity_the_builders_left() -> Result<
             token.reserve_exact(8);
         }
     }
-    for literal in &mut test.literals {
+    for literal in test.literals.make_mut().iter_mut() {
         literal.value.reserve_exact(8);
     }
-    for attr in &mut test.attrs {
+    for attr in test.attrs.make_mut().iter_mut() {
         attr.reserve_exact(8);
     }
-    for name in &mut test.nested_fn_names {
+    for name in test.nested_fn_names.make_mut().iter_mut() {
         name.reserve_exact(8);
     }
-    for binding in &mut test.let_bindings {
+    for binding in test.let_bindings.make_mut().iter_mut() {
         binding.name.reserve_exact(8);
     }
     facts.literals.push(literal);

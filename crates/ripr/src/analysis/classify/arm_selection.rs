@@ -3330,14 +3330,14 @@ mod tests {
             start_line: 1,
             end_line: body.lines().count(),
             body: body.to_string().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: crate::analysis::facts::FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -3365,12 +3365,12 @@ mod tests {
             start_line: 1,
             end_line: body.lines().count(),
             body: body.to_string().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         }
     }
 
@@ -3541,7 +3541,7 @@ mod tests {
             text: text.into(),
         };
         let mut test = test_with("fn t() {\n    check(0, 1);\n}\n");
-        test.calls = vec![call_fact()];
+        test.calls = vec![call_fact()].into();
         let selects = |test: &TestSummary| selector.loan_selects(test, assertion_text, &loan);
         assert!(
             selects(&test),

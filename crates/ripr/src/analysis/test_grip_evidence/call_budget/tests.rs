@@ -12,12 +12,12 @@ fn test_with_line_of(distinct: usize) -> TestSummary {
         start_line: 1,
         end_line: 3,
         body: body.as_str().into(),
-        calls: extract_call_facts(&body, 1),
+        calls: extract_call_facts(&body, 1).into(),
         assertions: Vec::new(),
-        literals: Vec::new(),
-        attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
     }
 }
 

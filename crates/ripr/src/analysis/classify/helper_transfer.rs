@@ -4263,12 +4263,13 @@ mod tests {
                 name: name.to_string(),
                 line: 2,
                 text: text.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
         }
     }
 
@@ -4289,12 +4290,12 @@ mod tests {
                 })
                 .collect(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -4660,7 +4661,7 @@ mod tests {
 
         let mut local_wrapper =
             function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
-        local_wrapper.nested_fn_names = vec!["parse".to_string()];
+        local_wrapper.nested_fn_names = vec!["parse".to_string()].into();
         let from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
         let calling_local_wrapper = index_with_tests(
             vec![
@@ -4753,7 +4754,7 @@ mod tests {
         );
 
         let mut local_and_qualified = with_test("from_str", "VersionReq::from_str(\">=1.0\")");
-        local_and_qualified.nested_fn_names = vec!["from_str".to_string()];
+        local_and_qualified.nested_fn_names = vec!["from_str".to_string()].into();
         let mut workspace_from_str =
             function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
         workspace_from_str.impl_context = FunctionImplContext::Impl {
@@ -4890,7 +4891,7 @@ mod tests {
         );
 
         let mut local_parse = with_test("parse", "parse(\">=1.0\")");
-        local_parse.nested_fn_names = vec!["parse".to_string()];
+        local_parse.nested_fn_names = vec!["parse".to_string()].into();
         let calling_local = index_with_tests(vec![owner, parse, twin], vec![local_parse]);
         let chain = resolve_chain("op", &calling_local, true, &[]);
         assert_eq!(

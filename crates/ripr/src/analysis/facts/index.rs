@@ -794,30 +794,43 @@ impl RustIndex {
                 crate::analysis::cancellation::checkpoint()?;
             }
             fact.name.shrink_to_fit();
-            fact.calls.shrink_to_fit();
+            fact.calls.shrink_capacity_if_unique();
             fact.returns.shrink_to_fit();
-            fact.literals.shrink_to_fit();
-            fact.attrs.shrink_to_fit();
+            fact.literals.shrink_capacity_if_unique();
+            fact.attrs.shrink_capacity_if_unique();
             fact.impl_attrs.shrink_to_fit();
-            fact.nested_fn_names.shrink_to_fit();
-            fact.let_bindings.shrink_to_fit();
-            for call in &mut fact.calls {
-                call.name.shrink_to_fit();
+            fact.nested_fn_names.shrink_capacity_if_unique();
+            fact.let_bindings.shrink_capacity_if_unique();
+            if fact.calls.is_uniquely_owned() {
+                for call in fact.calls.make_mut().iter_mut() {
+                    call.name.shrink_to_fit();
+                }
             }
             for ret in &mut fact.returns {
                 ret.text.shrink_to_fit();
             }
-            for literal in &mut fact.literals {
-                literal.value.shrink_to_fit();
+            if fact.literals.is_uniquely_owned() {
+                for literal in fact.literals.make_mut().iter_mut() {
+                    literal.value.shrink_to_fit();
+                }
             }
-            for attr in fact.attrs.iter_mut().chain(&mut fact.impl_attrs) {
+            if fact.attrs.is_uniquely_owned() {
+                for attr in fact.attrs.make_mut().iter_mut() {
+                    attr.shrink_to_fit();
+                }
+            }
+            for attr in &mut fact.impl_attrs {
                 attr.shrink_to_fit();
             }
-            for name in &mut fact.nested_fn_names {
-                name.shrink_to_fit();
+            if fact.nested_fn_names.is_uniquely_owned() {
+                for name in fact.nested_fn_names.make_mut().iter_mut() {
+                    name.shrink_to_fit();
+                }
             }
-            for binding in &mut fact.let_bindings {
-                binding.name.shrink_to_fit();
+            if fact.let_bindings.is_uniquely_owned() {
+                for binding in fact.let_bindings.make_mut().iter_mut() {
+                    binding.name.shrink_to_fit();
+                }
             }
         }
         self.test_facts.records.shrink_to_fit();
@@ -826,14 +839,16 @@ impl RustIndex {
                 crate::analysis::cancellation::checkpoint()?;
             }
             fact.name.shrink_to_fit();
-            fact.calls.shrink_to_fit();
+            fact.calls.shrink_capacity_if_unique();
             fact.assertions.shrink_to_fit();
-            fact.literals.shrink_to_fit();
-            fact.attrs.shrink_to_fit();
-            fact.nested_fn_names.shrink_to_fit();
-            fact.let_bindings.shrink_to_fit();
-            for call in &mut fact.calls {
-                call.name.shrink_to_fit();
+            fact.literals.shrink_capacity_if_unique();
+            fact.attrs.shrink_capacity_if_unique();
+            fact.nested_fn_names.shrink_capacity_if_unique();
+            fact.let_bindings.shrink_capacity_if_unique();
+            if fact.calls.is_uniquely_owned() {
+                for call in fact.calls.make_mut().iter_mut() {
+                    call.name.shrink_to_fit();
+                }
             }
             for assertion in &mut fact.assertions {
                 assertion.text.shrink_to_fit();
@@ -842,17 +857,25 @@ impl RustIndex {
                     token.shrink_to_fit();
                 }
             }
-            for literal in &mut fact.literals {
-                literal.value.shrink_to_fit();
+            if fact.literals.is_uniquely_owned() {
+                for literal in fact.literals.make_mut().iter_mut() {
+                    literal.value.shrink_to_fit();
+                }
             }
-            for attr in &mut fact.attrs {
-                attr.shrink_to_fit();
+            if fact.attrs.is_uniquely_owned() {
+                for attr in fact.attrs.make_mut().iter_mut() {
+                    attr.shrink_to_fit();
+                }
             }
-            for name in &mut fact.nested_fn_names {
-                name.shrink_to_fit();
+            if fact.nested_fn_names.is_uniquely_owned() {
+                for name in fact.nested_fn_names.make_mut().iter_mut() {
+                    name.shrink_to_fit();
+                }
             }
-            for binding in &mut fact.let_bindings {
-                binding.name.shrink_to_fit();
+            if fact.let_bindings.is_uniquely_owned() {
+                for binding in fact.let_bindings.make_mut().iter_mut() {
+                    binding.name.shrink_to_fit();
+                }
             }
         }
         for (visited, file) in self.files.values_mut().enumerate() {

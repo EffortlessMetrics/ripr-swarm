@@ -41,8 +41,8 @@ use super::{
     name_scope::path_segments, name_scope_for_items, parse_clean_source_file, rust_nesting_refusal,
 };
 use crate::analysis::rust_index::{
-    FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SourceText, TestFact,
-    classify_assertion_with, err_return_guard_oracles, extract_call_facts,
+    FunctionFact, LazyDecls, OracleFact, ProbeShapeFact, ProbeShapeKind, SharedFactSlice,
+    SourceText, TestFact, classify_assertion_with, err_return_guard_oracles, extract_call_facts,
     extract_identifier_tokens, extract_line_scanned_oracles, extract_literal_facts,
     extract_return_facts, guarded_result_match_scan_with_shadow_authority,
     is_inline_unwrap_err_error_assertion, is_unwrap_err_bound_error_assertion,
@@ -707,21 +707,29 @@ fn summarize_file_with_collectors(
         file_literals.extend(literals.clone());
         file_probe_shapes.extend(probe_shapes);
 
+        let shared_calls = SharedFactSlice::from_vec(calls);
+        let shared_literals = SharedFactSlice::from_vec(literals);
+        let shared_attrs = SharedFactSlice::from_vec(attrs.clone());
+        let shared_nested_fn_names = SharedFactSlice::from_vec(nested_fn_names.clone());
+        let shared_let_bindings = SharedFactSlice::from_vec(let_bindings.clone());
+        let shared_body =
+            SourceText::shared_or_owned(&shared_source, u32::from(fn_start) as usize, &body);
+
         let function_fact = FunctionFact {
             id: parser_symbol_id(path, &function, &name),
             name: name.clone(),
             file: path_buf.clone(),
             start_line,
             end_line,
-            body: SourceText::shared_or_owned(&shared_source, u32::from(fn_start) as usize, &body),
-            calls: calls.clone(),
+            body: shared_body.clone(),
+            calls: shared_calls.clone(),
             returns: returns.clone(),
-            literals: literals.clone(),
+            literals: shared_literals.clone(),
             source_role,
-            attrs: attrs.clone(),
+            attrs: shared_attrs.clone(),
             impl_attrs: collect_impl_attr_syntax(&function),
-            nested_fn_names: nested_fn_names.clone(),
-            let_bindings: let_bindings.clone(),
+            nested_fn_names: shared_nested_fn_names.clone(),
+            let_bindings: shared_let_bindings.clone(),
             item: function_item_fact(&function),
             impl_context: function_impl_context(&function),
         };
@@ -732,12 +740,8 @@ fn summarize_file_with_collectors(
                 file: path_buf.clone(),
                 start_line,
                 end_line,
-                body: SourceText::shared_or_owned(
-                    &shared_source,
-                    u32::from(fn_start) as usize,
-                    &body,
-                ),
-                calls,
+                body: shared_body,
+                calls: shared_calls,
                 assertions: {
                     let mut assertions = extract_parser_oracles(
                         &function,
@@ -749,10 +753,10 @@ fn summarize_file_with_collectors(
                     assertions.extend(arrow_row_oracles_for_fn(&attrs, &function, start_line));
                     assertions
                 },
-                literals,
-                attrs,
-                nested_fn_names,
-                let_bindings,
+                literals: shared_literals,
+                attrs: shared_attrs,
+                nested_fn_names: shared_nested_fn_names,
+                let_bindings: shared_let_bindings,
             });
         }
 
@@ -3356,10 +3360,10 @@ pub fn fee() -> u64 { 5 }
                 .find(|function| function.name == name)
         };
         let charge = function("charge").ok_or("charge not summarized")?;
-        assert_eq!(charge.attrs, vec!["#[getter]".to_string()]);
+        assert_eq!(charge.attrs.to_vec(), vec!["#[getter]".to_string()]);
         assert_eq!(charge.impl_attrs, vec!["#[pymethods]".to_string()]);
         let fee = function("fee").ok_or("fee not summarized")?;
-        assert_eq!(fee.attrs, vec!["#[pyfunction]".to_string()]);
+        assert_eq!(fee.attrs.to_vec(), vec!["#[pyfunction]".to_string()]);
         assert!(
             fee.impl_attrs.is_empty(),
             "a free function has no impl attributes"
@@ -4107,7 +4111,7 @@ pub fn wrap(value: u64) -> Result<Option<u64>, ()> {
             functions: vec![],
             tests: vec![],
             returns: vec![],
-            literals: vec![],
+            literals: Vec::new(),
             probe_shapes: vec![],
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
