@@ -16,14 +16,16 @@ suite('repairStart (#4645)', () => {
     );
   });
 
-  test('findLiveRepairAttemptForSeam returns only awaiting or prepared rows', () => {
+  test('findLiveRepairAttemptForSeam returns only resumable awaiting or prepared rows', () => {
     const rows: AttemptInventoryRow[] = [
-      { attemptId: 'a1', seamId: 'seam-a', state: 'awaiting_edit', disposition: 'current', command: null },
-      { attemptId: 'a2', seamId: 'seam-a', state: 'finished_current', disposition: 'current', command: null },
-      { attemptId: 'a3', seamId: 'seam-b', state: 'prepared', disposition: 'current', command: null },
+      { attemptId: 'a1', seamId: 'seam-a', state: 'awaiting_edit', disposition: 'resumable', command: null },
+      { attemptId: 'a2', seamId: 'seam-a', state: 'awaiting_edit', disposition: 'prepared_at_other_head', command: null },
+      { attemptId: 'a3', seamId: 'seam-a', state: 'awaiting_edit', disposition: 'retry_budget_spent', command: null },
+      { attemptId: 'a4', seamId: 'seam-a', state: 'finished_current', disposition: 'resumable', command: null },
+      { attemptId: 'a5', seamId: 'seam-b', state: 'prepared', disposition: 'resumable', command: null },
     ];
     assert.strictEqual(findLiveRepairAttemptForSeam(rows, 'seam-a')?.attemptId, 'a1');
-    assert.strictEqual(findLiveRepairAttemptForSeam(rows, 'seam-b')?.attemptId, 'a3');
+    assert.strictEqual(findLiveRepairAttemptForSeam(rows, 'seam-b')?.attemptId, 'a5');
     assert.strictEqual(findLiveRepairAttemptForSeam(rows, 'missing'), undefined);
   });
 
@@ -34,7 +36,7 @@ suite('repairStart (#4645)', () => {
         {
           seam_id: '67fc764ba37d77bd',
           allowed_edit_surface: ['tests/pricing.rs'],
-          must_not_change: ['Do not edit production code.'],
+          must_not_change: ['Do not edit production code.', 'Editing outside the cage fails terminally.'],
           missing_discriminators: [{ value: 'discount_threshold (equality boundary)' }],
           nearest_strong_test_to_imitate: {
             file: 'tests/pricing.rs',
@@ -57,6 +59,8 @@ suite('repairStart (#4645)', () => {
     assert.strictEqual(parsed?.relatedTestLine, 4);
     assert.ok(parsed?.summaryLines.some((line) => line.includes('not complete')));
     assert.ok(parsed?.summaryLines.some((line) => line.includes('tests/pricing.rs')));
+    assert.ok(parsed?.summaryLines.some((line) => line.includes('Do not edit production code.')));
+    assert.ok(parsed?.summaryLines.some((line) => line.includes('Editing outside the cage fails terminally.')));
   });
 
   test('extractAgentRepairLoopTarget finds the seam-bound repair handoff payload', () => {

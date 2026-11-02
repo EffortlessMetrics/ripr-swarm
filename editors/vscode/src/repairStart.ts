@@ -14,6 +14,9 @@ export const LIVE_REPAIR_ATTEMPT_STATES: ReadonlySet<string> = new Set([
   'prepared',
 ]);
 
+/** Inventory disposition that means the CLI would resume this attempt as-is (#4645). */
+export const RESUMABLE_REPAIR_ATTEMPT_DISPOSITION = 'resumable';
+
 export interface BeforePhaseRepairStart {
   attemptId: string;
   manifestPath?: string;
@@ -112,7 +115,8 @@ export function findLiveRepairAttemptForSeam(
     (row) =>
       row.seamId === seamId &&
       row.state !== null &&
-      LIVE_REPAIR_ATTEMPT_STATES.has(row.state)
+      LIVE_REPAIR_ATTEMPT_STATES.has(row.state) &&
+      row.disposition === RESUMABLE_REPAIR_ATTEMPT_DISPOSITION
   );
 }
 
@@ -151,7 +155,7 @@ export function parseBeforePhaseRepairStart(stdout: string): BeforePhaseRepairSt
     seamId ? `Seam: ${seamId}` : undefined,
     missing.length > 0 ? `Missing discriminator: ${missing.join('; ')}` : undefined,
     allowed.length > 0 ? `Allowed edit surface: ${allowed.join(', ')}` : undefined,
-    mustNot.length > 0 ? mustNot[0] : undefined,
+    ...mustNot,
     related.file
       ? `Related test: ${related.file}${related.line ? `:${related.line}` : ''}${related.name ? ` (${related.name})` : ''}`
       : undefined,

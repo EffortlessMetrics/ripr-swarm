@@ -1638,16 +1638,20 @@ export class RiprClientController {
     if (generation !== this.startGeneration) {
       return true;
     }
-    if (inventory) {
-      const existing = findLiveRepairAttemptForSeam(inventory, seamId);
-      if (existing) {
-        this.rememberAttempt(root, existing.attemptId);
-        this.runtime.showInformationMessage(
-          `A live repair attempt already exists for seam ${seamId} (${existing.attemptId}); resuming it instead of creating a duplicate.`
-        );
-        await this.showAttemptStatus(existing.attemptId);
-        return true;
-      }
+    if (!inventory) {
+      this.runtime.showInformationMessage(
+        'ripr could not read the repair attempt inventory; Start Current Repair is unavailable until agent status is readable.'
+      );
+      return true;
+    }
+    const existing = findLiveRepairAttemptForSeam(inventory, seamId);
+    if (existing) {
+      this.rememberAttempt(root, existing.attemptId);
+      this.runtime.showInformationMessage(
+        `A live repair attempt already exists for seam ${seamId} (${existing.attemptId}); resuming it instead of creating a duplicate.`
+      );
+      await this.showAttemptStatus(existing.attemptId);
+      return true;
     }
     let stdout: string;
     try {

@@ -1639,6 +1639,78 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('startCurrentRepair fails closed when repair attempt inventory is unreadable', async function (this: Mocha.Context) {
+    skipUnlessTrustedTestHost(this);
+    const seamId = '67fc764ba37d77bd';
+    const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    assert.ok(selectedRoot, 'test workspace root must be open');
+    const rootArg = serverShellArg(selectedRoot.replace(/\\/g, '/'));
+    const context = createControllerTestContext({
+      runRiprHandler: (args) => {
+        if (args[0] === 'agent' && args[1] === 'status' && !args.includes('--attempt')) {
+          throw new Error('inventory unreadable');
+        }
+        return '{}';
+      },
+    });
+    const relativePath = 'src/start-shared-repair-unreadable-inventory.rs';
+    const uri = workspaceFileUri(relativePath);
+    const collection = vscode.languages.createDiagnosticCollection('ripr-start-shared-repair-unreadable');
+    let provider: vscode.Disposable | undefined;
+    try {
+      await writeWorkspaceFile(relativePath, 'pub fn near() {}\n');
+      const document = await vscode.workspace.openTextDocument(uri);
+      const editor = await vscode.window.showTextDocument(document);
+      editor.selection = new vscode.Selection(new vscode.Position(0, 2), new vscode.Position(0, 2));
+      const diagnostic = new vscode.Diagnostic(
+        new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 12)),
+        'near ripr gap',
+        vscode.DiagnosticSeverity.Warning
+      );
+      diagnostic.source = 'ripr';
+      diagnostic.code = 'ripr-gap-MissingBoundaryAssertion';
+      collection.set(uri, [diagnostic]);
+
+      provider = vscode.languages.registerCodeActionsProvider(
+        { language: 'rust', scheme: 'file' },
+        {
+          provideCodeActions(_document, range) {
+            const repairCommand = `ripr agent repair --root ${rootArg} --seam-id ${seamId} --phase before`;
+            const action = new vscode.CodeAction('Start repair: copy repair command', vscode.CodeActionKind.QuickFix);
+            action.command = {
+              title: 'Start repair: copy repair command',
+              command: 'ripr.copyAgentRepairCommand',
+              arguments: [
+                agentLoopCommandTarget('agent_repair', repairCommand, 'target/ripr/repair-attempts', { seamId }),
+              ],
+            };
+            return [action];
+          },
+        }
+      );
+
+      await context.controller.start();
+      await waitForCodeAction(uri, diagnostic.range, (action) => action.title === 'Start repair: copy repair command');
+      await context.controller.startCurrentRepair();
+
+      assert.ok(
+        !context.runRiprCalls.some(
+          (call) => call.args[0] === 'agent' && call.args[1] === 'repair' && call.args.includes(seamId)
+        )
+      );
+      assert.ok(
+        context.infoMessages.some((message) => message.includes('repair attempt inventory')),
+        context.infoMessages.join(' | ')
+      );
+    } finally {
+      provider?.dispose();
+      collection.dispose();
+      await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
+    }
+  });
+
   test('copyRepairPacketAtCursor uses only the packet action for the containing diagnostic', async function (this: Mocha.Context) {
     skipUnlessTrustedTestHost(this);
     const relativePath = 'src/copy-repair-packet-at-cursor.rs';
