@@ -22053,6 +22053,44 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
     Ok(())
 }
 
+/// #12610: a predicate-boundary seam must not treat an adapter-fed error read
+/// as a discriminator when the test supplies the compared value itself.
+#[test]
+fn adapter_fed_or_does_not_discriminate_predicate_boundary_seam() -> Result<(), String> {
+    let source = r#"
+#[derive(Debug, PartialEq)]
+pub enum Fault { Odd, Even }
+
+pub fn parse_masked(n: u8) -> Result<u8, Fault> {
+    if n % 2 == 1 { Err(Fault::Odd) } else { Ok(n) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn masked_odd() {
+        assert_eq!(parse_masked(1).or(Err(Fault::Odd)).unwrap_err(), Fault::Odd);
+    }
+}
+"#;
+    let files = [(PathBuf::from("src/lib.rs"), source)];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let boundary = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary && s.expression().contains("n % 2 == 1"))
+        .ok_or_else(|| "predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(boundary, &index);
+    assert_ne!(
+        evidence.discriminate.state,
+        StageState::Yes,
+        "adapter-fed masked_odd must not discriminate the boundary: {}",
+        evidence.discriminate.summary
+    );
+    Ok(())
+}
+
 /// Residual name-only false credits and missing pins tracked in #8917.
 #[test]
 #[rustfmt::skip]
