@@ -54,6 +54,11 @@ pub(in crate::analysis) struct ProbeContext<'a> {
     /// RIPR-SPEC-0048: what evaluating the changed constant through those
     /// readers showed; `None` when any part was unreadable.
     pub const_flow: Option<super::ConstFlow>,
+    /// Workspace root for optional admitted SCIP reference authority (#8116).
+    pub workspace_root: Option<&'a std::path::Path>,
+    /// When present, semantic reference edges may resolve ambiguous cross-package
+    /// bare calls to the changed owner (#8116).
+    pub scip_bindings: Option<&'a crate::analysis::scip::ScipReferenceBindings>,
 }
 
 impl<'a> ProbeContext<'a> {
@@ -84,7 +89,19 @@ impl<'a> ProbeContext<'a> {
             unmounted_build_script: false,
             const_readers: Vec::new(),
             const_flow: None,
+            workspace_root: None,
+            scip_bindings: None,
         }
+    }
+
+    pub(in crate::analysis) fn with_scip_authority(
+        mut self,
+        workspace_root: &'a std::path::Path,
+        scip_bindings: Option<&'a crate::analysis::scip::ScipReferenceBindings>,
+    ) -> Self {
+        self.workspace_root = Some(workspace_root);
+        self.scip_bindings = scip_bindings;
+        self
     }
 
     /// Share one classification run's per-file `use` scan across probes.

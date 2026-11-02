@@ -18,6 +18,8 @@ fn repo_options(root: &Path) -> AnalysisOptions {
         git_candidate: None,
         production_like_targets: Default::default(),
         test_harnesses: Vec::new(),
+        scip_index_path: None,
+        scip_manifest_path: None,
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
     }

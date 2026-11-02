@@ -70,6 +70,9 @@ pub(in crate::analysis) struct DependencyEdgeContext<'a> {
     pub(in crate::analysis) unindexed_manifests: &'a BTreeSet<String>,
     /// The scan root, for reading a manifest's package and library name.
     pub(in crate::analysis) root: &'a std::path::Path,
+    /// Admitted SCIP reference bindings when the caller supplied a matching
+    /// index and manifest (#8116).
+    pub(in crate::analysis) scip_bindings: Option<&'a crate::analysis::scip::ScipReferenceBindings>,
 }
 
 /// #6617: the nearest-manifest identity of every package that has an
@@ -1396,6 +1399,10 @@ fn find_related_tests_with_candidates<'a>(
                         )
                     })
                 }))
+            && !(calls_owner
+                && owner_fn.is_some_and(|owner| {
+                    scip_reference_admits_owner_call(dependency_edges, owner, test, &owner.name)
+                }))
         {
             continue;
         }
@@ -1811,6 +1818,31 @@ struct SameNameDefinitions<'s> {
 /// - the index must span the workspace (`workspace_complete`), except for
 ///   the type-path route on an inherent-impl owner whose whole package is
 ///   indexed (#6617): see `type_path_index_covers_competitors`.
+fn scip_reference_admits_owner_call(
+    dependency_edges: Option<&DependencyEdgeContext<'_>>,
+    owner: &FunctionSummary,
+    test: &TestSummary,
+    callee: &str,
+) -> bool {
+    let Some(context) = dependency_edges else {
+        return false;
+    };
+    let Some(bindings) = context.scip_bindings else {
+        return false;
+    };
+    test.calls.iter().any(|call| {
+        call.name == callee
+            && bindings.call_resolves_to_owner(
+                context.root,
+                &test.file,
+                call.line,
+                callee,
+                &owner.file,
+                &owner.name,
+            )
+    })
+}
+
 fn dependency_edge_admits_owner_call(
     context: &DependencyEdgeContext<'_>,
     owner: &FunctionSummary,
@@ -10506,6 +10538,7 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
             index,
             unindexed_manifests: &NONE_UNINDEXED,
             root: std::path::Path::new("."),
+            scip_bindings: None,
         }
     }
 
@@ -12670,6 +12703,7 @@ fn crate_c_score_test() {
             index: &index,
             unindexed_manifests: &unindexed_manifests,
             root: std::path::Path::new("."),
+            scip_bindings: None,
         };
         let probe = probe("crates/crate_a/src/lib.rs", "42");
         find_related_tests(

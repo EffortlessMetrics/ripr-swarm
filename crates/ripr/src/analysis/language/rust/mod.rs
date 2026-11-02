@@ -2532,6 +2532,23 @@ impl RustAdapter {
                 &index_files,
             )
         };
+        let scip_bindings = match (&options.scip_index_path, &options.scip_manifest_path) {
+            (Some(index_path), Some(manifest_path)) => Some(std::sync::Arc::new(
+                crate::analysis::scip::ScipReferenceBindings::from_admitted_index(
+                    &options.root,
+                    index_path,
+                    manifest_path,
+                )
+                .map_err(|error| format!("scip reference bindings: {}", error.reason()))?,
+            )),
+            (None, None) => None,
+            _ => {
+                return Err(
+                    "scip index and manifest must be supplied together for semantic references"
+                        .into(),
+                );
+            }
+        };
         let dependency_edges =
             dependency_adjacency
                 .as_ref()
@@ -2541,6 +2558,7 @@ impl RustAdapter {
                     index: &index,
                     unindexed_manifests: &unindexed_manifests,
                     root: &options.root,
+                    scip_bindings: scip_bindings.as_deref(),
                 });
 
         // #4722: a changed file the reference parser refused was indexed
@@ -2702,6 +2720,8 @@ impl RustAdapter {
                                             &transitive_reach,
                                             seeded.propagation_origin.as_ref(),
                                             Some(&value_origins),
+                                            scip_bindings.as_deref(),
+                                            &options.root,
                                         )
                                     }));
                                 match contained {
@@ -3541,12 +3561,30 @@ impl RustAdapter {
             &crate::analysis::seam_cache::workspace_graph_provenance(&options.root),
         );
         let unindexed_manifests = BTreeSet::new();
+        let scip_bindings = match (&options.scip_index_path, &options.scip_manifest_path) {
+            (Some(index_path), Some(manifest_path)) => Some(std::sync::Arc::new(
+                crate::analysis::scip::ScipReferenceBindings::from_admitted_index(
+                    &options.root,
+                    index_path,
+                    manifest_path,
+                )
+                .map_err(|error| format!("scip reference bindings: {}", error.reason()))?,
+            )),
+            (None, None) => None,
+            _ => {
+                return Err(
+                    "scip index and manifest must be supplied together for semantic references"
+                        .into(),
+                );
+            }
+        };
         let dependency_edges = classify::DependencyEdgeContext {
             adjacency: &dependency_adjacency,
             manifest_dir_prefixes: &manifest_dir_prefixes,
             index: &index,
             unindexed_manifests: &unindexed_manifests,
             root: &options.root,
+            scip_bindings: scip_bindings.as_deref(),
         };
 
         for path in &production_files {
@@ -3569,6 +3607,8 @@ impl RustAdapter {
                         &transitive_reach,
                         None,
                         Some(&value_origins),
+                        scip_bindings.as_deref(),
+                        &options.root,
                     );
                 finding.language = Some(LanguageId::Rust);
                 // Repo mode seeds probes from the current tree, so every
@@ -3755,6 +3795,9 @@ mod tests {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -3845,6 +3888,9 @@ mod tests {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -4000,6 +4046,9 @@ mod tests {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             };
             let result = RustAdapter.analyze_repo(&options, &OraclePolicy::default())?;
             let findings: Vec<_> = result
@@ -4070,6 +4119,9 @@ mod tests {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
         )?;
@@ -4109,6 +4161,8 @@ mod tests {
             git_candidate: None,
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+            scip_index_path: None,
+            scip_manifest_path: None,
         }
     }
 
@@ -4217,6 +4271,9 @@ mod tests {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
         )?;
@@ -4457,6 +4514,8 @@ mod tests {
             git_candidate: None,
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+            scip_index_path: None,
+            scip_manifest_path: None,
         }
     }
 
@@ -5984,6 +6043,9 @@ mod tests {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -6138,6 +6200,9 @@ mod tests {
                     git_candidate: None,
                     production_like_targets: Default::default(),
                     test_harnesses: Vec::new(),
+
+                    scip_index_path: None,
+                    scip_manifest_path: None,
                 },
                 &OraclePolicy::default(),
                 &changed_files,
@@ -6253,6 +6318,9 @@ mod tests {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -6444,6 +6512,9 @@ fn absent_delimiter_boundary_returns_head() {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -7733,6 +7804,9 @@ fn absent_delimiter_boundary_returns_head() {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -8214,6 +8288,9 @@ fn absent_delimiter_boundary_returns_head() {
             git_candidate: None,
             production_like_targets: Default::default(),
             test_harnesses: Vec::new(),
+
+            scip_index_path: None,
+            scip_manifest_path: None,
         };
         let policy = OraclePolicy::default();
         let result = cancellation::with_token(&token, || {
@@ -8325,6 +8402,9 @@ fn absent_delimiter_boundary_returns_head() {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -8416,6 +8496,9 @@ fn absent_delimiter_boundary_returns_head() {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -8498,6 +8581,9 @@ fn absent_delimiter_boundary_returns_head() {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -8566,6 +8652,9 @@ fn absent_delimiter_boundary_returns_head() {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -8623,6 +8712,9 @@ fn absent_delimiter_boundary_returns_head() {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &diff::parse_unified_diff(diff),
@@ -9683,6 +9775,9 @@ fn absent_delimiter_boundary_returns_head() {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -9770,6 +9865,9 @@ fn absent_delimiter_boundary_returns_head() {
                 git_candidate: None,
                 production_like_targets: Default::default(),
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -9914,6 +10012,9 @@ fn absent_delimiter_boundary_returns_head() {
                     adapter: crate::config::TestHarnessAdapter::LibtestMimicV1,
                     marker: "libtest_mimic".to_string(),
                 }],
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -10050,6 +10151,9 @@ fn absent_delimiter_boundary_returns_head() {
                     adapter: crate::config::TestHarnessAdapter::LibtestMimicV1,
                     marker: "libtest_mimic".to_string(),
                 }],
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,
@@ -10158,6 +10262,9 @@ fn absent_delimiter_boundary_returns_head() {
                 git_candidate: None,
                 production_like_targets: production_like,
                 test_harnesses: Vec::new(),
+
+                scip_index_path: None,
+                scip_manifest_path: None,
             },
             &OraclePolicy::default(),
             &changed_files,

@@ -160,7 +160,7 @@ pub(crate) fn admit_scip_index(
     Ok(facts)
 }
 
-fn read_manifest(path: &Path) -> Result<ScipAdmissionManifest, ScipAdmissionError> {
+pub(crate) fn read_manifest(path: &Path) -> Result<ScipAdmissionManifest, ScipAdmissionError> {
     let text = read_bounded_utf8(
         path,
         MAX_SCIP_MANIFEST_BYTES,
