@@ -76,10 +76,12 @@ consumed by reference, not reimplemented here.
 - Output metadata: `language = "dart"` and `language_status = "preview"` on
   every Dart preview finding unless the shared contract omits preview labels for
   a disabled adapter state.
-- Opt-in: Dart runs only when `ripr.toml` lists `dart` under `[languages]
-  enabled` and the binary includes a future `lang-dart` feature. Project
-  detection may propose Dart when `pubspec.yaml` and `lib/` or `test/` exist,
-  but explicit config remains authoritative to disable.
+- Opt-in follows RIPR-SPEC-0026: when `ripr.toml` is present, Dart runs only if
+  `dart` is listed under `[languages] enabled` and the binary includes a future
+  `lang-dart` feature. When `ripr.toml` is absent, Dart project detection may
+  enable the preview adapter for a recognized package root (`pubspec.yaml` with
+  `lib/` or `test/`). Explicit configuration remains authoritative and can keep
+  Dart disabled in a Dart-shaped repository.
 - Zero runtime/tool execution: no `dart`, `flutter`, `pub`, `build_runner`,
   analyzer server, VM, emulator, device, or test/app/plugin execution during
   passive analysis.
@@ -111,7 +113,11 @@ Package tests and Flutter widget tests are **separate capability cells**. A
 widget-test cell must not inherit support, limits, or non-claims from a
 package-test cell, and vice versa.
 
-Normative cell identities (registered in implementation slice #6148 / #5841):
+Normative cell identities (registered in implementation slice #6148 / #5841).
+The producer table today keys disposition lookups on framework `any`; landing
+these cells requires framework-aware consumers or an explicit per-framework
+lookup path so `package_test` and `flutter_test` dispositions cannot collapse
+(#5531).
 
 | Cell id | Framework | Mode | Family | Initial disposition |
 | --- | --- | --- | --- | --- |
@@ -325,8 +331,9 @@ This spec-only change proves registry and format gates on the document itself.
    `flutter_test` enables `dart/flutter_test/*` cells without upgrading
    package-test disposition.
 2. **Pump is not observation:** `testWidgets('x', (tester) async { await
-   tester.pumpWidget(MyApp()); });` yields registration + pump facts only;
-   classification stays `no_static_path` or activation-limited without
+   tester.pumpWidget(MyApp()); });` with `MyApp` as the changed owner yields
+   registration, pump, and related-test reach facts only; classification stays
+   `reachable_unrevealed` (or activation-limited) without
    `expect(find.text('Save'), findsOneWidget)`.
 3. **Finder ≠ interaction:** `final btn = find.text('Save');` without `tap`
    does not establish interaction; observation on `btn` still needs a resolved
