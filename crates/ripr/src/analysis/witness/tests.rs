@@ -1130,6 +1130,32 @@ fn unspecified_repo_completeness_is_a_typed_limitation_not_optimistic_parity() {
 }
 
 #[test]
+fn production_retain_python_preview_finding_keeps_digest() {
+    let finding = FindingSpec {
+        language: Some(LanguageId::Python),
+        language_status: Some(LanguageStatus::Preview),
+        ..FindingSpec::default()
+    }
+    .build();
+    super::retain_finding_projection(&finding);
+    let witness = from_finding(&finding);
+    assert_eq!(witness.language, "python");
+    assert!(
+        witness
+            .limitations
+            .iter()
+            .any(|item| item == "preview_language")
+    );
+    assert!(
+        witness
+            .limitations
+            .iter()
+            .any(|item| item == "cross_language_limit")
+    );
+    assert!(witness.digest_matches());
+}
+
+#[test]
 fn production_retain_does_not_mutate_producer_classes_or_relations() {
     let finding = boundary_related_finding();
     let seam = boundary_related_seam();

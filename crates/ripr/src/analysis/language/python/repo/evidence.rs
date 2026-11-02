@@ -726,7 +726,7 @@ fn build_production_file_evidence(
             // capability cell up from this, so repo-mode evidence can never
             // borrow the diff-mode repair-routing cell.
             finding.mark_repo_scoped();
-            findings.push(finding);
+            super::super::publish_production_finding(findings, finding);
         }
     }
 
