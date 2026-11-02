@@ -247,12 +247,46 @@ fn stated_ripr_command_span(prose: &str) -> bool {
     false
 }
 
+/// Whether the clause `prefix` preceding a command mention states it as the
+/// conditional step: a conditional marker with `,` or `:` after it (mirroring
+/// producer role assignment), an imperative, and no copula in the instruction
+/// portion after the condition delimiter. Copulas in the premise (`if the
+/// cache is stale, ...`) do not suppress the oracle.
+fn prefix_states_conditional_command(prefix: &str) -> bool {
+    const IMPERATIVES: &[&str] = &["run", "call", "use", "try", "rerun", "re-run", "execute"];
+    const DESCRIBING: &[&str] = &["is", "are"];
+    let lower = prefix.to_ascii_lowercase();
+    let Some(cond) = ["if", "unless", "when", "otherwise"]
+        .iter()
+        .filter_map(|word| phrase_position(&lower, word))
+        .max()
+    else {
+        return false;
+    };
+    let Some(delim) = lower[cond..].find([',', ':']) else {
+        return false;
+    };
+    let split_words = |text: &str| {
+        text.split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
+            .filter(|word| !word.is_empty())
+            .map(str::to_ascii_lowercase)
+            .collect::<Vec<String>>()
+    };
+    let imperative = split_words(prefix)
+        .iter()
+        .any(|w| IMPERATIVES.contains(&w.as_str()));
+    // Only the instruction after the condition delimiter can describe; the
+    // premise before it may name what is stale without unmarking the step.
+    let describing = split_words(&lower[cond + delim + 1..])
+        .iter()
+        .any(|w| DESCRIBING.contains(&w.as_str()));
+    imperative && !describing
+}
+
 /// When the clause names a conditional step (conditional marker with `,` or `:`
 /// before the mention, mirroring producer role assignment), the structured
 /// remedy must be non-`none` and marked `conditional`.
 fn stated_conditional_ripr_command_span(prose: &str) -> bool {
-    const IMPERATIVES: &[&str] = &["run", "call", "use", "try", "rerun", "re-run", "execute"];
-    const DESCRIBING: &[&str] = &["is", "are"];
     let mut offset = 0;
     for (index, part) in prose.split('`').enumerate() {
         let at = offset;
@@ -268,30 +302,41 @@ fn stated_conditional_ripr_command_span(prose: &str) -> bool {
         if !is_command || part.len() > MAX_COMMAND_LEN {
             continue;
         }
-        let prefix = clause_prefix(prose, at.saturating_sub(1));
-        let lower = prefix.to_ascii_lowercase();
-        let Some(cond) = ["if", "unless", "when", "otherwise"]
-            .iter()
-            .filter_map(|word| phrase_position(&lower, word))
-            .max()
-        else {
-            continue;
-        };
-        if !lower[cond..].contains([',', ':']) {
-            continue;
-        }
-        let words: Vec<String> = prefix
-            .split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
-            .filter(|word| !word.is_empty())
-            .map(str::to_ascii_lowercase)
-            .collect();
-        let imperative = words.iter().any(|w| IMPERATIVES.contains(&w.as_str()));
-        let describing = words.iter().any(|w| DESCRIBING.contains(&w.as_str()));
-        if imperative && !describing {
+        if prefix_states_conditional_command(clause_prefix(prose, at.saturating_sub(1))) {
             return true;
         }
     }
     false
+}
+
+/// Every backticked `ripr ...` span in the prose states a conditional step.
+/// A mixed message also names an unconditional step (`run X; if it persists,
+/// run Y`, or an instructed `ripr agent stub` beside a conditional
+/// `ripr repair`); there the producer's instructed step legitimately wins and
+/// the conditional assertion stays silent.
+fn every_stated_command_is_conditional(prose: &str) -> bool {
+    let mut any = false;
+    let mut offset = 0;
+    for (index, part) in prose.split('`').enumerate() {
+        let at = offset;
+        offset += part.len() + 1;
+        if index % 2 == 0 {
+            continue;
+        }
+        let is_command = part.trim().strip_prefix("ripr ").is_some_and(|rest| {
+            rest.chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase() || c == '-')
+        });
+        if !is_command || part.len() > MAX_COMMAND_LEN {
+            continue;
+        }
+        any = true;
+        if !prefix_states_conditional_command(clause_prefix(prose, at.saturating_sub(1))) {
+            return false;
+        }
+    }
+    any
 }
 
 /// Independent recall oracle: `--flag` tokens not inside a backticked
@@ -385,13 +430,17 @@ fn every_message_yields_a_grounded_remedy_or_an_explicit_none() -> Result<(), St
         }
         if message.len() <= 700
             && stated_conditional_ripr_command_span(message)
-            && !stated_ripr_command_span(message)
+            && every_stated_command_is_conditional(message)
         {
             if matches!(remedy.kind, RemedyKind::None) {
                 failures.push(format!(
                     "stated conditional command dropped to none: {message}"
                 ));
-            } else if !remedy.conditional {
+            } else if !remedy.conditional && remedy.kind != RemedyKind::McpTool {
+                // An instructed tool legitimately wins over a conditional
+                // command in `from_prose` precedence, so a non-conditional
+                // `McpTool` remedy is not a dropped conditional step.
+                // Conditional tool-only remedies stay checked.
                 failures.push(format!(
                     "conditional step not marked conditional: {message}"
                 ));
@@ -482,11 +531,39 @@ fn the_oracle_tells_a_conditional_command_from_a_description() {
     assert!(!stated_conditional_ripr_command_span(
         "this is run by `ripr x`"
     ));
+    // The last condition word needs its delimiter; without one the producer
+    // also reads the mention as explanatory, not conditional.
     assert!(stated_conditional_ripr_command_span(
+        "when stale; otherwise, run `ripr y`"
+    ));
+    assert!(!stated_conditional_ripr_command_span(
         "when stale, otherwise run `ripr y`"
     ));
-    assert!(!stated_ripr_command_span(
+    // A copula in the premise does not suppress the instruction.
+    assert!(stated_conditional_ripr_command_span(
+        "if the cache is stale, run `ripr doctor`"
+    ));
+    // The general oracle still sees the plain instruction; the conditional
+    // narrowing keys off every stated span, not this match, so a mixed
+    // message with a separate unconditional step stays silent.
+    assert!(stated_ripr_command_span(
         "run `ripr pilot`; if it persists, run `ripr doctor`"
+    ));
+    assert!(!every_stated_command_is_conditional(
+        "run `ripr pilot`; if it persists, run `ripr doctor`"
+    ));
+    assert!(every_stated_command_is_conditional(
+        "if stale, run `ripr doctor`"
+    ));
+    // A lone colon-delimited conditional has only conditional spans, so its
+    // conditional flag stays pinned.
+    assert!(every_stated_command_is_conditional(
+        "if stale: run `ripr doctor`"
+    ));
+    // An instructed step beside a conditional one (producer precedence wins)
+    // is not a dropped conditional step.
+    assert!(!every_stated_command_is_conditional(
+        "write the test by hand -- `ripr agent stub --at x`; when it derives, otherwise fill values, then rerun `ripr repair`"
     ));
 }
 
