@@ -8470,10 +8470,7 @@ fn seam_code_actions_keep_legacy_finding_context_when_both_diagnostics_are_prese
         ]
     );
     assert_eq!(commands[0].2[0]["seam_id"], seam.seam.id().as_str());
-    assert_eq!(
-        commands[8].2[0]["finding_id"],
-        "probe:pricing:88:predicate"
-    );
+    assert_eq!(commands[8].2[0]["finding_id"], "probe:pricing:88:predicate");
     assert_eq!(commands[8].2[0]["probe_id"], "probe:pricing:88:predicate");
     Ok(())
 }
