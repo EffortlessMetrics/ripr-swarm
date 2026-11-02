@@ -2409,7 +2409,7 @@ export class RiprClientController {
         resolution.attemptIds.map((attemptId) => {
           const row = rowById.get(attemptId);
           return {
-            label: row?.seamId ? `${attemptId} — seam ${row.seamId}` : attemptId,
+            label: row?.seamId ? `${attemptId} — spot ${row.seamId}` : attemptId,
             description: row?.state ?? undefined,
             attemptId
           };
@@ -3561,10 +3561,10 @@ function firstUsefulActionLines(firstAction: FirstUsefulActionStatus): string[] 
     lines.push(`Gap identity: ${firstAction.seamId}`);
   }
   if (firstAction.selectedLocation) {
-    lines.push(`Seam: ${firstAction.selectedLocation}`);
+    lines.push(`Spot: ${firstAction.selectedLocation}`);
   }
   if (firstAction.missingDiscriminator) {
-    lines.push(`Missing discriminator: ${firstAction.missingDiscriminator}`);
+    lines.push(`Missing check: ${firstAction.missingDiscriminator}`);
   }
   if (firstAction.target) {
     lines.push(`Target: ${firstAction.target}`);
@@ -3801,7 +3801,7 @@ function actionableGapQueueTopLines(queue: RiprActionableGapQueueStatus): string
     lines.push(`Why this matters: ${queue.why}`);
   }
   if (queue.missingDiscriminator) {
-    lines.push(`Missing discriminator: ${queue.missingDiscriminator}`);
+    lines.push(`Missing check: ${queue.missingDiscriminator}`);
   }
   if (queue.focusedProofIntent) {
     lines.push(`Focused proof intent: ${queue.focusedProofIntent}`);
@@ -3890,7 +3890,7 @@ function currentRepairPacket(queue: RiprActionableGapQueueStatus): string {
   pushOptionalLine(lines, 'Actionability', queue.actionability);
   pushOptionalLine(lines, 'Changed behavior', queue.changedBehavior);
   pushOptionalLine(lines, 'Why this matters', queue.why);
-  pushOptionalLine(lines, 'Missing discriminator', queue.missingDiscriminator);
+  pushOptionalLine(lines, 'Missing check', queue.missingDiscriminator);
   pushOptionalLine(lines, 'Focused proof intent', queue.focusedProofIntent);
   pushOptionalLine(lines, 'Confidence basis', queue.confidenceBasis);
   lines.push(`Related test: ${queue.relatedTest ?? 'not provided by typed queue artifact'}`);
@@ -3976,7 +3976,7 @@ function repoGapMap(
     pushOptionalLine(lines, 'Changed behavior', queue.changedBehavior);
     pushOptionalLine(lines, 'Why this matters', queue.why);
     pushOptionalLine(lines, 'Repair kind', queue.topRepair);
-    pushOptionalLine(lines, 'Missing discriminator', queue.missingDiscriminator);
+    pushOptionalLine(lines, 'Missing check', queue.missingDiscriminator);
     pushOptionalLine(lines, 'Focused proof intent', queue.focusedProofIntent);
     pushOptionalLine(lines, 'Language', queue.languageStatus ? `${queue.language ?? 'unknown'} (${queue.languageStatus})` : queue.language);
     pushOptionalLine(lines, 'Related test', queue.relatedTest);
@@ -3992,7 +3992,7 @@ function repoGapMap(
   lines.push('Receipt state');
   lines.push(`State: ${receipt.state}`);
   pushOptionalLine(lines, 'Movement', receipt.movement);
-  pushOptionalLine(lines, 'Receipt seam', receipt.seamId);
+  pushOptionalLine(lines, 'Receipt spot', receipt.seamId);
   lines.push('');
   lines.push('First PR packet state');
   lines.push(`State: ${firstPr.state}`);
@@ -4128,7 +4128,7 @@ function receiptStatusLines(
   switch (receipt.state) {
     case 'missing': {
       const lines = [
-        `Receipt status: missing; no matching receipt was found for seam ${currentSeam}.`
+        `Receipt status: missing; no matching receipt was found for spot ${currentSeam}.`
       ];
       if (firstAction?.receiptCommand) {
         lines.push(`Receipt command: ${firstAction.receiptCommand}`);
@@ -4165,36 +4165,36 @@ function receiptStatusLines(
   }
   if (!receipt.seamId) {
     return [
-      `Receipt status: malformed; ${receipt.relativePath} is missing a seam identity.`,
+      `Receipt status: malformed; ${receipt.relativePath} is missing a spot identity.`,
       'Receipt movement is not projected.'
     ];
   }
   if (receipt.seamId !== currentSeam) {
     return [
-      `Receipt status: gap mismatch; receipt seam ${receipt.seamId} does not match current seam ${currentSeam}.`,
+      `Receipt status: gap mismatch; receipt spot ${receipt.seamId} does not match current spot ${currentSeam}.`,
       'Receipt movement is not projected.'
     ];
   }
   if (receiptIsOlderThanFirstAction(receipt, firstAction)) {
     return [
-      `Receipt status: stale; receipt for seam ${currentSeam} is older than the current first useful action report.`,
+      `Receipt status: stale; receipt for spot ${currentSeam} is older than the current first useful action report.`,
       'Refresh saved-workspace evidence and rerun verify/receipt before trusting movement.'
     ];
   }
   if (receipt.movement === 'improved' || receipt.movement === 'resolved') {
     return [
-      `Receipt status: movement improved; matching receipt found for seam ${currentSeam}.`,
+      `Receipt status: movement improved; matching receipt found for spot ${currentSeam}.`,
       'Receipt records static movement only; it does not prove runtime adequacy or gate eligibility.'
     ];
   }
   if (receipt.movement === 'unchanged') {
     return [
-      `Receipt status: movement unchanged; matching receipt found for seam ${currentSeam}.`,
-      'Next safe action: inspect the focused test and missing discriminator before requesting another seam.'
+      `Receipt status: movement unchanged; matching receipt found for spot ${currentSeam}.`,
+      'Next safe action: inspect the focused test and missing check before requesting another spot.'
     ];
   }
   return [
-    `Receipt status: found; matching receipt exists for seam ${currentSeam}.`,
+    `Receipt status: found; matching receipt exists for spot ${currentSeam}.`,
     `Receipt movement: ${receipt.movement ?? 'not reported'}`,
     'Receipt records static movement only; it does not prove runtime adequacy or gate eligibility.'
   ];
@@ -4519,12 +4519,12 @@ export function statusForRunStatus(
   if (runStatus === 'seams_deferred') {
     return {
       kind: 'analysisLimited',
-      summary: 'ripr analysis completed; seam and gap evidence is deferred.',
+      summary: 'ripr analysis completed; spot and gap evidence is deferred.',
       detail: [
         input.detail,
-        'Interactive saves defer the seam inventory to keep saves fast, so seam and gap evidence is absent until a full refresh.'
+        'Interactive saves defer the spot inventory to keep saves fast, so spot and gap evidence is absent until a full refresh.'
       ].filter((line): line is string => Boolean(line)).join('\n'),
-      nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to compute the full seam inventory.`
+      nextStep: `Run ${REFRESH_DIAGNOSTICS_COMMAND_TITLE} to compute the full spot inventory.`
     };
   }
   // #8585: changed files of a language whose adapter is not enabled were not
@@ -4818,12 +4818,12 @@ function statusFromRefreshCompletedMessage(message: string): RiprStatusState {
   if (seamDiagnostics !== undefined && seamDiagnostics === 0) {
     return {
       kind: 'noActionableSeams',
-      summary: 'ripr analysis completed with no actionable seam diagnostics.',
+      summary: 'ripr analysis completed with no actionable spot diagnostics.',
       enabledLanguages: enabledLanguageNames,
       nextStep: 'If this is unexpected, save files, confirm the workspace root, and check ripr.toml [languages] enabled for the open file, then run ripr: Show Output.',
       detail: [
         message,
-        'No ripr seam diagnostics were published for the last saved workspace state.',
+        'No ripr spot diagnostics were published for the last saved workspace state.',
         'Enabled languages determine which saved files can produce diagnostics; disabled or unavailable preview languages stay silent.',
         routedPreviewEnablementLine(enabledLanguageNames),
         'If you expected diagnostics, confirm the file is saved, the workspace root is correct, and the language is enabled and available in this ripr build.'

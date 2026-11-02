@@ -246,36 +246,44 @@ impl Probe {
         if self.family != ProbeFamily::StaticUnknown {
             return None;
         }
-        let mut rest = self.expression.trim_start();
-        if let Some(after_pub) = rest.strip_prefix("pub") {
-            rest = after_pub.trim_start();
-            if rest.starts_with('(') {
-                rest = rest[rest.find(')')? + 1..].trim_start();
-            }
-        }
-        rest = rest
-            .strip_prefix("const ")
-            .or_else(|| rest.strip_prefix("static "))?
-            .trim_start();
-        rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
-        let end = rest
-            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .unwrap_or(rest.len());
-        let name = &rest[..end];
-        let declaration = rest[end..].trim_start();
-        // An initializer on the line separates an item from a generics or
-        // parameter continuation line such as `const N: usize,`.
-        let named_item = !name.is_empty()
-            && name != "_"
-            && declaration.starts_with(':')
-            && declaration.contains('=');
-        named_item.then_some(name)
+        declared_const_name(&self.expression)
     }
 
     /// Whether `ripr check` resolves a stub route for this probe.
     pub(crate) fn offers_stub_route(&self) -> bool {
         self.family.offers_stub_route() || self.changed_const_name().is_some()
     }
+}
+
+/// The name of the `const` or `static` item a changed line declares
+/// (`pub const GREETING: &str = "hi";` names `GREETING`), when the line holds
+/// its initializer. Shared by the static-unknown const probe and the #11400
+/// reader retarget, so both read one declaration rule.
+pub(crate) fn declared_const_name(expression: &str) -> Option<&str> {
+    let mut rest = expression.trim_start();
+    if let Some(after_pub) = rest.strip_prefix("pub") {
+        rest = after_pub.trim_start();
+        if rest.starts_with('(') {
+            rest = rest[rest.find(')')? + 1..].trim_start();
+        }
+    }
+    rest = rest
+        .strip_prefix("const ")
+        .or_else(|| rest.strip_prefix("static "))?
+        .trim_start();
+    rest = rest.strip_prefix("mut ").unwrap_or(rest).trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    let name = &rest[..end];
+    let declaration = rest[end..].trim_start();
+    // An initializer on the line separates an item from a generics or
+    // parameter continuation line such as `const N: usize,`.
+    let named_item = !name.is_empty()
+        && name != "_"
+        && declaration.starts_with(':')
+        && declaration.contains('=');
+    named_item.then_some(name)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
