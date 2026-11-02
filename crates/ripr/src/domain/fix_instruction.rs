@@ -8,6 +8,8 @@
 //! readiness gate; this type is the projection of witness availability.
 
 use super::DiagnosticWitness;
+use super::canonical_item::CanonicalItemId;
+use std::fmt;
 
 /// The closed 5-state fix-instruction vocabulary. Each state is derived
 /// from existing producer-owned witness fields; no field is fabricated.
@@ -39,6 +41,97 @@ pub enum FixInstructionState {
     Unavailable,
 }
 
+/// Portable instruction meaning for one canonical item (#4805).
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct InstructionSemanticId(pub String);
+
+/// One semantic instruction bound to a completed snapshot and source facts.
+#[derive(
+    Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct InstructionInstanceId(pub String);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InstructionIdentityParseError {
+    Empty,
+    WrongClass {
+        value: String,
+        expected: &'static str,
+    },
+}
+
+impl fmt::Display for InstructionIdentityParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("instruction identity must not be empty"),
+            Self::WrongClass { value, expected } => {
+                write!(f, "value `{value}` is not a {expected}")
+            }
+        }
+    }
+}
+
+impl InstructionSemanticId {
+    pub fn parse(value: &str) -> Result<Self, InstructionIdentityParseError> {
+        parse_prefixed_id(value, "instruction-semantic:", "InstructionSemanticId")
+            .map(InstructionSemanticId)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl InstructionInstanceId {
+    pub fn parse(value: &str) -> Result<Self, InstructionIdentityParseError> {
+        parse_prefixed_id(value, "instruction-instance:", "InstructionInstanceId")
+            .map(InstructionInstanceId)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+fn parse_prefixed_id(
+    value: &str,
+    prefix: &str,
+    label: &'static str,
+) -> Result<String, InstructionIdentityParseError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(InstructionIdentityParseError::Empty);
+    }
+    if !trimmed.starts_with(prefix) {
+        return Err(InstructionIdentityParseError::WrongClass {
+            value: trimmed.to_string(),
+            expected: label,
+        });
+    }
+    Ok(trimmed.to_string())
+}
+
+/// Completed-snapshot axis for instruction instance identity (#4805).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InstructionSnapshotCurrentness {
+    Current,
+    AcceptedDirtyDraft,
+}
+
+/// Snapshot and source facts needed to mint an instruction instance id.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FixInstructionIdentityContext<'a> {
+    pub canonical_item: Option<&'a CanonicalItemId>,
+    pub workspace_identity: Option<&'a str>,
+    pub repository_head: Option<&'a str>,
+    pub snapshot_currentness: Option<InstructionSnapshotCurrentness>,
+    pub witness: Option<&'a DiagnosticWitness>,
+}
+
 /// A bounded fix-instruction summary projected from the diagnostic witness.
 /// Not a second repair-readiness authority — derived, not authoritative.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -50,6 +143,10 @@ pub struct FixInstructionSummary {
     pub has_suggested_assertion: bool,
     /// The named limitation kinds from the witness, if any.
     pub limitation_kinds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instruction_semantic_id: Option<InstructionSemanticId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instruction_instance_id: Option<InstructionInstanceId>,
 }
 
 impl FixInstructionSummary {
@@ -92,7 +189,42 @@ impl FixInstructionSummary {
             has_fix_site,
             has_suggested_assertion,
             limitation_kinds,
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         }
+    }
+
+    /// Attach typed semantic/instance identities when the producer supplies
+    /// canonical item and snapshot context.
+    pub fn attach_identities(&mut self, context: &FixInstructionIdentityContext<'_>) {
+        let Some(canonical_item) = context.canonical_item else {
+            self.instruction_semantic_id = None;
+            self.instruction_instance_id = None;
+            return;
+        };
+        self.instruction_semantic_id = Some(mint_instruction_semantic_id(
+            canonical_item,
+            self,
+            context.witness,
+        ));
+        self.instruction_instance_id =
+            mint_instruction_instance_id(self.instruction_semantic_id.as_ref(), context);
+    }
+
+    /// A stale or snapshot-mismatched instance must not authorize a current op.
+    pub fn instance_authorizes_current_operation(
+        &self,
+        context: &FixInstructionIdentityContext<'_>,
+    ) -> bool {
+        if self.state == FixInstructionState::Stale {
+            return false;
+        }
+        let Some(expected) =
+            mint_instruction_instance_id(self.instruction_semantic_id.as_ref(), context)
+        else {
+            return false;
+        };
+        self.instruction_instance_id.as_ref() == Some(&expected)
     }
 
     /// Derive the summary for a diagnostic with no witness at all.
@@ -102,8 +234,100 @@ impl FixInstructionSummary {
             has_fix_site: false,
             has_suggested_assertion: false,
             limitation_kinds: Vec::new(),
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         }
     }
+}
+
+fn mint_instruction_semantic_id(
+    canonical_item: &CanonicalItemId,
+    summary: &FixInstructionSummary,
+    witness: Option<&DiagnosticWitness>,
+) -> InstructionSemanticId {
+    let mut kinds = summary.limitation_kinds.clone();
+    kinds.sort();
+    kinds.dedup();
+    let witness_kind = witness.map(|value| value.kind.as_str()).unwrap_or("");
+    let digest = identity_digest(&[
+        ("canonical_item", canonical_item.as_str()),
+        ("state", state_token(summary.state)),
+        ("has_fix_site", if summary.has_fix_site { "1" } else { "0" }),
+        (
+            "has_suggested_assertion",
+            if summary.has_suggested_assertion {
+                "1"
+            } else {
+                "0"
+            },
+        ),
+        ("limitation_kinds", &kinds.join("|")),
+        ("witness_kind", witness_kind),
+    ]);
+    InstructionSemanticId(format!("instruction-semantic:{digest:016x}"))
+}
+
+fn mint_instruction_instance_id(
+    semantic: Option<&InstructionSemanticId>,
+    context: &FixInstructionIdentityContext<'_>,
+) -> Option<InstructionInstanceId> {
+    let semantic = semantic?;
+    let workspace = context.workspace_identity.unwrap_or("");
+    let head = context.repository_head.unwrap_or("");
+    let currentness = match context.snapshot_currentness {
+        Some(InstructionSnapshotCurrentness::Current) => "current",
+        Some(InstructionSnapshotCurrentness::AcceptedDirtyDraft) => "accepted_dirty_draft",
+        None => "",
+    };
+    let mut source_facts: Vec<(&str, String)> = Vec::new();
+    if let Some(witness) = context.witness {
+        source_facts.push(("changed_expression", witness.changed_expression.clone()));
+        if let Some(site) = &witness.fix_site {
+            source_facts.push(("fix_site_file", site.file.clone()));
+            source_facts.push(("fix_site_line", site.line.to_string()));
+            source_facts.push(("fix_site_test", site.test_name.clone()));
+        }
+    }
+    let mut parts: Vec<(&str, &str)> = vec![
+        ("instruction_semantic", semantic.as_str()),
+        ("workspace_identity", workspace),
+        ("repository_head", head),
+        ("snapshot_currentness", currentness),
+    ];
+    for (key, value) in &source_facts {
+        parts.push((key, value.as_str()));
+    }
+    let digest = identity_digest(&parts);
+    Some(InstructionInstanceId(format!(
+        "instruction-instance:{digest:016x}"
+    )))
+}
+
+fn state_token(state: FixInstructionState) -> &'static str {
+    match state {
+        FixInstructionState::FixSiteReady => "fix_site_ready",
+        FixInstructionState::StaticLimitation => "static_limitation",
+        FixInstructionState::Stale => "stale",
+        FixInstructionState::InspectOnly => "inspect_only",
+        FixInstructionState::Unavailable => "unavailable",
+    }
+}
+
+fn identity_digest(parts: &[(&str, &str)]) -> u64 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET;
+    for (key, value) in parts {
+        for byte in key.as_bytes().iter().chain([0].iter()) {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+        for byte in value.as_bytes().iter().chain([0].iter()) {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
+    }
+    hash
 }
 
 #[cfg(test)]
@@ -199,5 +423,75 @@ mod tests {
         });
         let summary = FixInstructionSummary::from_witness(&witness);
         assert_eq!(summary.state, FixInstructionState::Stale);
+    }
+
+    fn identity_context<'a>(
+        canonical: &'a CanonicalItemId,
+        head: &'a str,
+        witness: &'a DiagnosticWitness,
+    ) -> FixInstructionIdentityContext<'a> {
+        FixInstructionIdentityContext {
+            canonical_item: Some(canonical),
+            workspace_identity: Some("ws:demo"),
+            repository_head: Some(head),
+            snapshot_currentness: Some(InstructionSnapshotCurrentness::Current),
+            witness: Some(witness),
+        }
+    }
+
+    #[test]
+    fn semantic_id_stable_when_only_snapshot_head_moves() -> Result<(), String> {
+        let witness = witness_with_fix_site();
+        let canonical = CanonicalItemId::from_canonical_gap_id("gap:67f9714ba37b3967")
+            .map_err(|error| error.to_string())?;
+        let mut first = FixInstructionSummary::from_witness(&witness);
+        first.attach_identities(&identity_context(&canonical, "aaa", &witness));
+        let mut second = FixInstructionSummary::from_witness(&witness);
+        second.attach_identities(&identity_context(&canonical, "bbb", &witness));
+        assert_eq!(
+            first.instruction_semantic_id, second.instruction_semantic_id,
+            "semantic id must not move for snapshot-only change"
+        );
+        assert_ne!(
+            first.instruction_instance_id, second.instruction_instance_id,
+            "instance id must move when snapshot head moves"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_id_changes_when_instruction_state_changes() -> Result<(), String> {
+        let ready_witness = witness_with_fix_site();
+        let limited_witness = witness_with_limitation("missing_discriminator_unavailable");
+        let canonical = CanonicalItemId::from_canonical_gap_id("gap:67f9714ba37b3967")
+            .map_err(|error| error.to_string())?;
+        let mut ready = FixInstructionSummary::from_witness(&ready_witness);
+        ready.attach_identities(&identity_context(&canonical, "aaa", &ready_witness));
+        let mut limited = FixInstructionSummary::from_witness(&limited_witness);
+        limited.attach_identities(&identity_context(&canonical, "aaa", &limited_witness));
+        assert_ne!(
+            ready.instruction_semantic_id,
+            limited.instruction_semantic_id
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stale_instance_does_not_authorize_current_operation() -> Result<(), String> {
+        let witness = witness_with_limitation("snapshot_stale");
+        let canonical = CanonicalItemId::from_canonical_gap_id("gap:67f9714ba37b3967")
+            .map_err(|error| error.to_string())?;
+        let mut summary = FixInstructionSummary::from_witness(&witness);
+        let context = identity_context(&canonical, "aaa", &witness);
+        summary.attach_identities(&context);
+        assert!(!summary.instance_authorizes_current_operation(&context));
+        Ok(())
+    }
+
+    #[test]
+    fn typed_ids_reject_cross_class_parse() {
+        assert!(InstructionSemanticId::parse("instruction-instance:deadbeef").is_err());
+        assert!(InstructionInstanceId::parse("instruction-semantic:deadbeef").is_err());
+        assert!(InstructionSemanticId::parse("gap:67f9714ba37b3967").is_err());
     }
 }

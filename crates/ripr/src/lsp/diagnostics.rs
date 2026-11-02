@@ -3733,7 +3733,21 @@ fn diagnostic_for_finding_with_causal(
                 *slot = serde_json::json!(crate::domain::contract_confidence(confidence));
             }
             obj.insert("witness".to_string(), value);
-            let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
+            let mut summary = crate::domain::FixInstructionSummary::from_witness(&witness);
+            if let Some(gap) = &finding.canonical_gap {
+                if let Ok(canonical_item) =
+                    crate::domain::CanonicalItemId::from_canonical_gap_id(&gap.id)
+                {
+                    let context = crate::domain::FixInstructionIdentityContext {
+                        canonical_item: Some(&canonical_item),
+                        workspace_identity: None,
+                        repository_head: None,
+                        snapshot_currentness: None,
+                        witness: Some(&witness),
+                    };
+                    summary.attach_identities(&context);
+                }
+            }
             if let Ok(summary_value) = serde_json::to_value(&summary) {
                 obj.insert("fix_instruction".to_string(), summary_value);
             }

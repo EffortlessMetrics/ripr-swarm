@@ -455,6 +455,8 @@ mod tests {
             has_fix_site: state == FixInstructionState::FixSiteReady,
             has_suggested_assertion: true,
             limitation_kinds: Vec::new(),
+            instruction_semantic_id: None,
+            instruction_instance_id: None,
         }
     }
 
