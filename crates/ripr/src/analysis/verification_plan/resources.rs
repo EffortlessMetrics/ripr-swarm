@@ -119,12 +119,19 @@ pub(crate) fn project_resource_plan(
         }
     }
 
+    let has_resource_change = !changed_resources.is_empty()
+        || !deleted_resources.is_empty()
+        || !newly_read_resources.is_empty();
     let mut opaque_packages = BTreeSet::new();
     for edge in edges {
-        if edge.resource_kind != ResourceKindV1::OpaqueOrDynamicResource {
+        let opaque_edge = edge.completeness_class == ResourceCompletenessClassV1::Opaque
+            || edge.access_kind == ResourceAccessKindV1::DynamicOrUnresolved
+            || edge.resource_kind == ResourceKindV1::OpaqueOrDynamicResource;
+        if !opaque_edge {
             continue;
         }
-        let touches_change = changed_resources.contains(&edge.resource_path)
+        let touches_change = has_resource_change
+            || changed_resources.contains(&edge.resource_path)
             || deleted_resources.contains(&edge.resource_path)
             || newly_read_resources.contains(&edge.resource_path);
         if !touches_change {

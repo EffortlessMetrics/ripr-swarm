@@ -48,6 +48,10 @@ pub(crate) fn collect_resource_dependency_edges(
             ));
             continue;
         }
+        let source = file_facts.source.as_ref();
+        if !source.contains("include_str!") && !source.contains("include_bytes!") {
+            continue;
+        }
         let directives =
             match rust_embed_resource_directives(parent, &file_facts.source, MAX_RESOURCE_EDGES) {
                 Ok(directives) => directives,
@@ -84,7 +88,7 @@ pub(crate) fn collect_resource_dependency_edges(
                     &mut facts,
                     parent,
                     &directive,
-                    resource_kind,
+                    ResourceKindV1::OpaqueOrDynamicResource,
                     "dynamic_or_non_literal_embed_argument",
                 );
                 continue;
@@ -139,7 +143,7 @@ pub(crate) fn collect_resource_dependency_edges(
                 );
                 continue;
             }
-            let content_identity = content_identity_for_path(index, &candidate);
+            let content_identity = content_identity_for_path(root, index, &candidate);
             let consumer_id = consumer_for_line(index, parent, directive.line);
             let semantic_digest = ResourceDependencyEdgeV1::mint_semantic_digest(
                 resource_kind,
@@ -189,12 +193,19 @@ pub(crate) fn attach_resource_dependencies(root: &Path, index: &mut RustIndex) {
     index.resource_dependencies = collect_resource_dependency_edges(root, index);
 }
 
-fn content_identity_for_path(index: &RustIndex, path: &Path) -> String {
-    index
-        .files
-        .get(path)
-        .map(|facts| format!("source:{}", source_digest(facts.source.as_ref())))
-        .unwrap_or_else(|| "source:missing".to_string())
+fn content_identity_for_path(root: &Path, index: &RustIndex, path: &Path) -> String {
+    if let Some(facts) = index.files.get(path) {
+        return format!("source:{}", source_digest(facts.source.as_ref()));
+    }
+    let disk_path = root.join(path);
+    match std::fs::read(&disk_path) {
+        Ok(bytes) => format!("bytes:{}", source_digest_bytes(&bytes)),
+        Err(_) => "source:missing".to_string(),
+    }
+}
+
+fn source_digest_bytes(bytes: &[u8]) -> String {
+    format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
 fn source_digest(source: &str) -> String {
@@ -202,16 +213,21 @@ fn source_digest(source: &str) -> String {
 }
 
 fn consumer_for_line(index: &RustIndex, file: &Path, line: usize) -> SymbolId {
+    let mut best: Option<(usize, SymbolId)> = None;
     for id in index.live_function_ids() {
         let function = &index.function_facts[id];
         if function.file.as_path() != file {
             continue;
         }
         if line >= function.start_line && line <= function.end_line {
-            return function.id.clone();
+            let depth_key = function.start_line;
+            if best.as_ref().is_none_or(|(start, _)| depth_key >= *start) {
+                best = Some((depth_key, function.id.clone()));
+            }
         }
     }
-    SymbolId(format!("{}::file_scope", stable_path_text(file)))
+    best.map(|(_, id)| id)
+        .unwrap_or_else(|| SymbolId(format!("{}::file_scope", stable_path_text(file))))
 }
 
 fn push_opaque_edge(
@@ -410,6 +426,101 @@ fn production() {}
                 .iter()
                 .any(|item| item.contains("resource_plan_empty_with_opaque_boundary"))
         );
+        assert_eq!(projection.widened_packages.len(), 1);
+    }
+
+    #[test]
+    fn nested_function_embed_selects_innermost_consumer() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-resource-deps-nested-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("fixtures"))?;
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("fixtures/x.txt"), "x\n")?;
+        let source = r#"
+fn outer() {
+    fn inner() {
+        let _ = include_str!("../fixtures/x.txt");
+    }
+    let _ = inner();
+}
+"#;
+        fs::write(root.join("src/lib.rs"), source)?;
+        let index = manual_index(&root, &[("src/lib.rs", source)])?;
+        let facts = collect_resource_dependency_edges(&root, &index);
+        assert_eq!(facts.edges.len(), 1);
+        assert!(
+            facts.edges[0].consumer_id.0.contains("inner"),
+            "{:?}",
+            facts.edges[0].consumer_id
+        );
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn content_identity_reads_fixture_bytes_from_disk() -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-resource-deps-bytes-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("fixtures"))?;
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("fixtures/data.json"), "{}\n")?;
+        let lib = "const DATA: &str = include_str!(\"../fixtures/data.json\");\n";
+        fs::write(root.join("src/lib.rs"), lib)?;
+        let index = manual_index(&root, &[("src/lib.rs", lib)])?;
+        let first = collect_resource_dependency_edges(&root, &index);
+        assert_eq!(first.edges.len(), 1);
+        assert!(
+            first.edges[0].content_identity.starts_with("bytes:sha256:"),
+            "{}",
+            first.edges[0].content_identity
+        );
+        fs::write(root.join("fixtures/data.json"), "{\"ok\":true}\n")?;
+        let second = collect_resource_dependency_edges(&root, &index);
+        assert_ne!(
+            first.edges[0].content_identity, second.edges[0].content_identity,
+            "fixture edit should change disk-backed content identity"
+        );
+        fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn dynamic_include_bytes_producer_widens_package_on_resource_change()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-resource-deps-dynamic-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("src"))?;
+        let source = r#"fn read() { let _ = include_bytes!(concat!(env!("OUT_DIR"), "/x.bin")); }"#;
+        fs::write(root.join("src/lib.rs"), source)?;
+        let index = manual_index(&root, &[("src/lib.rs", source)])?;
+        let facts = collect_resource_dependency_edges(&root, &index);
+        assert_eq!(facts.edges.len(), 1);
+        assert_eq!(
+            facts.edges[0].resource_kind,
+            ResourceKindV1::OpaqueOrDynamicResource
+        );
+        let mut changed = BTreeSet::new();
+        changed.insert(PathBuf::from("generated/out.bin"));
+        let projection = project_resource_plan(
+            &facts.edges,
+            &changed,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            |_| Some("pkg-a".to_string()),
+        );
+        assert_eq!(projection.widened_packages.len(), 1);
+        fs::remove_dir_all(&root)?;
+        Ok(())
     }
 
     #[test]

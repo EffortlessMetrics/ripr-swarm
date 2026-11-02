@@ -168,6 +168,9 @@ pub(crate) fn rust_embed_resource_directives(
         let Some(macro_kind) = embed_resource_macro_callee(&path) else {
             continue;
         };
+        if embed_resource_call_may_be_shadowed(text, &path) {
+            continue;
+        }
         let expression = slice_text(text, call_start, call_range.end());
         directives.push(RustEmbedResourceDirective {
             line: line_index.line(call_start),
@@ -589,6 +592,23 @@ fn embed_resource_macro_callee(path: &ast::Path) -> Option<RustEmbedResourceMacr
         "include_bytes" => Some(RustEmbedResourceMacro::IncludeBytes),
         _ => None,
     }
+}
+
+/// Unqualified `include_str!` / `include_bytes!` spellings can be shadowed by
+/// a same-file `macro_rules!` definition; skip those calls rather than emit
+/// a false exact resource edge.
+fn embed_resource_call_may_be_shadowed(source: &str, path: &ast::Path) -> bool {
+    if path.segments().count() > 1 {
+        return false;
+    }
+    let Some(kind) = embed_resource_macro_callee(path) else {
+        return false;
+    };
+    let name = match kind {
+        RustEmbedResourceMacro::IncludeStr => "include_str",
+        RustEmbedResourceMacro::IncludeBytes => "include_bytes",
+    };
+    source.contains(&format!("macro_rules! {name}"))
 }
 
 pub(super) fn include_literal_path_from_macro_call(call: &ast::MacroCall) -> Option<PathBuf> {
@@ -4753,6 +4773,24 @@ fn read() {
         assert_eq!(
             directives[1].macro_kind,
             RustEmbedResourceMacro::IncludeBytes
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn shadowed_include_str_macro_is_not_a_resource_directive() -> Result<(), String> {
+        let source = r#"
+macro_rules! include_str {
+    ($path:literal) => { "fixed" };
+}
+const DATA: &str = include_str!("data.json");
+const TRUSTED: &str = std::include_str!("data.json");
+"#;
+        let directives = rust_embed_resource_directives(Path::new("src/lib.rs"), source, 16)?;
+        assert_eq!(directives.len(), 1);
+        assert_eq!(
+            directives[0].literal_path.as_deref(),
+            Some(Path::new("data.json"))
         );
         Ok(())
     }
