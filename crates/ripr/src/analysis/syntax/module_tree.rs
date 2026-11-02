@@ -520,7 +520,7 @@ fn introduced_path_literals(body: &[(SyntaxKind, String)], candidates: &mut Vec<
 /// The inline modules enclosing an out-of-line declaration, outermost first,
 /// or `None` when the declaration sits outside the item tree (a function body
 /// or other block).
-fn enclosing_inline_modules(module: &ast::Module) -> Option<Vec<String>> {
+pub(crate) fn enclosing_inline_modules(module: &ast::Module) -> Option<Vec<String>> {
     let mut names = Vec::new();
     for ancestor in module.syntax().ancestors().skip(1) {
         match ancestor.kind() {

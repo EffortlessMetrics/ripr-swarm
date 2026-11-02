@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- `ripr agent stub` now refuses with `owner_unsupported` when an out-of-line owner file is reached only through a parent `mod` declaration gated by a cfg a plain `cargo test` build may not enable (#5616).
