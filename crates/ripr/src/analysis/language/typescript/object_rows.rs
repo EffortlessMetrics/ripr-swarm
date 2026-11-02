@@ -635,13 +635,15 @@ fn ident_part(byte: u8) -> bool {
 /// `true` when `body` (a callback body, braces optional) is exactly one
 /// `expect(..).matcher(..)` chain: at bracket depth zero only the `expect`
 /// identifier (optionally after `await`/`return`) and `.member` names, no
-/// string, comment, second statement or `;` before the end.
+/// string, second statement or `;` before the end. A comment is not code: a
+/// complete `//` or `/* */` comment at depth zero, or after the final `;`, is
+/// skipped (#12494); one inside brackets, or an unterminated one, still
+/// refuses.
 pub(crate) fn single_expect_statement(body: &str) -> bool {
     let mut text = body.trim();
     if let Some(inner) = text.strip_prefix('{').and_then(|t| t.strip_suffix('}')) {
         text = inner.trim();
     }
-    let text = text.strip_suffix(';').unwrap_or(text).trim();
     let bytes = text.as_bytes();
     let mut depth = 0usize;
     let mut idx = 0;
@@ -674,6 +676,30 @@ pub(crate) fn single_expect_statement(body: &str) -> bool {
                 idx += 1;
             }
             _ if byte.is_ascii_whitespace() => idx += 1,
+            b'/' if matches!(bytes.get(idx + 1), Some(b'/' | b'*')) => {
+                match skip_comment(text, idx) {
+                    Some(next) => idx = next,
+                    None => return false,
+                }
+            }
+            // The statement's own terminator: only whitespace and comments
+            // may follow it.
+            b';' => {
+                let mut rest = idx + 1;
+                while rest < bytes.len() {
+                    if bytes[rest].is_ascii_whitespace() {
+                        rest += 1;
+                    } else if bytes[rest] == b'/' {
+                        match skip_comment(text, rest) {
+                            Some(next) => rest = next,
+                            None => return false,
+                        }
+                    } else {
+                        return false;
+                    }
+                }
+                idx = rest;
+            }
             _ if ident_start(byte) => {
                 let end = idx + bytes[idx..].iter().take_while(|b| ident_part(**b)).count();
                 let word = &text[idx..end];
@@ -699,6 +725,18 @@ pub(crate) fn single_expect_statement(body: &str) -> bool {
         }
     }
     depth == 0 && seen_expect
+}
+
+/// The offset after the complete `//` or `/* */` comment that starts at
+/// `start`, or `None` for an unterminated block comment or a lone `/`.
+fn skip_comment(text: &str, start: usize) -> Option<usize> {
+    let rest = text.get(start..)?;
+    if rest.starts_with("//") {
+        return Some(rest.find('\n').map_or(text.len(), |end| start + end));
+    }
+    rest.starts_with("/*")
+        .then(|| rest.get(2..)?.find("*/").map(|end| start + 2 + end + 2))
+        .flatten()
 }
 
 /// A container read is direct when it is an argument of the call that is
@@ -758,6 +796,10 @@ mod tests {
             "{ expect(f(x)).toBe(y); }",
             "expect(f(x)).toEqual(y)",
             "{ await expect(f(x)).resolves.toBe(y) }",
+            "{ // note\n expect(f(x)).toBe(y); }",
+            "{ expect(f(x)).toBe(y) // note\n }",
+            "{ expect(f(x)).toBe(y); /* note */ }",
+            "{ /* a */ expect(f(x)) /* b */ .toBe(y); // c\n }",
             "{ return expect(f(x)).not.toBe(y); }",
         ] {
             assert!(single_expect_statement(body), "{body}");
@@ -768,7 +810,9 @@ mod tests {
             "{ expect(f(a)).toBe(y); expect(g(a)).toBe(y); }",
             "{ const z = 1; expect(f(a)).toBe(z); }",
             "{ if (a) expect(f(a)).toBe(y); }",
-            "{ expect(f(a)).toBe(y) // note\n }",
+            "{ expect(f(a)).toBe(y) /* open }",
+            "{ expect(f(/* note */ a)).toBe(y); }",
+            "{ expect(f(a)).toBe(y); // note\n g(a); }",
             "{ \"s\"; expect(f(a)).toBe(y); }",
             "{ }",
             "{ foo(expect(f(a)).toBe(y)); }",
