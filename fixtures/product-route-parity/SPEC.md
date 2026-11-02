@@ -1,10 +1,11 @@
 # Product route parity corpus (#3332)
 
-Spec: RIPR-SPEC-0167
+Spec: RIPR-SPEC-0253
 
-Corpus for `cargo xtask check-product-route-parity`, which compares normalized
-gate propositions from the ordinary swarm route and the reusable external-tree
-route projection built from the typed #3330 product gate plan.
+Corpus for `cargo xtask check-product-route-parity` (GitHub #3332), which
+compares normalized gate propositions from the ordinary swarm route and the
+reusable external-tree route projection built from the typed #3330 product gate
+plan.
 
 ## Given
 

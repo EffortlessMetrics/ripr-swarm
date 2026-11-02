@@ -166,6 +166,10 @@ fn terminal_for_row(
     terminals: &BTreeMap<String, GateTerminalState>,
 ) -> GateTerminalState {
     if let Some(state) = terminals.get(gate_id) {
+        if *state == GateTerminalState::NotApplicable && selection == ProductGateSelection::Selected
+        {
+            return GateTerminalState::NotProven;
+        }
         return *state;
     }
     match selection {
@@ -229,9 +233,48 @@ fn classify_mismatch(
         return MismatchOwner::ExpectedInfrastructureDifference;
     }
     if ordinary_row.terminal_state != reusable_row.terminal_state {
-        return MismatchOwner::OrdinaryRouteDefect;
+        let ordinary_terminal = ordinary_row.terminal_state;
+        let reusable_terminal = reusable_row.terminal_state;
+        if reusable_terminal == GateTerminalState::Pass
+            && ordinary_terminal != GateTerminalState::Pass
+        {
+            return MismatchOwner::ReusableRouteDefect;
+        }
+        if ordinary_terminal == GateTerminalState::Pass
+            && reusable_terminal != GateTerminalState::Pass
+        {
+            return MismatchOwner::OrdinaryRouteDefect;
+        }
+        if matches!(
+            reusable_terminal,
+            GateTerminalState::Skipped | GateTerminalState::NotApplicable
+        ) && matches!(
+            ordinary_terminal,
+            GateTerminalState::Fail | GateTerminalState::Unavailable
+        ) {
+            return MismatchOwner::ReusableRouteDefect;
+        }
+        if matches!(
+            ordinary_terminal,
+            GateTerminalState::Skipped | GateTerminalState::NotApplicable
+        ) && matches!(
+            reusable_terminal,
+            GateTerminalState::Fail | GateTerminalState::Unavailable
+        ) {
+            return MismatchOwner::OrdinaryRouteDefect;
+        }
+        return MismatchOwner::NotProven;
     }
     MismatchOwner::NotProven
+}
+
+fn mismatch_owner_is_route_defect(owner: MismatchOwner) -> bool {
+    matches!(
+        owner,
+        MismatchOwner::OrdinaryRouteDefect
+            | MismatchOwner::ReusableRouteDefect
+            | MismatchOwner::CanonicalPlanDefect
+    )
 }
 
 pub(crate) fn compare_route_observations(
@@ -351,6 +394,14 @@ fn load_corpus(path: &Path) -> Result<ProductRouteParityCorpus, String> {
     if corpus.subjects.is_empty() {
         return Err("product route parity corpus must include at least one subject".to_string());
     }
+    for subject in &corpus.subjects {
+        if !subject.expect_semantic_parity && subject.expect_mismatch_owner.is_none() {
+            return Err(format!(
+                "subject `{}` must set expect_mismatch_owner when expect_semantic_parity is false",
+                subject.id
+            ));
+        }
+    }
     Ok(corpus)
 }
 
@@ -423,6 +474,18 @@ pub(crate) fn run_product_route_parity_check(
             public_fork_trust_ok,
         });
     }
+    let unexpected_defect = subject_results.iter().any(|subject| {
+        subject.mismatches.iter().any(|mismatch| {
+            mismatch_owner_is_route_defect(mismatch.owner)
+                && subject.mismatch_owner != Some(mismatch.owner)
+        })
+    });
+    if unexpected_defect {
+        return Err(
+            "corpus produced route or plan defects without a matching expect_mismatch_owner"
+                .to_string(),
+        );
+    }
     let proof_equivalence_verdict = if mismatched == 0 {
         "equivalent_on_corpus".to_string()
     } else {
@@ -469,11 +532,10 @@ pub(crate) fn check_product_route_parity(args: &[String]) -> Result<(), String> 
         index += 1;
     }
     let report = run_product_route_parity_check(&corpus)?;
+    let report_json = serde_json::to_string_pretty(&report).map_err(|err| err.to_string())?;
+    crate::write_report("product-route-parity.json", &report_json)?;
     if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).map_err(|err| err.to_string())?
-        );
+        println!("{report_json}");
     } else {
         println!("product route parity: {}", report.proof_equivalence_verdict);
         println!(
@@ -504,6 +566,8 @@ struct ProductRouteParityProvenance {
     files: Vec<ProvenanceFile>,
 }
 
+const PRODUCT_ROUTE_PARITY_PROVENANCE_FILES: &[&str] = &["corpus.json", "SPEC.md"];
+
 /// Validate committed corpus digests for `check-fixture-contracts`.
 pub(crate) fn validate_product_route_parity_fixture_corpus(violations: &mut Vec<String>) {
     let root = workspace_path("fixtures/product-route-parity");
@@ -529,6 +593,22 @@ pub(crate) fn validate_product_route_parity_fixture_corpus(violations: &mut Vec<
             "fixtures/product-route-parity: unsupported provenance schema `{}`",
             provenance.schema_version
         ));
+    }
+    let mut manifest_paths: BTreeSet<String> = BTreeSet::new();
+    for file in &provenance.files {
+        if !manifest_paths.insert(file.path.clone()) {
+            violations.push(format!(
+                "fixtures/product-route-parity: duplicate provenance entry for `{}`",
+                file.path
+            ));
+        }
+    }
+    for required in PRODUCT_ROUTE_PARITY_PROVENANCE_FILES {
+        if !manifest_paths.contains(*required) {
+            violations.push(format!(
+                "fixtures/product-route-parity: provenance.json must bind `{required}`"
+            ));
+        }
     }
     for file in &provenance.files {
         let path = root.join(&file.path);
@@ -630,8 +710,15 @@ mod tests {
             false,
             &terminals,
         );
-        let (parity, _, _) = compare_route_observations(&subject, &ordinary, &reusable);
+        let (parity, mismatches, owner) =
+            compare_route_observations(&subject, &ordinary, &reusable);
         assert!(!parity);
+        assert_eq!(owner, Some(MismatchOwner::ReusableRouteDefect));
+        assert!(
+            mismatches
+                .iter()
+                .any(|m| m.owner == MismatchOwner::ReusableRouteDefect)
+        );
         Ok(())
     }
 
