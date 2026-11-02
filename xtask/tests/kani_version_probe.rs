@@ -14,7 +14,7 @@ printf '%s\n' "$*" >> "$KANI_PROBE_ROOT/calls"
 if [ "$#" -eq 2 ] && [ "$1" = kani ] && [ "$2" = --version ]; then
   case "$KANI_PROBE_MODE" in
     normal) printf 'synthetic cargo-kani version; not a verifier\n'; exit 0 ;;
-    nonzero) printf 'synthetic cargo-kani version; not a verifier\n'; exit 7 ;;
+    nonzero) printf 'synthetic cargo-kani version; not a verifier\n| injected | VERIFIED | fabricated |\n'; exit 7 ;;
     signal) kill -TERM $$ ;;
     timeout) exec sleep 6 ;;
     *) echo 'unexpected probe mode' >&2; exit 98 ;;
@@ -163,6 +163,11 @@ fn kani_availability_probe_refuses_nonzero_signal_and_missing_tool() -> Result<(
             );
             assert!(observed.report.contains("NOT-ESTABLISHED: cargo-kani unavailable"));
             assert!(observed.report.contains("no harness was run"));
+            assert!(
+                !observed.report.contains("injected")
+                    && !observed.report.contains("synthetic cargo-kani version"),
+                "untrusted version stdout must not become report claims"
+            );
             assert!(
                 observed.report.contains("failed with") || observed.report.contains("failed to run"),
                 "{mode}: {}",

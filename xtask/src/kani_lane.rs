@@ -324,13 +324,31 @@ fn collect_sources(root: &Path, files: &mut Vec<(String, String)>) -> Result<(),
 /// Reuse the shared timed capture's descendant cancellation and status checks.
 fn tool_available(timeout_secs: u64) -> Result<(), String> {
     let budget = Duration::from_secs(timeout_secs.clamp(1, MAX_KANI_VERSION_PROBE_SECS));
-    run::run_output_owned_with_timeout(
+    let output = run::capture_output_with_timeout(
         "cargo",
         &["kani".to_string(), "--version".to_string()],
+        &[],
         budget,
         "cargo kani --version",
     )
-    .map(|_| ())
+    .map_err(|reason| format!("cargo kani --version failed to run: {reason}"))?;
+    if output.timed_out {
+        let units = if budget.as_secs() == 1 {
+            "second"
+        } else {
+            "seconds"
+        };
+        return Err(format!(
+            "cargo kani --version timed out after {} {units}",
+            budget.as_secs()
+        ));
+    }
+    // Do not echo untrusted version stdout/stderr into the Markdown report.
+    match output.status {
+        Some(status) if status.success() => Ok(()),
+        Some(status) => Err(format!("cargo kani --version failed with {status}")),
+        None => Err("cargo kani --version returned without a process exit status".to_string()),
+    }
 }
 
 /// Splits Kani's output into `(qualified harness name, block text)` pairs at
