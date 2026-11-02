@@ -850,14 +850,6 @@ fn relative_and_reexport_import_routes_are_refused() -> Result<(), String> {
             "extern crate qual_reach as lib_alias;\n",
             "use crate::lib_alias::inner::order_discount;\n",
         ),
-        (
-            "mod api {\n    pub use ::qual_reach::inner;\n}\n",
-            "use self::api::inner::order_discount;\n",
-        ),
-        (
-            "mod api {\n    pub use qual_reach::inner;\n}\n",
-            "use self::api::inner::order_discount;\n",
-        ),
     ] {
         let tests = format!("{module}{import}{}", test_file(BARE));
         let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
@@ -883,6 +875,42 @@ fn relative_and_reexport_import_routes_are_refused() -> Result<(), String> {
     );
     let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
     assert_eq!(package.relation()?.as_deref(), LINKED, "unrelated import");
+    Ok(())
+}
+
+/// #9971: a test-crate module that re-exports a library module lets
+/// `use self::<module>::..` reach the entry when nothing nearer shadows it.
+#[test]
+fn test_crate_reexport_module_routes_link_through_self() -> Result<(), String> {
+    let direct = module_package(
+        "src/inner.rs",
+        MODULE_LIB,
+        format!(
+            "use qual_reach::inner::order_discount;\n{}",
+            test_file(BARE)
+        ),
+        vec![],
+    );
+    assert_eq!(
+        direct.classification()?,
+        "exposed",
+        "direct import control must render exposed"
+    );
+    for (module, import) in [
+        (
+            "mod api {\n    pub use ::qual_reach::inner;\n}\n",
+            "use self::api::inner::order_discount;\n",
+        ),
+        (
+            "mod api {\n    pub use qual_reach::inner;\n}\n",
+            "use self::api::inner::order_discount;\n",
+        ),
+    ] {
+        let tests = format!("{module}{import}{}", test_file(BARE));
+        let package = module_package("src/inner.rs", MODULE_LIB, tests, vec![]);
+        assert_eq!(package.relation()?.as_deref(), LINKED, "{module}{import}");
+        assert_eq!(package.classification()?, "exposed", "{module}{import}");
+    }
     Ok(())
 }
 

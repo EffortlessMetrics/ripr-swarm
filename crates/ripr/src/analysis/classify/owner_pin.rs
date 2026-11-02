@@ -6500,23 +6500,90 @@ impl FreeOwnerBinding<'_> {
                     first,
                     segments,
                 )?;
-                resolve_module_path(index, syntax, &file, &stack, &rest)
+                self.resolve_module_path(index, syntax, scope, &file, &stack, &rest)
             }
             "crate" => {
                 let root = composed_root(self.owner_file, index);
                 if composed_root(scope.file, index) != root {
                     return None;
                 }
-                resolve_module_path(index, syntax, &root, &[], segments)
+                self.resolve_module_path(index, syntax, scope, &root, &[], segments)
             }
             _ => {
                 if !self.krate_root_names_owner_crate(first, scope.file, scope.source, index) {
                     return None;
                 }
                 let root = composed_root(self.owner_file, index);
-                resolve_module_path(index, syntax, &root, &[], segments)
+                self.resolve_module_path(index, syntax, scope, &root, &[], segments)
             }
         }
+    }
+
+    /// #9971: follow exactly one module `use` re-export in the current
+    /// scope when an inline or out-of-line child module is absent.
+    fn follow_module_reexport(
+        &self,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+        parent_scope: ScopeContext<'_>,
+        segment: &str,
+    ) -> Option<(PathBuf, Vec<String>)> {
+        let scopes = syntax.file_scopes(index, parent_scope.file)?;
+        let module = scopes.scope_with_stack(parent_scope.stack)?;
+        let reexports: Vec<&UsePath> = module
+            .uses
+            .iter()
+            .filter(|use_path| {
+                use_path.alias.is_none()
+                    && !use_path.path.contains('*')
+                    && split_binding_use(use_path, segment).is_some()
+            })
+            .collect();
+        if reexports.len() != 1 {
+            return None;
+        }
+        let use_path = reexports[0];
+        let (first, _) = split_binding_use(use_path, segment)?;
+        self.resolve_use_prefix(first, &[segment], parent_scope, index, syntax)
+    }
+
+    fn resolve_module_path(
+        &self,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+        _scope: ScopeContext<'_>,
+        file: &Path,
+        stack: &[String],
+        segments: &[&str],
+    ) -> Option<(PathBuf, Vec<String>)> {
+        let mut file = file.to_path_buf();
+        let mut stack = stack.to_vec();
+        for segment in segments {
+            let source = index.files().get(&file)?.data().source.as_ref();
+            let scopes = syntax.file_scopes(index, &file)?;
+            let mut child = stack.clone();
+            child.push(segment.to_string());
+            if scopes.scope_with_stack(&child).is_some() {
+                stack = child;
+                continue;
+            }
+            let key = (file.clone(), segment.to_string());
+            if let Some(next) = syntax.mod_children(index).get(&key) {
+                file = next.clone()?;
+                stack = Vec::new();
+                continue;
+            }
+            let parent_scope = ScopeContext {
+                file: &file,
+                source,
+                stack: &stack,
+            };
+            let (next_file, next_stack) =
+                self.follow_module_reexport(index, syntax, parent_scope, segment)?;
+            file = next_file;
+            stack = next_stack;
+        }
+        Some((file, stack))
     }
 
     /// #7097: whether a resolved module delivers the owner: it holds no
@@ -6644,6 +6711,64 @@ impl FreeOwnerBinding<'_> {
             !self.use_resolves_to_owner_module(binding, context, owner_inline, index, syntax)
         })
     }
+}
+
+/// #9971: whether a test-crate `use self::..` import in an integration test
+/// delivers the entry through the scope-aware resolver (including one library
+/// re-export hop through a test module).
+pub(in crate::analysis) fn integration_test_relative_import_delivers_entry(
+    index: &RustIndex,
+    test: &TestSummary,
+    import_path: &str,
+    entry: &FunctionSummary,
+) -> bool {
+    use super::call_identity::{source_may_splice_items, under_tests_dir};
+    if !under_tests_dir(&test.file) {
+        return false;
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    if import_path.split("::").next() != Some("self") {
+        return false;
+    }
+    if source_may_splice_items(&facts.source, true) {
+        return false;
+    }
+    if flattened_use_paths(&facts.source)
+        .iter()
+        .any(|import| import.path.ends_with('*'))
+    {
+        return false;
+    }
+    let syntax = OwnerPinSyntax::default();
+    let Some(owner_inline) = syntax
+        .item_nesting(index, &entry.file, &entry.name, entry.start_line)
+        .map(|nesting| nesting.modules)
+    else {
+        return false;
+    };
+    let binding = FreeOwnerBinding {
+        name: &entry.name,
+        owner_file: &entry.file,
+        owner_start_line: entry.start_line,
+    };
+    let Some(scopes) = syntax.file_scopes(index, &test.file) else {
+        return false;
+    };
+    let Some(scope) = scopes.scope_of_test(&facts.source, test) else {
+        return false;
+    };
+    let context = ScopeContext {
+        file: &test.file,
+        source: &facts.source,
+        stack: &scope.stack,
+    };
+    let use_path = UsePath {
+        path: import_path.to_string(),
+        alias: None,
+    };
+    binding.use_names_owner(&use_path, context, &owner_inline, index, &syntax)
 }
 
 /// The bare-call identity gates applied to a borrowed check helper (#6482):
@@ -11224,35 +11349,6 @@ fn climb_one_level(
         .clone();
     *file = edge.parent.clone();
     Some(())
-}
-
-/// #7097: walk `segments` from (`file`, `stack`): each names an inline
-/// child module or a composed out-of-line `mod`. Returns the target's
-/// file and file-relative inline stack, or `None` when a step is
-/// unplaced or ambiguous. Each step consumes a segment, so module
-/// cycles cannot loop.
-fn resolve_module_path(
-    index: &RustIndex,
-    syntax: &OwnerPinSyntax,
-    file: &Path,
-    stack: &[String],
-    segments: &[&str],
-) -> Option<(PathBuf, Vec<String>)> {
-    let mut file = file.to_path_buf();
-    let mut stack = stack.to_vec();
-    for segment in segments {
-        let scopes = syntax.file_scopes(index, &file)?;
-        let mut child = stack.clone();
-        child.push(segment.to_string());
-        if scopes.scope_with_stack(&child).is_some() {
-            stack = child;
-            continue;
-        }
-        let key = (file.clone(), segment.to_string());
-        file = syntax.mod_children(index).get(&key)?.clone()?;
-        stack = Vec::new();
-    }
-    Some((file, stack))
 }
 
 /// Whether another workspace definition of the owner's name could take a
