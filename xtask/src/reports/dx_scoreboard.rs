@@ -480,6 +480,14 @@ pub(crate) fn validate_corpus(corpus: &[CorpusEntry]) -> Result<(), String> {
                 entry.id
             ));
         }
+        if let Some(limit) = entry.expected_partial.as_deref()
+            && measure::typed_cause_of_static_limit(limit).is_none()
+        {
+            return Err(format!(
+                "corpus `{}` expected_partial `{limit}` has no known typed cause",
+                entry.id
+            ));
+        }
         if !full_sha(&entry.sha)
             || entry
                 .base_sha

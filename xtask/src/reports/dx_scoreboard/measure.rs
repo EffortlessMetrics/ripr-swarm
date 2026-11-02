@@ -6,6 +6,7 @@
 //! and the warm check reuses that same cache.
 
 mod check_admission;
+pub(crate) use check_admission::typed_cause_of_static_limit;
 mod editor_refresh;
 
 use super::{Config, CorpusEntry, Options, RunContext, Sample, SampleOutcome};
@@ -558,7 +559,7 @@ pub(crate) fn record_warm_check(
             reason: "warm-up capture failed".to_string(),
         },
     };
-    let warmup_ok = warmup_admission.is_complete();
+    let warmup_ok = warmup_admission.is_admitted();
     match (warmup, measured) {
         (Err(err), _) => {
             missing_sources.push("warm check JSON");
@@ -610,7 +611,7 @@ pub(crate) fn record_warm_check(
         }
         (Ok(_warmup), Ok(Some(measured))) => {
             let admission = admit_measured(&measured, subject);
-            let complete = warmup_ok && admission.is_complete();
+            let complete = warmup_ok && admission.is_admitted();
             let ms = duration_ms(&measured);
             let findings = admission
                 .findings()
@@ -628,6 +629,8 @@ pub(crate) fn record_warm_check(
                 ));
             }
             if !admission.is_complete() {
+                // An expected partial outcome is admitted but stays visibly
+                // partial: its reason names the limit it stopped at.
                 detail.push_str(&format!("; {}", admission.reason()));
             }
             if admission.rendering_truncated() {
@@ -649,7 +652,8 @@ pub(crate) fn record_warm_check(
                 complete,
             ));
             // Trust may scan only an admitted complete document. A rejected
-            // subject or incomplete analysis cannot contribute a clean zero.
+            // subject, an incomplete analysis or an expected partial outcome
+            // cannot contribute a clean zero.
             if admission.is_complete() {
                 match serde_json::from_str::<Value>(&measured.output.stdout) {
                     Ok(json) => match check_contradictions(&json) {

@@ -76,26 +76,44 @@ pub(crate) enum CheckAdmission {
         rendering_truncated: bool,
         kind: String,
     },
+    /// The row declared an expected partial outcome and this document is it:
+    /// the typed partial analysis, stopped by the declared limit. It is
+    /// admitted as a speed sample but is not a complete analysis, so trust
+    /// scans never read it as a clean population (#12052).
+    ExpectedPartial {
+        findings: u64,
+        rendering_truncated: bool,
+        reason: String,
+    },
     Rejected {
         reason: String,
     },
 }
 
 impl CheckAdmission {
+    /// A complete analysis: the only admission a contradiction scan may read.
     pub(crate) fn is_complete(&self) -> bool {
         matches!(self, Self::Complete { .. })
+    }
+
+    /// May enter the speed population: complete, or the partial outcome the
+    /// row declared.
+    pub(crate) fn is_admitted(&self) -> bool {
+        matches!(self, Self::Complete { .. } | Self::ExpectedPartial { .. })
     }
 
     pub(crate) fn reason(&self) -> &str {
         match self {
             Self::Complete { kind, .. } => kind,
-            Self::Rejected { reason } => reason,
+            Self::ExpectedPartial { reason, .. } | Self::Rejected { reason } => reason,
         }
     }
 
     pub(crate) fn findings(&self) -> Option<u64> {
         match self {
-            Self::Complete { findings, .. } => Some(*findings),
+            Self::Complete { findings, .. } | Self::ExpectedPartial { findings, .. } => {
+                Some(*findings)
+            }
             Self::Rejected { .. } => None,
         }
     }
@@ -106,8 +124,21 @@ impl CheckAdmission {
             Self::Complete {
                 rendering_truncated: true,
                 ..
+            } | Self::ExpectedPartial {
+                rendering_truncated: true,
+                ..
             }
         )
+    }
+}
+
+/// The typed outcome limitation that makes an analysis stop at a declared
+/// static limit. A finding carrying the static limit alone does not show it
+/// is why the analysis is partial.
+pub(crate) fn typed_cause_of_static_limit(limit: &str) -> Option<&'static str> {
+    match limit {
+        "typescript_workspace_discovery_truncated" => Some("diff_scope_oversized"),
+        _ => None,
     }
 }
 
@@ -254,7 +285,7 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
         ));
     }
     if let Some(limit) = subject.expected_partial.as_deref() {
-        return admit_expected_partial(object, outcome, kind, limit);
+        return admit_expected_partial(value, outcome, kind, limit);
     }
     if !analysis_complete {
         return rejected(&format!("analysis is not complete (`{kind}`)"));
@@ -279,12 +310,14 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
 }
 
 /// A row that declares an expected partial outcome passes only when the
-/// analysis is the typed `partial_with_limitations` outcome and a finding
-/// names the declared static limit. A complete result means the pinned diff
-/// no longer reproduces the refusal; another limit or kind is a different
-/// failure. Either way the sample is not admitted (#12052).
+/// analysis is the typed `partial_with_limitations` outcome, the typed
+/// limitation that causes the declared static limit is present, and a finding
+/// names that static limit. A complete result means the pinned diff no longer
+/// reproduces the refusal; another limit or kind is a different failure.
+/// Counts get the same consistency checks as a complete document. The result
+/// is `ExpectedPartial`, never `Complete` (#12052).
 fn admit_expected_partial(
-    envelope: &serde_json::Map<String, Value>,
+    envelope: &Value,
     outcome: &serde_json::Map<String, Value>,
     kind: &str,
     limit: &str,
@@ -294,7 +327,26 @@ fn admit_expected_partial(
             "expected a partial outcome stopped at `{limit}`, got `{kind}`"
         ));
     }
-    let names_limit = envelope
+    let Some(object) = envelope.as_object() else {
+        return rejected("stdout JSON is not an object");
+    };
+    let Some(cause) = typed_cause_of_static_limit(limit) else {
+        return rejected(&format!(
+            "no typed cause is known for static limit `{limit}`"
+        ));
+    };
+    let cause_present = outcome
+        .get("limitations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|limitation| limitation.get("kind").and_then(Value::as_str) == Some(cause));
+    if !cause_present {
+        return rejected(&format!(
+            "partial outcome carries no `{cause}` limitation for static limit `{limit}`"
+        ));
+    }
+    let names_limit = object
         .get("findings")
         .and_then(Value::as_array)
         .into_iter()
@@ -305,11 +357,18 @@ fn admit_expected_partial(
             "partial outcome carries no finding with static limit `{limit}`"
         ));
     }
-    let findings = finding_count(envelope, outcome).unwrap_or(0);
-    CheckAdmission::Complete {
-        findings,
-        rendering_truncated: findings_rendering_truncated(&Value::Object(envelope.clone())),
-        kind: kind.to_string(),
+    if let Err(reason) = require_outcome_counts(outcome) {
+        return rejected(reason);
+    }
+    let findings = finding_count(object, outcome);
+    let truncated = findings_rendering_truncated(envelope);
+    if let Some(reason) = declared_finding_counts_disagree(object, outcome, truncated) {
+        return rejected(reason);
+    }
+    CheckAdmission::ExpectedPartial {
+        findings: findings.unwrap_or(0),
+        rendering_truncated: truncated,
+        reason: format!("expected partial outcome stopped at `{limit}` (not a complete analysis)"),
     }
 }
 
@@ -1289,8 +1348,9 @@ mod tests {
         }
     }
 
-    /// A partial outcome whose findings carry `limit` as their static limit,
-    /// the shape the pinned `typescript-compiler` diff produces.
+    /// A partial outcome whose findings carry `limit` as their static limit
+    /// and whose typed limitations include the walk-cap cause, the shape the
+    /// pinned `typescript-compiler` diff produces.
     fn partial_document(limit: Option<&str>) -> Value {
         let mut finding = json!({
             "id": "p1",
@@ -1310,14 +1370,24 @@ mod tests {
     }
 
     #[test]
-    fn an_expected_partial_outcome_naming_the_limit_is_admitted() {
+    fn an_expected_partial_outcome_is_admitted_but_never_complete() {
         let doc = partial_document(Some(TS_LIMIT));
         let admission = admit_check_document(&doc, &expecting_partial());
-        assert!(admission.is_complete(), "{admission:?}");
+        assert!(admission.is_admitted(), "{admission:?}");
+        assert!(
+            !admission.is_complete(),
+            "a partial analysis must stay out of the contradiction scan"
+        );
         assert_eq!(admission.findings(), Some(1));
+        assert!(
+            admission.reason().contains(TS_LIMIT),
+            "{}",
+            admission.reason()
+        );
+        assert!(admission.reason().contains("not a complete analysis"));
         // The same document is rejected by a row that expects a complete
         // analysis, so the declaration is what admits it.
-        assert!(!admit_check_document(&doc, &subject()).is_complete());
+        assert!(!admit_check_document(&doc, &subject()).is_admitted());
     }
 
     #[test]
@@ -1334,7 +1404,7 @@ mod tests {
         assert!(no_limit.reason().contains("no finding with static limit"));
         let complete = complete_document("complete_with_findings", vec![one_finding()]);
         let admission = admit_check_document(&complete, &subject);
-        assert!(!admission.is_complete());
+        assert!(!admission.is_admitted());
         assert!(
             admission.reason().contains("expected a partial outcome"),
             "{admission:?}"
@@ -1344,11 +1414,56 @@ mod tests {
             doc["analysis_outcome"]["outcome"]["kind"] = json!("analysis_failed");
             admit_check_document(&doc, &subject)
         };
-        assert!(!failed.is_complete());
+        assert!(!failed.is_admitted());
         // Identity checks still apply before the expected-partial path.
         let mut other_root = partial_document(Some(TS_LIMIT));
         other_root["root"] = json!("/tmp/elsewhere");
-        assert!(!admit_check_document(&other_root, &subject).is_complete());
+        assert!(!admit_check_document(&other_root, &subject).is_admitted());
+    }
+
+    #[test]
+    fn the_named_limit_must_be_why_the_analysis_is_partial() {
+        let subject = expecting_partial();
+        // Another cause of partiality plus a finding that merely carries the
+        // static limit is not the declared refusal.
+        let mut other_cause = partial_document(Some(TS_LIMIT));
+        other_cause["analysis_outcome"]["outcome"]["limitations"] =
+            json!([{ "kind": "language_scope_unsupported" }]);
+        let admission = admit_check_document(&other_cause, &subject);
+        assert!(!admission.is_admitted());
+        assert!(
+            admission.reason().contains("diff_scope_oversized"),
+            "{admission:?}"
+        );
+        let mut no_limitations = partial_document(Some(TS_LIMIT));
+        no_limitations["analysis_outcome"]["outcome"]["limitations"] = json!([]);
+        assert!(!admit_check_document(&no_limitations, &subject).is_admitted());
+        let unknown = CheckSubject {
+            expected_partial: Some("made_up_limit".to_string()),
+            ..self::subject()
+        };
+        let admission = admit_check_document(&partial_document(Some("made_up_limit")), &unknown);
+        assert!(
+            admission.reason().contains("no typed cause"),
+            "{admission:?}"
+        );
+    }
+
+    #[test]
+    fn the_partial_path_keeps_the_count_consistency_checks() {
+        let subject = expecting_partial();
+        let mut missing_counts = partial_document(Some(TS_LIMIT));
+        missing_counts["analysis_outcome"]["outcome"]
+            .as_object_mut()
+            .map(|outcome| outcome.remove("counts"));
+        assert!(!admit_check_document(&missing_counts, &subject).is_admitted());
+        let mut disagree = partial_document(Some(TS_LIMIT));
+        disagree["analysis_outcome"]["outcome"]["counts"]["finding_count"] = json!(7);
+        let admission = admit_check_document(&disagree, &subject);
+        assert!(!admission.is_admitted(), "{admission:?}");
+        let mut summary_disagrees = partial_document(Some(TS_LIMIT));
+        summary_disagrees["summary"]["findings"] = json!(3);
+        assert!(!admit_check_document(&summary_disagrees, &subject).is_admitted());
     }
 
     #[test]
