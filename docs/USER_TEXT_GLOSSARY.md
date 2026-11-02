@@ -38,7 +38,8 @@ changed behavior, related test, Next step, base/head, doctor, pilot.
 
 ## What the check scans
 
-`cargo xtask check-user-text` reads real output, not source strings:
+`cargo xtask check-user-text` reads real output, plus the editor strings the LSP
+sidecar sends (scanned from source, see the last bullet):
 
 - every committed default-format golden, `fixtures/**/expected/human.txt`
   (each golden is judged on its own: the `golden-human` ceiling bounds the
@@ -48,17 +49,22 @@ changed behavior, related test, Next step, base/head, doctor, pilot.
   `repair` refusals (missing `.gitignore` entry, uncommitted source change),
   `agent card` (unknown ID and a real gap), `agent packet`, `agent repair`,
   and the help screens (`--help`, `help --all`, and `help <command>`).
-
 - the editor strings of the LSP sidecar (#12213), surface `lsp-source`: every
   quoted string literal in the non-test Rust sources under
   `crates/ripr/src/lsp/` (status messages, hover, code actions, lens, error
-  strings sent to editors). Comments, test modules (`tests.rs`, `*_tests.rs`,
-  everything after `#[cfg(test)]`) and literals made only of identifier
-  characters (JSON keys, ids, `seams_deferred`) are skipped. A literal that must
-  keep a banned word (a machine diagnostic code, or text matched against a
-  producer's own wording) carries `user-text-exempt: <reason>` on its line or
-  the comment line above. The ceilings are in the baseline file like any other
-  surface; `seam` and `discriminator` have none, so any new use fails.
+  strings sent to editors). Skipped: comments; `tests.rs`, `tests/` and
+  `*_tests.rs` files; inline test modules written as `#[cfg(test)]` followed by
+  a column-0 `mod name {` and closed by a column-0 `}` (a `#[cfg(test)]` helper
+  function is still scanned); and single-token literals shaped like machine
+  keys (starting with `ripr-` or containing `_`, `.`, `/`, `::`, a digit, a `{}` placeholder or
+  camelCase, such as `seams_deferred` or `seamDiagnostics`). Bare words and
+  labels (`"Seam"`, `"Seam:"`, `"seam-level"`) are prose and are scanned. A
+  literal that must keep a banned word (a machine id seed, a diagnostic code, or
+  text matched against a producer's own wording) carries
+  `user-text-exempt: <reason>` on its line or the comment line directly above;
+  a marker without a reason does not exempt. The ceilings are in the baseline
+  file like any other surface; `seam` and `discriminator` have none, so any new
+  use fails.
 
 Explicitly not scanned (the allowlist printed in every report):
 

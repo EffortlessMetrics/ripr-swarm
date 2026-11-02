@@ -1356,18 +1356,18 @@ const LSP_SOURCE_DIR: &str = "crates/ripr/src/lsp";
 
 /// Prose string literals of a Rust source as `(line, text)`.
 ///
-/// Comments, character literals and everything from the first `#[cfg(test)]`
-/// line on (the test module) are skipped. A literal made only of identifier
-/// characters (`"seams_deferred"`, `"missing_discriminator"`) is a machine key,
-/// not prose, and is dropped; a label such as `"Seam:"` and any sentence is kept.
+/// Comments, character literals and column-0 `#[cfg(test)]` + `mod name {`
+/// blocks (closed by a `}` in column 0) are skipped. A single-token literal
+/// shaped like a machine key (`"seams_deferred"`, `"seamDiagnostics"`) is
+/// dropped; bare words, labels such as `"Seam:"`, and any sentence are kept.
 pub(crate) fn rust_prose_segments(source: &str) -> Vec<(usize, String)> {
     let mut kept = String::new();
     let mut source_lines = source.lines().peekable();
     while let Some(line) = source_lines.next() {
         // Skip an inline `#[cfg(test)] mod name { .. }` (rustfmt closes it with
-        // a `}` in column 0). A `mod name;` declaration and a `#[cfg(test)]`
-        // helper item are production-adjacent and only their own line is kept
-        // out of the scan by the caller's file selection.
+        // a `}` in column 0). Only that exact shape is skipped: a `mod name;`
+        // declaration, an indented module and a `#[cfg(test)]` helper function
+        // are scanned like any other code.
         let is_test_mod = line.trim() == "#[cfg(test)]"
             && source_lines
                 .peek()
@@ -1419,7 +1419,10 @@ pub(crate) fn rust_prose_segments(source: &str) -> Vec<(usize, String)> {
             }
         } else if c == 'r'
             && matches!(chars.get(i + 1), Some('"' | '#'))
-            && (i == 0 || !is_word_char_c(chars[i - 1]))
+            && (i == 0
+                || !is_word_char_c(chars[i - 1])
+                // `br"..."` byte raw strings
+                || (chars[i - 1] == 'b' && (i == 1 || !is_word_char_c(chars[i - 2]))))
         {
             let mut j = i + 1;
             let mut hashes = 0usize;
@@ -1487,14 +1490,11 @@ pub(crate) fn rust_prose_segments(source: &str) -> Vec<(usize, String)> {
             i += 1;
         }
     }
-    out.retain(|(_, text)| {
-        !text
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | '/' | ':' | '#'))
-    });
+    out.retain(|(_, text)| !looks_like_machine_key(text));
     // A literal that must hold the word (a machine code, or text matched
-    // against a producer's own wording) says so with `user-text-exempt` on its
-    // line or the comment line above. The reason after the marker is for the reader.
+    // against a producer's own wording) says so with
+    // `user-text-exempt: <reason>` on its line or the comment line above. A
+    // bare marker with no reason does not exempt.
     let lines: Vec<&str> = kept.lines().collect();
     out.retain(|(number, _)| {
         let here = lines.get(number - 1).copied().unwrap_or_default();
@@ -1503,10 +1503,42 @@ pub(crate) fn rust_prose_segments(source: &str) -> Vec<(usize, String)> {
             .and_then(|at| lines.get(at))
             .copied()
             .unwrap_or_default();
-        !(here.contains(LSP_EXEMPT_MARKER)
-            || (above.trim_start().starts_with("//") && above.contains(LSP_EXEMPT_MARKER)))
+        !(has_exemption(here) || (above.trim_start().starts_with("//") && has_exemption(above)))
     });
     out
+}
+
+/// True when the line carries `user-text-exempt: <reason>` with a real reason.
+fn has_exemption(line: &str) -> bool {
+    line.find(LSP_EXEMPT_MARKER).is_some_and(|at| {
+        line[at + LSP_EXEMPT_MARKER.len()..]
+            .strip_prefix(':')
+            .is_some_and(|reason| reason.trim().chars().count() >= 3)
+    })
+}
+
+/// A literal that is a machine key, not prose: one token (no whitespace) that
+/// does not end in `:` and has the shape of an identifier, path, id or code
+/// (`_`, `.`, `/`, `#`, `::`, a digit, a `{}` placeholder, or camelCase).
+/// Bare words and labels (`"Seam"`, `"seam"`, `"Seam:"`, `"seam-level"`) are
+/// prose and stay scanned.
+fn looks_like_machine_key(text: &str) -> bool {
+    if text.is_empty() {
+        return true;
+    }
+    if text.chars().any(char::is_whitespace) || text.ends_with(':') {
+        return false;
+    }
+    let camel = text
+        .chars()
+        .zip(text.chars().skip(1))
+        .any(|(a, b)| a.is_ascii_lowercase() && b.is_ascii_uppercase());
+    // `ripr-...` is the namespace of diagnostic codes (`ripr-seam-ungripped`).
+    text.starts_with("ripr-")
+        || text.contains(['_', '.', '/', '#', '{', '}'])
+        || text.contains("::")
+        || text.chars().any(|c| c.is_ascii_digit())
+        || camel
 }
 
 fn is_word_char_c(c: char) -> bool {
@@ -3352,6 +3384,149 @@ mod tests {
             vec![(9, "seam of the day".to_string())],
             "{segments:?}"
         );
+    }
+
+    #[test]
+    fn bare_words_and_labels_are_prose_and_keys_are_not() {
+        let source = concat!(
+            "const A: &str = \"Seam:\";\n",
+            "const B: &str = \"Seam\";\n",
+            "const C: &str = \"seam\";\n",
+            "const D: &str = \"seam-level\";\n",
+            "const E: &str = \"Discriminator:\";\n",
+            "const F: &str = \"Seams\";\n",
+            "const G: &str = \"seam_id\";\n",
+            "const H: &str = \"seamDiagnostics\";\n",
+            "const I: &str = \"lsp::seam\";\n",
+            "const J: &str = \"ripr-seam-{}\";\n",
+            "const K: &str = br\"raw seam bytes\";\n",
+            "// user-text-exempt:\n",
+            "const L: &str = \"seam\";\n",
+        );
+        let texts: Vec<String> = rust_prose_segments(source)
+            .into_iter()
+            .map(|(_, t)| t)
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "Seam:",
+                "Seam",
+                "seam",
+                "seam-level",
+                "Discriminator:",
+                "Seams",
+                "raw seam bytes",
+                "seam"
+            ],
+            "{texts:?}"
+        );
+        let mut counts = Counts::new();
+        for text in &texts {
+            scan_text(LSP_SURFACE, "x.rs", text, &mut counts);
+        }
+        assert_eq!(
+            counts[&(LSP_SURFACE.to_string(), "seam".to_string())].lines,
+            7
+        );
+        assert_eq!(
+            counts[&(LSP_SURFACE.to_string(), "discriminator".to_string())].lines,
+            1
+        );
+    }
+
+    /// The scan on a tiny LSP tree: a banned word in a production file is
+    /// counted, `tests.rs` is skipped, too small a corpus is an error, and the
+    /// counts fail the real gate (`finish_check`) when they exceed the ceiling.
+    #[test]
+    fn scan_lsp_prose_drives_the_gate_on_a_seeded_tree() -> Result<(), String> {
+        let filler: String = (0..250)
+            .map(|n| format!("const F{n}: &str = \"plain words number {n}\";\n"))
+            .collect();
+        let seeded = format!("{filler}const BAD: &str = \"open the seam list\";\n");
+        let clean = format!("{filler}const OK: &str = \"open the gap list\";\n");
+        let tests_rs = "const T: &str = \"a seam in a test file\";\n";
+        let head = [
+            ("crates/ripr/src/lsp/seeded.rs", seeded.as_str()),
+            ("crates/ripr/src/lsp/tests.rs", tests_rs),
+            ("crates/ripr/src/lsp/more_tests.rs", tests_rs),
+            ("crates/ripr/src/lsp/tests/inner.rs", tests_rs),
+        ];
+        let root = golden_repo("lsp-seeded", &[(A, "plain\n")], &head)?;
+        let mut counts = Counts::new();
+        let (files, strings) = scan_lsp_prose(&root, &mut counts)?;
+        assert_eq!(files, 1, "tests.rs, *_tests.rs and tests/ are skipped");
+        assert!(strings >= 250, "{strings}");
+        let found = &counts[&(LSP_SURFACE.to_string(), "seam".to_string())];
+        assert_eq!(found.lines, 1, "{found:?}");
+        assert!(found.examples[0].contains("seeded.rs:251"), "{found:?}");
+
+        let scanned = Scanned {
+            counts: counts.clone(),
+            baseline: Baseline::new(),
+            live: Vec::new(),
+            golden_files: 1,
+        };
+        let outcome = finish_check(&root, "main", &Mode::Local, &scanned, false);
+        let _ = fs::remove_dir_all(&root);
+        let message = outcome
+            .err()
+            .ok_or("a banned LSP word must fail the gate")?;
+        assert!(message.contains("rose"), "{message}");
+
+        let ok_root = golden_repo(
+            "lsp-clean",
+            &[(A, "plain\n")],
+            &[("crates/ripr/src/lsp/seeded.rs", clean.as_str())],
+        )?;
+        let mut clean_counts = Counts::new();
+        scan_lsp_prose(&ok_root, &mut clean_counts)?;
+        let scanned = Scanned {
+            counts: clean_counts,
+            baseline: Baseline::new(),
+            live: Vec::new(),
+            golden_files: 1,
+        };
+        let passed = finish_check(&ok_root, "main", &Mode::Local, &scanned, false);
+        let _ = fs::remove_dir_all(&ok_root);
+        assert_eq!(passed, Ok(()));
+
+        let tiny = golden_repo(
+            "lsp-tiny",
+            &[(A, "plain\n")],
+            &[(
+                "crates/ripr/src/lsp/seeded.rs",
+                "const X: &str = \"a seam\";\n",
+            )],
+        )?;
+        let too_small = scan_lsp_prose(&tiny, &mut Counts::new());
+        let _ = fs::remove_dir_all(&tiny);
+        assert!(
+            matches!(too_small, Err(ref e) if e.contains("zero subjects")),
+            "{too_small:?}"
+        );
+        let empty = temp_root("lsp-empty")?;
+        let none = scan_lsp_prose(&empty, &mut Counts::new());
+        let _ = fs::remove_dir_all(&empty);
+        assert!(none.is_err(), "{none:?}");
+        Ok(())
+    }
+
+    /// The command must scan the LSP strings, keep their rows when only the
+    /// golden half runs, and list the surface in the report.
+    #[test]
+    fn the_command_wires_the_lsp_scan() -> Result<(), String> {
+        let source = fs::read_to_string(repo_root()?.join("xtask/src/policy/user_text.rs"))
+            .map_err(|err| format!("read user_text.rs: {err}"))?;
+        let start = source
+            .find("pub(crate) fn check_user_text_with_args(")
+            .ok_or("command not found")?;
+        let end = source[start..].find("\n}\n").ok_or("command end")? + start;
+        let command = &source[start..end];
+        assert!(command.contains("scan_lsp_prose(&root, &mut counts)?"));
+        assert!(command.contains("surface == LSP_SURFACE"));
+        assert!(command.contains("live.push(format!("));
+        Ok(())
     }
 
     /// The committed LSP sources keep `seam` and `discriminator` out of

@@ -1045,14 +1045,14 @@ fn plain_hover_summary(text: &str) -> String {
     let flush = |word: &mut String, out: &mut String, verbatim: bool| {
         match word.as_str() {
             _ if verbatim => out.push_str(word),
-            "discriminator" => out.push_str("check"),
-            "Discriminator" => out.push_str("Check"),
-            "discriminators" => out.push_str("checks"),
-            "Discriminators" => out.push_str("Checks"),
-            "seam" => out.push_str("spot"),
-            "Seam" => out.push_str("Spot"),
-            "seams" => out.push_str("spots"),
-            "Seams" => out.push_str("Spots"),
+            "discriminator" => out.push_str("check"), // user-text-exempt: rewrites the producer word
+            "Discriminator" => out.push_str("Check"), // user-text-exempt: rewrites the producer word
+            "discriminators" => out.push_str("checks"), // user-text-exempt: rewrites the producer word
+            "Discriminators" => out.push_str("Checks"), // user-text-exempt: rewrites the producer word
+            "seam" => out.push_str("spot"), // user-text-exempt: rewrites the producer word
+            "Seam" => out.push_str("Spot"), // user-text-exempt: rewrites the producer word
+            "seams" => out.push_str("spots"), // user-text-exempt: rewrites the producer word
+            "Seams" => out.push_str("Spots"), // user-text-exempt: rewrites the producer word
             _ => out.push_str(word),
         }
         word.clear();
@@ -1096,7 +1096,7 @@ fn plain_hover_summary(text: &str) -> String {
 fn discriminator_stage_line(finding: &Finding) -> String {
     let stage = &finding.ripr.reveal.discriminate;
     if finding.class == ExposureClass::Exposed || stage.state != StageState::Yes {
-        return stage_line("discriminator", stage);
+        return stage_line("discriminator", stage); // user-text-exempt: glossed stage label kept by design
     }
     let missing = finding
         .activation
