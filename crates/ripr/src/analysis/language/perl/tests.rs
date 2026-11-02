@@ -5480,6 +5480,15 @@ fn empty_diff_with_supplied_perl_packet_reports_findings() -> Result<(), String>
             crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings,
             "empty diff with Perl findings must not read as NoScope"
         );
+        let finding = output
+            .findings
+            .first()
+            .ok_or_else(|| "expected at least one finding".to_string())?;
+        assert_eq!(
+            finding.source_currentness,
+            crate::domain::SourceCurrentness::UnresolvedSubject,
+            "empty diff does not establish candidate-current Perl lines"
+        );
         Ok(())
     })();
     let _ = std::fs::remove_dir_all(&root);
