@@ -33,6 +33,11 @@ pub(super) fn default_check_timeout() -> Option<Duration> {
     Some(Duration::from_secs(DEFAULT_CHECK_TIMEOUT_SECS))
 }
 
+/// Shared scope note for `--timeout` help, stderr disclosure, and timeout refusals (#12508).
+const CHECK_ANALYSIS_BUDGET_GIT_SCOPE: &str = "Pre-analysis git work and post-analysis rendering \
+are outside the analysis-worker budget; git-backed diff loading inside the worker counts against \
+this budget, and each git invocation is bounded separately by RIPR_GIT_TIMEOUT.";
+
 /// The refusal diagnostic, also printed on stderr.
 fn timeout_detail(budget: Duration) -> String {
     format!(
@@ -40,7 +45,7 @@ fn timeout_detail(budget: Duration) -> String {
          No findings were produced, so this is not a clean result. \
          Repair route: raise or disable the budget (0 disables it) with --timeout SECS or \
          RIPR_CHECK_TIMEOUT=<seconds>, or narrow the diff, then re-run. \
-         Git probing and rendering run outside this budget (RIPR_GIT_TIMEOUT per invocation).",
+         {CHECK_ANALYSIS_BUDGET_GIT_SCOPE}",
         budget.as_secs()
     )
 }
@@ -55,10 +60,12 @@ pub(super) fn explicit_check_timeout_disclosure(
     }
     Some(match budget {
         Some(budget) => format!(
-            "ripr: check analysis budget {}s covers the analysis worker only; git probing and rendering are outside it (RIPR_GIT_TIMEOUT per invocation).",
+            "ripr: check analysis budget {}s covers the analysis worker (including git-backed diff loading inside it). {CHECK_ANALYSIS_BUDGET_GIT_SCOPE}",
             budget.as_secs()
         ),
-        None => "ripr: check analysis budget disabled (0); git probing and rendering still use RIPR_GIT_TIMEOUT per invocation.".to_string(),
+        None => {
+            format!("ripr: check analysis budget disabled (0). {CHECK_ANALYSIS_BUDGET_GIT_SCOPE}")
+        }
     })
 }
 
@@ -542,6 +549,14 @@ mod tests {
             "{line}"
         );
         assert!(line.contains("RIPR_GIT_TIMEOUT"), "{line}");
+        assert!(
+            line.contains("git-backed diff loading inside the worker"),
+            "{line}"
+        );
+        assert!(
+            line.contains("Pre-analysis git work"),
+            "must distinguish pre-worker git from worker-owned loading: {line}"
+        );
         let disabled = super::explicit_check_timeout_disclosure(None, false)
             .ok_or("explicit disable must disclose")?;
         assert!(disabled.contains("disabled (0)"), "{disabled}");

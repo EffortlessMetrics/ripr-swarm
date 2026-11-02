@@ -1619,13 +1619,13 @@ fn check_inner(
     if let Some(disclosure) = format.repo_audit_path_disclosure() {
         eprintln!("{disclosure}");
     }
-    if check_timeout_explicitly_provided {
-        if let Some(disclosure) = super::check_budget::explicit_check_timeout_disclosure(
+    if check_timeout_explicitly_provided
+        && let Some(disclosure) = super::check_budget::explicit_check_timeout_disclosure(
             check_timeout,
             format.is_repo_seam_inventory(),
-        ) {
-            eprintln!("{disclosure}");
-        }
+        )
+    {
+        eprintln!("{disclosure}");
     }
     if matches!(format, OutputFormat::RepoExposureJson) {
         // #7781: this path never reaches `check_with_progress`, so it needs

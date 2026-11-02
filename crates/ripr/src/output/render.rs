@@ -512,15 +512,18 @@ fn maybe_attach_repo_plus_projection_with_source(
         return;
     }
     match limit_info {
-        Some(limit) => badge::attach_public_projection_with_optional_source(
-            summary,
-            source_report,
-            "limited_seam_cap",
-            Some(format!(
-                "seam limit applied: analyzed {} of {} seams; unscanned seams are not counted",
-                limit.analyzed, limit.total
-            )),
-        ),
+        Some(limit) => {
+            badge::attach_public_projection_with_optional_source(
+                summary,
+                source_report,
+                "limited_seam_cap",
+                Some(format!(
+                    "seam limit applied: analyzed {} of {} seams; unscanned seams are not counted",
+                    limit.analyzed, limit.total
+                )),
+            );
+            push_repo_badge_seam_limit_warning_once(summary, limit);
+        }
         None => match source_report {
             Some(source) => badge::attach_public_projection(summary, source),
             None => {
@@ -598,11 +601,7 @@ fn attach_repo_badge_projection(
                 "limited_seam_cap",
                 Some(limited_reason),
             );
-            summary.warnings.push(format!(
-                "seam limit applied ({}); repair route: {}",
-                crate::output::repo_exposure::REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL,
-                crate::output::repo_exposure::repo_exposure_inventory_repair_route(&limit.source),
-            ));
+            push_repo_badge_seam_limit_warning_once(summary, limit);
         }
         None => match source_report {
             Some(source) => badge::attach_public_projection(summary, source),
@@ -611,6 +610,27 @@ fn attach_repo_badge_projection(
             }
         },
     }
+}
+
+/// Seam-cap repair disclosure for native repo badges (#12508). Idempotent so
+/// persistence retries do not duplicate warnings.
+fn push_repo_badge_seam_limit_warning_once(
+    summary: &mut badge::BadgeSummary,
+    limit: &analysis::SeamLimitInfo,
+) {
+    let control = crate::output::repo_exposure::REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL;
+    if summary
+        .warnings
+        .iter()
+        .any(|warning| warning.contains(control))
+    {
+        return;
+    }
+    summary.warnings.push(format!(
+        "seam limit applied ({}); repair route: {}",
+        control,
+        crate::output::repo_exposure::repo_exposure_inventory_repair_route(&limit.source),
+    ));
 }
 
 /// Renders the native repo badge and makes its `public_projection.source_report`
@@ -1505,6 +1525,60 @@ fn happy_path_passes() {
             .map_err(|err| format!("the named ripr+ source report must exist: {err}"))?;
         assert_eq!(persisted, rendered, "persisted bytes must equal stdout");
 
+        remove_temp_root(&output.root)?;
+        Ok(())
+    }
+
+    /// #6610: reattaching after a failed persist must not duplicate seam-cap warnings.
+    #[test]
+    fn repo_badge_seam_cap_warning_stays_singular_on_persist_retry() -> Result<(), String> {
+        let classified: Vec<crate::analysis::ClassifiedSeam> = Vec::new();
+        let mut summary = badge::ripr_canonical_actionable_gap_badge_summary(
+            &classified,
+            badge::BadgePolicy::default(),
+        );
+        let limit = crate::analysis::SeamLimitInfo {
+            analyzed: 1,
+            total: 2,
+            source: crate::analysis::SeamLimitSource::Default,
+        };
+        attach_repo_badge_projection(
+            &mut summary,
+            Some(&limit),
+            Some(REPO_RIPR_BADGE_SOURCE_REPORT),
+        );
+        attach_repo_badge_projection(&mut summary, Some(&limit), None);
+        assert_eq!(summary.warnings.len(), 1, "{:?}", summary.warnings);
+        Ok(())
+    }
+
+    /// #12508: repo-scoped ripr+ badges carry the same seam-limit repair route.
+    #[test]
+    fn repo_badge_plus_limited_scan_carries_seam_limit_warning() -> Result<(), String> {
+        let output = check_output_with_temp_report_workspace(Vec::new())?;
+        let classified: Vec<crate::analysis::ClassifiedSeam> = Vec::new();
+        let mut summary = badge::ripr_canonical_actionable_gap_badge_summary(
+            &classified,
+            badge::BadgePolicy::default(),
+        );
+        let limit = crate::analysis::SeamLimitInfo {
+            analyzed: 500,
+            total: 501,
+            source: crate::analysis::SeamLimitSource::Default,
+        };
+        super::maybe_attach_repo_plus_projection_with_source(
+            &mut summary,
+            &output,
+            Some(&limit),
+            Some(super::REPO_RIPR_PLUS_BADGE_SOURCE_REPORT),
+        );
+        assert_eq!(summary.warnings.len(), 1, "{:?}", summary.warnings);
+        assert!(
+            summary.warnings[0]
+                .contains(crate::output::repo_exposure::REPO_EXPOSURE_INVENTORY_LIMIT_CONTROL),
+            "{}",
+            summary.warnings[0]
+        );
         remove_temp_root(&output.root)?;
         Ok(())
     }

@@ -210,10 +210,9 @@ Common options:
                     this directory.
   --quiet           Suppress stderr progress. Unknown totals show no
                     percentage or ETA, and progress makes no speed claim.
-  --timeout SECS    Analysis-worker wall-clock budget (600s default; 0 disables;
-                    repo-wide formats run without it). Git probing and rendering
-                    use RIPR_GIT_TIMEOUT, not this budget. On analysis_timeout,
-                    raise/disable it or narrow the diff; re-run.
+  --timeout SECS    Analysis-worker budget (600s default; 0 off; repo formats skip).
+                    Pre-worker git/post-run rendering outside; in-worker git diff
+                    load counts against it (each git call has its own timeout). Raise/disable on analysis_timeout.
 
 Exit status: 0 for a completed run, including findings that are `exposed` or weak.
 `unsupported_input` reports exit 2, as do usage errors. Do not build
@@ -386,7 +385,9 @@ Options:
   --timeout SECS           Analysis-worker wall-clock budget in seconds (not
                            the repo-wide repo-exposure and seam formats).
                            Pre-analysis git work and post-analysis rendering
-                           are bounded by RIPR_GIT_TIMEOUT, not this budget.
+                           are outside this budget; git-backed diff loading
+                           inside the worker counts against it, and each git
+                           invocation is bounded separately by RIPR_GIT_TIMEOUT.
                            When the analysis worker exceeds it, check stops and
                            refuses with analysis_timeout: no findings are
                            produced and the result is never a clean pass. 0
