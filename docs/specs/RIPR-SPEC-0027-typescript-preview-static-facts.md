@@ -699,6 +699,28 @@ values defined in RIPR-SPEC-0026:
 - `unsupported_syntax` (e.g., TypeScript syntax the parser flags as
   unsupported for this preview)
 
+### Strong check that is not tied to the changed line
+
+When a related test carries a strong exact-value or snapshot check, the
+classifier reached the generic fallthrough, and no missing discriminator,
+static limit or named limitation applies, the finding's next step says the
+check is already strong but cannot be tied to the changed line and asks for an
+input that flips the changed branch (#12463). The text lives in one shared
+constant that the classifier writes and the preview card reads; the card
+wording applies only to a non-exposed finding carrying exactly that next step
+with a strong snapshot or exact-value oracle. It never asks for another
+exact-value assertion and never produces a repair packet.
+
+The decision is excluded, and keeps the generic "add a test that exercises the
+changed behavior" step, when no input can flip the change: an unwitnessed
+update of a field (`this.hits += 1`) whose new value reads none of the owner's
+parameters, as when the test overwrites the field before reading it, reads an
+accessor-backed field, or runs a table whose rows never call the method
+(`ts_field_update_overwrite_*`, `ts_field_update_table_zero_rows`,
+`ts_field_update_getter_backed`). The positive fixtures are
+`ts_strong_snapshot_untied` (literal inline snapshot) and
+`ts_coincident_state_update`.
+
 ## Required Evidence
 
 The TypeScript preview contract is supported only when the implementation
