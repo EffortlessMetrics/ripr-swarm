@@ -7,8 +7,8 @@
 use crate::analysis::syntax::source_imported_claims_macros;
 
 /// The 1-based first and last line of the `fn asserts` test: its signature
-/// line to the first closing-brace line at or after it (or the same line when
-/// the function is written on one line).
+/// line to the first line at or after it that holds a closing brace (the same
+/// line when the function is written on one line).
 fn asserts_span(source: &str) -> Result<(usize, usize), String> {
     let lines: Vec<&str> = source.lines().collect();
     let first = lines
@@ -16,16 +16,13 @@ fn asserts_span(source: &str) -> Result<(usize, usize), String> {
         .position(|line| line.contains("fn asserts"))
         .ok_or("no `fn asserts` in the source")?;
     let last = (first..lines.len())
-        .find(|&at| lines[at].trim_end().ends_with('}') && (at > first || lines[at].contains("{ ")))
+        .find(|&at| lines[at].contains('}'))
         .ok_or("no closing brace for `fn asserts`")?;
     Ok((first + 1, last + 1))
 }
 
 fn imported(source: &str) -> Result<Vec<&'static str>, String> {
-    Ok(source_imported_claims_macros(
-        source,
-        Some(asserts_span(source)?),
-    ))
+    Ok(source_imported_claims_macros(source, asserts_span(source)?))
 }
 
 #[test]
@@ -134,17 +131,47 @@ fn an_import_the_test_cannot_see_resolves_nothing() -> Result<(), String> {
 }
 
 #[test]
-fn an_unplaced_test_keeps_only_a_doc_examples_root_imports() -> Result<(), String> {
-    let at_root = "use claims::assert_ok;\n\n#[test]\nfn asserts() {\n    assert_ok!(f());\n}\n";
-    let in_module = "mod tests {\n    use claims::assert_ok;\n\n    #[test]\n    fn asserts() {\n        assert_ok!(f());\n    }\n}\n";
-    // No span: a doc example, which has no lines in its own source.
+fn a_test_is_placed_by_where_it_starts() -> Result<(), String> {
+    // A trailing comment on the closing line, or a neighbour after it, makes
+    // the span longer than the function; the function is still the test.
+    let trailing_comment =
+        "use claims::assert_ok;\n\n#[test]\nfn asserts() {\n    assert_ok!(f());\n} // checked\n";
     assert_eq!(
-        source_imported_claims_macros(at_root, None),
-        vec!["assert_ok"]
+        imported(trailing_comment)?,
+        vec!["assert_ok"],
+        "trailing comment"
     );
-    assert!(source_imported_claims_macros(in_module, None).is_empty());
-    // A span that is not in the source places no test, so nothing is credited.
-    assert!(source_imported_claims_macros(in_module, Some((90, 99))).is_empty());
-    assert!(source_imported_claims_macros(at_root, Some((90, 99))).is_empty());
+    let neighbour =
+        "use claims::assert_ok;\n\n#[test]\nfn asserts() { assert_ok!(f()); } fn other() {}\n";
+    assert_eq!(
+        imported(neighbour)?,
+        vec!["assert_ok"],
+        "same-line neighbour"
+    );
+
+    // A doc example is a synthetic source whose test fn opens on the fence
+    // line: padding lines, then the example inside the function.
+    let doc_example = "\n\n#[test] fn __doc_example() {\nuse claims::assert_ok;\nlet q = assert_ok!(f());\nassert_eq!(q, 3);\n}\n";
+    assert_eq!(
+        source_imported_claims_macros(doc_example, (3, 7)),
+        vec!["assert_ok"],
+        "an import written in the example"
+    );
+    let doc_without_import =
+        "use claims::assert_ok;\n\n#[test] fn __doc_example() {\nlet q = assert_ok!(f());\n}\n";
+    assert_eq!(
+        source_imported_claims_macros(doc_without_import, (3, 5)),
+        vec!["assert_ok"],
+        "a root import above is the file's, and the file root is in scope"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_span_that_places_no_function_credits_nothing() -> Result<(), String> {
+    let at_root = "use claims::assert_ok;\n\n#[test]\nfn asserts() {\n    assert_ok!(f());\n}\n";
+    assert!(source_imported_claims_macros(at_root, (90, 99)).is_empty());
+    // The first line of the span is a `use`, not inside any function.
+    assert!(source_imported_claims_macros(at_root, (1, 1)).is_empty());
     Ok(())
 }

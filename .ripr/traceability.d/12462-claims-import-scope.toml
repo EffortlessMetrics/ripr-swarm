@@ -4,6 +4,7 @@ id = "RIPR-SPEC-0197"
 tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests/claims_import_scope.rs::an_import_that_reaches_the_test_resolves_the_macro",
   "crates/ripr/src/analysis/classify/owner_pin/tests/claims_import_scope.rs::an_import_the_test_cannot_see_resolves_nothing",
-  "crates/ripr/src/analysis/classify/owner_pin/tests/claims_import_scope.rs::an_unplaced_test_keeps_only_a_doc_examples_root_imports",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/claims_import_scope.rs::a_test_is_placed_by_where_it_starts",
+  "crates/ripr/src/analysis/classify/owner_pin/tests/claims_import_scope.rs::a_span_that_places_no_function_credits_nothing",
   "crates/ripr/src/analysis/classify/owner_pin/tests/claims_direction.rs::the_claims_payload_route_needs_the_import_in_scope",
 ]

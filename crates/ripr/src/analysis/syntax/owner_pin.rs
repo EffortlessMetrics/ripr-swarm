@@ -1634,27 +1634,24 @@ fn is_drop_in_assertion(item: &ast::UseTree, name: &str) -> bool {
 /// `use super::name;`). An import in another function, a sibling module or a
 /// nested block never counts, and neither does one under any `cfg` or
 /// `cfg_attr` other than the plain test gate: it may be compiled out, and a
-/// predicate that might be true is not one that is. With no test span (a doc
-/// example) only file-root imports count; a span that places no test fn
-/// credits nothing.
+/// predicate that might be true is not one that is. A doc example is its own
+/// synthetic source whose test function opens on the fence line, so it is
+/// read like any test; a span that places no function credits nothing.
 pub(crate) fn source_imported_claims_macros(
     source: &str,
-    test_lines: Option<(usize, usize)>,
+    test_lines: (usize, usize),
 ) -> Vec<&'static str> {
     let Some(parse) = parse_clean_source_file(source) else {
         return Vec::new();
     };
     let root = parse.tree().syntax().clone();
-    let test_fn = match test_lines {
-        None => None,
-        Some((first, last)) => {
-            let found =
-                line_span(source, first, last).and_then(|span| innermost_fn_covering(&root, span));
-            if found.is_none() {
-                return Vec::new();
-            }
-            found
-        }
+    // The test is the function that starts on its first line. Only the start
+    // is used: a trailing comment or a neighbour on the last line does not
+    // change which function the test is.
+    let Some(test_fn) =
+        first_code_offset(source, test_lines.0).and_then(|offset| fn_at_offset(&root, offset))
+    else {
+        return Vec::new();
     };
     let uses: Vec<ast::UseTree> = root
         .descendants()
@@ -1665,8 +1662,7 @@ pub(crate) fn source_imported_claims_macros(
         .into_iter()
         .filter(|name| {
             uses.iter().any(|item| {
-                is_drop_in_assertion(item, name)
-                    && import_reaches_test(item, name, test_fn.as_ref())
+                is_drop_in_assertion(item, name) && import_reaches_test(item, name, &test_fn)
             })
         })
         .collect()
@@ -1678,37 +1674,29 @@ pub(crate) const CLAIMS_PAYLOAD_MACRO_NAMES: [&str; 2] = ["assert_ok", "assert_s
 
 const CLAIMS_MACRO_NAMES: [&str; 4] = ["assert_err", "assert_none", "assert_ok", "assert_some"];
 
-/// The byte span of source lines `first..=last` (1-based), without the final
-/// line break, or `None` when the lines are not in `source`.
-fn line_span(source: &str, first: usize, last: usize) -> Option<ra_ap_syntax::TextRange> {
-    if first == 0 || last < first {
-        return None;
-    }
+/// The offset of the first non-blank character on source line `line`
+/// (1-based), or `None` when there is no such line.
+fn first_code_offset(source: &str, line: usize) -> Option<TextSize> {
     let mut offset = 0usize;
-    let mut span_start = None;
-    for (index, line) in source.split_inclusive('\n').enumerate() {
-        let number = index + 1;
-        if number == first {
-            span_start = Some(offset);
+    for (index, text) in source.split_inclusive('\n').enumerate() {
+        if index + 1 == line {
+            let blank = text.len() - text.trim_start().len();
+            let at = offset + blank;
+            return (at < offset + text.trim_end().len())
+                .then(|| TextSize::try_from(at).ok())
+                .flatten();
         }
-        if number == last {
-            let end = offset + line.trim_end_matches(['\n', '\r']).len();
-            return Some(ra_ap_syntax::TextRange::new(
-                TextSize::try_from(span_start?).ok()?,
-                TextSize::try_from(end).ok()?,
-            ));
-        }
-        offset += line.len();
+        offset += text.len();
     }
     None
 }
 
-/// The smallest `fn` item whose text range holds all of `span`: the test.
-fn innermost_fn_covering(root: &SyntaxNode, span: ra_ap_syntax::TextRange) -> Option<SyntaxNode> {
-    root.descendants()
-        .filter(|node| ast::Fn::can_cast(node.kind()))
-        .filter(|node| node.text_range().contains_range(span))
-        .min_by_key(|node| node.text_range().len())
+/// The innermost `fn` item that holds `offset`; attributes belong to it.
+fn fn_at_offset(root: &SyntaxNode, offset: TextSize) -> Option<SyntaxNode> {
+    root.token_at_offset(offset)
+        .right_biased()?
+        .parent_ancestors()
+        .find(|node| ast::Fn::can_cast(node.kind()))
 }
 
 /// Whether `item` carries a `cfg` or `cfg_attr` other than the plain test
@@ -1725,8 +1713,8 @@ fn use_may_be_compiled_out(item: &ast::Use) -> bool {
 }
 
 /// Whether the `use` holding `tree` makes macro `name` resolve in the body of
-/// `test_fn` (the test is at the file root when `test_fn` is `None`).
-fn import_reaches_test(tree: &ast::UseTree, name: &str, test_fn: Option<&SyntaxNode>) -> bool {
+/// `test_fn`.
+fn import_reaches_test(tree: &ast::UseTree, name: &str, test_fn: &SyntaxNode) -> bool {
     let Some(item) = tree.syntax().ancestors().find_map(ast::Use::cast) else {
         return false;
     };
@@ -1746,15 +1734,11 @@ fn import_reaches_test(tree: &ast::UseTree, name: &str, test_fn: Option<&SyntaxN
             .collect()
     };
     match container.kind() {
-        K::SOURCE_FILE => match test_fn {
-            // A doc example: its root-level imports are its own.
-            None => true,
-            Some(test_fn) => enclosing(test_fn)
-                .iter()
-                .all(|module| module_reimports_parent(module, name)),
-        },
+        K::SOURCE_FILE => enclosing(test_fn)
+            .iter()
+            .all(|module| module_reimports_parent(module, name)),
         K::ITEM_LIST => {
-            let (Some(test_fn), Some(owner)) = (test_fn, container.parent()) else {
+            let Some(owner) = container.parent() else {
                 return false;
             };
             let mut between = Vec::new();
@@ -1771,9 +1755,6 @@ fn import_reaches_test(tree: &ast::UseTree, name: &str, test_fn: Option<&SyntaxN
         K::STMT_LIST => {
             // Only the test fn's own body block; a nested block or another
             // function's body does not reach the assertion.
-            let Some(test_fn) = test_fn else {
-                return false;
-            };
             container
                 .parent()
                 .and_then(|block| block.parent())

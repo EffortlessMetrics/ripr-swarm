@@ -5249,24 +5249,24 @@ impl OwnerReturnPin {
                                     // on a verified `use claims::..` import.
                                     .or_else(|| {
                                         let (name, call) = claims_payload_call(initializer)?;
-                                        // #12462: a doc example's imports are in its own
-                                        // synthetic source, which has no span of the file's;
-                                        // a test reads the holding file at its own lines.
-                                        let imported = match doctest {
-                                            Some(example) => {
-                                                source_imported_claims_macros(example, None)
-                                                    .contains(&name)
-                                            }
-                                            None => {
-                                                index.files().get(&test.file).is_some_and(|facts| {
-                                                    source_imported_claims_macros(
-                                                        &facts.source,
-                                                        Some((test.start_line, test.end_line)),
-                                                    )
-                                                    .contains(&name)
-                                                })
-                                            }
-                                        };
+                                        // #12462: the example's own synthetic source when
+                                        // the test is a doc example (its test fn opens on
+                                        // the fence line, so the span is valid there), the
+                                        // holding file otherwise.
+                                        let imported = doctest
+                                            .or_else(|| {
+                                                index
+                                                    .files()
+                                                    .get(&test.file)
+                                                    .map(|facts| facts.data().source.as_ref())
+                                            })
+                                            .is_some_and(|source| {
+                                                source_imported_claims_macros(
+                                                    source,
+                                                    (test.start_line, test.end_line),
+                                                )
+                                                .contains(&name)
+                                            });
                                         // The macro panics on the other variant and yields
                                         // the payload, so only a pin on that same payload
                                         // reads: an `Err` pin (`ErrVariant`, or a field
@@ -5723,11 +5723,9 @@ impl OwnerReturnPin {
         // (the syntax admission settles the manifest and shadowing): they
         // evaluate their operand and bind nothing, so an owner call inside
         // one is no rebinding.
-        // #12462: scoped to the asserting test. A doc example has no span in
-        // its source, so only its root-level imports count.
-        let claims_span = doctest
-            .is_none()
-            .then_some((test.start_line, test.end_line));
+        // #12462: scoped to the asserting test (a doc example reads its own
+        // synthetic source, whose test fn opens on the fence line).
+        let claims_span = (test.start_line, test.end_line);
         let claims_macros: Vec<&str> = test_source
             .map(|source| source_imported_claims_macros(source, claims_span))
             .unwrap_or_default();
