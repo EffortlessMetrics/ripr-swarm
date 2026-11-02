@@ -3539,9 +3539,9 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
         "report" | "check" => score_corpus(dir, sub == "check", cases.as_deref(), out),
         "check-all" => {
             // Every language's corpus scores its rows, found by name so a
-            // new corpus is checked without a workflow change. Coverage is
-            // declared per corpus inside `score_corpus`: a language without
-            // a ledger scores rows only, loudly, until it opts in.
+            // new corpus is checked without a workflow change. Each committed
+            // corpus must carry its spec-example ledger; `score_corpus` fails
+            // before running cases when the ledger is missing.
             let checked = check_each(corpus_dirs(Path::new(FIXTURES_DIR))?, |dir| {
                 score_corpus(dir, true, None, None)
             })?;
