@@ -157,7 +157,7 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
         }
     }
 
-    finish_policy_report_with_disclosures(
+    let result = finish_policy_report_with_disclosures(
         PolicyReportSpec {
             report_file: "file-policy.md",
             check: "check-file-policy",
@@ -182,7 +182,13 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
             intro: format!("{COMMAND_DIAGNOSTIC_DISCLOSURE} Capture scope: actual covered-by warmup/list calls only. Reused listings, skipped warmups and host-inapplicable selectors add no executed rows."),
             items: diagnostics.iter().map(CommandDiagnostic::render).collect(),
         }],
-    )
+    );
+    if result.is_ok() {
+        super::file_policy_retained_evidence::write_retained_subject()?;
+    } else {
+        super::file_policy_retained_evidence::remove_retained_subject();
+    }
+    result
 }
 
 fn file_policy_failure_report(
@@ -191,6 +197,7 @@ fn file_policy_failure_report(
     diagnostics: &[CommandDiagnostic],
     mut write: impl FnMut(&str) -> Result<(), String>,
 ) -> Result<(), String> {
+    super::file_policy_retained_evidence::remove_retained_subject();
     // Preserve the original enumerator failure, including instrument failures,
     // without routing it through a renderer that calls it a policy violation.
     let body = format!(

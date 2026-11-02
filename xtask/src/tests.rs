@@ -29653,92 +29653,10 @@ fn policy_checker_facade_checks_in_repo_cwd() -> Result<(), String> {
 
 fn assert_packet_coverage_report() -> Result<(), String> {
     let report = crate::read_text_lossy(Path::new("target/ripr/reports/file-policy.md"))?;
-    let common = report
-        .lines()
-        .find(|line| {
-            line.ends_with("`cargo test -p xtask --bin xtask --locked --offline portable_consumer`")
-        })
-        .ok_or("common packet coverage is absent from the policy report")?;
-    let common_tests = packet_coverage_selected_tests(common)?;
-    for subject in [
-        "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client",
-        "portable_consumer::tests::packet_digest_matches_the_producer_formula",
-    ] {
-        if !common_tests.contains(&subject) || !common.contains("declared=all; applicable;") {
-            return Err(format!(
-                "common packet subject not selected: {subject}: {common}"
-            ));
-        }
-    }
-    let native = report
-        .lines()
-        .find(|line| {
-            line.ends_with(
-                "`cargo test -p ripr --locked --offline --test portable_consumer_packet`",
-            )
-        })
-        .ok_or("native packet coverage is absent from the policy report")?;
-    if packet_coverage_selected_count(common)? < 2 {
-        return Err(format!(
-            "common packet selection lost required subjects: {common}"
-        ));
-    }
-    if cfg!(windows) {
-        if !common.contains("host=windows; declared=all; applicable;")
-            || !native
-                .contains("host=windows; declared=unix; not_applicable; selected=not_enumerated;")
-            || native.contains("tests=[")
-        {
-            return Err(format!(
-                "Windows packet applicability drifted: {common}\n{native}"
-            ));
-        }
-    } else {
-        let native_tests = packet_coverage_selected_tests(native)?;
-        if !native.contains("host=unix; declared=unix; applicable;")
-            || packet_coverage_selected_count(native)? < 2
-        {
-            return Err(format!(
-                "Unix native packet selector was not retained: {native}"
-            ));
-        }
-        for subject in [
-            "native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback",
-            "native_packet_pilot_consumes_the_summary_artifact",
-        ] {
-            if !native_tests.contains(&subject) {
-                return Err(format!(
-                    "Unix native packet subject missing: {subject}: {native}"
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn packet_coverage_selected_count(row: &str) -> Result<usize, String> {
-    row.split_once("; selected=")
-        .and_then(|(_, rest)| rest.split_once(';'))
-        .ok_or_else(|| format!("selected count absent from coverage row: {row}"))?
-        .0
-        .parse()
-        .map_err(|error| format!("invalid selected count in {row}: {error}"))
-}
-
-fn packet_coverage_selected_tests(row: &str) -> Result<Vec<&str>, String> {
-    let tests = row
-        .rsplit_once("; `")
-        .and_then(|(fields, _)| fields.split_once("; tests=["))
-        .and_then(|(_, tests)| tests.strip_suffix(']'))
-        .ok_or_else(|| format!("selected tests field missing or malformed: {row}"))?;
-    let selected: Vec<_> = tests.split(", ").collect();
-    if selected.iter().any(|test| {
-        test.is_empty() || test.contains([',', '[', ']', ';']) || test.contains(char::is_whitespace)
-    }) || selected.len() != packet_coverage_selected_count(row)?
-    {
-        return Err(format!("selected identities and count disagree: {row}"));
-    }
-    Ok(selected)
+    crate::policy::file_policy_retained_evidence::validate_packet_coverage_report(
+        &report,
+        crate::policy::file_policy_retained_evidence::host_label(),
+    )
 }
 
 fn packet_coverage_report_fixture() -> String {

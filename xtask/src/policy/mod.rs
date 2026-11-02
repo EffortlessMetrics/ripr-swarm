@@ -13,6 +13,7 @@ pub(crate) mod droid_review;
 pub(crate) mod evidence_state_literals;
 mod executable_files;
 mod file_policy;
+pub(crate) mod file_policy_retained_evidence;
 mod fold_changelog;
 mod local_context;
 mod network;

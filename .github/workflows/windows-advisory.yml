@@ -258,6 +258,25 @@ jobs:
         run: |
           cargo xtask windows-advisory-summary --run1 target/windows-run1.log --run1-status target/windows-run1.status --run2 target/windows-run2.log --run2-status target/windows-run2.status | tee target/windows-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # The artifact upload retains file-policy.md with if-no-files-found: ignore,
+      # so upload success alone cannot establish provenance. Run the real facade
+      # in isolation, then admit the retained report against the checkout head,
+      # facade log, cargo status, subject sidecar, and packet oracle (#5044).
+      - name: Admit retained file-policy evidence (#5044)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 60
+        shell: bash
+        run: |
+          mkdir -p target target/ripr/reports
+          rm -f target/ripr/reports/file-policy.md target/ripr/reports/file-policy.subject.json
+          target/advisory-run/xtask.exe windows-advisory-run --timeout-minutes 45 --log target/file-policy-facade.log --status target/file-policy-facade.status -- cargo test -p xtask policy_checker_facade_runs_current_repo_checks -- --exact --nocapture
+          target/advisory-run/xtask.exe windows-advisory-file-policy-evidence \
+            --report target/ripr/reports/file-policy.md \
+            --subject target/ripr/reports/file-policy.subject.json \
+            --log target/file-policy-facade.log \
+            --status target/file-policy-facade.status \
+            --head "$(git rev-parse HEAD)"
+
       # A missing status file is `not_run`, never silence: a lane that drops a
       # row it did not execute reads as if nothing was wrong. The rows are
       # echoed to the job log as well: the step summary is not retrievable
@@ -341,7 +360,10 @@ jobs:
             target/windows-run2.status
             target/windows-acl.log
             target/windows-acl.status
+            target/file-policy-facade.log
+            target/file-policy-facade.status
             target/ripr/reports/file-policy.md
+            target/ripr/reports/file-policy.subject.json
             target/nofeatures-check.log
             target/nofeatures-check.status
             target/nofeatures-test.log

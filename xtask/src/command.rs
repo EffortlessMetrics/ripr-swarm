@@ -22,6 +22,7 @@ pub(crate) enum XtaskCommand {
     WindowsAdvisorySummary(Vec<String>),
     WindowsAdvisoryRun(Vec<String>),
     WindowsAdvisoryAclEvidence(Vec<String>),
+    WindowsAdvisoryFilePolicyEvidence(Vec<String>),
     VerifyTestShards(Vec<String>),
     WindowsAdvisoryIsolatedSummary(Vec<String>),
     SuggestedFixes,
@@ -234,6 +235,9 @@ impl XtaskCommand {
             "windows-advisory-summary" => Self::WindowsAdvisorySummary(rest),
             "windows-advisory-run" => Self::WindowsAdvisoryRun(rest),
             "windows-advisory-acl-evidence" => Self::WindowsAdvisoryAclEvidence(rest),
+            "windows-advisory-file-policy-evidence" => {
+                Self::WindowsAdvisoryFilePolicyEvidence(rest)
+            }
             "verify-test-shards" => Self::VerifyTestShards(rest),
             "windows-advisory-isolated-summary" => Self::WindowsAdvisoryIsolatedSummary(rest),
             "eval-sweep" => Self::EvalSweep(rest),
@@ -552,6 +556,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "windows-advisory-summary --run1 <path> --run1-status <path> --run2 <path> --run2-status <path>",
         "windows-advisory-run --timeout-minutes <n> --log <path> --status <path> -- <program> [args...]",
         "windows-advisory-acl-evidence --log <path> --status <path> --expect <test-path> [--expect <test-path>...]",
+        "windows-advisory-file-policy-evidence --report <path> --subject <path> --log <path> --status <path> --head <sha>",
         "verify-test-shards --dir <path> --artifact <name> --attempt <n> --repository <owner/name> --sha <sha> --run-id <id> --shards <n> --out <path>",
         "windows-advisory-isolated-summary --dir <path>",
         "suggested-fixes",
@@ -932,6 +937,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Fails unless the nightly Windows advisory lane's real-ACL pwsh step produced usable evidence (#10621): the status file and log must exist, spawn-failure status 127 is refused, and every --expect full libtest path must appear exactly once in the log as an ok or FAILED row; an ignored row is refused because the deny was never exercised. Closes the silent-green hole where a renamed test or a stale name filter left a status file standing over a run that executed none of the four real-ACL tests (#4938). Test outcomes stay advisory; only evidence is fail-closed. The nightly pwsh step invokes it through the lane's prebuilt advisory-run binary, and the step's refusal-is-the-step-status behavior is pinned by the xtask workflow test. Reads only the supplied files and writes none.",
+        ),
+        command_entry(
+            "windows-advisory-file-policy-evidence --report <path> --subject <path> --log <path> --status <path> --head <sha>",
+            "report_only",
+            "stdout only",
+            false,
+            false,
+            "Admits the nightly Windows advisory lane's retained file-policy report only when the matching native policy facade ran successfully on the checkout head (#5044): the facade log must show exactly one ok row for policy_checker_facade_runs_current_repo_checks, the captured cargo status must be zero, the report must be present and Status: pass, the subject sidecar must match --head and the current host, and the shared packet-coverage oracle must accept the report rows. Missing, empty, malformed, stale, mismatched, or failed-producer controls exit non-zero while unrelated advisory test failures stay advisory. Reads only the supplied files and writes none.",
         ),
         command_entry(
             "verify-test-shards --dir <path> --artifact <name> --attempt <n> --repository <owner/name> --sha <sha> --run-id <id> --shards <n> --out <path>",

@@ -49,6 +49,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::WindowsAdvisoryAclEvidence(args) => {
             super::windows_advisory_acl_evidence::run(&args)
         }
+        XtaskCommand::WindowsAdvisoryFilePolicyEvidence(args) => {
+            super::windows_advisory_file_policy_evidence::run(&args)
+        }
         XtaskCommand::VerifyTestShards(args) => super::verify_test_shards::run(&args),
         XtaskCommand::WindowsAdvisoryIsolatedSummary(args) => {
             super::windows_advisory::run_isolated(&args)
