@@ -175,6 +175,15 @@ calls the owner and asserts `assert_eq!(buf, expected_buf)` with the full
 expected contents left to fill in. A push into any other receiver, such as
 the function's own local, keeps the observer refusal.
 
+The repair brief bare `ripr repair` prints for that gap names the same check
+(#12711). `RepairRouteReadiness::proposes_collection_contents_check` (the
+proposed `whole_object_equality` with its present contents-check evidence)
+is the one answer it reads: the suggested assertion reads "an exact check of
+the full contents of `buf` after the call, such as
+`assert_eq!(buf, expected_buf)`", and the suggested test name and the stub's
+test name end in `full_contents` rather than `side_effect_observer`. Every
+other gap keeps its brief and test name.
+
 `ripr check` and bare `ripr repair` read the same repository evidence and the
 same `repair_packet_eligibility` decision. In the default check and with
 `--mode instant` or `--no-unchanged-tests`:
@@ -359,7 +368,13 @@ already noticed.
   plain collection receiver, and supplies it with a proposed
   `whole_object_equality` only through
   `TestGripEvidence::follows_push_to_counted_local`.
-- `crates/ripr/src/analysis/test_stub.rs`: `pushed_buffer_parameter`.
+- `crates/ripr/src/analysis/test_stub.rs`: `pushed_buffer_parameter`, which
+  also picks the `full_contents` test name.
+- `crates/ripr/src/analysis/repair_route.rs`:
+  `RepairRouteReadiness::proposes_collection_contents_check` and
+  `collection_contents_check_suggestion` (#12711), read by
+  `assemble_repair_card` in `crates/ripr/src/app/repair_card_handoff.rs` and
+  `recommended_test_for` in `crates/ripr/src/output/agent_seam_packets.rs`.
 - `crates/ripr/src/app/task_first.rs`: `check_repair_route` refuses a start
   whose recommended test is not an editable target.
 

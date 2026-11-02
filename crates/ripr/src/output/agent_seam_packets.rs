@@ -2931,6 +2931,17 @@ pub(crate) fn recommended_test_for(entry: &ClassifiedSeam) -> RecommendedTest {
             "producer-owned route readiness is not eligible for a repair target",
         );
     }
+    // #12711: the new test for a pushed collection checks its full contents,
+    // so its suggested name does not call it an observer.
+    let name = if readiness.proposes_collection_contents_check() {
+        format!(
+            "{}_{}",
+            snake_case_token(owner_short),
+            crate::analysis::repair_route::COLLECTION_CONTENTS_TEST_NAME_SUFFIX
+        )
+    } else {
+        name
+    };
     let selected_target = match &readiness.target_selection {
         RepairTargetSelection::Existing(selected_target) => selected_target,
         RepairTargetSelection::Proposed(proposal) => {

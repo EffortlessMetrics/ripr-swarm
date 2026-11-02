@@ -142,6 +142,41 @@ impl RepairRouteReadiness {
         self.state == RepairRouteState::Ready
             && !matches!(self.target_selection, RepairTargetSelection::Missing)
     }
+
+    /// #12711: whether this route proposes the exact contents check of a
+    /// pushed collection (#11402): the whole-object comparison together with
+    /// its present contents-check evidence. The repair brief and the
+    /// suggested test name read this one answer instead of re-deriving the
+    /// push shape.
+    pub(crate) fn proposes_collection_contents_check(&self) -> bool {
+        self.proposed_oracle == Some(OracleKind::WholeObjectEquality)
+            && self
+                .present_evidence
+                .iter()
+                .any(|fact| fact == COLLECTION_CONTENTS_CHECK_EVIDENCE)
+    }
+}
+
+/// #12711: the name ending for a new test that checks a pushed collection's
+/// full contents, shared by the suggested test name and the stub so neither
+/// calls that test an observer.
+pub(crate) const COLLECTION_CONTENTS_TEST_NAME_SUFFIX: &str = "full_contents";
+
+/// #12711: the plain suggested assertion for a route that proposes the
+/// pushed collection's contents check, naming the collection the changed
+/// push writes into; `None` for every other route.
+pub(crate) fn collection_contents_check_suggestion(
+    seam: &RepoSeam,
+    readiness: &RepairRouteReadiness,
+) -> Option<String> {
+    if !readiness.proposes_collection_contents_check() {
+        return None;
+    }
+    let receiver =
+        crate::analysis::classify::direct_collection_mutation_receiver(seam.expression())?;
+    Some(format!(
+        "an exact check of the full contents of `{receiver}` after the call, such as `assert_eq!({receiver}, expected_{receiver})`"
+    ))
 }
 
 /// Typed reason a seam is not eligible for a repair packet. The flip is
@@ -1137,6 +1172,7 @@ mod tests {
     fn contents_check_is_proposed_only_for_a_marked_side_effect_push() -> Result<(), String> {
         let ready = repair_packet_eligibility(&push_seam(SeamKind::SideEffect, true));
         if !ready.eligible()
+            || !ready.readiness.proposes_collection_contents_check()
             || ready.readiness.proposed_oracle != Some(OracleKind::WholeObjectEquality)
             || !ready
                 .readiness
@@ -1153,6 +1189,7 @@ mod tests {
         ] {
             let refused = repair_packet_eligibility(&push_seam(kind, marked));
             if refused.eligible()
+                || refused.readiness.proposes_collection_contents_check()
                 || refused.readiness.proposed_oracle.is_some()
                 || !refused
                     .readiness

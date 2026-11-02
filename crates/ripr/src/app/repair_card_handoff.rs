@@ -24,7 +24,8 @@ use crate::agent::loop_commands::{bound_root, shell_arg};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::RepoSeam;
 use crate::analysis::repair_route::{
-    RepairRouteReadiness, RepairTargetSelection, repair_packet_eligibility,
+    RepairRouteReadiness, RepairTargetSelection, collection_contents_check_suggestion,
+    repair_packet_eligibility,
 };
 use crate::config::RiprConfig;
 use crate::domain::{
@@ -464,6 +465,10 @@ pub(crate) fn assemble_repair_card(
     // the shared seam producer. The card reads that same producer so a repair
     // that prints an assertion shape never also says there is none.
     let seam_assertion = suggested_assertion_for_classified_seam(entry);
+    // #12711: a route that proposes a pushed collection's contents check
+    // names that check, the one the stub writes, instead of "none".
+    let seam_assertion =
+        seam_assertion.or_else(|| collection_contents_check_suggestion(&entry.seam, readiness));
     let mut instruction = facts
         .witness
         .map(FixInstructionSummary::from_witness)

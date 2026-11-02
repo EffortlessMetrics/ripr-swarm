@@ -21161,6 +21161,8 @@ tests = [
   "crates/ripr/tests/collection_out_parameter_repair.rs::stub_for_a_push_into_a_local_vector_still_needs_an_observer",
   "crates/ripr/tests/collection_out_parameter_repair.rs::stub_for_a_conditional_push_into_the_buffer_still_needs_an_observer",
   "crates/ripr/tests/collection_out_parameter_repair.rs::stub_for_a_local_that_shadows_the_buffer_still_needs_an_observer",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::repair_brief_names_the_contents_check_for_a_pinned_push",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::repair_brief_for_other_gaps_is_unchanged",
   "crates/ripr/tests/collection_out_parameter_repair.rs::inline_count_read_with_no_editable_test_starts_in_neither_command",
   "crates/ripr/src/analysis/repair_route.rs::tests::contents_check_is_proposed_only_for_a_marked_side_effect_push",
   "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs::tests::count_reads_of_a_fresh_vector_or_string_are_followed",
@@ -21181,6 +21183,8 @@ code = [
   "crates/ripr/src/analysis/test_grip_evidence.rs",
   "crates/ripr/src/analysis/classifier/evidence.rs",
   "crates/ripr/src/app/task_first.rs",
+  "crates/ripr/src/app/repair_card_handoff.rs",
+  "crates/ripr/src/output/agent_seam_packets.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md",

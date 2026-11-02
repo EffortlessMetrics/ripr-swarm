@@ -420,11 +420,14 @@ fn rust_test_stub_for_target(
         "use super::*;".to_string()
     };
 
-    let base_name = format!(
-        "{}_{}",
-        snake_case(&signature.name),
+    // #12711: the contents-check stub is not an observer test; it takes the
+    // name ending the repair brief suggests for the same check.
+    let suffix = if pushed_buffer_parameter(seam, &signature, source).is_some() {
+        crate::analysis::repair_route::COLLECTION_CONTENTS_TEST_NAME_SUFFIX
+    } else {
         name_suffix(seam.kind())
-    );
+    };
+    let base_name = format!("{}_{}", snake_case(&signature.name), suffix);
     let path_scope = if integration_placement {
         PathScope::Integration(integration_crate.unwrap_or("crate"))
     } else {
