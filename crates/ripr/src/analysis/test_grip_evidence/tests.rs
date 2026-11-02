@@ -13656,6 +13656,107 @@ fn given_boundary_owner_call_when_input_operand_is_closure_local_then_activation
 /// assertion in a test that also calls the owner still counts. Pinned through
 /// both the full and the compact entry points, which must agree.
 #[test]
+fn proximity_test_pinning_another_function_cannot_credit_a_predicate_seam() -> Result<(), String> {
+    type Stages = (StageState, StageState, StageState);
+    // (stages through the full path, stages through the compact path,
+    // published oracle strengths) for the first seam whose expression
+    // contains `needle`.
+    let read = |extra_test: &str,
+                needle: &str|
+     -> Result<(Stages, Stages, Vec<OracleStrength>), String> {
+        let prod = format!(
+            "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+             pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+             pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {extra_test}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::PredicateBoundary && s.expression().contains(needle))
+            .ok_or_else(|| format!("predicate seam `{needle}` present"))?;
+        let full = evidence_for_seam(seam, &index);
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(seam, &context);
+        let published: Vec<OracleStrength> = full
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect();
+        Ok((
+            (
+                full.propagate.state,
+                full.observe.state,
+                full.discriminate.state,
+            ),
+            (
+                compact.propagate.state,
+                compact.observe.state,
+                compact.discriminate.state,
+            ),
+            published,
+        ))
+    };
+    // `reduce_over` calls only `reduce`. It never reaches `consume`, so its
+    // assertion says nothing about `consume`'s `wait < 5`.
+    let other_function = read(
+        "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }",
+        "wait < 5",
+    )?;
+    assert_eq!(other_function.0, other_function.1, "full and compact agree");
+    assert_eq!(
+        other_function.0,
+        (StageState::Unknown, StageState::No, StageState::No),
+        "other-function stages"
+    );
+    assert_eq!(
+        other_function.2,
+        vec![OracleStrength::None],
+        "other-function published oracle"
+    );
+    // The same assertion in a test that also calls `consume` is credited.
+    let owner_and_other = read(
+        "#[test] fn consume_and_reduce() { let _ = consume(3); assert_eq!(reduce(3), Reduction::Over(3)); }",
+        "wait < 5",
+    )?;
+    assert_eq!(
+        owner_and_other.0, owner_and_other.1,
+        "full and compact agree"
+    );
+    assert_eq!(
+        owner_and_other.0,
+        (StageState::Yes, StageState::Yes, StageState::Yes),
+        "owner+other stages"
+    );
+    assert_eq!(
+        owner_and_other.2,
+        vec![OracleStrength::Strong],
+        "owner+other published oracle"
+    );
+    // Control: the assertion does pin `reduce`, so it still grips `reduce`'s
+    // own predicate. The filter removes only what pins a function with no
+    // path to the seam's owner.
+    let own_predicate = read(
+        "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }",
+        "tokens > 9",
+    )?;
+    assert_eq!(own_predicate.0, own_predicate.1, "full and compact agree");
+    assert_eq!(
+        own_predicate.0,
+        (StageState::Yes, StageState::Yes, StageState::Yes),
+        "own-predicate stages"
+    );
+    assert!(
+        own_predicate.2.contains(&OracleStrength::Strong),
+        "own-predicate keeps its strong oracle: {:?}",
+        own_predicate.2
+    );
+    Ok(())
+}
+
+#[test]
 fn proximity_test_pinning_another_function_cannot_grade_a_match_arm_up() -> Result<(), String> {
     type Stages = (StageState, StageState, StageState);
     let stages_for = |extra_test: &str| -> Result<(Stages, Stages, Vec<OracleStrength>), String> {
