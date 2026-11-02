@@ -52492,6 +52492,31 @@ fn require_proof_pack_violation(violations: &[String], needle: &str) -> Result<(
 }
 
 #[test]
+fn check_proof_packs_rejects_output_contracts_lane_missing_pack_command() -> Result<(), String> {
+    let manifest = ci_document(
+        "policy/proof-packs.toml",
+        include_str!("../../policy/proof-packs.toml"),
+    )?;
+    let mut lane_commands = std::collections::BTreeMap::new();
+    lane_commands.insert(
+        "output-contracts".to_string(),
+        [
+            "cargo xtask check-output-contracts",
+            "cargo xtask check-fixture-contracts",
+            "cargo xtask check-generated",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect(),
+    );
+    let violations = super::proof_pack_output_contracts_lane_violations(&manifest, &lane_commands);
+    require_proof_pack_violation(
+        &violations,
+        "requires `cargo xtask goldens check` but ci_lane `output-contracts`",
+    )
+}
+
+#[test]
 fn check_proof_packs_accepts_current_manifest() -> Result<(), String> {
     with_repo_cwd(super::check_proof_packs_impl)
 }
