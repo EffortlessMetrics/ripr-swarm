@@ -2251,6 +2251,13 @@ impl RepoModuleTreeScanCache {
     }
 }
 
+fn cache_entry_layer_has_any_entry(dir: &Path) -> bool {
+    match std::fs::read_dir(dir) {
+        Ok(entries) => entries.flatten().next().is_some(),
+        Err(_) => false,
+    }
+}
+
 /// Crate-private cache I/O surface. Holds the directory the cache lives
 /// in but not in-memory state; safe to construct cheaply per call.
 pub(crate) struct RepoSeamFactCache {
@@ -2288,6 +2295,19 @@ impl RepoSeamFactCache {
             ClassifiedCacheFamily::CompactClassifiedSeams,
             COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION,
         )
+    }
+
+    /// Cheap cache-presence probe for invocation-time cost disclosure (#12505).
+    pub(crate) fn seam_facts_cache_has_stored_entries(
+        workspace_root: &Path,
+        compact: bool,
+    ) -> bool {
+        let cache = if compact {
+            Self::at_compact_classified(workspace_root)
+        } else {
+            Self::at(workspace_root)
+        };
+        cache.has_stored_entries()
     }
 
     fn at_named(
@@ -2332,6 +2352,13 @@ impl RepoSeamFactCache {
     /// (see `publish_sharded_generation`), hence `true` only there.
     pub(crate) fn entry_dirs(&self) -> [(PathBuf, bool); 2] {
         [(self.dir.clone(), false), (self.sharded_dir.clone(), true)]
+    }
+
+    /// True when either cache layer directory contains at least one entry.
+    pub(crate) fn has_stored_entries(&self) -> bool {
+        self.entry_dirs()
+            .iter()
+            .any(|(dir, _)| cache_entry_layer_has_any_entry(dir))
     }
 
     pub(crate) fn rooted_at(dir: PathBuf, sharded_dir: PathBuf, base: PathBuf) -> Self {

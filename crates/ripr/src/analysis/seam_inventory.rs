@@ -272,6 +272,19 @@ impl From<&SeamLimitInfo> for CachedSeamLimitInfo {
 /// pipeline entirely. Misses and corrupt entries fall through to a
 /// fresh compute and write the result for the next run. Cache
 /// failures never fail the analysis.
+
+pub(crate) fn seam_facts_cache_miss_message(compact: bool) -> &'static str {
+    if compact {
+        "ripr: no usable compact seam-facts cache entry for this workspace state; running the full compact classified walk"
+    } else {
+        "ripr: no usable seam-facts cache entry for this workspace state; running the full classified walk"
+    }
+}
+
+fn disclose_seam_facts_cache_miss(compact: bool) {
+    eprintln!("{}", seam_facts_cache_miss_message(compact));
+}
+
 #[cfg(test)]
 pub(crate) fn inventory_classified_seams_at(root: &Path) -> Result<Vec<ClassifiedSeam>, String> {
     inventory_classified_seams_report_at_with_config(root, &RiprConfig::default())
@@ -423,6 +436,7 @@ fn inventory_classified_seams_report_collect(
             }
             CacheLoad::Miss => {
                 trace_latency_phase("cache_load", "miss", cache_started.elapsed());
+                disclose_seam_facts_cache_miss(false);
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
@@ -486,6 +500,7 @@ fn inventory_classified_seams_report_collect(
         }
         CacheLoad::Miss => {
             trace_latency_phase("cache_load", "miss", cache_started.elapsed());
+            disclose_seam_facts_cache_miss(false);
         }
         CacheLoad::CorruptIgnored { reason } => {
             trace_latency_phase("cache_load", "corrupt_ignored", cache_started.elapsed());
@@ -905,6 +920,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
             }
             CacheLoad::Miss => {
                 trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
+                disclose_seam_facts_cache_miss(true);
             }
             CacheLoad::CorruptIgnored { reason } => {
                 trace_latency_phase(
@@ -941,6 +957,7 @@ pub(crate) fn inventory_compact_classified_seams_at_with_config(
         }
         CacheLoad::Miss => {
             trace_latency_phase("compact_cache_load", "miss", cache_started.elapsed());
+            disclose_seam_facts_cache_miss(true);
         }
         CacheLoad::CorruptIgnored { reason } => {
             trace_latency_phase(
@@ -4233,6 +4250,20 @@ fn expected_sink_for(kind: SeamKind) -> ExpectedSink {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
+
+    #[test]
+    fn seam_facts_cache_miss_messages_name_each_family_walk() {
+        assert!(
+            seam_facts_cache_miss_message(false).contains("full classified walk"),
+            "{}",
+            seam_facts_cache_miss_message(false)
+        );
+        assert!(
+            seam_facts_cache_miss_message(true).contains("compact classified walk"),
+            "{}",
+            seam_facts_cache_miss_message(true)
+        );
+    }
 
     #[test]
     fn cache_receipt_retains_producer_order_and_portable_failure_rows() {

@@ -1616,7 +1616,7 @@ fn check_inner(
     // format — see `repo_audit_path_disclosure`) — like the repo-scope
     // --base/--diff warning above, this is an advisory notice, so it is not
     // part of the --quiet-suppressed progress stream.
-    if let Some(disclosure) = format.repo_audit_path_disclosure() {
+    if let Some(disclosure) = format.repo_audit_path_disclosure(&input.root) {
         eprintln!("{disclosure}");
     }
     if matches!(format, OutputFormat::RepoExposureJson) {

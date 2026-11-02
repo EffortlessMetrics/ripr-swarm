@@ -1,0 +1,28 @@
+schema_version = "1"
+# Pinned numeric `process::exit(<literal>)` sites outside the closed product
+# vocabulary {0,2,3,130}. Subprocess test helpers only; live CLI exits use
+# CommandError in `crates/ripr/src/cli/`.
+
+[[allow]]
+path = "crates/ripr/src/main.rs"
+line = 45
+literal = 2
+reason = "closed-stdout panic hook maps to EXIT_COULD_NOT_COMPLETE"
+
+[[allow]]
+path = "crates/ripr/src/git.rs"
+line = 2455
+literal = 0
+reason = "git timeout test subprocess success exit"
+
+[[allow]]
+path = "crates/ripr/src/git.rs"
+line = 2467
+literal = 0
+reason = "git timeout test subprocess success exit"
+
+[[allow]]
+path = "crates/ripr/src/atomic_file.rs"
+line = 970
+literal = 86
+reason = "atomic write test child exit code"

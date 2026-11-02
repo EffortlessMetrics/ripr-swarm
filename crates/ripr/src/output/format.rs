@@ -395,12 +395,23 @@ impl OutputFormat {
     /// cache-backed classified/compact-classified walks claim seam-facts
     /// cache reuse; the raw `repo-seams-*` walks disclose that every run
     /// pays the full walk (#4945 review).
-    pub(crate) fn repo_audit_path_disclosure(&self) -> Option<String> {
+    pub(crate) fn repo_audit_path_disclosure(
+        &self,
+        workspace_root: &std::path::Path,
+    ) -> Option<String> {
         if !self.is_full_repo_analysis() {
             return None;
         }
         let warm_rerun_clause = if self.is_seam_fact_cache_backed() {
-            "warm reruns reuse the seam-facts cache and are much faster."
+            let compact = matches!(self, OutputFormat::RepoExposureSummaryJson);
+            if crate::analysis::seam_cache::RepoSeamFactCache::seam_facts_cache_has_stored_entries(
+                workspace_root,
+                compact,
+            ) {
+                "warm reruns reuse the seam-facts cache and are much faster."
+            } else {
+                "no seam-facts cache present yet; the first run on this workspace pays the full walk."
+            }
         } else {
             "raw seam inventory does not read the seam-facts cache, so every run pays the full walk."
         };
@@ -495,8 +506,14 @@ mod tests {
     #[test]
     fn repo_format_audit_path_disclosure_covers_exactly_the_full_repo_analysis_group()
     -> Result<(), String> {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "ripr-format-audit-disclosure-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&workspace_root);
+        std::fs::create_dir_all(&workspace_root).map_err(|err| err.to_string())?;
         for spec in FORMAT_SPECS {
-            let disclosure = spec.format.repo_audit_path_disclosure();
+            let disclosure = spec.format.repo_audit_path_disclosure(&workspace_root);
             assert_eq!(
                 spec.format.is_full_repo_analysis(),
                 spec.is_full_repo_analysis,
@@ -526,12 +543,12 @@ mod tests {
                 );
                 if spec.is_seam_fact_cache_backed {
                     assert!(
-                        disclosure.contains("warm reruns reuse the seam-facts cache"),
-                        "cache-backed format must claim warm cache reruns: {disclosure}"
+                        disclosure.contains("no seam-facts cache present yet"),
+                        "cache-backed format without cache must not promise warm reruns: {disclosure}"
                     );
                     assert!(
-                        !disclosure.contains("every run pays the full walk"),
-                        "cache-backed format must not claim an uncached walk: {disclosure}"
+                        !disclosure.contains("warm reruns reuse the seam-facts cache"),
+                        "cache-backed format without cache must not promise warm reruns: {disclosure}"
                     );
                 } else {
                     assert!(
@@ -556,6 +573,41 @@ mod tests {
                 );
             }
         }
+        let _ = std::fs::remove_dir_all(&workspace_root);
+        Ok(())
+    }
+
+    /// #12505: cache-presence-aware warm-rerun disclosure flips once a family
+    /// has stored entries.
+    #[test]
+    fn repo_audit_path_disclosure_is_cache_presence_aware() -> Result<(), String> {
+        use std::path::Path;
+
+        let workspace_root =
+            std::env::temp_dir().join(format!("ripr-format-cache-presence-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&workspace_root);
+        std::fs::create_dir_all(&workspace_root).map_err(|err| err.to_string())?;
+        let format = OutputFormat::RepoExposureJson;
+        let cold = format
+            .repo_audit_path_disclosure(&workspace_root)
+            .ok_or("missing disclosure")?;
+        assert!(
+            cold.contains("no seam-facts cache present yet"),
+            "cold disclosure: {cold}"
+        );
+        let cache = crate::analysis::seam_cache::RepoSeamFactCache::at(&workspace_root);
+        for (dir, _) in cache.entry_dirs() {
+            std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+            std::fs::write(dir.join("presence-probe"), b"x").map_err(|err| err.to_string())?;
+        }
+        let warm = format
+            .repo_audit_path_disclosure(&workspace_root)
+            .ok_or("missing warm disclosure")?;
+        assert!(
+            warm.contains("warm reruns reuse the seam-facts cache"),
+            "warm disclosure: {warm}"
+        );
+        let _ = std::fs::remove_dir_all(&workspace_root);
         Ok(())
     }
 
