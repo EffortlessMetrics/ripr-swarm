@@ -1297,9 +1297,9 @@ impl CurrentChangeLabel {
                 (w, t) => format!("{w} of the {t} checked spots on {}", lines(t)),
             };
             let what = if withheld == 1 {
-                "ripr cannot tell from the code what a test checks there, so it is not listed as a gap"
+                "ripr cannot tell from the code whether a test would notice a change there, so it is not listed as a gap"
             } else {
-                "ripr cannot tell from the code what a test checks there, so they are not listed as gaps"
+                "ripr cannot tell from the code whether a test would notice a change there, so they are not listed as gaps"
             };
             let rest = match gripped {
                 0 => String::new(),
@@ -1367,7 +1367,7 @@ impl CurrentChangeLabel {
     fn markdown(&self) -> String {
         match self {
             Self::PartOfChange { base } => format!(
-                "part of it (this seam is on {})",
+                "part of it (this gap is on {})",
                 Self::changed_line(base.as_ref(), true)
             ),
             Self::Elsewhere {
@@ -1476,15 +1476,14 @@ const UNANALYZED_ONLY_VERDICT: &str = "this repository's source is in languages 
 /// Why pilot withheld seams from its ranking (#5497): their class is
 /// `opaque` or an `*_unknown` class, so ripr's static evidence could not
 /// establish whether a test discriminates them.
-const WITHHELD_REASON: &str =
-    "ripr cannot tell from the code what a test checks there, so this is not listed as a gap";
+const WITHHELD_REASON: &str = "ripr cannot tell from the code whether a test would notice a change there, so nothing here is listed as a gap";
 
 /// Why an empty ranking with withheld seams is not a clean result.
-const WITHHELD_ONLY_VERDICT: &str = "were withheld because ripr cannot tell from the code what a test checks there, so this is not a clean result.";
+const WITHHELD_ONLY_VERDICT: &str = "were withheld because ripr cannot tell from the code whether a test would notice a change there, so this is not a clean result.";
 
 /// Closing line for [`WITHHELD_ONLY_VERDICT`]: no gap to test, no snapshot
 /// pair to compare.
-const WITHHELD_ONLY_NEXT: &str = "No missing test to add: the repo exposure report says, for each withheld spot, which step ripr could not work out.";
+const WITHHELD_ONLY_NEXT: &str = "Nothing to act on yet: the repo exposure report says, for each withheld spot, which step ripr could not work out.";
 
 /// [`WITHHELD_ONLY_NEXT`], unless a seam limit cut seams pilot never
 /// classified: those may hold gaps, so "no gap to test" would claim an

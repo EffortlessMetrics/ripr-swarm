@@ -17906,13 +17906,13 @@ budget; a changed seam the budget dropped is not in `repo-exposure.json` until
 `RIPR_PILOT_SEAM_BUDGET` is raised. When
 `top_recommendation_in_change` is `false`, the terminal and Markdown say why no
 seam on the change ranks (pilot withholds them, they are already gripped,
-intentional or suppressed, the seam limit left seams unanalyzed, the change is
+intentional or suppressed, the pilot limit left spots unchecked, the change is
 in a file pilot's repo-wide ranking leaves out by design such as a Cargo build
 script (#6944; a reason drawn from analyzed seams also names such a file when the change includes one), or no seam pilot analyzed is on a changed line; a reason drawn from analyzed seams adds the seam-limit
 caveat when the inventory limit left seams unanalyzed, the change touches a
 Rust file and pilot could not classify the change's own files past the limit,
 from an error or its deadline; #6943), say the
-recommendation is elsewhere in the repo and name `ripr check --root <root>` for
+gap is not on a line you changed and name `ripr check --root <root>` for
 the change itself, adding `--worktree` when the diff came from the working tree
 (plain `ripr check` reads committed history only). The partial (timeout) summary carries no `current_change`.
 

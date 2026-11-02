@@ -922,7 +922,7 @@ fn pilot_summary_ranks_a_true_gap_ahead_of_withheld_limitations() {
     let md = render_pilot_summary_md(&entries, context);
     assert!(
         md.contains(
-            "- Withheld: 3 spots (ripr cannot tell from the code what a test checks there, so this is not listed as a gap; listed in `target/ripr/pilot/repo-exposure.md`)\n"
+            "- Withheld: 3 spots (ripr cannot tell from the code whether a test would notice a change there, so nothing here is listed as a gap; listed in `target/ripr/pilot/repo-exposure.md`)\n"
         ),
         "{md}"
     );
@@ -932,7 +932,7 @@ fn pilot_summary_ranks_a_true_gap_ahead_of_withheld_limitations() {
     let terminal = render_pilot_terminal(&entries, context);
     assert!(
         terminal.contains(
-            "  withheld: 3 spots (ripr cannot tell from the code what a test checks there, so this is not listed as a gap)\n"
+            "  withheld: 3 spots (ripr cannot tell from the code whether a test would notice a change there, so nothing here is listed as a gap)\n"
         ),
         "{terminal}"
     );
@@ -965,12 +965,12 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
 
     let md = render_pilot_summary_md(&entries, context);
     assert!(
-        md.contains("None ranked: 2 spots were withheld because ripr cannot tell from the code what a test checks there, so this is not a clean result. Inspect them in `target/ripr/pilot/repo-exposure.md`.\n"),
+        md.contains("None ranked: 2 spots were withheld because ripr cannot tell from the code whether a test would notice a change there, so this is not a clean result. Inspect them in `target/ripr/pilot/repo-exposure.md`.\n"),
         "{md}"
     );
     assert!(!md.contains("No actionable seam was ranked"), "{md}");
     assert!(!md.contains("After adding one focused test"), "{md}");
-    assert!(md.contains("No missing test to add:"), "{md}");
+    assert!(md.contains("Nothing to act on yet:"), "{md}");
 
     let terminal = render_pilot_terminal(&entries, context);
     assert!(
@@ -985,7 +985,7 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
         !terminal.contains("Run after adding the focused test"),
         "{terminal}"
     );
-    assert!(terminal.contains("No missing test to add:"), "{terminal}");
+    assert!(terminal.contains("Nothing to act on yet:"), "{terminal}");
 
     // With nothing withheld, the empty ranking keeps its old wording.
     let md = render_pilot_summary_md(&[], context);
@@ -1005,7 +1005,7 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
     );
 
     // A seam limit cut seams pilot never classified: they may hold gaps, so
-    // the withheld count is a lower bound and "No missing test to add" would claim an
+    // the withheld count is a lower bound and "Nothing to act on yet" would claim an
     // absence the run did not establish.
     let limit = crate::analysis::SeamLimitInfo {
         analyzed: 2,
@@ -1022,7 +1022,7 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
     );
     assert!(md.contains("- Withheld: at least 2 spots ("), "{md}");
     assert!(md.contains(expected_next), "{md}");
-    assert!(!md.contains("No missing test to add:"), "{md}");
+    assert!(!md.contains("Nothing to act on yet:"), "{md}");
     let terminal = render_pilot_terminal(&entries, limited);
     assert!(
         terminal.contains("  limit reached: checked 2 of 9 spots in the code\n"),
@@ -1033,7 +1033,7 @@ fn pilot_summary_with_only_limitations_is_not_a_clean_result() {
         "{terminal}"
     );
     assert!(terminal.contains(expected_next), "{terminal}");
-    assert!(!terminal.contains("No missing test to add:"), "{terminal}");
+    assert!(!terminal.contains("Nothing to act on yet:"), "{terminal}");
 }
 
 /// #9368: the terminal shows the top 1 seam; it must also disclose the
@@ -4638,25 +4638,25 @@ fn pilot_says_why_no_seam_on_the_change_ranks() -> Result<(), String> {
         (
             vec![ranked.clone(), opaque()],
             None,
-            "Pilot withholds the checked spot on a line changed since origin/main: ripr cannot tell from the code what a test checks there, so it is not listed as a gap.".to_string(),
+            "Pilot withholds the checked spot on a line changed since origin/main: ripr cannot tell from the code whether a test would notice a change there, so it is not listed as a gap.".to_string(),
             1,
         ),
         (
             vec![ranked.clone(), opaque(), unknown()],
             None,
-            "Pilot withholds the 2 checked spots on lines changed since origin/main: ripr cannot tell from the code what a test checks there, so they are not listed as gaps.".to_string(),
+            "Pilot withholds the 2 checked spots on lines changed since origin/main: ripr cannot tell from the code whether a test would notice a change there, so they are not listed as gaps.".to_string(),
             2,
         ),
         (
             vec![ranked.clone(), unknown(), gripped()],
             None,
-            "Pilot withholds 1 of the 2 checked spots on lines changed since origin/main: ripr cannot tell from the code what a test checks there, so it is not listed as a gap; the other is already gripped, intentional or suppressed.".to_string(),
+            "Pilot withholds 1 of the 2 checked spots on lines changed since origin/main: ripr cannot tell from the code whether a test would notice a change there, so it is not listed as a gap; the other is already gripped, intentional or suppressed.".to_string(),
             1,
         ),
         (
             vec![ranked.clone(), opaque(), unknown(), gripped(), gripped()],
             None,
-            "Pilot withholds 2 of the 4 checked spots on lines changed since origin/main: ripr cannot tell from the code what a test checks there, so they are not listed as gaps; the others are already gripped, intentional or suppressed.".to_string(),
+            "Pilot withholds 2 of the 4 checked spots on lines changed since origin/main: ripr cannot tell from the code whether a test would notice a change there, so they are not listed as gaps; the others are already gripped, intentional or suppressed.".to_string(),
             2,
         ),
         (
@@ -4676,7 +4676,7 @@ fn pilot_says_why_no_seam_on_the_change_ranks() -> Result<(), String> {
         (
             vec![ranked.clone(), opaque()],
             Some(&limit),
-            format!("Pilot withholds the checked spot on a line changed since origin/main: ripr cannot tell from the code what a test checks there, so it is not listed as a gap, but {unseen}."),
+            format!("Pilot withholds the checked spot on a line changed since origin/main: ripr cannot tell from the code whether a test would notice a change there, so it is not listed as a gap, but {unseen}."),
             1,
         ),
         (
@@ -4738,7 +4738,7 @@ fn pilot_explains_the_change_when_nothing_ranks() {
         current_change: Some(&change),
         ..pilot_context(&artifacts)
     };
-    let reason = "Pilot withholds the checked spot on a line changed since origin/main: ripr cannot tell from the code what a test checks there, so it is not listed as a gap.";
+    let reason = "Pilot withholds the checked spot on a line changed since origin/main: ripr cannot tell from the code whether a test would notice a change there, so it is not listed as a gap.";
     // The budget cut every seam: nothing is left to rank or count.
     let terminal = render_pilot_terminal(&[], context);
     assert!(
@@ -4956,7 +4956,7 @@ fn pilot_renderers_say_whether_the_top_recommendation_is_in_the_current_change()
         "{terminal}"
     );
     assert!(
-        md.contains("- Current change: part of it (this seam is on a line changed since `origin/main`)\n- Inspected seam: "),
+        md.contains("- Current change: part of it (this gap is on a line changed since `origin/main`)\n- Inspected seam: "),
         "{md}"
     );
     assert!(
