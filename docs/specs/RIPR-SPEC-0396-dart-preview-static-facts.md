@@ -208,7 +208,7 @@ Registration facts (syntax):
 Matchers and expectations (bounded allow-list, fail closed on unknown):
 
 - equality: `expect(a, equals(b))`, `same`, `predicate` with literal closure
-  limits as `opaque_custom_assertion_helper`
+  limits as `dart_opaque_custom_matcher`
 - type: `isA`, `TypeMatcher`
 - throws: `throwsA`, `throwsException`, typed `throws<TypeError>`
 - collections: `contains`, ordered/unordered matchers with literal expectations
@@ -259,12 +259,14 @@ Rendering and layout:
 | build_runner / source_gen outputs | `dart_generated_code` | exclude or provenance-only |
 | `dynamic` call or unresolved target | `dart_dynamic_call` | fail closed |
 | mirrors, `dart:mirrors`, registry patterns | `dart_reflection_registry` | fail closed |
-| mockito/mocktail/fake overrides | `dart_mock_fake` | limit unless call surface stati |
+| mockito/mocktail/fake overrides | `dart_mock_fake` | limit unless call surface is statically resolved |
 | isolates / `Isolate.spawn` | `dart_isolate` | fail closed |
 | timers, `Future.delayed`, event loop | `dart_event_loop_timer` | scheduling limit |
+| unresolved async/event-loop/stream ordering | `dart_async_scheduling` | scheduling limit |
 | inherited widget / provider / bloc state | `dart_inherited_widget_state` | limit |
 | `MethodChannel`, `EventChannel`, FFI | `dart_platform_channel` / cross-language edge | no reach without #5559 edge |
 | native plugin declarations | `dart_native_plugin` | declarative only |
+| golden/layout/visual assertions | `dart_rendering_visual` | weak or unknown |
 | custom matchers / `expect(..., customMatcher)` | `dart_opaque_custom_matcher` | weak or unknown |
 | unresolved package: URI or missing pub context | `dart_unresolved_package_context` | fail closed |
 
@@ -338,7 +340,7 @@ This spec-only change proves registry and format gates on the document itself.
 3. **Finder ≠ interaction:** `final btn = find.text('Save');` without `tap`
    does not establish interaction; observation on `btn` still needs a resolved
    finder on the assertion path.
-4. **Async limit:** `test('streams', () async { expect later, emits(1)); });`
+4. **Async limit:** `test('streams', () async { expect(stream, emits(1)); });`
    with changed owner in a different microtask retains `dart_async_scheduling`
    and does not read `exposed` without static ordering evidence.
 5. **Generated file:** A change only in `*.g.dart` is excluded or tagged
