@@ -1922,3 +1922,11 @@ path = "docs/specs/RIPR-SPEC-0352-inherent-receiver-unestablished-limit.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Records the inherent-receiver unestablished contract: a gap whose only refusal is an assertion macro binding that cannot be verified because target-root placement is unavailable reads static_unknown under rust_inherent_receiver_unestablished, credits nothing, and keeps every real receiver mismatch and every available-placement rebinding as a gap."
+
+[[artifact]]
+id = "RIPR-SPEC-0377"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0377-verification-plan-corpus-pr-a.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Issue #5173 PR A records the change-to-verification plan mechanics corpus: typed row validator, synthetic falsification matrix, check/report commands, and honest not_measured real safety denominators until Stage A rows land."

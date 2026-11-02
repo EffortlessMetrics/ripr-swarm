@@ -92,6 +92,7 @@ mod rust_region_scan;
 mod schema_cut_replay;
 mod schema_producer_sweep;
 mod verification_contracts;
+mod verification_plan_corpus;
 mod verify_test_shards;
 mod version;
 mod windows_advisory;
