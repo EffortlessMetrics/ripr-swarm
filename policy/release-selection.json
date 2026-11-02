@@ -275,12 +275,14 @@
       "claim_id": "lsp-stale-evidence-reason",
       "owner_issue": 4427,
       "materiality": "release_optional",
-      "resolution": "accepted_defer_with_non_claim",
-      "candidate_effect": "The LSP repair packet fails closed with analysis_snapshot_stale while a refresh is queued or running.",
-      "proof_refs": [
-        "https://github.com/EffortlessMetrics/ripr-swarm/issues/2766#issuecomment-5871399528"
+      "resolution": "landed_and_accepted",
+      "candidate_effect": "The LSP repair-packet sentinel still fails closed with analysis_snapshot_stale but carries refresh_state, attempt_state and recovery guidance.",
+      "implementation_refs": [
+        "pr:11766"
       ],
-      "non_claim": "The repair-packet command does not distinguish an in-flight refresh from stale evidence; it refuses in both cases."
+      "proof_refs": [
+        "https://github.com/EffortlessMetrics/ripr-swarm/pull/11766"
+      ]
     },
     {
       "claim_id": "unic-advisory-suppressions",
