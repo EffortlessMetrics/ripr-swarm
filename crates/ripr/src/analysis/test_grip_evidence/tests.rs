@@ -13729,6 +13729,71 @@ fn proximity_test_pinning_another_function_cannot_grade_a_match_arm_up() -> Resu
     Ok(())
 }
 
+/// #12434: the same refusal for a predicate boundary. `wait < 5` in `consume`
+/// is read through `reduce`, so a proximity test that pins `reduce` lends it no
+/// oracle once a test that runs `consume` is related, while a test that also
+/// calls `consume` still does. With no test tied to `consume` by a relation
+/// that establishes reach, the seam is `activation_unknown` and keeps the
+/// lent oracle: refusing it would read the seam `reachable_unrevealed` and
+/// claim a test runs code nothing is seen calling. Full and compact entry
+/// points must agree on the stage they credit.
+#[test]
+fn proximity_test_pinning_another_function_lends_a_predicate_boundary_no_oracle()
+-> Result<(), String> {
+    let published_for = |extra_tests: &str| -> Result<(Vec<OracleStrength>, bool), String> {
+        let prod = format!(
+            "#[derive(Debug, PartialEq)]\npub enum Reduction {{ Failure, Over(u64) }}\n\
+             pub fn reduce(tokens: u64) -> Reduction {{\n    if tokens > 9 {{ Reduction::Failure }} else {{ Reduction::Over(tokens) }}\n}}\n\
+             pub fn consume(tokens: u64) -> bool {{\n    match reduce(tokens) {{\n        Reduction::Failure => false,\n        Reduction::Over(wait) => wait < 5,\n    }}\n}}\n\
+             #[cfg(test)]\nmod tests {{\n    use super::*;\n    {extra_tests}\n}}\n"
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression().contains("wait < 5")
+            })
+            .ok_or_else(|| "wait < 5 boundary seam present".to_string())?;
+        let full = evidence_for_seam(boundary, &index);
+        let context = CompactGripContext::new(&index);
+        let compact = compact_evidence_for_seam(boundary, &context);
+        let published = full
+            .related_tests
+            .iter()
+            .map(|grip| grip.oracle_strength.clone())
+            .collect();
+        let agree = full.observe.state == compact.observe.state
+            && full.discriminate.state == compact.discriminate.state;
+        Ok((published, agree))
+    };
+    let other = "#[test] fn reduce_over() { assert_eq!(reduce(3), Reduction::Over(3)); }";
+    let (alone, alone_agree) = published_for(other)?;
+    let (with_runner, runner_agree) = published_for(&format!(
+        "{other} #[test] fn consume_runs() {{ let _ = consume(3); }}"
+    ))?;
+    let (owner_and_other, both_agree) = published_for(
+        "#[test] fn consume_and_reduce() { let _ = consume(3); assert_eq!(reduce(3), Reduction::Over(3)); }",
+    )?;
+    assert!(
+        alone_agree && runner_agree && both_agree,
+        "full and compact agree"
+    );
+    assert_eq!(
+        alone,
+        vec![OracleStrength::Strong],
+        "no runner keeps credit"
+    );
+    assert_eq!(
+        with_runner,
+        vec![OracleStrength::None, OracleStrength::None],
+        "runner without assertion: other-function lends none"
+    );
+    assert_eq!(owner_and_other, vec![OracleStrength::Strong], "owner+other");
+    Ok(())
+}
+
 /// #12053: a repo seam whose one-line arms all hold the same statement
 /// decides nothing an exact assertion can see, so it must not read propagated
 /// (and so not strongly gripped). Differing arms keep the propagated read.
@@ -22050,5 +22115,99 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         StageState::Yes,
         "an opaque expected value is not a variant pin"
     );
+    Ok(())
+}
+
+/// Residual name-only false credits and missing pins tracked in #8917.
+#[test]
+#[rustfmt::skip]
+fn inherent_receiver_name_only_residual_gaps_issue_8917() -> Result<(), String> {
+    let site = site!("}");
+    let cases: Vec<(String, &str, bool)> = vec![
+        (
+            format!("{site}\nfn Site() -> Cache {{ Cache }}"),
+            "assert_eq!(Site().area(), 1);",
+            false,
+        ),
+        (
+            format!("{site}\nimpl Site {{ pub fn Make() -> Cache {{ Cache }} }}"),
+            "assert_eq!(Site::Make().area(), 1);",
+            false,
+        ),
+        (
+            format!(
+                "{site}\nfn fixture() -> Site {{ Site {{ v: 1 }} }}\n#[cfg(test)]\nmod tests {{\n    use ext::fixture;\n    #[test]\n    fn t() {{ assert_eq!(fixture().area(), 1); }}\n}}\n"
+            ),
+            "__mod_tests__",
+            false,
+        ),
+        (
+            site.to_string(),
+            "type Site = Cache;\n    assert_eq!(Site::new().area(), 1);",
+            false,
+        ),
+        (
+            "pub struct Ledger { balance: u32 }\nimpl Ledger {\n    pub fn new() -> Self { Self { balance: 0 } }\n    pub fn m09(&self) -> u32 { self.balance + 9 }\n}\n".to_string(),
+            "__ledger_m09__",
+            false,
+        ),
+        (
+            format!("{site}\nimpl Other<x::From<u8>> for Site {{ fn from(_: u8) -> Self {{ Site {{ v: 0 }} }} }}"),
+            "assert_eq!(Site::from(1).area(), 1);",
+            false,
+        ),
+        (
+            "#[cfg_attr(test, derive(Default))]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }".to_string(),
+            "assert_eq!(Site::default().area(), 1);",
+            true,
+        ),
+        (
+            "pub struct Site { v: u32 }\nimpl From<String> for Site { fn from(_: String) -> Self { Site { v: 1 } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }".to_string(),
+            "assert_eq!(Site::from(String::new()).area(), 1);",
+            true,
+        ),
+    ];
+    for (source, call, expected) in cases {
+        if call == "__mod_tests__" {
+            let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+            let owner = index
+                .functions()
+                .iter()
+                .find(|f| f.name == "area" && f.item.has_self_param)
+                .ok_or("missing owner")?;
+            let caller = index
+                .tests()
+                .iter()
+                .find(|t| t.name == "t")
+                .ok_or("missing test")?;
+            assert_eq!(
+                crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+                expected,
+                "mod tests fixture import over `{source}`"
+            );
+            continue;
+        }
+        if call == "__ledger_m09__" {
+            let call = "let book = Ledger::new();\n    let book = String::new();\n    assert_eq!(book.m09(), 9);";
+            let (index, _) = receiver_rule_parts(source.as_str(), call)?;
+            let owner = index
+                .functions()
+                .iter()
+                .find(|f| f.name == "m09" && f.item.has_self_param)
+                .ok_or("missing m09 owner")?;
+            let caller = index.tests().iter().find(|t| t.name == "t").ok_or("missing test")?;
+            assert_eq!(
+                crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+                expected,
+                "live-shadowed Ledger receiver"
+            );
+            continue;
+        }
+        assert_eq!(
+            receiver_resolves(source.as_str(), call)?,
+            expected,
+            "call `{call}` over `{source}`"
+        );
+    }
     Ok(())
 }
