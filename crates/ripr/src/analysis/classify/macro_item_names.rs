@@ -58,8 +58,8 @@ pub(in crate::analysis) enum MacroSites {
     Unparsed { has_macro_rules: bool },
     Parsed {
         definitions: Vec<(String, String)>,
-        /// (macro name, masked arguments, item position)
-        invocations: Vec<(String, String, bool)>,
+        /// (macro name, masked arguments, item position, statement position)
+        invocations: Vec<(String, String, bool, bool)>,
     },
 }
 
@@ -111,12 +111,28 @@ impl MacroSites {
                         })
             });
             if item_position || statement_position {
-                invocations.push((macro_name, arguments, item_position));
+                invocations.push((macro_name, arguments, item_position, statement_position));
             }
         }
         Self::Parsed {
             definitions,
             invocations,
+        }
+    }
+
+    /// Whether the file invokes a macro at item or statement position whose
+    /// definition is not in this file, so expansion may emit unread items
+    /// (#7160).
+    pub(in crate::analysis) fn has_non_local_defining_invocation(&self) -> bool {
+        match self {
+            Self::Unparsed { has_macro_rules } => *has_macro_rules,
+            Self::Parsed {
+                definitions,
+                invocations,
+            } => invocations.iter().any(|(macro_name, _, _, _)| {
+                !definitions.iter().any(|(defined, _)| defined == macro_name)
+                    && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str())
+            }),
         }
     }
 
@@ -133,9 +149,8 @@ impl MacroSites {
                 invocations,
             } => (definitions, invocations),
         };
-        invocations
-            .iter()
-            .any(|(macro_name, arguments, item_position)| {
+        invocations.iter().any(
+            |(macro_name, arguments, item_position, _statement_position)| {
                 let mentions_name = contains_as_whole_word(arguments, name);
                 let bare_item_argument =
                     *item_position && passes_name_as_bare_argument(arguments, name);
@@ -159,7 +174,8 @@ impl MacroSites {
                         || mentions_name && declares_item_through_binder(definition)
                         || declares_in_arguments && forwards_arguments_verbatim(definition)
                 })
-            })
+            },
+        )
     }
 }
 
@@ -180,6 +196,16 @@ pub(in crate::analysis) fn macro_may_define_item_named(source: &str, name: &str)
         return false;
     }
     MacroSites::scan(source).may_define(name)
+}
+
+/// Whether the file invokes an item- or statement-position macro whose body
+/// is not in the indexed source, so it may emit items the scan never reads
+/// (#7160).
+pub(in crate::analysis) fn file_has_non_local_defining_macro_invocation(source: &str) -> bool {
+    if !source.contains('!') {
+        return false;
+    }
+    MacroSites::scan(source).has_non_local_defining_invocation()
 }
 
 /// Whether the invocation's top-level arguments pass `name` as a bare
@@ -361,7 +387,7 @@ fn identifier_tokens(masked: &str) -> Vec<&str> {
 
 #[cfg(test)]
 mod tests {
-    use super::macro_may_define_item_named;
+    use super::{file_has_non_local_defining_macro_invocation, macro_may_define_item_named};
 
     const SHADOW: &str = "macro_rules! fake {\n    () => {\n        fn suit_color(_s: char) -> u8 { 1 }\n    };\n}\n";
 
@@ -449,6 +475,19 @@ mod tests {
         assert!(!macro_may_define_item_named(
             "#[test]\nfn t() {\n    assert_eq!(suit_color('S'), 1);\n}\n",
             "suit_color"
+        ));
+    }
+
+    #[test]
+    fn a_non_local_item_macro_without_the_name_in_its_arguments_refuses_anyway() {
+        assert!(file_has_non_local_defining_macro_invocation(
+            "other::make_unit!();\n"
+        ));
+        assert!(!file_has_non_local_defining_macro_invocation(
+            "macro_rules! make_unit { () => {}; }\nmake_unit!();\n"
+        ));
+        assert!(!file_has_non_local_defining_macro_invocation(
+            "#[test]\nfn t() { assert_eq!(1, 1); }\n"
         ));
     }
 

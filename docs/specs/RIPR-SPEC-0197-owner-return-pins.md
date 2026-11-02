@@ -690,8 +690,10 @@ wrong credits.
      re-export), raw identifiers, macro input, `include!`, Unicode
      whitespace inside a macro matcher and a prelude name can each put
      another value under the name, so any of them refuses. Items a derive
-     or attribute proc macro emits stay invisible, as for every other rule,
-     as do items an out-of-workspace `macro_rules!` invocation emits (#7160).
+     or attribute proc macro emits stay invisible, as for every other rule.
+     An item- or statement-position macro whose definition is not in the
+     indexed workspace text may emit unread items, so any such invocation
+     in the workspace refuses (#7160).
      An inline receiver `T::f(..).name(..)` is typed exactly as
      `let recv = T::f(..);` would be, so `Stack::new(1).depth()` pins
      `Stack::depth` under the same constructor-signature rules.
@@ -3019,6 +3021,9 @@ assertions. This repair shares the existing callback without that larger migrati
   layouts fail on a `4 + self.step()` mutant.
   `reexported_value_under_a_unit_struct_name_is_not_credited` imports a
   `pub use std::u32::MAX;` re-export over a unit struct `MAX`, and
+  `out_of_workspace_item_macro_emits_unread_unit_binding` (#7160) invokes a
+  dependency `macro_rules!` at item position that re-exports `MAX` without
+  naming it in the arguments; both keep the mutant green at `weakly_exposed`.
   `aliased_outside_module_beside_a_same_named_module_is_not_credited` globs
   `use std::u32 as nums;` beside an unrelated `mod nums`; in both the mutant
   passes and the finding reads `weakly_exposed`.

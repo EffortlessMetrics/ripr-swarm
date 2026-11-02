@@ -2626,6 +2626,99 @@ fn aliased_outside_module_beside_a_same_named_module_is_not_credited() -> Result
     unit_struct_shadow_is_not_credited("aliased module glob", production, &[], tests)
 }
 
+/// #7160: a dependency `macro_rules!` invoked at item position can emit a
+/// `pub use` the spelling scan never reads. The mutant passes while ripr
+/// refuses the unit-struct receiver.
+#[test]
+fn out_of_workspace_item_macro_emits_unread_unit_binding() -> Result<(), String> {
+    let production = "pub trait Counter {\n    fn step(&self) -> u32;\n\n    fn count_ones(&self) -> u32 {\n        4 * self.step()\n    }\n}\n\n#[allow(non_camel_case_types)]\npub struct MAX;\n\nimpl Counter for MAX {\n    fn step(&self) -> u32 {\n        8\n    }\n}\n\npub mod limits;\n";
+    let limits = "#![allow(deprecated)]\nuse macro_reexport::reexport_max;\nreexport_max!();\n";
+    let tests = "#[cfg(test)]\nmod tests {\n    use super::Counter;\n    use crate::limits::MAX;\n\n    #[test]\n    fn counts() {\n        assert_eq!(MAX.count_ones(), 32);\n    }\n}\n";
+    let scratch = Scratch::create()?;
+    let root = scratch.0.join("ws");
+    let dep = scratch.0.join("macro_reexport");
+    for directory in [root.join("src"), dep.join("src")] {
+        std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    }
+    let write =
+        |path: PathBuf, text: &str| std::fs::write(path, text).map_err(|error| error.to_string());
+    write(
+        dep.join("Cargo.toml"),
+        "[package]\nname = \"macro_reexport\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    write(
+        dep.join("src/lib.rs"),
+        "#![allow(deprecated)]\n#[macro_export]\nmacro_rules! reexport_max {\n    () => {\n        pub use std::u32::MAX;\n    };\n}\n",
+    )?;
+    write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"unit_struct_macro_shadow_control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dependencies]\nmacro_reexport = { path = \"../macro_reexport\" }\n",
+    )?;
+    write(root.join("src/lib.rs"), &format!("{production}\n{tests}"))?;
+    write(root.join("src/limits.rs"), limits)?;
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@ pub trait Counter {\n \n     fn count_ones(&self) -> u32 {\n-        self.step() * 4\n+        4 * self.step()\n     }\n }\n";
+    let changed_line = production
+        .lines()
+        .position(|line| line.contains("4 * self.step()"))
+        .map(|index| index + 1)
+        .ok_or("production has no changed tail")?;
+    let diff = diff.replace(
+        "@@ -3,5 +3,5",
+        &format!("@@ -{0},5 +{0},5", changed_line - 2),
+    );
+    write(root.join("diff.patch"), &diff)?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(root.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        ..CheckInput::default()
+    })?;
+    let finding = report
+        .findings
+        .iter()
+        .find(|finding| {
+            finding.probe.family == ProbeFamily::ReturnValue
+                && finding.probe.location.line == changed_line
+        })
+        .ok_or("no return_value finding on the changed tail")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "out-of-workspace item macro: {:?}",
+        finding.class
+    );
+    for (label, tail) in [
+        ("rewrite", "4 * self.step()"),
+        ("mutant", "4 + self.step()"),
+    ] {
+        let mutant_production = production.replace("4 * self.step()", tail);
+        write(
+            root.join("src/lib.rs"),
+            &format!("{mutant_production}\n{tests}"),
+        )?;
+        let cargo = PathBuf::from(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+        let result = run(
+            &cargo,
+            &[
+                "test".as_ref(),
+                "--quiet".as_ref(),
+                "--manifest-path".as_ref(),
+                root.join("Cargo.toml").as_os_str(),
+                "--target-dir".as_ref(),
+                scratch.0.join("target").as_os_str(),
+            ],
+        )?;
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(
+            result.status.success() && stdout.contains("1 passed; 0 failed;"),
+            "out-of-workspace item macro {label} must keep the mutant green: {stdout}; {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    Ok(())
+}
+
 /// The changed `Counter::count_ones` default on line 5 reads weakly_exposed,
 /// and the mutant passes because the test's `MAX` is not the unit struct.
 fn unit_struct_shadow_is_not_credited(
