@@ -6508,9 +6508,10 @@ fn code_action_response_unknown_only_kind_does_not_poison_a_matching_kind() -> R
 #[test]
 fn code_action_response_identical_requests_keep_stable_serialized_order() -> Result<(), String> {
     // #1891: identical snapshot/request inputs must keep byte-stable action
-    // order. Two independent calls through the retained producer are compared
-    // on title, kind, command, and arguments so a later reorder cannot hide
-    // behind equal lengths.
+    // order. Two independent producer calls are compared on the full
+    // serialized `CodeAction` (title, kind, command, arguments, data,
+    // diagnostics, disabled, preferred) so a reorder or a drift in wire
+    // fields cannot hide behind equal lengths.
     let vscode = vscode_client_features()?;
     let (params, snapshot) = seam_code_action_request()?;
     let first = code_action_response(&params, Some(&snapshot), &vscode);
@@ -6531,29 +6532,10 @@ fn code_action_response_identical_requests_keep_stable_serialized_order() -> Res
 
 fn serialize_code_action_list(actions: &[CodeActionOrCommand]) -> Result<String, String> {
     let mut rows = Vec::new();
-    for action in code_action_literals(actions)? {
-        let kind = action
-            .kind
-            .as_ref()
-            .map(CodeActionKind::as_str)
-            .unwrap_or("");
-        let command = action
-            .command
-            .as_ref()
-            .map(|command| command.command.as_str())
-            .unwrap_or("");
-        let arguments = action
-            .command
-            .as_ref()
-            .and_then(|command| command.arguments.as_ref())
-            .cloned()
-            .unwrap_or_default();
-        let arguments = serde_json::to_string(&arguments)
-            .map_err(|err| format!("serialize arguments for {}: {err}", action.title))?;
-        rows.push(format!(
-            "{}\t{}\t{}\t{}",
-            action.title, kind, command, arguments
-        ));
+    for (index, action) in code_action_literals(actions)?.into_iter().enumerate() {
+        let encoded = serde_json::to_string(action)
+            .map_err(|err| format!("serialize code action {index}: {err}"))?;
+        rows.push(encoded);
     }
     Ok(rows.join("\n"))
 }
