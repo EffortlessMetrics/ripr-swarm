@@ -16584,6 +16584,47 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "must_not_promote" }
       ]
+    },
+    {
+      "id": "rust_contradiction_withhold_lone_test",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_contradiction_lone_test",
+      "vector": "whole_test_contradiction_withholds_the_only_related_tests_activation_credit",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "infection_unknown" }
+      ]
+    },
+    {
+      "id": "rust_contradiction_withhold_composed_file_mates",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_contradiction_composed_file_mates",
+      "vector": "unrelated_file_mate_composition_cannot_restore_withheld_contradiction_credit",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "maximum_class", "class": "infection_unknown" }
+      ]
+    },
+    {
+      "id": "rust_contradiction_withhold_mates_only",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_contradiction_mates_only",
+      "vector": "file_mate_proximity_never_establishes_reach_so_the_refusal_stays_no_static_path",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "expected_class", "class": "no_static_path" }
+      ]
     }
   ]
 }
