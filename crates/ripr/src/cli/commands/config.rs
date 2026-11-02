@@ -296,8 +296,10 @@ path = ".ripr/suppressions\u0000.toml"
         let source = "[analysis]\nmode = \"bad\"\n";
         fs::write(root.join(CONFIG_FILE_NAME), source).map_err(|error| error.to_string())?;
 
-        let diagnostic = crate::config::parse_config_diagnostic(source)
-            .expect_err("invalid mode must fail parse");
+        let diagnostic = match crate::config::parse_config_diagnostic(source) {
+            Ok(_) => return Err("invalid mode must fail parse".to_string()),
+            Err(diagnostic) => diagnostic,
+        };
         let location = diagnostic
             .location
             .as_ref()
