@@ -9541,10 +9541,10 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
     );
     for (what, from, to, needle) in [
         (
-            "the extension e2e step",
-            "      - name: Read the extension e2e check for the admitted head\n        id: vscode\n",
+            "the extension e2e result step",
+            "      - name: Require the extension e2e result for the admitted head\n        id: vscode\n",
             "      - name: Read something else\n        id: other\n",
-            "read the extension e2e check for the admitted head",
+            "require the extension e2e result for the admitted head",
         ),
         (
             "the summary branch that fails the Result",
@@ -9553,22 +9553,34 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
             "fail the Result when the selected extension e2e did not succeed",
         ),
         (
-            "the check-run read permission",
-            "  checks: read\n",
-            "",
-            "grant the Result's check-run read",
+            "the e2e job of this run",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: [vscode-select]\n",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: []\n",
+            "run the extension e2e as a job of this run",
         ),
         (
-            "the same-suite binding of the skip",
-            "((.check_suite.id | tostring) == $suite)",
-            "true",
-            "bind the extension e2e verdict to this request's own successful",
+            "the label selection",
+            "case \",$LABELS,\" in *,full-ci,*|*,vscode,*) return 0 ;; esac",
+            "case \",$LABELS,\" in *,never,*) return 0 ;; esac",
+            "select the extension e2e from the admitted diff and the full-ci and vscode labels",
         ),
         (
-            "the skipped-check exclusion from the verdict",
-            "[.[] | select(.conclusion != \"skipped\")] | last // {}",
-            "[.[]] | last // {}",
-            "decide the extension e2e verdict by the newest executed check",
+            "the Result's dependency on the extension jobs",
+            "docs-gate, vscode-select, vscode-e2e]",
+            "docs-gate]",
+            "make the Result depend on the extension selection and e2e jobs",
+        ),
+        (
+            "the selected-and-succeeded pass",
+            "true:success)",
+            "true:never)",
+            "pass a selected extension e2e only when it succeeded",
+        ),
+        (
+            "the unselected-and-skipped pass",
+            "false:skipped)",
+            "false:never)",
+            "pass an unselected extension e2e only when it was skipped",
         ),
     ] {
         let mutated = workflow.replacen(from, to, 1);

@@ -1,0 +1,53 @@
+name: VS Code extension e2e
+
+# #12252: the extension e2e as a reusable job, so its verdict is bound to the
+# calling run by `needs` instead of by correlating two workflows' runs by title.
+# routed-rust.yml's Result and ci.yml's push/dispatch/callable lanes call it.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to test; empty tests the caller's github.sha.
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  vscode:
+    name: vscode
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: editors/vscode
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
+
+      - run: npm ci
+      - run: npm run compile
+      - run: npm run package
+      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      - run: xvfb-run -a npm run test:e2e
+      # Failure-only host logs. Size is capped by
+      # editors/vscode/test/hostDiagnostics.ts (5 MiB total, 256 KiB per file).
+      # Collection cannot change the original test exit status.
+      - name: Upload VS Code test host diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vscode-test-host-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/ripr/vscode-test-host-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 5

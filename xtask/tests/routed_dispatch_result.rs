@@ -241,7 +241,7 @@ esac
             .split_once("      - name: Recheck initially admitted eligibility\n")
             .ok_or("missing actual eligibility step")?;
         let (step, _) = job
-            .split_once("      - name: Read the extension e2e check for the admitted head\n")
+            .split_once("      - name: Require the extension e2e result for the admitted head\n")
             .ok_or("missing summary after eligibility")?;
         let eligibility_script = scratch.0.join("eligibility.sh");
         fs::write(&eligibility_script, result_shell(step)?).map_err(|e| e.to_string())?;
@@ -258,9 +258,9 @@ esac
         "ELIGIBILITY_RESULT".to_string(),
         eligibility_outcome.to_string(),
     );
-    // The extension e2e step (#12122) reads live check runs and runs only for
-    // an admitted merge-ready pull_request; its own verdict is exercised by
-    // repo-policy's docs_only_routing and the synthetic-JSON run on #12148.
+    // The extension e2e step (#12122, #12252) judges this run's own `needs`
+    // results and runs only for an admitted merge-ready pull_request; its
+    // verdict matrix is exercised by repo-policy's docs_only_routing.
     env.insert(
         "VSCODE_CHECK_RESULT".to_string(),
         if event == "pull_request" && eligibility_outcome != "skipped" {
@@ -1087,7 +1087,7 @@ fn succession_reads_are_pinned_read_only_gets_of_the_same_workflow_head_and_even
         .split_once("      - name: Recheck initially admitted eligibility\n")
         .ok_or("missing eligibility step")?;
     let (step, _) = job
-        .split_once("      - name: Read the extension e2e check for the admitted head\n")
+        .split_once("      - name: Require the extension e2e result for the admitted head\n")
         .ok_or("missing summary")?;
     for needle in [
         "gh api \"repos/$REPOSITORY/actions/runs/$GITHUB_RUN_ID\"",

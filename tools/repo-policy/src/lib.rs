@@ -1354,32 +1354,28 @@ pub fn routed_rust_ready_event_contract_violations(workflow: &str) -> Vec<String
             ".id == $id and .run_attempt == $attempt and .head_sha == $head",
         ),
         (
-            "grant the Result's check-run read the token needs for the extension e2e verdict (#12122)",
-            "permissions:\n  actions: read\n  checks: read\n  contents: read\n",
+            "run the extension e2e as a job of this run through the reusable workflow, so no other request's result can be read (#12252)",
+            "  vscode-e2e:\n    name: vscode extension e2e\n    needs: [vscode-select]\n",
         ),
         (
-            "read the extension e2e check for the admitted head before summarizing (#12122)",
-            "      - name: Read the extension e2e check for the admitted head\n        id: vscode\n",
+            "select the extension e2e from the admitted diff and the full-ci and vscode labels (#12252)",
+            "case \",$LABELS,\" in *,full-ci,*|*,vscode,*) return 0 ;; esac",
         ),
         (
-            "bind the extension e2e verdict to this request's own successful `vscode surface` suite so a stale skipped check cannot read as not selected (#12122)",
-            "((.check_suite.id | tostring) == $suite)",
+            "make the Result depend on the extension selection and e2e jobs (#12252)",
+            "docs-gate, vscode-select, vscode-e2e]",
         ),
         (
-            "decide the extension e2e verdict by the newest executed check of this request (#12122)",
-            "[.[] | select(.conclusion != \"skipped\")] | last // {}",
+            "require the extension e2e result for the admitted head before summarizing (#12122)",
+            "      - name: Require the extension e2e result for the admitted head\n        id: vscode\n",
         ),
         (
-            "bind the `vscode surface` to the ci.yml run that names this request's head and request time, so an earlier request's suite is never read (#12236)",
-            "[ \"$candidate_title\" = \"$request_title\" ]",
+            "pass a selected extension e2e only when it succeeded (#12252)",
+            "true:success)",
         ),
         (
-            "include every extension-selection input (base and labels) in the request title the surface is bound to (#12236)",
-            "$REQUEST_AT $REQUEST_SELECTION",
-        ),
-        (
-            "refuse distinct ci.yml runs that carry the identical request title instead of choosing between their suites (#12236)",
-            "more than one ci.yml run",
+            "pass an unselected extension e2e only when it was skipped (#12252)",
+            "false:skipped)",
         ),
         (
             "fail the Result when the selected extension e2e did not succeed (#12122)",
