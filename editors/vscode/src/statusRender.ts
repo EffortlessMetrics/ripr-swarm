@@ -203,6 +203,40 @@ export function statusSummary(status: RiprStatusState, firstAction?: FirstUseful
   return `${status.summary} First useful action: ${firstAction.title}`;
 }
 
+/**
+ * Lines derived from `ripr.collectWorkspaceStatus` when the stored delivery
+ * budget overflowed. This surfaces the same omission record the server JSON
+ * carries (#2596 machine-status parity); it does not restate Problems entries.
+ */
+export function workspaceStatusDeliveryBudgetLines(
+  wsStatus: Record<string, unknown>
+): string[] {
+  const budget = wsStatus['diagnostic_budget'];
+  if (!budget || typeof budget !== 'object') {
+    return [];
+  }
+  const record = budget as Record<string, unknown>;
+  if (record['overflowed'] !== true) {
+    return [];
+  }
+  const omitted = record['omitted_count'];
+  if (typeof omitted !== 'number' || omitted <= 0) {
+    return [];
+  }
+  const selected = record['selected_count'];
+  const eligible = record['eligible_items'];
+  const route =
+    typeof record['continuation_or_inspect_route'] === 'string'
+      ? record['continuation_or_inspect_route']
+      : 'ripr/listActionableItems';
+  const selectedText = typeof selected === 'number' ? String(selected) : '?';
+  const eligibleText = typeof eligible === 'number' ? String(eligible) : '?';
+  return [
+    `ripr diagnostic delivery budget: ${selectedText} selected, ${omitted} omitted (${eligibleText} eligible items); displayed diagnostics are a bounded subset and the result is incomplete.`,
+    `Next safe action: narrow the diff or profile, or retrieve current details through ${route}.`,
+  ];
+}
+
 export function statusBarColors(kind: RiprStatusKind): StatusBarColors | undefined {
   switch (kind) {
     case 'analysisFailed':

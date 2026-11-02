@@ -6,6 +6,7 @@ import {
   shouldShowMainStatusBar,
   statusBarColors,
   statusText,
+  workspaceStatusDeliveryBudgetLines,
   type RiprStatusKind
 } from '../../src/statusRender';
 import { compatibleLspEvidence } from './testCompatibility';
@@ -213,5 +214,37 @@ suite('Show Status command (#5319)', () => {
       outputLines.some((line) => line.includes('ripr status:')),
       `output channel must receive the status summary: ${outputLines.join('\n')}`
     );
+  });
+});
+
+suite('Workspace status delivery budget disclosure (#2596)', () => {
+  test('overflowed budget status names omitted counts and the retrieval route', () => {
+    const lines = workspaceStatusDeliveryBudgetLines({
+      diagnostic_budget: {
+        overflowed: true,
+        selected_count: 50,
+        omitted_count: 1,
+        eligible_items: 51,
+        continuation_or_inspect_route: 'ripr/listActionableItems'
+      }
+    });
+    assert.strictEqual(lines.length, 2);
+    assert.ok(lines[0].includes('50 selected, 1 omitted'));
+    assert.ok(lines[0].includes('bounded subset'));
+    assert.ok(lines[1].includes('ripr/listActionableItems'));
+  });
+
+  test('profile-only or complete budgets stay silent', () => {
+    assert.deepStrictEqual(
+      workspaceStatusDeliveryBudgetLines({
+        diagnostic_budget: {
+          overflowed: false,
+          omitted_count: 3,
+          selected_count: 0
+        }
+      }),
+      []
+    );
+    assert.deepStrictEqual(workspaceStatusDeliveryBudgetLines({}), []);
   });
 });
