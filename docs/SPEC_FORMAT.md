@@ -66,7 +66,9 @@ Planned tests:
 `check-traceability` recognizes an unindented nonempty named bullet under an
 unindented `Planned tests:` label
 in that section as a planned mapping and reports it as advisory. Empty labels,
-placeholder items, comments, and fenced or indented examples do not satisfy this obligation.
+placeholder items (including generic instructions such as `Add tests`), comments,
+and fenced or indented examples do not satisfy this obligation. A level-one or
+level-two heading ends the `## Test Mapping` section.
 Keep future references out of the manifest's current `tests` and `fixtures`
 arrays until their files exist; all registered current paths still must exist,
 and `::symbol` resolution remains advisory. This does not claim implementation,

@@ -102,6 +102,9 @@ fn accepted_empty_placeholder_fenced_and_unrelated_plans_remain_failures() -> Re
         "Planned tests:\n- [ ] **TODO**\n",
         "Planned tests:\n- None yet\n",
         "Planned tests:\n- planned\n",
+        "Planned tests:\n- Add tests\n",
+        "Planned tests:\n- add tests\n",
+        "\n\n# Appendix\n\nPlanned tests:\n- boundary_obligation\n",
         "Planned tests:\n- <test name>\n",
         "```text\nPlanned tests:\n- boundary_obligation\n```\n",
         "```text <!--\n-->\nPlanned tests:\n- boundary_obligation\n```\n",
@@ -157,6 +160,7 @@ fn visible_named_obligations_after_comments_and_task_markers_remain_valid() -> R
         "Visible prose <!--\n```\n-->\nPlanned tests:\n- boundary_obligation\n",
         "Planned tests:\n- [ ] **boundary_obligation**\n",
         "Planned tests:\n- [x] `boundary_obligation`\n",
+        "Planned tests:\n- boundary_obligation <!-- tracked in issue 8002 -->\n",
         "````text\nExample only.\n   ````\nPlanned tests:\n- boundary_obligation\n",
     ] {
         with_temp_cwd("trace-visible-named-obligation", |root| {

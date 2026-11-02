@@ -7057,7 +7057,6 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
     let mut fence: Option<(char, usize)> = None;
     let mut comment = false;
     for line in text.lines() {
-        let trimmed = line.trim();
         let fence_text = line.trim_start_matches(' ');
         let fence_indent = line.len() - fence_text.len();
         if let Some((delimiter, length)) = fence {
@@ -7087,8 +7086,8 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
             ));
             continue;
         }
+        let mut visible = String::new();
         let mut remainder = line;
-        let mut comment_line = comment;
         loop {
             if comment {
                 let Some(end) = remainder.find("-->") else {
@@ -7096,19 +7095,20 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
                 };
                 comment = false;
                 remainder = &remainder[end + 3..];
-            } else {
-                let Some(start) = remainder.find("<!--") else {
-                    break;
-                };
+            } else if let Some(start) = remainder.find("<!--") {
+                visible.push_str(&remainder[..start]);
                 comment = true;
-                comment_line = true;
                 remainder = &remainder[start + 4..];
+            } else {
+                visible.push_str(remainder);
+                break;
             }
         }
-        if comment_line {
+        let trimmed = visible.trim();
+        if trimmed.is_empty() {
             continue;
         }
-        if line.trim_end() == "## Test Mapping" {
+        if trimmed == "## Test Mapping" {
             in_mapping = true;
             planned_list = false;
             continue;
@@ -7116,19 +7116,16 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
         if !in_mapping {
             continue;
         }
-        if line.starts_with("## ") {
+        if trimmed.starts_with("## ") || trimmed.starts_with("# ") {
             break;
         }
         // The qualified native form is unindented, excluding Markdown code blocks.
-        if line.starts_with(char::is_whitespace) && !trimmed.is_empty() {
+        if visible.starts_with(char::is_whitespace) && !trimmed.is_empty() {
             planned_list = false;
             continue;
         }
         if trimmed.eq_ignore_ascii_case("Planned tests:") {
             planned_list = true;
-            continue;
-        }
-        if trimmed.is_empty() {
             continue;
         }
         let item = trimmed
@@ -7154,7 +7151,17 @@ fn has_explicit_planned_test_mapping(text: &str) -> bool {
             let placeholder = !sentinel.chars().any(char::is_alphanumeric)
                 || matches!(
                     sentinel,
-                    "..." | "-" | "none" | "n/a" | "tbd" | "todo" | "planned"
+                    "..."
+                        | "-"
+                        | "none"
+                        | "n/a"
+                        | "tbd"
+                        | "todo"
+                        | "planned"
+                        | "add test"
+                        | "add tests"
+                        | "write test"
+                        | "write tests"
                 )
                 || ["none ", "todo:", "todo ", "tbd:", "tbd ", "<!--", "<"]
                     .iter()
