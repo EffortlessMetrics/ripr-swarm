@@ -1,7 +1,7 @@
 [[artifact]]
-id = "RIPR-SPEC-0377"
+id = "RIPR-SPEC-0378"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0377-cross-language-edge-registry-v1.md"
+path = "docs/specs/RIPR-SPEC-0378-cross-language-edge-registry-v1.md"
 status = "accepted"
 owner = "provider-contract"
 standalone_reason = "Slice #6481 introduces the versioned cross-language edge registry schema and validation without a spec anchor."

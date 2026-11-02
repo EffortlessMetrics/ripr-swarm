@@ -25,7 +25,14 @@ impl CrossLanguageEdgeRegistryV1 {
                 "supported_boundary_families contains duplicates",
             ));
         }
+        let mut producer_ids = BTreeSet::new();
         for producer in &self.registered_producers {
+            if !producer_ids.insert(producer.producer_id.clone()) {
+                return Err(error(
+                    CrossLanguageEdgeRegistryErrorCodeV1::DuplicateEdgeId,
+                    "registered_producers contains duplicate producer_id values",
+                ));
+            }
             validate_producer_registration(producer, &supported)?;
         }
         let mut edge_ids = BTreeSet::new();
@@ -63,10 +70,10 @@ impl CrossLanguageSubjectV1 {
 
     pub fn portable_identity_key(&self) -> String {
         format!(
-            "{}:{}:{}:{}",
-            self.language,
-            self.subject_id,
-            self.subject_body_digest,
+            "{}|{}|{}|{}",
+            length_prefixed_segment(&self.language),
+            length_prefixed_segment(&self.subject_id),
+            identity_sha256_component(&self.subject_body_digest),
             self.project.portable_key()
         )
     }
@@ -81,10 +88,10 @@ impl CrossLanguageProjectIdentityV1 {
 
     pub fn portable_key(&self) -> String {
         format!(
-            "{}:{}:{}",
-            self.project_id,
-            self.package_id.as_deref().unwrap_or(""),
-            self.config_digest
+            "{}|{}|{}",
+            length_prefixed_segment(&self.project_id),
+            length_prefixed_segment(self.package_id.as_deref().unwrap_or("")),
+            identity_sha256_component(&self.config_digest)
         )
     }
 }
@@ -122,7 +129,21 @@ fn edge_matches_subjects(
 }
 
 fn subject_same(left: &CrossLanguageSubjectV1, right: &CrossLanguageSubjectV1) -> bool {
-    left.portable_identity_key() == right.portable_identity_key()
+    left.language == right.language
+        && left.subject_id == right.subject_id
+        && canonical_sha256_digest(&left.subject_body_digest)
+            == canonical_sha256_digest(&right.subject_body_digest)
+        && project_same(&left.project, &right.project)
+}
+
+fn project_same(
+    left: &CrossLanguageProjectIdentityV1,
+    right: &CrossLanguageProjectIdentityV1,
+) -> bool {
+    left.project_id == right.project_id
+        && left.package_id == right.package_id
+        && canonical_sha256_digest(&left.config_digest)
+            == canonical_sha256_digest(&right.config_digest)
 }
 
 fn validate_producer_registration(
@@ -156,10 +177,18 @@ fn validate_edge(
     require_non_empty("edge_id", &edge.edge_id)?;
     edge.source.validate()?;
     edge.target.validate()?;
-    if edge.source.portable_identity_key() == edge.target.portable_identity_key() {
+    if subject_same(&edge.source, &edge.target) {
         return Err(error(
             CrossLanguageEdgeRegistryErrorCodeV1::ContradictoryDirection,
             "source and target subjects must differ",
+        ));
+    }
+    if edge.disposition == EdgeDispositionV1::PositiveRegistered
+        && edge.source.language == edge.target.language
+    {
+        return Err(error(
+            CrossLanguageEdgeRegistryErrorCodeV1::UnsupportedDisposition,
+            "positive registered edges require distinct source and target languages",
         ));
     }
     if !supported.contains(&edge.boundary_family) {
@@ -201,6 +230,18 @@ fn validate_edge(
                 return Err(error(
                     CrossLanguageEdgeRegistryErrorCodeV1::IncompatibleFamilyStrength,
                     "positive registered edges cannot remain unsupported",
+                ));
+            }
+            if edge.first_unresolved_leg.is_some() {
+                return Err(error(
+                    CrossLanguageEdgeRegistryErrorCodeV1::CompletenessConflict,
+                    "positive registered edges cannot carry first_unresolved_leg",
+                ));
+            }
+            if edge.currentness != EdgeCurrentnessV1::Current {
+                return Err(error(
+                    CrossLanguageEdgeRegistryErrorCodeV1::CompletenessConflict,
+                    "positive registered edges require current currentness",
                 ));
             }
         }
@@ -372,19 +413,31 @@ fn require_registered_producer(
 }
 
 fn require_sha256(field: &str, value: &str) -> Result<(), CrossLanguageEdgeRegistryErrorV1> {
-    let Some(digest) = value.strip_prefix("sha256:") else {
-        return Err(error(
+    let _ = canonical_sha256_digest(value).map_err(|message| {
+        error(
             CrossLanguageEdgeRegistryErrorCodeV1::MalformedIdentity,
-            format!("{field} must use sha256:<64-hex>"),
-        ));
+            format!("{field}: {message}"),
+        )
+    })?;
+    Ok(())
+}
+
+fn identity_sha256_component(value: &str) -> String {
+    canonical_sha256_digest(value).unwrap_or_else(|_| value.to_string())
+}
+
+fn canonical_sha256_digest(value: &str) -> Result<String, String> {
+    let Some(digest) = value.strip_prefix("sha256:") else {
+        return Err("must use sha256:<64-hex>".into());
     };
     if digest.len() != 64 || !is_hex(digest) {
-        return Err(error(
-            CrossLanguageEdgeRegistryErrorCodeV1::MalformedIdentity,
-            format!("{field} must use sha256:<64-hex>"),
-        ));
+        return Err("must use sha256:<64-hex>".into());
     }
-    Ok(())
+    Ok(format!("sha256:{}", digest.to_ascii_lowercase()))
+}
+
+fn length_prefixed_segment(value: &str) -> String {
+    format!("{}:{}", value.len(), value)
 }
 
 fn is_hex(value: &str) -> bool {

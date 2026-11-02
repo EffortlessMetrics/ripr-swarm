@@ -1,7 +1,7 @@
 {
   "schema_version": "0.1",
   "kind": "cross_language_edge_registry_corpus",
-  "spec": "RIPR-SPEC-0377-cross-language-edge-registry-v1.md",
+  "spec": "RIPR-SPEC-0378-cross-language-edge-registry-v1.md",
   "description": "Schema fixtures for versioned cross-language edge registry acceptance (#6481).",
   "cases": [
     {

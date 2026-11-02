@@ -1,6 +1,6 @@
 # Fixture: cross-language-edge-registry-corpus
 
-Spec: RIPR-SPEC-0377
+Spec: RIPR-SPEC-0378
 
 This manifest-only fixture pins versioned cross-language edge registry schema
 documents for #6481 before Bun producers or consumers migrate.

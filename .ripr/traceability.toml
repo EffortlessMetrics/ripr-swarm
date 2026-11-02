@@ -21129,9 +21129,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0377"
+id = "RIPR-SPEC-0378"
 name = "Cross-language edge registry v1"
-spec = "docs/specs/RIPR-SPEC-0377-cross-language-edge-registry-v1.md"
+spec = "docs/specs/RIPR-SPEC-0378-cross-language-edge-registry-v1.md"
 tests = [
   "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::corpus_cases_cover_registry_acceptance_matrix",
   "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::same_display_name_without_edge_is_unrelated",
@@ -21142,6 +21142,11 @@ tests = [
   "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::unknown_fields_are_rejected_at_deserialize",
   "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::semantic_digest_is_order_and_relocation_invariant",
   "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::every_boundary_family_has_a_constructible_edge_shape",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::colon_in_project_ids_do_not_collide_identities",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::uppercase_hex_digests_match_lowercase_identities",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::positive_edge_with_unresolved_leg_is_rejected",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::same_language_positive_edge_is_rejected",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::duplicate_producer_ids_are_rejected",
 ]
 fixtures = [
   "fixtures/cross-language-edge-registry-corpus/corpus.json",
@@ -21152,7 +21157,7 @@ code = [
   "crates/ripr/src/provider_contract/cross_language_edge/digest.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0377-cross-language-edge-registry-v1.md",
+  "docs/specs/RIPR-SPEC-0378-cross-language-edge-registry-v1.md",
 ]
 metrics = [
   "unit_test_pass_rate",

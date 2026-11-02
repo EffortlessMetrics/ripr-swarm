@@ -308,6 +308,130 @@ fn config_digest_is_load_bearing_for_subject_identity() {
 }
 
 #[test]
+fn colon_in_project_ids_do_not_collide_identities() -> Result<(), String> {
+    let left = CrossLanguageSubjectV1 {
+        project: CrossLanguageProjectIdentityV1 {
+            project_id: "a:b".into(),
+            package_id: Some("c".into()),
+            config_digest: CONFIG.into(),
+        },
+        ..subject("rust", "shared.subject", "unused")
+    };
+    let right = CrossLanguageSubjectV1 {
+        project: CrossLanguageProjectIdentityV1 {
+            project_id: "a".into(),
+            package_id: Some("b:c".into()),
+            config_digest: CONFIG.into(),
+        },
+        ..subject("rust", "shared.subject", "unused")
+    };
+    let mut edge = positive_edge(
+        "colon",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    edge.source = left.clone();
+    edge.target = subject("typescript", "colon.target", "project.beta");
+    let registry = base_registry(vec![edge]);
+    require_ok(registry.validate(), "valid edge")?;
+    assert!(!subjects_related_by_registered_edge(
+        &left, &right, &registry
+    ));
+    assert!(!subjects_related_by_registered_edge(
+        &right, &left, &registry
+    ));
+    Ok(())
+}
+
+#[test]
+fn uppercase_hex_digests_match_lowercase_identities() -> Result<(), String> {
+    let edge = positive_edge(
+        "hex",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    let left = edge.source.clone();
+    let right = edge.target.clone();
+    let registry = base_registry(vec![edge]);
+    require_ok(registry.validate(), "valid edge")?;
+    let mut upper_left = left.clone();
+    upper_left.subject_body_digest = format!(
+        "sha256:{}",
+        upper_left
+            .subject_body_digest
+            .strip_prefix("sha256:")
+            .unwrap_or("")
+            .to_ascii_uppercase()
+    );
+    assert!(subjects_related_by_registered_edge(
+        &upper_left,
+        &right,
+        &registry
+    ));
+    Ok(())
+}
+
+#[test]
+fn positive_edge_with_unresolved_leg_is_rejected() -> Result<(), String> {
+    let mut edge = positive_edge(
+        "unresolved",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    edge.first_unresolved_leg = Some("external_oracle".into());
+    let registry = base_registry(vec![edge]);
+    let error = require_err(registry.validate(), "unresolved positive")?;
+    if error.code != CrossLanguageEdgeRegistryErrorCodeV1::CompletenessConflict {
+        return Err(format!("unresolved positive: got {:?}", error.code));
+    }
+    Ok(())
+}
+
+#[test]
+fn same_language_positive_edge_is_rejected() -> Result<(), String> {
+    let mut edge = positive_edge(
+        "same_lang",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    edge.target = subject("rust", "same_lang.target", "project.beta");
+    let registry = base_registry(vec![edge]);
+    let error = require_err(registry.validate(), "same language")?;
+    if error.code != CrossLanguageEdgeRegistryErrorCodeV1::UnsupportedDisposition {
+        return Err(format!("same language: got {:?}", error.code));
+    }
+    Ok(())
+}
+
+#[test]
+fn duplicate_producer_ids_are_rejected() -> Result<(), String> {
+    let mut registry = base_registry(vec![]);
+    registry
+        .registered_producers
+        .push(CrossLanguageEdgeProducerRegistrationV1 {
+            producer_id: "producer.dup".into(),
+            producer_version: "1".into(),
+            supported_families: vec![BoundaryFamilyV1::FfiBinding],
+        });
+    registry
+        .registered_producers
+        .push(CrossLanguageEdgeProducerRegistrationV1 {
+            producer_id: "producer.dup".into(),
+            producer_version: "2".into(),
+            supported_families: vec![BoundaryFamilyV1::NativeAddon],
+        });
+    let error = require_err(registry.validate(), "duplicate producer")?;
+    if error.code != CrossLanguageEdgeRegistryErrorCodeV1::DuplicateEdgeId {
+        return Err(format!("duplicate producer: got {:?}", error.code));
+    }
+    Ok(())
+}
+
+#[test]
 fn semantic_digest_is_order_and_relocation_invariant() -> Result<(), String> {
     let edge_a = positive_edge(
         "b",

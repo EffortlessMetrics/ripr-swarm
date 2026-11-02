@@ -1,4 +1,4 @@
-# RIPR-SPEC-0377: Cross-Language Edge Registry V1
+# RIPR-SPEC-0378: Cross-Language Edge Registry V1
 
 Status: accepted
 
@@ -105,7 +105,7 @@ Portable semantic identity hashes canonical registry content with edges sorted b
 
 ## Test Mapping
 
-See `.ripr/traceability.toml` behavior `RIPR-SPEC-0377`.
+See `.ripr/traceability.toml` behavior `RIPR-SPEC-0378`.
 
 ## Implementation Mapping
 
