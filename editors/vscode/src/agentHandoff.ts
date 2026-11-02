@@ -440,6 +440,9 @@ export function validatedAgentLoopCommand(
     return body === prefix || body.startsWith(`${prefix} `);
   });
   if (rootArg === undefined) {
+    if (label === 'gap_verify' && rootedTestRunnerVerifyCommandIsSafe(command, redirectRoots)) {
+      return command;
+    }
     return undefined;
   }
   const portableBody = body.replace(`--root ${rootArg}`, '--root .');
@@ -1053,9 +1056,13 @@ export class AgentHandoffController {
       this.host.runtime.showInformationMessage('No verify command available.');
       return;
     }
-    const verifyCommand = typeof packet['verify_command'] === 'string'
-      ? packet['verify_command'].trim()
+    const clipboardCommand = typeof packet['verify_command_clipboard'] === 'string'
+      ? packet['verify_command_clipboard'].trim()
       : '';
+    const verifyCommand = clipboardCommand
+      || (typeof packet['verify_command'] === 'string'
+        ? packet['verify_command'].trim()
+        : '');
     if (!verifyCommand) {
       this.host.runtime.showInformationMessage('No verify command available.');
       return;
