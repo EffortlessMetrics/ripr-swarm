@@ -574,3 +574,54 @@ fn inline_count_read_with_no_editable_test_starts_in_neither_command() -> Result
     }
     Ok(())
 }
+
+/// The stub output for the push at `src/lib.rs:line` with `src` on both sides
+/// of a one-word change.
+fn side_effect_stub(src: &str, line: usize) -> Result<String, String> {
+    let repo = Repo::create(
+        src,
+        &src.replace("msg.to_string()", "msg.to_uppercase()"),
+        &test_file(COUNT_BODY),
+    )?;
+    Ok(text(&repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        &format!("src/lib.rs:{line}"),
+        "--kind",
+        "side_effect",
+    ])?))
+}
+
+#[test]
+fn stub_for_a_conditional_push_into_the_buffer_still_needs_an_observer() -> Result<(), String> {
+    // The push may not run, so the owner is not the one-push shape.
+    let stub = side_effect_stub(
+        "pub fn log_line(buf: &mut Vec<String>, msg: &str) {\n    if !msg.is_empty() {\n        buf.push(msg.to_string());\n    }\n}\n",
+        3,
+    )?;
+    if stub.contains("assert_eq!(buf,") || !stub.contains("observer or mock") {
+        return Err(format!(
+            "a conditional push keeps the observer refusal:\n{stub}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn stub_for_a_local_that_shadows_the_buffer_still_needs_an_observer() -> Result<(), String> {
+    // The push lands in a fresh local named like the parameter, not in the
+    // caller's buffer.
+    let stub = side_effect_stub(
+        "pub fn log_line(buf: &mut Vec<String>, msg: &str) {\n    let buf = &mut Vec::new();\n    buf.push(msg.to_string());\n}\n",
+        3,
+    )?;
+    if stub.contains("assert_eq!(buf,") || !stub.contains("observer or mock") {
+        return Err(format!(
+            "a shadowing local keeps the observer refusal:\n{stub}"
+        ));
+    }
+    Ok(())
+}

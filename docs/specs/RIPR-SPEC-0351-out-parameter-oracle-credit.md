@@ -165,9 +165,12 @@ not start, including a call-presence seam that is not already checked.
 
 For that seam, the stub (`ripr agent stub --kind side_effect`) writes an exact
 contents check instead of refusing for want of an observer. The owner must be
-a free function, the changed push's receiver one of its `&mut Vec<..>` or
-`&mut String` parameters, and the owner's file must not declare its own `Vec`
-or `String`. The stub binds that parameter to `Vec::new()` or `String::new()`,
+exactly the owner shape the rule above follows (`sole_pushed_buffer_at`, one
+check shared with the rule): a plain free function whose only statement is
+one unconditional push into one of its `&mut Vec<..>` or `&mut String`
+parameters, so a conditional push or a local that shadows the parameter keeps
+the observer refusal. The owner's file must not declare its own `Vec` or
+`String`. The stub binds that parameter to `Vec::new()` or `String::new()`,
 calls the owner and asserts `assert_eq!(buf, expected_buf)` with the full
 expected contents left to fill in. A push into any other receiver, such as
 the function's own local, keeps the observer refusal.
@@ -175,7 +178,12 @@ the function's own local, keeps the observer refusal.
 `ripr check` and bare `ripr repair` read the same repository evidence and the
 same `repair_packet_eligibility` decision. In the default check and with
 `--mode instant` or `--no-unchanged-tests`:
-- a pinning count read starts in both commands, on the same gap;
+- a pinning count read starts in both commands, on the same gap in the
+  default check. With `--no-unchanged-tests` or `--mode instant`, `check`
+  leaves the unchanged test out of its evidence, so it may offer no start
+  while bare `ripr repair` still starts; the agreement claimed in those modes
+  is only that neither command starts on a negative and that any start
+  `check` offers is the gap bare `ripr repair` starts;
 - a followed read that does not pin refuses in both, and in the default check
   both name the same reason: "an exact count the test checks after the
   call, such as `assert_eq!(v.len(), 1)`, that would fail if nothing were

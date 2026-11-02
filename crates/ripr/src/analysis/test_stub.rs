@@ -1128,14 +1128,15 @@ fn render_test_fn(
     out
 }
 
-/// Concrete boundary inputs from a single comparison over integer
-/// parameters. `x OP 10` sets `x = 10`; `a OP b` sets both to `100`; `x OP
-/// LIMIT` sets `x = LIMIT`. Anything else stays a `todo!()`.
 /// #11402: for a side-effect seam that pushes into a `&mut Vec<..>` or
 /// `&mut String` parameter of a free function, that parameter's name and a
-/// fresh, empty value for it. `None` for any other seam or owner, and when
-/// the owner's file declares its own `Vec` or `String`, so the stub never
-/// names a type other than the standard one.
+/// fresh, empty value for it. The owner must be exactly the shape the
+/// propagation rule follows (`sole_pushed_buffer_at`, the one owner of that
+/// decision): its only statement is one unconditional push into that
+/// parameter, so a conditional push or a local that shadows the parameter
+/// is refused. `None` for any other seam or owner, and when the owner's
+/// file declares its own `Vec` or `String`, so the stub never names a type
+/// other than the standard one.
 fn pushed_buffer_parameter(
     seam: &RepoSeam,
     signature: &OwnerSignature,
@@ -1150,24 +1151,23 @@ fn pushed_buffer_parameter(
     }
     let receiver =
         crate::analysis::classify::direct_collection_mutation_receiver(seam.expression())?;
-    let parameter = signature
+    signature
         .params
         .iter()
         .find(|parameter| parameter.name.as_deref() == Some(receiver))?;
-    let pointee: String = strip_mut_reference(&parameter.ty)?
-        .chars()
-        .filter(|ch| !ch.is_whitespace())
-        .collect();
-    let empty = if pointee == "String" {
+    let string =
+        crate::analysis::classify::sole_pushed_buffer_at(source, seam.byte_offset(), receiver)?;
+    let empty = if string {
         "String::new()"
-    } else if pointee.starts_with("Vec<") && pointee.ends_with('>') {
-        "Vec::new()"
     } else {
-        return None;
+        "Vec::new()"
     };
     Some((receiver.to_string(), empty.to_string()))
 }
 
+/// Concrete boundary inputs from a single comparison over integer
+/// parameters. `x OP 10` sets `x = 10`; `a OP b` sets both to `100`; `x OP
+/// LIMIT` sets `x = LIMIT`. Anything else stays a `todo!()`.
 fn boundary_inputs(seam: &RepoSeam, signature: &OwnerSignature) -> Vec<(String, String)> {
     if seam.kind() != SeamKind::PredicateBoundary {
         return Vec::new();

@@ -157,7 +157,7 @@ pub(in crate::analysis) use propagation_witness::{
     assertion_pins_pushed_collection_count, assigned_field_path, concat_literal_tail,
     concat_tail_witness, current_path_witness_with, direct_collection_mutation_receiver,
     field_assignment_target, owner_may_exit_before_line, retain_returned_ledger,
-    returned_ledger_witness, test_count_pins_pushed_collection,
+    returned_ledger_witness, sole_pushed_buffer_at, test_count_pins_pushed_collection,
     test_counts_pushed_collection_argument,
 };
 pub(in crate::analysis) use propagation_witness::{

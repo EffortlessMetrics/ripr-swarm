@@ -269,6 +269,33 @@ fn sole_pushed_parameter(
         .source_syntax
         .get(index, &owner.file)?
         .declaration(owner)?;
+    pushed_parameter_of(receiver, &function)
+}
+
+/// Whether the innermost function in `source` that holds `byte_offset` is a
+/// plain free function whose only statement is one unconditional
+/// `receiver.push(..)` into its own `&mut Vec<..>` or `&mut String`
+/// parameter, by the same rule the propagation rule applies to the owner;
+/// `Some(true)` for a `String` parameter, `Some(false)` for a `Vec`. The
+/// test stub reads this, so a stub writes the contents check only for the
+/// owner shape the rule follows.
+pub(in crate::analysis) fn sole_pushed_buffer_at(
+    source: &str,
+    byte_offset: usize,
+    receiver: &str,
+) -> Option<bool> {
+    let offset = ra_ap_syntax::TextSize::try_from(byte_offset).ok()?;
+    let function = parse_clean_source_file(source)?
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| function.syntax().text_range().contains_inclusive(offset))
+        .max_by_key(|function| function.syntax().text_range().start())?;
+    pushed_parameter_of(receiver, &function).map(|parameter| parameter.string)
+}
+
+fn pushed_parameter_of(receiver: &str, function: &ast::Fn) -> Option<PushedParameter> {
     if function.async_token().is_some()
         || function.unsafe_token().is_some()
         || function.gen_token().is_some()
