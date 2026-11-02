@@ -246,8 +246,7 @@ fn detect_artifact_cross_bind(
     for bindings in artifact_index.values() {
         for left_index in 0..bindings.len() {
             let (left_edge, left_artifact) = bindings[left_index];
-            for right_index in (left_index + 1)..bindings.len() {
-                let (right_edge, right_artifact) = bindings[right_index];
+            for &(right_edge, right_artifact) in bindings.iter().skip(left_index + 1) {
                 if left_edge.edge_id == right_edge.edge_id {
                     continue;
                 }
