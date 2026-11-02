@@ -284,8 +284,9 @@ fn validate_test_covered_by_recorded(
     let host = FilePolicyHost::current()?;
     // Cargo serializes builds on the target-dir lock, so the per-selector
     // preparations below compile one package at a time. One combined build
-    // lets Cargo schedule them together; it only pre-fills the cache.
-    if let Some(args) = combined_preparation_args(commands, host) {
+    // per package set lets Cargo schedule each set's targets together; it
+    // only pre-fills the cache.
+    for args in combined_preparation_builds(commands, host) {
         let captured = announce_cargo_child(
             &cargo_child_label("test-valued covered_by combined build", &args),
             || {
@@ -351,19 +352,31 @@ fn validate_test_covered_by_recorded_with(
     })
 }
 
-/// One `cargo test --no-run` covering every applicable selector whose build
-/// is only `-p`, `--bin`, `--test` and lock flags. Selectors with any other
-/// shape are left to their own preparation. This is a cache fill, not
-/// evidence: a failure here is ignored and each selector still builds,
-/// lists and fails under its own spawn.
-fn combined_preparation_args(
+/// One `cargo test --no-run` per package set, each covering every applicable
+/// selector of that set whose build is only `-p`, `--bin`, `--test` and lock
+/// flags. Selectors with any other shape are left to their own preparation. A
+/// set with a single selector is also left to its own preparation. This is a
+/// cache fill, not evidence: a failure here is ignored and each selector still
+/// builds, lists and fails under its own spawn.
+///
+/// The sets are built separately on purpose. `-p ripr` in test mode adds
+/// ripr's dev-dependencies, which changes the features of crates `xtask`
+/// also uses (`tokio`, `libc`, `getrandom`). On Windows that made Cargo
+/// recompile the `xtask` binary, about 95 s, every time the build switched
+/// between `-p xtask` and `-p ripr -p xtask` (#12245). Keeping `xtask`
+/// selectors out of any build that selects `ripr` leaves them with the same
+/// build that `cargo xtask` made.
+fn combined_preparation_builds(
     commands: &[FilePolicyTestCommand],
     host: FilePolicyHost,
-) -> Option<Vec<String>> {
-    let mut packages = BTreeSet::new();
-    let mut bins = BTreeSet::new();
-    let mut tests = BTreeSet::new();
-    let mut merged = 0usize;
+) -> Vec<Vec<String>> {
+    #[derive(Default)]
+    struct Group {
+        bins: BTreeSet<String>,
+        tests: BTreeSet<String>,
+        merged: usize,
+    }
+    let mut groups = BTreeMap::<BTreeSet<String>, Group>::new();
     for selector in commands {
         if selector.host.is_some_and(|declared| declared != host)
             || !is_cargo_test_command(&selector.command)
@@ -399,23 +412,30 @@ fn combined_preparation_args(
             }
         }
         if mergeable && !command_packages.is_empty() {
-            packages.extend(command_packages);
-            bins.extend(command_bins);
-            tests.extend(command_tests);
-            merged += 1;
+            let group = groups.entry(command_packages).or_default();
+            group.bins.extend(command_bins);
+            group.tests.extend(command_tests);
+            group.merged += 1;
         }
     }
-    if merged < 2 {
-        return None;
-    }
-    let mut args = vec!["test".to_string(), "--no-run".to_string()];
-    for (flag, values) in [("-p", packages), ("--bin", bins), ("--test", tests)] {
-        for value in values {
-            args.push(flag.to_string());
-            args.push(value);
-        }
-    }
-    Some(args)
+    groups
+        .into_iter()
+        .filter(|(_, group)| group.merged >= 2)
+        .map(|(packages, group)| {
+            let mut args = vec!["test".to_string(), "--no-run".to_string()];
+            for package in packages {
+                args.push("-p".to_string());
+                args.push(package);
+            }
+            for (flag, values) in [("--bin", group.bins), ("--test", group.tests)] {
+                for value in values {
+                    args.push(flag.to_string());
+                    args.push(value);
+                }
+            }
+            args
+        })
+        .collect()
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -760,7 +780,7 @@ mod tests {
     }
 
     #[test]
-    fn covered_by_combined_preparation_merges_only_plain_build_shapes() {
+    fn covered_by_combined_preparation_builds_each_package_set_apart() {
         let commands = [
             common(1, "cargo test -p xtask --bin xtask alpha"),
             common(2, "cargo test -p ripr --locked --test mcp_stdio"),
@@ -768,29 +788,44 @@ mod tests {
             common(4, "cargo test --workspace"),
             common(5, "cargo test -p ripr --doc"),
             common(6, "cargo test -p windows_only --test w"),
+            common(7, "cargo test -p xtask --test policy_all"),
         ];
         let mut windows = commands.to_vec();
         windows[5].host = Some(FilePolicyHost::Windows);
+        // `xtask` selectors never share a build with `ripr`: selecting
+        // `ripr` in test mode adds its dev-dependencies' features and makes
+        // Cargo recompile the `xtask` binary on Windows (#12245).
         assert_eq!(
-            super::combined_preparation_args(&windows, FilePolicyHost::Unix),
-            Some(argv(
-                "test --no-run -p ripr -p xtask --bin xtask --test causal_delta_fixture --test mcp_stdio"
-            ))
+            super::combined_preparation_builds(&windows, FilePolicyHost::Unix),
+            vec![
+                argv("test --no-run -p ripr --test causal_delta_fixture --test mcp_stdio"),
+                argv("test --no-run -p xtask --bin xtask --test policy_all"),
+            ]
         );
-        assert_eq!(
-            super::combined_preparation_args(&commands[..1], FilePolicyHost::Unix),
-            None,
+        assert!(
+            super::combined_preparation_builds(&commands[..1], FilePolicyHost::Unix).is_empty(),
             "a single selector needs no combined build"
         );
-        assert_eq!(
-            super::combined_preparation_args(
+        assert!(
+            super::combined_preparation_builds(
+                &[
+                    common(1, "cargo test -p xtask --bin xtask alpha"),
+                    common(2, "cargo test -p ripr --test mcp_stdio"),
+                ],
+                FilePolicyHost::Unix,
+            )
+            .is_empty(),
+            "one selector per package set needs no combined build"
+        );
+        assert!(
+            super::combined_preparation_builds(
                 &[
                     common(1, "cargo test --bin xtask alpha"),
                     common(2, "cargo test --test mcp_stdio"),
                 ],
                 FilePolicyHost::Unix,
-            ),
-            None,
+            )
+            .is_empty(),
             "selectors without -p cannot be merged"
         );
     }
