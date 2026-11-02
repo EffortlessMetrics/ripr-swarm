@@ -510,9 +510,18 @@ mod tests {
 
     #[test]
     fn typed_ids_reject_cross_class_parse() {
-        assert!(InstructionSemanticId::parse("instruction-instance:deadbeef").is_err());
-        assert!(InstructionInstanceId::parse("instruction-semantic:deadbeef").is_err());
-        assert!(InstructionSemanticId::parse("gap:67f9714ba37b3967").is_err());
+        assert!(matches!(
+            InstructionSemanticId::parse("instruction-instance:deadbeef"),
+            Err(_)
+        ));
+        assert!(matches!(
+            InstructionInstanceId::parse("instruction-semantic:deadbeef"),
+            Err(_)
+        ));
+        assert!(matches!(
+            InstructionSemanticId::parse("gap:67f9714ba37b3967"),
+            Err(_)
+        ));
     }
 
     #[test]

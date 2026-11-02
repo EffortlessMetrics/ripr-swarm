@@ -114,9 +114,18 @@ mod tests {
 
     #[test]
     fn probe_and_action_ids_reject_as_canonical_item() {
-        assert!(CanonicalItemId::from_canonical_gap_id("probe:demo").is_err());
-        assert!(CanonicalItemId::from_gap_id_alias("action:demo").is_err());
-        assert!(CanonicalItemId::from_canonical_gap_id("seam:demo").is_err());
+        assert!(matches!(
+            CanonicalItemId::from_canonical_gap_id("probe:demo"),
+            Err(_)
+        ));
+        assert!(matches!(
+            CanonicalItemId::from_gap_id_alias("action:demo"),
+            Err(_)
+        ));
+        assert!(matches!(
+            CanonicalItemId::from_canonical_gap_id("seam:demo"),
+            Err(_)
+        ));
     }
 
     #[test]

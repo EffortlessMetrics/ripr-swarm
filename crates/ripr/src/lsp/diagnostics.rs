@@ -3734,19 +3734,18 @@ fn diagnostic_for_finding_with_causal(
             }
             obj.insert("witness".to_string(), value);
             let mut summary = crate::domain::FixInstructionSummary::from_witness(&witness);
-            if let Some(gap) = &finding.canonical_gap {
-                if let Ok(canonical_item) =
+            if let Some(gap) = &finding.canonical_gap
+                && let Ok(canonical_item) =
                     crate::domain::CanonicalItemId::from_canonical_gap_id(&gap.id)
-                {
-                    let context = crate::domain::FixInstructionIdentityContext {
-                        canonical_item: Some(&canonical_item),
-                        workspace_identity: None,
-                        repository_head: None,
-                        snapshot_currentness: None,
-                        witness: Some(&witness),
-                    };
-                    summary.attach_identities(&context);
-                }
+            {
+                let context = crate::domain::FixInstructionIdentityContext {
+                    canonical_item: Some(&canonical_item),
+                    workspace_identity: None,
+                    repository_head: None,
+                    snapshot_currentness: None,
+                    witness: Some(&witness),
+                };
+                summary.attach_identities(&context);
             }
             if let Ok(summary_value) = serde_json::to_value(&summary) {
                 obj.insert("fix_instruction".to_string(), summary_value);
