@@ -1339,7 +1339,48 @@ fn owner_call_binding_matches_impl_type(
     if super::related_tests::let_binding_mentions_type(&prefix, binding, impl_type) {
         return true;
     }
-    super::related_tests::let_binding_certain_type_head(&prefix, binding) == Some(impl_type)
+    match super::related_tests::let_binding_certain_type_head(&prefix, binding) {
+        Some(head) => head == impl_type,
+        None => owner_call_binding_init_names_impl_type(&prefix, binding, impl_type),
+    }
+}
+
+/// Whether the binding's latest `let` initializer begins with `impl_type::`
+/// (for example `Ledger::seeded()`), when no compact type head was read.
+fn owner_call_binding_init_names_impl_type(body: &str, binding: &str, impl_type: &str) -> bool {
+    let head = format!("{impl_type}::");
+    owner_call_binding_let_initializer(body, binding)
+        .is_some_and(|init| init.trim().starts_with(&head))
+}
+
+/// The initializer expression of the latest `let [mut] binding = ..` in `body`.
+fn owner_call_binding_let_initializer<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
+    if binding.is_empty() {
+        return None;
+    }
+    let ident = |ch: char| ch.is_ascii_alphanumeric() || ch == '_';
+    let mut last = None;
+    let mut search = 0usize;
+    while let Some(relative) = body[search..].find("let ") {
+        let let_at = search + relative;
+        let mut rest = body[let_at + 4..].trim_start();
+        rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+        let after = rest.strip_prefix(binding)?;
+        if after.starts_with(ident) {
+            search = let_at + 1;
+            continue;
+        }
+        let stmt_end = rest
+            .find(';')
+            .map(|offset| let_at + 4 + (body[let_at + 4..].len() - rest.len()) + offset)
+            .unwrap_or(body.len());
+        let stmt = &body[let_at..stmt_end];
+        if let Some(eq) = stmt.find('=') {
+            last = Some(stmt[eq + 1..].trim());
+        }
+        search = let_at + 1;
+    }
+    last
 }
 
 /// The offsets in `body` of the `binding.method(..)` calls that
@@ -6789,6 +6830,10 @@ mod tests {
         assert!(precedes(
             "    let mut other = Inventory::new();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
             "Inventory",
+        ));
+        assert!(precedes(
+            "    let mut ledger = Ledger::seeded();\n    ledger.record(7);\n    assert_eq!(ledger.log.last(), Some(&7));",
+            "Ledger",
         ));
         for refused in [
             "    let mut other = OtherInventory::default();\n    other.add(4);\n    assert_eq!(other.log, vec![4]);",
