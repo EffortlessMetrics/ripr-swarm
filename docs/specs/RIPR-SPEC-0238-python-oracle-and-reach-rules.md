@@ -1913,6 +1913,7 @@ and the test is `tests/test_subject.py`, which imports each owner from
   `a_deep_sum_is_refused_not_recursed`.
 - Existing: `crates/ripr/src/analysis/language/python/python_tests.rs`
   `oracle_for_call_recognizes_all_unittest_and_mock_variants`,
+  `oracle_for_call_recognizes_async_mock_expectations`,
   `collect_with_item_assertions_treats_pytest_raises_match_as_exact_error`,
   `contains_dynamic_dispatch_detects_registry_indexed_call`,
   `contains_metaprogramming_detects_metaclass_declarations`,

@@ -1146,32 +1146,41 @@ class CaseAll(unittest.TestCase):
 
 #[test]
 fn oracle_for_call_recognizes_async_mock_expectations() -> Result<(), String> {
-    let source = r#"
+    for method in [
+        "assert_awaited",
+        "assert_awaited_once",
+        "assert_awaited_with",
+        "assert_awaited_once_with",
+    ] {
+        let source = format!(
+            r#"
 from unittest.mock import AsyncMock
 
 async def test_on_parse():
     m = AsyncMock()
     await on_parse("1", m)
-    m.assert_awaited_once_with(1)
-"#;
-    let oracles = assertion_oracles(source);
-    let mock = oracles
-        .iter()
-        .filter(|(kind, _)| matches!(kind, OracleKind::MockExpectation))
-        .count();
-    if mock != 1 {
-        return Err(format!(
-            "expected one mock_expectation oracle for assert_awaited_once_with, got {mock} ({oracles:?})"
-        ));
-    }
-    let unknown = oracles
-        .iter()
-        .filter(|(kind, _)| matches!(kind, OracleKind::Unknown))
-        .count();
-    if unknown != 0 {
-        return Err(format!(
-            "assert_awaited_once_with must not read as unknown custom helper ({oracles:?})"
-        ));
+    m.{method}(1)
+"#
+        );
+        let oracles = assertion_oracles(&source);
+        let mock = oracles
+            .iter()
+            .filter(|(kind, _)| matches!(kind, OracleKind::MockExpectation))
+            .count();
+        if mock != 1 {
+            return Err(format!(
+                "expected one mock_expectation oracle for {method}, got {mock} ({oracles:?})"
+            ));
+        }
+        let unknown = oracles
+            .iter()
+            .filter(|(kind, _)| matches!(kind, OracleKind::Unknown))
+            .count();
+        if unknown != 0 {
+            return Err(format!(
+                "{method} must not read as unknown custom helper ({oracles:?})"
+            ));
+        }
     }
     Ok(())
 }
