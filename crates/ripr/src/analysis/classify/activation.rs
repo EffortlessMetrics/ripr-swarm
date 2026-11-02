@@ -7724,8 +7724,15 @@ fn is_truncated_by_cast(literal: &str, rest: &str) -> bool {
         "isize" => (i128::from(i64::MIN), i128::from(i64::MAX)),
         _ => return false,
     };
-    if literal.contains('.') {
-        return true;
+    if let Some((whole, fraction)) = literal.split_once('.') {
+        let fraction_digits = fraction.replace('_', "");
+        if !fraction_digits.is_empty() && fraction_digits.chars().any(|ch| ch != '0') {
+            return true;
+        }
+        match whole.replace('_', "").parse::<i128>() {
+            Ok(value) => return value < min || value > max,
+            Err(_) => return true,
+        }
     }
     match literal.replace('_', "").parse::<i128>() {
         Ok(value) => value < min || value > max,
@@ -10193,6 +10200,8 @@ assert_eq!(input.amount, 100);"#
         assert_eq!(scalar_values("score(-1 as i32)"), vec!["-1".to_string()]);
         assert_eq!(scalar_values("score(3 as f64)"), vec!["3".to_string()]);
         assert_eq!(scalar_values("score(300 assert)"), vec!["300".to_string()]);
+        assert_eq!(scalar_values("score(1.0 as u8)"), vec!["1.0".to_string()]);
+        assert_eq!(scalar_values("score(0.0 as i32)"), vec!["0.0".to_string()]);
     }
 
     #[test]
