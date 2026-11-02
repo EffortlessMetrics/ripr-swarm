@@ -26,6 +26,7 @@ pub fn cross_language_edge_content_digest(
     edge: &CrossLanguageEdgeV1,
 ) -> Result<String, CrossLanguageEdgeRegistryErrorV1> {
     let mut normalized = edge.clone();
+    normalized.edge_id.clear();
     normalized.source.display_name = None;
     normalized.target.display_name = None;
     let encoded =

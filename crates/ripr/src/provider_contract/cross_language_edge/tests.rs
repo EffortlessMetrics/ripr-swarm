@@ -587,6 +587,16 @@ fn currentness_corpus_cases() -> Result<(), String> {
                             .collect::<Vec<_>>()
                     ));
                 }
+                if case.id == "movement_moved"
+                    && report.records.iter().any(|record| {
+                        record.movement_kind == CrossLanguageEdgeMovementKindV1::BaseOnlyDeleted
+                    })
+                {
+                    return Err(format!(
+                        "{} moved edge must not also emit base_only_deleted",
+                        case.id
+                    ));
+                }
             }
             "anomaly" => {
                 let registry = case
@@ -617,6 +627,8 @@ fn currentness_corpus_cases() -> Result<(), String> {
 
 #[test]
 fn missing_producer_registration_removes_positive_relation() -> Result<(), String> {
+    // Evaluation-only path: partial head registries may be analyzed before producer
+    // registration catches up; validated loads still reject this shape at parse time.
     let mut registry = base_registry(vec![positive_edge(
         "pos",
         BoundaryFamilyV1::FfiBinding,
@@ -700,5 +712,35 @@ fn generated_artifact_cannot_cross_bind_projects() -> Result<(), String> {
     assert!(report.anomalies.iter().any(|anomaly| {
         anomaly.kind == CrossLanguageEdgeRegistryAnomalyKindV1::ArtifactCrossBind
     }));
+    Ok(())
+}
+
+#[test]
+fn edge_id_rename_with_same_facts_reports_unchanged_movement() -> Result<(), String> {
+    let base_edge = positive_edge(
+        "old-id",
+        BoundaryFamilyV1::FfiBinding,
+        CrossLanguageEdgeDirectionV1::SourceToTarget,
+        EdgeStrengthV1::RegisteredBinding,
+    );
+    let mut head_edge = base_edge.clone();
+    head_edge.edge_id = "new-id".into();
+    let base_loaded =
+        load_cross_language_edge_registry_from_json(&registry_json(&base_registry(vec![
+            base_edge,
+        ]))?)
+        .map_err(|error| error.to_string())?;
+    let head_loaded =
+        load_cross_language_edge_registry_from_json(&registry_json(&base_registry(vec![
+            head_edge,
+        ]))?)
+        .map_err(|error| error.to_string())?;
+    let report = compare_cross_language_edge_registries(&base_loaded, &head_loaded)
+        .map_err(|error| error.to_string())?;
+    assert_eq!(report.records.len(), 1);
+    assert_eq!(
+        report.records[0].movement_kind,
+        CrossLanguageEdgeMovementKindV1::Unchanged
+    );
     Ok(())
 }

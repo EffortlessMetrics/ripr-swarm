@@ -12,82 +12,119 @@ pub fn compare_cross_language_edge_registries(
     head: &LoadedCrossLanguageEdgeRegistryV1,
 ) -> Result<CrossLanguageEdgeRegistryMovementReportV1, CrossLanguageEdgeRegistryErrorV1> {
     let head_currentness = analyze_cross_language_edge_registry_currentness(head)?;
-    let mut base_by_key: BTreeMap<String, &CrossLanguageEdgeV1> = BTreeMap::new();
-    let mut head_by_key: BTreeMap<String, &CrossLanguageEdgeV1> = BTreeMap::new();
-    let mut base_by_id: BTreeMap<String, &CrossLanguageEdgeV1> = BTreeMap::new();
-    let mut head_by_id: BTreeMap<String, &CrossLanguageEdgeV1> = BTreeMap::new();
-
-    for edge in &base.registry.edges {
-        base_by_key.insert(cross_language_edge_semantic_key(edge), edge);
-        base_by_id.insert(edge.edge_id.clone(), edge);
-    }
-    for edge in &head.registry.edges {
-        head_by_key.insert(cross_language_edge_semantic_key(edge), edge);
-        head_by_id.insert(edge.edge_id.clone(), edge);
-    }
-
+    let mut used_base = BTreeSet::new();
+    let mut used_head = BTreeSet::new();
     let mut records = Vec::new();
-    let mut seen_keys = BTreeSet::new();
 
-    for (semantic_key, head_edge) in &head_by_key {
-        seen_keys.insert(semantic_key.clone());
-        if let Some(base_edge) = base_by_key.get(semantic_key) {
-            let base_digest = cross_language_edge_content_digest(base_edge)?;
-            let head_digest = cross_language_edge_content_digest(head_edge)?;
-            let movement_kind = if base_digest == head_digest {
-                CrossLanguageEdgeMovementKindV1::Unchanged
-            } else {
-                CrossLanguageEdgeMovementKindV1::Replaced
+    for base_edge in &base.registry.edges {
+        let Some(head_edge) = head
+            .registry
+            .edges
+            .iter()
+            .find(|edge| edge.edge_id == base_edge.edge_id)
+        else {
+            continue;
+        };
+        used_base.insert(base_edge.edge_id.clone());
+        used_head.insert(head_edge.edge_id.clone());
+        let base_key = cross_language_edge_semantic_key(base_edge);
+        let head_key = cross_language_edge_semantic_key(head_edge);
+        let kind = if base_key != head_key {
+            CrossLanguageEdgeMovementKindV1::Moved
+        } else {
+            movement_kind_for_matching_content(base_edge, head_edge)?
+        };
+        records.push(movement_record(
+            refine_head_disposition(kind, head_edge, &head_currentness),
+            &head_key,
+            Some(base_edge.edge_id.clone()),
+            Some(head_edge.edge_id.clone()),
+        ));
+    }
+
+    let mut head_by_key: BTreeMap<String, Vec<&CrossLanguageEdgeV1>> = BTreeMap::new();
+    let mut base_by_key: BTreeMap<String, Vec<&CrossLanguageEdgeV1>> = BTreeMap::new();
+    for edge in &head.registry.edges {
+        if !used_head.contains(&edge.edge_id) {
+            head_by_key
+                .entry(cross_language_edge_semantic_key(edge))
+                .or_default()
+                .push(edge);
+        }
+    }
+    for edge in &base.registry.edges {
+        if !used_base.contains(&edge.edge_id) {
+            base_by_key
+                .entry(cross_language_edge_semantic_key(edge))
+                .or_default()
+                .push(edge);
+        }
+    }
+
+    for (semantic_key, base_edges) in &base_by_key {
+        let Some(head_edges) = head_by_key.get(semantic_key) else {
+            continue;
+        };
+        for base_edge in base_edges {
+            if used_base.contains(&base_edge.edge_id) {
+                continue;
+            }
+            let Some(head_edge) = head_edges
+                .iter()
+                .find(|edge| !used_head.contains(&edge.edge_id))
+            else {
+                continue;
             };
-            records.push(CrossLanguageEdgeMovementRecordV1 {
-                movement_kind: refine_head_disposition(movement_kind, head_edge, &head_currentness),
-                semantic_key: semantic_key.clone(),
-                base_edge_id: Some(base_edge.edge_id.clone()),
-                head_edge_id: Some(head_edge.edge_id.clone()),
-            });
+            used_base.insert(base_edge.edge_id.clone());
+            used_head.insert(head_edge.edge_id.clone());
+            let kind = movement_kind_for_matching_content(base_edge, head_edge)?;
+            records.push(movement_record(
+                refine_head_disposition(kind, head_edge, &head_currentness),
+                semantic_key,
+                Some(base_edge.edge_id.clone()),
+                Some(head_edge.edge_id.clone()),
+            ));
+        }
+    }
+
+    for head_edge in &head.registry.edges {
+        if used_head.contains(&head_edge.edge_id) {
             continue;
         }
-
-        if let Some(base_edge) = base_by_id.get(&head_edge.edge_id) {
-            records.push(CrossLanguageEdgeMovementRecordV1 {
-                movement_kind: CrossLanguageEdgeMovementKindV1::Moved,
-                semantic_key: semantic_key.clone(),
-                base_edge_id: Some(base_edge.edge_id.clone()),
-                head_edge_id: Some(head_edge.edge_id.clone()),
-            });
-            continue;
-        }
-
-        records.push(CrossLanguageEdgeMovementRecordV1 {
-            movement_kind: refine_head_disposition(
+        records.push(movement_record(
+            refine_head_disposition(
                 CrossLanguageEdgeMovementKindV1::HeadOnlyAdded,
                 head_edge,
                 &head_currentness,
             ),
-            semantic_key: semantic_key.clone(),
-            base_edge_id: None,
-            head_edge_id: Some(head_edge.edge_id.clone()),
-        });
+            &cross_language_edge_semantic_key(head_edge),
+            None,
+            Some(head_edge.edge_id.clone()),
+        ));
     }
 
-    for (semantic_key, base_edge) in &base_by_key {
-        if seen_keys.contains(semantic_key) {
+    for base_edge in &base.registry.edges {
+        if used_base.contains(&base_edge.edge_id) {
             continue;
         }
-        records.push(CrossLanguageEdgeMovementRecordV1 {
-            movement_kind: CrossLanguageEdgeMovementKindV1::BaseOnlyDeleted,
-            semantic_key: semantic_key.clone(),
-            base_edge_id: Some(base_edge.edge_id.clone()),
-            head_edge_id: None,
-        });
+        records.push(movement_record(
+            CrossLanguageEdgeMovementKindV1::BaseOnlyDeleted,
+            &cross_language_edge_semantic_key(base_edge),
+            Some(base_edge.edge_id.clone()),
+            None,
+        ));
     }
 
     records.sort_by(|left, right| {
-        left.semantic_key.cmp(&right.semantic_key).then_with(|| {
-            left.movement_kind
-                .as_str()
-                .cmp(right.movement_kind.as_str())
-        })
+        left.semantic_key
+            .cmp(&right.semantic_key)
+            .then_with(|| {
+                left.movement_kind
+                    .as_str()
+                    .cmp(right.movement_kind.as_str())
+            })
+            .then_with(|| left.head_edge_id.cmp(&right.head_edge_id))
+            .then_with(|| left.base_edge_id.cmp(&right.base_edge_id))
     });
 
     Ok(CrossLanguageEdgeRegistryMovementReportV1 {
@@ -96,6 +133,33 @@ pub fn compare_cross_language_edge_registries(
         head_semantic_digest: head.semantic_digest.clone(),
         records,
     })
+}
+
+fn movement_kind_for_matching_content(
+    base_edge: &CrossLanguageEdgeV1,
+    head_edge: &CrossLanguageEdgeV1,
+) -> Result<CrossLanguageEdgeMovementKindV1, CrossLanguageEdgeRegistryErrorV1> {
+    let base_digest = cross_language_edge_content_digest(base_edge)?;
+    let head_digest = cross_language_edge_content_digest(head_edge)?;
+    Ok(if base_digest == head_digest {
+        CrossLanguageEdgeMovementKindV1::Unchanged
+    } else {
+        CrossLanguageEdgeMovementKindV1::Replaced
+    })
+}
+
+fn movement_record(
+    movement_kind: CrossLanguageEdgeMovementKindV1,
+    semantic_key: &str,
+    base_edge_id: Option<String>,
+    head_edge_id: Option<String>,
+) -> CrossLanguageEdgeMovementRecordV1 {
+    CrossLanguageEdgeMovementRecordV1 {
+        movement_kind,
+        semantic_key: semantic_key.into(),
+        base_edge_id,
+        head_edge_id,
+    }
 }
 
 impl CrossLanguageEdgeMovementKindV1 {

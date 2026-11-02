@@ -244,35 +244,34 @@ fn detect_artifact_cross_bind(
     anomalies: &mut Vec<CrossLanguageEdgeRegistryAnomalyV1>,
 ) {
     for bindings in artifact_index.values() {
-        if bindings.len() < 2 {
-            continue;
-        }
-        for window in bindings.windows(2) {
-            let (left_edge, left_artifact) = window[0];
-            let (right_edge, right_artifact) = window[1];
-            if left_edge.edge_id == right_edge.edge_id {
-                continue;
+        for left_index in 0..bindings.len() {
+            let (left_edge, left_artifact) = bindings[left_index];
+            for right_index in (left_index + 1)..bindings.len() {
+                let (right_edge, right_artifact) = bindings[right_index];
+                if left_edge.edge_id == right_edge.edge_id {
+                    continue;
+                }
+                if left_artifact.generator_id != right_artifact.generator_id
+                    || left_artifact.input_digest != right_artifact.input_digest
+                    || left_artifact.output_digest != right_artifact.output_digest
+                {
+                    continue;
+                }
+                if project_scope_key(&left_edge.source.project)
+                    == project_scope_key(&right_edge.source.project)
+                    && project_scope_key(&left_edge.target.project)
+                        == project_scope_key(&right_edge.target.project)
+                {
+                    continue;
+                }
+                push_anomaly(
+                    anomalies,
+                    CrossLanguageEdgeRegistryAnomalyKindV1::ArtifactCrossBind,
+                    &left_edge.edge_id,
+                    Some(right_edge.edge_id.clone()),
+                    "generated artifact identity cannot cross-bind across project scopes",
+                );
             }
-            if left_artifact.generator_id != right_artifact.generator_id
-                || left_artifact.input_digest != right_artifact.input_digest
-                || left_artifact.output_digest != right_artifact.output_digest
-            {
-                continue;
-            }
-            if project_scope_key(&left_edge.source.project)
-                == project_scope_key(&right_edge.source.project)
-                && project_scope_key(&left_edge.target.project)
-                    == project_scope_key(&right_edge.target.project)
-            {
-                continue;
-            }
-            push_anomaly(
-                anomalies,
-                CrossLanguageEdgeRegistryAnomalyKindV1::ArtifactCrossBind,
-                &left_edge.edge_id,
-                Some(right_edge.edge_id.clone()),
-                "generated artifact identity cannot cross-bind across project scopes",
-            );
         }
     }
 }
@@ -282,18 +281,7 @@ fn project_scope_key(project: &CrossLanguageProjectIdentityV1) -> String {
 }
 
 fn subjects_swap(left: &CrossLanguageEdgeV1, right: &CrossLanguageEdgeV1) -> bool {
-    left.source.language == right.target.language
-        && left.source.subject_id == right.target.subject_id
-        && left.source.subject_body_digest == right.target.subject_body_digest
-        && left.target.language == right.source.language
-        && left.target.subject_id == right.source.subject_id
-        && left.target.subject_body_digest == right.source.subject_body_digest
-        && left.source.project.project_id == right.target.project.project_id
-        && left.source.project.package_id == right.target.project.package_id
-        && left.source.project.config_digest == right.target.project.config_digest
-        && left.target.project.project_id == right.source.project.project_id
-        && left.target.project.package_id == right.source.project.package_id
-        && left.target.project.config_digest == right.source.project.config_digest
+    super::validate::edge_connects_subjects(left, &right.target, &right.source)
 }
 
 fn push_anomaly(
@@ -303,9 +291,6 @@ fn push_anomaly(
     related_edge_id: Option<String>,
     message: impl Into<String>,
 ) {
-    if anomalies.len() >= MAX_ANOMALIES {
-        return;
-    }
     anomalies.push(CrossLanguageEdgeRegistryAnomalyV1 {
         kind,
         edge_id: edge_id.into(),
