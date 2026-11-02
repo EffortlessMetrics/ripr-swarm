@@ -6765,7 +6765,11 @@ fn test_imports_same_name_twin(
         .copied()
         .chain(imported.iter().copied())
         .collect();
-    if imported.is_empty()
+    // A named `use super::rows` (or `self::rows`) stores only the qualifier
+    // prefix in `module`; the leaf is `owner_name` and is not part of
+    // `imported`. An empty `imported` with a resolved `segments` path is
+    // valid (#7103 / #8059).
+    if (imported.is_empty() && segments.is_empty())
         || imported
             .iter()
             .any(|segment| matches!(*segment, "super" | "self" | "crate"))
