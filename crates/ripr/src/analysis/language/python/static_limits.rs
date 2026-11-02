@@ -1762,6 +1762,7 @@ pub(super) mod tests {
             version_conditional: false,
             cli_subcommand: None,
             nested_called_by_parent: false,
+            nested_result_discarded: false,
         }
     }
 

@@ -1,0 +1,44 @@
+{
+  "case_id": "py-hostile-nested-result-discarded",
+  "subject_id": "authored-py-pytest-hostile",
+  "diff": "cases/py-hostile-nested-result-discarded.diff",
+  "anchor": {
+    "file": "hostile/nested_discard.py",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_nested_function_result_discarded_by_outer",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.13.17, pytest 9.2.0, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return m + 2",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: inner returns a different value, but tally calls it as a statement and returns 2"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 rule 31: tally calls inner only as a statement, so the test reaches inner but asserts nothing inner returned.",
+  "labeling_observation": {
+    "ripr_commit": "8783b83f",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
