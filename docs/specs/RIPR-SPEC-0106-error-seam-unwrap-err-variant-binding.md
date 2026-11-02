@@ -102,6 +102,14 @@ an error-constructor call or a fixed payload), is `ExactErrorVariant` /
 Negative assertions, an opaque expected value, an unwrapped `Ok` read and a
 method call on the error (`.unwrap_err().kind()`) are not upgraded.
 
+An `Err(..)` constructor that is an argument of a value-supplying adapter
+(`or`, `or_else`, `and`, `and_then`, `ok_or`, `ok_or_else`, `unwrap_or`,
+`unwrap_or_else`, `map_err`, `map_or`, `map_or_else`, as a method or a `Result::`
+path, grouped or not) never makes an assertion `ExactErrorVariant` (#12359). The
+test wrote that error itself, so the assertion passes whatever the owner
+returns. `Err(..)` compared directly, inside `Some(..)`, or matched with
+`matches!` keeps its reading.
+
 FAIL-CLOSED rule: when the binding is present but the assertion does NOT
 contain a named enum-variant token (e.g. `assert!(err.to_string().contains(…))`),
 do NOT upgrade. The classification stays at its original kind.
