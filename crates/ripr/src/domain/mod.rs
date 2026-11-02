@@ -16,6 +16,7 @@ mod feedback;
 mod finding_test_evidence;
 mod fix_instruction;
 mod git_candidate;
+mod guard_refusal;
 mod identity;
 mod intervention_study;
 mod language;
@@ -98,6 +99,10 @@ pub use git_candidate::{
     GitCandidateBase, GitCandidateDiffSemantics, GitCandidateSubject, GitCandidateSubjectError,
     GitHashFormat, GitObjectId, GitTreeish,
 };
+pub(crate) use guard_refusal::{
+    GuardRefusalKind, assertion_not_credited_entry_for_test, assertion_not_credited_reason,
+    guard_refusal_digest_classification_hint, guard_refusal_kind, guard_refusal_limitation_edge,
+};
 pub use identity::{
     GOVERNED_IDENTITY_SURFACES, IDENTITY_REGISTRY_JSON_PATH, IDENTITY_REGISTRY_MARKDOWN_PATH,
     REQUIRED_TAXONOMY_KINDS, identity_field_disposition, identity_registry_canonical_json,
@@ -129,6 +134,7 @@ pub(crate) use next_action::{
 pub(crate) use probe::{
     ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, STRONG_CHECK_UNTIED_NEXT_STEP,
     exact_assertion_fact, input_boundary_fact, is_unselected_input_reason,
+    row_exact_discriminator_fact,
 };
 pub use probe::{
     ActivationEvidence, AnalysisScope, DeltaKind, Finding, FindingCanonicalGap, FlowSinkFact,

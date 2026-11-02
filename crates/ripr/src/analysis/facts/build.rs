@@ -8,7 +8,7 @@ use super::model::{RustIndex, WorkspaceRootAuthority};
 use crate::analysis::cancellation::{self, WorkerError};
 use crate::analysis::seam_cache::{
     CacheLoad, FileFactCacheStats, FilesContentHashBuilder, KnownFilePaths, RepoFileFactCache,
-    RepoFileFactCacheKey,
+    RepoFileFactCacheKey, claim_base_untrusted_reason_emission,
 };
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -617,7 +617,14 @@ pub(crate) mod streamed_source_bytes {
 
 fn emit_corrupt_entries_warning(count: usize, first_reason: Option<&str>) {
     if let Some(reason) = first_reason {
-        eprintln!("{}", corrupt_entries_warning(count, reason));
+        // #12432: the run-stable base-class reasons (tracked cache dir, base
+        // Git could not confirm) are byte-identical in every build of a run,
+        // so each distinct base reports once instead of once per build;
+        // ordinary per-entry reasons never reach the guard and keep the
+        // per-build count+first-reason line.
+        if claim_base_untrusted_reason_emission(reason) {
+            eprintln!("{}", corrupt_entries_warning(count, reason));
+        }
     }
 }
 

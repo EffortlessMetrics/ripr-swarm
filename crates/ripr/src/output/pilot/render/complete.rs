@@ -2290,42 +2290,9 @@ fn repair_action_label(action: &str) -> &'static str {
     }
 }
 
-/// #9244 item 3: the suggested assertion carries `/* ... */` placeholders for
-/// the values only the developer knows. Labelled "assertion:" they read like
-/// unfilled template text, so a shape with a placeholder names itself a shape
-/// and says what to do with it; any other assertion text keeps its label.
+/// #9244 item 3: shared placeholder-assertion wording. The helper lives in
+/// `output::placeholder_assertion` so the other human handoff lines use the
+/// same fill-in note.
 fn push_assertion_shape(out: &mut String, shape: &str) {
-    if shape.contains("/*") {
-        out.push_str(&format!("  assertion shape: {shape}\n"));
-        out.push_str(
-            "    (replace each /* ... */ comment with a real value from your test before using it)\n",
-        );
-    } else {
-        out.push_str(&format!("  assertion: {shape}\n"));
-    }
-}
-
-#[cfg(test)]
-mod assertion_shape_tests {
-    use super::push_assertion_shape;
-
-    #[test]
-    fn placeholder_shape_is_labelled_a_shape_with_a_fill_in_note() {
-        let mut out = String::new();
-        push_assertion_shape(
-            &mut out,
-            "assert_eq!(total(/* boundary input where a >= b */), /* expected */)",
-        );
-        assert_eq!(
-            out,
-            "  assertion shape: assert_eq!(total(/* boundary input where a >= b */), /* expected */)\n    (replace each /* ... */ comment with a real value from your test before using it)\n"
-        );
-    }
-
-    #[test]
-    fn concrete_assertion_keeps_its_label_and_gets_no_note() {
-        let mut out = String::new();
-        push_assertion_shape(&mut out, "assert!(quote.total > Money::zero())");
-        assert_eq!(out, "  assertion: assert!(quote.total > Money::zero())\n");
-    }
+    crate::output::placeholder_assertion::push_terminal_assertion(out, "  ", shape);
 }

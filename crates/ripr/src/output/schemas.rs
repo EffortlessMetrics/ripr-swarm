@@ -340,6 +340,14 @@ mod tests {
         )
     }
 
+    fn live_context_packet_dto_version() -> Result<&'static str, String> {
+        unique_quoted_before_following_lines(
+            include_str!("../domain/context_packet.rs"),
+            "version: \"",
+            &["tool: \"ripr\","],
+        )
+    }
+
     #[test]
     fn producer_version_extraction_rejects_missing_and_conflicting_literals() -> Result<(), String>
     {
@@ -374,6 +382,11 @@ mod tests {
         let doc = output_schema_doc()?;
         let table = command_to_version_table(&doc)?;
         let required_rows = [
+            (
+                "`ripr context --json`",
+                crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                "output::json::context_packet::CONTEXT_PACKET_VERSION_CONTRACT",
+            ),
             (
                 "`ripr diff --json`",
                 live_diff_report_schema_version()?,
@@ -420,6 +433,13 @@ mod tests {
                     "{command} row must document producer version {version} from {owner}; got {row}"
                 ));
             }
+        }
+        let context_renderer_version = crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT;
+        let context_dto_version = live_context_packet_dto_version()?;
+        if context_renderer_version != context_dto_version {
+            return Err(format!(
+                "context packet renderer contract {context_renderer_version:?} must match ContextPacket::from_finding version {context_dto_version:?}"
+            ));
         }
         Ok(())
     }
