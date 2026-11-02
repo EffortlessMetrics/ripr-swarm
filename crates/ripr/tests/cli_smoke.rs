@@ -8282,6 +8282,12 @@ fn first_useful_action_corpus_pins_routing_cases() -> Result<(), Box<dyn std::er
             assert_success(&produced);
             let produced: serde_json::Value = serde_json::from_slice(&produced.stdout)?;
             let normalized_produced = normalize_unchanged_repo_exposure_producer_fixture(produced)?;
+            if normalized_produced != before {
+                let _ = std::fs::write(
+                    "/tmp/normalized_produced.json",
+                    serde_json::to_string_pretty(&normalized_produced).unwrap_or_default(),
+                );
+            }
             assert_eq!(
                 before, normalized_produced,
                 "before snapshot must be the portable normalization of production output"
