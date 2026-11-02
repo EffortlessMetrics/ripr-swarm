@@ -204,3 +204,17 @@ fn only_pairs_of_two_named_operands_need_bindings() {
         "def test_a():\n    expected = f(2)\n    assert f(2) == expected\n"
     ));
 }
+
+/// Skipping the bindings parse for literal pairs must not change a named pair
+/// next to it (#12515): in one file the literal comparison keeps its credit and
+/// the comparison against a binding built from the owner is still demoted.
+#[test]
+fn a_literal_pair_beside_a_named_pair_leaves_each_with_its_own_verdict() {
+    let source = unit(
+        "    def test_literal(self):\n        self.assertEqual(f(2), 6)\n    def test_named(self):\n        e = f(2)\n        self.assertEqual(f(2), e)\n",
+    );
+    assert_eq!(
+        strengths(&source),
+        [OracleStrength::Strong, OracleStrength::Weak]
+    );
+}

@@ -257,12 +257,10 @@ impl<'o, 'a> OwnerIndex<'o, 'a> {
                     .filter(|called| self.has_owner(called)),
             );
         }
-        let callees = Arc::new(callees);
-        self.callees
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(key, Arc::clone(&callees));
-        callees
+        // Another thread may have read the same owner meanwhile; keep the one
+        // entry so every caller shares it.
+        let mut memo = self.callees.lock().unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(memo.entry(key).or_insert_with(|| Arc::new(callees)))
     }
 
     /// The lines of `file`, split once.
@@ -277,11 +275,11 @@ impl<'o, 'a> OwnerIndex<'o, 'a> {
         }
         let source = (self.read_source)(file)?;
         let lines = Arc::new(source.lines().collect::<Vec<_>>());
-        self.lines_by_file
+        let mut split = self
+            .lines_by_file
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(file, Arc::clone(&lines));
-        Some(lines)
+            .unwrap_or_else(PoisonError::into_inner);
+        Some(Arc::clone(split.entry(file).or_insert(lines)))
     }
 
     /// `names` and every owner they call, transitively.
