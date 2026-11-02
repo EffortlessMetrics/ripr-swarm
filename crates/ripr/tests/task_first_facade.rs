@@ -329,7 +329,7 @@ fn repair_without_actionable_item_creates_no_attempt() -> Result<(), String> {
     );
     let stderr = stderr_text(&repair);
     assert!(
-        stderr.contains("no seams visible"),
+        stderr.contains("no gaps visible"),
         "must report the honest setup outcome:\n{stderr}"
     );
     assert!(
@@ -457,7 +457,7 @@ fn repair_with_changed_non_rust_code_says_rust_only() -> Result<(), String> {
     assert_exit(&repair, 3, "repair with changed non-Rust code");
     let stderr = stderr_text(&repair);
     assert!(
-        stderr.contains("is Python and TypeScript, and `ripr repair` works from Rust seams only"),
+        stderr.contains("is Python and TypeScript, and `ripr repair` works from Rust gaps only"),
         "must say plainly that repair start is Rust only:\n{stderr}"
     );
     assert!(
@@ -498,7 +498,7 @@ fn repair_with_committed_only_non_rust_change_says_rust_only() -> Result<(), Str
     git_commit(root, "change ts")?;
     let stderr = nonrust_repair_stderr(root, &root_arg)?;
     assert!(
-        stderr.contains("is TypeScript, and `ripr repair` works from Rust seams only"),
+        stderr.contains("is TypeScript, and `ripr repair` works from Rust gaps only"),
         "committed-only change must be named:\n{stderr}"
     );
     assert!(!stderr.contains("ripr pilot"), "no pilot loop:\n{stderr}");
@@ -517,7 +517,7 @@ fn repair_with_quoted_non_rust_filename_says_rust_only() -> Result<(), String> {
     std::fs::write(root.join("café.ts"), "export const t = 11;\n").map_err(|e| e.to_string())?;
     let stderr = nonrust_repair_stderr(root, &root_arg)?;
     assert!(
-        stderr.contains("is TypeScript, and `ripr repair` works from Rust seams only"),
+        stderr.contains("is TypeScript, and `ripr repair` works from Rust gaps only"),
         "quoted filename must still be recognised:\n{stderr}"
     );
     Ok(())
@@ -586,7 +586,7 @@ fn repair_with_rust_only_change_keeps_the_generic_message() -> Result<(), String
         .map_err(|e| e.to_string())?;
     let stderr = nonrust_repair_stderr(root, &root_arg)?;
     assert!(
-        stderr.contains("no seams visible") && !stderr.contains("Rust seams only"),
+        stderr.contains("no gaps visible") && !stderr.contains("Rust gaps only"),
         "Rust-only change must keep the generic message:\n{stderr}"
     );
     Ok(())
@@ -1532,7 +1532,7 @@ fn explain_names_truncation_when_seam_reverse_cannot_check() -> Result<(), Strin
         "a truncated inventory must be named, not a clean miss:\n{stderr}"
     );
     assert!(
-        stderr.contains("wider seam budget"),
+        stderr.contains("wider gap budget"),
         "the refusal must name the wider-budget recovery:\n{stderr}"
     );
     assert!(
@@ -1551,7 +1551,7 @@ fn repair_accepts_the_producer_gap_id_check_prints() -> Result<(), String> {
     let fixture = Fixture::two_seam("facade-producer-gap")?;
     let root = &fixture.root;
     let root_arg = root.to_string_lossy().into_owned();
-    // Wrong discriminator: names no seam, starts nothing.
+    // Wrong discriminator: names no gap, starts nothing.
     let wrong = run_ripr(
         root,
         &[
@@ -1617,7 +1617,7 @@ fn repair_refuses_a_producer_gap_id_that_names_several_seams() -> Result<(), Str
     );
     let stderr = String::from_utf8_lossy(&repair.stderr);
     assert!(
-        stderr.contains("names 2 seams; select one explicitly"),
+        stderr.contains("names 2 gaps; select one explicitly"),
         "expected the ambiguous refusal, got: {stderr}"
     );
     assert!(
@@ -1764,7 +1764,7 @@ fn cross_namespace_ids_round_trip_between_check_explain_and_repair() -> Result<(
     assert_exit(&repair_stale, 3, "repair with a stale probe ID");
     let stale_stderr = stderr_text(&repair_stale);
     assert!(
-        stale_stderr.contains("names no seam") && stale_stderr.contains("stale"),
+        stale_stderr.contains("names no gap") && stale_stderr.contains("stale"),
         "stale probe refusal must name the stale mapping:\n{stale_stderr}"
     );
     assert!(
@@ -1838,7 +1838,7 @@ fn repair_refuses_unassignable_probe_ordinals() -> Result<(), String> {
         assert_exit(&repair, 3, "repair with an unassignable probe ordinal");
         let stderr = stderr_text(&repair);
         assert!(
-            stderr.contains("names no seam") && stderr.contains("stale"),
+            stderr.contains("names no gap") && stderr.contains("stale"),
             "an unassignable ordinal must refuse as stale ({forged}):\n{stderr}"
         );
     }
@@ -1905,7 +1905,7 @@ fn repair_with_second_occurrence_probe_id_refuses_as_ambiguous() -> Result<(), S
         assert_exit(&repair, 3, "repair with a diff probe ordinal");
         let stderr = stderr_text(&repair);
         assert!(
-            stderr.contains("names 2 seams; select one explicitly")
+            stderr.contains("names 2 gaps; select one explicitly")
                 && stderr.contains(&first_seam)
                 && stderr.contains(&second_seam),
             "a diff probe ordinal must refuse as ambiguous listing both seams ({forged}):\n{stderr}"
@@ -1974,7 +1974,7 @@ fn repair_with_diff_probe_ordinal_does_not_bind_unchanged_middle_seam() -> Resul
     );
     let stderr = stderr_text(&repair);
     assert!(
-        stderr.contains("names 2 seams; select one explicitly"),
+        stderr.contains("names 2 gaps; select one explicitly"),
         "diff .2 must refuse as ambiguous, not bind the middle seam:\n{stderr}"
     );
     assert!(
@@ -2038,7 +2038,7 @@ fn repair_accepts_a_unique_file_line_location() -> Result<(), String> {
     let stale = run_ripr(root, &["repair", "src/lib.rs:99", "--root", &root_arg])?;
     assert_exit(&stale, 3, "repair with a file:line naming no seam");
     assert!(
-        stderr_text(&stale).contains("names no seam"),
+        stderr_text(&stale).contains("names no gap"),
         "stale location refusal must name the miss:\n{}",
         stderr_text(&stale)
     );
@@ -2080,7 +2080,7 @@ fn repair_refuses_an_ambiguous_probe_id() -> Result<(), String> {
     assert_exit(&repair, 3, "repair with an ambiguous probe ID");
     let stderr = stderr_text(&repair);
     assert!(
-        stderr.contains("names 2 seams; select one explicitly"),
+        stderr.contains("names 2 gaps; select one explicitly"),
         "ambiguous probe ID must refuse with the candidate list:\n{stderr}"
     );
     assert!(
@@ -4413,7 +4413,7 @@ fn status_and_continue_do_not_offer_a_start_for_a_stale_seam_id() -> Result<(), 
         .map_err(|error| format!("shift lib: {error}"))?;
     let moved = run_ripr(root, &["repair", FIXTURE_SEAM, "--root", &root_arg])?;
     assert!(
-        stderr_text(&moved).contains("unknown") || stderr_text(&moved).contains("no seam"),
+        stderr_text(&moved).contains("unknown") || stderr_text(&moved).contains("no gap"),
         "precondition: the recorded seam id no longer resolves:\n{}",
         stderr_text(&moved)
     );

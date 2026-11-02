@@ -244,6 +244,34 @@ arguments (`!x`, `a != b`) do not change this grade.
   non-matches.
 - Pure fixture golden for
   `fixtures/rust_macro_wrapped_assertion_limitation/`.
+- Pure fixture golden for
+  `fixtures/rust_tolerance_assertion_macro_limitation/`: a tolerance macro spelled
+  like `approx::assert_relative_eq!` keeps the same named limitation with a
+  numeric next step (#6645). The macro's spelling selects only that wording; it
+  never classifies the macro, grades an oracle or earns credit.
+- Pure fixture golden for
+  `fixtures/rust_tolerance_ne_assertion_macro_limitation/`: an inequality tolerance
+  macro (`assert_relative_ne!`) gets the opposite advice, because the assertion
+  passes when the values differ by more than the tolerance (#6645).
+- Provider assertion macro inventory, pinned by
+  `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs`. It records
+  what ripr reads today and is not a statement of what is desirable:
+
+  | Family | Forms | Oracle read | Limitation named |
+  |---|---|---|---|
+  | Presence or variant only | `claims::assert_some!`, `assert_ok!`, `assert_err!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
+  | Direct payload equality | `claims::assert_some_eq!`, `assert_ok_eq!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
+  | Payload extraction, then a std assertion | `let v = assert_ok!(..); assert_eq!(v, ..)` | exact value / strong | none (the manifest-verified claims import path, #9619) |
+  | Payload extraction, payload discarded | `let v = assert_ok!(..); let _ = v;` | relational / weak | none |
+  | Tolerance equality | `approx::assert_relative_eq!`, `assert_abs_diff_eq!`, `assert_ulps_eq!`, `float_cmp::assert_approx_eq!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
+  | Tolerance inequality | `approx::assert_relative_ne!` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
+  | Debug-only | `debug_assert_eq!` | unknown / none | none named |
+  | Local macro with a provider's name | `macro_rules! assert_some` | unknown / none | `rust_macro_wrapped_assertion_unresolved` |
+
+  No provider macro other than the payload-extraction chain earns credit. The
+  direct payload equality forms are exact by the provider's contract, so they
+  are the first credit candidate; the tolerance forms are not, until the
+  tolerance and the size of the change are both readable.
 - Honesty corpus case expecting
   `rust_macro_wrapped_assertion_unresolved`, limitation detail,
   non-promotion, no verify command, no receipt command, and no repair packet.
@@ -265,6 +293,10 @@ arguments (`!x`, `a != b`) do not change this grade.
 - `crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
 - `crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_macro_wrapped_assertion_static_limit_kind`
 - `fixtures/rust_macro_wrapped_assertion_limitation/expected/check.json`
+- `fixtures/rust_tolerance_assertion_macro_limitation/expected/check.json`
+- `crates/ripr/src/analysis/language/rust/oracles.rs::tests::a_tolerance_macro_gets_a_numeric_next_step_and_nothing_else_changes`
+- `fixtures/rust_tolerance_ne_assertion_macro_limitation/expected/check.json`
+- `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs::provider_assertion_macro_inventory_matches_current_behavior`
 - `fixtures/evidence-promotion-honesty-corpus/corpus.json` case
   `rust_macro_wrapped_assertion_named_limitation`
 - `crates/ripr/tests/local_macro_assertion_expansion.rs`
@@ -282,6 +314,9 @@ arguments (`!x`, `a != b`) do not change this grade.
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |
 | Static limit docs | `docs/STATIC_LIMITS.md` |
 | Pure fixture golden | `fixtures/rust_macro_wrapped_assertion_limitation/` |
+| Pure fixture golden (tolerance macro wording) | `fixtures/rust_tolerance_assertion_macro_limitation/` |
+| Pure fixture golden (inequality tolerance wording) | `fixtures/rust_tolerance_ne_assertion_macro_limitation/` |
+| Provider macro inventory | `crates/ripr/tests/rust_assertion_provider_macro_inventory.rs` |
 | Honesty corpus | `fixtures/evidence-promotion-honesty-corpus/corpus.json` |
 
 ## CI Proof
@@ -290,6 +325,10 @@ arguments (`!x`, `a != b`) do not change this grade.
 - `cargo test -p ripr static_limit_kind`
 - `cargo test -p ripr validation_accepts_rust_macro_wrapped_assertion_static_limit_kind`
 - `cargo xtask fixtures rust_macro_wrapped_assertion_limitation`
+- `cargo xtask fixtures rust_tolerance_assertion_macro_limitation`
+- `cargo test -p ripr a_tolerance_macro_gets`
+- `cargo xtask fixtures rust_tolerance_ne_assertion_macro_limitation`
+- `cargo test -p ripr --test rust_assertion_provider_macro_inventory`
 - `cargo xtask check-evidence-promotion-honesty`
 - `cargo xtask goldens check`
 - `cargo xtask check-output-contracts`

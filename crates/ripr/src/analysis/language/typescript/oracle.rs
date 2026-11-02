@@ -3823,6 +3823,15 @@ pub(crate) fn is_literal_container_argument(arg: &Argument<'_>) -> bool {
     }
 }
 
+/// An array or object literal built only from [`is_literal_container_argument`]'s
+/// literal vocabulary, as an expression (a table-row cell).
+pub(crate) fn is_literal_container_expression(value: &Expression<'_>) -> bool {
+    matches!(
+        value,
+        Expression::ArrayExpression(_) | Expression::ObjectExpression(_)
+    ) && literal_container_value(value)
+}
+
 fn literal_container_array(array: &oxc_ast::ast::ArrayExpression<'_>) -> bool {
     array
         .elements

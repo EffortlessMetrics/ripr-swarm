@@ -526,7 +526,7 @@ fn is_pytest_plugins_target(target: &Expr) -> bool {
 }
 
 /// Every statement block nested directly inside a compound statement.
-fn nested_blocks(stmt: &Stmt) -> Vec<&[Stmt]> {
+pub(super) fn nested_blocks(stmt: &Stmt) -> Vec<&[Stmt]> {
     match stmt {
         Stmt::FunctionDef(function) => vec![&function.body],
         Stmt::AsyncFunctionDef(function) => vec![&function.body],

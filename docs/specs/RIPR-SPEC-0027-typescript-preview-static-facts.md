@@ -575,6 +575,12 @@ boundary without changing the guards (#4104 E):
   the name; the position, arity, off-value and expected-side rules are the
   literal path's, unchanged. Fixtures: `ts_boundary_local_constant_credit`,
   `ts_boundary_local_constant_refused`.
+- **Object-row expected values** (#11196, RIPR-SPEC-0243 rule 11): a
+  `row.key` expected value of a never-touched `const` object-row table, or
+  of an inline `test.each` object table, is read per row as that row's
+  literal only when every row holds a one-line literal at every key read;
+  otherwise the dynamic-assertion refusal is unchanged. Fixtures:
+  `ts_table_row_expected_credit`, `ts_table_row_expected_refused`.
 - **Boundary input evidence**: for a changed predicate with a named missing
   discriminator `<param> == <operand>`, the adapter emits
   `typescript_boundary_input: parameter=<param>;index=<i>;operand=<operand>;value=<v>`

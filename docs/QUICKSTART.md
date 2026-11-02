@@ -599,7 +599,7 @@ Reference details for driving ripr from a coding agent:
   accept the seam ID that `pilot` prints. They also resolve a `probe:...`,
   `repo-probe:...` or `gap:...` finding ID from `ripr check` to its one seam. If
   the ID is stale, ambiguous, or its seam is not repair-eligible they refuse and
-  start no attempt. Run `ripr pilot --root .` to list current seam IDs.
+  start no attempt. Run `ripr pilot --root .` to list current repair IDs.
 - The compact repair card is the default bounded handoff to a coding agent:
   `ripr agent card --root . --seam-id <seam-id> --json` projects the
   fix-instruction summary, repair-route readiness, and canonical next action, with
