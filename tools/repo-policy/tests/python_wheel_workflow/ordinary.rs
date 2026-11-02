@@ -301,7 +301,12 @@ fn installed_hook_refuses_wrong_identity_empty_execution_and_missing_completion(
             );
         }
     }
-    for field in ["candidate_sha", "candidate_tree", "runner_sha256", "test_selector"] {
+    for field in [
+        "candidate_sha",
+        "candidate_tree",
+        "runner_sha256",
+        "test_selector",
+    ] {
         let mut wrong = runner_receipt.clone();
         wrong[field] = "wrong".into();
         assert!(
