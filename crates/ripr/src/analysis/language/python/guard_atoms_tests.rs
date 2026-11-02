@@ -368,6 +368,14 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins as b\n(other, b.isinstance) = (None, checker)\n\n\n",
         "import builtins as b\n[b.isinstance, other] = [checker, None]\n\n\n",
         "import builtins as b\nother = b.isinstance = checker\n\n\n",
+        // Review of #12452: a later chained tuple, a subscripted annotation or
+        // sibling target, a starred slot and a statement after a `;`.
+        "import builtins as b\nother = (b.isinstance, slot) = checker, None\n\n\n",
+        "import builtins as b\nb.isinstance: list[int] = checker\n\n\n",
+        "import builtins as b\nb.isinstance, slot[0] = checker, None\n\n\n",
+        "import builtins as b\n*b.isinstance, other = [checker, None]\n\n\n",
+        "import builtins as b\nvalue = 1; b.isinstance, other = checker, None\n\n\n",
+        "import builtins as b\nb['isinstance'], other = checker, None\n\n\n",
     ];
     for patch in patches {
         let owner = format!("{patch}{arm}");
@@ -394,6 +402,8 @@ fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Resu
         "import builtins as b\nassert check(b.isinstance, 3), \"mode=strict\"\n\n\n",
         "import builtins as b\ncheck(b.isinstance, 3)  # n=1\n\n\n",
         "import builtins as b\nb.isinstance: object  # a=b\n\n\n",
+        "import builtins as b\nb.isinstance, other; value = 1\n\n\n",
+        "import builtins as b\nfor name in [b.isinstance, b.len]: count = 1\n\n\n",
     ] {
         let owner = format!("{harmless}{arm}");
         assert_eq!(
