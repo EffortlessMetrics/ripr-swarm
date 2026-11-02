@@ -150,10 +150,16 @@ fn cargo_project_with_committed_cache(label: &str) -> Result<Scratch, String> {
     .map_err(|error| error.to_string())?;
     // The trap: cache contents committed into the index by a routine
     // `git add -A` (force-add is the deliberate author state; a later
-    // `.gitignore` cannot untrack what the index already holds).
-    std::fs::create_dir_all(root.join("target/ripr/cache")).map_err(|error| error.to_string())?;
-    std::fs::write(root.join("target/ripr/cache/committed-entry.json"), "{}")
+    // `.gitignore` cannot untrack what the index already holds). The entry
+    // sits in a registered cache layer so the advisory's exact untrack
+    // command owns every indexed path it names.
+    std::fs::create_dir_all(root.join("target/ripr/cache/repo-file-facts/v1"))
         .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("target/ripr/cache/repo-file-facts/v1/committed-entry.json"),
+        "{}",
+    )
+    .map_err(|error| error.to_string())?;
     git(&root, &["add", "Cargo.toml", "src/lib.rs"])?;
     git(&root, &["add", "-f", "--", "target"])?;
     git(&root, &["commit", "-q", "-m", "base"])?;
