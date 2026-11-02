@@ -24,5 +24,7 @@ pub(crate) fn analysis_options_from_input_and_config(
         test_harnesses: config.analysis().test_harnesses().to_vec(),
         resolved_subject_identity: None,
         open_rust_index_paths: Default::default(),
+        scip_index_path: None,
+        scip_manifest_path: None,
     }
 }

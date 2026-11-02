@@ -88,6 +88,10 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         transitive_reach,
         propagation_origin,
         value_origins,
+        dependency_edges.and_then(|edges| edges.scip_bindings),
+        dependency_edges
+            .map(|edges| edges.root)
+            .unwrap_or_else(|| std::path::Path::new(".")),
     )
     .0
 }
@@ -105,6 +109,8 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     transitive_reach: &TransitiveReachIndex<'_>,
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
     value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
+    scip_bindings: Option<&crate::analysis::scip::ScipReferenceBindings>,
+    workspace_root: &std::path::Path,
 ) -> (Finding, Option<bool>) {
     let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
@@ -303,7 +309,8 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     .with_unseen_reach_names(candidate_index.unseen_reach_names())
     .with_test_value_facts(candidate_index.test_value_facts())
     .with_owner_caller_names(candidate_index.owner_caller_names())
-    .with_diff_touched(candidate_index.diff_touched());
+    .with_diff_touched(candidate_index.diff_touched())
+    .with_scip_authority(workspace_root, scip_bindings);
     context.propagation_origin = propagation_origin;
     context.const_readers = const_readers;
     context.const_flow = const_flow;

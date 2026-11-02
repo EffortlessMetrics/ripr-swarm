@@ -141,12 +141,30 @@ impl RustAdapter {
             ),
         );
         let unindexed_manifests = BTreeSet::new();
+        let scip_bindings = match (&options.scip_index_path, &options.scip_manifest_path) {
+            (Some(index_path), Some(manifest_path)) => Some(std::sync::Arc::new(
+                crate::analysis::scip::ScipReferenceBindings::from_admitted_index(
+                    &options.root,
+                    index_path,
+                    manifest_path,
+                )
+                .map_err(|error| format!("scip reference bindings: {}", error.reason()))?,
+            )),
+            (None, None) => None,
+            _ => {
+                return Err(
+                    "scip index and manifest must be supplied together for semantic references"
+                        .into(),
+                );
+            }
+        };
         let dependency_edges = classify::DependencyEdgeContext {
             adjacency: &dependency_adjacency,
             manifest_dir_prefixes: &manifest_dir_prefixes,
             index: &index,
             unindexed_manifests: &unindexed_manifests,
             root: &options.root,
+            scip_bindings: scip_bindings.as_deref(),
         };
 
         for path in &production_files {
@@ -169,6 +187,8 @@ impl RustAdapter {
                         &transitive_reach,
                         None,
                         Some(&value_origins),
+                        scip_bindings.as_deref(),
+                        &options.root,
                     );
                 finding.language = Some(LanguageId::Rust);
                 finding.source_currentness = SourceCurrentness::CandidateCurrent;

@@ -946,10 +946,31 @@ impl ClassifiedProbeEvidence {
                 if test_package == owner_package {
                     return false;
                 }
-                context.index.functions().iter().any(|function| {
+                let same_name_in_test_package = context.index.functions().iter().any(|function| {
                     function.name == callee
                         && package_prefix(&function.file).as_deref() == Some(test_package.as_str())
-                })
+                });
+                if !same_name_in_test_package {
+                    return false;
+                }
+                if let (Some(bindings), Some(root), Some(owner)) = (
+                    context.scip_bindings,
+                    context.workspace_root,
+                    context.owner_fn,
+                ) && test.calls.iter().any(|call| {
+                    call.name == callee
+                        && bindings.call_resolves_to_owner(
+                            root,
+                            &test.file,
+                            call.line,
+                            callee,
+                            &owner.file,
+                            &owner.name,
+                        )
+                }) {
+                    return false;
+                }
+                true
             })
         };
         let map_callback_pin_required = matches!(

@@ -4,6 +4,8 @@
 //! (regenerate with `prost-build` and `.disable_comments` when the pin changes).
 
 pub(crate) mod admission;
+pub(crate) mod reference_bindings;
+pub(crate) use reference_bindings::ScipReferenceBindings;
 pub(crate) mod generated {
     #[allow(
         dead_code,
