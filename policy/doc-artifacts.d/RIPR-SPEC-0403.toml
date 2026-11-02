@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0403"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0403-powershell-edition-module-pipeline-stream-pester-system-effect-evidence-contracts.md"
+status = "proposed"
+owner = "language-adapter"
+standalone_reason = "Issue #5710 defines normative PowerShell preview evidence law for edition, module, pipeline, stream, Pester, and system-effect facts before adapters or support promotion; spec-only slice."
