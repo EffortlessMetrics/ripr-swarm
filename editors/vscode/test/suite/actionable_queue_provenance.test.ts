@@ -76,7 +76,7 @@ suite('Genuine actionable queue consumer', () => {
       for (const line of [
         'RIPR current repair packet', `Repair this one canonical gap: ${gapId}.`,
         `Source: ${sourceFile}`, `Related test: ${testFile}`, `Run: ${boundedVerify}`,
-        'Missing discriminator: threshold (equality boundary)',
+        'Missing check: threshold (equality boundary)',
         'Repair kind: add_boundary_assertion', 'Confidence basis: static_only',
         'Do not treat this advisory static packet as a gate decision'
       ]) { assert.ok(copied.includes(line), `${line}\n${copied}`); }

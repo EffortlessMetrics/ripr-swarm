@@ -502,37 +502,51 @@ fn rust_check_requires_the_producer_failure_limitation_naming_the_declined_file(
 
 #[test]
 fn glob_normalization_rows_pin_both_consumers_and_reject_opposite_results() -> TestResult {
-    for (id, pattern, matches) in [
-        ("leading-dot-segment", "./src/lib.rs", true),
-        ("inner-dot-segment", "src/./lib.rs", true),
-        ("empty-segment", "src//lib.rs", true),
-        ("normalized-nonmatch", "src/./other.rs", false),
+    for (id, pattern, matches) in super::corpus::NORMALIZATION_CASES {
+        glob_consumer_row_pins_literal(id, pattern, "src/lib.rs", matches)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn glob_boundary_rows_pin_both_consumers_and_reject_opposite_results() -> TestResult {
+    for (id, pattern, changed, matches) in super::corpus::BOUNDARY_CASES {
+        glob_consumer_row_pins_literal(id, pattern, changed, matches)?;
+    }
+    Ok(())
+}
+
+fn glob_consumer_row_pins_literal(
+    id: &str,
+    pattern: &str,
+    changed: &str,
+    matches: bool,
+) -> TestResult {
+    for (consumer, config_path, config_key) in [
+        (
+            "suppression",
+            super::corpus::SUPPRESSION_POLICY_FILE,
+            "path",
+        ),
+        ("generated", "ripr.toml", "generated_file_patterns"),
     ] {
-        for (consumer, config_path, config_key) in [
+        let case = case_named(&format!("glob-{consumer}-{id}"))?;
+        if case.changed != changed || case.route != Route::Check {
+            return Err(format!(
+                "{} does not exercise the retained check path",
+                case.id
+            ));
+        }
+        let config = case
+            .files
+            .iter()
+            .find(|(path, _)| path == config_path)
+            .ok_or_else(|| format!("{} has no consumer config", case.id))?;
+        let config: toml::Value =
+            toml::from_str(std::str::from_utf8(&config.1).map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+        let (configured, expected, matched, unmatched) = if consumer == "suppression" {
             (
-                "suppression",
-                super::corpus::SUPPRESSION_POLICY_FILE,
-                "path",
-            ),
-            ("generated", "ripr.toml", "generated_file_patterns"),
-        ] {
-            let case = case_named(&format!("glob-{consumer}-{id}"))?;
-            if case.changed != "src/lib.rs" || case.route != Route::Check {
-                return Err(format!(
-                    "{} does not exercise the retained check path",
-                    case.id
-                ));
-            }
-            let config = case
-                .files
-                .iter()
-                .find(|(path, _)| path == config_path)
-                .ok_or_else(|| format!("{} has no consumer config", case.id))?;
-            let config: toml::Value =
-                toml::from_str(std::str::from_utf8(&config.1).map_err(|error| error.to_string())?)
-                    .map_err(|error| error.to_string())?;
-            let (configured, expected, matched, unmatched) = if consumer == "suppression" {
-                (
                     config.get("suppressions").and_then(|value| value.get(0))
                         .and_then(|value| value.get(config_key)).and_then(toml::Value::as_str),
                     matches!(case.expect, Expect::GlobMatch),
@@ -543,46 +557,45 @@ fn glob_normalization_rows_pin_both_consumers_and_reject_opposite_results() -> T
                     }).to_string(),
                     check_json(&[&case.changed], "", true),
                 )
-            } else {
-                (
-                    config
-                        .get("languages")
-                        .and_then(|value| value.get("rust"))
-                        .and_then(|value| value.get(config_key))
-                        .and_then(|value| value.get(0))
-                        .and_then(toml::Value::as_str),
-                    matches!(case.expect, Expect::GeneratedExcluded),
-                    check_json(
-                        &[],
-                        &python_limitation(
-                            &case.changed,
-                            "intentionally skipped",
-                            "language_scope_unsupported",
-                        ),
-                        false,
+        } else {
+            (
+                config
+                    .get("languages")
+                    .and_then(|value| value.get("rust"))
+                    .and_then(|value| value.get(config_key))
+                    .and_then(|value| value.get(0))
+                    .and_then(toml::Value::as_str),
+                matches!(case.expect, Expect::GeneratedExcluded),
+                check_json(
+                    &[],
+                    &python_limitation(
+                        &case.changed,
+                        "intentionally skipped",
+                        "language_scope_unsupported",
                     ),
-                    check_json(&[&case.changed], "", true),
-                )
-            };
-            if configured != Some(pattern) || expected != matches {
-                return Err(format!(
-                    "{} changed its literal pattern or expectation",
-                    case.id
-                ));
-            }
-            let (good, wrong) = if matches {
-                (&matched, &unmatched)
-            } else {
-                (&unmatched, &matched)
-            };
-            if !assess(&case, &observe(good, "", None)).result.is_pass()
-                || assess(&case, &observe(wrong, "", None)).result.is_pass()
-            {
-                return Err(format!(
-                    "{} accepts the wrong consumer disposition",
-                    case.id
-                ));
-            }
+                    false,
+                ),
+                check_json(&[&case.changed], "", true),
+            )
+        };
+        if configured != Some(pattern) || expected != matches {
+            return Err(format!(
+                "{} changed its literal pattern or expectation",
+                case.id
+            ));
+        }
+        let (good, wrong) = if matches {
+            (&matched, &unmatched)
+        } else {
+            (&unmatched, &matched)
+        };
+        if !assess(&case, &observe(good, "", None)).result.is_pass()
+            || assess(&case, &observe(wrong, "", None)).result.is_pass()
+        {
+            return Err(format!(
+                "{} accepts the wrong consumer disposition",
+                case.id
+            ));
         }
     }
     Ok(())

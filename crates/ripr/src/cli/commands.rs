@@ -9,7 +9,6 @@ use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::CONFIG_FILE_NAME;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::output;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use crate::cli::commands_options::*;
@@ -35,6 +34,9 @@ mod context;
 mod feedback_command;
 #[path = "commands/kani_report.rs"]
 mod kani_report;
+#[path = "commands/lsp.rs"]
+mod lsp;
+pub(super) use lsp::lsp;
 #[path = "commands/policy.rs"]
 mod policy_commands;
 #[path = "commands/receipt.rs"]
@@ -2946,56 +2948,6 @@ pub(super) fn drill_in_scope_conflict(
         ));
     }
     Ok(())
-}
-
-pub(super) fn lsp(args: &[String]) -> Result<(), String> {
-    lsp_with_serve(args, || {
-        write_lsp_terminal_hint(
-            std::io::stdin().is_terminal(),
-            &mut std::io::stderr().lock(),
-        );
-        crate::lsp::serve()
-    })
-}
-
-/// A person who typed `ripr lsp --stdio` at a prompt would otherwise see a
-/// silent hang; an editor pipes stdin, so the hint never reaches one. stderr
-/// only (stdout carries LSP framing), and best effort so an unwritable stderr
-/// cannot keep the server from starting (issue #10347).
-fn write_lsp_terminal_hint(stdin_is_terminal: bool, stderr: &mut impl std::io::Write) {
-    if stdin_is_terminal {
-        let _ = writeln!(
-            stderr,
-            "ripr lsp: waiting for an editor on stdin (this is a language server, not an interactive command); start it from your editor, or press Ctrl-D to exit."
-        );
-    }
-}
-
-/// Argument dispatch for `ripr lsp`, separated from the blocking stdio
-/// transport so unit tests can prove accepted-argument/dispatch semantics
-/// without entering the real server (issue #1387: the server owns tokio
-/// stdin/stdout and waits indefinitely while stdin stays open, so a test
-/// that calls `lsp(&["--stdio"])` hangs). Production always passes
-/// `crate::lsp::serve`; tests inject a nonblocking stub.
-fn lsp_with_serve(
-    args: &[String],
-    serve: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    for arg in args {
-        match arg.as_str() {
-            "--stdio" => {}
-            "--version" | "-V" => {
-                println!("ripr-lsp {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            "--help" | "-h" => {
-                help::print_lsp_help();
-                return Ok(());
-            }
-            other => return Err(unknown_argument("lsp", other)),
-        }
-    }
-    serve()
 }
 
 /// `ripr pr-summary` — binary-first PR readiness summary (Campaign 31 item 8).

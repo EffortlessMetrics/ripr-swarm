@@ -2461,6 +2461,57 @@ pub(in crate::analysis) fn text_calls_owner(
         })
 }
 
+/// Like [`text_calls_owner`], but resolves bare production calls through
+/// [`OwnerCallIdentity`] instead of the test-specific rival heuristic (#6621).
+pub(in crate::analysis) fn production_text_calls_owner(
+    index: &RustIndex,
+    owner: &FunctionSummary,
+    caller: &FunctionSummary,
+) -> bool {
+    let test = TestSummary {
+        name: caller.name.clone(),
+        file: caller.file.clone(),
+        start_line: caller.start_line,
+        end_line: caller.end_line,
+        body: caller.body.clone(),
+        calls: caller.calls.clone(),
+        assertions: Vec::new(),
+        literals: caller.literals.clone(),
+        attrs: caller.attrs.clone(),
+        nested_fn_names: caller.nested_fn_names.clone(),
+        let_bindings: caller.let_bindings.clone(),
+    };
+    let text = caller.body.as_ref();
+    if let Some(identity) = shared_owner_call_identity(index, owner) {
+        return call_sites(text, &owner.name, true)
+            .into_iter()
+            .any(|(qualifier, is_method)| match qualifier {
+                None => false,
+                Some(segments) if segments.is_empty() => match owner.item.container {
+                    FunctionContainer::Inherent { .. }
+                    | FunctionContainer::TraitImpl { .. }
+                    | FunctionContainer::Trait { .. } => {
+                        is_method && identity.resolve_call(&test, index, &[]) == CallTarget::Owner
+                    }
+                    FunctionContainer::Free | FunctionContainer::Local => {
+                        !is_method && identity.resolve_call(&test, index, &[]) == CallTarget::Owner
+                    }
+                    FunctionContainer::Unknown => false,
+                },
+                Some(segments) => match owner.item.container {
+                    FunctionContainer::Inherent { .. }
+                    | FunctionContainer::TraitImpl { .. }
+                    | FunctionContainer::Trait { .. } => {
+                        is_method
+                            && identity.resolve_call(&test, index, &segments) == CallTarget::Owner
+                    }
+                    _ => identity.resolve_call(&test, index, &segments) == CallTarget::Owner,
+                },
+            });
+    }
+    text_calls_owner(index, owner, &test, text)
+}
+
 /// [`OwnerCallIdentity::own_crate_names`] for an owner given by its file,
 /// package and crate class.
 fn own_crate_names_of(
