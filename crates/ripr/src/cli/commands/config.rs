@@ -290,6 +290,29 @@ path = ".ripr/suppressions\u0000.toml"
     }
 
     #[test]
+    fn validate_reports_line_column_for_semantic_mode_error() -> Result<(), String> {
+        let root = temp_dir("semantic-line");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::write(root.join(CONFIG_FILE_NAME), "[analysis]\nmode = \"bad\"\n")
+            .map_err(|error| error.to_string())?;
+
+        let result = validate_config(&root);
+        fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+        let error = match result {
+            Ok(message) => {
+                return Err(format!("invalid mode unexpectedly passed with {message}"));
+            }
+            Err(error) => error,
+        };
+        if !error.contains(":2:") {
+            return Err(format!(
+                "expected line/column in semantic error, got {error}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn validate_returns_the_loader_error_for_invalid_toml() -> Result<(), String> {
         let root = temp_dir("invalid");
         fs::create_dir_all(&root).map_err(|error| error.to_string())?;

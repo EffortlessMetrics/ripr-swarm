@@ -31,6 +31,7 @@ mod typescript;
 pub(crate) use diagnostic::ConfigDiagnostic;
 #[cfg(test)]
 use diagnostic::ConfigLocationStatus;
+pub(crate) use diagnostic::ConfigValidationMachine;
 /// `LanguagesConfig` is crate-visible beyond tests since #7386: the analysis
 /// pipeline and check entry points thread the per-language config (including
 /// `handwritten_files`) into diff-mode discovery, so production paths name the
@@ -315,19 +316,70 @@ fn is_repository_boundary(directory: &Path) -> bool {
 }
 
 pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
+    load_for_root_failure(root).map_err(|failure| failure.human_display(root, cfg!(windows)))
+}
+
+/// Load configuration for a root, retaining semantic validation diagnostics
+/// when parse/validation fails (#2624).
+pub(crate) fn load_for_root_failure(root: &Path) -> Result<RiprConfig, ConfigLoadFailure> {
     let Some(path) = discover_config_path(root) else {
-        return default_config_for_root(root);
+        return default_config_for_root(root).map_err(ConfigLoadFailure::Read);
     };
-    let text = crate::bounded_input::read_metadata_toml(&path)
-        .map_err(|err| config_load_read_error_for_host(&path, &err, cfg!(windows)))?;
-    let mut config = parse_config(&text)
-        .map_err(|err| config_load_parse_error_for_host(&path, &err, cfg!(windows)))?;
+    let text = crate::bounded_input::read_metadata_toml(&path).map_err(|err| {
+        ConfigLoadFailure::Read(config_load_read_error_for_host(&path, &err, cfg!(windows)))
+    })?;
+    let mut config =
+        parse_config_diagnostic(&text).map_err(|diagnostic| ConfigLoadFailure::Parse {
+            path: path.clone(),
+            diagnostic,
+        })?;
     // Identity stays the discovered canonical path: symlink equality and
     // `source_path` consumers compare filesystem identity, not the display
     // spelling (#7652).
     config.source_path = Some(path);
     config.source_text = Some(text);
     Ok(config)
+}
+
+/// Why [`load_for_root_failure`] refused a configuration.
+pub(crate) enum ConfigLoadFailure {
+    Read(String),
+    Parse {
+        path: PathBuf,
+        diagnostic: Box<ConfigDiagnostic>,
+    },
+}
+
+impl ConfigLoadFailure {
+    pub(crate) fn human_display(&self, _root: &Path, windows: bool) -> String {
+        match self {
+            Self::Read(message) => message.clone(),
+            Self::Parse { path, diagnostic } => {
+                let path_display = config_load_error_path_for_host(path, windows);
+                format!(
+                    "{}\n{CONFIG_LOAD_PARSE_HINT}",
+                    diagnostic.human_first_line(&path_display),
+                )
+            }
+        }
+    }
+
+    pub(crate) fn semantic_validation(&self) -> Option<ConfigValidationMachine> {
+        match self {
+            Self::Read(_) => None,
+            Self::Parse { diagnostic, .. } => diagnostic.machine_validation(),
+        }
+    }
+
+    pub(crate) fn human_summary_for_machine(&self) -> String {
+        match self {
+            Self::Read(message) => config_error_summary(message),
+            Self::Parse { path, diagnostic } => {
+                let path_display = config_load_error_path_for_host(path, cfg!(windows));
+                config_error_summary(&diagnostic.human_first_line(&path_display))
+            }
+        }
+    }
 }
 
 /// User-facing config path for load errors (#7652). Discovery and
@@ -356,14 +408,6 @@ const CONFIG_LOAD_READ_HINT: &str = concat!(
     "Make that ripr.toml readable and rerun; ",
     config_removal_advice!()
 );
-
-fn config_load_parse_error_for_host(path: &Path, err: &str, windows: bool) -> String {
-    format!(
-        "{}: {}\n{CONFIG_LOAD_PARSE_HINT}",
-        config_load_error_path_for_host(path, windows),
-        err.trim_end()
-    )
-}
 
 fn config_load_read_error_for_host(
     path: &Path,
