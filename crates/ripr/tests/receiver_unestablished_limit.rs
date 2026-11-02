@@ -250,6 +250,31 @@ fn main() {
             .map_err(|error| format!("instrument: stdout is not JSON: {error}"))
     }
 
+    fn run_with_relative_root(&self, diff: bool, mode: &str) -> Result<Value, String> {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+        command
+            .current_dir(&self.root)
+            .args(["check", "--root", "."])
+            .args(["--mode", mode, "--quiet", "--format"])
+            .arg(if diff { "json" } else { "repo-exposure-json" })
+            .env("RIPR_CACHE_DIR", self.root.join("cache"));
+        if diff {
+            command.arg("--diff").arg(&self.diff);
+        }
+        let output = command
+            .output()
+            .map_err(|error| format!("run ripr failed: {error}"))?;
+        if !matches!(output.status.code(), Some(0 | 1)) {
+            return Err(format!(
+                "instrument: ripr exited {:?}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("instrument: stdout is not JSON: {error}"))
+    }
+
     fn run(&self, diff: bool) -> Result<Value, String> {
         self.run_with_mode(diff, "ready")
     }
@@ -361,6 +386,9 @@ fn draft_mode_withholds_the_unplaced_generated_mount_control() -> Result<(), Str
     let finding = workspace.finding_from(&workspace.run_with_mode(true, "draft")?)?;
     assert_eq!(text(&finding, "/classification")?, "static_unknown");
     assert_eq!(limit(&finding), Some(LIMIT), "{finding}");
+    let relative = workspace.finding_from(&workspace.run_with_relative_root(true, "draft")?)?;
+    assert_eq!(text(&relative, "/classification")?, "static_unknown");
+    assert_eq!(limit(&relative), Some(LIMIT), "{relative}");
     Ok(())
 }
 

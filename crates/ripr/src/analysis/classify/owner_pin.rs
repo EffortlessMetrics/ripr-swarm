@@ -2607,15 +2607,16 @@ fn workspace_has_unindexed_members(index: &RustIndex) -> bool {
         return false;
     };
     index.workspace_member_dirs.iter().any(|member_dir| {
-        let Some(relative) = member_dir.strip_prefix(root).ok() else {
+        let member_canon = member_dir
+            .canonicalize()
+            .unwrap_or_else(|_| member_dir.to_path_buf());
+        let Some(relative) = member_canon.strip_prefix(root).ok() else {
             return false;
         };
         !index.files().iter().any(|(path, _)| {
-            path.strip_prefix(root)
-                .unwrap_or(path.as_path())
-                .strip_prefix("./")
-                .unwrap_or(path)
-                .starts_with(relative)
+            let path = path.as_path();
+            let path = path.strip_prefix("./").unwrap_or(path);
+            path.starts_with(relative)
         })
     })
 }
