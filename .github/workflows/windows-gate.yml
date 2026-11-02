@@ -1,0 +1,274 @@
+name: Windows Gate
+
+# Diff-scoped always-reporting Windows gate (#5088). Posts `Ripr Windows Gate Result`
+# on every qualifying event; pass-as-skips when the diff cannot touch cfg(windows)
+# surfaces. Branch-protection promotion to required is a separate owner step.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-gate-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  detect:
+    name: windows-gate-detect
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      windows_relevant: ${{ steps.check.outputs.windows_relevant }}
+      detect_reason: ${{ steps.check.outputs.detect_reason }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+      - name: Detect cfg(windows)-touching diff
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          windows_relevant=false
+          reason=not_applicable
+          fail_toward_run() {
+            windows_relevant=true
+            reason=detect_fail_closed
+          }
+          classify() {
+            case "$EVENT_NAME" in
+              workflow_dispatch)
+                windows_relevant=true
+                reason=workflow_dispatch
+                return 0
+                ;;
+              pull_request|push) ;;
+              *)
+                reason=unsupported_event
+                return 0
+                ;;
+            esac
+            reason=missing_identity
+            [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ] || { fail_toward_run; return 0; }
+            reason=invalid_identity
+            [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || { fail_toward_run; return 0; }
+            if [ "$EVENT_NAME" = push ]; then
+              if [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+                fail_toward_run
+                return 0
+              fi
+              [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { fail_toward_run; return 0; }
+            else
+              [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { fail_toward_run; return 0; }
+            fi
+            reason=unavailable_history
+            if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || { fail_toward_run; return 0; }
+            fi
+            [ "$(git rev-parse --is-shallow-repository)" = "false" ] || { fail_toward_run; return 0; }
+            reason=diff_failed
+            changed="$(mktemp)"
+            trap 'rm -f "$changed"' EXIT
+            git diff --no-renames --name-only -z "$BASE_SHA"..."$HEAD_SHA" > "$changed" 2>/dev/null || { fail_toward_run; return 0; }
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                .github/workflows/windows-advisory.yml|.github/workflows/windows-gate.yml)
+                  windows_relevant=true
+                  reason=workflow_surface
+                  return 0
+                  ;;
+              esac
+            done < "$changed"
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                *.rs) ;;
+                *) continue ;;
+              esac
+              if git diff -U0 "$BASE_SHA"..."$HEAD_SHA" -- "$path" 2>/dev/null | grep -Eq '^[+-].*cfg\(windows\)'; then
+                windows_relevant=true
+                reason=cfg_windows_diff_hunk
+                return 0
+              fi
+              if git show "$HEAD_SHA:$path" 2>/dev/null | grep -q 'cfg(windows)'; then
+                windows_relevant=true
+                reason=cfg_windows_file_superset
+                return 0
+              fi
+            done < "$changed"
+            reason=not_windows_relevant
+          }
+          classify
+          echo "windows_relevant=$windows_relevant" >> "$GITHUB_OUTPUT"
+          echo "detect_reason=$reason" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Windows gate detection (#5088)"
+            echo ""
+            echo "- windows_relevant: \`$windows_relevant\`"
+            echo "- reason: \`$reason\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  run:
+    name: windows-gate-run
+    needs: detect
+    if: needs.detect.result == 'success' && needs.detect.outputs.windows_relevant == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    outputs:
+      verdict_pass: ${{ steps.verdict.outputs.verdict_pass }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95
+
+      - name: Run lsp::gap_artifacts subset (#4921)
+        shell: bash
+        run: |
+          mkdir -p target
+          set +e
+          cargo test -p ripr --lib lsp::gap_artifacts 2>&1 | tee target/gate-subset-gap-artifacts.log
+          pipe_status=("${PIPESTATUS[@]}")
+          printf '%s\n' "${pipe_status[0]}" > target/gate-subset-gap-artifacts.status
+          if [ "${pipe_status[1]}" != "0" ]; then
+            echo "gate evidence capture failed: tee exited ${pipe_status[1]} writing target/gate-subset-gap-artifacts.log" >&2
+            exit 1
+          fi
+
+      - name: Run cache-warning smoke subset (#4918)
+        shell: bash
+        run: |
+          mkdir -p target
+          set +e
+          cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build 2>&1 | tee target/gate-subset-cache-warning.log
+          pipe_status=("${PIPESTATUS[@]}")
+          printf '%s\n' "${pipe_status[0]}" > target/gate-subset-cache-warning.status
+          if [ "${pipe_status[1]}" != "0" ]; then
+            echo "gate evidence capture failed: tee exited ${pipe_status[1]} writing target/gate-subset-cache-warning.log" >&2
+            exit 1
+          fi
+
+      - name: Run clippy subset (#4337)
+        shell: bash
+        run: |
+          mkdir -p target
+          set +e
+          cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/gate-subset-clippy.log
+          pipe_status=("${PIPESTATUS[@]}")
+          printf '%s\n' "${pipe_status[0]}" > target/gate-subset-clippy.status
+          if [ "${pipe_status[1]}" != "0" ]; then
+            echo "gate evidence capture failed: tee exited ${pipe_status[1]} writing target/gate-subset-clippy.log" >&2
+            exit 1
+          fi
+
+      - name: Fail on missing or empty gate subset evidence
+        shell: bash
+        run: |
+          for label in gate-subset-gap-artifacts gate-subset-cache-warning gate-subset-clippy; do
+            test -f "target/${label}.status" || exit 1
+            test -f "target/${label}.log" || exit 1
+          done
+          for label in gate-subset-gap-artifacts gate-subset-cache-warning; do
+            if [ "$(cat "target/${label}.status")" = "0" ]; then
+              executed="$(awk '/^test result:/{for (i = 1; i <= NF; i++) if ($i == "passed;" || $i == "failed;" || $i == "measured;") executed += $(i - 1)} END {print executed + 0}' "target/${label}.log")"
+              if [ "$executed" -eq 0 ]; then
+                echo "${label}: cargo exited 0 but no test executed" >&2
+                exit 1
+              fi
+            fi
+          done
+
+      - name: Summarize gate subset verdicts
+        id: verdict
+        shell: bash
+        run: |
+          verdict_pass=true
+          {
+            printf '## Windows gate subset (#5088)\n\n'
+            printf 'Evidence contract: missing logs/status or zero executed tests fail the run job; command outcomes become gate verdicts.\n\n'
+            for label in gate-subset-gap-artifacts gate-subset-cache-warning gate-subset-clippy; do
+              status_file="target/${label}.status"
+              if [ ! -f "$status_file" ]; then
+                echo "- ${label}: not_run (no status file)"
+                verdict_pass=false
+              elif [ "$(cat "$status_file")" = "0" ]; then
+                echo "- ${label}: PASS"
+              else
+                echo "- ${label}: FAIL (exit $(cat "$status_file"))"
+                verdict_pass=false
+              fi
+            done
+          } | tee target/windows-gate-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "verdict_pass=$verdict_pass" >> "$GITHUB_OUTPUT"
+
+      - name: Upload gate subset evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ripr-windows-gate-subset
+          path: |
+            target/gate-subset-gap-artifacts.log
+            target/gate-subset-gap-artifacts.status
+            target/gate-subset-cache-warning.log
+            target/gate-subset-cache-warning.status
+            target/gate-subset-clippy.log
+            target/gate-subset-clippy.status
+            target/windows-gate-verdict.md
+          if-no-files-found: ignore
+
+  result:
+    name: Ripr Windows Gate Result
+    needs: [detect, run]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Summarize gate result
+        env:
+          DETECT_RESULT: ${{ needs.detect.result }}
+          WINDOWS_RELEVANT: ${{ needs.detect.outputs.windows_relevant }}
+          DETECT_REASON: ${{ needs.detect.outputs.detect_reason }}
+          RUN_RESULT: ${{ needs.run.result }}
+          VERDICT_PASS: ${{ needs.run.outputs.verdict_pass }}
+        run: |
+          status=pass
+          message="windows gate passed"
+          if [ "$DETECT_RESULT" != success ]; then
+            status=fail
+            message="windows-gate-detect result was $DETECT_RESULT; never silently skip"
+          elif [ "$WINDOWS_RELEVANT" != true ]; then
+            message="skipped: diff does not touch cfg(windows) surfaces ($DETECT_REASON)"
+          elif [ "$RUN_RESULT" = skipped ]; then
+            status=fail
+            message="windows-gate-run was skipped while windows_relevant=true"
+          elif [ "$RUN_RESULT" != success ]; then
+            status=fail
+            message="windows-gate-run result was $RUN_RESULT (missing or invalid evidence)"
+          elif [ "$VERDICT_PASS" != true ]; then
+            status=fail
+            message="windows gate subset reported a failing command verdict"
+          fi
+          {
+            echo "### Ripr Windows Gate Result"
+            echo ""
+            echo "- detect: \`$DETECT_RESULT\`"
+            echo "- windows_relevant: \`$WINDOWS_RELEVANT\`"
+            echo "- detect_reason: \`$DETECT_REASON\`"
+            echo "- run: \`$RUN_RESULT\`"
+            echo "- verdict_pass: \`$VERDICT_PASS\`"
+            echo "- status: \`$status\`"
+            echo "- message: $message"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$status" = pass ]
