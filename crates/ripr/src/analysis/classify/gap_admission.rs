@@ -124,14 +124,19 @@ pub(in crate::analysis) fn withhold_dependent_crate_reach_gap(
     }
     // Renderers take the first `limitation_*` evidence line. A prior
     // no-path witness (RIPR-SPEC-0118 and siblings) left those fields
-    // describing its own route; drop them so the dependent-crate detail
-    // is the structured projection of the kind this pass sets.
+    // describing its own route; drop them, and the no-path absence
+    // lines, before `withhold_gap` writes the dependent-crate detail.
+    // A later substring filter would also delete a replacement
+    // `limitation_last_established_edge` whose reach summary still
+    // contained "No static test path".
     finding.evidence.retain(|line| {
         !line.starts_with(LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX)
             && !line.starts_with(LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX)
             && !line.starts_with(LIMITATION_ANALYZER_ROUTE_PREFIX)
             && !line.starts_with(LIMITATION_NON_CLAIM_PREFIX)
             && !line.starts_with(LIMITATION_HELPER_BOUNDARY_PREFIX)
+            && !line.contains("No static test path")
+            && !line.starts_with("No test reaches the changed owner")
     });
     finding.stop_reasons.retain(|reason| {
         !matches!(
@@ -139,13 +144,6 @@ pub(in crate::analysis) fn withhold_dependent_crate_reach_gap(
             StopReason::TransitiveReachUnresolved | StopReason::MacroReachUnresolved
         )
     });
-    withhold_gap(
-        finding,
-        DEPENDENT_CRATE_LIMIT,
-        DEPENDENT_CRATE_FIRST_UNRESOLVED_EDGE,
-        DEPENDENT_CRATE_LIMIT.next_step().to_string(),
-        &[],
-    );
     let unknown = |summary: &str| StageEvidence::new(StageState::Unknown, Confidence::Low, summary);
     let ruled_out = |stage: &StageEvidence| {
         stage.state == StageState::No
@@ -177,19 +175,13 @@ pub(in crate::analysis) fn withhold_dependent_crate_reach_gap(
         finding.ripr.reveal.discriminate =
             unknown("Not established: whether a dependent crate's test discriminates this change");
     }
-    finding.evidence.retain(|line| {
-        !line.contains("No static test path")
-            && !line.starts_with("No test reaches the changed owner")
-    });
-    let ripr = &finding.ripr;
-    finding.confidence = finding.confidence.min(confidence_score(
-        &ripr.reach,
-        &ripr.infect,
-        &ripr.propagate,
-        &ripr.reveal.observe,
-        &ripr.reveal.discriminate,
-        &finding.class,
-    ));
+    withhold_gap(
+        finding,
+        DEPENDENT_CRATE_LIMIT,
+        DEPENDENT_CRATE_FIRST_UNRESOLVED_EDGE,
+        DEPENDENT_CRATE_LIMIT.next_step().to_string(),
+        &[],
+    );
     true
 }
 
@@ -1616,11 +1608,29 @@ mod tests {
             first_unresolved,
             Some(DEPENDENT_CRATE_FIRST_UNRESOLVED_EDGE)
         );
+        let last_established = finding
+            .evidence
+            .iter()
+            .find_map(|line| line.strip_prefix(LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX));
+        assert_eq!(
+            last_established,
+            Some(
+                "reach unknown: Not established: a dependent crate hosts tests that may reach this owner through a path ripr does not follow"
+            )
+        );
         let analyzer_route = finding
             .evidence
             .iter()
             .find_map(|line| line.strip_prefix(LIMITATION_ANALYZER_ROUTE_PREFIX));
         assert_eq!(analyzer_route, Some("analysis/classify/gap-admission"));
+        let non_claim = finding
+            .evidence
+            .iter()
+            .find_map(|line| line.strip_prefix(LIMITATION_NON_CLAIM_PREFIX));
+        assert_eq!(
+            non_claim,
+            Some("no missing test, no weak oracle, and no test adequacy is established")
+        );
         assert_eq!(finding.ripr.reach.state, StageState::Unknown);
         assert_eq!(finding.ripr.infect.state, StageState::Unknown);
         assert_eq!(finding.ripr.reveal.observe.state, StageState::Unknown);
