@@ -11,7 +11,7 @@ use crate::analysis::repair_route::{
     RepairRouteState, RepairTargetSelection, is_safe_for_repair_packet, repair_packet_eligibility,
 };
 use crate::analysis::rust_index::{RaRustSyntaxAdapter, RustSyntaxAdapter};
-use crate::analysis::seam_classification::ClassifiedSeam;
+use crate::analysis::seam_classification::{ClassifiedSeam, classify_seam};
 use crate::analysis::seam_inventory::inventory_seams_from_index;
 use crate::analysis::seams::{ExpectedSink, RequiredDiscriminator, SeamGripClass};
 use std::fs;
@@ -13791,6 +13791,42 @@ fn identical_inline_arm_predicate_seam_does_not_propagate_but_differing_arms_do(
             "r + 0"
         )?,
         StageState::Yes
+    );
+    Ok(())
+}
+
+/// #5384: a predicate whose arms only run unit-returning calls must not read
+/// `strongly_gripped` from unrelated return-value assertions.
+#[test]
+fn side_effect_only_branch_predicate_seam_is_not_strongly_gripped() -> Result<(), String> {
+    let prod_src = "pub fn configure(exrescode: bool) -> i32 {\n    if !exrescode {\n        side_only(1);\n    }\n    42\n}\n";
+    let test_src = "#[test] fn pins_result() { assert_eq!(configure(true), 42); }\n";
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("src/lib.rs"), prod_src),
+        (PathBuf::from("tests/configure_tests.rs"), test_src),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    assert_eq!(
+        predicate.expected_sink(),
+        ExpectedSink::SideEffect,
+        "side-effect-only branch must bind to the side-effect sink"
+    );
+    let evidence = evidence_for_seam(predicate, &index);
+    assert_eq!(
+        evidence.propagate.state,
+        StageState::Unknown,
+        "return-value propagation must not be credited"
+    );
+    let class = classify_seam(predicate, &evidence);
+    assert_ne!(
+        class,
+        SeamGripClass::StronglyGripped,
+        "unobserved branch side effect must not read strongly_gripped"
     );
     Ok(())
 }

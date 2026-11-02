@@ -4032,7 +4032,16 @@ fn build_seam_from_shape(
         Some(field) => RequiredDiscriminator::FieldValue { field },
         None => required_discriminator_for(kind, &expression),
     };
-    let expected_sink = expected_sink_for(kind);
+    let expected_sink = if kind == SeamKind::PredicateBoundary
+        && crate::analysis::classify::predicate_branch_side_effect_only_in_body(
+            owner_fact.body.as_str(),
+            owner_fact.start_line,
+            shape.start_line,
+        ) {
+        ExpectedSink::SideEffect
+    } else {
+        expected_sink_for(kind)
+    };
     let owner_call = OwnerCallShape::from_function(owner_fact);
     // The ID hashes the line-ending-normalized logical offset (#7203): a
     // CRLF working tree and an LF checkout of the same commit must produce
