@@ -64,6 +64,10 @@ mod stray_files;
 pub(crate) fn compose_fixture_source_roles(index: &mut RustIndex, root: &Path) {
     role_composition::compose_index_source_roles(index, root);
 }
+mod quickcheck_generator;
+pub(crate) use quickcheck_generator::is_generator_subject;
+#[cfg(test)]
+mod quickcheck_generator_tests;
 mod test_helpers;
 mod test_styles;
 pub(crate) use test_styles::BUILT_IN_TEST_ATTRIBUTE_PATHS;

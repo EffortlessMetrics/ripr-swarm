@@ -1769,6 +1769,10 @@ fn changed_line_is_test_evidence(
     test_module_ranges: &[InlineModuleRange],
 ) -> bool {
     if let Some(function) = find_owner_function(index, path, line) {
+        // Stimulus changes must remain visible as unknown findings (#11545).
+        if function.source_role == crate::analysis::facts::FunctionSourceRole::TestInputGenerator {
+            return false;
+        }
         // Ownership is line-granular: a production fn and a `#[test]` fn
         // opening on one physical line both own it, and the later-listed
         // one wins `find_owner_function`. Without columns the line cannot be
@@ -1794,6 +1798,8 @@ fn changed_line_is_test_evidence(
             && find_file_facts(index, path).is_some_and(|facts| {
                 facts.functions.iter().any(|outer| {
                     outer.source_role.is_evidence_role()
+                        && outer.source_role
+                            != crate::analysis::facts::FunctionSourceRole::TestInputGenerator
                         && function.start_line < outer.end_line
                         && function.end_line <= outer.end_line
                         && (outer.start_line < function.start_line
@@ -2098,6 +2104,18 @@ fn build_probe(
     after: Option<String>,
 ) -> Probe {
     let text = changed_line.text.trim();
+    // Only candidate-side generator subjects have established role identity.
+    // A deleted production body must not borrow its replacement's role.
+    let family = if after.is_some()
+        && crate::analysis::facts::is_generator_subject(
+            context.index,
+            &context.changed.path,
+            changed_line.new_side_line,
+        ) {
+        ProbeFamily::StaticUnknown
+    } else {
+        family
+    };
     // #9080: no value or effect assertion observes a memory-ordering swap, so
     // a call whose only edit is an atomic `Ordering` variant has no honest
     // value/effect family; it stays an explicit unknown.
