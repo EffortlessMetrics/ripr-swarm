@@ -17,3 +17,5 @@ crates/ripr/src/domain/**|serde_json|domain must not know JSON rendering
 crates/ripr/src/output/**|check_workspace|output must not orchestrate analysis use cases
 crates/ripr/src/output/**|collect_context|output must not orchestrate context use cases
 crates/ripr/src/output/**|explain_finding|output must not orchestrate explain use cases
+crates/ripr/src/**|fn gap_record_from_perl_preview_finding|#3225: only one historical Perl preview gap-ledger adapter; extend perl_gap_record_projection instead of duplicating
+!crates/ripr/src/output/gap_decision_ledger.rs|fn gap_record_from_perl_preview_finding|#3225: bespoke markdown adapter pending shared-authority decommission tracked in #3225

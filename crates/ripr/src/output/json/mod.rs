@@ -2175,6 +2175,12 @@ mod tests {
             .map_err(|err| format!("finding JSON parse failed: {err}"))?;
 
         let card = &value["perl_preview_card"];
+        let shared = crate::output::perl_preview_card::perl_preview_card_json(&finding)
+            .ok_or_else(|| "expected shared perl_preview_card_json projection".to_string())?;
+        assert_eq!(
+            card, &shared,
+            "check JSON must embed the shared perl_preview_card_json projection (#3225)"
+        );
         assert_eq!(card["card_version"], "perl_preview_card.v1");
         assert_eq!(card["language"], "perl");
         assert_eq!(card["language_status"], "preview");
