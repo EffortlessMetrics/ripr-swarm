@@ -5657,7 +5657,10 @@ mod tests {
         // inputs no call binds unresolved, so their weak boundary findings
         // name no discriminator and carry no repair card; the direct-aligned
         // inventory drops by two.
-        if (direct, no_strong, orthogonal, family_selection) != (21, 36, 31, 1) {
+        // #12182: `python_nested_result_discarded` is a weak return finding
+        // that names the result of the nested def as its discriminator, one
+        // more direct-aligned card.
+        if (direct, no_strong, orthogonal, family_selection) != (22, 36, 31, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

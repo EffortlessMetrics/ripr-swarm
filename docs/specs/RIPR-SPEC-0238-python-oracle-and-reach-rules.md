@@ -1354,8 +1354,22 @@ mutant calibrates the rule; ripr reports only the static shape.
     and still count. A body that rebinds the name (assignment, walrus, `for`, `as`,
     `import`), a name defined more than once in the enclosing body, and a def
     that is only returned or passed are fail-closed: they give no reach. A direct test call of the nested name is
-    unchanged. Whether the assertion observes the nested function's result,
-    not only its call, is a separate problem (#12182).
+    unchanged. Reach is a call path; credit needs a result path. When every
+    call the enclosing body makes is an expression statement of its own
+    (`inner()` on a line by itself) and the name is never referenced any
+    other way (`return inner`, `register(inner)` and `x = inner` let a caller
+    run it later) anywhere in the enclosing body, deferred lambda and
+    sibling-def bodies included, the nested function's result reaches
+    nothing the enclosing function returns. The downgrade also needs the
+    changed `return` line, and the line it replaced, to be free of calls,
+    `await`, `yield` and `lambda`, since a call in
+    the returned expression can have an effect a test observes. So a strong assertion on the
+    enclosing function's result gives a changed `return` in the nested body no
+    direct return-value credit: the finding is `weakly_exposed` with the
+    missing discriminator "an assertion on a value computed from the result of
+    `outer.inner`". A call whose value may be returned, bound, passed or
+    asserted keeps the credit, and so does a related test that calls the
+    nested name itself.
 
 ### Verdict ladder
 
