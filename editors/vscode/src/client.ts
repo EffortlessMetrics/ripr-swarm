@@ -3994,6 +3994,7 @@ interface RiprAnalysisStatusPayload {
   root_state?: string;
   effective_root?: string | null;
   candidate_roots?: string[];
+  candidate_roots_omitted_count?: number;
   root_input_identity?: string | null;
   root_detail?: string | null;
   root_recovery_route?: string;
@@ -4374,10 +4375,14 @@ function composeLimitedNextStep(
 
 function analysisRootStatusDetail(status: RiprAnalysisStatusPayload): string {
   const candidates = status.candidate_roots?.filter((root) => root.length > 0) ?? [];
+  const omitted = status.candidate_roots_omitted_count ?? 0;
+  const candidateField = candidates.length > 0 || omitted > 0
+    ? `candidate_roots=${candidates.join('|')}${omitted > 0 ? ` (+${omitted} more omitted)` : ''}`
+    : undefined;
   return [
     `root_state=${status.root_state ?? 'unknown'}`,
     status.effective_root ? `effective_root=${status.effective_root}` : undefined,
-    candidates.length > 0 ? `candidate_roots=${candidates.join('|')}` : undefined,
+    candidateField,
     status.root_detail ?? undefined,
     status.root_recovery_route ? `recovery=${status.root_recovery_route}` : undefined
   ].filter((field): field is string => Boolean(field)).join(', ');

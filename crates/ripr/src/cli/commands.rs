@@ -144,6 +144,7 @@ pub(super) use check::{bind_member_selector_file, resolve_implicit_command_root}
 
 #[path = "commands/review_comments.rs"]
 mod review_comments;
+mod review_guidance_index_handoff;
 pub(super) use review_comments::review_comments;
 
 #[path = "commands/capabilities.rs"]

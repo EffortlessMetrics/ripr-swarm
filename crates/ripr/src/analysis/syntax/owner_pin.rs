@@ -390,6 +390,10 @@ pub(crate) struct MacroBindingSite {
     /// inline module or function body: that item's first and last line.
     /// `None` means the binding may reach any file in the workspace.
     pub(crate) scope: Option<(usize, usize)>,
+    /// Byte span of the item that bounds [`Self::scope`], when set. Same-line
+    /// siblings disambiguate through this span rather than line overlap alone
+    /// (#5695).
+    pub(crate) scope_bytes: Option<(u32, u32)>,
     /// The binding cannot leave the crate whose module tree holds this file:
     /// a private import, `#[macro_use] extern crate`, `#![no_implicit_prelude]`
     /// or a non-exported definition. Exported definitions, `pub` imports,
@@ -763,6 +767,7 @@ fn macro_binding_ambiguity_sets(
             line: 0,
             kind: MacroBindingKind::Unparsed,
             scope: None,
+            scope_bytes: None,
             crate_local: false,
             module_local: false,
         };
@@ -821,6 +826,7 @@ fn macro_binding_sites_in_tree(
                         line,
                         kind: kind.clone(),
                         scope: None,
+                        scope_bytes: None,
                         crate_local,
                         module_local: false,
                     },
@@ -840,8 +846,11 @@ fn macro_binding_sites_in_tree(
             let range = item.text_range();
             let lines = lines.get_or_init(|| LineIndex::new(source));
             (
-                lines.line(range.start()),
-                lines.line_for_range_end(range.end()),
+                (
+                    lines.line(range.start()),
+                    lines.line_for_range_end(range.end()),
+                ),
+                (u32::from(range.start()), u32::from(range.end())),
             )
         })
     };
@@ -918,6 +927,7 @@ fn macro_binding_sites_in_tree(
                     line: line_of(node),
                     kind: MacroBindingKind::Import,
                     scope: None,
+                    scope_bytes: None,
                     crate_local: false,
                     module_local: false,
                 },
@@ -933,13 +943,14 @@ fn macro_binding_sites_in_tree(
                 && ast::MacroRules::cast(node.clone()).is_some_and(|item| empty_catch_all(&item));
             if trusted.contains(&name) && !admitted_declaration {
                 let line = line_of(node);
-                let scope = scope_of(textual_scope(node));
+                let scoped = scope_of(textual_scope(node));
                 ambiguous.push((
                     name.to_string(),
                     MacroBindingSite {
                         line,
                         kind: MacroBindingKind::Definition,
-                        scope,
+                        scope: scoped.map(|(lines, _)| lines),
+                        scope_bytes: scoped.map(|(_, bytes)| bytes),
                         crate_local: !is_exported_macro(node),
                         module_local: false,
                     },
@@ -992,6 +1003,7 @@ fn macro_binding_sites_in_tree(
                         line: line_of(node),
                         kind: MacroBindingKind::MacroBody(macro_name.clone()),
                         scope: None,
+                        scope_bytes: None,
                         crate_local,
                         module_local: false,
                     },
@@ -1216,6 +1228,7 @@ fn macro_binding_sites_in_tree(
                             line,
                             kind: MacroBindingKind::MacroArgument(path.syntax().text().to_string()),
                             scope: None,
+                            scope_bytes: None,
                             crate_local: false,
                             module_local: false,
                         },
@@ -1347,7 +1360,7 @@ fn macro_binding_sites_in_tree(
                 if item.star_token().is_some() && !own {
                     let path = import.syntax().text().to_string();
                     let line = line_of(node);
-                    let Some(scope) = scope_of(import_scope(&import)) else {
+                    let Some((scope, scope_bytes)) = scope_of(import_scope(&import)) else {
                         // A private file-level glob is visible only in this
                         // module and its descendants (`module_local`). Its
                         // descendants are the modules this file declares, so
@@ -1390,6 +1403,7 @@ fn macro_binding_sites_in_tree(
                                 line,
                                 kind: MacroBindingKind::ForeignGlob(path.clone()),
                                 scope: Some(scope),
+                                scope_bytes: Some(scope_bytes),
                                 crate_local: private,
                                 module_local: false,
                             },
@@ -1422,12 +1436,14 @@ fn macro_binding_sites_in_tree(
                     };
                     if let Some(kind) = kind {
                         let line = line_of(node);
+                        let scoped = scope_of(import_scope(&import));
                         ambiguous.push((
                             name.to_string(),
                             MacroBindingSite {
                                 line,
                                 kind,
-                                scope: scope_of(import_scope(&import)),
+                                scope: scoped.map(|(lines, _)| lines),
+                                scope_bytes: scoped.map(|(_, bytes)| bytes),
                                 crate_local: private,
                                 module_local: false,
                             },
@@ -1515,6 +1531,7 @@ fn macro_binding_sites_in_tree(
                             line,
                             kind: MacroBindingKind::MacroArgument(path.clone()),
                             scope: None,
+                            scope_bytes: None,
                             crate_local: false,
                             module_local: false,
                         },
