@@ -12,15 +12,16 @@
 
 use crate::agent::loop_commands::{bound_root, display_path, root_path_display, shell_arg};
 use crate::analysis;
+use crate::analysis::ClassifiedSeam;
 use crate::analysis::owner_fn_line_span;
 use crate::analysis::repair_route::repair_packet_eligibility;
-use crate::analysis::seams::SeamGripClass;
-use crate::analysis::seams::SeamKind;
+use crate::analysis::seams::{
+    CrlfPairPositions, ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
+};
 use crate::analysis::test_stub::{
     RustTestStub, TestStubPlacement, TestStubRefusal, rust_test_stub,
     rust_test_stub_for_classified_seam,
 };
-use crate::analysis::{ClassifiedSeam, RepoSeam};
 use crate::app::CheckOutput;
 use crate::app::agent_brief::AgentBriefPolicy;
 use crate::config::RiprConfig;
@@ -97,6 +98,8 @@ pub(crate) struct TestStubResolution {
     /// Set when `--at FILE:LINE` named a line that holds no gap and the
     /// nearest gap in the same function was stubbed instead (#6298), so the
     /// substitution is stated rather than left to the generated comment.
+    /// `return_value` never substitutes (#8444 item 2); this note is for
+    /// other `--kind` families only.
     pub(crate) at_note: Option<String>,
     /// The repair journey this stub feeds (#8727): the documented
     /// `ripr agent repair` start for the same seam plus the repair packet's
@@ -1084,11 +1087,84 @@ fn finding_text_is_on_disk(root: &Path, file: &str, line: usize, expression: &st
     squash(&scope).contains(&wanted)
 }
 
+/// Byte offset of the start of a 1-based `line` in `source`.
+fn byte_offset_of_line(source: &str, line: usize) -> Option<usize> {
+    if line == 0 {
+        return None;
+    }
+    let mut current = 1usize;
+    for (index, ch) in source.char_indices() {
+        if current == line {
+            return Some(index);
+        }
+        if ch == '\n' {
+            current += 1;
+        }
+    }
+    (current == line).then_some(source.len())
+}
+
+/// When `--kind return_value` names a probe line that holds no inventory seam,
+/// build a stub for the return on that line instead of substituting the
+/// nearest gap (#8444 item 2).
+fn return_value_direct_at_probe_line(
+    candidates: &[AtCandidate<'_>],
+    file: &str,
+    line: usize,
+    source: &str,
+) -> Option<TestStubResolution> {
+    let (fn_start, fn_end) = owner_fn_line_span(source, line)?;
+    let owner = candidates.iter().find_map(|candidate| {
+        let seam_line = candidate.seam().display_line();
+        (fn_start <= seam_line && seam_line <= fn_end).then(|| candidate.seam().owner().to_string())
+    })?;
+    let code = code_lines_of(source);
+    let code_line = code.get(line.saturating_sub(1))?;
+    let expression = code_line.trim();
+    if expression.is_empty() || matches!(expression, "}" | ")" | "};" | "),") {
+        return None;
+    }
+    let line_start = byte_offset_of_line(source, line)?;
+    let trimmed_start = source[line_start..]
+        .find(expression)
+        .map(|index| line_start + index)?;
+    let crlf_pairs = CrlfPairPositions::build(source);
+    let seam = RepoSeam::new_in_source(
+        file,
+        owner,
+        SeamKind::ReturnValue,
+        trimmed_start,
+        line,
+        expression,
+        RequiredDiscriminator::ReturnValue {
+            description: expression.to_string(),
+        },
+        ExpectedSink::ReturnValue,
+        &crlf_pairs,
+    );
+    let outcome = rust_test_stub(&seam, None, source);
+    outcome.is_ok().then(|| TestStubResolution {
+        seam_id: seam.id().as_str().to_string(),
+        owner: seam.owner().to_string(),
+        source: source.to_string(),
+        outcome,
+        grip_class: None,
+        at_note: None,
+        next_repair: None,
+        seam_line: line,
+        weak_oracle_guidance: None,
+    })
+}
+
 /// A `ripr check` finding line is the changed line, which is not always a
 /// seam's own line. Candidates are the seams on that line, then the seams in
 /// the same function nearest first, only those of seam kind `kind` when it
 /// is given; the first one that yields a stub wins, and when none does, the
 /// first candidate's refusal names why.
+///
+/// `return_value` is special (#8444 item 2): only seams on the requested line
+/// are tried. A line with no `return_value` gap gets a direct stub for that
+/// line's return probe or an explicit refusal, never a nearest-gap substitute.
 fn resolve_at(
     root: &Path,
     config: &RiprConfig,
@@ -1202,12 +1278,18 @@ fn resolve_at(
             });
         }
     }
+    let return_value_exact_line =
+        kind.is_some_and(|selected| selected.seam_kind == SeamKind::ReturnValue);
     let mut first_refusal = None;
-    for candidate in candidates {
+    for candidate in candidates.iter().copied() {
         let seam_line = candidate.seam().display_line();
+        if return_value_exact_line && seam_line != line {
+            continue;
+        }
         let mut resolution = candidate.resolution(root, config, source.clone());
         // A finding line is the changed line, which need not hold a gap of
         // its own; when the stub is for a different line, say so (#6298).
+        // `return_value` skips off-line candidates above (#8444 item 2).
         if seam_line != line {
             resolution.at_note = Some(format!(
                 "note: {file}:{line} has no stubbable gap; this stub is for the nearest one in `{}`, {file}:{seam_line}",
@@ -1218,6 +1300,18 @@ fn resolve_at(
             return Ok(resolution);
         }
         first_refusal.get_or_insert(resolution);
+    }
+    if return_value_exact_line {
+        let on_line_return_value = candidates.iter().any(|candidate| {
+            candidate.seam().kind() == SeamKind::ReturnValue
+                && candidate.seam().display_line() == line
+        });
+        if !on_line_return_value
+            && let Some(resolution) =
+                return_value_direct_at_probe_line(&candidates, file, line, &source)
+        {
+            return Ok(resolution);
+        }
     }
     if let Some(resolution) = first_refusal {
         return Ok(resolution);
@@ -2725,9 +2819,10 @@ mod tests {
         Ok(())
     }
 
-    /// #6298: `--at` on a line that holds no gap stubs the nearest gap in the
-    /// function, and the resolution says so; a line that holds a gap says
-    /// nothing, so the note never fires on an exact match.
+    /// #8444 item 2 / #6298: `return_value` on a line without its own gap
+    /// gets a direct stub for that line or an explicit refusal, never a
+    /// nearest-gap substitute. Other `--kind` families still disclose
+    /// substitution (#6298).
     #[test]
     fn at_a_line_without_a_gap_names_the_nearest_gap_it_stubbed() -> Result<(), String> {
         const SOURCE: &str = "pub struct Size(pub u64);
@@ -2748,20 +2843,66 @@ impl Size {
             resolve_test_stub(&root, &config, &selector).map_err(|error| format!("{error:?}"))
         };
         let exact = resolve(7, "return_value")?;
-        let off = resolve(8, "return_value")?;
-        let _ = std::fs::remove_dir_all(&root);
         assert_eq!(exact.at_note, None, "an exact line match needs no note");
+        assert!(exact.outcome.is_ok(), "{:?}", exact.outcome.err());
+        assert_eq!(exact.seam_line, 7);
+
+        let early = resolve(5, "return_value")?;
+        assert!(early.at_note.is_none(), "return_value must not substitute");
+        assert_eq!(early.seam_line, 5);
         assert!(
-            off.outcome.is_ok(),
-            "the nearest gap is still stubbed: {:?}",
-            off.outcome.err()
+            early.outcome.is_ok(),
+            "early return line stubs directly or refuses: {:?}",
+            early.outcome.err()
         );
-        let note = off.at_note.ok_or("a substituted line must carry a note")?;
+
+        let off = resolve(8, "return_value");
         assert!(
-            note.starts_with("note: src/lib.rs:8 has no stubbable gap")
-                && note.ends_with(", src/lib.rs:7"),
+            off.is_err()
+                || off
+                    .as_ref()
+                    .is_ok_and(|resolution| resolution.at_note.is_none()),
+            "a closing line must not nearest-gap substitute: {off:?}"
+        );
+        assert!(
+            match &off {
+                Err(_) => true,
+                Ok(resolution) => resolution.outcome.is_err(),
+            },
+            "no stubbable return_value on a closing brace: {off:?}"
+        );
+
+        let substituted = {
+            let root = scratch_stub_crate(
+                "at-note-predicate",
+                "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n",
+            )?;
+            let selector = TestStubSelector::parse_at("src/lib.rs:3")?.with_kind("predicate")?;
+            let resolution = resolve_test_stub(&root, &config, &selector)
+                .map_err(|error| format!("{error:?}"))?;
+            let _ = std::fs::remove_dir_all(&root);
+            resolution
+        };
+        assert!(
+            substituted.at_note.is_some(),
+            "predicate still discloses nearest-gap substitution"
+        );
+        if substituted.outcome.is_err() {
+            return Err(format!(
+                "predicate off-line still stubs: {:?}",
+                substituted.outcome.as_ref().err()
+            ));
+        }
+        let note = substituted
+            .at_note
+            .as_deref()
+            .ok_or("missing substitution note")?;
+        assert!(
+            note.contains("src/lib.rs:3") && note.contains("src/lib.rs:2"),
             "{note}"
         );
+
+        let _ = std::fs::remove_dir_all(&root);
         Ok(())
     }
 

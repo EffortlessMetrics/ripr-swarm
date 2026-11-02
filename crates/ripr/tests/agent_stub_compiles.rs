@@ -697,10 +697,9 @@ fn check_prints_the_stub_refusal_for_a_field_construction_finding() -> Result<()
     scratch.cleanup()
 }
 
-/// #8444: a finding on a continuation line holds no seam of its own, so
-/// `agent stub --at` stubs the nearest gap. `check` must print the line that
-/// stub is for, not the finding's line, and the printed command must run as
-/// printed with no substitution note.
+/// #8444 item 2: a `return_value` finding on a continuation line gets a direct
+/// stub for that probe line. `check` prints `--at` on the finding line, and
+/// the printed command runs with no nearest-gap substitution note.
 #[test]
 fn check_routes_a_continuation_line_finding_to_the_line_the_stub_targets() -> Result<(), String> {
     const LIB: &str = "pub fn whole(total: u64, unit: u64) -> Option<u64> {\n    Some(\n        total / (unit + 1),\n    )\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn runs() {\n        assert!(whole(4, 2).is_some());\n    }\n}\n";
@@ -726,12 +725,12 @@ fn check_routes_a_continuation_line_finding_to_the_line_the_stub_targets() -> Re
     let args = printed_stub_args(&stdout)
         .ok_or_else(|| format!("a stubbable gap prints the route: {stdout}"))?;
     assert!(
-        args.iter().any(|arg| arg == "src/lib.rs:2"),
-        "the route names the line the stub targets: {args:?}"
+        args.iter().any(|arg| arg == "src/lib.rs:3"),
+        "return_value routes to the finding line with a direct stub: {args:?}"
     );
     assert!(
-        !args.iter().any(|arg| arg == "src/lib.rs:3"),
-        "the route must not name the finding line, which stubs another gap: {args:?}"
+        !args.iter().any(|arg| arg == "src/lib.rs:2"),
+        "return_value must not substitute the tail line: {args:?}"
     );
     let mut stub = ripr_command();
     stub.args(&args).arg("--json");
