@@ -2826,17 +2826,18 @@ pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverag
     }
 }
 
-/// Whether `check-all` gates a corpus on spec-example coverage. Scoring is
-/// universal — every discovered corpus compares its rows — but coverage is
-/// declared per corpus: a language without a ledger scores rows only, loudly,
-/// until it opts in. A present-but-invalid ledger still fails.
+/// Whether a corpus directory declares spec-example coverage via a ledger
+/// file. Used in unit tests of the ledgerless structural path; production
+/// validation requires the ledger for every committed corpus (#8775).
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CorpusCoverage {
+pub(crate) enum CorpusCoverage {
     Gated,
     Ungated,
 }
 
-fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
+#[cfg(test)]
+pub(crate) fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
     if dir.join(coverage::LEDGER_FILE).is_file() {
         CorpusCoverage::Gated
     } else {
@@ -2844,30 +2845,21 @@ fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
     }
 }
 
-/// Validate one corpus honoring its coverage declaration: a ledgered corpus
-/// gates coverage, a ledgerless one validates structurally with disclosure.
-/// Every subcommand funnels through here so `--language` behaves the same
-/// for `validate`, `report`, `check` and `bless`. Every corpus but Perl
-/// must carry its spec-example ledger (#6686 review for Rust, #7650 for
-/// Python and TypeScript), so a deleted or renamed ledger fails instead of
-/// silently dropping the coverage floor. Ledgerless operation is reserved
-/// for the Perl corpus, which carries a ledger but is not yet required to (#8775).
+/// Validate one corpus honoring its coverage declaration: every committed
+/// corpus must carry its spec-example ledger (#6686 review for Rust, #7650
+/// for Python and TypeScript, #8775 for Perl), so a deleted or renamed
+/// ledger fails instead of silently dropping the coverage floor. Every
+/// subcommand funnels through here so `--language` behaves the same for
+/// `validate`, `report`, `check` and `bless`.
 fn validated_corpus_declared(dir: &Path) -> Result<(Corpus, Option<SpecExampleCoverage>), String> {
-    if !is_perl_corpus(dir) || corpus_coverage_mode(dir) == CorpusCoverage::Gated {
-        return validated_corpus(dir).map(|(corpus, coverage)| (corpus, Some(coverage)));
-    }
-    println!(
-        "verdict-corpus: {} has no {}; scoring rows without the spec-example coverage gate",
-        normalize_path(dir),
-        coverage::LEDGER_FILE
-    );
-    validated_corpus_without_coverage(dir).map(|corpus| (corpus, None))
+    validated_corpus(dir).map(|(corpus, coverage)| (corpus, Some(coverage)))
 }
 
-/// `validated_corpus` without the coverage half, for a corpus that declares
-/// no ledger. Structural validation still applies; only the spec-example
-/// gate is skipped.
-fn validated_corpus_without_coverage(dir: &Path) -> Result<Corpus, String> {
+/// `validated_corpus` without the coverage half, for tests of a corpus that
+/// declares no ledger. Production paths require a ledger; structural
+/// validation still applies and only the spec-example gate is skipped.
+#[cfg(test)]
+pub(crate) fn validated_corpus_without_coverage(dir: &Path) -> Result<Corpus, String> {
     let corpus = load_corpus(dir)?;
     let mut violations = validate(&corpus, dir);
     violations.extend(oracle::ungated_label_violations(&corpus, dir));
