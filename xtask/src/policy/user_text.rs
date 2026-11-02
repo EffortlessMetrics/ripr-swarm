@@ -2985,25 +2985,71 @@ mod tests {
         );
         Ok(())
     }
-    /// The quoted segments (`'..'`, `".."`, `` `..` ``) of one TypeScript line.
-    fn quoted_segments(line: &str) -> Vec<String> {
+    /// Prose string literals of a TypeScript source as `(line, text)`.
+    ///
+    /// Quoted segments (`'..'`, `".."`, `` `..` ``) are returned; a template
+    /// literal may span lines and is returned whole, tagged with the line it
+    /// opened on. Comment lines outside a template are skipped. A segment made
+    /// only of identifier characters (`'seam'`, `'seam_diagnostics'`) is a key,
+    /// not prose, and is dropped; a label such as `'Seam:'` is kept.
+    fn prose_segments(source: &str) -> Vec<(usize, String)> {
         let mut out = Vec::new();
-        let mut open: Option<(char, String)> = None;
-        for ch in line.chars() {
-            match open.take() {
-                Some((quote, mut text)) => {
-                    if ch == quote {
-                        out.push(text);
-                    } else {
-                        text.push(ch);
-                        open = Some((quote, text));
-                    }
+        let mut open: Option<(char, String, usize)> = None;
+        for (index, line) in source.lines().enumerate() {
+            let number = index + 1;
+            if open.is_none() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with('*')
+                    || trimmed.starts_with("/*")
+                {
+                    continue;
                 }
-                None if matches!(ch, '\'' | '"' | '`') => open = Some((ch, String::new())),
-                None => {}
+            }
+            for ch in line.chars() {
+                match open.take() {
+                    Some((quote, mut text, start)) => {
+                        if ch == quote {
+                            out.push((start, text));
+                        } else {
+                            text.push(ch);
+                            open = Some((quote, text, start));
+                        }
+                    }
+                    None if matches!(ch, '\'' | '"' | '`') => {
+                        open = Some((ch, String::new(), number));
+                    }
+                    None => {}
+                }
+            }
+            // Only a template literal continues onto the next line.
+            match open.take() {
+                Some((quote, mut text, start)) if quote == '`' => {
+                    text.push('\n');
+                    open = Some((quote, text, start));
+                }
+                _ => {}
             }
         }
+        out.retain(|(_, text)| {
+            !text
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | '/'))
+        });
         out
+    }
+
+    #[test]
+    fn prose_segments_keeps_labels_and_multiline_templates_and_drops_keys() {
+        let source = "const a = 'seam';\nconst b = 'Seam:';\nconst c = `line one\nMissing discriminator here`;\n// 'Seam: comment'\n";
+        let segments = prose_segments(source);
+        let texts: Vec<&str> = segments.iter().map(|(_, t)| t.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["Seam:", "line one\nMissing discriminator here"],
+            "{segments:?}"
+        );
+        assert_eq!(segments[1].0, 3);
     }
 
     #[test]
@@ -3025,25 +3071,11 @@ mod tests {
             }
             let text =
                 fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
-            for (number, line) in text.lines().enumerate() {
-                let trimmed = line.trim_start();
-                if trimmed.starts_with("//")
-                    || trimmed.starts_with('*')
-                    || trimmed.starts_with("/*")
-                {
-                    continue;
-                }
-                for segment in quoted_segments(line) {
-                    // A segment with no whitespace is a key or identifier
-                    // (`'seam'`, `'seam_diagnostics'`), not prose.
-                    if !segment.contains(char::is_whitespace) {
-                        continue;
-                    }
-                    scanned_strings += 1;
-                    let terms = banned_terms_in_line(&segment);
-                    if terms.iter().any(|t| matches!(*t, "seam" | "discriminator")) {
-                        hits.push(format!("{}:{}: {segment}", path.display(), number + 1));
-                    }
+            for (number, segment) in prose_segments(&text) {
+                scanned_strings += 1;
+                let terms = banned_terms_in_line(&segment);
+                if terms.iter().any(|t| matches!(*t, "seam" | "discriminator")) {
+                    hits.push(format!("{}:{}: {segment}", path.display(), number));
                 }
             }
         }

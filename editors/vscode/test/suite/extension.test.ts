@@ -577,7 +577,7 @@ suite('Extension Smoke', () => {
     assert.ok(targetedBriefText.includes('Target seam:'), targetedBriefText);
     assert.ok(targetedBriefText.includes('src/lib.rs:2'), targetedBriefText);
     assert.ok(targetedBriefText.includes('predicate_boundary'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('Missing check'), targetedBriefText);
+    assert.ok(targetedBriefText.includes('Missing discriminator'), targetedBriefText);
     assert.ok(targetedBriefText.includes('tests/pricing.rs'), targetedBriefText);
 
     await vscode.commands.executeCommand(packetCommand.command, ...(packetCommand.arguments ?? []));
