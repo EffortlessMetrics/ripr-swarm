@@ -1,9 +1,9 @@
 use super::*;
 use crate::analysis::syntax::parse_clean_source_file;
-use crate::domain::StaticLimitKind;
 use crate::analysis::test_grip_evidence::owner_result_binding::ParsedTestFile;
 use crate::analysis::test_grip_evidence::shared_grips::SharedGrips;
 use crate::analysis::value_resolution::{FileValueScan, ValueEnvFacts};
+use crate::domain::StaticLimitKind;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 /// Precomputed per-test facts for repo seam evidence consumers. This

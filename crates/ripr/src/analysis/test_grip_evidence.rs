@@ -519,7 +519,7 @@ fn evidence_for_seam_with_context(
         .collect();
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
     let unresolved_reach_limit =
-        unresolved_reach_limit_for_owner(reach.state, owner_fn, context, &reach.summary);
+        unresolved_reach_limit_for_owner(reach.state.clone(), owner_fn, context, &reach.summary);
     let (activate, observed_values, missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     let pin_syntax = context.pin_syntax();
@@ -2345,7 +2345,7 @@ pub(crate) fn compact_evidence_for_seam(
         .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
         .count();
     let unresolved_reach_limit =
-        unresolved_reach_limit_for_owner(reach.state, owner_fn, context, &reach.summary);
+        unresolved_reach_limit_for_owner(reach.state.clone(), owner_fn, context, &reach.summary);
 
     let mut evidence = TestGripEvidence {
         seam_id: seam.id().clone(),
