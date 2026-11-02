@@ -795,9 +795,11 @@ impl MemberCrates {
     /// The cargo features a plain `cargo test` of the library rooted at
     /// `crate_root` enables: the closure of the manifest's `[features]
     /// default = [..]` over plain feature names (RIPR-SPEC-0279, #12230).
-    /// A `dep:name` or `name/feature` entry names a dependency, not a
-    /// feature of this package, so it adds nothing; leaving it out can only
-    /// shrink the set. `None` when the package cannot be read, or its
+    /// A `dep:name` or weak `name?/feature` entry adds nothing; a plain
+    /// `name/feature` entry enables the optional dependency `name`, which
+    /// credits `name` only where it is that dependency's implicit feature.
+    /// The declared `default` feature itself is enabled. `None` when the
+    /// package cannot be read, or its
     /// `default` or a followed feature entry is not an array of strings:
     /// the caller then resolves no feature gate.
     pub(crate) fn default_library_features(
@@ -814,10 +816,9 @@ impl MemberCrates {
             return Some(std::collections::BTreeSet::new());
         };
         let table = table.as_table()?;
-        // `visited` bounds the walk; `enabled` is what the walk credits.
-        // They differ only by the distinguished `default` name, which is
-        // walked but never credited as a feature, so a list that names
-        // `default` (directly or through a cycle) still terminates.
+        // `visited` bounds the walk so a list that names `default`
+        // (directly or through a cycle) terminates; `enabled` is what the
+        // walk credits, which includes a declared `default` feature.
         let implicit = implicit_dependency_features(&manifest, table);
         let mut enabled = std::collections::BTreeSet::new();
         let mut visited = std::collections::BTreeSet::new();
@@ -836,12 +837,19 @@ impl MemberCrates {
                 }
                 continue;
             };
-            if name != "default" {
-                enabled.insert(name.clone());
-            }
+            enabled.insert(name.clone());
             for member in entry.as_array()? {
                 let member = member.as_str()?;
-                if member.starts_with("dep:") || member.contains('/') {
+                if member.starts_with("dep:") {
+                    continue;
+                }
+                // `name/feature` enables the optional dependency `name`
+                // (and so its implicit feature, if it has one); the weak
+                // `name?/feature` enables nothing by itself.
+                if let Some((dependency, _)) = member.split_once('/') {
+                    if !dependency.ends_with('?') && implicit.contains(dependency) {
+                        enabled.insert(dependency.to_string());
+                    }
                     continue;
                 }
                 if !visited.contains(member) {

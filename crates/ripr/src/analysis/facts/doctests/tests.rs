@@ -594,7 +594,8 @@ fn only_the_manifest_default_closure_counts_as_enabled() -> Result<(), Box<dyn E
         registered_with_manifest("\n[features]\ndefault = []\nstd = []\n", &gate)?,
         0
     );
-    // `dep:` and `name/feature` entries add no feature of this package.
+    // `dep:`, `name/feature` and `name?/feature` entries add no feature of
+    // this package (the dependency forms are covered below).
     for default in ["\"dep:std\"", "\"std/extra\"", "\"std?/extra\""] {
         assert_eq!(
             registered_with_manifest(
@@ -648,9 +649,46 @@ fn only_the_manifest_default_closure_counts_as_enabled() -> Result<(), Box<dyn E
             "{manifest}"
         );
     }
+    // A plain `name/feature` entry enables the optional dependency `name`
+    // and so its implicit feature; the weak form and `dep:` do not
+    // (review bot, #12368).
+    for (default, expected) in [
+        ("\"serde/std\"", 1),
+        ("\"serde?/std\"", 0),
+        ("\"dep:serde\"", 0),
+    ] {
+        assert_eq!(
+            registered_with_manifest(
+                &format!(
+                    "\n[features]\ndefault = [{default}]\n\n[dependencies]\nserde = {{ version = \"1\", optional = true }}\n"
+                ),
+                &gate_serde
+            )?,
+            expected,
+            "{default}"
+        );
+    }
+    // `dep:serde` elsewhere turns the implicit feature off, so `serde/std`
+    // no longer makes `feature = "serde"` true.
+    assert_eq!(
+        registered_with_manifest(
+            "\n[features]\ndefault = [\"serde/std\"]\njson = [\"dep:serde\"]\n\n[dependencies]\nserde = { version = \"1\", optional = true }\n",
+            &gate_serde
+        )?,
+        0
+    );
+    // A declared `default` feature is enabled; an undeclared one is not.
+    let gate_default = gated_item("#[cfg(feature = \"default\")]");
+    assert_eq!(
+        registered_with_manifest("\n[features]\ndefault = []\n", &gate_default)?,
+        1
+    );
+    assert_eq!(
+        registered_with_manifest("\n[features]\nstd = []\n", &gate_default)?,
+        0
+    );
     // `default` named in its own list, directly or through a cycle, must
-    // terminate: the walk never credits `default` as a feature (review of
-    // da949b6ea). Entries beside the cycle still resolve.
+    // terminate (review of da949b6ea). Entries beside the cycle still resolve.
     for manifest in [
         "\n[features]\ndefault = [\"default\"]\nstd = []\n",
         "\n[features]\ndefault = [\"default\", \"std\"]\nstd = []\n",
