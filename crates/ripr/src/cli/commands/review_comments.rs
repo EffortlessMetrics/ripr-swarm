@@ -1115,8 +1115,8 @@ fn review_comments_markdown_path(json_path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::super::tests::{args, unique_command_test_dir};
-    use crate::output::review_comments_receipt::CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM;
     use super::*;
+    use crate::output::review_comments_receipt::CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM;
     use sha2::{Digest, Sha256};
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
