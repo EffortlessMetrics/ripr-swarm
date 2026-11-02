@@ -5039,29 +5039,46 @@ fn owner_call_parameter_values_where(
                 !crate::analysis::value_resolution::test_case_bound_literals(test, argument)
                     .is_empty()
             };
+            let case_column_heights = || {
+                cells
+                    .iter()
+                    .filter(|(_, _, argument, table)| !*table && case_column(argument))
+                    .map(|(_, values, _, _)| values.len())
+                    .collect::<Vec<_>>()
+            };
+            let aligned_case_height = |heights: &[usize]| -> Option<usize> {
+                let mut iter = heights.iter();
+                let first = *iter.next()?;
+                iter.all(|height| *height == first)
+                    .then_some(first)
+                    .filter(|height| *height > 0)
+            };
+            let table_height = cells
+                .iter()
+                .filter(|(_, _, _, table)| *table)
+                .map(|(_, values, _, _)| values.len())
+                .max();
+            let case_zip_height = aligned_case_height(&case_column_heights());
+            let case_table_height = table_height.and_then(|table_height| {
+                case_zip_height.map(|case_height| (case_height, table_height))
+            });
             let by_row = cells.iter().any(|(_, _, _, table)| *table)
                 && cells.iter().all(|(_, values, argument, table)| {
                     *table || (values.len() == 1 && !case_column(argument))
                 });
-            let height = if by_row {
-                cells
-                    .iter()
-                    .map(|(_, values, _, _)| values.len())
-                    .max()
-                    .unwrap_or(0)
-            } else {
-                usize::from(!cells.is_empty())
-            };
-            for position in 0..height {
+            let mut push_row = |case_index: Option<usize>,
+                                table_index: Option<usize>,
+                                zip_index: Option<usize>| {
                 let row = cells
                     .iter()
-                    .filter_map(|(parameter, values, _, _)| {
-                        let value = match values.len() {
-                            _ if !by_row => values.first(),
-                            1 => values.first(),
-                            len if len == height => values.get(position),
-                            _ => None,
-                        }?;
+                    .filter_map(|(parameter, values, argument, table)| {
+                        let value = if *table {
+                            table_index.and_then(|idx| values.get(idx))?
+                        } else if case_column(argument) {
+                            case_index.or(zip_index).and_then(|idx| values.get(idx))?
+                        } else {
+                            values.first()?
+                        };
                         Some(ParameterValue {
                             parameter: (*parameter).clone(),
                             value: value.clone(),
@@ -5073,6 +5090,88 @@ fn owner_call_parameter_values_where(
                     .collect::<Vec<_>>();
                 if !row.is_empty() {
                     rows.push(row);
+                }
+            };
+            if let Some((case_height, table_height)) = case_table_height {
+                // Each rstest case runs the inner constant-row loop, so case
+                // rows and table rows are independent dimensions (#7127).
+                for case_index in 0..case_height {
+                    for table_index in 0..table_height {
+                        push_row(Some(case_index), Some(table_index), None);
+                    }
+                }
+            } else if table_height.is_none() {
+                if let Some(case_height) = case_zip_height {
+                    // Columns of the same `#[case(..)]` row stay correlated.
+                    for zip_index in 0..case_height {
+                        push_row(None, None, Some(zip_index));
+                    }
+                } else {
+                    let height = if by_row {
+                        cells
+                            .iter()
+                            .map(|(_, values, _, _)| values.len())
+                            .max()
+                            .unwrap_or(0)
+                    } else {
+                        usize::from(!cells.is_empty())
+                    };
+                    for position in 0..height {
+                        let row = cells
+                            .iter()
+                            .filter_map(|(parameter, values, _, _)| {
+                                let value = match values.len() {
+                                    _ if !by_row => values.first(),
+                                    1 => values.first(),
+                                    len if len == height => values.get(position),
+                                    _ => None,
+                                }?;
+                                Some(ParameterValue {
+                                    parameter: (*parameter).clone(),
+                                    value: value.clone(),
+                                    line: call.line,
+                                    text: call.text.to_string(),
+                                    file: Some(test.file.clone()),
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        if !row.is_empty() {
+                            rows.push(row);
+                        }
+                    }
+                }
+            } else {
+                let height = if by_row {
+                    cells
+                        .iter()
+                        .map(|(_, values, _, _)| values.len())
+                        .max()
+                        .unwrap_or(0)
+                } else {
+                    usize::from(!cells.is_empty())
+                };
+                for position in 0..height {
+                    let row = cells
+                        .iter()
+                        .filter_map(|(parameter, values, _, _)| {
+                            let value = match values.len() {
+                                _ if !by_row => values.first(),
+                                1 => values.first(),
+                                len if len == height => values.get(position),
+                                _ => None,
+                            }?;
+                            Some(ParameterValue {
+                                parameter: (*parameter).clone(),
+                                value: value.clone(),
+                                line: call.line,
+                                text: call.text.to_string(),
+                                file: Some(test.file.clone()),
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    if !row.is_empty() {
+                        rows.push(row);
+                    }
                 }
             }
         }
@@ -10456,10 +10555,13 @@ assert_eq!(input.amount, 100);"#
             body: body.to_string().into(),
             calls: calls
                 .iter()
-                .map(|(line, text)| CallFact {
-                    name: "score".to_string(),
-                    line: *line,
-                    text: (*text).to_string().into(),
+                .map(|(line, text)| {
+                    let name = text.split('(').next().unwrap_or("score").trim().to_string();
+                    CallFact {
+                        name,
+                        line: *line,
+                        text: (*text).to_string().into(),
+                    }
                 })
                 .collect(),
             assertions: Vec::new(),
@@ -10562,6 +10664,80 @@ assert_eq!(input.amount, 100);"#
             owner_argument_values(&test, "cents"),
             vec!["4_999".to_string(), "5_000".to_string()]
         );
+    }
+
+    #[test]
+    fn rstest_case_rows_cross_constant_table_rows_for_owner_call_inputs() {
+        // #7127: each `#[case]` run executes every constant-row loop row, so
+        // activation must pair every case value with every table value.
+        let body = "fn t(#[case] left: u32) {\n    for right in [99, 100] {\n        assert_eq!(eq(left, right), left == right);\n    }\n}";
+        let mut test = test_with_body_calls(body, &[(13, "eq(left, right)")]);
+        test.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(100)]".to_string(),
+            "#[case(99)]".to_string(),
+        ];
+        let rows = owner_call_parameter_values(
+            &[&test],
+            "eq",
+            false,
+            &["left".to_string(), "right".to_string()],
+        );
+        let pairs = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.iter()
+                        .find(|cell| cell.parameter == "left")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                    row.iter()
+                        .find(|cell| cell.parameter == "right")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(pairs.len(), 4);
+        assert!(pairs.contains(&("100", "99")));
+        assert!(pairs.contains(&("100", "100")));
+        assert!(pairs.contains(&("99", "99")));
+        assert!(pairs.contains(&("99", "100")));
+    }
+
+    #[test]
+    fn rstest_case_columns_stay_correlated_without_inventing_cross_pairs() {
+        // #7127 negative control: columns of one `#[case(a, b, c)]` row zip
+        // together; ripr must not invent `(1, 1)` or `(2, 2)`.
+        let body = "fn correlated_cases(\n    #[case] left: u32,\n    #[case] right: u32,\n    #[case] expected: bool,\n) {\n    assert_eq!(less(left, right), expected);\n}";
+        let mut test = test_with_body_calls(body, &[(15, "less(left, right)")]);
+        test.attrs = vec![
+            "#[rstest]".to_string(),
+            "#[case(1, 2, true)]".to_string(),
+            "#[case(2, 1, false)]".to_string(),
+        ];
+        let rows = owner_call_parameter_values(
+            &[&test],
+            "less",
+            false,
+            &["left".to_string(), "right".to_string()],
+        );
+        let pairs = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.iter()
+                        .find(|cell| cell.parameter == "left")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                    row.iter()
+                        .find(|cell| cell.parameter == "right")
+                        .map(|cell| cell.value.as_str())
+                        .unwrap_or(""),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(pairs, vec![("1", "2"), ("2", "1")]);
     }
 
     #[test]
