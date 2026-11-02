@@ -416,6 +416,10 @@ fn cfg_gated_items_and_inner_cfg_files_register_nothing() -> Result<(), Box<dyn 
         &format!("#![cfg_attr(docsrs, feature(doc_cfg))]\n{WIRE}"),
     )?;
     assert_eq!(doctests(&dir.0, &["src/lib.rs"])?.len(), 1);
+    // `#![cfg(not(doctest))]` passes the library build but rustdoc excludes
+    // the file during collection, so the file gate refuses.
+    package(&dir.0, "", &format!("#![cfg(not(doctest))]\n{WIRE}"))?;
+    assert_eq!(doctests(&dir.0, &["src/lib.rs"])?, Vec::new());
     let cfg_doctest = format!("{example}#[cfg(doctest)]\npub fn read_u16() {{}}\n");
     assert_eq!(examples(&cfg_doctest).len(), 1);
     // And it registers through the index, not just the example scan.
@@ -500,6 +504,11 @@ fn feature_gated_doc_examples_register_only_under_default_features() -> Result<(
             gated("#[cfg(all(feature = \"std\", feature = \"alloc\"))]"),
             1,
         ),
+        (
+            hex_manifest,
+            gated("#[cfg(feature = /* enabled by default */ \"alloc\")]"),
+            1,
+        ),
     ] {
         package(&dir.0, manifest, &lib)?;
         assert_eq!(
@@ -508,9 +517,9 @@ fn feature_gated_doc_examples_register_only_under_default_features() -> Result<(
             "{manifest} {lib}"
         );
     }
-    // The file gate follows the library build: a default-enabled feature
-    // admits, anything else refuses — including `doctest`, which the
-    // library `cargo test` builds never sets.
+    // The file gate must hold for both the library build and rustdoc's
+    // collection pass: a default-enabled feature admits, anything else
+    // refuses — including `doctest` and `not(doctest)`.
     for (manifest, lib, expected) in [
         (
             hex_manifest,
@@ -523,6 +532,7 @@ fn feature_gated_doc_examples_register_only_under_default_features() -> Result<(
             0,
         ),
         (hex_manifest, format!("#![cfg(doctest)]\n{WIRE}"), 0),
+        (hex_manifest, format!("#![cfg(not(doctest))]\n{WIRE}"), 0),
     ] {
         package(&dir.0, manifest, &lib)?;
         assert_eq!(
@@ -617,6 +627,7 @@ fn cfg_predicates_evaluate_for_the_doctest_build_under_cargo_defaults() {
         ("foo(bar)", None, None),
         ("feature = 1", None, None),
         ("feature = b\"alloc\"", None, None),
+        ("feature = /* note */ \"alloc\"", Some(true), Some(true)),
         ("r#test", None, None),
         ("", None, None),
     ] {

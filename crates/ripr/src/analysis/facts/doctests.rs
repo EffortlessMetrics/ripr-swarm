@@ -352,11 +352,12 @@ fn is_between_doc_and_item(line: &str) -> bool {
 }
 
 /// Whether the file is gated by an inner `#![cfg(..)]` attribute the
-/// doctest build may not satisfy. A plain `cfg` satisfied for the library
-/// `cargo test` builds (`test` and `doctest` off, default features on)
-/// admits the file; anything else — target, custom and unknown predicates,
-/// `cfg_attr`, a malformed predicate, or no manifest establishing default
-/// features — refuses, as before.
+/// doctest build may not satisfy. A plain `cfg` satisfied for both the
+/// library `cargo test` builds (`test` and `doctest` off, default features
+/// on) and rustdoc's collection pass (`doctest` on) admits the file;
+/// anything else — target, custom and unknown predicates, `cfg_attr`, a
+/// malformed predicate, or no manifest establishing default features —
+/// refuses, as before.
 fn file_has_inner_cfg_gate(source: &str, enabled: Option<&BTreeSet<String>>) -> bool {
     for line in source.lines() {
         let trimmed = line.trim_start();
@@ -380,9 +381,11 @@ fn file_has_inner_cfg_gate(source: &str, enabled: Option<&BTreeSet<String>>) -> 
     false
 }
 
-/// Whether a gating inner `#![cfg(..)]` holds for the library build: the
-/// same predicate language as the item gate, but `doctest` is off — the
-/// library `cargo test` builds never sets it.
+/// Whether a gating inner `#![cfg(..)]` holds for both the library build
+/// and rustdoc's doctest-collection build: same predicate language as the
+/// item gate, but the file must survive `doctest` off (library `cargo test`)
+/// and `doctest` on (rustdoc collecting examples). `#![cfg(not(doctest))]`
+/// therefore refuses — rustdoc excludes the file during collection.
 fn inner_cfg_gate_admits(trimmed: &str, enabled: Option<&BTreeSet<String>>) -> bool {
     if attribute_cfg_family(trimmed) != AttributeCfgFamily::Cfg {
         return false;
@@ -393,7 +396,9 @@ fn inner_cfg_gate_admits(trimmed: &str, enabled: Option<&BTreeSet<String>>) -> b
     let Some(args) = args else {
         return false;
     };
-    cfg_satisfied_under_doctest_defaults(args, enabled, false) == Some(true)
+    [false, true].into_iter().all(|doctest_on| {
+        cfg_satisfied_under_doctest_defaults(args, enabled, doctest_on) == Some(true)
+    })
 }
 
 /// `#![cfg(..)]`, or an inner `#![cfg_attr(.., cfg(..))]` that can add a
@@ -510,6 +515,28 @@ enum DoctestCfg {
 /// of levels; anything past this bound refuses rather than recursing
 /// without a limit.
 const MAX_DOCTEST_CFG_NESTING: usize = 64;
+
+/// Returns the offset just past a (possibly nested) block comment starting
+/// with `/*` at `index`. Unterminated comments fail closed.
+fn skip_cfg_predicate_block_comment(bytes: &[u8], index: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut cursor = index.checked_add(2)?;
+    while bytes.get(cursor).is_some() {
+        if bytes.get(cursor) == Some(&b'/') && bytes.get(cursor + 1) == Some(&b'*') {
+            depth += 1;
+            cursor += 2;
+        } else if bytes.get(cursor) == Some(&b'*') && bytes.get(cursor + 1) == Some(&b'/') {
+            depth = depth.checked_sub(1)?;
+            cursor += 2;
+            if depth == 0 {
+                return Some(cursor);
+            }
+        } else {
+            cursor += 1;
+        }
+    }
+    None
+}
 
 /// Whether a `cfg(...)` predicate holds for a doctest built under cargo
 /// defaults: `test` is off, `doctest` follows `doctest_on` (on between the
@@ -641,12 +668,30 @@ impl DoctestCfgParser<'_> {
     }
 
     fn skip_ws(&mut self) {
-        while self
-            .bytes
-            .get(self.pos)
-            .is_some_and(|byte| byte.is_ascii_whitespace())
-        {
-            self.pos += 1;
+        loop {
+            while self
+                .bytes
+                .get(self.pos)
+                .is_some_and(|byte| byte.is_ascii_whitespace())
+            {
+                self.pos += 1;
+            }
+            match self.bytes.get(self.pos) {
+                Some(b'/') if self.bytes.get(self.pos + 1) == Some(&b'/') => {
+                    self.pos += 2;
+                    while self.bytes.get(self.pos).is_some_and(|byte| *byte != b'\n') {
+                        self.pos += 1;
+                    }
+                }
+                Some(b'/') if self.bytes.get(self.pos + 1) == Some(&b'*') => {
+                    let Some(end) = skip_cfg_predicate_block_comment(self.bytes, self.pos) else {
+                        self.pos = self.bytes.len();
+                        return;
+                    };
+                    self.pos = end;
+                }
+                _ => break,
+            }
         }
     }
 
