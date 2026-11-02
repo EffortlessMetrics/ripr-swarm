@@ -1352,6 +1352,7 @@ fn scan_live(bin: &Path, root: &Path, counts: &mut Counts) -> Result<Vec<String>
 
 const LSP_SURFACE: &str = "lsp-source";
 const LSP_EXEMPT_MARKER: &str = "user-text-exempt";
+const LSP_MODULE_ROOT: &str = "crates/ripr/src/lsp.rs";
 const LSP_SOURCE_DIR: &str = "crates/ripr/src/lsp";
 
 /// Prose string literals of a Rust source as `(line, text)`.
@@ -1526,19 +1527,35 @@ fn looks_like_machine_key(text: &str) -> bool {
     if text.is_empty() {
         return true;
     }
-    if text.chars().any(char::is_whitespace) || text.ends_with(':') {
+    // Only identifier, path and code characters; no sentence punctuation
+    // (`Seam.`, `Seam!`, `Seam?`, `Seam:`), no whitespace, no trailing `.`/`/`/`:`.
+    let key_chars = text.chars().all(|c| {
+        c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '#' | '{' | '}' | ':' | '-')
+    });
+    let ends_clean = text.ends_with(|c: char| c.is_ascii_alphanumeric() || c == '}' || c == '_');
+    if !key_chars || !ends_clean {
         return false;
     }
     let camel = text
         .chars()
         .zip(text.chars().skip(1))
         .any(|(a, b)| a.is_ascii_lowercase() && b.is_ascii_uppercase());
-    // `ripr-...` is the namespace of diagnostic codes (`ripr-seam-ungripped`).
-    text.starts_with("ripr-")
-        || text.contains(['_', '.', '/', '#', '{', '}'])
+    let shaped = text.contains(['_', '.', '/', '#', '{', '}'])
         || text.contains("::")
         || text.chars().any(|c| c.is_ascii_digit())
-        || camel
+        || camel;
+    // `ripr-...` is the namespace of diagnostic codes (`ripr-seam-ungripped`).
+    if text.starts_with("ripr-") {
+        return true;
+    }
+    // A capitalised first word with only `/` or `.` after it is a label
+    // (`Seam/Seams`), not a key; keys with `_`, `::`, digits or camelCase stay keys.
+    let label_like = text.starts_with(|c: char| c.is_ascii_uppercase())
+        && !text.contains(['_', '#', '{', '}'])
+        && !text.contains("::")
+        && !text.chars().any(|c| c.is_ascii_digit())
+        && !camel;
+    shaped && !label_like
 }
 
 fn is_word_char_c(c: char) -> bool {
@@ -1570,7 +1587,17 @@ pub(crate) fn lsp_source_files(root: &Path) -> Result<Vec<PathBuf>, String> {
         Ok(())
     }
     let mut out = Vec::new();
-    walk(&root.join(LSP_SOURCE_DIR), &mut out)?;
+    // A missing directory is left to the caller's corpus-size guard.
+    let dir = root.join(LSP_SOURCE_DIR);
+    if dir.is_dir() {
+        walk(&dir, &mut out)?;
+    }
+    // The module root `lsp.rs` sits beside the directory and defines text sent
+    // to editors (hover and status constants). Test-module rules still apply.
+    let module_root = root.join(LSP_MODULE_ROOT);
+    if module_root.is_file() {
+        out.push(module_root);
+    }
     out.sort();
     Ok(out)
 }
@@ -3395,6 +3422,11 @@ mod tests {
             "const D: &str = \"seam-level\";\n",
             "const E: &str = \"Discriminator:\";\n",
             "const F: &str = \"Seams\";\n",
+            "const F2: &str = \"Seam.\";\n",
+            "const F3: &str = \"Seam!\";\n",
+            "const F4: &str = \"Seam/Seams\";\n",
+            "const F5: &str = \"ripr.refreshDiagnostics\";\n",
+            "const F6: &str = \"a/b.rs\";\n",
             "const G: &str = \"seam_id\";\n",
             "const H: &str = \"seamDiagnostics\";\n",
             "const I: &str = \"lsp::seam\";\n",
@@ -3416,6 +3448,9 @@ mod tests {
                 "seam-level",
                 "Discriminator:",
                 "Seams",
+                "Seam.",
+                "Seam!",
+                "Seam/Seams",
                 "raw seam bytes",
                 "seam"
             ],
@@ -3427,7 +3462,7 @@ mod tests {
         }
         assert_eq!(
             counts[&(LSP_SURFACE.to_string(), "seam".to_string())].lines,
-            7
+            10
         );
         assert_eq!(
             counts[&(LSP_SURFACE.to_string(), "discriminator".to_string())].lines,
@@ -3509,6 +3544,34 @@ mod tests {
         let none = scan_lsp_prose(&empty, &mut Counts::new());
         let _ = fs::remove_dir_all(&empty);
         assert!(none.is_err(), "{none:?}");
+        Ok(())
+    }
+
+    /// The module root `lsp.rs` beside the `lsp/` directory is scanned too.
+    #[test]
+    fn a_banned_word_in_the_sibling_lsp_module_root_fails_the_gate() -> Result<(), String> {
+        let filler: String = (0..250)
+            .map(|n| format!("const F{n}: &str = \"plain words number {n}\";\n"))
+            .collect();
+        let module = format!("{filler}const HOVER_TEXT: &str = \"Seam/Seams below\";\n");
+        let root = golden_repo(
+            "lsp-sibling",
+            &[(A, "plain\n")],
+            &[("crates/ripr/src/lsp.rs", module.as_str())],
+        )?;
+        let mut counts = Counts::new();
+        let (files, _) = scan_lsp_prose(&root, &mut counts)?;
+        assert_eq!(files, 1);
+        let scanned = Scanned {
+            counts,
+            baseline: Baseline::new(),
+            live: Vec::new(),
+            golden_files: 1,
+        };
+        let outcome = finish_check(&root, "main", &Mode::Local, &scanned, false);
+        let _ = fs::remove_dir_all(&root);
+        let message = outcome.err().ok_or("a banned word in lsp.rs must fail")?;
+        assert!(message.contains("rose"), "{message}");
         Ok(())
     }
 

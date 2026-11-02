@@ -50,7 +50,7 @@ sidecar sends (scanned from source, see the last bullet):
   `agent card` (unknown ID and a real gap), `agent packet`, `agent repair`,
   and the help screens (`--help`, `help --all`, and `help <command>`).
 - the editor strings of the LSP sidecar (#12213), surface `lsp-source`: every
-  quoted string literal in the non-test Rust sources under
+  quoted string literal in the non-test Rust sources of `crates/ripr/src/lsp.rs` and under
   `crates/ripr/src/lsp/` (status messages, hover, code actions, lens, error
   strings sent to editors). Skipped: comments; `tests.rs`, `tests/` and
   `*_tests.rs` files; inline test modules written as `#[cfg(test)]` followed by
