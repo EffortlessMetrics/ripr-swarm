@@ -17960,6 +17960,8 @@ tests = [
   "crates/ripr/tests/error_path_sibling_variant.rs::spec_0231_inequality_excluding_a_sibling_reads_relational_weak",
   "crates/ripr/tests/error_path_sibling_variant.rs::spec_0231_sibling_inequality_off_the_owner_call_stays_refused",
   "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::drop_in_assertion_crate_paths_keep_assertion_authority",
+  "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::qualified_drop_in_assertions_classify_unless_their_root_is_bound_locally",
+  "crates/ripr/tests/owner_pin_execution.rs::glob_imported_module_refuses_qualified_drop_in_assertions",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::shared_return_admission_uses_the_outer_invocation_identity",
   "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_literal_false_blocks_are_unreached",
   "crates/ripr/src/analysis/extract/oracles/reach_tests.rs::spec_0231_rule_8_live_branches_keep_their_oracles",
@@ -17983,6 +17985,7 @@ fixtures = [
   "fixtures/test_wrapped_in_some_not_exact",
   "fixtures/test_in_struct_literal_not_exact",
   "fixtures/test_in_index_read_not_exact",
+  "fixtures/glob_import_pretty_assertions_drop_in",
 ]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",

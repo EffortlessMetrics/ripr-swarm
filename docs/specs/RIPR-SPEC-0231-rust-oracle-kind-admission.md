@@ -916,8 +916,9 @@ rejected alternative. Any can be reversed later without touching the rest.
     has an item-position macro call that could emit such a binding; or the
     call sits in a promoted function (a `#[test_case]` test, a borrowed
     check helper, a harness trial) whose oracles are read from the function
-    text alone. A binding in another file reached through a glob import, and
-    a Cargo package rename, are not detected.
+    text alone. A glob import in the same file refuses qualified drop-in
+    assertion roots in parser oracles (#7641); a Cargo package rename is not
+    detected.
 
 31. `assert_eq!(score(2) != 0, true)`, `assert_eq!(check(20) == Err(E::Bad),
     false)`, `ensure!((score(2) == 4) == false)`,
