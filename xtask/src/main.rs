@@ -21,6 +21,7 @@ use ripr::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED,
 };
 
+mod admission_incident_route;
 mod agent_skills;
 use repo_policy::*;
 mod blind_journey;

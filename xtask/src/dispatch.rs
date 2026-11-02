@@ -197,6 +197,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckPolicyAll => super::policy::check_policy_all(),
         XtaskCommand::CheckStaticLanguage => super::check_static_language(),
         XtaskCommand::CheckAgentSkills => super::agent_skills::check(),
+        XtaskCommand::CheckAdmissionIncidentRoute => super::admission_incident_route::check(),
         XtaskCommand::CheckNoPanicFamily(args) => {
             super::no_panic::check_no_panic_family_with_args(&args)
         }

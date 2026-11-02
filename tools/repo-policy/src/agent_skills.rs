@@ -54,6 +54,38 @@ const REVIEW_ROUTE_REQUIRED_MARKERS: [(&str, &str); 5] = [
     ),
 ];
 
+const INCIDENT_ROUTE_REQUIRED_MARKERS: [(&str, &str); 14] = [
+    ("finish-pr", "incident_route:currentness_before_class"),
+    (
+        "finish-pr",
+        "incident_route:candidate_escape_revoke_repair_ready",
+    ),
+    (
+        "finish-pr",
+        "incident_route:candidate_escape_requires_proof_feedback",
+    ),
+    (
+        "finish-pr",
+        "incident_route:integration_not_behind_main_only",
+    ),
+    ("finish-pr", "incident_route:instrument_repair_before_retry"),
+    (
+        "finish-pr",
+        "incident_route:infrastructure_same_subject_no_mutation",
+    ),
+    ("finish-pr", "incident_route:superseded_no_h2_contamination"),
+    ("finish-pr", "incident_route:not_proven_no_convenient_retry"),
+    ("finish-pr", "incident_route:retain_incident_lineage"),
+    ("deliver-pr", "incident_route:currentness_before_class"),
+    ("deliver-pr", "incident_route:no_poll_child"),
+    ("deliver-pr", "incident_route:same_subject_retry_bounded"),
+    (
+        "deliver-goal",
+        "incident_route:main_unhealthy_repository_owner",
+    ),
+    ("deliver-goal", "incident_route:release_claim_local_context"),
+];
+
 const REVIEW_PR_REQUIRED_MARKERS: [&str; 17] = [
     "review_contract:exact_head_binding",
     "review_contract:non_mutating_inspection_workspace",
@@ -242,6 +274,9 @@ pub fn check() -> Result<(), String> {
                 }
             }
             for finding in review_route_findings(skill, &skill_text) {
+                findings.push(format!("{provider}: {relative} {finding}"));
+            }
+            for finding in incident_route_findings(skill, &skill_text) {
                 findings.push(format!("{provider}: {relative} {finding}"));
             }
             if skill == "finish-pr" {
@@ -593,6 +628,35 @@ fn review_route_findings(skill: &str, skill_text: &str) -> Vec<String> {
             .any(|(owner, marker)| *owner == skill && *marker == declared.as_str())
         {
             findings.push(format!("declares unknown review route marker `{declared}`"));
+        }
+    }
+    findings
+}
+
+fn incident_route_findings(skill: &str, skill_text: &str) -> Vec<String> {
+    let counts = declared_marker_counts(skill_text, "incident_route:");
+    let mut findings = Vec::new();
+
+    for (_, required) in INCIDENT_ROUTE_REQUIRED_MARKERS
+        .iter()
+        .filter(|(owner, _)| *owner == skill)
+    {
+        match counts.get(*required).copied().unwrap_or(0) {
+            0 => findings.push(format!("is missing incident route marker `{required}`")),
+            1 => {}
+            count => findings.push(format!(
+                "declares incident route marker `{required}` {count} times"
+            )),
+        }
+    }
+    for declared in counts.keys() {
+        if !INCIDENT_ROUTE_REQUIRED_MARKERS
+            .iter()
+            .any(|(owner, marker)| *owner == skill && *marker == declared.as_str())
+        {
+            findings.push(format!(
+                "declares unknown incident route marker `{declared}`"
+            ));
         }
     }
     findings
