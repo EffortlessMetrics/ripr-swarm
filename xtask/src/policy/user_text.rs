@@ -2985,4 +2985,85 @@ mod tests {
         );
         Ok(())
     }
+    /// The quoted segments (`'..'`, `".."`, `` `..` ``) of one TypeScript line.
+    fn quoted_segments(line: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut open: Option<(char, String)> = None;
+        for ch in line.chars() {
+            match open.take() {
+                Some((quote, mut text)) => {
+                    if ch == quote {
+                        out.push(text);
+                    } else {
+                        text.push(ch);
+                        open = Some((quote, text));
+                    }
+                }
+                None if matches!(ch, '\'' | '"' | '`') => open = Some((ch, String::new())),
+                None => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn vscode_extension_prose_uses_plain_words() -> Result<(), String> {
+        // #12213: the extension's user-visible strings must not bring back the
+        // words the default `ripr check` screen retired. Only quoted strings
+        // are scanned (identifiers, comments and JSON keys such as
+        // `seam_diagnostics` or `seamId` are not prose), and only the two
+        // words #12213 audited; the rest of the glossary has its own rows.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let dir = root.join("editors/vscode/src");
+        let mut scanned_strings = 0usize;
+        let mut hits = Vec::new();
+        let entries = fs::read_dir(&dir).map_err(|e| format!("read {}: {e}", dir.display()))?;
+        for entry in entries {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if path.extension().is_none_or(|ext| ext != "ts") {
+                continue;
+            }
+            let text =
+                fs::read_to_string(&path).map_err(|e| format!("read {}: {e}", path.display()))?;
+            for (number, line) in text.lines().enumerate() {
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("//")
+                    || trimmed.starts_with('*')
+                    || trimmed.starts_with("/*")
+                {
+                    continue;
+                }
+                for segment in quoted_segments(line) {
+                    // A segment with no whitespace is a key or identifier
+                    // (`'seam'`, `'seam_diagnostics'`), not prose.
+                    if !segment.contains(char::is_whitespace) {
+                        continue;
+                    }
+                    scanned_strings += 1;
+                    let terms = banned_terms_in_line(&segment);
+                    if terms.iter().any(|t| matches!(*t, "seam" | "discriminator")) {
+                        hits.push(format!("{}:{}: {segment}", path.display(), number + 1));
+                    }
+                }
+            }
+        }
+        if scanned_strings < 200 {
+            return Err(format!(
+                "guard scanned too little ({scanned_strings} strings); is {} the right directory?",
+                dir.display()
+            ));
+        }
+        if !hits.is_empty() {
+            return Err(format!(
+                "retired words in VS Code extension strings:\n{}",
+                hits.join("\n")
+            ));
+        }
+        // Positive control: the matcher still flags the retired wording.
+        let flagged = banned_terms_in_line("Missing discriminator: x");
+        if !flagged.contains(&"discriminator") {
+            return Err("matcher no longer flags a retired word".to_string());
+        }
+        Ok(())
+    }
 }

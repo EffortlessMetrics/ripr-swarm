@@ -180,7 +180,7 @@ export function statusText(kind: RiprStatusKind, firstAction?: FirstUsefulAction
     case 'gapArtifactWarning':
       return '$(warning) ripr: gap blocked';
     case 'noActionableSeams':
-      return '$(circle-slash) ripr: no seams';
+      return '$(circle-slash) ripr: no spots';
     case 'noEnabledLanguages':
       return '$(circle-slash) ripr: languages off';
     case 'stale':
