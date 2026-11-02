@@ -81,8 +81,10 @@ arithmetic expression), related tests that compare the owner call to a
 literal are evaluated under the old initializer and the new one. An
 assertion that holds before and fails after is `exposed`; every related
 assertion holding both ways is `weakly_exposed`; anything unreadable stays
-`static_unknown`. A reassignment, shadow, partial use, or transformed return
-(`NAME + 1`, a method, a range bound) is not evaluated.
+`static_unknown`. A reassignment, shadow, partial use, transformed return
+(`NAME + 1`, a method, a range bound), a `return`/`break`/`?` before the
+changed `let`, a foreign same-name import of the owner, or a renamed
+binding is not evaluated.
 
 ### Credit (stage 2, not implemented)
 

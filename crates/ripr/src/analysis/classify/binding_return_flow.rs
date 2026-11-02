@@ -9,6 +9,7 @@
 //! once; anything else stays unread.
 //!
 //! Nothing here approximates. A transform tail, a rebound binding, a
+//! preceding early exit, a foreign same-name import, a renamed binding, a
 //! non-literal expectation or an unreadable helper ends in `None`, and the
 //! caller keeps `static_unknown`.
 
@@ -18,11 +19,11 @@ use super::const_flow::expr::{
 };
 use super::const_flow::{mentions_call, shares_module_scope};
 use crate::analysis::facts::{FunctionImplContext, FunctionSourceRole, FunctionSummary};
-use crate::analysis::language::changed_let_binding;
+use crate::analysis::language::{changed_let_binding, mask_rust_comments_and_strings};
 use crate::analysis::probes::{ReturnFlowKind, resolve_changed_binding_return};
 use crate::analysis::rust_index::{RustIndex, TestSummary, find_file_facts};
 use crate::domain::Probe;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Related tests evaluated per owner. Past it the flow is unread rather
 /// than sampled.
@@ -59,6 +60,8 @@ pub(in crate::analysis) fn evaluate_binding_return_flow(
     helpers: &[&FunctionSummary],
     tests: &[&TestSummary],
     functions_named: &dyn Fn(&str) -> usize,
+    import_sources: &[&str],
+    crate_names: &BTreeSet<String>,
 ) -> Option<BindingReturnFlow> {
     if !matches!(owner.impl_context, FunctionImplContext::Free)
         || functions_named(&owner.name) != 1
@@ -72,7 +75,11 @@ pub(in crate::analysis) fn evaluate_binding_return_flow(
         return None;
     }
     let flow = whole_binding_return(probe, owner)?;
-    let old_init = initializer_text(probe.before.as_deref()?)?;
+    let offset = probe.location.line.checked_sub(owner.start_line)?;
+    if preceding_early_exit(&owner.body, offset) {
+        return None;
+    }
+    let old_init = initializer_text(probe.before.as_deref()?, &flow.binding)?;
     let new_init = flow.initializer.as_str();
     if old_init == new_init {
         return None;
@@ -102,10 +109,19 @@ pub(in crate::analysis) fn evaluate_binding_return_flow(
         constant_value: &dummy,
     };
     let owner_name = owner.name.as_str();
+    if import_sources
+        .iter()
+        .any(|src| super::reveal::file_imports_foreign_callee_name(src, owner_name, crate_names))
+    {
+        return None;
+    }
 
     let mut first_seen: Option<BindingReturnFlowDetail> = None;
     let mut failing: Option<BindingReturnFlowDetail> = None;
     for test in tests {
+        if super::reveal::file_imports_foreign_callee_name(&test.body, owner_name, crate_names) {
+            return None;
+        }
         let mut evaluated = 0usize;
         let mut calls_evaluated = 0usize;
         for oracle in &test.assertions {
@@ -212,14 +228,29 @@ fn whole_binding_return(
     (flow.kind == ReturnFlowKind::Whole).then_some(flow)
 }
 
-fn initializer_text(line: &str) -> Option<&str> {
-    match changed_let_binding(line) {
-        Some((_, init)) => Some(init),
-        None => {
-            let trimmed = line.trim().trim_end_matches(';').trim();
-            (!trimmed.is_empty()).then_some(trimmed)
-        }
-    }
+fn initializer_text<'a>(line: &'a str, expected_binding: &str) -> Option<&'a str> {
+    let (binding, init) = changed_let_binding(line)?;
+    (binding == expected_binding).then_some(init)
+}
+
+/// `return`, `?`, or `break` on a line before the changed `let`. The
+/// whole-binding relation still holds for the tail path; credit does not,
+/// because this evaluator treats every owner call as the initializer.
+fn preceding_early_exit(body: &str, changed_offset: usize) -> bool {
+    mask_rust_comments_and_strings(body)
+        .lines()
+        .take(changed_offset)
+        .any(|line| {
+            let trimmed = line.trim();
+            contains_ident(trimmed, "return")
+                || contains_ident(trimmed, "break")
+                || trimmed.contains('?')
+        })
+}
+
+fn contains_ident(text: &str, ident: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .any(|part| part == ident)
 }
 
 fn helper_readers(

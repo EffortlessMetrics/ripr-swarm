@@ -253,10 +253,21 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         && let Some(facts) = find_file_facts(index, &owner.file)
     {
         let reader_tests: Vec<&TestSummary> = related_tests.iter().map(|(test, _)| *test).collect();
-        binding_return_flow =
-            evaluate_binding_return_flow(probe, owner, &helpers, &reader_tests, &|name| {
-                facts.functions.iter().filter(|f| f.name == name).count()
-            });
+        let import_owned: Vec<String> = std::iter::once(facts.source.to_string())
+            .chain(reader_tests.iter().filter_map(|test| {
+                find_file_facts(index, &test.file).map(|file| file.source.to_string())
+            }))
+            .collect();
+        let import_sources: Vec<&str> = import_owned.iter().map(String::as_str).collect();
+        binding_return_flow = evaluate_binding_return_flow(
+            probe,
+            owner,
+            &helpers,
+            &reader_tests,
+            &|name| facts.functions.iter().filter(|f| f.name == name).count(),
+            &import_sources,
+            &index.package_names,
+        );
     }
     // RIPR-SPEC-0133: detect assertion-shaped owners (oracles) here, where the
     // full index is available; the context carries the verdict so guidance can

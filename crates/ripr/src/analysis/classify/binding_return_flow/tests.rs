@@ -63,6 +63,8 @@ fn decide(
                 .filter(|function| function.name == name)
                 .count()
         },
+        &[source.as_str()],
+        &std::collections::BTreeSet::new(),
     ))
 }
 
@@ -92,6 +94,33 @@ fn a_transformed_return_is_not_evaluated() -> Result<(), String> {
     let body = "    let result = helper(amount * 8);\n    result + 1";
     let pin = "#[test]\nfn score_of_ten_is_eleven() {\n    assert_eq!(score(10), 11);\n}";
     assert_eq!(decide(body, pin, OLD, NEW)?, None);
+    Ok(())
+}
+
+#[test]
+fn an_early_return_before_the_binding_is_not_evaluated() -> Result<(), String> {
+    let body = "    if amount == 0 { return 0; }\n    let result = helper(amount * 8);\n    result";
+    let pin = "#[test]\nfn score_of_zero_is_zero() {\n    assert_eq!(score(0), 0);\n}";
+    assert_eq!(decide(body, pin, OLD, NEW)?, None);
+    Ok(())
+}
+
+#[test]
+fn a_foreign_same_name_import_is_not_evaluated() -> Result<(), String> {
+    let body = "    let result = helper(amount * 8);\n    result";
+    let pin =
+        "use other_crate::score;\n#[test]\nfn pins_foreign() {\n    assert_eq!(score(10), 10);\n}";
+    assert_eq!(decide(body, pin, OLD, NEW)?, None);
+    Ok(())
+}
+
+#[test]
+fn a_renamed_binding_is_not_evaluated() -> Result<(), String> {
+    let body = "    let result = helper(amount * 8);\n    result";
+    assert_eq!(
+        decide(body, PIN, "    let output = helper(amount * 9);", NEW)?,
+        None
+    );
     Ok(())
 }
 
@@ -164,11 +193,19 @@ fn a_duplicate_owner_name_is_unreadable() -> Result<(), String> {
         required_oracles: Vec::new(),
     };
     assert_eq!(
-        evaluate_binding_return_flow(&probe, owner, &helpers, &related, &|name| facts
-            .functions
-            .iter()
-            .filter(|function| function.name == name)
-            .count(),),
+        evaluate_binding_return_flow(
+            &probe,
+            owner,
+            &helpers,
+            &related,
+            &|name| facts
+                .functions
+                .iter()
+                .filter(|function| function.name == name)
+                .count(),
+            &[source.as_str()],
+            &std::collections::BTreeSet::new(),
+        ),
         None
     );
     Ok(())
