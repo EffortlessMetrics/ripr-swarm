@@ -3299,3 +3299,86 @@ both disabled, and there the same deny is enforced. The sharded workflow
 therefore runs the real-ACL tests in a pwsh step and excludes them from the
 bash shards. `File::create` was never affected (the `(WD)` deny was
 enforced). The failure message still records the privilege state.
+
+## 2026-10-31: Goldens blessed on one platform fail on the Linux arbiter platform
+
+`goldens check` is the merge arbiter for output contracts, and hosted Linux
+is the arbiter for goldens: the repo is continuously validated on Linux only,
+and the advisory Windows lane deliberately runs no golden gate and no
+blessing (#2337; `docs/CI.md`, "Advisory Windows Lane"). A bless rendered on
+Windows fails on that arbiter in recorded shapes: 43 local Windows drift
+entries against 35 hosted Linux entries for the same tree, so the eight
+Windows-only fixtures must never be blessed from a Windows run (#8437);
+Windows renders a base-side evidence suffix the committed Linux goldens do
+not carry (#8525); and a bless from a CRLF working tree embedded
+`input_identity` hashes that no `eol=lf` checkout reproduces, burning a
+hosted qualification run on PR #8559 (run 39072364336) until the fixtures
+were re-blessed from an LF tree (#8614; the bless-time guard now refuses that
+shape, `xtask/src/reports/fixtures.rs`).
+
+Durable rules:
+
+- Never bless or hand-edit golden expected-files from a Windows host. The
+  re-bless route is WSL Ubuntu with the pinned toolchain
+  (`rust-toolchain.toml`, channel 1.95.0) or hosted Linux qualification —
+  never a Windows renderer. Run the failing check under WSL, confirm the
+  drift is `formatting_only` (or semantically justified per the output
+  contract), then bless from the WSL checkout so expected-file bytes come
+  from the Linux renderer.
+- A renderer-wording re-bless records classifications unchanged: diff the
+  blessed fixtures' `expected/check.json` and keep it empty, citing the
+  landed renderer change in the blessing reason. A `check.json` change is
+  semantic drift and needs the fixture's own justification;
+  `check-evidence-promotion-honesty` (RIPR-SPEC-0108) still rejects a
+  dishonest re-bless.
+- Attribute the cost lines correctly: the three blocked merge-ref
+  qualification runs on PR #10532 (runs 41000730801, 41008685127,
+  41022609903) are the #11197 binary-swap class (in-suite xtask builds
+  replacing `target/debug/ripr` mid-run), not a golden bless; the recorded
+  Windows-bless qualification cost is #8614/PR #8559.
+
+## 2026-10-31: One owner, two branches, one silent leading-slash asymmetry (#4207)
+
+`normalized_relative_import_module`
+(`crates/ripr/src/analysis/language/typescript/related_tests.rs`) filtered
+empty path components on its relative-specifier branch, which dropped the
+leading `/` of an absolute test path, while the alias branch and
+`normalized_module_path` kept it. With absolute paths on both sides a
+specifier module and an owner module could never be equal. A positive
+assertion failed loudly (the hosted failure that found it); a negative
+assertion would have passed vacuously, because the comparison could not
+succeed. Two sibling fixtures (#4164, #4176, both closed unmerged) built
+absolute `std::env::temp_dir()` paths and hit exactly this. #11595 fixed the
+relative branch and pinned absolute inputs on both sides.
+
+Production reachability of an absolute path at the relation gate: not
+reachable, from source (answer to #4207 item 3):
+
+- Workspace test and owner files come from the TypeScript walk
+  (`typescript/discovery.rs`), which starts at `options.root` and so always
+  strips to a workspace-relative path; the `unwrap_or(&path)` fallback never
+  fires for a walked entry.
+- The only other way a path joins the workspace set is a changed file named
+  by the diff when the walk truncates (`typescript/mod.rs`). Diff paths pass
+  `confine_to_relative_path` (`analysis/diff/path.rs`), which rejects any
+  root, prefix or parent component, so an out-of-root or absolute path never
+  becomes a `ChangedFile` (covered by
+  `rejects_new_path_marker_with_absolute_path` and
+  `rejects_new_path_marker_with_parent_dir_traversal` in `diff/parse.rs`).
+
+This is source inspection plus those existing tests, not a run that fed an
+out-of-root file through the analyzer, so it is a not-reachable-by-construction
+claim, not an observation.
+
+Durable rules:
+
+- When one function canonicalizes the same identity on two branches, give both
+  branches one shared normalizer, or document the intended difference where
+  the code is.
+- Build relation-gate unit fixtures with production-shaped workspace-relative
+  paths; an absolute-path fixture depends on a branch the pipeline does not
+  use. Pin absolute inputs separately, as a control, so the asymmetry cannot
+  return.
+- Pair every negative assertion with a positive control built from the same
+  fixture shape, or the negative can pass because the comparison is
+  unsatisfiable.

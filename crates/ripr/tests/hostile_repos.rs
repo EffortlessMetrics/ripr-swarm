@@ -667,6 +667,69 @@ fn symlink_loops_and_dangling_links_complete() -> Result<(), String> {
     assert_sane(&ran, "symlink loop pilot")
 }
 
+/// #11563: a `ripr.toml` of newlines needs ~27x its size once the `toml` lexer
+/// tokenizes it, so a file well under the general 256 MiB input cap aborted
+/// the process on allocation. Metadata TOML has its own small cap and a typed
+/// refusal that names the file.
+#[test]
+fn oversized_config_is_a_typed_refusal_not_an_allocation_abort() -> Result<(), String> {
+    let scratch = Scratch::new("bigconfig")?;
+    let root = scratch.path.join("r");
+    repo(&root, |root| {
+        change_lib(root)?;
+        let newlines = vec![b'\n'; 3 * 1024 * 1024];
+        fs::write(root.join("ripr.toml"), newlines).map_err(|e| format!("write failed: {e}"))
+    })?;
+    let ran = ripr(&root, &["check"], &[])?;
+    assert_no_panic(&ran, "oversized ripr.toml")?;
+    if ran.code != Some(2)
+        || !ran.stderr.contains("ripr.toml")
+        || !ran.stderr.contains("metadata limit")
+    {
+        return Err(format!(
+            "expected an exit-2 refusal naming ripr.toml and the metadata limit\n{:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    Ok(())
+}
+
+/// #11563: a FIFO named `ripr.toml` or `Cargo.toml` blocked `open` forever.
+#[cfg(unix)]
+#[test]
+fn fifo_metadata_files_are_refused_instead_of_blocking() -> Result<(), String> {
+    let scratch = Scratch::new("fifometa")?;
+    let root = scratch.path.join("r");
+    repo(&root, change_lib)?;
+    let fifo = |name: &str| -> Result<(), String> {
+        let path = root.join(name);
+        let _ = fs::remove_file(&path);
+        let made = Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .map_err(|e| format!("mkfifo failed: {e}"))?;
+        if made.success() {
+            Ok(())
+        } else {
+            Err(format!("mkfifo {name} failed"))
+        }
+    };
+    fifo("ripr.toml")?;
+    let ran = ripr(&root, &["check"], &[])?;
+    assert_no_panic(&ran, "fifo ripr.toml")?;
+    if ran.code != Some(2) || !ran.stderr.contains("not a regular file") {
+        return Err(format!(
+            "expected an exit-2 refusal for a FIFO ripr.toml\n{:?}\n{}",
+            ran.code, ran.stderr
+        ));
+    }
+    fs::remove_file(root.join("ripr.toml")).map_err(|e| format!("remove failed: {e}"))?;
+    fs::remove_file(root.join("Cargo.toml")).map_err(|e| format!("remove failed: {e}"))?;
+    fifo("Cargo.toml")?;
+    let ran = ripr(&root, &["check"], &[])?;
+    assert_no_panic(&ran, "fifo Cargo.toml")
+}
+
 #[test]
 fn oversized_diff_is_refused_with_a_repair_route() -> Result<(), String> {
     let scratch = Scratch::new("huge")?;
@@ -1763,7 +1826,7 @@ fn corrupt_packed_refs_without_base_is_not_reported_as_unborn() -> Result<(), St
 }
 
 /// A checkout whose `.git` is a gitfile pointing at a vanished gitdir is
-/// still a repository checkout; "run it from inside your repository" is the
+/// still a repository checkout; "Run from inside a repository" is the
 /// wrong repair (#6927).
 #[test]
 fn missing_gitfile_gitdir_names_worktree_or_submodule_repair() -> Result<(), String> {
@@ -1787,10 +1850,7 @@ fn missing_gitfile_gitdir_names_worktree_or_submodule_repair() -> Result<(), Str
             return Err(format!("missing `{needle}`\n{}", ran.stderr));
         }
     }
-    for wrong in [
-        "not inside a Git work tree",
-        "run it from inside your repository",
-    ] {
+    for wrong in ["not inside a Git work tree", "Run from inside a repository"] {
         if ran.stderr.contains(wrong) {
             return Err(format!("wrong cause `{wrong}`\n{}", ran.stderr));
         }
@@ -2168,4 +2228,149 @@ fn ripr_shell(dir: &Path, line: &str, path: &str) -> Result<String, String> {
         .output()
         .map_err(|e| format!("spawn bash failed: {e}"))?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// A Python repository whose base commit holds `m.py`, its test and any
+/// `extra` files; the feature commit changes `m.py` (python) or `src/lib.rs`
+/// (rust) only, so every `extra` file stays unchanged.
+#[cfg(all(unix, feature = "lang-python"))]
+fn python_repo(root: &Path, extra: &[(&str, &[u8])], change_python: bool) -> Result<(), String> {
+    let w = |rel: &str, body: &[u8]| -> Result<(), String> {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {e}"))?;
+        }
+        fs::write(path, body).map_err(|e| format!("write {rel} failed: {e}"))
+    };
+    fs::create_dir_all(root).map_err(|e| format!("mkdir root failed: {e}"))?;
+    git(root, &["init", "-q", "-b", "main"])?;
+    w(
+        "ripr.toml",
+        b"[languages]\nenabled = [\"rust\", \"python\"]\n",
+    )?;
+    w("Cargo.toml", MANIFEST.as_bytes())?;
+    w("src/lib.rs", BASE_LIB.as_bytes())?;
+    w("tests/t.rs", TEST.as_bytes())?;
+    w("m.py", b"def f(x):\n    return x + 1\n")?;
+    w(
+        "test_m.py",
+        b"from m import f\n\n\ndef test_f():\n    assert f(1) == 2\n",
+    )?;
+    for (rel, body) in extra {
+        w(rel, body)?;
+    }
+    git(root, &["add", "-A"])?;
+    git(root, &["commit", "-q", "-m", "base"])?;
+    git(root, &["checkout", "-q", "-b", "feat"])?;
+    if change_python {
+        w("m.py", b"def f(x):\n    return x + 2\n")?;
+    } else {
+        change_lib(root)?;
+    }
+    git(root, &["add", "-A"])?;
+    git(root, &["commit", "-q", "-m", "change"])
+}
+
+/// An unchanged source file that is not UTF-8 is never read into the index.
+/// A diff that depends on that language must disclose it: before the fix the
+/// per-language child was partial while the outcome said "analysis complete"
+/// (and a debug build aborted on the reconcile assertion).
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+fn unreadable_unchanged_python_source_is_disclosed_not_complete() -> Result<(), String> {
+    let scratch = Scratch::new("unread-py")?;
+    let control = scratch.path.join("control");
+    python_repo(&control, &[], true)?;
+    let ran = ripr(&control, &["check", "--base", "main"], &[])?;
+    assert_sane(&ran, "control")?;
+    if !ran.stdout.contains("(analysis complete)") {
+        return Err(format!("control must be complete\n{}", ran.stdout));
+    }
+
+    let hostile = scratch.path.join("hostile");
+    python_repo(&hostile, &[("bad.py", b"x = '\xff\xfe'\n")], true)?;
+    let ran = ripr(&hostile, &["check", "--base", "main"], &[])?;
+    assert_sane(&ran, "unreadable unchanged python")?;
+    if ran.stdout.contains("(analysis complete)")
+        || !ran.stdout.contains("(analysis incomplete)")
+        || !ran.stdout.contains("re-encode them as UTF-8")
+    {
+        return Err(format!(
+            "expected a disclosed unreadable-source limitation\n{}\n{}",
+            ran.stdout, ran.stderr
+        ));
+    }
+    Ok(())
+}
+
+/// The same unreadable Python file cannot affect a Rust-only diff, so it must
+/// neither abort nor downgrade that result.
+#[cfg(all(unix, feature = "lang-python"))]
+#[test]
+fn unreadable_unchanged_python_source_does_not_downgrade_a_rust_only_diff() -> Result<(), String> {
+    let scratch = Scratch::new("unread-py-rust")?;
+    let root = scratch.path.join("r");
+    python_repo(&root, &[("bad.py", b"x = '\xff\xfe'\n")], false)?;
+    let ran = ripr(&root, &["check", "--base", "main"], &[])?;
+    assert_found_change(&ran, "rust diff beside unreadable python")?;
+    if !ran.stdout.contains("(analysis complete)") {
+        return Err(format!("Rust-only diff must stay complete\n{}", ran.stdout));
+    }
+    Ok(())
+}
+
+/// A FIFO named `package.json` or `tsconfig.json` blocks `open` forever. The
+/// TypeScript config readers and the implicit-root probe must treat it as an
+/// unreadable config (#11579), not wait on it.
+#[cfg(unix)]
+#[test]
+fn fifo_typescript_config_files_do_not_block_the_run() -> Result<(), String> {
+    let scratch = Scratch::new("ts-config-fifo")?;
+    for name in ["package.json", "tsconfig.json"] {
+        let root = scratch.path.join(name.replace('.', "-"));
+        fs::create_dir_all(root.join("src")).map_err(|e| format!("mkdir failed: {e}"))?;
+        fs::create_dir_all(root.join("test")).map_err(|e| format!("mkdir failed: {e}"))?;
+        let w = |rel: &str, body: &str| {
+            fs::write(root.join(rel), body).map_err(|e| format!("write {rel} failed: {e}"))
+        };
+        git(&root, &["init", "-q", "-b", "main"])?;
+        w("ripr.toml", "[languages]\nenabled = [\"typescript\"]\n")?;
+        w(
+            "package.json",
+            "{\"name\":\"fifo-fixture\",\"private\":true}\n",
+        )?;
+        w(
+            "src/pricing.ts",
+            "export function total(n: number): number {\n  if (n > 100) {\n    return n - 5;\n  }\n  return n;\n}\n",
+        )?;
+        w(
+            "test/pricing.test.ts",
+            "import { total } from \"../src/pricing\";\nimport { expect, test } from \"vitest\";\ntest(\"total\", () => {\n  expect(total(50)).toBe(50);\n});\n",
+        )?;
+        git(&root, &["add", "-A"])?;
+        git(&root, &["commit", "-q", "-m", "base"])?;
+        git(&root, &["checkout", "-q", "-b", "feat"])?;
+        w(
+            "src/pricing.ts",
+            "export function total(n: number): number {\n  if (n >= 100) {\n    return n - 5;\n  }\n  return n;\n}\n",
+        )?;
+        git(&root, &["add", "-A"])?;
+        git(&root, &["commit", "-q", "-m", "change"])?;
+        // The FIFO replaces the config after the commit, so only the working
+        // tree readers can see it.
+        let fifo = root.join(name);
+        if fifo.exists() {
+            fs::remove_file(&fifo).map_err(|e| format!("remove {name} failed: {e}"))?;
+        }
+        let made = Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .map_err(|e| format!("spawn mkfifo failed: {e}"))?;
+        if !made.success() {
+            return Err(format!("mkfifo {name} failed"));
+        }
+        let ran = ripr(&root, &["check", "--base", "main", "--committed"], &[])?;
+        assert_sane(&ran, &format!("FIFO {name}"))?;
+    }
+    Ok(())
 }

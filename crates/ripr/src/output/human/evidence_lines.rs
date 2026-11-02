@@ -88,6 +88,28 @@ const PLAIN_PHRASES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The classifier's fixed "nothing strong enough notices this" entry. JSON
+/// `missing`, `--format human-full` and the matching keys in this module keep
+/// its wording byte-for-byte; the default human lines say the same thing with
+/// the plain word for what a test supplies. Applied only where the default
+/// digest and the Hidden list print a `missing` entry.
+const STRONG_DISCRIMINATOR_ENTRY: &str = "No strong discriminator was detected";
+const STRONG_ASSERTION_ENTRY: &str = "No strong assertion was detected";
+
+pub(crate) fn plain_default_missing(text: &str) -> String {
+    text.replace(STRONG_DISCRIMINATOR_ENTRY, STRONG_ASSERTION_ENTRY)
+}
+
+/// The change-type token the default human lists print after `kind:`. Every
+/// family keeps its stable snake_case spelling except the catch-all, whose
+/// raw token is the banned state word; JSON and `human-full` keep it.
+pub(crate) fn plain_probe_family(family: &crate::domain::ProbeFamily) -> &'static str {
+    match family {
+        crate::domain::ProbeFamily::StaticUnknown => "unclear",
+        other => other.as_str(),
+    }
+}
+
 pub(crate) fn plain_internal_wording(text: &str) -> String {
     let mut plain = text.to_string();
     for (internal, replacement) in PLAIN_PHRASES {
@@ -96,6 +118,22 @@ pub(crate) fn plain_internal_wording(text: &str) -> String {
         }
     }
     plain
+}
+
+/// Render-only plain wording for a repair-route stop condition (#12214).
+///
+/// The Python producer states "the missing discriminator" in its stop
+/// conditions; that exact string is part of the JSON and agent contract and
+/// stays byte-identical there. Editor text (hover, code-action packet, test
+/// skeleton comment) shows the glossary word instead. Only the one known
+/// producer form is rewritten; any other condition passes through unchanged.
+pub(crate) fn plain_stop_condition(text: &str) -> String {
+    const PYTHON_AMBIGUOUS: &str =
+        "Stop if the expected value for the missing discriminator is ambiguous.";
+    if text == PYTHON_AMBIGUOUS {
+        return "Stop if the expected value for the missing check is ambiguous.".to_string();
+    }
+    text.to_string()
 }
 
 /// #9244: the producer's reveal-stage summaries carry the machine marker

@@ -204,3 +204,68 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_predicate_returned_drop_exit (17)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless rust_predicate_returned_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_predicate_returned_drop_exit (18)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless rust_predicate_returned_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_predicate_returned_drop_exit (19)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless rust_predicate_returned_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_predicate_returned_drop_exit (20)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless rust_predicate_returned_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_predicate_returned_drop_exit (21)
+
+Reason:
+RIPR-SPEC-0122: render the missing check in plain language
+
+Command:
+`cargo xtask goldens bless rust_predicate_returned_drop_exit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -77,3 +77,82 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_macro_transcriber_own_call (7)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless rust_macro_transcriber_own_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_macro_transcriber_own_call (8)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+RIPR-SPEC-0114: proximity-only reach limit now also applies to infection_unknown findings (#11481); class, stages and related tests unchanged, finding gains macro_reach_unresolved
+
+Command:
+`cargo xtask goldens bless rust_macro_transcriber_own_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_macro_transcriber_own_call (9)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless rust_macro_transcriber_own_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_macro_transcriber_own_call (10)
+
+Reason:
+RIPR-SPEC-0001: additive summary.conflicting_expressions member (#11554)
+
+Command:
+`cargo xtask goldens bless rust_macro_transcriber_own_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_macro_transcriber_own_call (11)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless rust_macro_transcriber_own_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_macro_transcriber_own_call (12)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless rust_macro_transcriber_own_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

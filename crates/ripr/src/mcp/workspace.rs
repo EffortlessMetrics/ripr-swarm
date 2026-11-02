@@ -41,6 +41,10 @@ pub(crate) const CODE_NO_SNAPSHOT: &str = "no_snapshot";
 pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
+/// A call argument the model can correct (unknown name, wrong type, out of
+/// range, bad enum token). Returned as an `isError: true` tool result
+/// instead of a JSON-RPC `-32602`, which many hosts flatten (#11621).
+pub(crate) const CODE_INVALID_ARGUMENT: &str = "invalid_argument";
 /// #8736 review follow-up: one raw resource-id segment can resolve both as
 /// captured (legacy raw URI for a literal-`%` file) and as its percent-
 /// decoded form (a URI-emitting client addressing the decoded file) when
@@ -67,6 +71,7 @@ pub(crate) const RECOVERY_GAP_LIST_FILTER_TOO_LARGE: &str = "the echoed filter v
 pub(crate) const RECOVERY_REFRESH_TOO_LARGE: &str = "the refresh result exceeds the MCP response bound; read session state with ripr_workspace_status";
 pub(crate) const RECOVERY_STATUS_TOO_LARGE: &str =
     "the status document exceeds the MCP response bound; there is no narrower status read";
+pub(crate) const RECOVERY_LIMITATION_TOO_LARGE: &str = "this item's limitation document exceeds the MCP response bound; its canonical id is too long to echo, so read the bounded list summary with ripr_list_gaps";
 pub(crate) const RECOVERY_REPAIR_TOO_LARGE: &str = "this repair document exceeds the MCP response bound; there is no narrower MCP read of this record";
 /// Reserved typed-failure vocabulary for later slices. This slice fails
 /// closed before any of these states can occur; they are named so the wire
@@ -295,6 +300,7 @@ impl AttemptFailure {
             "code": self.code,
             "detail": self.detail,
             "recovery": self.recovery,
+            "remedy": crate::domain::RefusalRemedy::from_prose(&self.recovery),
             "data": self.data,
         })
     }
@@ -419,6 +425,12 @@ pub(crate) enum SourceCustody {
     NotApplicable,
     /// A worktree snapshot whose producers were not shown to agree.
     NotEstablished { reason: String },
+    /// A committed snapshot taken over a checkout whose tracked source or test
+    /// files carry uncommitted edits: the findings read HEAD content while the
+    /// seam inventory and cards read the live files, and the two were not
+    /// shown to be the same bytes (#7357). Findings stay served; repair
+    /// readiness and cards are withheld.
+    CommittedOverUncommitted { reason: String },
     /// A worktree snapshot whose findings and inventory consumed the same
     /// Rust context.
     Established { commitment: String },
@@ -428,7 +440,9 @@ impl SourceCustody {
     fn commitment(&self) -> Option<&str> {
         match self {
             Self::Established { commitment } => Some(commitment),
-            Self::NotApplicable | Self::NotEstablished { .. } => None,
+            Self::NotApplicable
+            | Self::NotEstablished { .. }
+            | Self::CommittedOverUncommitted { .. } => None,
         }
     }
 }
@@ -1243,6 +1257,37 @@ impl WorkspaceSession {
         Ok((document, snapshot.gap_item_recovery.clone()))
     }
 
+    /// Whether the current completed snapshot holds an item with exactly this
+    /// canonical id. Route disambiguation only; it reports no failure.
+    pub(crate) fn has_current_item(&self, canonical_id: &str) -> bool {
+        self.active_snapshot(None)
+            .is_ok_and(|snapshot| snapshot.item(canonical_id).is_some())
+    }
+
+    /// The earliest producer limitation for one canonical item of the current
+    /// completed snapshot (`ripr_get_top_limitation`,
+    /// `ripr://gap/{canonical_id}/limitation`). Reads committed facts only:
+    /// the same stale-snapshot and unknown-item failures as the gap read, and
+    /// no analysis rerun.
+    pub(crate) fn get_limitation(
+        &self,
+        canonical_id: &str,
+        requested: Option<&str>,
+    ) -> Result<Value, AttemptFailure> {
+        let snapshot = self.active_snapshot(requested)?;
+        let Some(item) = snapshot.item(canonical_id) else {
+            return Err(AttemptFailure::new(
+                CODE_ITEM_NOT_FOUND,
+                format!("no canonical item {canonical_id} exists in the current snapshot"),
+                "list the current canonical ids with ripr_list_gaps, then retry",
+            ));
+        };
+        bounded_document(
+            item.limitation_document(&snapshot.snapshot_id),
+            RECOVERY_LIMITATION_TOO_LARGE,
+        )
+    }
+
     /// The `ripr://snapshot/{snapshot_id}` evidence resource: snapshot
     /// identity, typed outcome, the full item index, and the stored selection
     /// summary — not the full evidence graph.
@@ -1512,14 +1557,18 @@ fn worktree_scope_disclosure(snapshot: &Snapshot) -> Value {
             "consumed_source_commitment": "established",
             "repair_cards": "available",
         }),
-        SourceCustody::NotEstablished { .. } | SourceCustody::NotApplicable => json!({
+        SourceCustody::NotEstablished { .. }
+        | SourceCustody::NotApplicable
+        | SourceCustody::CommittedOverUncommitted { .. } => json!({
             "analyzed": analyzed,
             "uncommitted_edits": "saved tracked edits included",
             "note": format!(
                 "this snapshot analyzed saved staged and unstaged tracked edits as the producer read them during the refresh; unsaved editor buffers and gitignored files are outside it, and untracked files are never analyzed as findings. The consumed source bytes of the findings and the seam inventory were not shown to agree{}, so edits after the refresh are not detected (refresh again) and repair cards and repair readiness are withheld",
                 match &snapshot.custody {
                     SourceCustody::NotEstablished { reason } => format!(" ({reason})"),
-                    SourceCustody::Established { .. } | SourceCustody::NotApplicable => String::new(),
+                    SourceCustody::Established { .. }
+                    | SourceCustody::NotApplicable
+                    | SourceCustody::CommittedOverUncommitted { .. } => String::new(),
                 }
             ),
             "consumed_source_commitment": "not_established",
@@ -1590,6 +1639,46 @@ fn analyzed_label(snapshot: &Snapshot) -> String {
 }
 
 fn tracked_scope_disclosure(snapshot: &Snapshot) -> Option<Value> {
+    let facts = tracked_scope_facts_disclosure(snapshot);
+    let SourceCustody::CommittedOverUncommitted { reason } = &snapshot.custody else {
+        return facts;
+    };
+    // The checkout can change after the findings ran even when it was clean
+    // then, so the withheld state is disclosed without an uncommitted-edit fact.
+    let mut disclosure = facts.unwrap_or_else(|| {
+        json!({
+            "analyzed": analyzed_label(snapshot),
+            "uncommitted_edits": "outside this analysis",
+            "note": "this snapshot reads each file as committed at HEAD",
+        })
+    });
+    let note = disclosure
+        .get("note")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim_end_matches('.')
+        .to_string();
+    let withheld = format!(
+        "Repair cards and repair readiness are withheld for this snapshot because the findings read committed content while the seam inventory reads the checkout's current Rust files ({reason}). {}",
+        committed_withheld_remedy(reason)
+    );
+    let withheld_note = json!(if note.is_empty() {
+        withheld
+    } else {
+        format!("{note}. {withheld}")
+    });
+    if let Some(object) = disclosure.as_object_mut() {
+        object.insert("note".to_string(), withheld_note);
+        object.insert(
+            "consumed_source_commitment".to_string(),
+            json!("not_established"),
+        );
+        object.insert("repair_cards".to_string(), json!("withheld"));
+    }
+    Some(disclosure)
+}
+
+fn tracked_scope_facts_disclosure(snapshot: &Snapshot) -> Option<Value> {
     let scope = &snapshot.scope;
     const NAMED_PATHS: usize = 3;
     if !scope.uncommitted_edits {
@@ -1710,9 +1799,22 @@ pub(crate) fn refresh_document(session: &WorkspaceSession) -> Value {
         "claim_boundary": "One bounded static analysis attempt over the workspace diff. The server never edits source, executes verification or mutation commands, or loads project-local provider configuration.",
         "limitations": [
             "an attempt runs to a terminal state; MCP cancellation of the request does not roll back a running attempt and never manufactures a snapshot",
-            "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits (#5254 item 2)",
+            "a cancelled refresh attempt still commits as a completed snapshot when it finishes; only transport teardown abandons an attempt before it commits",
         ],
     });
+    // Top-level currentness so an agent need not parse `scope`: `true` only
+    // when the snapshot's source is the saved worktree or the working tree
+    // had no uncommitted edits outside the analysis; `false` after a failed
+    // attempt or with edits the analysis cannot see; `null` with no snapshot
+    // (audit finding 2).
+    document["fresh_for_working_tree"] = match (&session.last_good, &session.last_failure) {
+        (None, _) => Value::Null,
+        (Some(_), Some(_)) => json!(false),
+        (Some(snapshot), None) => {
+            json!(snapshot.source == RefreshSource::Worktree || !snapshot.scope.uncommitted_edits)
+        }
+    };
+    document["verify"] = super::repair::verify_after_editing_tests();
     if let Some(base) = &session.desired_base {
         document["requested_base"] = json!(base);
     }
@@ -1888,19 +1990,47 @@ pub(crate) fn run_check(
         if source == RefreshSource::Worktree {
             return run_worktree_check(input, &config, root_identity, base);
         }
-        let (output, language_view) = crate::app::check_workspace_with_config_typed(input, &config)
-            .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
+        let (output, language_view, findings_sources) =
+            crate::app::check_workspace_with_config_typed(input, &config)
+                .map_err(|error| check_failure(&error, root, base, RefreshSource::Committed))?;
         // The seam inventory is gathered once inside this bounded attempt and
         // feeds both consumers: the shared repair validator that decides each
         // item's repair readiness (#8717) and the repair-card seam bindings
         // (RIPR-SPEC-0215). Readiness is projected before the snapshot identity
         // is computed, so the identity binds the admission decision.
+        #[cfg(test)]
+        after_worktree_findings_hook::run();
         let inventory = super::repair_card::gather_seam_inventory(root, &config, &output.findings)?;
+        // A committed refresh reads committed content for the findings but live
+        // files for the inventory (#7357); only the shared custody owner may
+        // say they agree.
+        if let Some(reason) =
+            committed_over_uncommitted_refusal(&output, &findings_sources, &inventory, || {
+                dirty_rust_routed_paths(Path::new(root))
+            })
+        {
+            let admission = super::repair_admission::SeamAdmission::withheld(
+                &output.findings,
+                super::repair_admission::SEAM_WORKTREE_SOURCE,
+                &committed_card_withheld_detail(&reason),
+            );
+            let mut snapshot = Snapshot::from_output_with_custody(
+                &output,
+                root_identity,
+                &admission,
+                RefreshSource::Committed,
+                SourceCustody::CommittedOverUncommitted { reason },
+            )?;
+            snapshot.base = base.map(str::to_string);
+            snapshot.language_view = language_view;
+            return Ok(snapshot);
+        }
         let admission = super::repair_admission::SeamAdmission::evaluate(
             &output.findings,
             &inventory.candidate_seams,
             crate::app::agent_brief::AgentBriefPolicy::from_config(&config),
             &inventory.completeness,
+            Path::new(root),
         );
         let mut snapshot = Snapshot::from_output_admitted(
             &output,
@@ -1995,6 +2125,7 @@ fn run_worktree_check(
                 &inventory.candidate_seams,
                 crate::app::agent_brief::AgentBriefPolicy::from_config(config),
                 &inventory.completeness,
+                &root,
             );
             let mut snapshot = Snapshot::from_output_with_custody(
                 &output,
@@ -2062,6 +2193,123 @@ fn worktree_custody(
     )
     .map(|commitment| commitment.as_str().to_string())
     .map_err(|refusal| refusal.describe())
+}
+
+/// Why a committed refresh cannot vouch that its findings (committed content)
+/// and its live-file seam inventory consumed the same Rust bytes (#7357), or
+/// `None` when no finding needs a card or the producers agree.
+///
+/// The shared [`ConsumedRustSources::establish_agreement`] owner decides on
+/// every committed refresh with findings, so a checkout that changed after the
+/// findings ran is caught even when it was clean at that time, and it names the
+/// moved path when it can. The agreement only covers paths the findings
+/// consumed, but the inventory reads its own selected Rust files, so with
+/// Rust findings any dirty tracked or untracked Rust-routed path also withholds
+/// (`dirty_rust` lists them; it is evaluated only when needed and an
+/// unestablishable list fails closed). Dirty non-Rust files never withhold, and
+/// gitignored Rust files are a stated residual, not claimed. A
+/// head the findings producer observed that differs from the inventory's also
+/// withholds; an unobserved head is not compared on the committed path.
+///
+/// [`ConsumedRustSources::establish_agreement`]: crate::analysis::consumed_source::ConsumedRustSources::establish_agreement
+fn committed_over_uncommitted_refusal(
+    output: &crate::app::CheckOutput,
+    findings_sources: &crate::analysis::consumed_source::ConsumedRustSources,
+    inventory: &super::repair_card::SeamInventory,
+    dirty_rust: impl FnOnce() -> Result<Vec<String>, String>,
+) -> Option<String> {
+    use crate::analysis::consumed_source::{ConsumedRustSources, CustodyRefusal};
+    if output.findings.is_empty() {
+        return None;
+    }
+    let producer_head = output
+        .analyzed_revisions
+        .as_ref()
+        .and_then(|revisions| revisions.head_commit.as_deref());
+    if producer_head.is_some_and(|head| head != inventory.repository_head) {
+        return Some(COMMITTED_HEAD_MOVED_REASON.to_string());
+    }
+    match ConsumedRustSources::establish_agreement(findings_sources, &inventory.consumed_sources) {
+        Ok(_) | Err(CustodyRefusal::FindingsObservedNothing) => {}
+        Err(refusal) => return Some(refusal.describe()),
+    }
+    let rust_findings = output
+        .findings
+        .iter()
+        .any(|finding| finding.language == Some(crate::domain::LanguageId::Rust));
+    if !rust_findings {
+        return None;
+    }
+    match dirty_rust() {
+        Err(error) => Some(format!("{COMMITTED_DIRTY_LIST_UNESTABLISHED} ({error})")),
+        Ok(paths) if paths.is_empty() => None,
+        Ok(paths) => {
+            let named = paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
+            let more = paths.len().saturating_sub(3);
+            let listing = if more > 0 {
+                format!("{named} and {more} more")
+            } else {
+                named
+            };
+            Some(format!(
+                "uncommitted Rust source or test files ({listing}) are read by the seam inventory and the committed findings never saw them"
+            ))
+        }
+    }
+}
+
+/// The dirty tracked and untracked Rust-routed paths of the checkout, from the
+/// same committed-source probe the committed findings producer uses. Gitignored
+/// files are excluded (see the comment below).
+fn dirty_rust_routed_paths(root: &Path) -> Result<Vec<String>, String> {
+    let overlay =
+        crate::analysis::committed_source::probe(root, Some(crate::app::default_cli_git_timeout()))
+            .map_err(|error| error.to_string())?;
+    let Some(overlay) = overlay else {
+        return Ok(Vec::new());
+    };
+    // Gitignored Rust files are deliberately not listed: the inventory can
+    // read them, but their enumeration is capped and descends into skipped
+    // directories, so including them would over-withhold clean checkouts. They
+    // are a stated residual (RIPR-SPEC-0211), as in worktree mode.
+    let mut paths = overlay.dirty_source_paths();
+    paths.extend(overlay.untracked_source_paths());
+    paths.retain(|path| {
+        crate::analysis::language::route(Path::new(path)) == Some(crate::domain::LanguageId::Rust)
+    });
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+/// The reason a committed refresh withholds when the head moved between the
+/// findings and the inventory.
+const COMMITTED_HEAD_MOVED_REASON: &str = "the repository head the findings producer observed does not match the head the seam inventory bound";
+
+/// The reason prefix when the dirty Rust path list could not be established.
+const COMMITTED_DIRTY_LIST_UNESTABLISHED: &str =
+    "the checkout's uncommitted Rust files could not be established";
+
+/// The recovery that matches a committed withheld reason: a moved head or an
+/// unestablishable list needs another refresh, uncommitted Rust files need
+/// committing first.
+fn committed_withheld_remedy(reason: &str) -> &'static str {
+    if reason == COMMITTED_HEAD_MOVED_REASON {
+        "Run ripr_refresh again once the repository head settles"
+    } else if reason.starts_with(COMMITTED_DIRTY_LIST_UNESTABLISHED) {
+        "Run ripr_refresh again; if it keeps failing, check that git can read the repository"
+    } else {
+        "Commit the uncommitted Rust source or test files (untracked ones included) and run ripr_refresh again, or run ripr_refresh with source `worktree` to analyze saved edits"
+    }
+}
+
+/// Why a committed snapshot whose findings and checkout were not shown to
+/// agree carries no repair readiness or repair card (#7357).
+pub(crate) fn committed_card_withheld_detail(reason: &str) -> String {
+    format!(
+        "this snapshot analyzed committed content, but its findings and the live seam inventory were not shown to have consumed the same Rust source bytes ({reason}), so repair readiness and cards are withheld rather than claimed current. {}",
+        committed_withheld_remedy(reason)
+    )
 }
 
 /// Test-only barrier between the findings producer and the seam inventory, so
@@ -2210,6 +2458,23 @@ mod tests {
         AnalysisRecoveryKind, AnalysisStage,
     };
     use std::path::PathBuf;
+
+    #[test]
+    fn check_retry_recovery_remedy_is_the_tool_not_the_conditional_command() {
+        // Real producer: the instructed step is `ripr_refresh`; the `ripr
+        // check` command is only the `if the failure persists` fallback.
+        let recovery = check_retry_recovery(Path::new("."), Some("main"), RefreshSource::Committed);
+        let value = AttemptFailure::new("analysis_failed", "x", recovery).value();
+        assert_eq!(value["remedy"]["kind"], "mcp_tool", "{value}");
+        assert_eq!(value["remedy"]["tool"], "ripr_refresh", "{value}");
+        assert_eq!(value["remedy"]["command"], Value::Null, "{value}");
+        assert!(
+            value["remedy"]["alternatives"]
+                .as_array()
+                .is_some_and(|alternatives| alternatives.len() == 1),
+            "{value}"
+        );
+    }
 
     fn limitation(kind: AnalysisLimitationKind) -> Result<AnalysisLimitation, String> {
         Ok(AnalysisLimitation::new(
@@ -2650,6 +2915,37 @@ mod tests {
                 Ok(())
             }
         }
+    }
+
+    #[test]
+    fn a_missing_stale_or_unknown_limitation_read_never_yields_a_limitation_document()
+    -> Result<(), String> {
+        // #11821: the limitation read is committed-facts only. Every state in
+        // which the item's limitation cannot be established answers with a
+        // typed failure (and its recovery), never with a limitation document a
+        // client could read as "no limitation, so a repair route".
+        expect_code(
+            WorkspaceSession::default().get_limitation("gap:any", None),
+            CODE_NO_SNAPSHOT,
+        )?;
+        expect_code(
+            WorkspaceSession {
+                in_flight: true,
+                ..Default::default()
+            }
+            .get_limitation("gap:any", None),
+            CODE_ANALYSIS_IN_FLIGHT,
+        )?;
+        let session = session_with_findings(1)?;
+        expect_code(
+            session.get_limitation("gap:any", Some("snapshot:sha256:old")),
+            CODE_STALE_SNAPSHOT,
+        )?;
+        expect_code(
+            session.get_limitation("gap:does-not-exist", None),
+            CODE_ITEM_NOT_FOUND,
+        )?;
+        Ok(())
     }
 
     /// A snapshot carrying `count` distinct canonical items, built from the
@@ -4306,6 +4602,19 @@ mod tests {
     }
 
     #[test]
+    fn refresh_limitations_contain_no_internal_issue_references() -> Result<(), String> {
+        use crate::mcp::agent_facing_text_tests::assert_agent_text_has_no_internal_issue_or_adr_references;
+        let session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
+        let document = refresh_document(&session);
+        let limitations = document
+            .pointer("/limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "refresh document lost its limitations".to_string())?;
+        let text = serde_json::to_string(limitations).map_err(|error| error.to_string())?;
+        assert_agent_text_has_no_internal_issue_or_adr_references(&text)
+    }
+
+    #[test]
     fn refresh_document_reports_failure_without_dropping_last_known_good() -> Result<(), String> {
         let mut session = session_with(AnalysisOutcomeKind::CompleteNoFindings, 0)?;
         let failure = AttemptFailure::new(CODE_ANALYSIS_FAILED, "producer hiccup", "retry");
@@ -4367,6 +4676,15 @@ mod tests {
         };
 
         let refresh = refresh_document(&session);
+        // The audit's silent-staleness case: an uncommitted edit the analysis
+        // cannot see is a top-level `false`, with the worktree re-check named.
+        if refresh["fresh_for_working_tree"] != json!(false)
+            || refresh["verify"]["mcp"]["arguments"]["source"] != "worktree"
+        {
+            return Err(format!(
+                "a dirty-tree committed refresh must say it is not fresh: {refresh}"
+            ));
+        }
         if refresh.pointer("/scope/analyzed").and_then(Value::as_str)
             != Some("committed default-branch diff")
         {
@@ -4615,6 +4933,117 @@ mod tests {
             "no worktree item is repair ready"
         );
         assert!(worktree.card_producers.is_none());
+        Ok(())
+    }
+
+    fn refusal_inputs(
+        language: crate::domain::LanguageId,
+        producer_head: Option<&str>,
+        findings_digest: &[u8],
+        inventory_digest: &[u8],
+    ) -> Result<
+        (
+            crate::app::CheckOutput,
+            crate::analysis::consumed_source::ConsumedRustSources,
+            super::super::repair_card::SeamInventory,
+        ),
+        String,
+    > {
+        let mut out = output(AnalysisOutcomeKind::CompleteWithFindings, 1, Vec::new())?;
+        let mut finding = crate::mcp::gaps::test_finding()?;
+        finding.language = Some(language);
+        out.findings = vec![finding];
+        out.analyzed_revisions = producer_head.map(|head| crate::analysis::AnalyzedRevisions {
+            head_commit: Some(head.to_string()),
+            ..Default::default()
+        });
+        let mut findings = crate::analysis::consumed_source::ConsumedRustSources::default();
+        findings.record(Path::new("src/lib.rs"), Some(findings_digest));
+        let mut inventory_sources =
+            crate::analysis::consumed_source::ConsumedRustSources::default();
+        inventory_sources.record(Path::new("src/lib.rs"), Some(inventory_digest));
+        let inventory = super::super::repair_card::SeamInventory {
+            repository_head: "head-a".to_string(),
+            candidate_seams: Vec::new(),
+            completeness: Default::default(),
+            config: crate::config::RiprConfig::default(),
+            consumed_sources: inventory_sources,
+        };
+        Ok((out, findings, inventory))
+    }
+
+    /// #7357: the committed custody decision itself, with the agreement Ok so
+    /// the dirty-Rust rule is the only thing that can withhold.
+    #[test]
+    fn committed_refusal_dirty_rust_rule_is_isolated_from_the_agreement() -> Result<(), String> {
+        use crate::domain::LanguageId::{Python, Rust};
+        let reason = |language, head, dirty: Result<Vec<String>, String>| {
+            let (out, findings, inventory) = refusal_inputs(language, head, b"a", b"a")?;
+            Ok::<_, String>(committed_over_uncommitted_refusal(
+                &out,
+                &findings,
+                &inventory,
+                || dirty,
+            ))
+        };
+        // Agreement Ok, a dirty Rust path: withheld by the dirty rule's own text.
+        let dirty = reason(Rust, Some("head-a"), Ok(vec!["src/h.rs".to_string()]))?
+            .ok_or("a dirty Rust path must withhold")?;
+        if !dirty.contains("uncommitted Rust source or test files") || !dirty.contains("src/h.rs") {
+            return Err(format!("unexpected dirty reason: {dirty}"));
+        }
+        // An unestablishable list fails closed.
+        let failed = reason(Rust, Some("head-a"), Err("git failed".to_string()))?
+            .ok_or("an unestablishable dirty list must withhold")?;
+        if !failed.contains("could not be established")
+            || committed_withheld_remedy(&failed).contains("Commit the uncommitted")
+        {
+            return Err(format!("unexpected probe-failure reason: {failed}"));
+        }
+        // Rust findings and no dirty path: no withholding.
+        if reason(Rust, Some("head-a"), Ok(Vec::new()))?.is_some() {
+            return Err("a clean Rust checkout must not withhold".to_string());
+        }
+        // An unobserved producer head is not compared.
+        if reason(Rust, None, Ok(Vec::new()))?.is_some() {
+            return Err("an unobserved head is not a mismatch".to_string());
+        }
+        // A producer head that differs from the inventory's withholds.
+        let moved =
+            reason(Rust, Some("head-b"), Ok(Vec::new()))?.ok_or("a moved head must withhold")?;
+        if moved != COMMITTED_HEAD_MOVED_REASON
+            || committed_withheld_remedy(&moved).contains("Commit the uncommitted")
+        {
+            return Err(format!("the head remedy must be a plain refresh: {moved}"));
+        }
+        // Non-Rust findings never consult the dirty list.
+        let (out, findings, inventory) = refusal_inputs(Python, Some("head-a"), b"a", b"a")?;
+        let consulted = std::cell::Cell::new(false);
+        let python = committed_over_uncommitted_refusal(&out, &findings, &inventory, || {
+            consulted.set(true);
+            Ok(vec!["src/h.rs".to_string()])
+        });
+        if python.is_some() || consulted.get() {
+            return Err("non-Rust findings must not consult the dirty-Rust list".to_string());
+        }
+        // No findings never consult it either.
+        let (mut out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"a")?;
+        out.findings.clear();
+        let none = committed_over_uncommitted_refusal(&out, &findings, &inventory, || {
+            consulted.set(true);
+            Ok(vec!["src/h.rs".to_string()])
+        });
+        if none.is_some() || consulted.get() {
+            return Err("no findings must not consult the dirty-Rust list".to_string());
+        }
+        // The agreement still names a moved consumed path first.
+        let (out, findings, inventory) = refusal_inputs(Rust, Some("head-a"), b"a", b"b")?;
+        let moved_path =
+            committed_over_uncommitted_refusal(&out, &findings, &inventory, || Ok(Vec::new()))
+                .ok_or("a moved consumed path must withhold")?;
+        if !moved_path.contains("src/lib.rs") || !moved_path.contains("changed between") {
+            return Err(format!("the owner must name the moved path: {moved_path}"));
+        }
         Ok(())
     }
 

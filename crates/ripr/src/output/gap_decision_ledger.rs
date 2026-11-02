@@ -843,9 +843,25 @@ pub(crate) fn build_gap_decision_ledger_report(
     .to_string();
 
     let check_output_provenance = match input.source_kind {
-        GapDecisionLedgerSourceKind::CheckOutput => Some(serde_json::json!({
-            "root": input_root.clone(),
-        })),
+        GapDecisionLedgerSourceKind::CheckOutput => {
+            let mut origin = serde_json::Map::new();
+            origin.insert("root".to_string(), serde_json::json!(input_root));
+            // Retain the producer's own values verbatim, including malformed
+            // values. This is provenance, not a currentness decision: the
+            // derived source_subject and its limitation remain authoritative
+            // for existing consumers, and absent fields stay absent.
+            if let Some(source) = source_value_snapshot.as_ref().and_then(Value::as_object) {
+                if let Some(raw_root) = source.get("root") {
+                    origin.insert("source_root_raw".to_string(), raw_root.clone());
+                }
+                for key in ["source_subject", "base", "base_commit", "head", "mode"] {
+                    if let Some(value) = source.get(key) {
+                        origin.insert(key.to_string(), value.clone());
+                    }
+                }
+            }
+            Some(Value::Object(origin))
+        }
         GapDecisionLedgerSourceKind::Records => source_value_snapshot.as_ref().and_then(|value| {
             value.get("check_output_provenance").cloned().or_else(|| {
                 (value.pointer("/inputs/source_kind").and_then(Value::as_str)
@@ -948,7 +964,7 @@ pub(crate) fn render_gap_decision_ledger_json(
         warnings: &report.warnings,
         limits: &report.limits,
     })
-    .map_err(|err| format!("serialize gap decision ledger JSON failed: {err}"))
+    .map_err(|err| format!("serialize gap decision ledger JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// Derive the ledger's `source_subject` for the selected `root` (#4544).
@@ -1043,7 +1059,7 @@ pub(crate) fn check_output_gap_records(
 }
 
 fn gap_record_json_value(record: &GapRecord) -> Result<Value, String> {
-    serde_json::to_value(record).map_err(|err| format!("serialize gap record JSON failed: {err}"))
+    serde_json::to_value(record).map_err(|err| format!("serialize gap record JSON failed: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 /// Producer-supplied typed command specs parsed from one canonical item.
@@ -1062,7 +1078,7 @@ fn command_specs_from_value(value: Option<&Value>) -> Result<ParsedCommandSpecCo
     };
     let object = command_specs
         .as_object()
-        .ok_or_else(|| "command_specs must be an object".to_string())?;
+        .ok_or_else(|| "command_specs must be an object; regenerate the input with the command that wrote it, then rerun".to_string())?;
     let parse = |field: &str, expected_role: CommandRole| -> Result<Vec<CommandSpec>, String> {
         let Some(value) = object.get(field) else {
             return Ok(Vec::new());
@@ -1071,18 +1087,22 @@ fn command_specs_from_value(value: Option<&Value>) -> Result<ParsedCommandSpecCo
             Value::Null => return Ok(Vec::new()),
             Value::Array(values) => values.clone(),
             Value::Object(_) => vec![value.clone()],
-            _ => return Err(format!("command_specs.{field} must be an object or array")),
+            _ => {
+                return Err(format!(
+                    "command_specs.{field} must be an object or array; regenerate the input with the command that wrote it, then rerun"
+                ));
+            }
         };
         values
             .into_iter()
             .map(|value| {
                 let spec: CommandSpec = serde_json::from_value(value)
-                    .map_err(|error| format!("command_specs.{field} is malformed: {error}"))?;
+                    .map_err(|error| format!("command_specs.{field} is malformed: {error}; regenerate the input with the command that wrote it, then rerun"))?;
                 spec.validate()
-                    .map_err(|error| format!("command_specs.{field} is invalid: {error}"))?;
+                    .map_err(|error| format!("command_specs.{field} is invalid: {error}; regenerate the input with the command that wrote it, then rerun"))?;
                 if spec.role != expected_role {
                     return Err(format!(
-                        "command_specs.{field} contains {} role, expected {}",
+                        "command_specs.{field} contains {} role, expected {}; regenerate the input with the command that wrote it, then rerun",
                         command_role_label(spec.role),
                         command_role_label(expected_role)
                     ));
@@ -1256,8 +1276,11 @@ fn parse_gap_record_source_json_with_root(
     contents: &str,
     selected_root: Option<&Path>,
 ) -> Result<ParsedGapRecordSource, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let root = value
         .as_object()
         .and_then(|object| object.get("root"))
@@ -1328,8 +1351,11 @@ fn input_findings_total_from_source_value(source_value: Option<&Value>) -> usize
 }
 
 fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let items = value
         .get("finding_alignment")
         .and_then(|alignment| alignment.get("items"))
@@ -1337,7 +1363,7 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     let findings = value.get("findings").and_then(Value::as_array);
     if items.is_none() && findings.is_none() {
         return Err(
-            "expected check output object with finding_alignment.items or findings array"
+            "expected check output object with finding_alignment.items or findings array; regenerate the input with the command that wrote it, then rerun"
                 .to_string(),
         );
     }
@@ -1348,7 +1374,9 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
     if let Some(findings) = findings {
         for (index, finding) in findings.iter().enumerate() {
             if !finding.is_object() {
-                return Err(format!("findings array entry {index} is not a JSON object"));
+                return Err(format!(
+                    "findings array entry {index} is not a JSON object; regenerate the input with the command that wrote it, then rerun"
+                ));
             }
         }
     }
@@ -1437,12 +1465,15 @@ fn gap_records_from_check_output_json(contents: &str) -> Result<Vec<GapRecord>, 
 }
 
 fn gap_records_from_repo_exposure_json(contents: &str) -> Result<Vec<GapRecord>, String> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| format!("invalid JSON: {err}"))?;
+    let value: Value = serde_json::from_str(contents).map_err(|err| {
+        format!(
+            "invalid JSON: {err}; regenerate the input with the command that wrote it, then rerun"
+        )
+    })?;
     let seams = value
         .get("seams")
         .and_then(Value::as_array)
-        .ok_or_else(|| "expected repo exposure object with seams array".to_string())?;
+        .ok_or_else(|| "expected repo exposure object with seams array; regenerate the input with the command that wrote it, then rerun".to_string())?;
     let mut records = Vec::new();
     for (index, seam) in seams.iter().enumerate() {
         if let Some(canonical_item) = seam
@@ -3411,7 +3442,7 @@ fn gap_records_from_value(value: &Value) -> Result<Vec<GapRecord>, String> {
         return parse_record_array(records);
     }
     let Some(object) = value.as_object() else {
-        return Err("expected object or array at gap record root".to_string());
+        return Err("expected object or array at gap record root; regenerate the input with the command that wrote it, then rerun".to_string());
     };
     if let Some(records) = object.get("records").and_then(Value::as_array) {
         return parse_record_array(records);
@@ -3424,7 +3455,9 @@ fn gap_records_from_value(value: &Value) -> Result<Vec<GapRecord>, String> {
         for case in cases {
             let case_id = case.get("id").and_then(Value::as_str).unwrap_or("unknown");
             let Some(record) = case.get("expected_gap_record") else {
-                return Err(format!("case {case_id} is missing expected_gap_record"));
+                return Err(format!(
+                    "case {case_id} is missing expected_gap_record; regenerate the input with the command that wrote it, then rerun"
+                ));
             };
             records.push(parse_record(record).map_err(|err| format!("case {case_id}: {err}"))?);
         }
@@ -3442,7 +3475,7 @@ fn parse_record_array(records: &[Value]) -> Result<Vec<GapRecord>, String> {
 }
 
 fn parse_record(record: &Value) -> Result<GapRecord, String> {
-    serde_json::from_value(record.clone()).map_err(|err| format!("invalid GapRecord: {err}"))
+    serde_json::from_value(record.clone()).map_err(|err| format!("invalid GapRecord: {err}; regenerate the input with the command that wrote it, then rerun"))
 }
 
 fn summarize_records(records: &[GapRecord]) -> GapDecisionLedgerSummary {
@@ -5589,6 +5622,9 @@ mod tests {
         // observe the owners but need operands that distinguish product order.
         // `python_factor_reorder_rebound` adds one direct-aligned weak card:
         // its rebound table operand leaves multiplication order unresolved.
+        // RIPR-SPEC-0028: `python_adversarial_attribute_sink_same_value_other_receiver`
+        // adds one orthogonal card: the same value on a foreign receiver is
+        // not observation of the changed `self.status` sink.
         // #9186: `python_truthiness_swap_no_exposed_credit` downgrades an
         // `is None` -> `not x` swap that every strong call leaves unseparated to
         // `weakly_exposed`; one more direct-aligned card. Its
@@ -5599,9 +5635,29 @@ mod tests {
         // #10707: `python_boundary_local_rebound_not_credited` keeps a rebound
         // test local unresolved at the boundary, so its weak finding adds one
         // direct-aligned card; `python_boundary_local_input_credited` is exposed.
+        // #9733: `python_while_counter_past_bound` keeps a generator loop whose
+        // counter steps by one past the changed bound `weakly_exposed` when its
+        // only test starts below it; the weak finding names the missing
+        // `start == 0` boundary and carries one direct-aligned card.
         // #10707: `python_boundary_module_constant_rebound_not_credited` keeps a
         // twice-bound test-module constant unresolved, one more direct card.
-        if (direct, no_strong, orthogonal, family_selection) != (21, 27, 30, 1) {
+        // #10391: nine conservative patch-scope fixtures
+        // (`python_bool_owner_{environment_protocol, escaped_patch_target,
+        // fake_environment, mock_comprehension, mock_equality,
+        // mock_inspection_override, mock_result_escape, parameter_patch,
+        // patched_callee}`) carry one packet-eligible `no_strong_oracle` card
+        // each; the admitted-environment positive stays exposed and the
+        // formatted-patch limit contributes no card.
+        // #9185: `python_message_pin_local_no_exposed_credit` is the two-step
+        // `msg = "..."` / `raise Exc(msg)` form of the same downgrade, one more
+        // direct-aligned weak card; `python_message_pin_local_control` is
+        // exposed, no card.
+        // #10990: `python_boundary_local_rebound_not_credited` and
+        // `python_boundary_module_constant_rebound_not_credited` keep rebound
+        // inputs no call binds unresolved, so their weak boundary findings
+        // name no discriminator and carry no repair card; the direct-aligned
+        // inventory drops by two.
+        if (direct, no_strong, orthogonal, family_selection) != (21, 36, 31, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
@@ -5916,7 +5972,7 @@ mod tests {
             finding["preview_actionability"]["why_not_actionable"].as_str()
         );
         assert!(record.static_limit_detail.as_deref().is_some_and(|detail| detail
-            .contains("validator: is not agent-packet eligible: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`")));
+            .contains("validator: is not agent-packet eligible: derive an input that hits the boundary before this repair can be handed to an agent: observed call input `login('alice')` does not reach the missing discriminator `user.length == 3`")));
         assert!(record.static_limits.iter().any(|limit| {
             limit["kind"] == "not_delegatable_target_shape"
                 && limit["detail"] == "Add an exact boundary assertion for `user.length == 3`."
@@ -6318,6 +6374,104 @@ mod tests {
             !receipt_cmd.contains("ripr outcome"),
             "gap-ledger receipt command must not reuse outcome receipt syntax, got: {receipt_cmd}"
         );
+        Ok(())
+    }
+
+    /// #10709: the TypeScript ledger record carries the producer's
+    /// `source_currentness` and the run's `analysis_outcome`, which the shared
+    /// agent-packet validator and `first-pr` read before they recommend the
+    /// gap-bound `ripr agent repair` start. The checked-in portable ledger must
+    /// agree with what the producer emits for the saved check output, and a
+    /// finding without an established candidate-current source must not form
+    /// an agent-packet-eligible record.
+    #[test]
+    fn typescript_preview_fixture_ledger_carries_producer_currentness_and_outcome()
+    -> Result<(), String> {
+        fn produce(payload: &Value) -> GapDecisionLedgerReport {
+            build_gap_decision_ledger_report(GapDecisionLedgerInput {
+                root: ".".to_string(),
+                generated_at: "test".to_string(),
+                source_kind: GapDecisionLedgerSourceKind::CheckOutput,
+                records_path: "typescript-check.json".to_string(),
+                records_json: Ok(payload.to_string()),
+            })
+        }
+        let payload: Value = serde_json::from_str(&typescript_preview_gap_before_check_output())
+            .map_err(|error| format!("parse TypeScript fixture: {error}"))?;
+        let report = produce(&payload);
+        let record = report
+            .records
+            .first()
+            .ok_or("TypeScript fixture produced no record")?;
+        assert_eq!(
+            record.source_currentness.as_deref(),
+            Some("candidate_current")
+        );
+        assert!(projection_eligible(record, "agent_packet"));
+        assert_eq!(
+            report
+                .analysis_outcome
+                .as_ref()
+                .and_then(|outcome| outcome.get("analysis_complete"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+
+        let ledger: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/first_successful_pr/typescript-preview-gap/inputs/reports/gap-decision-ledger.json"
+        ))
+        .map_err(|error| format!("parse checked-in TypeScript ledger: {error}"))?;
+        assert_eq!(
+            ledger["analysis_outcome"],
+            report.analysis_outcome.clone().unwrap_or(Value::Null)
+        );
+        let produced = gap_record_json_value(record)?;
+        for key in [
+            "canonical_gap_id",
+            "source_currentness",
+            "language",
+            "repairability",
+        ] {
+            assert_eq!(
+                ledger["records"][0][key], produced[key],
+                "checked-in ledger record drifted from the producer on `{key}`"
+            );
+        }
+
+        // Discriminating negatives: no established candidate-current source
+        // (missing or unknown) keeps the record but turns the authority
+        // projection off; a stale (moved) source forms no record at all.
+        for currentness in [None, Some("unknown")] {
+            let mut stale = payload.clone();
+            let finding = stale["findings"][0]
+                .as_object_mut()
+                .ok_or("TypeScript finding must be an object")?;
+            match currentness {
+                Some(value) => {
+                    finding.insert("source_currentness".to_string(), Value::from(value));
+                }
+                None => {
+                    finding.remove("source_currentness");
+                }
+            }
+            let report = produce(&stale);
+            let record = report
+                .records
+                .first()
+                .ok_or("a non-current TypeScript finding still forms an advisory record")?;
+            assert_ne!(
+                record.source_currentness.as_deref(),
+                Some("candidate_current"),
+                "{currentness:?}"
+            );
+            assert!(
+                !projection_eligible(record, "agent_packet"),
+                "{currentness:?}"
+            );
+        }
+        let mut moved = payload;
+        moved["findings"][0]["source_currentness"] = Value::from("moved_or_renamed");
+        assert!(produce(&moved).records.is_empty());
         Ok(())
     }
 

@@ -133,3 +133,75 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — exact_any_membership_oracle (12)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless exact_any_membership_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — exact_any_membership_oracle (13)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless exact_any_membership_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — exact_any_membership_oracle (14)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless exact_any_membership_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — exact_any_membership_oracle (15)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless exact_any_membership_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — exact_any_membership_oracle (16)
+
+Reason:
+RIPR-SPEC-0122: describe classified spots without implying repair eligibility
+
+Command:
+`cargo xtask goldens bless exact_any_membership_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — exact_any_membership_oracle (17)
+
+Reason:
+RIPR-SPEC-0122: render the missing check in plain language
+
+Command:
+`cargo xtask goldens bless exact_any_membership_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

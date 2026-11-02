@@ -654,3 +654,242 @@ fn compound_line_boundary_fact_reads_the_source_line_identity() -> Result<(), St
     let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }
+
+// Clause-level matrix over compound `&&` / `||` conditions (#11196). The
+// selector reads parser-owned comparison leaves, so precedence is decided by
+// the parse tree, never by token order. A named clause is the comparison the
+// edit changed; it is not claimed to be independently steerable, because under
+// `&&` it is observable only when the other clauses hold.
+
+#[test]
+fn mixed_logical_operators_name_the_changed_leaf_by_parse_tree_precedence() {
+    // `a && b > 1 || c` parses as `(a && (b > 1)) || c`; `b > 1` is still one
+    // comparison leaf whichever way the operators group.
+    for (old, new) in [
+        ("  if (ok && b > 1 || c) {", "  if (ok && b >= 1 || c) {"),
+        ("  if (ok || b > 1 && c) {", "  if (ok || b >= 1 && c) {"),
+        (
+            "  if ((ok || b > 1) && c) {",
+            "  if ((ok || b >= 1) && c) {",
+        ),
+    ] {
+        assert_eq!(
+            boundary_label(Some(old), new).as_deref(),
+            Some("b == 1"),
+            "{new}"
+        );
+    }
+}
+
+#[test]
+fn clause_reorder_names_no_boundary() {
+    let old = "  if (a > 1 && b < 2) {";
+    let new = "  if (b < 2 && a > 1) {";
+    assert_eq!(boundary_label(Some(old), new), None);
+}
+
+#[test]
+fn removed_clause_names_no_boundary() {
+    assert_eq!(
+        boundary_label(Some("  if (a > 1 && b < 2) {"), "  if (a > 1) {"),
+        None
+    );
+    assert_eq!(
+        boundary_label(Some("  if (a > 1 || b < 2) {"), "  if (b < 2) {"),
+        None
+    );
+}
+
+#[test]
+fn moved_parenthesis_names_no_boundary() {
+    // No comparison changed; only the grouping of `b || c` did.
+    let old = "  if ((a > 1 && b) || c) {";
+    let new = "  if (a > 1 && (b || c)) {";
+    assert_eq!(boundary_label(Some(old), new), None);
+}
+
+#[test]
+fn logical_operator_swap_names_no_boundary() {
+    // `&&` -> `||` changes how the clauses combine, not a comparison.
+    assert_eq!(
+        boundary_label(Some("  if (a > 1 && b) {"), "  if (a > 1 || b) {"),
+        None
+    );
+}
+
+#[test]
+fn non_comparison_clause_edit_names_no_boundary() {
+    assert_eq!(
+        boundary_label(Some("  if (a > 1 && ok) {"), "  if (a > 1 && ready) {"),
+        None
+    );
+}
+
+#[test]
+fn edit_inside_a_string_that_looks_like_a_clause_names_no_boundary() {
+    let old = "  log(\"a > 1 && b\");";
+    let new = "  log(\"a >= 1 && b\");";
+    assert_eq!(boundary_label(Some(old), new), None);
+}
+
+#[test]
+fn non_simple_operand_in_the_changed_clause_names_no_boundary() {
+    for (old, new) in [
+        ("  if (f(a) > 1 && b) {", "  if (f(a) >= 1 && b) {"),
+        ("  if (xs[i] > 1 && b) {", "  if (xs[i] >= 1 && b) {"),
+        ("  if ((a ?? 0) > 1 && b) {", "  if ((a ?? 0) >= 1 && b) {"),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{new}");
+    }
+}
+
+#[test]
+fn nullish_chain_without_parentheses_names_no_boundary() {
+    // `a ?? b > 1` groups as `a ?? (b > 1)`: the changed comparison sits under
+    // a nullish operand the label reader cannot represent.
+    assert_eq!(
+        boundary_label(Some("  if (a ?? b > 1) {"), "  if (a ?? b >= 1) {"),
+        None
+    );
+}
+
+#[test]
+fn comparison_inside_a_template_literal_names_no_boundary() {
+    let old = "  const s = `${a > 1 ? 'x' : 'y'}`;";
+    let new = "  const s = `${a >= 1 ? 'x' : 'y'}`;";
+    assert_eq!(boundary_label(Some(old), new), None);
+}
+
+#[test]
+fn assigned_boolean_expression_names_no_boundary() {
+    // Not a predicate line: the declaration is not classified as a predicate,
+    // so no clause-level label is produced for it (non-goal of #11196).
+    let old = "  const ok = a > 1 && b < 2;";
+    let new = "  const ok = a >= 1 && b < 2;";
+    assert_eq!(boundary_label(Some(old), new), None);
+}
+
+// #11442: two over-claims are withheld. Everything else keeps the edit-envelope
+// behavior above.
+
+#[test]
+fn single_token_substitutions_keep_their_label() {
+    for (old, new, label) in [
+        ("  if (x > 5) {", "  if (x >= 5) {", "x == 5"),
+        ("  if (x === 'a') {", "  if (x !== 'a') {", "x == 'a'"),
+        ("  if (x > 5) {", "  if (x > 6) {", "x == 6"),
+        ("  if (x > y) {", "  if (x > z) {", "x == z"),
+        ("  if (a > 1 && ok) {", "  if (a >= 1 && ok) {", "a == 1"),
+        (
+            "  if (ok && a > 1 && b < 2) {",
+            "  if (ok && a > 1 && b <= 2) {",
+            "b == 2",
+        ),
+    ] {
+        assert_eq!(
+            boundary_label(Some(old), new).as_deref(),
+            Some(label),
+            "{old} -> {new}"
+        );
+    }
+}
+
+#[test]
+fn pure_operand_swaps_keep_their_label() {
+    for (old, new, label) in [
+        (
+            "  if (total >= 100) {",
+            "  if (100 <= total) {",
+            "100 == total",
+        ),
+        (
+            "  if (spend > 500) {",
+            "  if (500 < spend) {",
+            "500 == spend",
+        ),
+        (
+            "  if (tier === \"gold\") {",
+            "  if (\"gold\" === tier) {",
+            "\"gold\" == tier",
+        ),
+        ("  if (a !== 1) {", "  if (1 !== a) {", "1 == a"),
+        ("  return age >= 18;", "  return 18 <= age;", "18 == age"),
+        ("  if (a.x > b.y) {", "  if (b.y < a.x) {", "b.y == a.x"),
+    ] {
+        assert_eq!(
+            boundary_label(Some(old), new).as_deref(),
+            Some(label),
+            "{old} -> {new}"
+        );
+    }
+}
+
+#[test]
+fn swaps_that_change_the_predicate_name_no_boundary() {
+    for (old, new) in [
+        // Operands exchanged without mirroring the operator flips the test.
+        ("  if (a > b) {", "  if (b > a) {"),
+        ("  if (a >= b) {", "  if (b >= a) {"),
+        // Mirror operator but the operator also strengthens or a literal moves.
+        ("  if (a >= b) {", "  if (b < a) {"),
+        ("  if (a > 1) {", "  if (2 < a) {"),
+        ("  if (a > b) {", "  if (c < a) {"),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
+    }
+}
+
+#[test]
+fn pure_operand_swap_beside_an_unchanged_clause_names_its_clause() {
+    assert_eq!(
+        boundary_label(Some("  if (a > 1 && b < 2) {"), "  if (1 < a && b < 2) {").as_deref(),
+        Some("1 == a")
+    );
+}
+
+#[test]
+fn swap_plus_another_edit_in_the_line_names_no_boundary() {
+    for (old, new) in [
+        ("  if (a > 1 && b < 2) {", "  if (1 < a && b < 3) {"),
+        ("  if (a > 1 && b < 2) {", "  if (1 < a && b <= 2) {"),
+        ("  if (x > 1 && ok) {", "  if (1 < x && done) {"),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
+    }
+}
+
+#[test]
+fn two_tokens_changed_in_one_clause_name_no_boundary() {
+    for (old, new) in [
+        ("  if (a > 1 && ok) {", "  if (a >= 2 && ok) {"),
+        ("  if (a > 1) {", "  if (a >= 2) {"),
+        ("  if (a > b) {", "  if (c >= b) {"),
+        ("  if (a.x > 1) {", "  if (b.y > 1) {"),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
+    }
+}
+
+#[test]
+fn added_comparison_clause_names_no_boundary() {
+    for (old, new) in [
+        ("  if (a > 1) {", "  if (a > 1 && b < 2) {"),
+        ("  if (a > 1) {", "  if (b < 2 && a > 1) {"),
+        ("  if (a > 1 && ok) {", "  if (a > 1 && ok && b < 2) {"),
+        ("  if (a > 1 || ok) {", "  if (a > 1 || b < 2) {"),
+        ("  if (a > 1 && ok) {", "  if (a > 1 && ok < b) {"),
+        ("  if (a && b) {", "  if (a < b) {"),
+        ("  if (a > 1) {", "  if (a >= 1 && b < 2) {"),
+    ] {
+        assert_eq!(boundary_label(Some(old), new), None, "{old} -> {new}");
+    }
+}
+
+#[test]
+fn single_token_edit_in_a_line_with_an_added_neighbour_clause_names_no_boundary() {
+    // Two edits at once: a substitution in `a > 1` plus a new clause.
+    assert_eq!(
+        boundary_label(Some("  if (a > 1) {"), "  if (a >= 1 && b < 2) {"),
+        None
+    );
+}

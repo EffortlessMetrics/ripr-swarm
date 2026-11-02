@@ -14,12 +14,25 @@ pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
 };
 pub(crate) mod harness_projection;
+mod input_facts;
+#[cfg(test)]
+pub(crate) use input_facts::PublishedInputFacts;
+pub(crate) use input_facts::{
+    CapturedInputFacts, InputFactsSlot, InputSource,
+    publish_input_source as publish_input_source_fact,
+    publish_loaded_diff as publish_loaded_input_facts,
+    publish_scoped_intake as publish_scoped_intake_facts, published as published_input_facts,
+    with_input_facts_capture,
+};
 pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
 pub(crate) mod path_glob;
 mod pipeline;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
+// Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
+// consumers outside `analysis` ask it instead of matching attribute text.
+pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
 pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
@@ -40,7 +53,7 @@ pub(crate) mod seams;
 mod sort;
 #[cfg(test)]
 mod source_role_corpus;
-mod summary;
+pub(crate) mod summary;
 mod sync_memo;
 mod syntax;
 mod test_changes;
@@ -56,10 +69,17 @@ pub(crate) use diff::parse_unified_diff_bounded_with_metadata;
 pub(crate) use diff_scope_filter::DiffIntake;
 pub use diff_scope_filter::DiffScopeFilter;
 
+/// Test-only construction handle for the deadline-refusal input-facts
+/// publisher (RIPR-SPEC-0241 #10796); production publishers run inside the
+/// analysis tree and name the type through inference.
+#[cfg(test)]
+pub(crate) use diff::LoadedDiff;
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
 pub use diff::load_pr_evidence_diff_range;
+#[cfg(test)]
+pub(crate) use diff::not_a_work_tree_message;
 /// Shared NUL-delimited Git path-record authority (#4006), consumed by the
 /// product and xtask routes alike.
 pub use diff::records::{
@@ -127,10 +147,11 @@ pub(crate) use seam_inventory::file_fact_store_failure_rows;
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
     ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, FileSeamIndex,
-    PilotInventoryDefault, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo,
-    SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
-    classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
-    diff_only_rust_files, inventory_changed_test_classified_seams_at_with_config_node,
+    PilotInventoryDefault, REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory,
+    ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
+    apply_pilot_seam_budget, classify_seams_in_file_with_shared_index,
+    classify_seams_in_files_at_with_config, diff_only_rust_files,
+    inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_bound_seams_at_with_config,
@@ -141,6 +162,7 @@ pub(crate) use seam_inventory::{
     seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
     workspace_cache_key_at_with_config,
 };
+pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{
     owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
@@ -182,6 +204,14 @@ pub(crate) fn workspace_unanalyzed_source_languages(root: &Path) -> Vec<(&'stati
 /// walk; see `workspace::has_inspectable_source_file`.
 pub(crate) fn workspace_has_inspectable_source(root: &Path) -> bool {
     workspace::has_inspectable_source_file(root)
+}
+
+/// Whether the root is not a workspace ripr can inspect: no `Cargo.toml` and
+/// no source file in any language ripr reads. The single owner of this verdict
+/// (#11395): `ripr pilot` refuses on it and `ripr status` withholds the pilot
+/// command on it, so the two cannot disagree.
+pub(crate) fn root_has_no_inspectable_workspace(root: &Path) -> bool {
+    !(root.join("Cargo.toml").is_file() || workspace_has_inspectable_source(root))
 }
 
 /// Re-export workspace Rust file discovery for the output layer so it can
@@ -520,6 +550,40 @@ use crate::core_error::CoreError;
 use crate::domain::{Finding, Summary};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
+
+/// #11398: whether `seam` is a field write in a method (`self.count += 1`)
+/// rather than a field of a struct literal. Surfaces that word guidance for
+/// field seams read this so they do not describe a returned struct.
+pub(crate) fn is_field_write_seam(seam: &seams::RepoSeam) -> bool {
+    seam.kind() == seams::SeamKind::FieldConstruction
+        && classify::field_assignment_target(seam.expression()).is_some()
+}
+
+/// Where a field write is read back (#12061).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FieldWriteRead {
+    /// The owner borrows its receiver: read the field on the value the
+    /// method was called on.
+    Receiver,
+    /// The owner takes `self` by value and writes a moved copy: the caller's
+    /// binding never sees the write, so read the field on the value the call
+    /// returns.
+    CallResult,
+    /// The receiver mode is not recorded (a cache entry from before the
+    /// fact): word the read without naming a value.
+    Unspecified,
+}
+
+/// How `seam`'s field write is read back, or `None` when it is not a field
+/// write. The one place the receiver mode becomes wording, so the hover, the
+/// agent packet and the human step agree.
+pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead> {
+    is_field_write_seam(seam).then(|| match seam.owner_borrows_receiver() {
+        Some(true) => FieldWriteRead::Receiver,
+        Some(false) => FieldWriteRead::CallResult,
+        None => FieldWriteRead::Unspecified,
+    })
+}
 
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
@@ -866,8 +930,19 @@ impl PreviewLanguageAdvisory {
     /// [`crate::domain::LanguageId::unavailable_adapter_recovery`] so every
     /// renderer tells the same story.
     pub(crate) fn unavailable_adapter_recovery(&self) -> Option<String> {
+        use crate::domain::language_availability::{
+            LanguageAvailabilityInput, resolve_language_availability, unavailable_recovery,
+        };
         let language = crate::domain::LanguageId::from_wire(&self.language)?;
-        (!self.enabled && !language.is_available()).then(|| language.unavailable_adapter_recovery())
+        if self.enabled {
+            return None;
+        }
+        let report = resolve_language_availability(&LanguageAvailabilityInput {
+            project_detected: true,
+            file_count: self.file_count,
+            ..LanguageAvailabilityInput::for_language(language)
+        });
+        unavailable_recovery(&report).map(str::to_owned)
     }
 
     /// Single-line `why` for a not-enabled advisory, shared by the JSON check

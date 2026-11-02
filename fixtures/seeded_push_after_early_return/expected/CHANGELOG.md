@@ -192,3 +192,68 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — seeded_push_after_early_return (15)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless seeded_push_after_early_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — seeded_push_after_early_return (16)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless seeded_push_after_early_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — seeded_push_after_early_return (17)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless seeded_push_after_early_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — seeded_push_after_early_return (18)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless seeded_push_after_early_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — seeded_push_after_early_return (19)
+
+Reason:
+RIPR-SPEC-0122: render the missing check in plain language
+
+Command:
+`cargo xtask goldens bless seeded_push_after_early_return --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

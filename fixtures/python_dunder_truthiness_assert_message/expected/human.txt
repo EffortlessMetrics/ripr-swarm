@@ -24,12 +24,12 @@ Start here:
     preview adapter does not bind the syntax to the instance or evaluate the assertion against the
     dunder's result, so it does not grade this edit as a gap
   Related test: tests/test_money.py:4 test_truthiness
-  Evidence: reach weak · infection unknown · propagation unknown · observation weak · discriminator unknown
+  Evidence: reach weak · infection unknown · propagation unknown · observation weak · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -42,7 +42,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_dunder_truthiness_assert_message/input --diff <cwd>/fixtures/python_dunder_truthiness_assert_message/diff.patch --mode fast probe:src_shapes_money.py:python_preview:aacb327b
   ripr context --root <cwd>/fixtures/python_dunder_truthiness_assert_message/input --diff <cwd>/fixtures/python_dunder_truthiness_assert_message/diff.patch --mode fast --at probe:src_shapes_money.py:python_preview:aacb327b
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 More:
   Full evidence: rerun with --format human-full

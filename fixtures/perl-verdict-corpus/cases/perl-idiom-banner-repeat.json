@@ -57,7 +57,7 @@
   },
   "perl_facts": {
     "packet": "packets/perl-idiom-banner-repeat.json",
-    "sha256": "f4053cb426158d54460b0d10da97953b5e1e8911f7ed3e6d51b99998078c979e",
+    "sha256": "36d77f04716bd52b5d5154173deba4229d32d14b07ec7e296d20064293d79357",
     "provenance": "producer"
   }
 }

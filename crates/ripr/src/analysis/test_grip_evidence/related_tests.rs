@@ -2,7 +2,7 @@ use super::*;
 use crate::analysis::classify::{
     CallTarget, call_text_may_call_free_function, free_helper_call_resolves, impl_self_type_name,
     inherent_owner_call_resolves, method_call_resolves_to_impl, module_stem, owner_dispatch_trait,
-    requires_inherent_receiver_identity, test_calls_free_function,
+    owner_impl_identity_shadowed, requires_inherent_receiver_identity, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -83,6 +83,24 @@ pub(super) fn find_related_tests_with_context<'context, 'index>(
                     identity.resolve_test(indexed.test, context.index) != CallTarget::Other
                 })
         });
+    } else if owner.free_function
+        && owner.same_name_count > 1
+        && let Some(owner_fn) = context.owner_function(seam.file(), seam.display_line())
+    {
+        // #10855: no identity exists when the only rival sits in another
+        // crate class (an integration test's own module). A test whose every
+        // call goes through a module its own file declares and defines the
+        // same-named function in names that local rival, not the owner.
+        candidates.retain(|test_index, reason| {
+            *reason == RelationReason::HelperOwnerCall
+                || context.tests.get(*test_index).is_none_or(|indexed| {
+                    !crate::analysis::classify::test_calls_only_through_local_rival_module(
+                        context.index,
+                        owner_fn,
+                        indexed.test,
+                    )
+                })
+        });
     }
 
     // Newly registered property facts carry assertion interpretation, not
@@ -130,6 +148,8 @@ pub(super) struct OwnerContext<'index> {
     free_function: bool,
     inherent_receiver: bool,
     inherent_owner: Option<&'index FunctionSummary>,
+    /// The seam's owning function, for the shadowed-impl-identity refusal.
+    function: Option<&'index FunctionSummary>,
     impl_trait: Option<String>,
     same_name_count: usize,
     identity: Option<std::sync::Arc<crate::analysis::classify::OwnerCallIdentity>>,
@@ -178,6 +198,7 @@ impl<'index> OwnerContext<'index> {
             free_function,
             inherent_receiver,
             inherent_owner: owner_fn.filter(|owner| requires_inherent_receiver_identity(owner)),
+            function: owner_fn,
             impl_trait,
             same_name_count,
             identity,
@@ -336,6 +357,15 @@ pub(super) fn match_direct_owner_call(
                 .get(*test_index)
                 .is_some_and(|indexed| test_calls_free_function(indexed.test, &owner.name))
         {
+            continue;
+        }
+        // #11382: a test whose own scope rebinds the owner's impl type or
+        // trait calls the test-local item, not the production owner; the
+        // finding-level relation refuses the same call. Refusal only removes
+        // the direct-call credit, so this can only lower a relation.
+        if owner.function.is_some_and(|function| {
+            owner_impl_identity_shadowed(indexed.test, function, context.index)
+        }) {
             continue;
         }
         insert_related_candidate(
@@ -736,8 +766,18 @@ pub(super) fn sort_related_tests_for_seam<'a>(
         .iter()
         .map(|&entry| {
             let (indexed, reason) = entry;
+            // #12060: rank and publish the oracle the stages credit. A
+            // proximity test whose assertion pins another function keeps its
+            // identity but offers no oracle for this match arm.
+            let credited = (seam.kind() == SeamKind::MatchArm).then(|| {
+                super::credited_related_tests(seam, context, owner_fn, &[(indexed.test, reason)])
+            });
+            let credited_test = credited
+                .as_ref()
+                .and_then(|views| views.first())
+                .map_or(indexed.test, AsRef::as_ref);
             let oracle = best_oracle(
-                indexed.test,
+                credited_test,
                 seam,
                 owner_fn,
                 context.index,

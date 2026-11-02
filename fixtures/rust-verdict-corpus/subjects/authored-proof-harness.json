@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-proof-harness",
+  "origin": "authored",
+  "version_label": "authored 2026-10-31 for RIPR-SPEC-0367",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "b4856c3752c3a883bb0424557c5285ed79f17a86c9f2ebaec365a335b84737e0"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "5c1c5a283cf529ea15ddf6e3493c1a2eb7f60c05f175b11628c95c58436cfd23"
+    },
+    {
+      "path": "tests/unrelated.rs",
+      "sha256": "92a5eae112ec13fd1982321c6e3eb0b3a698c3f537a339ef67223e2abb229edb"
+    }
+  ]
+}

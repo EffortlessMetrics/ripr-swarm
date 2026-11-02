@@ -2488,6 +2488,18 @@ pub(crate) fn materialize_edit(dir: &Path, case: &Case, work: &Path) -> Result<P
 }
 
 fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<String>), String> {
+    run_case_expecting(dir, case, work_root, None)
+}
+
+/// `run_case` with the expected language named by the caller. The corpus
+/// routes it from the anchor file; a test names another to exercise the live
+/// admission against a real producer result.
+pub(crate) fn run_case_expecting(
+    dir: &Path,
+    case: &Case,
+    work_root: &Path,
+    language: Option<&'static str>,
+) -> Result<(Value, Option<String>), String> {
     let (work, diff) = materialize(dir, case, work_root)?;
     let anchored_file = work.join(&case.anchor.file);
     let anchor_line = read(&anchored_file)?
@@ -2517,7 +2529,14 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
     }
     let cache_value = cache.to_string_lossy().into_owned();
     let stdout = run_output_owned_with_envs(&binary, &args, &[(CACHE_ENV, &cache_value)])?;
-    let mut check = case_check_output(&stdout, case, &binary)?;
+    let mut subject = case_subject(
+        case,
+        &fs::read(&diff).map_err(|err| format!("read {}: {err}", normalize_path(&diff)))?,
+    )?;
+    if let Some(language) = language {
+        subject.language = language;
+    }
+    let mut check = case_check_output(&stdout, case, &binary, &subject)?;
     relativize_probe_files(&mut check, &work);
     // ripr may report the canonical root (macOS `/var` is `/private/var`);
     // strip that spelling too so findings still land on their anchors.
@@ -2527,9 +2546,51 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
     Ok((check, anchor_line))
 }
 
+/// What the harness fixed about a live case before ripr ran: the language the
+/// corpus dispatches the case to and the exact diff bytes handed to ripr. The
+/// returned output is checked against these, never the other way round.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CaseSubject {
+    pub(crate) language: &'static str,
+    pub(crate) diff_sha256: String,
+}
+
+/// The language the anchored source file dispatches to. This is the harness's
+/// own routing of the case; ripr's output cannot select its expected identity.
+pub(crate) fn expected_language(anchor_file: &str) -> Option<&'static str> {
+    let extension = Path::new(anchor_file).extension()?.to_str()?;
+    match extension {
+        "rs" => Some("rust"),
+        "py" => Some("python"),
+        "ts" | "tsx" | "mts" | "cts" => Some("typescript"),
+        "js" | "jsx" | "mjs" | "cjs" => Some("javascript"),
+        "pm" | "pl" | "t" => Some("perl"),
+        _ => None,
+    }
+}
+
+pub(crate) fn case_subject(case: &Case, diff_bytes: &[u8]) -> Result<CaseSubject, String> {
+    let language = expected_language(&case.anchor.file).ok_or_else(|| {
+        format!(
+            "case `{}`: the anchor file `{}` does not dispatch to a known language, so the expected measurement cannot be named",
+            case.case_id, case.anchor.file
+        )
+    })?;
+    Ok(CaseSubject {
+        language,
+        diff_sha256: sha256_hex(diff_bytes),
+    })
+}
+
 /// Parse one case's `ripr check --json` output. Refuse a failed Perl packet
-/// run before any row can be scored.
-pub(crate) fn case_check_output(stdout: &str, case: &Case, binary: &str) -> Result<Value, String> {
+/// run, then require affirmative producer evidence that the expected language
+/// was analyzed for this case's diff before any row can be scored.
+pub(crate) fn case_check_output(
+    stdout: &str,
+    case: &Case,
+    binary: &str,
+    subject: &CaseSubject,
+) -> Result<Value, String> {
     let check: Value = serde_json::from_str(stdout).map_err(|err| {
         format!(
             "case `{}`: ripr check did not emit JSON: {err}",
@@ -2539,8 +2600,121 @@ pub(crate) fn case_check_output(stdout: &str, case: &Case, binary: &str) -> Resu
     if case.perl_facts.is_some() {
         refuse_incomplete_perl_run(&check, &case.case_id, binary)?;
     }
+    admit_measurement(&check, &case.case_id, binary, subject)?;
     Ok(check)
 }
+
+/// Outcome kinds the bounded corpus contract scores: the analysis ran over the
+/// diff and either completed or disclosed its own limitations (which the
+/// verdict mapping reads as `limited`). `no_scope`, `no_changed_lines`,
+/// `unsupported_input` and `analysis_failed` establish no measurement of a case
+/// that declares a changed subject.
+const SCOREABLE_OUTCOME_KINDS: [&str; 4] = [
+    "complete_with_findings",
+    "complete_no_findings",
+    "no_behavioral_candidates",
+    "partial_with_limitations",
+];
+
+/// A parsed `{"findings":[]}`, exit code 0, an enabled configuration or a file
+/// count is not evidence that the expected language analyzed this case. A
+/// successful `LanguageRun` is omitted by design, so its absence cannot be a
+/// completion receipt either. The producer's own `analysis_outcome` supplies
+/// the completion kind and the digest of the diff it read; `summary` supplies
+/// the languages the diff routed to.
+pub(crate) fn admit_measurement(
+    check: &Value,
+    case_id: &str,
+    binary: &str,
+    subject: &CaseSubject,
+) -> Result<(), String> {
+    let unestablished = |why: String| {
+        format!(
+            "case `{case_id}`: {binary} output does not establish a measurement of the {} adapter: {why}; the case cannot be scored",
+            subject.language
+        )
+    };
+    let Some(outcome) = check.pointer("/analysis_outcome/outcome") else {
+        return Err(unestablished(
+            "it carries no analysis_outcome completion evidence".to_string(),
+        ));
+    };
+    let kind = outcome
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("missing");
+    if !SCOREABLE_OUTCOME_KINDS.contains(&kind) {
+        return Err(unestablished(format!("the analysis outcome is `{kind}`")));
+    }
+    let expected_input = format!("sha256:{}", subject.diff_sha256);
+    match outcome
+        .pointer("/identity/input_identity")
+        .and_then(Value::as_str)
+    {
+        Some(identity) if identity == expected_input => {}
+        Some(identity) => {
+            return Err(unestablished(format!(
+                "its input identity `{identity}` is not this case's diff `{expected_input}`"
+            )));
+        }
+        None => {
+            return Err(unestablished(
+                "it names no input identity to bind to this case's diff".to_string(),
+            ));
+        }
+    }
+    let routed = check
+        .pointer("/summary/changed_files_by_language")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            unestablished("it lists no changed_files_by_language for the diff".to_string())
+        })?;
+    let mut for_language = routed
+        .iter()
+        .filter(|entry| entry.get("language").and_then(Value::as_str) == Some(subject.language));
+    // The adapter's own file count is not read: a packet-driven Perl run
+    // analyzes its facts with an honest zero admitted files.
+    let (Some(_), None) = (for_language.next(), for_language.next()) else {
+        return Err(unestablished(
+            "the diff is not routed to that language exactly once".to_string(),
+        ));
+    };
+    // The aggregate outcome can read complete while a sibling language carries
+    // the evidence. The producer's per-language row (#11272) says whether the
+    // expected language's own adapter ran: it must be present exactly once
+    // and evidenced, not skipped, unavailable, failed or out of scope.
+    let rows = check
+        .pointer("/language_completeness/languages")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            unestablished("it carries no language_completeness projection".to_string())
+        })?;
+    let mut own = rows
+        .iter()
+        .filter(|row| row.get("language").and_then(Value::as_str) == Some(subject.language));
+    let (Some(row), None) = (own.next(), own.next()) else {
+        return Err(unestablished(
+            "language_completeness has no single row for that language".to_string(),
+        ));
+    };
+    let status = row
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("missing");
+    if !EVIDENCED_LANGUAGE_STATUSES.contains(&status) {
+        return Err(unestablished(format!(
+            "its language_completeness row is `{status}`"
+        )));
+    }
+    Ok(())
+}
+
+/// Per-language completeness statuses that evidence an adapter run over the
+/// case: it completed with findings, completed with none, or completed while
+/// disclosing its own limits. Every other status (`unavailable`, `invalid`,
+/// `failed`, `unsupported`, `not_selected`, `no_current_scope`) means the
+/// expected language was not measured.
+const EVIDENCED_LANGUAGE_STATUSES: [&str; 3] = ["complete", "complete_zero", "partial"];
 
 /// A non-aborting Perl failure can exit zero with no findings. It is a failed
 /// measurement, not a silent verdict. Successful runs may omit language_runs.

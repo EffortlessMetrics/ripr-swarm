@@ -159,7 +159,14 @@ fn exposed_change_says_nothing_to_repair_in_both_commands() -> Result<(), String
             && check.contains("already notice this change (exposed)"),
         "check must say there is nothing to repair:\n{check}"
     );
-    for leak in ["no seam in this finding's file", "missing", "found no seam"] {
+    for leak in [
+        "no spot in this finding's file",
+        "no repairable spot in this finding's file",
+        "no spot in this finding's file",
+        "missing",
+        "found no seam",
+        "found no repairable spot",
+    ] {
         let advisory: Vec<&str> = check
             .lines()
             .filter(|line| line.contains("no repair start offered"))
@@ -171,7 +178,7 @@ fn exposed_change_says_nothing_to_repair_in_both_commands() -> Result<(), String
     }
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
-        repair.contains("already grip it") && !repair.contains("missing evidence"),
+        repair.contains("already check it") && !repair.contains("missing evidence"),
         "repair must agree that no gap remains:\n{repair}"
     );
     Ok(())
@@ -182,7 +189,10 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     let repo = Repo::create(
         "pub fn label(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1 => \"one\",\n        _ => \"many\",\n    }\n}\n",
         "pub fn label(n: u32) -> &'static str {\n    match n {\n        0 => \"zero\",\n        1 => \"uno\",\n        _ => \"many\",\n    }\n}\n",
-        "use ar::label;\n\n#[test]\nfn labels() {\n    assert!(!label(1).is_empty());\n}\n",
+        // The test takes the wildcard arm, so no test runs a literal arm
+        // and repair lists seams instead of starting one (a test passing
+        // `label(1)` is a match-arm repair start since #11111).
+        "use ar::label;\n\n#[test]\nfn labels() {\n    assert!(!label(7).is_empty());\n}\n",
     )?;
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
@@ -191,12 +201,12 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     );
     let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
     assert!(
-        !check.contains("found no seam") && !check.contains("no seam in this finding's file"),
+        !check.contains("found no spot") && !check.contains("no spot in this finding's file"),
         "check must not claim there is no seam while repair lists seams:\n{check}"
     );
     assert!(
         check.contains(
-            "seams in this finding's file, but could not tie one to this finding's changed line"
+            "spots in this finding's file, but could not tie one to this finding's changed line"
         ),
         "check must name the one reason it cannot bind a seam:\n{check}"
     );
@@ -219,7 +229,7 @@ fn gap_finding_on_a_whole_gripped_seam_names_the_disagreement_not_no_binding() -
     )?;
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
-        repair.contains("already grip it"),
+        repair.contains("already check it"),
         "precondition, repair reads the whole seam as gripped:\n{repair}"
     );
     let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
@@ -264,7 +274,7 @@ const LOOP_NEW: &str = "pub fn sum_to(n: u32) -> u32 {\n    let mut acc = 0;\n  
 const LOOP_TEST: &str =
     "use ar::sum_to;\n\n#[test]\nfn sum_to_zero() {\n    assert_eq!(sum_to(0), 0);\n}\n";
 
-/// #11111: with no diff to scope to, bare repair's whole-seam "already grip
+/// #11111: with no diff to scope to, bare repair's whole-seam "already check
 /// it (exposed)" names the seam it is about, so it is not read as a verdict
 /// on the changed loop line that `ripr check` cannot classify.
 #[test]
@@ -279,7 +289,7 @@ fn whole_seam_gripped_refusal_names_its_seam_not_the_change() -> Result<(), Stri
     let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
     assert_eq!(code, Some(3), "repair must not start:\n{repair}");
     assert!(
-        repair.contains("the code at src/lib.rs:6 `acc`: ") && repair.contains("already grip it"),
+        repair.contains("the code at src/lib.rs:6 `acc`: ") && repair.contains("already check it"),
         "the gripped reason must name the seam it judges:\n{repair}"
     );
     Ok(())
@@ -305,7 +315,7 @@ fn bare_repair_does_not_cite_an_unrelated_gripped_seam_for_the_change() -> Resul
     let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
     assert_eq!(code, Some(3), "repair must not start:\n{repair}");
     assert!(
-        !repair.contains("already grip it"),
+        !repair.contains("already check it"),
         "an unrelated gripped seam must not stand in for the change:\n{repair}"
     );
     assert!(
@@ -339,7 +349,7 @@ fn exposed_boolean_tail_is_gripped_for_both_check_and_repair() -> Result<(), Str
         "repair must not start on a change check reads as exposed:\n{repair}"
     );
     assert!(
-        repair.contains("already grip it") && !repair.contains("Ready to repair."),
+        repair.contains("already check it") && !repair.contains("Ready to repair."),
         "repair must agree that no gap remains:\n{repair}"
     );
     Ok(())
@@ -428,7 +438,7 @@ fn compound_boolean_tail_is_not_read_as_exposed_by_repair() -> Result<(), String
     let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
     assert_eq!(code, Some(3), "several candidates need a choice:\n{repair}");
     assert!(
-        repair.contains("`age >= 18 && age < 65`") && !repair.contains("already grip it"),
+        repair.contains("`age >= 18 && age < 65`") && !repair.contains("already check it"),
         "the whole-tail seam must stay a candidate, not read as gripped:\n{repair}"
     );
     Ok(())
@@ -444,7 +454,8 @@ const ERR_TEST: &str = "use ar::{parse, ParseError};\n\n#[test]\nfn long_input_i
 
 const WS_ROOT: &str = "[workspace]\nmembers = [\"wscore\", \"app\"]\nresolver = \"2\"\n";
 const WS_APP_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\n";
-const WS_CORE_TOML: &str = "[package]\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
+const WS_CORE_TOML: &str =
+    "[package]\nname = \"wscore\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
 const WS_APP_SRC: &str = "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n";
 const WS_OLD: &str = "pub fn discount(price: u32) -> u32 {\n    if price > 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
 const WS_NEW: &str = "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
@@ -525,7 +536,7 @@ fn exposed_error_variant_change_repair_says_only_gripped() -> Result<(), String>
     // all-gripped-only presentation: the unscoped control above has not-ready
     // spots, the scoped output must not.
     assert!(
-        repair.contains("already grip it")
+        repair.contains("already check it")
             && !repair.contains("missing evidence")
             && !repair.contains("tests/ layout")
             && !repair.contains("repair route not ready"),
@@ -546,7 +557,7 @@ fn exposed_workspace_change_repair_says_only_gripped() -> Result<(), String> {
     );
     let unscoped = refused_repair(&committed)?;
     assert!(
-        unscoped.contains("tests/ layout") && unscoped.contains("already grip it"),
+        unscoped.contains("tests/ layout") && unscoped.contains("already check it"),
         "precondition, the other package lacks a tests/ folder:\n{unscoped}"
     );
     assert_plain(&unscoped);
@@ -559,7 +570,7 @@ fn exposed_workspace_change_repair_says_only_gripped() -> Result<(), String> {
     );
     let repair = refused_repair(&repo)?;
     assert!(
-        repair.contains("already grip it")
+        repair.contains("already check it")
             && !repair.contains("missing evidence")
             && !repair.contains("tests/ layout")
             && !repair.contains("repair route not ready"),
@@ -602,7 +613,7 @@ fn assert_limited_change_is_not_called_gripped(
     let unscoped = refused_repair(&committed)?;
     assert_plain(&unscoped);
     assert!(
-        unscoped.contains("already grip it"),
+        unscoped.contains("already check it"),
         "precondition, the fixture has a gripped spot:\n{unscoped}"
     );
     assert!(
@@ -618,12 +629,12 @@ fn assert_limited_change_is_not_called_gripped(
     );
     let repair = refused_repair(&repo)?;
     assert!(
-        !repair.contains("already grip it"),
+        !repair.contains("already check it"),
         "a limited change must not be called gripped:\n{repair}"
     );
     // The gripped spot is counted, not cited: either as a different check
     // when it sits on the changed lines, or as outside them. Main listed it
-    // by name as "already grip it".
+    // by name as "already check it".
     assert!(
         repair.contains(gripped_note),
         "the gripped spot must be counted, not cited:\n{repair}"
@@ -702,8 +713,10 @@ fn unreached_workspace_change_is_not_called_gripped_by_repair() -> Result<(), St
     let unscoped = refused_repair(&committed)?;
     assert_plain(&unscoped);
     assert!(
-        unscoped.contains("ripr does not start an automatic repair for this kind of finding"),
-        "the class refusal must be plain:\n{unscoped}"
+        unscoped.contains(
+            "ripr does not start an automatic repair here because it could not establish"
+        ) && !unscoped.contains("this kind of finding"),
+        "the class refusal must be plain and name what ripr could not establish:\n{unscoped}"
     );
 
     let repo = workspace_repo(false, false)?;
@@ -714,7 +727,7 @@ fn unreached_workspace_change_is_not_called_gripped_by_repair() -> Result<(), St
     );
     let repair = refused_repair(&repo)?;
     assert!(
-        !repair.contains("already grip it"),
+        !repair.contains("already check it"),
         "a change with no static path must not be called gripped:\n{repair}"
     );
     assert_plain(&repair);
@@ -807,7 +820,7 @@ fn exact_err_variant_pin_grips_the_return_value_seam_for_check_and_repair() -> R
     );
     assert!(
         repair.contains(
-            "the code at src/lib.rs:8 `return Err(E::Bad)`: existing tests already grip it"
+            "the code at src/lib.rs:8 `return Err(E::Bad)`: existing tests already check it"
         ) && !repair.contains("missing evidence")
             && !repair.contains("repair_ready=true"),
         "repair must agree that no gap remains on the return-value seam:\n{repair}"
@@ -835,6 +848,80 @@ fn sibling_err_variant_pin_leaves_the_return_value_seam_weak() -> Result<(), Str
     assert!(
         !repair.contains("repair_ready=true"),
         "no start is added:\n{repair}"
+    );
+    Ok(())
+}
+
+// Not-ready burn-down (#11111): the closing step of a bare-repair refusal
+// follows what `ripr check` says about the change.
+
+/// An exposed change: repair says there is nothing to do, not that `ripr
+/// check` names a gap to test by hand.
+#[test]
+fn exposed_change_refusal_says_nothing_to_do() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(
+        "pub fn dbl(x: i32) -> i32 {\n    x * 2\n}\n",
+        "pub fn dbl(x: i32) -> i32 {\n    x * 3\n}\n",
+        "use ar::dbl;\n\n#[test]\nfn exact() {\n    assert_eq!(dbl(2), 6);\n}\n",
+    )?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: exposed"),
+        "precondition, check reads exposed:\n{check}"
+    );
+    let repair = refused_repair(&repo)?;
+    assert!(
+        repair.contains("Nothing to do for this change: the existing tests already check it")
+            && !repair.contains("names a gap in it to test by hand"),
+        "an exposed change must close with nothing to do:\n{repair}"
+    );
+    Ok(())
+}
+
+/// A change on lines with no repairable code (a loop range) leads with that
+/// and closes with a hand-written test, not a generic repository route.
+#[test]
+fn change_with_no_repairable_code_says_so_first() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(LOOP_OLD, LOOP_NEW, LOOP_TEST)?;
+    let repair = refused_repair(&repo)?;
+    assert!(
+        repair
+            .contains("your changed lines (src/lib.rs:3) touch no code ripr can start a repair on")
+            && repair.contains("Next: write a test for this change by hand")
+            && !repair.contains("names a gap in it to test by hand"),
+        "the refusal must lead with the change and close with a hand-written test:\n{repair}"
+    );
+    Ok(())
+}
+
+/// A route-not-ready async owner: repair names why no fill-in skeleton is
+/// offered (as `ripr check` does) instead of a stub command that refuses.
+#[test]
+fn async_route_refusal_does_not_offer_a_stub_that_refuses() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(
+        "pub async fn fetch_len(s: &str) -> usize {\n    s.len()\n}\n",
+        "pub async fn fetch_len(s: &str) -> usize {\n    s.len() + 1\n}\n",
+        "use ar::fetch_len;\n\n#[test]\nfn builds_future() {\n    let _f = fetch_len(\"abc\");\n}\n",
+    )?;
+    let repair = refused_repair(&repo)?;
+    assert!(
+        repair.contains("ripr cannot write a fill-in skeleton here because the owner is async")
+            && !repair.contains("--kind return_value"),
+        "repair must not offer a stub the stub command refuses:\n{repair}"
+    );
+    let stub = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+    ])?;
+    assert!(
+        stub.contains("async"),
+        "precondition, the stub command itself refuses the async owner:\n{stub}"
     );
     Ok(())
 }

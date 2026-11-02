@@ -1,8 +1,17 @@
 name: 'ripr check'
-description: 'Run ripr static mutation-exposure analysis on a PR diff'
+description: 'Run ripr static mutation-exposure analysis on a PR diff (advisory; installs a checksum-verified prebuilt ripr)'
 author: 'EffortlessMetrics'
 
 inputs:
+  version:
+    description: >-
+      ripr release to install. The prebuilt archive is checked against its
+      published SHA-256 (a missing or mismatched checksum, or a bad archive,
+      fails the step); only where no prebuilt archive exists for the runner,
+      or it cannot be downloaded, does the action fall back to
+      `cargo install ripr --version <version> --locked`.
+    required: false
+    default: '0.10.0'
   mode:
     description: 'Analysis mode: draft, deep, or ready'
     required: false
@@ -12,26 +21,92 @@ inputs:
     required: false
     default: 'human'
   base:
-    description: 'Base ref for diff (default: origin/main)'
+    description: >-
+      Base ref for the diff. Empty (default) uses the pull request base branch
+      on pull_request events and ripr's own default-branch detection elsewhere.
     required: false
-    default: 'origin/main'
+    default: ''
 
 runs:
   using: 'composite'
   steps:
-    - name: Install ripr
-      shell: bash
-      run: |
-        if ! command -v ripr &>/dev/null; then
-          echo "Installing ripr from source..."
-          cargo install ripr --locked || {
-            echo "::error::Failed to install ripr. Pre-built binaries: https://github.com/EffortlessMetrics/ripr/releases"
-            exit 1
-          }
-        fi
-
     # Inputs reach the shell through env, never through `${{ }}` inside
     # `run:`, so an input value cannot inject shell syntax.
+    - name: Install ripr
+      shell: bash
+      env:
+        RIPR_INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        version="$RIPR_INPUT_VERSION"
+        if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "::error::version must look like 0.10.0, got '$version'"; exit 1
+        fi
+        if command -v ripr >/dev/null 2>&1 && [ "$(ripr --version | awk 'NR == 1 { print $2 }')" = "$version" ]; then
+          echo "ripr $version is already on PATH"; exit 0
+        fi
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64) target=x86_64-unknown-linux-gnu ;;
+          Linux-ARM64) target=aarch64-unknown-linux-gnu ;;
+          macOS-X64) target=x86_64-apple-darwin ;;
+          macOS-ARM64) target=aarch64-apple-darwin ;;
+          Windows-X64) target=x86_64-pc-windows-msvc ;;
+          Windows-ARM64) echo "::error::Unsupported runner Windows-ARM64: ripr $version publishes no prebuilt Windows ARM64 build, and this installer does not run the x64 build under emulation. Use a Windows x64 runner."; exit 1 ;;
+          *) target="" ;;
+        esac
+        case "$target" in
+          *-windows-*) ext=zip exe=ripr.exe ;;
+          *) ext=tar.gz exe=ripr ;;
+        esac
+        asset="ripr-server-v$version-$target.$ext"
+        url="https://github.com/EffortlessMetrics/ripr/releases/download/v$version/$asset"
+        mkdir -p "$RUNNER_TEMP/ripr-bin" && cd "$RUNNER_TEMP"
+        ripr=ripr
+        if [ -n "$target" ] && curl -fsSL --retry 3 -O "$url"; then
+          # The release asset exists: from here every failure is final. A missing or
+          # mismatched checksum, a bad archive or a wrong payload never falls back to
+          # cargo or to a ripr already on PATH.
+          curl -fsSL --retry 3 -O "$url.sha256" || { echo "::error::$asset has no downloadable SHA-256 ($url.sha256); refusing to install it unverified"; exit 1; }
+          expected="$(awk 'NR == 1 { print $1 }' "$asset.sha256")"
+          actual="$( { sha256sum "$asset" 2>/dev/null || shasum -a 256 "$asset"; } | awk '{ print $1 }')"
+          if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            echo "::error::$asset does not match its published SHA-256 (expected ${expected:-nothing}, got $actual)"; exit 1
+          fi
+          if [ "$ext" = zip ]; then
+            # Git for Windows' bash ships GNU tar (no zip support) and no unzip, so use the
+            # bsdtar that Windows itself ships, by absolute path so nothing on PATH can stand in.
+            ziptool="${SYSTEMROOT:-${SystemRoot:-}}/System32/tar.exe"
+            [ -x "$ziptool" ] || { echo "::error::Cannot extract $asset: Windows tar not found at $ziptool"; exit 1; }
+            entries="$("$ziptool" -tf "$asset" | tr -d '\r' | sed 's#^\./##' | LC_ALL=C sort)" || { echo "::error::$asset is not a readable zip archive"; exit 1; }
+            if [ -z "$entries" ] || grep -Eq '[/\\:]|^\.\.?$|^$' <<< "$entries"; then
+              echo "::error::$asset lists an entry outside a flat archive root (nested, absolute, traversal or empty name)"; exit 1
+            fi
+            [ -z "$(printf '%s\n' "$entries" | uniq -d)" ] || { echo "::error::$asset lists a duplicate entry"; exit 1; }
+            grep -qx "$exe" <<< "$entries" || { echo "::error::$asset does not contain $exe at its root"; exit 1; }
+            "$ziptool" -xf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
+          else
+            tar -xzf "$asset" -C ripr-bin || { echo "::error::$asset could not be extracted"; exit 1; }
+          fi
+          if [ ! -f "$RUNNER_TEMP/ripr-bin/$exe" ] || [ -L "$RUNNER_TEMP/ripr-bin/$exe" ]; then
+            echo "::error::$asset did not extract a regular file named $exe"; exit 1
+          fi
+          ripr="$RUNNER_TEMP/ripr-bin/$exe"
+          echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH"
+          echo "::notice title=ripr install::version $version, target $target, archive $asset, sha256 $actual, executable $ripr"
+        else
+          why="no prebuilt ripr $version for $RUNNER_OS-$RUNNER_ARCH"; [ -z "$target" ] || why="downloading $url failed"
+          if ! command -v cargo >/dev/null 2>&1; then
+            echo "::error::Cannot install ripr: $why, and this runner has no cargo to build it. Add a Rust toolchain step before this action, or use a runner with a prebuilt archive."; exit 1
+          fi
+          echo "::notice::$why; building it with cargo install"
+          cargo install ripr --version "$version" --locked
+        fi
+        reported="$("$ripr" --version)"; echo "$reported"
+        case "$reported" in "ripr $version" | "ripr $version "*) ;; *) echo "::error::the installed ripr reports \"$reported\", not ripr $version"; exit 1 ;; esac
+
+    # A pull_request checkout often lacks the base branch (single-branch or
+    # shallow clone). Fetch just that branch so the diff has a base; deeper
+    # history is the checkout step's `fetch-depth: 0`, which ripr names when
+    # it is still missing.
     - name: Run ripr check
       shell: bash
       env:
@@ -39,7 +114,18 @@ runs:
         RIPR_INPUT_MODE: ${{ inputs.mode }}
         RIPR_INPUT_FORMAT: ${{ inputs.format }}
       run: |
-        ripr check --root . --base "$RIPR_INPUT_BASE" --mode "$RIPR_INPUT_MODE" --format "$RIPR_INPUT_FORMAT"
+        base="$RIPR_INPUT_BASE"
+        if [ -z "$base" ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
+          branch="$GITHUB_BASE_REF"
+          if ! git rev-parse --verify --quiet "origin/$branch^{commit}" >/dev/null; then
+            git fetch --no-tags --quiet origin "+refs/heads/$branch:refs/remotes/origin/$branch" \
+              || echo "::warning::could not fetch the pull request base branch '$branch'; ripr will report the missing base"
+          fi
+          base="origin/$branch"
+        fi
+        set -- --root . --mode "$RIPR_INPUT_MODE" --format "$RIPR_INPUT_FORMAT"
+        [ -z "$base" ] || set -- "$@" --base "$base"
+        ripr check "$@"
 
 branding:
   icon: 'shield'

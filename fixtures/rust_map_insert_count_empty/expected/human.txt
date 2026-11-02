@@ -15,15 +15,15 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:impl Shelf::restock:side_effect:side_effect:self.stock.insert_sku.to_owned_qty
   Changed behavior: self.stock.insert(sku.to_owned(), qty)
-  Missing check: No strong discriminator was detected
+  Missing check: No strong assertion was detected
   Related test: src/lib.rs:22 first_insert_makes_one_entry (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Add a mock expectation, event receiver assertion, persisted-state check, or metric assertion for the changed effect
-  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -43,5 +43,7 @@ Write this test by hand: call the function, then assert the visible change the c
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:13 (exposed); kind: call_deletion; reason: Strong oracle found: exact value or pattern assertion
+  Hidden classes:
+    exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

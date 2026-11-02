@@ -1,0 +1,1 @@
+crates/ripr/tests/ripr_check_action.rs|Command::new|5|ci/ripr-check|#11659: runs the Action run blocks under bash and git against stand-in tools in a temp directory; no network.

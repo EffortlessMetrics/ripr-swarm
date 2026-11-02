@@ -310,3 +310,68 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_direct (24)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_direct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_direct (25)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_direct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_direct (26)
+
+Reason:
+RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_direct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_direct (27)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_direct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_direct (28)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_direct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

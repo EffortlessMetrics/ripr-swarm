@@ -90,9 +90,9 @@ pub enum StopReason {
     InfectionEvidenceUnknown,
     PropagationEvidenceUnknown,
     StaticProbeUnknown,
-    /// A bounded transitive-reach walk found a candidate path (test -> ... ->
-    /// owner) that ripr cannot fully resolve (lexical-only, name-match only).
-    /// Classification stays `no_static_path`. See RIPR-SPEC-0114.
+    /// Reach through internal calls is unresolved. A bounded walk may retain
+    /// a candidate path (RIPR-SPEC-0114), but an unmodeled private-member
+    /// boundary establishes no path either way (RIPR-SPEC-0243).
     TransitiveReachUnresolved,
     /// A Rust reach walk found a candidate test entry path that stops at a
     /// same-repo macro invocation whose definition lexically names the changed
@@ -108,6 +108,18 @@ pub enum StopReason {
     /// the ambiguous name but cannot bind it to one workspace function.
     /// Classification is `static_unknown`. See RIPR-SPEC-0159 / #7272.
     HelperIdentityUnresolved,
+    /// The changed line is a compile-time assertion (`const _: () = assert!(..)`,
+    /// `static_assertions::const_assert!`). A violating edit fails to build; it
+    /// is not a test-kill question, so ripr states that instead of placing the
+    /// line in a function. Classification stays `static_unknown`, never
+    /// `exposed` (#11547).
+    CompileTimeInvariant,
+    /// The changed code states an unsafe contract the compiler does not
+    /// check: an `unsafe fn` (callers now carry a safety obligation) or an
+    /// unchecked assumption (`unreachable_unchecked`, `assert_unchecked`).
+    /// A safe-code test cannot discharge it. Classification stays
+    /// `static_unknown`, never `exposed` (#11549).
+    UnsafeObligation,
 }
 
 impl StopReason {
@@ -128,6 +140,8 @@ impl StopReason {
             StopReason::MacroReachUnresolved => "macro_reach_unresolved",
             StopReason::GapEvidenceUnresolved => "gap_evidence_unresolved",
             StopReason::HelperIdentityUnresolved => "helper_identity_unresolved",
+            StopReason::CompileTimeInvariant => "compile_time_invariant",
+            StopReason::UnsafeObligation => "unsafe_obligation",
         }
     }
 
@@ -176,8 +190,7 @@ impl StopReason {
                 "ripr could not model this change well enough to classify it"
             }
             StopReason::TransitiveReachUnresolved => {
-                "a candidate test path exists but passes through calls ripr only matched by \
-                 name"
+                "ripr could not establish whether a test reaches this change through internal calls"
             }
             StopReason::MacroReachUnresolved => {
                 "a candidate test path stops at a same-repo macro ripr does not expand"
@@ -189,6 +202,14 @@ impl StopReason {
             StopReason::HelperIdentityUnresolved => {
                 "ripr cannot tell which workspace function a test call names because that name \
                  is not unique"
+            }
+            StopReason::CompileTimeInvariant => {
+                "the changed line is a compile-time assertion, so a violating edit fails to \
+                 build instead of failing a test"
+            }
+            StopReason::UnsafeObligation => {
+                "the change adds or alters an unsafe contract (an unsafe function or an \
+                 unchecked assumption) that safe test code cannot discharge"
             }
         }
     }
@@ -488,8 +509,9 @@ pub struct RelatedTest {
     /// Why this test does not catch the changed behavior, when ripr can say.
     /// `None` for a test whose oracle supports the finding's class, and for
     /// findings from producers that do not record it. Explanation only: no
-    /// decision helper reads this field; row eligibility is [`Self::role`]
-    /// (#5563).
+    /// decision helper reads this field except the refused-assertion exception
+    /// of the opaque assertion-macro limit (`AssertionNotCredited`, RIPR-SPEC-0120,
+    /// #9644); row eligibility is [`Self::role`] (#5563).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub miss: Option<RelatedTestMiss>,
     /// Whether this row belonged to the legacy decision set or was retained
@@ -866,6 +888,17 @@ pub(crate) fn boundary_input_observed_with_weak_oracle(
 }
 
 impl Finding {
+    /// The (file, line, expression) a finding speaks about. Probes of
+    /// different families can sit on one expression (#11554); they share this
+    /// key, so counts and selection can treat them as one verdict.
+    pub(crate) fn expression_key(&self) -> (&std::path::Path, usize, &str) {
+        (
+            self.probe.location.file.as_path(),
+            self.probe.location.line,
+            self.probe.expression.as_str(),
+        )
+    }
+
     /// A weak predicate finding whose related tests already supply the changed
     /// boundary input (infection `yes`): the remaining gap is the oracle, not
     /// the input (#10622). Static evidence only. The finding must also carry
@@ -928,6 +961,27 @@ impl Finding {
         self.source_currentness.permits_candidate_action()
     }
 
+    /// The one sentence every surface uses to say a finding is not a
+    /// candidate edit target (#11905). `None` for a candidate-current finding.
+    /// Human, hover and any later renderer take the wording from here so a
+    /// base-side finding reads the same on every surface.
+    pub fn source_currentness_disclosure(&self) -> Option<String> {
+        if self.is_candidate_actionable() {
+            return None;
+        }
+        // `unresolved_subject` means the producer could not tell, so it must
+        // not be called base-side evidence.
+        let reason = if self.source_currentness.is_base_side() {
+            "base-side evidence, not a candidate edit target"
+        } else {
+            "source currentness not established, not a candidate edit target"
+        };
+        Some(format!(
+            "{} \u{2014} {reason}",
+            self.source_currentness.as_str()
+        ))
+    }
+
     /// Mark this finding as produced by a repo-mode run (#5531). The single
     /// place that sets the typed scope and derives the compatibility
     /// evidence line `analysis_scope: repo` (disclosed in
@@ -957,6 +1011,10 @@ impl Finding {
         }
     }
 }
+
+#[cfg(kani)]
+#[path = "probe_kani.rs"]
+mod kani_proofs;
 
 #[cfg(test)]
 mod tests {
@@ -1043,6 +1101,8 @@ mod tests {
             StopReason::MacroReachUnresolved,
             StopReason::GapEvidenceUnresolved,
             StopReason::HelperIdentityUnresolved,
+            StopReason::CompileTimeInvariant,
+            StopReason::UnsafeObligation,
         ] {
             let gloss = reason.describe();
             assert!(!gloss.contains("  "), "{}: {gloss}", reason.as_str());

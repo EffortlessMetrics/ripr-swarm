@@ -2645,12 +2645,15 @@ fn dogfood_ripr_binary() -> Result<PathBuf, String> {
                 .iter()
                 .map(|value| (*value).to_string())
                 .collect::<Vec<_>>();
-            run_output_owned_with_timeout(
-                "cargo",
-                &args,
-                tool_build_timeout()?,
-                "report-packet-index dogfood build of ripr",
-            )?;
+            let timeout = tool_build_timeout()?;
+            crate::run::retry_while_binary_busy(crate::run::binary_replacement_blocked, || {
+                run_output_owned_with_timeout(
+                    "cargo",
+                    &args,
+                    timeout,
+                    "report-packet-index dogfood build of ripr",
+                )
+            })?;
             // `cargo build` writes under CARGO_TARGET_DIR when it is set (routed
             // CI and isolated worktrees set it), so the binary must be looked up
             // there too; a hardcoded `target/debug` fails every case (#2176).
@@ -3588,7 +3591,7 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     summary: &str,
 ) -> DogfoodGeneratedCiCockpitRun {
     let start_here = summary.contains("### Start here")
-        && summary.contains("Open `target/ripr/reports/start-here.md` first");
+        && summary.contains("Open `start-here.md` in the `ripr-reports` artifact");
     let repair_commands = [
         GENERATED_CI_FIRST_ACTION_REPAIR,
         GENERATED_CI_FIRST_PR_REPAIR,
@@ -3599,8 +3602,12 @@ pub(crate) fn dogfood_generated_ci_cockpit_run_from_surfaces(
     .filter(|command| summary.contains(**command))
     .count();
     let expected_repair_commands = 4usize;
-    let gate_authority_boundary =
-        summary.contains("ripr gate evaluate") && summary.contains("Gate authority:");
+    // #11585 removed the generic `Gate authority:` Start here bullet. The
+    // first-run summary states the boundary on the preview-language grouping
+    // line, so pin that line: other blocks that name pass/fail authority only
+    // render when their artifacts exist and must not satisfy this.
+    let gate_authority_boundary = summary
+        .contains("advisory presentation only; `ripr gate evaluate` remains pass/fail authority when explicitly configured");
     let summary_step = generated_ci_advisory_summary_step(workflow);
     let summary_step_head = summary_step.is_some();
     let summary_invoke = summary_step.is_some_and(generated_ci_summary_step_has_executable_invoke);
@@ -10918,7 +10925,8 @@ pub(crate) fn dogfood_typescript_preview_repair_loop_run(
         ("reason", &scenario.reason),
     ] {
         if value.trim().is_empty()
-            || (value == "unknown" && !matches!(label, "oracle_kind" | "oracle_strength"))
+            || (value == "unknown"
+                && !matches!(label, "oracle_kind" | "oracle_strength" | "gap_state"))
         {
             errors.push(format!("{label} must be present"));
         }
@@ -11069,10 +11077,9 @@ pub(crate) fn dogfood_typescript_preview_repair_loop_run(
                 .to_string(),
         );
     }
-    if scenario.outcome == "unanchored_relation_holds_advisory" && scenario.gap_state != "advisory"
-    {
+    if scenario.outcome == "unanchored_relation_holds_advisory" && scenario.gap_state != "unknown" {
         errors.push(
-            "unanchored_relation_holds_advisory requires gap_state advisory: the #4103 anchor gate withholds exposure credit, so the case must not claim already_observed"
+            "unanchored_relation_holds_advisory requires gap_state unknown: the #4103 anchor gate withholds exposure credit, so the case must not claim already_observed"
                 .to_string(),
         );
     }
@@ -11607,7 +11614,9 @@ pub(crate) fn typescript_preview_false_actionable_audit_case_errors(
         ),
         ("reason", &case.reason),
     ] {
-        if value.trim().is_empty() || value == "unknown" {
+        // `unknown` is a real `EvidenceState` value for gap_state (#11691);
+        // everywhere else it is the unfilled-field placeholder.
+        if value.trim().is_empty() || (value == "unknown" && label != "gap_state") {
             errors.push(format!("{label} must be present"));
         }
     }

@@ -96,7 +96,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Rerun(Vec::new())),
             Err(CommandError::Failure(
-                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>"
+                "rerun requires --changed-test <path> or --gap <canonical-gap-id> --gap-ledger <path>; pass one selector, for example `--changed-test tests/a.rs`"
                     .to_string()
             ))
         );
@@ -114,25 +114,25 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Doctor(args(&["--root"]))),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::Doctor(args(&["--profile", "foo"]))),
             Err(CommandError::Failure(
-                "unknown doctor profile `foo`; expected `analysis` or `source-build`".to_string()
+                "unknown doctor profile \"foo\". Accepted: analysis, source-build.".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::Init(args(&["--root"]))),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::Config(args(&["validate", "--root"]))),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
@@ -145,7 +145,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Pilot(args(&["--max-seams", "0"]))),
             Err(CommandError::Failure(
-                "--max-seams requires a positive integer; got \"0\"".to_string()
+                "--max-seams requires a positive integer; pass a whole number of 1 or more, got \"0\"".to_string()
             ))
         );
         assert_eq!(
@@ -157,41 +157,41 @@ mod tests {
         assert_eq!(
             execute(CliCommand::EvidenceHealth(args(&["--root"]))),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::ReviewComments(args(&["--base"]))),
             Err(CommandError::Failure(
-                "missing value for --base".to_string()
+                "missing value for --base; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::Gate(args(&["evaluate", "--mode", "strict"]))),
-            Err(CommandError::Failure("unknown gate mode `strict`; expected `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate`".to_string()))
+            Err(CommandError::Failure("unknown gate mode \"strict\". Accepted: visible-only, acknowledgeable, baseline-check, calibrated-gate.".to_string()))
         );
         assert_eq!(
             execute(CliCommand::Baseline(args(&["create", "--from"]))),
             Err(CommandError::Failure(
-                "missing value for --from".to_string()
+                "missing value for --from; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::Zero(args(&["status", "--delta"]))),
             Err(CommandError::Failure(
-                "missing value for --delta".to_string()
+                "missing value for --delta; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::PrLedger(args(&["record", "--pr-number"]))),
             Err(CommandError::Failure(
-                "missing value for --pr-number".to_string()
+                "missing value for --pr-number; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::PrComments(args(&["plan", "--mode"]))),
             Err(CommandError::Failure(
-                "missing value for --mode".to_string()
+                "missing value for --mode; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
@@ -200,37 +200,37 @@ mod tests {
                 "--first-action"
             ]))),
             Err(CommandError::Failure(
-                "missing value for --first-action".to_string()
+                "missing value for --first-action; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::CoverageGrip(args(&["frontier", "--ledger"]))),
             Err(CommandError::Failure(
-                "missing value for --ledger".to_string()
+                "missing value for --ledger; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::AssistantLoop(args(&["proof", "--pr-guidance"]))),
             Err(CommandError::Failure(
-                "missing value for --pr-guidance".to_string()
+                "missing value for --pr-guidance; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::FirstPr(args(&["--gap-ledger"]))),
             Err(CommandError::Failure(
-                "missing value for --gap-ledger".to_string()
+                "missing value for --gap-ledger; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::FirstAction(args(&["--pr-guidance"]))),
             Err(CommandError::Failure(
-                "missing value for --pr-guidance".to_string()
+                "missing value for --pr-guidance; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::Reports(args(&["index", "--reports-dir"]))),
             Err(CommandError::Failure(
-                "missing value for --reports-dir".to_string()
+                "missing value for --reports-dir; pass a value right after it".to_string()
             ))
         );
         assert_eq!(
@@ -259,13 +259,27 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Swarm(args(&["queue", "--top", "0"]))),
             Err(CommandError::Failure(
-                "swarm queue --top requires a positive integer; got \"0\"".to_string()
+                "swarm queue --top requires a positive integer; pass a whole number of 1 or more, got \"0\"".to_string()
             ))
         );
         assert_eq!(
             execute(CliCommand::Diff(args(&["--format", "xml"]))),
             Err(CommandError::Failure(
                 "unknown diff format \"xml\". Accepted: human, text, md, markdown, json."
+                    .to_string()
+            ))
+        );
+        assert_eq!(
+            execute(CliCommand::Diff(args(&["--format", "jsn"]))),
+            Err(CommandError::Failure(
+                "unknown diff format \"jsn\". Did you mean `json`? Accepted: human, text, md, markdown, json."
+                    .to_string()
+            ))
+        );
+        assert_eq!(
+            execute(CliCommand::Doctor(args(&["--profile", "analyss"]))),
+            Err(CommandError::Failure(
+                "unknown doctor profile \"analyss\". Did you mean `analysis`? Accepted: analysis, source-build."
                     .to_string()
             ))
         );

@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- The editor hover on code with no evidence now says what is actually happening: after an analysis finds no changes against the base it says ripr found no changed lines against the base ref at its last analysis, so there is nothing to grade, and while the first analysis is queued or running it says analysis is in progress and the result will appear, instead of asking you to run `ripr.refresh`. The "not analyzed yet" wording remains when no analysis is running (#11253).

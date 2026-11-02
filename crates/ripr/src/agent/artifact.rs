@@ -526,6 +526,15 @@ pub(crate) fn validate_repo_exposure_artifact(
 ) -> Result<ValidatedArtifact, String> {
     let subject = format!("agent verify {label} artifact");
     let document: RepoExposureDocument = serde_json::from_str(raw).map_err(|err| {
+        if let Ok(document) = serde_json::from_str::<Value>(raw) {
+            let cut = crate::output::repo_exposure::seam_limit_cut_controls(&document);
+            if crate::output::repo_exposure::is_byte_bounded_repo_exposure(&document) {
+                return byte_bounded_repo_exposure_refusal(&subject, &cut);
+            }
+            if !cut.is_empty() {
+                return seam_limited_repo_exposure_refusal(&subject, &cut);
+            }
+        }
         if is_unversioned_repo_exposure(raw) {
             return legacy_repo_exposure_refusal(root, &subject);
         }
@@ -536,16 +545,32 @@ pub(crate) fn validate_repo_exposure_artifact(
         scope,
         artifact: identity,
         seams,
+        run_status,
+        limitations,
     } = document;
+    // #12150: a seam-capped file is a prefix of the inventory; same class.
+    let cut = crate::output::repo_exposure::seam_limit_cut_controls_from_parts(
+        run_status.as_deref(),
+        limitations.as_ref(),
+    );
+    if crate::output::repo_exposure::byte_bounded_from_parts(
+        run_status.as_deref(),
+        limitations.as_ref(),
+    ) {
+        return Err(byte_bounded_repo_exposure_refusal(&subject, &cut));
+    }
+    if !cut.is_empty() {
+        return Err(seam_limited_repo_exposure_refusal(&subject, &cut));
+    }
     if schema_version != crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION {
         return Err(format!(
-            "agent verify {label} artifact has unsupported repo-exposure schema `{}`",
+            "agent verify {label} artifact has unsupported repo-exposure schema `{}`; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             schema_version
         ));
     }
     if scope != "repo" {
         return Err(format!(
-            "agent verify {label} artifact has unsupported scope `{}`",
+            "agent verify {label} artifact has unsupported scope `{}`; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             scope
         ));
     }
@@ -557,7 +582,7 @@ pub(crate) fn validate_repo_exposure_artifact(
             || seam.grip_class.trim().is_empty()
     }) {
         return Err(format!(
-            "agent verify {label} artifact contains an invalid canonical seam"
+            "agent verify {label} artifact contains an invalid canonical seam; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     validate_artifact_identity(root, raw, label, identity, &REPO_EXPOSURE_IDENTITY_SPEC)
@@ -699,7 +724,7 @@ pub(crate) fn validate_issued_check_findings_commitment(
     validate_artifact_identity_shape(label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
     if identity.producer.version != recorded_producer_version {
         return Err(format!(
-            "agent verify {label} artifact producer does not match the issued attempt"
+            "agent verify {label} artifact producer does not match the issued attempt; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     validate_artifact_commitment(root, raw, label, &identity, &CHECK_FINDINGS_IDENTITY_SPEC)?;
@@ -807,7 +832,7 @@ pub(crate) fn verify_gap_closure(
     for (raw, label) in [(before_raw, "before"), (after_raw, "after")] {
         if declared_artifact_kind(raw).as_deref() != Some("check_findings") {
             return Err(format!(
-                "agent verify --gap-id requires `check-findings-json` snapshots; the {label} artifact is not one"
+                "agent verify --gap-id requires `check-findings-json` snapshots; the {label} artifact is not one; save `ripr check --format check-findings-json` output as both --before and --after"
             ));
         }
     }
@@ -846,7 +871,7 @@ fn check_findings_gaps(
 ) -> Result<Vec<CheckFindingsGap>, String> {
     let Some(outcome) = analysis_outcome else {
         return Err(format!(
-            "agent verify {label} artifact carries no analysis outcome, so a gap's absence cannot be read as closed"
+            "agent verify {label} artifact carries no analysis outcome, so a gap's absence cannot be read as closed; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     };
     if !check_findings_outcome_is_complete(outcome.analysis_complete, outcome.document_complete) {
@@ -871,7 +896,7 @@ fn check_findings_gaps(
         });
         if classification.trim().is_empty() || file.trim().is_empty() || line == 0 {
             return Err(format!(
-                "agent verify {label} artifact contains an invalid finding for gap `{gap_id}`"
+                "agent verify {label} artifact contains an invalid finding for gap `{gap_id}`; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
             ));
         }
         let missing_discriminator = finding
@@ -939,11 +964,15 @@ fn validate_artifact_identity(
         }
         None => {
             return Err(format!(
-                "agent verify {label} artifact repository head `{}` is not present in the checked repository",
+                "agent verify {label} artifact repository head `{}` is not present in the checked repository; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
                 identity.repository.head
             ));
         }
     }
+    // #3056: the currentness enum is the repository-currentness axis only.
+    // The production-time dirty declaration is carried separately so the
+    // `Historical` classification does not discard it.
+    let produced_from_dirty = identity.analysis.worktree == "dirty";
     let currentness = if actual_head == identity.repository.head {
         if identity.analysis.worktree == "dirty" || actual_worktree_dirty {
             ArtifactCurrentness::DirtyWorktree
@@ -955,6 +984,7 @@ fn validate_artifact_identity(
     };
     Ok(ValidatedArtifact {
         currentness,
+        produced_from_dirty,
         base_revision: identity.analysis.base_revision,
         input_identity: identity.analysis.input_identity,
         snapshot_identity: identity.snapshot_identity,
@@ -987,7 +1017,7 @@ fn validate_artifact_identity_shape(
         )
     {
         return Err(format!(
-            "agent verify {label} artifact has invalid or unknown producer identity"
+            "agent verify {label} artifact has invalid or unknown producer identity; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     Ok(())
@@ -1013,7 +1043,7 @@ fn validate_artifact_commitment(
         && !stamp.starts_with("unix_ms:")
     {
         return Err(format!(
-            "agent verify {label} artifact carries a generated_at stamp that is neither a unix_ms millisecond disclosure nor the documented \"unavailable\" fallback: {stamp}"
+            "agent verify {label} artifact carries a generated_at stamp that is neither a unix_ms millisecond disclosure nor the documented \"unavailable\" fallback: {stamp}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     // Version gate (#2823): only the current input-identity algorithm
@@ -1030,7 +1060,7 @@ fn validate_artifact_commitment(
         .strip_prefix(&supported_prefix)
     else {
         return Err(format!(
-            "agent verify {label} artifact has unsupported input identity version `{}` (expected `{supported_prefix}<digest>`)",
+            "agent verify {label} artifact has unsupported input identity version `{}` (expected `{supported_prefix}<digest>`); regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             identity.analysis.input_identity
         ));
     };
@@ -1040,7 +1070,7 @@ fn validate_artifact_commitment(
     // reason so a shape failure is never confused with a version failure.
     let Some(digest) = algorithm_and_digest.strip_prefix("fnv1a64:") else {
         return Err(format!(
-            "agent verify {label} artifact has malformed input identity digest `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`)",
+            "agent verify {label} artifact has malformed input identity digest `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`); regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             identity.analysis.input_identity
         ));
     };
@@ -1050,7 +1080,7 @@ fn validate_artifact_commitment(
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
     {
         return Err(format!(
-            "agent verify {label} artifact has malformed input identity digest `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`)",
+            "agent verify {label} artifact has malformed input identity digest `{}` (expected `{supported_prefix}fnv1a64:<16 lowercase hex>`); regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             identity.analysis.input_identity
         ));
     }
@@ -1058,14 +1088,14 @@ fn validate_artifact_commitment(
     let declared_root = canonical_root(Path::new(&identity.repository.root))?;
     if declared_root != expected_root {
         return Err(format!(
-            "agent verify {label} artifact repository root {} does not match {}",
+            "agent verify {label} artifact repository root {} does not match {}; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             declared_root.display(),
             expected_root.display()
         ));
     }
     if identity.repository.head != "unavailable" && !is_full_sha(&identity.repository.head) {
         return Err(format!(
-            "agent verify {label} artifact has invalid repository HEAD `{}`",
+            "agent verify {label} artifact has invalid repository HEAD `{}`; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)",
             identity.repository.head
         ));
     }
@@ -1075,12 +1105,12 @@ fn validate_artifact_commitment(
     );
     if identity.snapshot_identity != expected_snapshot {
         return Err(format!(
-            "agent verify {label} artifact snapshot identity does not match the declared analysis input identity and repository head"
+            "agent verify {label} artifact snapshot identity does not match the declared analysis input identity and repository head; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     if !identity.content_sha256.starts_with("sha256:") {
         return Err(format!(
-            "agent verify {label} artifact is missing a sha256 content commitment"
+            "agent verify {label} artifact is missing a sha256 content commitment; regenerate the {label} snapshot with the current ripr (`ripr agent verify --help` shows the loop)"
         ));
     }
     // The typed parse above already established these bytes as well-formed,
@@ -1100,12 +1130,38 @@ fn validate_artifact_commitment(
     // always refuse it before currentness or movement can be calculated.
     if identity.repository.head == "unavailable" || identity.analysis.worktree == "unavailable" {
         return Err(format!(
-            "agent verify {label} artifact has unavailable Git/revision provenance (repository.head={}, analysis.worktree={}); {VERIFY_GIT_PROVENANCE_REQUIREMENT} Regenerate both snapshots from the existing Git checkout. Patch analysis and agent brief remain supported without verification provenance.",
+            "agent verify {label} artifact has unavailable Git/revision provenance (repository.head={}, analysis.worktree={}); regenerate both snapshots from the existing Git checkout. {VERIFY_GIT_PROVENANCE_REQUIREMENT} Patch analysis and agent brief remain supported without verification provenance.",
             identity.repository.head, identity.analysis.worktree,
         ));
     }
 
     Ok(expected_root)
+}
+
+fn seam_limited_repo_exposure_refusal(subject: &str, controls: &[&str]) -> String {
+    format!(
+        "{subject} is a seam-limited repo-exposure file (its seams[] is a prefix of the inventory cut by {}, so a seam missing from it cannot be compared; {})",
+        controls.join(" and "),
+        crate::output::repo_exposure::seam_limit_cut_repair(controls)
+    )
+}
+
+/// A pilot `repo-exposure.json` whose `seams[]` the byte budget cut (#12108)
+/// lists only some of the seams. `seam_cut` is the same document's seam-limit
+/// controls: when a seam limit also cut it (#12226), the one refusal lists
+/// every control, so the repair does not surface a second refusal.
+fn byte_bounded_repo_exposure_refusal(subject: &str, seam_cut: &[&'static str]) -> String {
+    if !seam_cut.is_empty() {
+        let controls = crate::output::repo_exposure::byte_and_seam_cut_controls(seam_cut);
+        return format!(
+            "{subject} is a byte-bounded and seam-limited repo-exposure file (`ripr pilot` cut its seams[] by {}, so a seam missing from it cannot be compared; {})",
+            controls.join(" and "),
+            crate::output::repo_exposure::seam_limit_cut_repair(&controls)
+        );
+    }
+    format!(
+        "{subject} is a byte-bounded repo-exposure file (`ripr pilot` cut its seams[] to RIPR_PILOT_REPO_EXPOSURE_BYTES, so a seam missing from it cannot be compared; rerun `ripr pilot` with RIPR_PILOT_REPO_EXPOSURE_BYTES=0, or produce the snapshot with `ripr check --format repo-exposure-json`, then compare)"
+    )
 }
 
 /// Classify only the old repo-exposure shape after canonical parsing refused it.
@@ -1164,6 +1220,11 @@ pub(crate) fn pair_currentness_label(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ValidatedArtifact {
     pub(crate) currentness: ArtifactCurrentness,
+    /// The artifact envelope's production-time `analysis.worktree == "dirty"`
+    /// declaration (#3056). Independent of `currentness`: an artifact produced
+    /// from a dirty worktree classifies as `Historical` once the repository
+    /// advances, and this keeps the fact visible. Pair tokens never read it.
+    pub(crate) produced_from_dirty: bool,
     pub(crate) base_revision: Option<String>,
     pub(crate) input_identity: String,
     pub(crate) snapshot_identity: String,
@@ -1175,6 +1236,16 @@ pub(crate) struct ValidatedArtifact {
     /// envelope. Verify output binds this value so a later byte change to the
     /// artifact is detectable downstream (#2922 PR B).
     pub(crate) content_sha256: String,
+}
+
+impl ValidatedArtifact {
+    /// True only when this artifact is classified `Historical` and its
+    /// envelope declared a dirty production-time worktree (#3056). Current
+    /// and dirty-worktree artifacts already disclose dirtiness through
+    /// `currentness`, so they never set this additive verify field.
+    pub(crate) fn historical_produced_from_dirty(&self) -> bool {
+        self.currentness == ArtifactCurrentness::Historical && self.produced_from_dirty
+    }
 }
 
 /// Validate that two producer artifacts describe comparable analyses. The
@@ -1246,12 +1317,12 @@ pub(crate) fn validate_pair_lineage(
     }
     if git_merge_base_is_ancestor(root, &after.repository_head, &before.repository_head)? {
         return Err(format!(
-            "repository revisions are reversed: after head {} does not descend from before head {}",
+            "repository revisions are reversed: after head {} does not descend from before head {}; swap --before and --after, or regenerate both snapshots in order",
             after.repository_head, before.repository_head
         ));
     }
     Err(format!(
-        "repository revisions are unrelated: before head {} and after head {} share no ancestry",
+        "repository revisions are unrelated: before head {} and after head {} share no ancestry; regenerate both snapshots from the same branch",
         before.repository_head, after.repository_head
     ))
 }
@@ -1279,7 +1350,7 @@ pub(crate) fn validate_verify_movement(
             .get(..7)
             .unwrap_or(&before.repository_head);
         return Err(format!(
-            "no repository movement between before and after artifacts: the repository is still at {short}, so nothing has changed since the before phase and there is nothing to compare yet"
+            "no repository movement between before and after artifacts: the repository is still at {short}, so nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot"
         ));
     }
     Ok(())
@@ -1291,6 +1362,10 @@ struct RepoExposureDocument {
     scope: String,
     artifact: ArtifactIdentity,
     seams: Vec<RepoExposureSeam>,
+    #[serde(default)]
+    run_status: Option<String>,
+    #[serde(default)]
+    limitations: Option<Vec<Value>>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1500,7 +1575,7 @@ pub(crate) fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = git_spawn(root, args)?;
     if !output.status.success() {
         return Err(format!(
-            "git {:?} in {} failed with {}: {}",
+            "git {:?} in {} failed with {}: {}; check that the selected root is a Git checkout and git is on PATH",
             args,
             root.display(),
             output.status,
@@ -1524,8 +1599,15 @@ const ARTIFACT_GIT_DEADLINE: Duration = Duration::from_mins(1);
 /// the adapter-level `Output` contract (exit status inspected by the caller)
 /// is unchanged.
 fn git_spawn(root: &Path, args: &[&str]) -> Result<std::process::Output, String> {
-    crate::git::run_git_output_with_deadline(root, args, Some(ARTIFACT_GIT_DEADLINE))
-        .map_err(|err| format!("run git {:?} in {} failed: {err}", args, root.display()))
+    crate::git::run_git_output_with_deadline(root, args, Some(ARTIFACT_GIT_DEADLINE)).map_err(
+        |err| {
+            format!(
+                "run git {:?} in {} failed: {err}; check that git is installed and on PATH",
+                args,
+                root.display()
+            )
+        },
+    )
 }
 
 /// Resolve the commit that Git reports for a repository root.
@@ -1538,7 +1620,7 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
     let head = head.trim();
     if !is_full_sha(head) {
         return Err(format!(
-            "git rev-parse HEAD in {} returned an invalid commit `{head}`",
+            "git rev-parse HEAD in {} returned an invalid commit `{head}`; check that the selected root is a healthy Git checkout, or report this as a ripr bug",
             root.display()
         ));
     }
@@ -1550,7 +1632,9 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
 /// result must be a full lowercase commit id.
 pub(crate) fn resolve_commit_rev(root: &Path, rev: &str) -> Result<String, String> {
     if rev.trim().is_empty() || rev.starts_with('-') {
-        return Err(format!("`{rev}` is not a revision ripr can resolve"));
+        return Err(format!(
+            "`{rev}` is not a revision ripr can resolve; pass a commit id, branch or tag that does not start with `-`"
+        ));
     }
     let spec = format!("{rev}^{{commit}}");
     let resolved =
@@ -1560,7 +1644,7 @@ pub(crate) fn resolve_commit_rev(root: &Path, rev: &str) -> Result<String, Strin
     let resolved = resolved.trim();
     if !is_full_sha(resolved) {
         return Err(format!(
-            "revision `{rev}` resolved to an invalid commit `{resolved}`"
+            "revision `{rev}` resolved to an invalid commit `{resolved}`; report this as a ripr bug with the revision and your git version"
         ));
     }
     Ok(resolved.to_string())
@@ -1673,7 +1757,7 @@ pub(crate) fn git_merge_base_is_ancestor(
         Some(0) => Ok(true),
         Some(1) => Ok(false),
         _ => Err(format!(
-            "git merge-base --is-ancestor {ancestor} {descendant} in {} failed with {}: {}",
+            "git merge-base --is-ancestor {ancestor} {descendant} in {} failed with {}: {}; check that both revisions exist in this checkout (fetch them if needed)",
             root.display(),
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()
@@ -2047,6 +2131,135 @@ mod tests {
         findings: Vec<CheckFindingsFinding>,
     }
 
+    /// #12226: a file the writer cut by bytes AND by the pilot seam budget is
+    /// refused once, naming both controls; single-cut files keep one control.
+    #[test]
+    fn both_cuts_repo_exposure_refusal_names_every_control() -> Result<(), String> {
+        let root = std::path::Path::new(".");
+        let both = crate::output::repo_exposure::tests::both_cuts_document_from_writer()?;
+        let refusal = validate_repo_exposure_artifact(root, &both, "before")
+            .err()
+            .ok_or("a both-cuts file must not validate")?;
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        // Negative: byte-only names no seam control; seam-only names no byte control.
+        let byte_only = serde_json::json!({
+            "schema_version": "0.5", "scope": "repo",
+            "run_status": "limited_repo_exposure_bytes", "seams": []
+        })
+        .to_string();
+        let refusal = validate_repo_exposure_artifact(root, &byte_only, "before")
+            .err()
+            .ok_or("a byte-only file must not validate")?;
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        assert!(!refusal.contains("RIPR_PILOT_SEAM_BUDGET"), "{refusal}");
+        let seam_only = serde_json::json!({
+            "schema_version": "0.5", "scope": "repo",
+            "run_status": "seam_limit_applied",
+            "limitations": [{"category": "pilot_seam_budget_applied"}], "seams": []
+        })
+        .to_string();
+        let refusal = validate_repo_exposure_artifact(root, &seam_only, "before")
+            .err()
+            .ok_or("a seam-only file must not validate")?;
+        assert!(refusal.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{refusal}");
+        assert!(
+            !refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES"),
+            "{refusal}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn byte_bounded_repo_exposure_is_refused_by_name_not_as_a_malformed_file() -> Result<(), String>
+    {
+        // #12108: a pilot file whose seams[] the byte budget cut carries no
+        // artifact identity; the refusal names the cut and its recovery.
+        let bounded = serde_json::json!({
+            "schema_version": "0.5",
+            "scope": "repo",
+            "run_status": "limited_repo_exposure_bytes",
+            "seams": []
+        })
+        .to_string();
+        let root = std::path::Path::new(".");
+        let refusal = validate_repo_exposure_artifact(root, &bounded, "before")
+            .err()
+            .ok_or("a byte-bounded repo-exposure file must not validate")?;
+        assert!(
+            refusal.contains("byte-bounded repo-exposure file"),
+            "{refusal}"
+        );
+        assert!(
+            refusal.contains("RIPR_PILOT_REPO_EXPOSURE_BYTES=0"),
+            "{refusal}"
+        );
+        // Both limits applied: run_status is the seam cap's, the byte bound is a
+        // limitations[] entry, and the file is still refused by name.
+        let both = serde_json::json!({
+            "schema_version": "0.5",
+            "scope": "repo",
+            "run_status": "seam_limit_applied",
+            "limitations": [
+                {"category": "pilot_seam_budget_applied"},
+                {"category": "pilot_repo_exposure_byte_bound_applied"}
+            ],
+            "seams": []
+        })
+        .to_string();
+        let both_refusal = validate_repo_exposure_artifact(root, &both, "before")
+            .err()
+            .ok_or("a seam-capped and byte-bounded file must not validate")?;
+        assert!(both_refusal.contains("byte-bounded"), "{both_refusal}");
+        // #12150: a seam cap alone is refused by its own name and control.
+        let seam_cap_only = both.replace("pilot_repo_exposure_byte_bound_applied", "other");
+        let capped = validate_repo_exposure_artifact(root, &seam_cap_only, "before")
+            .err()
+            .ok_or("a seam-capped file must not validate")?;
+        assert!(!capped.contains("byte-bounded"), "{capped}");
+        assert!(capped.contains("seam-limited"), "{capped}");
+        assert!(capped.contains("RIPR_PILOT_SEAM_BUDGET=0"), "{capped}");
+        let inventory_cap =
+            seam_cap_only.replace("pilot_seam_budget_applied", "repo_seam_limit_applied");
+        let inventory = validate_repo_exposure_artifact(root, &inventory_cap, "before")
+            .err()
+            .ok_or("an inventory-capped file must not validate")?;
+        assert!(
+            inventory.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT=0"),
+            "{inventory}"
+        );
+        // Negative: a declined-files status is not a seam cut and keeps the
+        // generic refusal.
+        let declined = seam_cap_only
+            .replace("seam_limit_applied", "limited_declined_files")
+            .replace("pilot_seam_budget_applied", "rust_files_declined");
+        let declined_refusal = validate_repo_exposure_artifact(root, &declined, "before")
+            .err()
+            .ok_or("a file without artifact identity must not validate")?;
+        assert!(
+            !declined_refusal.contains("seam-limited"),
+            "{declined_refusal}"
+        );
+        // Discriminating negative: the same shape with another status keeps the
+        // generic malformed-artifact refusal, so the new branch is not a catch-all.
+        let other = bounded.replace("limited_repo_exposure_bytes", "complete");
+        let generic = validate_repo_exposure_artifact(root, &other, "before")
+            .err()
+            .ok_or("a file without artifact identity must not validate")?;
+        assert!(!generic.contains("byte-bounded"), "{generic}");
+        assert!(
+            generic.contains("not a canonical repo-exposure artifact"),
+            "{generic}"
+        );
+        Ok(())
+    }
+
     fn ts_finding(fp8: &str, classification: &str) -> serde_json::Value {
         serde_json::json!({
             "id": format!("probe:src_pricing.ts:typescript_preview:{fp8}"),
@@ -2091,7 +2304,7 @@ mod tests {
         );
         assert_eq!(
             error.map(|closure| closure.after_classification),
-            Err("agent verify --gap-id requires `check-findings-json` snapshots; the before artifact is not one"
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the before artifact is not one; save `ripr check --format check-findings-json` output as both --before and --after"
                 .to_string())
         );
         assert!(!"agent verify --gap-id requires".starts_with(GAP_BINDING_REFUSAL_PREFIX));
@@ -2107,7 +2320,7 @@ mod tests {
         );
         assert_eq!(
             error.map(|closure| closure.after_classification),
-            Err("agent verify --gap-id requires `check-findings-json` snapshots; the after artifact is not one"
+            Err("agent verify --gap-id requires `check-findings-json` snapshots; the after artifact is not one; save `ripr check --format check-findings-json` output as both --before and --after"
                 .to_string())
         );
     }
@@ -3368,6 +3581,7 @@ mod tests {
     fn comparable_artifact() -> ValidatedArtifact {
         ValidatedArtifact {
             currentness: ArtifactCurrentness::Current,
+            produced_from_dirty: false,
             base_revision: None,
             input_identity: "input:stable".to_string(),
             snapshot_identity: format!("snapshot:input:stable;revision:{}", "a".repeat(40)),
@@ -3624,7 +3838,7 @@ mod tests {
             validate_verify_movement(&before, &after),
             Err(error) if error.contains("no repository movement")
                 && error.contains("the repository is still at aaaaaaa")
-                && error.contains("nothing has changed since the before phase and there is nothing to compare yet")
+                && error.contains("nothing has changed since the before phase and there is nothing to compare yet; make the edit, then regenerate the after snapshot")
                 // The old internal wording and the full 40-character
                 // revision must not come back.
                 && !error.contains("both are current")
@@ -4499,6 +4713,77 @@ mod tests {
                     "a declared-dirty artifact must stay DirtyWorktree on a clean worktree"
                         .to_string(),
                 );
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
+    #[test]
+    fn historical_classification_preserves_production_time_dirty_fact() -> Result<(), String> {
+        let advance = |root: &Path| {
+            run_git(
+                root,
+                &[
+                    "-c",
+                    "commit.gpgSign=false",
+                    "commit",
+                    "--quiet",
+                    "--allow-empty",
+                    "-m",
+                    "advance",
+                ],
+            )
+        };
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            // Clean-produced artifact.
+            let clean_raw = commit_content(&repo_exposure_raw_with_placeholder(&root)?)?;
+            // Dirty-produced artifact at the same revision.
+            std::fs::write(root.join("Cargo.toml"), "[workspace]\n# unsaved edit\n")
+                .map_err(|error| format!("dirty fixture file: {error}"))?;
+            let dirty_raw = commit_content(&repo_exposure_raw_with_placeholder(&root)?)?;
+            run_git(&root, &["checkout", "--", "Cargo.toml"])?;
+
+            // Current-revision controls: the flag mirrors the declaration,
+            // but the verify-facing projection stays false because currentness
+            // already discloses the dirty side.
+            let clean_now = validate_repo_exposure_artifact(&root, &clean_raw, "clean")?;
+            let dirty_now = validate_repo_exposure_artifact(&root, &dirty_raw, "dirty")?;
+            if clean_now.produced_from_dirty || !dirty_now.produced_from_dirty {
+                return Err("flag must mirror the envelope worktree declaration".to_string());
+            }
+            if clean_now.historical_produced_from_dirty()
+                || dirty_now.currentness != ArtifactCurrentness::DirtyWorktree
+                || dirty_now.historical_produced_from_dirty()
+            {
+                return Err("non-historical artifacts must not set the verify field".to_string());
+            }
+
+            advance(&root)?;
+            let clean_hist = validate_repo_exposure_artifact(&root, &clean_raw, "clean")?;
+            let dirty_hist = validate_repo_exposure_artifact(&root, &dirty_raw, "dirty")?;
+            if clean_hist.currentness != ArtifactCurrentness::Historical
+                || dirty_hist.currentness != ArtifactCurrentness::Historical
+            {
+                return Err("both artifacts must be historical after movement".to_string());
+            }
+            if clean_hist.historical_produced_from_dirty() {
+                return Err("clean-produced historical must not report dirty".to_string());
+            }
+            if !dirty_hist.historical_produced_from_dirty() {
+                return Err("dirty-produced historical must preserve the dirty fact".to_string());
+            }
+            // Pair tokens are unchanged by the additive flag.
+            if pair_currentness_label(&clean_hist.currentness, &dirty_hist.currentness)
+                != "historical_noncurrent"
+            {
+                return Err("pair token must stay historical_noncurrent".to_string());
             }
             Ok(())
         })();

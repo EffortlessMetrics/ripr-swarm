@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- Python: a parametrize argname whose `indirect=` value ripr cannot settle (a name such as `indirect=IND`, a computed list, a positional `indirect`, or a `*args`/`**kwargs` splat in the mark) now counts toward the fixture limit, without creating a fixture edge. The test keeps `unresolved_pytest_fixture` instead of being credited as if pytest passed the literal values (#10685).

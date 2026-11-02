@@ -1,5 +1,35 @@
 use std::path::{Component, Path, PathBuf};
 
+use crate::output::path::{host_paths_case_insensitive, path_identity_key_on};
+
+/// Equality key for matching a git-spelled [`ChangedFile`](super::ChangedFile)
+/// path against a walked or indexed workspace path (#8419).
+///
+/// Display and `ChangedFile.path` keep git's byte spelling (#7937). This key
+/// is membership only: on macOS it folds NFC/NFD through the shared owner
+/// [`path_identity_key_on`]; Linux and Windows keep byte-distinct names
+/// distinct.
+pub(crate) fn diff_path_identity_key(path: &Path) -> String {
+    path_identity_key_on(path, cfg!(windows), host_paths_case_insensitive())
+}
+
+/// [`diff_path_identity_key`] with host rules explicit so the macOS
+/// normalization fold is testable on every host (#8419).
+#[cfg(test)]
+pub(crate) fn diff_path_identity_key_with(
+    path: &Path,
+    backslash_is_separator: bool,
+    case_insensitive: bool,
+    normalization_insensitive: bool,
+) -> String {
+    crate::output::path::path_identity_key_with(
+        path,
+        backslash_is_separator,
+        case_insensitive,
+        normalization_insensitive,
+    )
+}
+
 /// Deepest accepted diff path, in components. Real repositories sit far below
 /// this; a crafted header with tens of thousands of `a/` components made
 /// ancestor walks and path comparisons quadratic in time and memory (hang or
@@ -54,6 +84,109 @@ pub(super) fn parse_git_old_path(raw: &str) -> Option<PathBuf> {
     };
     let path = path.without_side_prefix("a/");
     confine_to_relative_path(&path)
+}
+
+/// Check both identities against the complete header, using rename metadata to
+/// locate the boundary when unquoted filenames themselves contain ` b/`.
+pub(super) fn git_header_matches_rename(raw: &str, old: &Path, new: &Path) -> bool {
+    if [old, new].iter().any(|path| {
+        path.components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    }) {
+        return false;
+    }
+    let Some(marker) = raw.strip_prefix("diff --git ") else {
+        return false;
+    };
+    let rest = if let Some(after_quote) = marker.strip_prefix('"') {
+        let Some(end) = quoted_token_end(marker) else {
+            return false;
+        };
+        let Some(decoded) = parse_diff_path_token(&marker[..end]) else {
+            return false;
+        };
+        if confine_to_relative_path(&decoded.without_side_prefix("a/")).as_deref() != Some(old)
+            || !after_quote.starts_with("a/")
+        {
+            return false;
+        }
+        &marker[end..]
+    } else {
+        let Some(unquoted) = marker.strip_prefix("a/") else {
+            return false;
+        };
+        // First prefer the established header parser's confined identity.
+        // This preserves e.g. `a/./src/x` paired with `rename from ./src/x`.
+        // For an embedded ` b/`, that parser returns only a prefix; in that
+        // case use the exact metadata identity to find the real boundary.
+        let first_boundary = unquoted.find(" \"b/").or_else(|| unquoted.find(" b/"));
+        if let Some(boundary) = first_boundary
+            && parse_diff_path_token(&unquoted[..boundary])
+                .and_then(|path| confine_to_relative_path(&path))
+                .as_deref()
+                == Some(old)
+        {
+            &unquoted[boundary..]
+        } else {
+            let mut rest = unquoted;
+            let mut components = old.components().peekable();
+            while let Some(Component::Normal(component)) = components.next() {
+                while let Some(tail) = rest.strip_prefix("./") {
+                    rest = tail;
+                }
+                let Some(component) = component.to_str() else {
+                    return false;
+                };
+                let Some(tail) = rest.strip_prefix(component) else {
+                    return false;
+                };
+                rest = tail;
+                if components.peek().is_some() {
+                    let Some(tail) = rest.strip_prefix('/') else {
+                        return false;
+                    };
+                    rest = tail.trim_start_matches('/');
+                }
+            }
+            rest
+        }
+    };
+    let Some(target) = rest.strip_prefix(' ') else {
+        return false;
+    };
+    let target = target.trim_end_matches('\r');
+    let token = if let Some(after_quote) = target.strip_prefix('"') {
+        let Some(end) = quoted_token_end(target) else {
+            return false;
+        };
+        if end != target.len() || !after_quote.starts_with("b/") {
+            return false;
+        }
+        target
+    } else {
+        if !target.starts_with("b/") || target.contains('\t') {
+            return false;
+        }
+        target
+    };
+    parse_diff_path_token(token)
+        .and_then(|path| confine_to_relative_path(&path.without_side_prefix("b/")))
+        .as_deref()
+        == Some(new)
+}
+
+fn quoted_token_end(raw: &str) -> Option<usize> {
+    let mut escaped = false;
+    for (offset, byte) in raw.as_bytes().iter().enumerate().skip(1) {
+        if escaped {
+            escaped = false;
+        } else if *byte == b'\\' {
+            escaped = true;
+        } else if *byte == b'"' {
+            return Some(offset + 1);
+        }
+    }
+    None
 }
 
 pub(super) fn parse_rename_from_path(raw: &str) -> Option<PathBuf> {
@@ -572,6 +705,53 @@ pub(crate) fn is_ripr_artifact_path_under(path: &Path, roots: &[PathBuf]) -> boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::path::path_identity_key_with;
+
+    #[test]
+    fn nfc_diff_path_matches_nfd_walk_path_only_when_normalization_insensitive() {
+        // #8419: Linux-runnable macOS rule. NFC git spelling vs NFD walk
+        // spelling of café.rs share an identity key only when the fold is on.
+        let nfc = Path::new("caf\u{e9}.rs");
+        let nfd = Path::new("cafe\u{301}.rs");
+        assert_eq!(
+            path_identity_key_with(nfc, false, true, true),
+            path_identity_key_with(nfd, false, true, true),
+            "NFC and NFD café.rs must match when normalization is injected"
+        );
+        assert_eq!(
+            diff_path_identity_key_with(nfc, false, true, true),
+            diff_path_identity_key_with(nfd, false, true, true)
+        );
+        assert_ne!(
+            path_identity_key_with(nfc, false, true, false),
+            path_identity_key_with(nfd, false, true, false),
+            "NFC and NFD café.rs must stay distinct when the fold is off"
+        );
+        assert_ne!(
+            diff_path_identity_key_with(nfc, false, true, false),
+            diff_path_identity_key_with(nfd, false, true, false)
+        );
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn host_diff_path_identity_key_keeps_nfc_and_nfd_distinct_off_macos() {
+        assert_ne!(
+            diff_path_identity_key(Path::new("caf\u{e9}.rs")),
+            diff_path_identity_key(Path::new("cafe\u{301}.rs")),
+            "Linux/Windows host keys must not fold NFC/NFD (#8419)"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn host_diff_path_identity_key_folds_nfc_and_nfd_on_macos() {
+        assert_eq!(
+            diff_path_identity_key(Path::new("caf\u{e9}.rs")),
+            diff_path_identity_key(Path::new("cafe\u{301}.rs")),
+            "macOS host keys fold NFC/NFD café.rs (#8419)"
+        );
+    }
 
     #[test]
     fn artifact_root_gitignore_entry_escapes_patterns_separately_from_paths() {

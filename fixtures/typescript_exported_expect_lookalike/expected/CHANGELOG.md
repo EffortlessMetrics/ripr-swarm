@@ -63,3 +63,55 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_exported_expect_lookalike (5)
+
+Reason:
+RIPR-SPEC-0088: related-test selection ties keep the first row, matching the check headline (#11228)
+
+Command:
+`cargo xtask goldens bless typescript_exported_expect_lookalike --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_exported_expect_lookalike (6)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless typescript_exported_expect_lookalike --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_exported_expect_lookalike (7)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless typescript_exported_expect_lookalike --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_exported_expect_lookalike (8)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless typescript_exported_expect_lookalike --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

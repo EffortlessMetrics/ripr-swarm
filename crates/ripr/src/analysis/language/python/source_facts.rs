@@ -34,6 +34,8 @@ pub(super) struct PythonSourceFacts {
     pub(super) fixtures: Vec<super::PythonFixtureDef>,
     /// Fixture-reaching code `fixtures` does not record (#9619).
     pub(super) fixture_side_effects: super::fixtures::FixtureSideEffects,
+    /// Fixtures, hooks and marks that may replace the owner around a test.
+    pub(super) substitution_scope: super::fixture_substitution::SubstitutionScope,
     /// Single-assert helper defs of the module (#9419).
     pub(super) helper_module: super::helper_assertions::PythonHelperModule,
     /// The file is a `conftest.py` that installs implicit setup around the
@@ -54,6 +56,12 @@ pub(super) struct PythonSourceFacts {
     /// original source; None when it does not parse. The workspace foreign
     /// index reads it instead of parsing every file again (#10914).
     pub(super) assigned_attributes: Option<Vec<String>>,
+    /// Writes of `<module>.<attr>` in this file (`mod.NAME = ...`,
+    /// `setattr(mod, "NAME", ...)`, `monkeypatch.setattr(...)`) so the
+    /// workspace pass can refuse a test-module constant another file
+    /// rebinds (#11424).
+    #[serde(default)]
+    pub(super) module_attribute_writes: Vec<super::module_constants::PythonModuleAttributeWrite>,
     /// The foreign index's lexes of the source as written; filled only by
     /// [`extract_workspace_source_facts`], so the workspace index reads them
     /// instead of lexing every file again (#10914).
@@ -595,7 +603,7 @@ pub(super) fn parse_module_result(path: &Path, source: &str) -> Result<Mod, Stri
         .map_err(|err| format!("parse_error: {err}"))?;
     match module {
         Mod::Module(_) => Ok(module),
-        _ => Err("parse_error: expected Python module".to_string()),
+        _ => Err("parse_error: expected Python module; fix the Python syntax error in the changed file and rerun".to_string()),
     }
 }
 
@@ -660,6 +668,7 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         tests: Vec::new(),
         fixtures: Vec::new(),
         fixture_side_effects: super::fixtures::FixtureSideEffects::default(),
+        substitution_scope: super::fixture_substitution::SubstitutionScope::default(),
         helper_module: super::helper_assertions::PythonHelperModule::default(),
         conftest_implicit_setup: false,
         conftest_declares_fixture_or_hook: false,
@@ -670,6 +679,7 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         assigned_attributes: None,
         foreign_lexes: None,
         star_facts: None,
+        module_attribute_writes: Vec::new(),
     };
     let module = match parse_module_result(file, source) {
         Ok(Mod::Module(module)) => module,
@@ -694,6 +704,9 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
     snapshot.assigned_attributes = Some(super::module_constants::assigned_attribute_names(
         &module.body,
     ));
+    let imports = collect_imports_from_statements(file, &module.body);
+    snapshot.module_attribute_writes =
+        super::module_constants::module_attribute_writes(&module.body, &imports);
     // A plain test's calls to a same-file assertion helper read as the
     // helper's asserts (#9636); extract from the rewritten source, which keeps
     // every line number. The foreign index reads the file as written, so the
@@ -706,6 +719,7 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
     {
         let mut rewritten = extract_source_facts(file, &inlined);
         rewritten.assigned_attributes = snapshot.assigned_attributes;
+        rewritten.module_attribute_writes = snapshot.module_attribute_writes;
         // The re-export pass reads the file as written.
         // Only a test file is inlined, and the workspace keeps a test file's
         // tests, not its owners: it needs the helper answers alone.
@@ -736,12 +750,12 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         module_range,
     );
 
-    let imports = collect_imports_from_statements(file, &module.body);
     let module_constants = module_literal_constants(source, &module.body);
     collect_owners_from_statements(
         file,
         source,
         &module.body,
+        None,
         None,
         &imports,
         &module_constants,
@@ -787,6 +801,12 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
     snapshot.fixtures = super::fixtures::collect_fixture_defs(file, source, &module.body, &imports);
     snapshot.fixture_side_effects =
         super::fixtures::collect_fixture_side_effects(source, &module.body, &imports);
+    snapshot.substitution_scope = super::fixture_substitution::collect_substitution_scope(
+        source,
+        &module.body,
+        &imports,
+        file.file_name().and_then(|name| name.to_str()) == Some("conftest.py"),
+    );
     snapshot.helper_module =
         super::helper_assertions::collect_helper_module(file, source, &module.body);
     snapshot.conftest_implicit_setup = file.file_name().and_then(|name| name.to_str())

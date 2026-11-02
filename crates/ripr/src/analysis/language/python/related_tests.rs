@@ -570,6 +570,15 @@ pub(super) fn related_test_relation(
     // group instead (`cli_subcommand.rs`).
     if let Some(name) = name_anchor(owner)
         && !test_text_mentions(test, name)
+        && !(owner.owner_kind == Some(OwnerKind::Function)
+            && owner.nested_called_by_parent
+            && owner
+                .qualified_name
+                .rsplit_once('.')
+                .is_some_and(|(parent, _)| {
+                    let parent_name = parent.rsplit('.').next().unwrap_or(parent);
+                    test_text_mentions(test, parent_name) || test_text_mentions(test, parent)
+                }))
         && !owner
             .cli_subcommand
             .as_ref()
@@ -1579,6 +1588,17 @@ pub(super) fn body_calls_owner(body_text: &str, owner: &PythonOwner) -> bool {
     contains_call_name(body_text, &owner.name)
         || (owner.qualified_name != owner.name
             && contains_call_name(body_text, &owner.qualified_name))
+        || (owner.owner_kind == Some(OwnerKind::Function)
+            && owner.qualified_name != owner.name
+            && owner.nested_called_by_parent
+            && owner
+                .qualified_name
+                .rsplit_once('.')
+                .is_some_and(|(parent, _)| {
+                    let parent_name = parent.rsplit('.').next().unwrap_or(parent);
+                    contains_call_name(body_text, parent_name)
+                        || contains_call_name(body_text, parent)
+                }))
         || (matches!(
             owner.owner_kind,
             Some(OwnerKind::Method | OwnerKind::ClassMethod)
@@ -2478,6 +2498,15 @@ pub(super) fn strong_test_imports_owner_from_module(
 /// Python keeps only the last binding and this reader does not order them.
 fn import_binds_owner_name(import: &PythonImport, owner: &PythonOwner, test: &PythonTest) -> bool {
     import.imported == owner.name
+        || (owner.owner_kind == Some(OwnerKind::Function)
+            && owner.qualified_name != owner.name
+            && owner.nested_called_by_parent
+            && owner
+                .qualified_name
+                .rsplit_once('.')
+                .is_some_and(|(parent, _)| {
+                    import.imported == parent.rsplit('.').next().unwrap_or(parent)
+                }))
         || (import.imported == "*"
             && !owner.name.starts_with('_')
             && owner.star_exported
@@ -3344,7 +3373,7 @@ pub(super) fn test_rebinds_import_alias(test: &PythonTest, alias: &str) -> bool 
 
 /// Whether `name` is bound by anything other than a plain `name = ...`
 /// assignment: a loop or `with` target, `def`, `class`, walrus, augmented
-/// assignment, import or `nonlocal`.
+/// assignment, import, `nonlocal`, `global`, `del` or a `type` statement.
 pub(super) fn text_binds_beyond_assignment(text: &str, name: &str) -> bool {
     keyword_or_operator_binds_text(text, name, true)
 }
@@ -3352,27 +3381,29 @@ pub(super) fn text_binds_beyond_assignment(text: &str, name: &str) -> bool {
 fn keyword_or_operator_binds_text(body: &str, name: &str, import_as_binds: bool) -> bool {
     augmented_assignment(body, name)
         || walrus_binds(body, name)
-        || ["def", "class", "for", "as", "import", "nonlocal"]
-            .into_iter()
-            .any(|keyword| {
-                body.match_indices(keyword).any(|(idx, _)| {
-                    let after_keyword = idx + keyword.len();
-                    let spaced = &body[after_keyword..];
-                    // Any run of blanks (or a backslash continuation) may separate
-                    // the keyword from the name: `for  r  in`, `as\tr`.
-                    let rest = skip_blank_forward(spaced, false);
-                    let name_at = body.len() - rest.len();
-                    let line_start = body[..idx].rfind('\n').map_or(0, |offset| offset + 1);
-                    let line = body[line_start..].trim_start();
-                    let import_line = line.starts_with("import ") || line.starts_with("from ");
-                    rest.len() != spaced.len()
-                        && rest.starts_with(name)
-                        && python_callee_start_has_boundary(body, idx)
-                        && !next_char_is_identifier(body, name_at + name.len())
-                        && !python_text_hides_code(body, idx)
-                        && (import_as_binds || !matches!(keyword, "as" | "import") || !import_line)
-                })
+        || [
+            "def", "class", "for", "as", "import", "nonlocal", "global", "del", "type",
+        ]
+        .into_iter()
+        .any(|keyword| {
+            body.match_indices(keyword).any(|(idx, _)| {
+                let after_keyword = idx + keyword.len();
+                let spaced = &body[after_keyword..];
+                // Any run of blanks (or a backslash continuation) may separate
+                // the keyword from the name: `for  r  in`, `as\tr`.
+                let rest = skip_blank_forward(spaced, false);
+                let name_at = body.len() - rest.len();
+                let line_start = body[..idx].rfind('\n').map_or(0, |offset| offset + 1);
+                let line = body[line_start..].trim_start();
+                let import_line = line.starts_with("import ") || line.starts_with("from ");
+                rest.len() != spaced.len()
+                    && rest.starts_with(name)
+                    && python_callee_start_has_boundary(body, idx)
+                    && !next_char_is_identifier(body, name_at + name.len())
+                    && !python_text_hides_code(body, idx)
+                    && (import_as_binds || !matches!(keyword, "as" | "import") || !import_line)
             })
+        })
 }
 
 /// A line that starts with `name <op>=` (`total += 1`, `x //= 2`).

@@ -1,0 +1,56 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/unsafe_assumption_stop_reason/input
+
+Summary: 5 changed behaviors checked: 0 appear noticed by tests, 1 partly noticed, 0 reached but not noticed, 0 no test path, 4 unclear. 5 found, 0 suppressed by your settings
+
+Analysis outcome: findings below (analysis complete)
+  Counts: 1 changed file(s), 7 changed line(s), 4 candidate line(s), 5 changed behavior(s) checked, 5 finding(s)
+
+Start here:
+  State: a test gap to inspect or repair
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  File: ./src/lib.rs:12
+  Static exposure: weak (severity: warning, confidence 0.92)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Gap ID (for scripts): gap:rust:src/lib.rs:first:return_value:return_value:unsafe_pick_values_0
+  Changed behavior: unsafe { pick(values, 0) }
+  Missing check: No strong assertion was detected
+  Related test: tests/pick_tests.rs:4 first_reads_the_head (ripr could not confirm that this assertion observes the changed behavior)
+  Next step: The related test `first_reads_the_head` already has an exact assertion; this does not
+    establish observation of the returned value. Check whether the change can affect the returned
+    value. If it can, add a separating input and assert the exact returned value. If it cannot, test
+    the changed effect separately; another input cannot distinguish unchanged returns
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
+    Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
+      propagation = changed effect reaches output; observation = related test/assertion evidence;
+      assertion = a test assertion tells intended from wrong behavior
+    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
+    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      no test path = no test path found; unclear = analysis limited, not a verdict;
+      found = listed for review; suppressed by your settings = hidden by your suppression policy;
+      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
+    - reach yes: Related tests appear to reach first: first_reads_the_head
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 8 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/unsafe_assumption_stop_reason/input --diff <cwd>/fixtures/unsafe_assumption_stop_reason/diff.patch --mode fast probe:src_lib.rs:return_value:d03efa4f
+  ripr context --root <cwd>/fixtures/unsafe_assumption_stop_reason/input --diff <cwd>/fixtures/unsafe_assumption_stop_reason/diff.patch --mode fast --at probe:src_lib.rs:return_value:d03efa4f
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
+Write a test for it:
+  ripr agent stub --root <cwd>/fixtures/unsafe_assumption_stop_reason/input --at src/lib.rs:12 --kind return_value
+
+Hidden:
+  4 lower-priority finding(s) omitted from default human output.
+    - ./src/lib.rs:3 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
+    - ./src/lib.rs:4 (unknown: propagation unclear); kind: return_value; reason: No clear propagation path from changed behavior to an observable sink
+    - ./src/lib.rs:11 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
+    - ./src/lib.rs:12 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
+  Hidden classes:
+    unknown: propagation unclear = ripr could not follow the change through an opaque boundary
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

@@ -113,24 +113,24 @@ pub(crate) fn weak_oracle_recommendation(
 ) -> String {
     match oracle_kind {
         OracleKind::Snapshot => format!(
-            "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: add an exact-value assertion alongside the snapshot for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         OracleKind::SmokeOnly => format!(
-            "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: replace or augment the smoke-only assertion with an exact-value assertion for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         OracleKind::MockExpectation => mock_payload_oracle.map_or_else(
                 || format!(
-                    "TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe discriminator for `{discriminator}`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries."
+                    "TypeScript preview advisory: related mock interaction evidence is present, but mock payloads are not yet a safe check for `{discriminator}`; no actionable repair packet is emitted until mock-shape support can name verify, receipt, evidence refs, and edit boundaries."
                 ),
                 |oracle| format!(
                     "TypeScript preview advisory: related mock payload evidence `{oracle}` is syntax-bounded for `{discriminator}`, but no actionable repair packet is emitted until verify, receipt, evidence refs, and edit boundaries are available."
                 ),
         ),
         OracleKind::BroadError => format!(
-            "TypeScript preview advisory: broad error evidence does not establish missing discriminator `{discriminator}`; add an exact payload to `toThrow` (string, object, or class reference) and no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: broad error evidence does not establish the missing check `{discriminator}`; add an exact payload to `toThrow` (string, object, or class reference) and no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
         _ => format!(
-            "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
+            "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `{discriminator}`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available."
         ),
     }
 }
@@ -155,6 +155,7 @@ pub(crate) fn collect_expect_assertions_in_statements(
         source,
         receiver,
         &TypeScriptAssertionBindings::default(),
+        false,
     )
 }
 
@@ -166,8 +167,55 @@ pub(crate) fn collect_assertions_in_statements_with_bindings(
     source: &SourceText<'_>,
     receiver: Option<&str>,
     bindings: &TypeScriptAssertionBindings,
+    expression_body: bool,
 ) -> Vec<TypeScriptAssertion> {
-    collect_callback_assertions(statements, source, receiver, bindings, true)
+    collect_callback_assertions(
+        statements,
+        source,
+        receiver,
+        bindings,
+        true,
+        expression_body,
+    )
+}
+
+/// A registered test's expression-bodied arrow returns the whole expression.
+/// Keep that AST fact distinct from an expression statement in a block, whose
+/// promise is discarded. The existing callback reader still admits only its
+/// supported returned/awaited forms; this does not walk arbitrary expressions.
+pub(crate) fn collect_test_arrow_expression_assertions(
+    arrow: &ArrowFunctionExpression<'_>,
+    source: &SourceText<'_>,
+    receiver: Option<&str>,
+    bindings: &TypeScriptAssertionBindings,
+) -> Option<Vec<TypeScriptAssertion>> {
+    if !arrow.expression {
+        return None;
+    }
+    let [Statement::ExpressionStatement(statement)] = arrow.body.statements.as_slice() else {
+        return None;
+    };
+    // The statement path reads AVA `t.throws`/`t.throwsAsync` payloads only
+    // when the receiver is used solely as `t.method(...)`; a concise arrow is
+    // the same body, so it gets the same fact.
+    let text = statements_text(&arrow.body.statements, source);
+    let context = AssertionContext {
+        receiver,
+        bindings,
+        returns_to_runner: true,
+        literal_consts: &[],
+        match_object_consts: &[],
+        receiver_named_once: false,
+        receiver_only_called: receiver.is_some_and(|name| {
+            identifier_occurrences(text, name) == receiver_method_call_occurrences(text, name)
+        }),
+        returned_to_runner: true,
+        expression_body: true,
+        table_consts: &[],
+    };
+    let mut out = Vec::new();
+    collect_assertions_in_expression(&statement.expression, true, source, &context, &mut out);
+    Some(out)
 }
 
 /// Like [`collect_assertions_in_statements_with_bindings`] for a callback
@@ -180,6 +228,7 @@ pub(crate) fn collect_callback_assertions(
     receiver: Option<&str>,
     bindings: &TypeScriptAssertionBindings,
     returns_to_runner: bool,
+    expression_body: bool,
 ) -> Vec<TypeScriptAssertion> {
     let literal_consts = loose_literal_consts(statements, source);
     let match_object_consts = match_object_consts(statements, source);
@@ -198,6 +247,7 @@ pub(crate) fn collect_callback_assertions(
             identifier_occurrences(text, name) == receiver_method_call_occurrences(text, name)
         }),
         returned_to_runner: false,
+        expression_body,
         table_consts: &table_consts,
     };
     let mut out = Vec::new();
@@ -337,6 +387,7 @@ pub(crate) fn statements_collect_assertion_probe(
         receiver_named_once: false,
         receiver_only_called: false,
         returned_to_runner: false,
+        expression_body: false,
         table_consts: &[],
     };
     let mut probe = Vec::new();
@@ -376,6 +427,10 @@ pub(crate) struct AssertionContext<'a> {
     /// Whether the expression under inspection is a `return` argument the
     /// test runner awaits.
     returned_to_runner: bool,
+    /// Whether this is the single implicit-return statement of an
+    /// expression-bodied arrow (`() => expect(p).resolves.toBe(x)`), whose
+    /// value the runner awaits. Empty (`false`) inside a nested statement.
+    expression_body: bool,
     /// The test body's top-level literal table `const`s a `for...of` loop may
     /// read (RIPR-SPEC-0243 rule 11). Empty inside a nested statement.
     table_consts: &'a [TableConst],
@@ -387,6 +442,7 @@ impl<'a> AssertionContext<'a> {
     fn returning(&self) -> AssertionContext<'a> {
         AssertionContext {
             returned_to_runner: self.returns_to_runner,
+            expression_body: false,
             literal_consts: self.literal_consts,
             match_object_consts: self.match_object_consts,
             table_consts: self.table_consts,
@@ -406,6 +462,7 @@ impl<'a> AssertionContext<'a> {
             receiver_named_once: self.receiver_named_once,
             receiver_only_called: self.receiver_only_called,
             returned_to_runner: false,
+            expression_body: false,
             table_consts: &[],
         }
     }
@@ -455,6 +512,21 @@ fn assertion_from_expression_any(
         })
 }
 
+fn collect_assertions_in_expression(
+    expression: &Expression<'_>,
+    returned: bool,
+    source: &SourceText<'_>,
+    context: &AssertionContext<'_>,
+    out: &mut Vec<TypeScriptAssertion>,
+) {
+    if let Some(mut assertion) = assertion_from_expression_any(expression, source, context) {
+        attach_match_object_const(&mut assertion, expression, context);
+        out.push(assertion);
+    } else {
+        collect_nested_callback_assertions(expression, returned, source, context, out);
+    }
+}
+
 pub(crate) fn collect_expect_assertions_in_statement(
     stmt: &Statement<'_>,
     source: &SourceText<'_>,
@@ -467,20 +539,14 @@ pub(crate) fn collect_expect_assertions_in_statement(
             collect_expect_assertions_from_statement_vec(&block.body, source, &nested, out);
         }
         Statement::ExpressionStatement(expr_stmt) => {
-            if let Some(mut assertion) =
-                assertion_from_expression_any(&expr_stmt.expression, source, context)
-            {
-                attach_match_object_const(&mut assertion, &expr_stmt.expression, context);
-                out.push(assertion);
-            } else {
-                collect_nested_callback_assertions(
-                    &expr_stmt.expression,
-                    false,
-                    source,
-                    context,
-                    out,
-                );
+            // A floating `expect(p).resolves.toBe(x)` / `.rejects.toThrow()`
+            // statement (no `await`, no `return`) leaves its promise to
+            // settle after the test body ends, so its failure cannot fail the
+            // test: no discriminator (fail closed, like a floating `.then`).
+            if !context.expression_body && is_floating_promise_assertion(&expr_stmt.expression) {
+                return;
             }
+            collect_assertions_in_expression(&expr_stmt.expression, false, source, context, out);
         }
         Statement::ReturnStatement(return_stmt) => {
             if let Some(argument) = &return_stmt.argument {
@@ -632,6 +698,22 @@ pub(crate) fn collect_expect_assertions_in_statement(
         }
         _ => {}
     }
+}
+
+/// An un-awaited `expect(...).resolves...` / `.rejects...` assertion
+/// expression statement. `await expect(...)` (also parenthesised) is the
+/// evident awaiting; a `return` argument and an expression-bodied arrow are
+/// handled by the callers. `void expect(...)` is not a call expression and
+/// never reaches the assertion reader.
+fn is_floating_promise_assertion(expr: &Expression<'_>) -> bool {
+    let Expression::CallExpression(call) = expr.get_inner_expression() else {
+        return false;
+    };
+    let Some(member) = call.callee.as_member_expression() else {
+        return false;
+    };
+    expect_assertion_chain(member.object().get_inner_expression())
+        .is_some_and(|(_, async_modifier, _)| async_modifier.is_some())
 }
 
 /// Jump targets open while walking a finalizer, so a `break`/`continue` that
@@ -869,20 +951,65 @@ fn collect_nested_callback_assertions(
             {
                 return;
             }
-            if let Some(body) = callback_body_text(callback, text)
-                && receiver_identifiers(receiver)
-                    .any(|name| !scan_body_lexical_facts(body, name).declarations.is_empty())
+            if let Some(statements) = function_body_statements_from_argument(callback) {
+                // `var` escapes nested blocks to the callback's function
+                // scope. The lexical block intervals below cannot prove it
+                // independent. Reuse the AST hoist walk, which skips nested
+                // function bodies; block functions keep their existing rules.
+                let mut hoisted = Vec::new();
+                for statement in statements {
+                    super::tests_extract::collect_hoisted_names(
+                        statement,
+                        &mut hoisted,
+                        context.bindings.block_functions_are_lexical,
+                    );
+                }
+                if receiver_identifiers(receiver)
+                    .any(|name| hoisted.iter().any(|binding| binding == name))
+                {
+                    return;
+                }
+            }
+            // A named function expression binds its own name inside its body,
+            // so `.then(function total() { ... })` rebinds a receiver that
+            // calls `total` to the callback itself, not the owner.
+            if let Some(name) = callback_function_expression_name(callback)
+                && receiver_identifiers(receiver).any(|identifier| identifier == name)
             {
                 return;
             }
+            if let Some(body) = callback_body_text(callback, text) {
+                // Substitution happens at parameter uses. A receiver binding
+                // in an independent nested block cannot capture those uses,
+                // nor a direct receiver reference outside that block.
+                let parameter_uses = first_plain_parameter(callback)
+                    .map(|name| scan_body_lexical_facts(body, name).uses)
+                    .unwrap_or_default();
+                if receiver_identifiers(receiver).any(|name| {
+                    let scan = scan_body_lexical_facts(body, name);
+                    scan.uses.iter().chain(&parameter_uses).any(|offset| {
+                        scan.declarations.iter().any(|declaration| {
+                            declaration_scope_binds(
+                                declaration
+                                    .scope
+                                    .and_then(|frame| scan.scopes.get(frame).copied()),
+                                *offset,
+                            )
+                        })
+                    })
+                }) {
+                    return;
+                }
+            }
             if callback_parameter_count(callback) == Some(0) {
                 if let Some(statements) = function_body_statements_from_argument(callback) {
-                    collect_expect_assertions_from_statement_vec(
-                        statements,
-                        source,
-                        &context.nested(),
-                        out,
-                    );
+                    // An expression-bodied arrow returns its assertion to the
+                    // awaited chain, so it is not floating.
+                    let body = AssertionContext {
+                        expression_body: callback_is_expression_arrow(callback),
+                        ..context.nested()
+                    };
+                    collect_expect_assertions_from_statement_vec(statements, source, &body, out);
                 }
             } else if let Some(assertions) = callback_case_assertions(
                 callback,
@@ -960,6 +1087,7 @@ fn collect_nested_callback_assertions(
                 receiver_named_once: false,
                 receiver_only_called: false,
                 returned_to_runner: false,
+                expression_body: false,
                 table_consts: &table_consts,
             };
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
@@ -1136,12 +1264,32 @@ fn callback_is_async_or_generator(callback: &oxc_ast::ast::Argument<'_>) -> bool
     }
 }
 
+/// `true` for an expression-bodied arrow callback (`() => expect(p)...`).
+fn callback_is_expression_arrow(callback: &oxc_ast::ast::Argument<'_>) -> bool {
+    match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => arrow.expression,
+        _ => false,
+    }
+}
+
 /// `true` for a generator (or async generator) function callback.
 fn callback_is_generator(callback: &oxc_ast::ast::Argument<'_>) -> bool {
     matches!(
         callback,
         oxc_ast::ast::Argument::FunctionExpression(function) if function.generator
     )
+}
+
+/// The name a function-expression callback binds inside its own body.
+fn callback_function_expression_name<'a>(
+    callback: &'a oxc_ast::ast::Argument<'a>,
+) -> Option<&'a str> {
+    match callback {
+        oxc_ast::ast::Argument::FunctionExpression(function) => {
+            function.id.as_ref().map(|id| id.name.as_str())
+        }
+        _ => None,
+    }
 }
 
 /// The source text of an arrow or function callback's body.
@@ -1155,7 +1303,7 @@ fn callback_body_text<'s>(callback: &oxc_ast::ast::Argument<'_>, text: &'s str) 
 }
 
 /// The identifiers a `.then` receiver reads, so a body that re-declares one
-/// of them refuses the substitution.
+/// of them at a substitution or direct-reference site refuses the substitution.
 fn receiver_identifiers(receiver: &str) -> impl Iterator<Item = &str> {
     receiver
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
@@ -1342,6 +1490,34 @@ pub(crate) fn expect_assertion_from_expression(
         && has_dynamic_matcher_arg
         && matches!(matcher, "toBe" | "toEqual" | "toStrictEqual")
         && self_comparing_matcher_argument(outer_call, source, observed_expression.as_deref())
+    {
+        oracle_kind = OracleKind::RelationalCheck;
+        oracle_strength = OracleStrength::Weak;
+    }
+
+    // A top-level asymmetric matcher (`expect.any(String)`, `expect.anything()`,
+    // `expect.stringMatching(..)`, `expect.not.*`, `expect.objectContaining(..)`)
+    // matches a family of values, not the one the changed behavior produces, so
+    // the equality matcher that carries it is a partial check, not `exact_value`.
+    if !negated
+        && matches!(matcher, "toBe" | "toEqual" | "toStrictEqual")
+        && outer_call
+            .arguments
+            .first()
+            .is_some_and(is_top_level_asymmetric_matcher_argument)
+    {
+        oracle_kind = OracleKind::RelationalCheck;
+        oracle_strength = OracleStrength::Weak;
+    }
+    // An equality on a derived property of the changed value (`typeof f(x)`,
+    // `[f(x)].length`) observes the value's kind or a constant container size,
+    // which the changed behavior need not move; it is not an exact value check.
+    if !negated
+        && matches!(matcher, "toBe" | "toEqual" | "toStrictEqual")
+        && expect_call
+            .arguments
+            .first()
+            .is_some_and(is_derived_property_observation)
     {
         oracle_kind = OracleKind::RelationalCheck;
         oracle_strength = OracleStrength::Weak;
@@ -1662,6 +1838,10 @@ pub(crate) struct TypeScriptAssertionBindings {
     /// Custom matchers the file registers with `expect.extend` that pass
     /// only on strict equality (RIPR-SPEC-0262).
     strict_matchers: Vec<String>,
+    /// Whether the file is a module or a strict script, so a block-level
+    /// function declaration stays inside its block. A sloppy script (`.cjs`)
+    /// hoists it to the enclosing function scope (Annex B).
+    block_functions_are_lexical: bool,
 }
 
 /// What the identifier `expect` names in a test body (RIPR-SPEC-0243 rule 3).
@@ -1876,7 +2056,15 @@ impl TypeScriptAssertionBindings {
                 .collect(),
             ava_runner: self.ava_runner,
             strict_matchers: self.strict_matchers.clone(),
+            block_functions_are_lexical: self.block_functions_are_lexical,
         }
+    }
+
+    /// These bindings for a file whose block-function scoping is `lexical`
+    /// (a module or strict script) or hoisting (a sloppy script).
+    pub(crate) fn with_block_function_scope(mut self, lexical: bool) -> Self {
+        self.block_functions_are_lexical = lexical;
+        self
     }
 
     /// These bindings for a test registered through a callee whose root
@@ -2826,6 +3014,57 @@ fn bigint_zero_is_falsy(literal: &str) -> bool {
     u128::from_str_radix(digits, radix) != Ok(0)
 }
 
+/// True when the argument is a call rooted at the runner's `expect` namespace
+/// (`expect.any(..)`, `expect.not.stringContaining(..)`, ...): a Jest/Vitest
+/// asymmetric matcher. Parentheses and TS wrappers do not hide it.
+pub(crate) fn is_top_level_asymmetric_matcher_argument(arg: &Argument<'_>) -> bool {
+    let Some(expression) = arg.as_expression() else {
+        return false;
+    };
+    let mut current = expression.get_inner_expression();
+    let mut descended = false;
+    loop {
+        match current {
+            Expression::CallExpression(call) => {
+                descended = true;
+                current = call.callee.get_inner_expression();
+            }
+            Expression::StaticMemberExpression(member) => {
+                descended = true;
+                current = member.object.get_inner_expression();
+            }
+            Expression::Identifier(ident) => {
+                return descended && ident.name.as_str() == "expect";
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// `typeof <expr>` or `<array literal>.length`: the asserted value is the
+/// kind of the changed value or the size of a literal wrapper around it, not
+/// the value itself. A spread element makes the length data-dependent, so only
+/// a spread-free literal counts as constant.
+pub(crate) fn is_derived_property_observation(arg: &Argument<'_>) -> bool {
+    let Some(expression) = arg.as_expression() else {
+        return false;
+    };
+    match expression.get_inner_expression() {
+        Expression::UnaryExpression(unary) => unary.operator == oxc_ast::ast::UnaryOperator::Typeof,
+        Expression::StaticMemberExpression(member) => {
+            member.property.name.as_str() == "length"
+                && matches!(
+                    member.object.get_inner_expression(),
+                    Expression::ArrayExpression(array)
+                        if array.elements.iter().all(|element| {
+                            !matches!(element, oxc_ast::ast::ArrayExpressionElement::SpreadElement(_))
+                        })
+                )
+        }
+        _ => false,
+    }
+}
+
 /// RIPR-SPEC-0243 rule 9 (#8713): true when the matcher's single argument is
 /// the same token sequence as the `expect(...)` argument. Whitespace outside
 /// string literals is not part of the sequence (`expect(a).toBe( a )` is still
@@ -2883,24 +3122,80 @@ fn normalized_token_sequence(text: &str) -> String {
     out
 }
 
-/// `assert.equal(send.mock.callCount(), 1)` and
-/// `expect(send.mock.calls.length).toBe(1)` compare how many times a mock ran,
-/// not what it was called with. For a change to the arguments of a call the
-/// owner makes (a side-effect probe) they read like `toHaveBeenCalledTimes`,
-/// `mock_expectation` / weak, never the `exact_value` the equality matcher
-/// gives a computed result (#9684). A deleted call, or a value that decides
-/// how many calls run, is exactly what a count sees, so other families keep
-/// the assertion's own reading.
-pub(crate) fn mock_call_count_assertion(assertion: &TypeScriptAssertion) -> bool {
-    assertion.mock_payload.is_none()
-        && assertion
-            .observed_expression
-            .as_deref()
-            .is_some_and(is_mock_call_count_expression)
+/// Read count-only observations once per related test. The classifier owns
+/// the SideEffect/removed-counterpart boundary; extracted oracle evidence
+/// keeps its original source spelling and equality metadata (#10174).
+pub(crate) fn mock_call_count_assertions(test: &TypeScriptTest) -> Vec<bool> {
+    let observed: Vec<_> = test
+        .assertions
+        .iter()
+        .map(|assertion| {
+            assertion
+                .mock_payload
+                .is_none()
+                .then(|| assertion.observed_expression.clone())
+                .flatten()
+        })
+        .collect();
+    let count = observed.len();
+    let fallback: Vec<bool> = observed
+        .iter()
+        .map(|text| text.as_deref().is_some_and(is_mock_call_count_expression))
+        .collect();
+    parse_on_worker(
+        &test.file,
+        &test.body_text,
+        move |file, source, allocator| {
+            let mut counts = vec![false; count];
+            let empty = MockCountAliases::new();
+            let mut pending = Vec::new();
+            for (index, text) in observed.iter().enumerate() {
+                let Some(text) = text else {
+                    continue;
+                };
+                let Ok(expression) =
+                    Parser::new(allocator, text, source_type_for(file)).parse_expression()
+                else {
+                    continue;
+                };
+                let path = mock_count_path(&expression, &empty, u32::MAX, 0);
+                if mock_count_suffix(&path) {
+                    counts[index] = true;
+                } else if path.len() <= 3
+                    && matches!(path.first(), Some(MockCountPart::Property(_)))
+                {
+                    // Only expanding the root can change a short unresolved
+                    // suffix. An argument pin's longer non-count suffix cannot
+                    // become a count through any alias, so it needs no body parse.
+                    pending.push(index);
+                }
+            }
+            if pending.is_empty() {
+                return counts;
+            }
+            let aliases = mock_count_aliases(file, source, allocator);
+            for index in pending {
+                let Some(text) = &observed[index] else {
+                    continue;
+                };
+                let Ok(expression) =
+                    Parser::new(allocator, text, source_type_for(file)).parse_expression()
+                else {
+                    continue;
+                };
+                counts[index] =
+                    mock_count_suffix(&mock_count_path(&expression, &aliases, u32::MAX, 0));
+            }
+            counts
+        },
+    )
+    .unwrap_or(fallback)
 }
 
 /// `<path>.mock.callCount()` or `<path>.mock.calls.length` on a plain
-/// identifier path (no optional chaining, indexing or alias).
+/// identifier path (no optional chaining, indexing or alias). Used only
+/// when the parse worker refuses, so a worker failure cannot restore the
+/// exact argument credit this demotion exists to withhold.
 fn is_mock_call_count_expression(text: &str) -> bool {
     let text = text.trim();
     let Some(path) = text
@@ -2916,6 +3211,275 @@ fn is_mock_call_count_expression(text: &str) -> bool {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
         })
+}
+
+#[cfg(test)]
+pub(crate) fn mock_call_count_assertion(
+    assertion: &TypeScriptAssertion,
+    test: &TypeScriptTest,
+) -> bool {
+    test.assertions
+        .iter()
+        .position(|found| found == assertion)
+        .and_then(|index| mock_call_count_assertions(test).get(index).copied())
+        .unwrap_or(false)
+}
+
+#[derive(Clone)]
+enum MockCountPart {
+    Property(String),
+    Call,
+    Opaque,
+}
+
+type MockCountAliases = std::collections::BTreeMap<String, (Vec<MockCountPart>, u32)>;
+
+/// A unique callback-local constant denotes the same value at every use.
+/// Resolve that binding identity independently of source-text mentions in
+/// unused closures. This only withholds argument credit; it establishes no
+/// execution order or admission. Initializer dependencies resolve independently
+/// of lexical order, and nested shadowing refuses the name entirely. A callback's
+/// constants retain their function or unconditional block's lexical scope.
+fn mock_count_aliases(file: &Path, source: &str, allocator: &Allocator) -> MockCountAliases {
+    use oxc_ast_visit::{Visit, walk};
+    struct Constant {
+        name: String,
+        initializer: String,
+        start: u32,
+        end: u32,
+        scope: oxc_span::Span,
+    }
+    struct Facts<'s> {
+        source: &'s str,
+        bindings: std::collections::BTreeMap<String, usize>,
+        reads: std::collections::BTreeMap<String, Vec<u32>>,
+        constants: Vec<Constant>,
+    }
+    impl Facts<'_> {
+        fn collect_straight_line_constants(
+            &mut self,
+            statements: &[Statement<'_>],
+            scope: oxc_span::Span,
+        ) {
+            for statement in statements {
+                if let Statement::BlockStatement(block) = statement {
+                    self.collect_straight_line_constants(&block.body, block.span);
+                    continue;
+                }
+                let Statement::VariableDeclaration(declaration) = statement else {
+                    continue;
+                };
+                if !declaration.kind.is_const() {
+                    continue;
+                }
+                for declarator in &declaration.declarations {
+                    let BindingPattern::BindingIdentifier(name) = &declarator.id else {
+                        continue;
+                    };
+                    let Some(init) = &declarator.init else {
+                        continue;
+                    };
+                    let span = init.span();
+                    let Some(initializer) = self.source.get(span.start as usize..span.end as usize)
+                    else {
+                        continue;
+                    };
+                    self.constants.push(Constant {
+                        name: name.name.to_string(),
+                        initializer: initializer.to_string(),
+                        start: declarator.span.start,
+                        end: declarator.span.end,
+                        scope,
+                    });
+                }
+            }
+        }
+    }
+    impl<'a> Visit<'a> for Facts<'_> {
+        fn visit_binding_identifier(&mut self, node: &oxc_ast::ast::BindingIdentifier<'a>) {
+            *self.bindings.entry(node.name.to_string()).or_default() += 1;
+        }
+
+        fn visit_identifier_reference(&mut self, node: &oxc_ast::ast::IdentifierReference<'a>) {
+            self.reads
+                .entry(node.name.to_string())
+                .or_default()
+                .push(node.span.start);
+        }
+
+        fn visit_function_body(&mut self, body: &oxc_ast::ast::FunctionBody<'a>) {
+            // Standalone lexical blocks preserve the straight-line contract.
+            // Do not descend through conditionals or loop/header declarations.
+            self.collect_straight_line_constants(&body.statements, body.span);
+            walk::walk_function_body(self, body);
+        }
+    }
+    let parsed = Parser::new(allocator, source, source_type_for(file)).parse();
+    if !parsed.errors.is_empty() {
+        return Default::default();
+    }
+    let mut facts = Facts {
+        source,
+        bindings: Default::default(),
+        reads: Default::default(),
+        constants: Vec::new(),
+    };
+    facts.visit_program(&parsed.program);
+    let mut aliases = MockCountAliases::new();
+    let empty = MockCountAliases::new();
+    for constant in &facts.constants {
+        if facts.bindings.get(&constant.name) != Some(&1)
+            || facts.reads.get(&constant.name).is_some_and(|reads| {
+                reads
+                    .iter()
+                    .any(|at| *at < constant.scope.start || *at >= constant.scope.end)
+            })
+        {
+            // A unique spelling can still name an outer value outside this
+            // lexical scope. Refuse it rather than let an unused block or
+            // sibling closure's count alias weaken an unrelated argument pin.
+            continue;
+        }
+        let Ok(init) =
+            Parser::new(allocator, &constant.initializer, source_type_for(file)).parse_expression()
+        else {
+            continue;
+        };
+        let path = mock_count_path(&init, &empty, constant.start, 0);
+        aliases.insert(constant.name.clone(), (path, constant.end));
+    }
+    resolve_mock_count_aliases(aliases)
+}
+
+/// Each path has at most one root alias dependency. Resolve that graph once,
+/// rather than treating source order as callback execution order or repeatedly
+/// parsing initializers. Cycles remain unresolved; long acyclic chains need no
+/// recursive stack and retain the same bounded path suffix as direct paths.
+fn resolve_mock_count_aliases(raw: MockCountAliases) -> MockCountAliases {
+    let mut ready = std::collections::VecDeque::new();
+    let mut waiting = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for (name, (path, _)) in &raw {
+        if let Some(MockCountPart::Property(root)) = path.first()
+            && raw.contains_key(root)
+        {
+            waiting.entry(root.clone()).or_default().push(name.clone());
+        } else {
+            ready.push_back(name.clone());
+        }
+    }
+    let mut resolved = MockCountAliases::new();
+    while let Some(name) = ready.pop_front() {
+        let Some((path, end)) = raw.get(&name) else {
+            continue;
+        };
+        let mut expanded = match path.first() {
+            Some(MockCountPart::Property(root)) => resolved
+                .get(root)
+                .map(|(prefix, _)| {
+                    let mut expanded = prefix.clone();
+                    expanded.extend_from_slice(&path[1..]);
+                    expanded
+                })
+                .unwrap_or_else(|| path.clone()),
+            _ => path.clone(),
+        };
+        if expanded.len() > 64 {
+            expanded.drain(..expanded.len() - 64);
+            if let Some(first) = expanded.first_mut() {
+                *first = MockCountPart::Opaque;
+            }
+        }
+        resolved.insert(name.clone(), (expanded, *end));
+        if let Some(dependents) = waiting.remove(&name) {
+            ready.extend(dependents);
+        }
+    }
+    resolved
+}
+
+fn mock_count_suffix(path: &[MockCountPart]) -> bool {
+    use MockCountPart::{Call, Property};
+    matches!(path, [.., Property(mock), Property(calls), Property(length)] if mock == "mock" && calls == "calls" && length == "length")
+        || matches!(path, [.., Property(mock), Property(count), Call] if mock == "mock" && count == "callCount")
+}
+
+/// Retain a bounded suffix, rather than refusing long receiver paths and
+/// resurrecting their exact credit. A property literally named `()` is not
+/// a call; opaque receivers and dynamic keys are separate path segments.
+fn mock_count_path(
+    expression: &Expression<'_>,
+    aliases: &MockCountAliases,
+    before: u32,
+    depth: usize,
+) -> Vec<MockCountPart> {
+    use MockCountPart::{Call, Opaque, Property};
+    if depth > 64 {
+        return vec![Opaque];
+    }
+    let (object, key) = match expression.get_inner_expression() {
+        Expression::Identifier(name) => {
+            return aliases
+                .get(name.name.as_str())
+                .filter(|(_, end)| *end < before)
+                .map_or_else(
+                    || vec![Property(name.name.to_string())],
+                    |(path, _)| path.clone(),
+                );
+        }
+        Expression::StaticMemberExpression(member) => {
+            (&member.object, Property(member.property.name.to_string()))
+        }
+        Expression::ComputedMemberExpression(member) => {
+            (&member.object, mock_count_key(&member.expression))
+        }
+        Expression::CallExpression(call) => (
+            &call.callee,
+            if call.arguments.is_empty() {
+                Call
+            } else {
+                Opaque
+            },
+        ),
+        Expression::ChainExpression(chain) => match &chain.expression {
+            oxc_ast::ast::ChainElement::StaticMemberExpression(member) => {
+                (&member.object, Property(member.property.name.to_string()))
+            }
+            oxc_ast::ast::ChainElement::ComputedMemberExpression(member) => {
+                (&member.object, mock_count_key(&member.expression))
+            }
+            oxc_ast::ast::ChainElement::CallExpression(call) => (
+                &call.callee,
+                if call.arguments.is_empty() {
+                    Call
+                } else {
+                    Opaque
+                },
+            ),
+            oxc_ast::ast::ChainElement::TSNonNullExpression(inner) => {
+                return mock_count_path(&inner.expression, aliases, before, depth + 1);
+            }
+            _ => return vec![Opaque],
+        },
+        _ => return vec![Opaque],
+    };
+    let mut path = mock_count_path(object, aliases, before, depth + 1);
+    if path.len() >= 64 {
+        path.remove(0);
+        if let Some(first) = path.first_mut() {
+            // The retained front is now a member, not a lexical root. Do
+            // not invent alias dependencies from a truncated receiver.
+            *first = Opaque;
+        }
+    }
+    path.push(key);
+    path
+}
+
+fn mock_count_key(expression: &Expression<'_>) -> MockCountPart {
+    match expression.get_inner_expression() {
+        Expression::StringLiteral(key) => MockCountPart::Property(key.value.to_string()),
+        _ => MockCountPart::Opaque,
+    }
 }
 
 pub(crate) fn mock_payload_from_assertion(
@@ -3257,6 +3821,15 @@ pub(crate) fn is_literal_container_argument(arg: &Argument<'_>) -> bool {
         Argument::ObjectExpression(object) => literal_container_object(object),
         _ => false,
     }
+}
+
+/// An array or object literal built only from [`is_literal_container_argument`]'s
+/// literal vocabulary, as an expression (a table-row cell).
+pub(crate) fn is_literal_container_expression(value: &Expression<'_>) -> bool {
+    matches!(
+        value,
+        Expression::ArrayExpression(_) | Expression::ObjectExpression(_)
+    ) && literal_container_value(value)
 }
 
 fn literal_container_array(array: &oxc_ast::ast::ArrayExpression<'_>) -> bool {

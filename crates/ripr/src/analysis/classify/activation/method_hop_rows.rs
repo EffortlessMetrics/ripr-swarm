@@ -101,10 +101,9 @@ fn no_receiver_cell_or_pseudo_parameter_reaches_an_owner_row() -> Result<(), Str
 #[test]
 fn one_unreadable_receiver_argument_withdraws_every_row() -> Result<(), String> {
     for calls in [
-        // A non-literal tuple field.
-        "        check(\"215 B\", ByteSize(215), true);\n        let n = 3;\n        check(\"x\", ByteSize(n), true);",
-        // A non-literal constructor argument.
-        "        check(\"215 B\", ByteSize(215), true);\n        let n = 3;\n        check(\"x\", ByteSize::kib(n), true);",
+        // A name with no `let` in the test body.
+        "        check(\"215 B\", ByteSize(215), true);\n        check(\"x\", ByteSize(n), true);",
+        "        check(\"215 B\", ByteSize(215), true);\n        check(\"x\", ByteSize::kib(n), true);",
         // A constructor argument that is an expression.
         "        check(\"215 B\", ByteSize(215), true);\n        check(\"x\", ByteSize::kib(1 + 1), true);",
         // A second constructor path the evaluator cannot read.
@@ -207,5 +206,103 @@ fn a_test_local_binding_of_the_constructor_name_binds_no_row() -> Result<(), Str
         owner_rows(&source(HELPER_CALL, calls))?,
         Vec::<Vec<(String, String)>>::new()
     );
+    Ok(())
+}
+
+#[test]
+fn one_immutable_let_literal_is_a_receiver_constructor_argument() -> Result<(), String> {
+    // `let count = 1; ByteSize::kib(count)` builds the same receiver as
+    // `ByteSize::kib(1)`; the tuple form reads the same way.
+    let calls = "        let count = 1;\n        check(\"215 B\", ByteSize(215), true);\n        check(\"1 big\", ByteSize::kib(count), true);";
+    assert_eq!(
+        owner_rows(&source(HELPER_CALL, calls))?,
+        vec![row("215", "true"), row("1024", "true")]
+    );
+    let calls = "        let n = 7;\n        check(\"7 B\", ByteSize(n), true);";
+    assert_eq!(
+        owner_rows(&source(HELPER_CALL, calls))?,
+        vec![row("7", "true")]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_let_that_may_hold_another_value_withdraws_every_row() -> Result<(), String> {
+    let call = "        check(\"1 big\", ByteSize::kib(count), true);";
+    let cases = [
+        // `mut`.
+        format!("        let mut count = 1;\n{call}"),
+        // Reassigned.
+        format!("        let mut count = 1;\n        count = 2;\n{call}"),
+        // Shadowed by a second `let`, computed or literal.
+        format!("        let count = 1;\n        let count = count + 1;\n{call}"),
+        format!("        let count = 1;\n        let count = 2;\n{call}"),
+        // Non-literal initializers.
+        format!("        let count = compute();\n{call}"),
+        format!("        let count = 1 + 1;\n{call}"),
+        format!("        let count = 1u64;\n{call}"),
+        format!("        let count = -1;\n{call}"),
+        format!("        let count = \"1\";\n{call}"),
+        // A tuple pattern, `for`, `if let` and closure binding of the name.
+        format!("        let (count, _) = (1, 2);\n{call}"),
+        format!("        for count in [1, 2] {{\n    {call}\n        }}"),
+        format!("        if let Some(count) = Some(1) {{\n    {call}\n        }}"),
+        format!(
+            "        let run = |count: u64| count;\n        let _ = run(2);\n        let count = 1;\n{call}"
+        ),
+    ];
+    for calls in cases {
+        assert_eq!(
+            owner_rows(&source(HELPER_CALL, &calls))?,
+            Vec::<Vec<(String, String)>>::new(),
+            "{calls}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_let_bound_from_a_parameter_or_outer_item_withdraws_every_row() -> Result<(), String> {
+    let call = "        check(\"1 big\", ByteSize::kib(count), true);";
+    // The test function's own parameter named `count` is not a literal.
+    let source = source(HELPER_CALL, &format!("        let count = 1;\n{call}"))
+        .replace("fn t() {", "fn t(count: u64) {");
+    assert!(owner_rows(&source)?.is_empty());
+    // Initialised from another binding.
+    let calls = format!("        let seed = 1;\n        let count = seed;\n{call}");
+    assert!(owner_rows(&source_of(&calls))?.is_empty());
+    // The name is a module constant, not a test `let`.
+    let source = source_of(call).replace(
+        "pub struct ByteSize",
+        "pub const count: u64 = 1;\npub struct ByteSize",
+    );
+    assert!(owner_rows(&source)?.is_empty());
+    Ok(())
+}
+
+fn source_of(calls: &str) -> String {
+    source(HELPER_CALL, calls)
+}
+
+#[test]
+fn a_let_in_a_closed_inner_block_does_not_bind_a_later_use() -> Result<(), String> {
+    // `count` at the call is the module constant, not the block's `let`.
+    let calls = "        {\n            let count = 1;\n            let _ = count;\n        }\n        check(\"1 big\", ByteSize::kib(count), true);";
+    let source = source_of(calls).replace(
+        "pub struct ByteSize",
+        "pub const count: u64 = 3;\npub struct ByteSize",
+    );
+    assert!(owner_rows(&source)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_let_after_the_use_does_not_bind_it() -> Result<(), String> {
+    let calls = "        check(\"1 big\", ByteSize::kib(count), true);\n        let count = 1;\n        let _ = count;";
+    let source = source_of(calls).replace(
+        "pub struct ByteSize",
+        "pub const count: u64 = 3;\npub struct ByteSize",
+    );
+    assert!(owner_rows(&source)?.is_empty());
     Ok(())
 }

@@ -1,2 +1,0 @@
-<!-- section: Changed -->
-- The workflow from `ripr init --ci github` now adds an `Explain failed SARIF upload` step that runs only when a SARIF upload step failed (its `continue-on-error` kept the job green and hid it): a `RIPR SARIF upload failed` warning names the usual causes (a private repository without GitHub Code Security, code scanning unavailable, a read-only fork or Dependabot token) and the fix (`RIPR_UPLOAD_SARIF: "false"`); `docs/CI.md` and `docs/QUICKSTART.md` now state the code-scanning requirement (#11145).

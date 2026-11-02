@@ -222,6 +222,16 @@ fn predicate_flow_sinks(
     owner_fn: Option<&FunctionSummary>,
     owner: Option<SymbolId>,
 ) -> Vec<FlowSinkFact> {
+    // #10875: the comparison's value is bound by a `let` nothing reads, so no
+    // later return, error or field can depend on it.
+    if let Some(binding) = dead_let_bound_comparison(probe, owner_fn) {
+        return vec![flow_sink(
+            FlowSinkKind::Unknown,
+            format!("binding `{binding}` is never read; propagation unknown"),
+            probe.location.line,
+            owner,
+        )];
+    }
     if let Some(error) = first_error_return(owner_fn, probe.location.line) {
         return vec![flow_sink(
             FlowSinkKind::ErrorVariant,
@@ -292,6 +302,111 @@ fn predicate_flow_sinks(
         )];
     }
     Vec::new()
+}
+
+/// The binding name (`_` for a wildcard) when the changed line is exactly one
+/// `let <name>[: T] = <comparison>;` statement in the probe's owner and that
+/// name occurs nowhere else in the owner, so the comparison's value is dead.
+///
+/// Fails closed: the initializer must be the bare comparison (a call or other
+/// wrapper may act on it), the pattern a plain identifier or `_`, and any other
+/// occurrence of the identifier in the owner text, including a shadowing
+/// rebind, a macro or closure body, an inline format argument or a comment,
+/// counts as a use. The scan is over the raw owner text, not a masked copy,
+/// so string-embedded `{name}` captures are uses too.
+fn dead_let_bound_comparison(probe: &Probe, owner_fn: Option<&FunctionSummary>) -> Option<String> {
+    use crate::analysis::syntax::parse_clean_source_file;
+    use ra_ap_syntax::{
+        AstNode,
+        ast::{self, HasName},
+    };
+
+    let owner = owner_fn?;
+    if probe.owner.as_ref() != Some(&owner.id) || !probe.location.file.ends_with(&owner.file) {
+        return None;
+    }
+    let code = |text: &str| {
+        crate::analysis::language::mask_rust_comments_and_strings(text)
+            .trim()
+            .to_string()
+    };
+    let expression = code(&probe.expression);
+    let offset = probe.location.line.checked_sub(owner.start_line)?;
+    let parse = parse_clean_source_file(&owner.body)?;
+    let mut lets = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::LetStmt::cast)
+        .filter(|statement| {
+            let start = usize::from(statement.syntax().text_range().start());
+            owner.body.get(..start).is_some_and(|before| {
+                before.bytes().filter(|byte| *byte == b'\n').count() == offset
+            })
+        });
+    let statement = lets.next()?;
+    if lets.next().is_some()
+        || statement.let_else().is_some()
+        || statement.syntax().text().to_string().contains('\n')
+    {
+        return None;
+    }
+    let mut initializer = statement.initializer()?;
+    while let ast::Expr::ParenExpr(parenthesized) = initializer.clone() {
+        initializer = parenthesized.expr()?;
+    }
+    let ast::Expr::BinExpr(binary) = &initializer else {
+        return None;
+    };
+    if !matches!(binary.op_kind(), Some(ast::BinaryOp::CmpOp(_))) {
+        return None;
+    }
+    let comparison = code(&initializer.syntax().text().to_string());
+    // The probe is the comparison itself or the whole `let` statement; a larger
+    // expression that merely encloses the `let` (a block condition) is that
+    // expression's own sink, not this binding's.
+    let statement_text = code(&statement.syntax().text().to_string());
+    let probe_text = expression.trim_end_matches(';').trim_end();
+    if probe_text.is_empty()
+        || (probe_text != comparison.trim_end_matches(';').trim_end()
+            && probe_text != statement_text.trim_end_matches(';').trim_end())
+    {
+        return None;
+    }
+    // The same comparison text elsewhere on the line (an `if` condition ahead
+    // of the `let`) may be the changed probe, so the line must hold it once.
+    let line = owner.body.lines().nth(offset)?;
+    if code(line).matches(comparison.as_str()).count() != 1 {
+        return None;
+    }
+    match statement.pat()? {
+        ast::Pat::WildcardPat(_) => Some("_".to_string()),
+        ast::Pat::IdentPat(ident) if ident.ref_token().is_none() && ident.at_token().is_none() => {
+            let name = ident.name()?.text().to_string();
+            // `r#flag` is read as plain `flag`, a spelling the scan below
+            // would not count.
+            if name.starts_with("r#") {
+                return None;
+            }
+            let bytes = owner.body.as_bytes();
+            let uses = owner
+                .body
+                .match_indices(name.as_str())
+                .filter(|(start, text)| {
+                    let before_ok = *start == 0
+                        || !bytes
+                            .get(start - 1)
+                            .is_some_and(|byte| is_ident_byte(*byte));
+                    let after_ok = !bytes
+                        .get(start + text.len())
+                        .is_some_and(|byte| is_ident_byte(*byte));
+                    before_ok && after_ok
+                })
+                .count();
+            (uses == 1).then_some(name)
+        }
+        _ => None,
+    }
 }
 
 /// Whether the plain `if` / `else` that starts on `probe_line` (one line or
@@ -902,6 +1017,67 @@ fn chain_repeats_adjacent_value(body: &str, value_offset: usize) -> bool {
     false
 }
 
+/// Whether every `{ .. }` arm on one line holds the same statement, so the
+/// predicate decides nothing the next line can observe.
+///
+/// Braces are located on the comment-and-string-masked copy (same length, so
+/// the offsets line up), but the arms are compared as written: masking blanks
+/// string literals, which would make `r = "yes";` and `r = "low";` look equal.
+/// A nested block inside an arm (`if a { if b { .. } else { .. } } else { .. }`)
+/// is not judged: the outer arms say nothing about the inner predicate, so the
+/// reading declines and the caller keeps its established behavior.
+fn inline_arms_all_agree(line: &str) -> bool {
+    let masked = crate::analysis::language::mask_rust_comments_and_strings(line);
+    if masked.len() != line.len() {
+        return false;
+    }
+    let mut arms = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, ch) in masked.char_indices() {
+        match ch {
+            '{' => {
+                if depth == 0 {
+                    start = index + 1;
+                } else {
+                    return false;
+                }
+                depth += 1;
+            }
+            '}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    let Some(arm) = line.get(start..index) else {
+                        return false;
+                    };
+                    arms.push(arm.trim().trim_end_matches(';').trim());
+                }
+            }
+            _ => {}
+        }
+    }
+    arms.split_first().is_some_and(|(first, rest)| {
+        !first.is_empty() && !rest.is_empty() && rest.iter().all(|arm| arm == first)
+    })
+}
+
+/// Whether the predicate line of `owner_fn` at `probe_line` is a one-line `if`
+/// whose arms all hold the same statement, so the condition decides nothing a
+/// test can observe. The shared owner of that reading for diff and repo seams
+/// (#10880, #12053).
+pub(in crate::analysis) fn predicate_line_arms_all_agree(
+    owner_fn: Option<&FunctionSummary>,
+    probe_line: usize,
+) -> bool {
+    owner_fn.is_some_and(|function| {
+        function
+            .body
+            .lines()
+            .nth(probe_line.saturating_sub(function.start_line))
+            .is_some_and(inline_arms_all_agree)
+    })
+}
+
 fn next_branch_value(
     owner_fn: Option<&FunctionSummary>,
     probe_line: usize,
@@ -911,6 +1087,14 @@ fn next_branch_value(
     let start_index = probe_line.saturating_sub(function.start_line);
     let adjacent_offset = start_index + 1;
     if chain_repeats_adjacent_value(&function.body, adjacent_offset) {
+        return None;
+    }
+    // A one-line `if` whose arms hold the same statement (`if c { r = 1; }
+    // else { r = 1; }`) decides nothing the next line can observe, so that
+    // line is not the predicate's produced value (#10880; #9843 for the tail
+    // form). Arms that differ keep the adjacency rule: `let r = if c { 1 }
+    // else { 0 };` really does feed `r` to the next line.
+    if predicate_line_arms_all_agree(owner_fn, probe_line) {
         return None;
     }
     function
@@ -973,7 +1157,7 @@ fn first_field_construction(
     })
 }
 
-fn flow_sink(
+pub(super) fn flow_sink(
     kind: FlowSinkKind,
     text: impl Into<String>,
     line: usize,
@@ -2009,6 +2193,61 @@ mod tests {
     }
 
     #[test]
+    fn identical_inline_arms_do_not_lend_the_next_line_as_a_branch_value() {
+        for tail in ["r + 0", "r * 2", "r.max(0)"] {
+            let body = format!(
+                "pub fn f(x: i32) -> i32 {{\n    let r;\n    if x > 5 {{ r = 1; }} else {{ r = 1; }}\n    {tail}\n}}"
+            );
+            let owner = tail_owner(&body);
+            let probe = probe(ProbeFamily::Predicate, "x > 5", 3);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert!(
+                !sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+                "`{body}` must not produce a return-value sink: {sinks:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn three_identical_inline_arms_lose_the_sink_and_a_differing_last_arm_keeps_it() {
+        let identical = "pub fn f(c: bool, d: bool) -> i32 {\n    let r;\n    if c { r = 1; } else if d { r = 1; } else { r = 1; }\n    r + 0\n}";
+        let owner = tail_owner(identical);
+        let first = probe(ProbeFamily::Predicate, "c", 3);
+        assert!(local_flow_sinks(&first, Some(&owner)).is_empty());
+
+        // The last arm differs, so the condition still decides what `r` is.
+        let differing = "pub fn f(c: bool, d: bool) -> i32 {\n    let r;\n    if c { r = 1; } else if d { r = 1; } else { r = 2; }\n    r + 0\n}";
+        let owner = tail_owner(differing);
+        let second = probe(ProbeFamily::Predicate, "c", 3);
+        assert_eq!(local_flow_sinks(&second, Some(&owner)).len(), 1);
+    }
+
+    #[test]
+    fn differing_inline_arms_and_closures_keep_the_adjacent_value() {
+        for (body, line) in [
+            (
+                "pub fn f(x: i32) -> i32 {\n    let r = if x > 5 { 1 } else { 0 };\n    r + 0\n}",
+                2,
+            ),
+            (
+                "pub fn f(x: u32) -> u32 {\n    let _unused = || x > 1;\n    7\n}",
+                2,
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "x > 5", line);
+
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+
+            assert_eq!(sinks.len(), 1, "`{body}`: {sinks:?}");
+        }
+    }
+
+    #[test]
     fn later_arms_that_only_agree_with_each_other_keep_the_first_sink() {
         let owner = tail_owner(
             "pub fn f(x: i32) -> i32 {\n    if x > 1 { 1 } else if x > 0 { 2 } else { 2 }\n}",
@@ -2879,6 +3118,114 @@ mod tests {
             "pub fn parse_code(c: Option<u32>) -> Result<u32, CodeError> {\n    let total = 1;\n    c.ok_or(CodeError::NotDigit)?;\n    Ok(total)\n}",
         );
         assert!(question_mark_returns_from_owner(&probe, Some(&owner)));
+    }
+
+    /// #10875: a comparison bound by a `let` whose name nothing reads cannot
+    /// influence the owner's value, so the later literal is not its sink.
+    #[test]
+    fn dead_let_bound_comparison_has_no_value_sink() {
+        for (body, expression) in [
+            (
+                "pub fn score(n: u32) -> u32 {\n    let _flag = n == 5;\n    7\n}",
+                "n == 5",
+            ),
+            (
+                "pub fn score(n: u32) -> u32 {\n    let _flag = n == 5;\n    7\n}",
+                "let _flag = n == 5;",
+            ),
+            (
+                "pub fn score(n: u32) -> u32 {\n    let mut unused = (n == 5);\n    7\n}",
+                "n == 5",
+            ),
+            (
+                "pub fn score(n: u32) -> u32 {\n    let _: bool = n == 5;\n    7\n}",
+                "n == 5",
+            ),
+            (
+                "pub fn score(n: u32) -> u32 {\n    let _ = n == 5;\n    7\n}",
+                "n == 5",
+            ),
+            (
+                "pub fn score(n: u32) -> u32 {\n    let _flag = n == 5;\n    let _other = 1;\n    7\n}",
+                "n == 5",
+            ),
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, expression, 2);
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                !sinks.is_empty() && sinks.iter().all(|sink| sink.kind == FlowSinkKind::Unknown),
+                "{body}: {sinks:?}"
+            );
+            let evidence = propagation_evidence_with_witness(&probe, &sinks, None);
+            assert_eq!(evidence.state, StageState::Unknown, "{body}");
+        }
+    }
+
+    /// #10875 controls: any later occurrence of the name (a read, a shadowing
+    /// rebind, a macro or closure capture, an inline format argument) keeps the
+    /// binding live, as do shapes the dead-binding rule does not admit.
+    #[test]
+    fn read_or_unproven_let_bound_comparison_keeps_its_value_sink() {
+        for body in [
+            // `_`-prefixed but read.
+            "pub fn score(n: u32) -> u32 {\n    let _flag = n == 5;\n    if _flag { 7 } else { 8 }\n}",
+            "pub fn score(n: u32) -> u32 {\n    let flag = n == 5;\n    if flag { 7 } else { 8 }\n}",
+            // A rebind of the name counts as a use (conservative).
+            "pub fn score(n: u32) -> u32 {\n    let flag = n == 5;\n    let flag = 1;\n    flag + 6\n}",
+            // Macro and closure uses.
+            "pub fn score(n: u32) -> u32 {\n    let flag = n == 5;\n    assert!(flag);\n    7\n}",
+            "pub fn score(n: u32) -> u32 {\n    let flag = n == 5;\n    let f = || flag;\n    7\n}",
+            "pub fn score(n: u32) -> String {\n    let flag = n == 5;\n    format!(\"{flag}\")\n}",
+            // The initializer is not the bare comparison.
+            "pub fn score(n: u32) -> u32 {\n    let _g = guard(n == 5);\n    7\n}",
+            // A raw identifier is read as its plain spelling.
+            "pub fn score(n: u32) -> u32 {\n    let r#flag = n == 5;\n    if flag { 7 } else { 8 }\n}",
+            // The same comparison also guards the line, so the probe may be
+            // the `if` condition rather than the `let`.
+            "pub fn score(n: u32) -> u32 {\n    if n == 5 { let _t = n == 5; return 1; }\n    7\n}",
+        ] {
+            let owner = tail_owner(body);
+            let probe = probe(ProbeFamily::Predicate, "n == 5", 2);
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks.iter().all(|sink| !sink.text.contains("never read")),
+                "{body}: {sinks:?}"
+            );
+        }
+        // The `_`-prefixed-but-read binding keeps its returned-value sink.
+        let owner = tail_owner(
+            "pub fn score(n: u32) -> u32 {\n    let _flag = n == 5;\n    if _flag { 7 } else { 8 }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "n == 5", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks
+                .iter()
+                .any(|sink| sink.kind == FlowSinkKind::ReturnValue),
+            "{sinks:?}"
+        );
+    }
+
+    /// An enclosing block condition that holds a dead `let` keeps its own value
+    /// flow: the nested statement's dead binding is not the outer probe's sink.
+    #[test]
+    fn outer_condition_with_a_nested_dead_let_keeps_its_own_flow() {
+        let owner = tail_owner(
+            "pub fn score(n: u32) -> u32 {\n    if { let unused = n == 5; n > 0 } { 7 } else { 8 }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "{ let unused = n == 5; n > 0 }", 2);
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+        assert!(
+            sinks.iter().all(|sink| !sink.text.contains("never read")),
+            "{sinks:?}"
+        );
+        // Control: the nested statement's own comparison is still dead.
+        let inner = super::dead_let_bound_comparison(
+            &self::probe(ProbeFamily::Predicate, "n == 5", 2),
+            Some(&owner),
+        );
+        assert_eq!(inner.as_deref(), Some("unused"));
     }
 
     fn tail_owner(body: &str) -> FunctionSummary {

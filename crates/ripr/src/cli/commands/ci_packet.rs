@@ -78,7 +78,7 @@ pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
     let options = parse_ci_packet_options(args)?;
     crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let exe = std::env::current_exe()
-        .map_err(|err| format!("{COMMAND} cannot locate the running ripr binary: {err}"))?;
+        .map_err(|err| format!("{COMMAND} cannot locate the running ripr binary: {err}; install ripr again, or run it by its full path"))?;
     let settings = CiSettings::from_env()?;
     let mut run = PacketRun {
         root: options.root,
@@ -99,7 +99,7 @@ pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
         .collect::<Vec<_>>();
     if !unknown.is_empty() {
         return Err(format!(
-            "{COMMAND}: unknown --step {}; the steps are: {}",
+            "{COMMAND}: unknown --step {}; the steps are: {}; pass one of those names to --step",
             unknown.join(", "),
             run.seen
                 .iter()
@@ -204,10 +204,10 @@ impl CiSettings {
             Ok(Value::Null)
         } else {
             fs::read(&event_path)
-                .map_err(|err| format!("cannot read GITHUB_EVENT_PATH {event_path}: {err}"))
+                .map_err(|err| format!("cannot read GITHUB_EVENT_PATH {event_path}: {err}; run inside a GitHub Actions pull_request job, or unset GITHUB_EVENT_PATH"))
                 .and_then(|bytes| {
                     serde_json::from_slice::<Value>(&bytes)
-                        .map_err(|err| format!("GITHUB_EVENT_PATH {event_path} is not JSON: {err}"))
+                        .map_err(|err| format!("GITHUB_EVENT_PATH {event_path} is not JSON: {err}; point GITHUB_EVENT_PATH at the event payload file GitHub Actions provides"))
                 })
         };
         let mut settings = Self::from_event(event.as_ref().unwrap_or(&Value::Null));
@@ -241,7 +241,7 @@ impl CiSettings {
                 .map(|label| match label {
                     Value::Object(map) => Ok(map.get("name").cloned().unwrap_or(Value::Null)),
                     Value::Null => Ok(Value::Null),
-                    _ => Err("a pull_request label is not an object".to_string()),
+                    _ => Err("a pull_request label is not an object; check GITHUB_EVENT_PATH points at an unmodified pull_request event payload".to_string()),
                 })
                 .collect(),
             Some(Value::Object(map)) => Ok(map
@@ -285,7 +285,7 @@ fn parse_pilot_timeout_ms(value: &str) -> Result<Option<u64>, String> {
     match value.parse::<u64>() {
         Ok(ms) if ms > 0 => Ok(Some(ms)),
         _ => Err(format!(
-            "{COMMAND}: RIPR_PILOT_TIMEOUT_MS must be a positive integer of milliseconds; got {value:?}"
+            "{COMMAND}: RIPR_PILOT_TIMEOUT_MS must be a positive integer of milliseconds; got {value:?}; set it to whole milliseconds such as 600000, or unset it"
         )),
     }
 }
@@ -362,22 +362,22 @@ impl PacketRun {
 
     fn mkdir(&self, relative: &str) -> StageResult {
         fs::create_dir_all(self.path(relative))
-            .map_err(|err| format!("cannot create {relative}: {err}"))
+            .map_err(|err| format!("cannot create {relative}: {err}; check you can write under the output directory, then rerun"))
     }
 
     fn copy(&self, from: &str, to: &str) -> StageResult {
         // Read, then write through the symlink-refusing advisory writer: a
         // plain `fs::copy` follows a planted destination link.
         let bytes = fs::read(self.path(from))
-            .map_err(|err| format!("cannot copy {from} to {to}: {err}"))?;
+            .map_err(|err| format!("cannot copy {from} to {to}: {err}; check the source exists and the destination is writable, then rerun"))?;
         crate::output::file_write::write(&self.path(to), &bytes)
-            .map_err(|err| format!("cannot copy {from} to {to}: {err}"))?;
+            .map_err(|err| format!("cannot copy {from} to {to}: {err}; check the source exists and the destination is writable, then rerun"))?;
         // `fs::copy` carried the source's permission bits; so does this.
         let permissions = fs::metadata(self.path(from))
-            .map_err(|err| format!("cannot copy {from} to {to}: {err}"))?
+            .map_err(|err| format!("cannot copy {from} to {to}: {err}; check the source exists and the destination is writable, then rerun"))?
             .permissions();
         fs::set_permissions(self.path(to), permissions)
-            .map_err(|err| format!("cannot copy {from} to {to}: {err}"))
+            .map_err(|err| format!("cannot copy {from} to {to}: {err}; check the source exists and the destination is writable, then rerun"))
     }
 
     fn stage(
@@ -447,19 +447,24 @@ impl PacketRun {
         // Same symlink-refusing owner as every other advisory write: refuse a
         // planted link or non-regular leaf, then truncate by replacing the
         // regular file with an exclusive no-follow create.
-        crate::output::file_write::validate_destination(&target)
-            .map_err(|err| format!("cannot write {out}: {err}"))?;
+        crate::output::file_write::validate_destination(&target).map_err(|err| {
+            format!("cannot write {out}: {err}; check you can write to that path, then rerun")
+        })?;
         // `File::create` kept an existing file's mode; keep it across the
         // replace too.
         let previous_permissions = fs::metadata(&target).ok().map(|meta| meta.permissions());
         if target.exists() {
-            fs::remove_file(&target).map_err(|err| format!("cannot write {out}: {err}"))?;
+            fs::remove_file(&target).map_err(|err| {
+                format!("cannot write {out}: {err}; check you can write to that path, then rerun")
+            })?;
         }
-        let file = crate::output::file_write::create_exclusive(&target)
-            .map_err(|err| format!("cannot write {out}: {err}"))?;
+        let file = crate::output::file_write::create_exclusive(&target).map_err(|err| {
+            format!("cannot write {out}: {err}; check you can write to that path, then rerun")
+        })?;
         if let Some(permissions) = previous_permissions {
-            file.set_permissions(permissions)
-                .map_err(|err| format!("cannot write {out}: {err}"))?;
+            file.set_permissions(permissions).map_err(|err| {
+                format!("cannot write {out}: {err}; check you can write to that path, then rerun")
+            })?;
         }
         if let Some(recorded) = &self.recorded {
             let prefix = env
@@ -517,7 +522,11 @@ impl PacketRun {
         let shown = format!("ripr {}", args.join(" "));
         let status = OwnedProcess::spawn(command)
             .and_then(|mut child| child.wait())
-            .map_err(|err| format!("`{shown}` could not run: {err}"))?;
+            .map_err(|err| {
+                format!(
+                    "`{shown}` could not run: {err}; check that command is installed and on PATH"
+                )
+            })?;
         Ok(status.code())
     }
 
@@ -1279,7 +1288,7 @@ impl PacketRun {
             self.path(&pending),
             self.path(WORKFLOW_AGENT_PACKET_ARTIFACT),
         )
-        .map_err(|err| format!("cannot move the agent packet into place: {err}"))?;
+        .map_err(|err| format!("cannot move the agent packet into place: {err}; check you can write under target/ripr, then rerun"))?;
         self.copy(WORKFLOW_AGENT_PACKET_ARTIFACT, EDITOR_AGENT_PACKET_ARTIFACT)?;
         self.copy(WORKFLOW_AGENT_BRIEF_ARTIFACT, EDITOR_AGENT_BRIEF_ARTIFACT)
     }
@@ -1303,7 +1312,7 @@ impl PacketRun {
         )
         .map_err(|err| unresolved_base_message(&self.root, &base_ref, &err.to_string()))?;
         let head_sha = crate::git::run_git(&self.root, &["rev-parse", "--verify", "HEAD^{commit}"])
-            .map_err(|err| format!("ripr: cannot resolve HEAD: {err}"))?;
+            .map_err(|err| format!("ripr: cannot resolve HEAD: {err}; run inside a git checkout that has at least one commit"))?;
         let range = format!("{base_sha}...{head_sha}");
         let diff = git_bytes(
             &self.root,
@@ -1325,9 +1334,9 @@ impl PacketRun {
                 &range,
             ],
         )
-        .map_err(|err| format!("ripr: git diff failed for {range}: {err}"))?;
+        .map_err(|err| format!("ripr: git diff failed for {range}: {err}; fetch the base ref (in CI, check out with full history), then rerun"))?;
         crate::output::file_write::write(&self.path("target/ripr/reports/pr.diff"), &diff)
-            .map_err(|err| format!("cannot write target/ripr/reports/pr.diff: {err}"))?;
+            .map_err(|err| format!("cannot write target/ripr/reports/pr.diff: {err}; check you can write under target/ripr, then rerun"))?;
         let receipt = DiffReceipt {
             tool: "ripr",
             kind: "pr-diff-receipt",
@@ -1338,13 +1347,13 @@ impl PacketRun {
             sha256: &hex(&Sha256::digest(&diff)),
         };
         let mut json = serde_json::to_string_pretty(&receipt)
-            .map_err(|err| format!("cannot render the diff receipt: {err}"))?;
+            .map_err(|err| format!("cannot render the diff receipt: {err}; report this as a ripr bug with the command you ran"))?;
         json.push('\n');
         crate::output::file_write::write(
             &self.path("target/ripr/reports/pr-diff.receipt.json"),
             json.as_bytes(),
         )
-        .map_err(|err| format!("cannot write target/ripr/reports/pr-diff.receipt.json: {err}"))?;
+        .map_err(|err| format!("cannot write target/ripr/reports/pr-diff.receipt.json: {err}; check you can write under target/ripr, then rerun"))?;
         if diff.is_empty() {
             let names = git_bytes(
                 &self.root,
@@ -1358,11 +1367,11 @@ impl PacketRun {
                     &range,
                 ],
             )
-            .map_err(|err| format!("ripr: git diff --name-only failed for {range}: {err}"))?;
+            .map_err(|err| format!("ripr: git diff --name-only failed for {range}: {err}; fetch the base ref (in CI, check out with full history), then rerun"))?;
             let changed = names.iter().filter(|byte| **byte == 0).count();
             if changed != 0 {
                 return Err(format!(
-                    "ripr: empty patch but {changed} changed path(s); refusing an absent result"
+                    "ripr: empty patch but {changed} changed path(s); refusing an absent result; fetch full git history and rerun, or report this as a ripr bug with the command you ran"
                 ));
             }
         }
@@ -1456,10 +1465,13 @@ impl PacketRun {
         self.mkdir("target/ci")?;
         let labels = self.settings.labels.clone()?;
         let mut json = serde_json::to_string(&serde_json::json!({ "labels": labels }))
-            .map_err(|err| format!("cannot render the labels: {err}"))?;
+            .map_err(|err| format!("cannot render the labels: {err}; report this as a ripr bug with the command you ran"))?;
         json.push('\n');
-        crate::output::file_write::write(&self.path(LABELS_JSON), json.as_bytes())
-            .map_err(|err| format!("cannot write {LABELS_JSON}: {err}"))
+        crate::output::file_write::write(&self.path(LABELS_JSON), json.as_bytes()).map_err(|err| {
+            format!(
+                "cannot write {LABELS_JSON}: {err}; check you can write under target/ci, then rerun"
+            )
+        })
     }
 
     fn evaluate_gate(&mut self) -> StageResult {
@@ -1760,9 +1772,12 @@ impl PacketRun {
 
     fn emit_annotations(&mut self) -> StageResult {
         let bytes = fs::read(self.path(COMMENTS_JSON))
-            .map_err(|err| format!("cannot read {COMMENTS_JSON}: {err}"))?;
-        let document = serde_json::from_slice::<Value>(&bytes)
-            .map_err(|err| format!("{COMMENTS_JSON} is not JSON: {err}"))?;
+            .map_err(|err| format!("cannot read {COMMENTS_JSON}: {err}; run the review-comments step that writes it first, then rerun"))?;
+        let document = serde_json::from_slice::<Value>(&bytes).map_err(|err| {
+            format!(
+                "{COMMENTS_JSON} is not JSON: {err}; rerun the review-comments step that writes it"
+            )
+        })?;
         let (printed, result) = match render_workflow_annotations(&document) {
             Ok(lines) => (lines, Ok(())),
             Err((lines, err)) => (lines, Err(err)),
@@ -2948,9 +2963,15 @@ mod tests {
         );
         assert!(message.contains("most likely a shallow clone"), "{message}");
         assert!(message.contains("`fetch-depth: 0`"), "{message}");
+        // The refspec is quoted for the host shell (single quotes on Unix,
+        // double quotes on the Windows console).
+        let refspec = shell_arg(&base_fetch_refspec("main"));
         assert!(
-            message
-                .contains("fetch --unshallow origin '+refs/heads/main:refs/remotes/origin/main'"),
+            refspec.contains("+refs/heads/main:refs/remotes/origin/main"),
+            "{refspec}"
+        );
+        assert!(
+            message.contains(&format!("fetch --unshallow origin {refspec}")),
             "{message}"
         );
         assert!(
@@ -2987,11 +3008,14 @@ mod tests {
             message.contains("`origin/no-such-branch` is not in this checkout"),
             "{message}"
         );
+        let refspec = shell_arg(&base_fetch_refspec("no-such-branch"));
         assert!(
-            message.contains(
-                "git fetch origin '+refs/heads/no-such-branch:refs/remotes/origin/no-such-branch'"
-            ),
+            message.contains(&format!("git fetch origin {refspec}")),
             "{message}"
+        );
+        assert!(
+            refspec.contains("+refs/heads/no-such-branch:refs/remotes/origin/no-such-branch"),
+            "{refspec}"
         );
         assert!(!message.contains("shallow clone"), "{message}");
         Ok(())

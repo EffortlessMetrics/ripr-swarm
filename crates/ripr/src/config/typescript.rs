@@ -73,22 +73,31 @@ pub(crate) fn is_detectable_excluded_typescript_path(path: &Path) -> bool {
 
 /// Whether an exact normalized repository-relative declaration admits this
 /// path past the built-in excluded-directory conventions (#7386).
-/// Declarations are the `[languages.typescript] handwritten_files` entries:
-/// exact paths only, no globs, normalized with `/` separators at parse time.
+///
+/// Declarations are stored strings: `[languages.typescript]
+/// handwritten_files` entries, exact paths only, no globs, parse-time
+/// `/`-normalized. The candidate side uses the shared separator rule
+/// (`path_identity_key_on(path, cfg!(windows), false)`): `\` is a separator
+/// only on Windows, and matching does not case-fold, so exact-entry
+/// semantics stay. A non-UTF-8 candidate is never admitted.
 pub(crate) fn is_declared_handwritten_typescript_path(declared: &[String], path: &Path) -> bool {
-    let normalized = path.to_string_lossy().replace('\\', "/");
+    let normalized = crate::output::path::path_identity_key_on(path, cfg!(windows), false);
     declared.iter().any(|entry| entry == &normalized)
 }
 
 /// Whether any declared hand-written TypeScript/JavaScript path lives under
-/// `dir`, which is repository-relative and normalized. The workspace walk
-/// consults this before pruning an excluded-name directory: a declared
-/// hand-written file keeps its ancestor directories reachable so the file
-/// can be read and indexed (#7386). Only the feature-gated discovery walk
-/// calls it.
+/// `dir`.
+///
+/// `dir` is a repository-relative candidate path. Declarations are stored
+/// strings (parse-time `/`-normalized); the candidate side uses the shared
+/// separator rule (`path_identity_key_on(dir, cfg!(windows), false)`), not
+/// ad hoc `\` rewriting. The workspace walk consults this before pruning an
+/// excluded-name directory: a declared hand-written file keeps its ancestor
+/// directories reachable so the file can be read and indexed (#7386). Only
+/// the feature-gated discovery walk calls it.
 #[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn declared_typescript_handwritten_under(declared: &[String], dir: &Path) -> bool {
-    let mut prefix = dir.to_string_lossy().replace('\\', "/");
+    let mut prefix = crate::output::path::path_identity_key_on(dir, cfg!(windows), false);
     if !prefix.is_empty() && !prefix.ends_with('/') {
         prefix.push('/');
     }
@@ -146,8 +155,9 @@ pub(crate) fn detect_typescript_project(root: &Path) -> bool {
 
 /// A package-led root (#11336): `package.json` at the root plus JavaScript or
 /// TypeScript source (not tooling config files) at the root or under
-/// `src`/`test`/`tests`. A Cargo or Python project at the same root does not
-/// exclude it: a polyglot repository whose JS/TS changes were reported as
+/// `src`/`test`/`tests` (beside a `Cargo.toml`, only the root and `src`: Rust
+/// `tests/` hold integration tests and fixtures, #11418). A Cargo or Python
+/// project at the same root does not exclude it: a polyglot repository whose JS/TS changes were reported as
 /// "not analyzed" is the case this exists for. `package.json` alone stays a
 /// non-marker (#10941), as does JavaScript with no manifest.
 #[cfg(any(feature = "lang-typescript", test))]
@@ -155,10 +165,16 @@ pub(crate) fn detect_javascript_led_root(root: &Path) -> bool {
     JAVASCRIPT_LED_MANIFESTS
         .iter()
         .any(|manifest| root.join(manifest).is_file())
-        && (dir_has_package_source_file(root)
-            || JAVASCRIPT_LED_SOURCE_DIRS
+        && (dir_has_package_source_file(root) || {
+            let has_cargo_toml = root.join("Cargo.toml").is_file();
+            JAVASCRIPT_LED_SOURCE_DIRS
                 .iter()
-                .any(|dir| dir_contains_package_source(&root.join(dir))))
+                // Beside a Rust crate, `test`/`tests` hold Rust integration
+                // tests and fixtures, so JavaScript there is not the
+                // project's own source (#11418).
+                .filter(|dir| !(has_cargo_toml && **dir != "src"))
+                .any(|dir| dir_contains_package_source(&root.join(dir)))
+        })
 }
 
 /// Root manifest and source directories that `detect_javascript_led_root`
@@ -173,6 +189,17 @@ pub(crate) const JAVASCRIPT_LED_SOURCE_DIRS: &[&str] = &["src", "test", "tests"]
 #[cfg(any(feature = "lang-typescript", test))]
 pub(crate) fn javascript_led_manifest_name(name: &str) -> Option<&'static str> {
     canonical_marker_name(JAVASCRIPT_LED_MANIFESTS, name)
+}
+
+/// Canonical root source-directory marker (`src`, `test` or `tests`) for a
+/// path component, with the same host path rule as the TypeScript and Python
+/// marker names. The detector resolves these directories through the
+/// filesystem (`root.join(dir)`), so on a case-insensitive host a
+/// differently-cased spelling (`Test`, `Src`) detects the same source the
+/// watcher must classify (#11419).
+#[cfg(any(feature = "lang-typescript", test))]
+pub(crate) fn javascript_led_source_dir_marker_name(name: &str) -> Option<&'static str> {
+    canonical_marker_name(JAVASCRIPT_LED_SOURCE_DIRS, name)
 }
 
 #[cfg(any(feature = "lang-typescript", test))]
@@ -313,7 +340,21 @@ pub(crate) fn typescript_source_dir_marker_name(name: &str) -> Option<&'static s
 
 #[cfg(any(feature = "lang-typescript", test))]
 fn canonical_marker_name(candidates: &[&'static str], name: &str) -> Option<&'static str> {
-    let case_insensitive = crate::output::path::host_paths_case_insensitive();
+    canonical_marker_name_on(
+        candidates,
+        name,
+        crate::output::path::host_paths_case_insensitive(),
+    )
+}
+
+/// Explicit-rule form of [`canonical_marker_name`] so tests discriminate the
+/// case-insensitive spelling on any host, mirroring the Python helper.
+#[cfg(any(feature = "lang-typescript", test))]
+fn canonical_marker_name_on(
+    candidates: &[&'static str],
+    name: &str,
+    case_insensitive: bool,
+) -> Option<&'static str> {
     candidates.iter().copied().find(|candidate| {
         if case_insensitive {
             candidate.eq_ignore_ascii_case(name)
@@ -388,6 +429,88 @@ fn dir_contains_typescript_source(dir: &Path, skip_hidden: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slash_separated_handwritten_typescript_path_is_still_admitted() {
+        let declared = ["a/b.ts".to_string()];
+        assert!(is_declared_handwritten_typescript_path(
+            &declared,
+            Path::new("a/b.ts")
+        ));
+        assert!(declared_typescript_handwritten_under(
+            &["pkg/gen/x.ts".to_string()],
+            Path::new("pkg/gen")
+        ));
+        assert!(!is_declared_handwritten_typescript_path(
+            &["A/B.ts".to_string()],
+            Path::new("a/b.ts")
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_literal_backslash_typescript_path_is_not_rewritten_to_slash() {
+        let declared = ["a/b.ts".to_string()];
+        assert!(
+            !is_declared_handwritten_typescript_path(&declared, Path::new("a\\b.ts")),
+            "Unix `\\` is a filename byte, so `a\\b.ts` must not match stored `a/b.ts`"
+        );
+        assert!(
+            !declared_typescript_handwritten_under(
+                &["pkg/gen/x.ts".to_string()],
+                Path::new("pkg\\gen")
+            ),
+            "Unix `pkg\\gen` is not a prefix of stored `pkg/gen/x.ts`"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_backslash_typescript_path_matches_slash_declaration() {
+        assert!(is_declared_handwritten_typescript_path(
+            &["a/b.ts".to_string()],
+            Path::new("a\\b.ts")
+        ));
+        assert!(declared_typescript_handwritten_under(
+            &["pkg/gen/x.ts".to_string()],
+            Path::new("pkg\\gen")
+        ));
+    }
+
+    #[test]
+    fn non_utf8_typescript_path_is_never_admitted_as_handwritten() {
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            let name = std::ffi::OsString::from_wide(&[
+                0x0061, 0x005C, 0xD800, 0x0062, 0x002E, 0x0074, 0x0073,
+            ]);
+            assert!(name.to_str().is_none(), "premise: the name is not UTF-8");
+            let path = Path::new(&name);
+            let lossy = path.to_string_lossy().replace('\\', "/");
+            assert!(!is_declared_handwritten_typescript_path(&[lossy], path));
+            assert!(!declared_typescript_handwritten_under(
+                &["a/b.ts".to_string()],
+                path
+            ));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let name = std::ffi::OsStr::from_bytes(b"a/\xFFb.ts");
+            assert!(name.to_str().is_none(), "premise: the name is not UTF-8");
+            let path = Path::new(name);
+            let lossy = path.to_string_lossy().replace('\\', "/");
+            assert!(
+                !is_declared_handwritten_typescript_path(&[lossy], path),
+                "lossy U+FFFD spelling must not admit a non-UTF-8 candidate"
+            );
+            assert!(!declared_typescript_handwritten_under(
+                &["a/b.ts".to_string()],
+                path
+            ));
+        }
+    }
 
     #[test]
     fn excluded_dirs_match_components_not_substrings() {
@@ -504,6 +627,34 @@ mod tests {
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
     }
 
+    /// A Rust crate's `tests/` holds Rust integration tests and fixtures, so
+    /// JavaScript there beside a `package.json` (wasm, napi, docs tooling) is
+    /// not the project's own source; `src/` and the root still count (#11418).
+    #[test]
+    fn rust_crate_fixture_javascript_does_not_select_the_adapter() -> Result<(), String> {
+        let root = detection_root("js-fixture-in-rust")?;
+        write(&root, "package.json")?;
+        write(&root, "Cargo.toml")?;
+        write(&root, "tests/fixtures/app/foo.js")?;
+        write(&root, "test/fixtures/bar.ts")?;
+        assert!(
+            !detect_typescript_project(&root),
+            "fixture JavaScript under tests/ beside Cargo.toml"
+        );
+        write(&root, "src/pricing.js")?;
+        assert!(
+            detect_typescript_project(&root),
+            "JavaScript under src/ beside Cargo.toml still counts"
+        );
+        std::fs::remove_file(root.join("Cargo.toml")).map_err(|err| err.to_string())?;
+        std::fs::remove_file(root.join("src/pricing.js")).map_err(|err| err.to_string())?;
+        assert!(
+            detect_typescript_project(&root),
+            "the same tests/ JavaScript counts when there is no Cargo.toml"
+        );
+        Ok(())
+    }
+
     /// #11336: a package-led root (manifest plus JavaScript/TypeScript source,
     /// Cargo or Python project or not) selects the adapter; a manifest alone,
     /// tooling config files, or excluded/generated JavaScript do not (#10941).
@@ -553,6 +704,42 @@ mod tests {
         write(&root, "test/unit.mjs")?;
         assert!(detect_typescript_project(&root), "JavaScript under test/");
         std::fs::remove_dir_all(&root).map_err(|err| err.to_string())
+    }
+
+    /// #11419: package-led source-directory markers canonicalize with the
+    /// host path rule, like the manifest and the other marker names. On a
+    /// case-insensitive host (`Test`, `Src`) canonicalizes; on a
+    /// case-sensitive host only the canonical spelling does.
+    #[test]
+    fn javascript_led_source_dir_markers_canonicalize_with_the_host_path_rule() {
+        for dir in JAVASCRIPT_LED_SOURCE_DIRS {
+            assert_eq!(javascript_led_source_dir_marker_name(dir), Some(*dir));
+        }
+        assert_eq!(javascript_led_source_dir_marker_name("lib"), None);
+        let insensitive = crate::output::path::host_paths_case_insensitive();
+        for (spelling, canonical) in [("Src", "src"), ("Test", "test"), ("TESTS", "tests")] {
+            assert_eq!(
+                javascript_led_source_dir_marker_name(spelling),
+                insensitive.then_some(canonical),
+                "{spelling} canonicalizes only on a case-insensitive host"
+            );
+        }
+        // Explicit-rule form discriminates on any host, mirroring the Python
+        // marker test: the exact pre-fix comparison rejected these outright.
+        for (spelling, canonical) in [("Src", "src"), ("Test", "test"), ("TESTS", "tests")] {
+            assert_eq!(
+                canonical_marker_name_on(JAVASCRIPT_LED_SOURCE_DIRS, spelling, true),
+                Some(canonical)
+            );
+            assert_eq!(
+                canonical_marker_name_on(JAVASCRIPT_LED_SOURCE_DIRS, spelling, false),
+                None
+            );
+        }
+        assert_eq!(
+            canonical_marker_name_on(JAVASCRIPT_LED_SOURCE_DIRS, "src", false),
+            Some("src")
+        );
     }
 
     #[test]

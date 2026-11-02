@@ -16,6 +16,19 @@ pub(super) fn type_bound_lines(
         return vec![false; lines.len()];
     };
     let root = parse.tree();
+    // Walk the tree once: each qualifying node re-walks its own subtree, so
+    // doing it per changed line made a whole-file change (an unsaved buffer)
+    // quadratic.
+    let tokens = LineTokens::new(root.syntax());
+    let declarations = root
+        .syntax()
+        .descendants()
+        .filter(supported_bound_declaration)
+        .map(|node| {
+            let range = node.text_range();
+            u32::from(range.start()) as usize..u32::from(range.end()) as usize
+        })
+        .collect::<Vec<_>>();
     lines
         .iter()
         .map(|line| {
@@ -25,17 +38,12 @@ pub(super) fn type_bound_lines(
             if source.get(range.clone()).map(str::trim) != Some(line.text.trim()) {
                 return false;
             }
-            let Some(span) = declaration_line_span(root.syntax(), range) else {
+            let Some(span) = tokens.declaration_span(range) else {
                 return false;
             };
-            root.syntax()
-                .descendants()
-                .filter(supported_bound_declaration)
-                .any(|node| {
-                    let range = node.text_range();
-                    u32::from(range.start()) as usize <= span.start
-                        && span.end <= u32::from(range.end()) as usize
-                })
+            declarations
+                .iter()
+                .any(|node| node.start <= span.start && span.end <= node.end)
         })
         .collect()
 }
@@ -597,37 +605,63 @@ fn supported_bound_declaration(node: &SyntaxNode) -> bool {
 /// separator. Comment text is preserved in the shape, but cannot extend its
 /// containment range. Real code after a comment remains in range.
 fn declaration_line_span(root: &SyntaxNode, line: Range<usize>) -> Option<Range<usize>> {
-    let mut start = None;
-    let mut end = None;
-    for token in root
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-    {
-        let range = token.text_range();
-        let token_start = u32::from(range.start()) as usize;
-        let token_end = u32::from(range.end()) as usize;
-        if token_start >= line.end {
-            break;
-        }
-        if token_end <= line.start
-            || matches!(token.kind(), SyntaxKind::WHITESPACE | SyntaxKind::COMMENT)
-        {
-            continue;
-        }
-        // A multiline nontrivia token cannot be a complete declaration-only line.
-        if token_start < line.start || token_end > line.end {
-            return None;
-        }
-        if start.is_none() {
-            start = Some(token_start);
-        }
-        if token.kind() != SyntaxKind::COMMA {
-            end = Some(token_end);
-        }
+    LineTokens::new(root).declaration_span(line)
+}
+
+/// The tree's tokens in source order, built once so a whole-file change
+/// (an unsaved buffer) finds each line's tokens by binary search instead of
+/// re-walking the tree from the top for every line.
+struct LineTokens {
+    tokens: Vec<(usize, usize, SyntaxKind)>,
+}
+
+impl LineTokens {
+    fn new(root: &SyntaxNode) -> Self {
+        let tokens = root
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .map(|token| {
+                let range = token.text_range();
+                (
+                    u32::from(range.start()) as usize,
+                    u32::from(range.end()) as usize,
+                    token.kind(),
+                )
+            })
+            .collect();
+        Self { tokens }
     }
-    let start = start?;
-    let end = end?;
-    Some(start..end)
+
+    fn declaration_span(&self, line: Range<usize>) -> Option<Range<usize>> {
+        let mut start = None;
+        let mut end = None;
+        // Tokens tile the source, so ends are sorted; skip those wholly
+        // before the line.
+        let first = self
+            .tokens
+            .partition_point(|(_, token_end, _)| *token_end <= line.start);
+        for (token_start, token_end, kind) in self.tokens.iter().skip(first).copied() {
+            if token_start >= line.end {
+                break;
+            }
+            if matches!(kind, SyntaxKind::WHITESPACE | SyntaxKind::COMMENT) {
+                continue;
+            }
+            // A multiline nontrivia token cannot be a complete declaration-only line.
+            if token_start < line.start || token_end > line.end {
+                return None;
+            }
+            if start.is_none() {
+                start = Some(token_start);
+            }
+            if kind != SyntaxKind::COMMA {
+                end = Some(token_end);
+            }
+        }
+        let start = start?;
+        let end = end?;
+        Some(start..end)
+    }
 }
 
 #[cfg(test)]
@@ -1134,6 +1168,27 @@ mod tests {
                 [false],
                 "admitted removed field declaration: {text}"
             );
+        }
+    }
+
+    /// The per-line verdicts are independent of how many lines are asked at
+    /// once, so the shared token and declaration indexes change cost only.
+    #[test]
+    fn type_bound_lines_verdicts_do_not_depend_on_the_batch() {
+        let unit = "struct S<T: Clone> {\n    x: T,\n}\nfn f<U>(u: U) where U: Clone {\n    let a = 1;\n}\n";
+        let source = unit.repeat(40);
+        let lines: Vec<_> = source
+            .lines()
+            .enumerate()
+            .map(|(index, text)| removed(index + 1, text))
+            .collect();
+        let batch = type_bound_lines(&source, &lines);
+        assert_eq!(batch.len(), lines.len());
+        assert!(batch.iter().any(|flag| *flag), "no bound line recognized");
+        assert!(batch.iter().any(|flag| !*flag), "every line recognized");
+        for (line, expected) in lines.iter().zip(&batch) {
+            let alone = type_bound_lines(&source, std::slice::from_ref(line));
+            assert_eq!(alone, [*expected], "line {}: {}", line.line, line.text);
         }
     }
 }

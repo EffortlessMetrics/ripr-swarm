@@ -50,3 +50,94 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — struct_literal_untouched_field_builder (5)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless struct_literal_untouched_field_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — struct_literal_untouched_field_builder (6)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless struct_literal_untouched_field_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — struct_literal_untouched_field_builder (7)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+
+Command:
+`cargo xtask goldens bless struct_literal_untouched_field_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — struct_literal_untouched_field_builder (8)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless struct_literal_untouched_field_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — struct_literal_untouched_field_builder (9)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless struct_literal_untouched_field_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — struct_literal_untouched_field_builder (10)
+
+Reason:
+RIPR-SPEC-0122: describe classified spots without implying repair eligibility
+
+Command:
+`cargo xtask goldens bless struct_literal_untouched_field_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — struct_literal_untouched_field_builder (11)
+
+Reason:
+RIPR-SPEC-0122: render the missing check in plain language
+
+Command:
+`cargo xtask goldens bless struct_literal_untouched_field_builder --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

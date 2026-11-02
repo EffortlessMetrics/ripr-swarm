@@ -37,6 +37,7 @@ routes the missing producer proof to its owning issue.
 | `schemas/ripr/review-comments.schema.json` | `0.1` | `ripr review-comments --format json` → `crates/ripr/src/output/review_comments` | live | `tests/fixtures/verification/ripr/review-comments.valid.json` | `cargo xtask check-verification-contracts --check`; also validated at generation time by `xtask/src/reports/review_comments.rs` | `assertion_guidance_schema_rejects_invalid_state_shapes` | registered | — |
 | `schemas/ripr/gate-decision.schema.json` | `0.1` | `ripr gate evaluate --format json` → `crates/ripr/src/output/gate` | live | `tests/fixtures/verification/ripr/gate-decision.valid.json` | `cargo xtask check-verification-contracts --check` | covered by the shared unknown-field and `const` rejections | registered | — |
 | `schemas/ripr/check.schema.json` | `0.2` | `ripr check --format json` → `crates/ripr/src/output/json` | live | `tests/fixtures/verification/ripr/check-complete.valid.json`, `…/check-limited.valid.json` | `cargo xtask check-verification-contracts --check` | `check_schema_rejects_unknown_top_level_field`, `check_schema_rejects_negative_fractional_confidence` | registered | — |
+| `schemas/ripr/check-timeout-refusal.schema.json` | `0.3` | `ripr check --format json` `analysis_timeout` refusal → `crates/ripr/src/output/limited_check` (`CHECK_REFUSAL_SCHEMA_VERSION` in `crates/ripr/src/app.rs`) | live | `tests/fixtures/verification/ripr/check-timeout-refusal.valid.json` (hand-written, portable paths) | `cargo xtask check-verification-contracts --check` | `check_timeout_refusal_schema_rejects_drift` | **exempt (partial)** | The committed fixture is hand-written: these bytes are produced only by a forced-deadline run, and that e2e control (`cli_smoke.rs::check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery`) is unix-only, so no producer-byte golden is committed. The narrower authorities pin the emitted shape: `limited_check.rs::timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3` asserts the rendered document's generation, keys, and fact/recovery shapes at the renderer, and the unix forced-deadline e2e parses the real CLI bytes (`schema_version` `0.3`, `input_context` echo, `recovery.budget_seconds` as a JSON number). |
 | `schemas/ripr/doctor.schema.json` | `0.4` | `ripr doctor --json` → `crates/ripr/src/output/doctor.rs`, filled by `cli/commands/doctor.rs` | live | `tests/fixtures/verification/ripr/doctor.valid.json` (hand-written, portable paths) | `cargo xtask check-verification-contracts --check`; `cargo test -p ripr --test doctor_json_schema` | `published_doctor_schema_rejects_documents_the_schema_forbids` | **exempt (partial)** | No committed producer-byte artifact exists: doctor writes per-run bytes to stdout, so the registered fixture is a hand-written instance that could let the schema confirm itself. The narrower authority is `crates/ripr/tests/doctor_json_schema.rs`, which reads this published schema and checks the document the production path actually wrote (closed property set, required fields, pinned `const`/`enum`, nested shapes), then runs the negative experiment proving the checker rejects drift — including a resurrected `sections` array, an undeclared field, a stale `schema_version`, an unlisted language tier, an untyped exporter state, and a detected-language entry with no `enabled` state. `the_checker_covers_every_keyword_the_published_schema_uses` keeps that checker from under-checking a schema that grows a keyword it ignores. |
 | `schemas/ripr/rust-repair-trust-corpus.schema.json` | `0.1` | `metrics/rust-repair-trust/corpus.json`, the corpus of record read by `xtask/src/reports/rust_repair_trust.rs` | live | `metrics/rust-repair-trust/corpus.json` (the artifact itself, not a copy) | `cargo xtask check-verification-contracts --check` | `rust_repair_trust_corpus_rejects_a_non_sha_analyzed_head` | registered (attempt subschema unexercised) | The corpus `cases` array is empty today (24 exclusions, 15 observations, 0 cases), so the per-attempt subschema is registered but consumes no subject. The negative mutation exercises `exclusions[0].analyzed_head_sha`, not an attempt. Attempt-level validation becomes real evidence only once a case exists. |
 | `schemas/ripr/repair-assurance.schema.json` `#/$defs/command_spec` | `1` | `crates/ripr/src/agent/command_specs.rs` → `command_specs` in `ripr agent packet --json` | live | `fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json` `/packets/0/evidence_record/canonical_item/command_specs/receipt` | `cargo xtask check-verification-contracts --check` | `command_spec_contract_rejects_an_absolute_working_directory` | registered | — |
@@ -95,14 +96,17 @@ validates every committed producer document instead, so a qualification run does
 not depend on which subjects someone remembered to register (#3919, #3920):
 
 ```bash
-cargo xtask schema-producer-sweep [--rev REV] \
+cargo xtask schema-producer-sweep [--rev REV | --worktree] \
   [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...
 ```
 
 Every schema and document it validates is read from one commit (`--rev`,
 default `HEAD`) through `git archive`, never from the working tree, so
 uncommitted edits and untracked files such as live artifacts cannot change the
-result. It uses the same validator as the registered contracts and writes
+result. Release qualification always uses this commit-bound mode. `--worktree`
+is the local `precommit` mode only: it snapshots HEAD plus uncommitted and
+untracked non-ignored files through a private index, and cannot combine with
+`--rev` or `--live-replay`. It uses the same validator as the registered contracts and writes
 `target/ripr/reports/schema-producer-sweep.json`: per schema row, the schema
 digest, discovered and validated producer counts, edge fixtures, excluded
 stimulus, live artifacts, every subject's byte digest, the commit, and a `rows_sha256` digest over all
@@ -173,22 +177,43 @@ subjects validated. Unit tests pin the
 sweep's own failure modes, that its binding table names exactly the published
 inventory, and that the required gate keeps the step and its three artifacts.
 
-To feed the runtime-only rows on a candidate, run the producers in a scratch Git
-repository with one committed behavior change (for example
-`fixtures/boundary_gap/input` with `diff.patch` applied as the head commit) and
-pass the outputs:
+### Exact-cut replay
+
+A qualification run replays every row, including the five with no committed
+producer bytes, with one command on a binary built from the candidate:
 
 ```bash
-ripr pr-evidence --base "$BASE" --head "$HEAD"
-ripr review-comments --base "$BASE" --head "$HEAD" --out rc.json
-cargo xtask schema-producer-sweep \
-  --artifact schemas/ripr/pr-evidence.schema.json=target/ripr/pr/repo-exposure.json \
-  --artifact schemas/ripr/review-comments.schema.json=rc.json
+cargo build -p ripr
+cargo xtask schema-producer-sweep --rev <candidate-sha> --live-replay [--ripr target/debug/ripr]
 ```
 
-`repair-attempt` manifests come from `ripr agent repair --phase before|after`
-(`target/ripr/repair-attempts/<id>/attempt.json`), and `execution_result` from
-`ripr agent verify-execute --result-json FILE`, passed as
+`--live-replay` runs these producers and passes their output as `--artifact`
+inputs, so the replay needs no hand-assembled recipe:
+
+| Row | Producer run | Artifact |
+|---|---|---|
+| `doctor` | `ripr doctor --json` | stdout |
+| `pr-evidence` | `ripr pr-evidence --base B --head H` | `target/ripr/pr/repo-exposure.json` |
+| `review-comments` | `ripr review-comments --base B --head H --out F` | `F` |
+| `repair-attempt` | `ripr agent repair --phase before`, one boundary test, then `--phase after` | `target/ripr/repair-attempts/<id>/attempt.json` |
+| `execution_result` | `ripr reports gap-ledger`, `ripr agent packet`, then `ripr agent verify-execute --result-json` | the `result` object |
+
+The scratch repository and outputs live under `target/ripr/cut-replay/`. Its
+fixture files and `diff.patch` come from `fixtures/boundary_gap/` at the
+replayed commit through `git show`, never from the working tree: `input/` is
+the head state, and the base commit reverse-applies the patch. The binary must
+report the full replayed commit in `ripr --version`; a binary built elsewhere is
+refused instead of validated as the cut's output. Any producer that exits
+nonzero fails the replay, so a row cannot fall back to `not_run`. Outputs stay
+outside the scratch checkout because a repair attempt counts an untracked file
+inside it as an edit, and the gap ledger and `verify-execute` packet stay inside
+the checkout because a source outside the root makes them stale.
+
+The default binary is `target/debug/ripr`. A passing replay records
+`artifact_validated` in the packet for every runtime-only and authority row
+(the console shows the runtime-only ones as `1 live artifact(s) validated`) and leaves only the exempt rows outside the producer count. The
+manual form remains valid for a single row: run the producer and pass
+`--artifact SCHEMA[#POINTER]=FILE[#POINTER]`, with `execution_result` passed as
 `schemas/ripr/repair-assurance.schema.json#/$defs/execution_result=FILE#/result`.
 
 The `review-comments --gap-ledger` route (#3913) does not need a live artifact

@@ -273,6 +273,32 @@ the corpus counts. The summary is therefore a function of the rows: the dx
 scoreboard (`verdict-corpus:` sources) and the public proof receipt derive
 it from the committed rows, so parallel case PRs share no line.
 
+A live case is scored only when its `ripr check --json` output establishes
+the measurement (#11272). The harness fixes two facts before ripr runs: the
+language the case's anchor file dispatches to, and the digest of the diff
+bytes it hands over. The output must then carry an `analysis_outcome` whose
+kind is `complete_with_findings`, `complete_no_findings`,
+`no_behavioral_candidates` or `partial_with_limitations`, whose
+`identity.input_identity` equals `sha256:` plus that digest, and whose
+`summary.changed_files_by_language` routes the diff to the expected language
+exactly once. Empty findings, exit code 0, an enabled configuration, the
+adapter's own file count and the absence of a `language_runs` row (a
+successful run is omitted by design) are not completion evidence. A missing
+block, another language's output, a stale or unbound digest, duplicate routing
+and the outcomes `no_scope`, `no_changed_lines`, `unsupported_input` and
+`analysis_failed` fail the run as an unestablished measurement; they are never
+a silent verdict. An explicit non-`ok` Perl `language_runs` row for a packet
+case keeps its own refusal, and a sibling language's row is left in the output.
+The output must also carry the producer's `language_completeness` projection
+(#11272) with exactly one row for the expected language whose `status` is
+`complete`, `complete_zero` or `partial`. The aggregate outcome can read
+complete while a sibling language supplied the evidence; the per-language row
+says the expected language's own adapter ran. A missing projection, no single
+row for that language, or a row that is `unavailable`, `invalid`, `failed`,
+`unsupported`, `not_selected` or `no_current_scope` fails the run as an
+unestablished measurement. This reads the existing producer outcome and view
+and does not add a field or change `language_runs`.
+
 ### Spec-example coverage
 
 The coverage unit is one numbered item (`1. `, `2. `, ...) written at the

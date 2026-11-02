@@ -1,0 +1,1 @@
+.github/actions/ripr-check/action.yml|curl|2|ci/ripr-check|#11540: downloads the pinned ripr release archive and its published SHA-256 from EffortlessMetrics/ripr GitHub Releases, verified before extraction (same route as the generated workflow).

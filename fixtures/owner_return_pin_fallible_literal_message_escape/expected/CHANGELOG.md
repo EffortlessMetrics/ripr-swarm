@@ -219,3 +219,68 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — owner_return_pin_fallible_literal_message_escape (18)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless owner_return_pin_fallible_literal_message_escape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_fallible_literal_message_escape (19)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_fallible_literal_message_escape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_fallible_literal_message_escape (20)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless owner_return_pin_fallible_literal_message_escape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_fallible_literal_message_escape (21)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless owner_return_pin_fallible_literal_message_escape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — owner_return_pin_fallible_literal_message_escape (22)
+
+Reason:
+RIPR-SPEC-0122: render the missing check in plain language
+
+Command:
+`cargo xtask goldens bless owner_return_pin_fallible_literal_message_escape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

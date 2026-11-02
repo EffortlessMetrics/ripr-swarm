@@ -7,6 +7,7 @@ use super::assertion_selection::{
 use super::boundary::{BoundaryActivation, python_boundary_evidence};
 use super::call_chain::call_chain_credits;
 use super::caplog_text::{PythonLogVerdict, python_log_evidence};
+use super::conditional_expression;
 use super::dataclass_default::dataclass_default_credits;
 use super::discriminators::python_missing_discriminators;
 use super::dunder_truthiness;
@@ -44,7 +45,7 @@ use super::term_activation::python_inactive_term_evidence;
 use super::transitive_reach::apply_python_no_static_path_limit;
 use super::type_guard::removed_type_guard_credit;
 use super::{
-    PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_expression,
+    PythonOracleShape, PythonOwner, PythonTest, fingerprint_probe_id, normalize_python_expression,
     owner_for_changed_line, python_no_family_relevant_missing_summary,
     python_recommended_next_step, python_weak_missing_summary, stop_reason_for_python_static_limit,
 };
@@ -288,7 +289,10 @@ fn classify_change_full<'a>(
     // behavior delta. Emit no probe rather than crediting `exposed` from a test that
     // reaches the owner. Requires the paired old line; fails closed when anything
     // beyond an annotation differs (e.g. a default-value change, which IS behavioral).
+    // A line inside a multi-line string (or in a file that could not be
+    // lexed) is data, not a header, so it keeps its probe (#11888).
     if let Some(old) = old_line_text
+        && !no_behavior.new_line_in_multiline_string
         && same_indentation(old, line_text)
         && is_annotation_only_def_change(old, line_text)
     {
@@ -312,7 +316,12 @@ fn classify_change_full<'a>(
     }
     let owner = owner_for_changed_line(file, line, owners)?;
     classify_change_for_owner_with_value_origins(
-        ChangeSite { file, line, owner },
+        ChangeSite {
+            file,
+            line,
+            owner,
+            old_guard: None,
+        },
         line_text,
         old_line_text,
         owners,
@@ -331,6 +340,21 @@ pub(super) struct ChangeSite<'a> {
     pub(super) file: &'a Path,
     pub(super) line: usize,
     pub(super) owner: &'a PythonOwner,
+    /// A deleted line's old-side view (#11889), `None` for a live line.
+    pub(super) old_guard: Option<OldGuardView<'a>>,
+}
+
+/// Where a deleted line sat in the old file: the old text, the owner re-spanned
+/// to old-side coordinates and the old line number. The guarded-arm reader
+/// walks the guards around that line exactly as it does for a live one, so a
+/// deleted line that no observed input could enter is not credited.
+pub(super) struct OldGuardView<'a> {
+    pub(super) owner: PythonOwner,
+    pub(super) source: &'a str,
+    pub(super) line: usize,
+    /// The owner's parameter names, the only identifiers an old-side guard may
+    /// name (constants resolve on the new side).
+    pub(super) parameters: Vec<String>,
 }
 
 /// Classify a change at a resolved owner.
@@ -349,7 +373,12 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     value_origins: Option<&mut crate::value_origins::ValueOrigins>,
     mut related: Option<&mut RelatedCandidateMemo<'a>>,
 ) -> Option<Finding> {
-    let ChangeSite { file, line, owner } = site;
+    let ChangeSite {
+        file,
+        line,
+        owner,
+        old_guard,
+    } = site;
     // Bare-variable annotation-only suppression at MODULE SCOPE only (#1289):
     // Python does not enforce type annotations at runtime at module scope, so a
     // module-scope annotated-variable change that touches ONLY the annotation
@@ -389,6 +418,21 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         helper_owner_call_candidates(owner, owners, all_tests)
     };
     related_candidates.extend(helper_callers.iter().map(|helper| helper.candidate));
+    // `f(g(x)) == g(x)` pins `f` but not `g` (#9814): the exact reading is
+    // per finding, so a test with such an assertion is replaced by its
+    // owner-resolved copy for this finding only.
+    let owner_exact: Vec<Option<PythonTest>> = related_candidates
+        .iter()
+        .map(|candidate| super::owner_exact::owner_exact_test(candidate.test, owner))
+        .collect();
+    let mut related_candidates: Vec<PythonRelatedCandidate<'_>> = related_candidates
+        .into_iter()
+        .zip(&owner_exact)
+        .map(|(candidate, resolved)| PythonRelatedCandidate {
+            test: resolved.as_ref().unwrap_or(candidate.test),
+            relation: candidate.relation,
+        })
+        .collect();
     // A module-level constant edit has no callable owner. A test whose
     // assertion provably holds under the old value and fails under the new one
     // (`module_value.rs`, #9423) is related through that value, and its
@@ -740,7 +784,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // arguments, `exposed` requires one of those calls to bind both operands
     // to equal values (or, for `==` -> `==`, either compared literal).
     // Unresolved operands never count as observed, so this fails closed to
-    // `weakly_exposed` and names the missing `left == right` boundary. With no
+    // `weakly_exposed` without naming a boundary they may already reach. With no
     // literal owner inputs at all the gate cannot see the activation either
     // way; that case keeps the oracle verdict and carries a named
     // `boundary_activation_unresolved` limitation instead.
@@ -789,12 +833,26 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     // equality side. Unreadable guards, unbound operands, and rows without
     // literal inputs fail open and keep the existing oracle verdict.
     let guarded_arm_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ReturnValue)
+        && matches!(family, ProbeFamily::ReturnValue | ProbeFamily::Predicate)
         && boundary_gap.is_none()
         && inactive_term.is_none()
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
             owner_source.and_then(|source| {
+                if matches!(family, ProbeFamily::Predicate) {
+                    // #9184: a conditional expression (`a if c else b`) reads
+                    // as a predicate probe; only its unreached-arm reading
+                    // applies, never the return-value guard walk.
+                    return conditional_expression::python_conditional_expression_gap(
+                        owner,
+                        source,
+                        line,
+                        line_text,
+                        old_line_text,
+                        &related_candidates,
+                        &focus,
+                    );
+                }
                 guard_activation::python_guarded_arm_gap(
                     owner,
                     source,
@@ -831,20 +889,51 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             })
         })
         .flatten();
+    // #11889: a deleted line is read on the old side. When every strong related
+    // call provably fails the guards that enclosed it there, the line never ran
+    // under an observed input, so no strong oracle could notice its removal.
+    let guarded_arm_gap = guarded_arm_gap.or_else(|| {
+        let view = old_guard.as_ref()?;
+        (static_limit.is_none()
+            && boundary_gap.is_none()
+            && inactive_term.is_none()
+            && !no_behavior.multi_line_def_header_line)
+            .then(|| {
+                guard_activation::python_guarded_arm_gap(
+                    &view.owner,
+                    view.source,
+                    view.line,
+                    &related_candidates,
+                    &focus,
+                )
+                .filter(|gap| {
+                    super::deleted_lines::guard_names_only_parameters(
+                        &gap.discriminator,
+                        &view.parameters,
+                    )
+                })
+            })
+            .flatten()
+    });
     let mut guarded_arm_downgraded = false;
     // Message-pin gate (#9185): a message-only change to a `raise` is
     // discriminated by a `match=` pattern only when the pattern accepts one
     // message and rejects the other. When every strong related error
     // assertion pins the exception with a literal pattern that matches the old
     // and the new message alike, it pins only the exception class. Unreadable
-    // patterns, non-literal messages and other assertion shapes fail open.
+    // patterns, non-literal messages and other assertion shapes fail open. The
+    // two-step `msg = "..."` / `raise Exc(msg)` form is a plain assignment
+    // (predicate family) that the gate resolves through the owner's raise.
     let message_pin_gap = (static_limit.is_none()
-        && matches!(family, ProbeFamily::ErrorPath)
+        && matches!(family, ProbeFamily::ErrorPath | ProbeFamily::Predicate)
         && !no_behavior.multi_line_def_header_line)
         .then(|| {
             message_pin::python_message_pin_gap(
                 line_text,
                 old_line_text,
+                owner,
+                owner_source,
+                line,
                 &related_candidates,
                 &focus,
             )
@@ -1027,7 +1116,7 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
             StageState::Yes,
             vec![format!(
                 // #7752: the article follows the oracle-kind label ("an `exact_value`").
-                "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value discriminator.",
+                "Related Python test reaches `{}` with {} `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value check.",
                 owner.name,
                 indefinite_article(strongest_kind.as_str()),
                 strongest_kind.as_str()
@@ -1059,8 +1148,8 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
         && let Some(gap) = boundary_gap
     {
         // A strong oracle observes the owner's output, but no strong related
-        // call places the comparison operands on the changed boundary, so the
-        // changed predicate is never activated where old and new disagree.
+        // call is statically placed on the changed boundary. Unresolved calls
+        // may still reach it at runtime.
         boundary_downgraded = true;
         (
             ExposureClass::WeaklyExposed,
@@ -1250,14 +1339,25 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
     let canonical_gap = (static_limit.is_none() && !imported_literal_gap)
         .then(|| canonical_python_gap_for(file, owner, &family, line_text));
     let owner_id = owner.symbol_id();
-    let probe_id = fingerprint_probe_id(
+    let normalized = normalize_python_expression(line_text);
+    let mut probe_id = fingerprint_probe_id(
         "probe",
         &id_path,
         "python_preview",
         owner_id.0.as_str(),
-        &normalize_expression(line_text),
+        &normalized,
         1,
     );
+    let marker = if normalized.starts_with("\0python-literal-v1\0") {
+        Some("v1-")
+    } else if normalized.starts_with("\0python-uncertain-v1\0") {
+        Some("v1u-")
+    } else {
+        None
+    };
+    if let (Some(marker), Some(separator)) = (marker, probe_id.0.rfind(':')) {
+        probe_id.0.insert_str(separator + 1, marker);
+    }
     let probe = Probe {
         id: probe_id,
         location: SourceLocation::new(file.to_string_lossy().as_ref(), line, 1),
@@ -1307,7 +1407,11 @@ pub(super) fn classify_change_for_owner_with_value_origins<'a>(
                 limit.kind.as_str()
             )
         } else if boundary_downgraded {
-            "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+            if boundary_gap.is_some_and(|gap| gap.discriminator.is_none()) {
+                "Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary.".to_string()
+            } else {
+                "Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary.".to_string()
+            }
         } else if guarded_arm_downgraded
             && guarded_arm_gap
                 .as_ref()
@@ -1845,6 +1949,7 @@ fn note_runner_invocation(finding: &mut Finding, owner: &PythonOwner, tests: &[P
 pub(super) fn number_colliding_candidates(
     findings: &mut [Finding],
     value_origins: &mut crate::value_origins::ValueOrigins,
+    context: Option<&super::PythonIdentityContext<'_>>,
 ) {
     let keys: Vec<[u8; 32]> = findings
         .iter()
@@ -1856,7 +1961,11 @@ pub(super) fn number_colliding_candidates(
                     .owner
                     .as_ref()
                     .map_or("", |owner| owner.0.as_str()),
-                &normalize_expression(&finding.probe.expression),
+                &context
+                    .and_then(|context| {
+                        context.normalize(finding.probe.location.line, &finding.probe.expression)
+                    })
+                    .unwrap_or_else(|| normalize_python_expression(&finding.probe.expression)),
             )
         })
         .collect();

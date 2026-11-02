@@ -35,6 +35,15 @@ def shell(source):
                      for line in source.split("      run: |\n", 1)[1].splitlines())
 
 
+def script_argv(source, directory):
+    """Run a workflow step from a file. Passing the multi-line script as one
+    `bash -c` argument is re-parsed by the Windows/MSYS command line and loses
+    quoting, so the long action step failed with `unexpected end of file`."""
+    script = Path(directory) / "workflow-step.sh"
+    script.write_bytes(source.encode("utf-8") + b"\n")  # LF: CRLF breaks bash
+    return [bash(), "-euo", "pipefail", script.as_posix()]
+
+
 def step(workflow, name):
     marker = f"      - name: {name}\n"
     if marker not in workflow:
@@ -118,7 +127,7 @@ class Bundle(unittest.TestCase):
             workflow = (ROOT / ".github/workflows/routed-rust.yml").read_text(encoding="utf-8")
             verify = step(workflow, "Verify trusted admission bundle")
             if verify:
-                result = run(bash(), "-euo", "pipefail", "-c", shell(verify), cwd=workspace)
+                result = run(*script_argv(shell(verify), tmp), cwd=workspace)
                 if result.returncode:
                     self.assertFalse(marker.exists())
                     return result.returncode, result.stdout + result.stderr, False
@@ -144,7 +153,7 @@ class Bundle(unittest.TestCase):
             (tmp / "gh").chmod(0o755)
             (tmp / "gh.cmd").write_text(f'@"{sys.executable}" "%~dp0gh" %*\r\n', encoding="utf-8")
             env["PATH"] = str(tmp) + os.pathsep + env["PATH"]
-            result = run(bash(), "-euo", "pipefail", "-c", shell((action / "action.yml").read_text(encoding="utf-8")), cwd=workspace)
+            result = run(*script_argv(shell((action / "action.yml").read_text(encoding="utf-8")), tmp), cwd=workspace)
             outputs = (tmp / "outputs").read_text(encoding="utf-8") if (tmp / "outputs").exists() else ""
             return result.returncode, outputs + result.stdout + result.stderr, marker.exists()
 

@@ -296,6 +296,14 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     let mut implicit_conftests: BTreeSet<PathBuf> = BTreeSet::new();
     let mut reach_conftests: BTreeSet<PathBuf> = BTreeSet::new();
     let mut read_conftests: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut substitution_by_file: std::collections::BTreeMap<
+        PathBuf,
+        super::super::fixture_substitution::SubstitutionScope,
+    > = std::collections::BTreeMap::new();
+    let mut module_attribute_writes: Vec<(
+        PathBuf,
+        Vec<super::super::module_constants::PythonModuleAttributeWrite>,
+    )> = Vec::new();
 
     // Evidence sources first, so production items can relate against the
     // full test pool. Owners are intentionally NOT harvested from
@@ -319,6 +327,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                             reach_conftests.insert(relative.clone());
                         }
                     }
+                    substitution_by_file.insert(relative.clone(), facts.substitution_scope.clone());
                     files.push(PythonRepoFileRecord {
                         path: normalized_path(relative),
                         role: role.as_str(),
@@ -327,6 +336,8 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                         test_count: facts.tests.len(),
                         behavior_item_count: 0,
                     });
+                    module_attribute_writes
+                        .push((relative.clone(), facts.module_attribute_writes.clone()));
                     all_tests.extend(facts.tests);
                 }
                 Err(reason) => {
@@ -348,6 +359,11 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         }
     }
 
+    super::super::fixture_substitution::apply_fixture_substitution(
+        &mut all_tests,
+        &substitution_by_file,
+        |conftest| !read_conftests.contains(conftest) && root.join(conftest).is_file(),
+    );
     super::super::fixtures::taint_admission_by_conftest(
         &mut all_tests,
         &implicit_conftests,
@@ -366,6 +382,11 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
     super::super::fixtures::record_bare_sibling_imports(&mut all_tests, |path| {
         root.join(path).exists()
     });
+    super::super::module_constants::apply_foreign_module_attribute_writes(
+        &mut all_tests,
+        &module_attribute_writes,
+    );
+    super::super::collection_config::apply_collection_config(&mut all_tests, root);
 
     // Production subjects: owners + behavior items, related against the
     // evidence pool built above. The public Finding projection is built in
@@ -415,7 +436,22 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
         .collect();
 
     for relative in &input.production_files {
-        match load_facts_with_source(root, relative) {
+        match load_facts_with_source(root, relative).and_then(|(facts, source)| {
+            let context = super::super::PythonIdentityContext::new(&source)
+                .ok_or_else(|| {
+                    "Python source identity context could not be lexed; fix its syntax and re-run `ripr check`"
+                        .to_string()
+                })?;
+            if representative_behavior_lines(&facts.facts)
+                .iter()
+                .any(|(line, text)| context.normalize(*line, text).is_none())
+            {
+                return Err(
+                    "Python source identity context did not match a behavior fact".to_string(),
+                );
+            }
+            Ok((facts, source))
+        }) {
             Ok((mut facts, source)) => {
                 apply_package_reexports_from(
                     &mut facts.owners,
@@ -435,6 +471,7 @@ pub(in crate::analysis::language::python) fn build_repo_evidence(
                 let owner_evidence = build_production_file_evidence(
                     relative,
                     &facts,
+                    &source,
                     &all_tests,
                     &mut limitations,
                     &mut findings,
@@ -610,11 +647,13 @@ fn load_facts_with_source(
 fn build_production_file_evidence(
     relative: &Path,
     facts: &PythonSourceFacts,
+    source: &str,
     all_tests: &[PythonTest],
     limitations: &mut Vec<PythonRepoLimitation>,
     findings: &mut Vec<Finding>,
     value_origins: &mut crate::value_origins::ValueOrigins,
 ) -> Vec<PythonRepoOwnerEvidence> {
+    let identity_context = super::super::PythonIdentityContext::new(source);
     let file_owners = &facts.owners;
     let mut items_per_owner: Vec<Vec<PythonRepoBehaviorItem>> = vec![Vec::new(); file_owners.len()];
     // Relations are matched once per owner (facts built once), then reused
@@ -636,6 +675,7 @@ fn build_production_file_evidence(
         })
         .collect();
 
+    let file_start = findings.len();
     for (line, text) in representative_behavior_lines(&facts.facts) {
         let Some(owner) = owner_for_changed_line(relative, line, file_owners) else {
             continue;
@@ -674,27 +714,11 @@ fn build_production_file_evidence(
             None,
         ) {
             let original_probe = finding.probe.clone();
-            // Repo mode classifies every representative behavior line, so
-            // identical statements under one owner produce identical probe
-            // ids. Suffix the duplicates (.2, .3, ...) the way the repo
-            // probe inventory does, so suppression and selection resolve a
-            // single finding instead of hiding the rest (#3668 review).
-            let base_id = finding.id.clone();
-            let count = findings
-                .iter()
-                .filter(|existing| {
-                    existing.id == base_id
-                        || existing.id.strip_prefix(&base_id).is_some_and(|suffix| {
-                            suffix.starts_with('.')
-                                && suffix[1..].chars().all(|c| c.is_ascii_digit())
-                        })
-                })
-                .count()
-                + 1;
-            if count > 1 {
-                let suffixed = format!("{base_id}.{count}");
-                finding.id = suffixed.clone();
-                finding.probe.id.0 = suffixed;
+            if let Some(normalized) = identity_context
+                .as_ref()
+                .and_then(|context| context.normalize(line, &text))
+            {
+                super::super::reidentify_python_finding(&mut finding, &normalized);
             }
             finding_origins.rebind_probe(&original_probe, &finding.probe);
             value_origins.extend(finding_origins);
@@ -706,6 +730,11 @@ fn build_production_file_evidence(
         }
     }
 
+    super::super::classify::number_colliding_candidates(
+        &mut findings[file_start..],
+        value_origins,
+        identity_context.as_ref(),
+    );
     file_owners
         .iter()
         .enumerate()

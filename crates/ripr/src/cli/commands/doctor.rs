@@ -9,7 +9,7 @@ use crate::analysis;
 use crate::app::Mode;
 use crate::cli::CommandError;
 use crate::cli::help;
-use crate::cli::suggest::unknown_argument;
+use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::config::{CONFIG_FILE_NAME, DEFAULT_LSP_SEAM_DIAGNOSTICS, RiprConfig};
 use crate::domain::{LanguageId, LanguageStatus};
 use crate::output;
@@ -38,13 +38,15 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     Some("analysis") => output::doctor::DoctorProfile::Analysis,
                     Some("source-build") => output::doctor::DoctorProfile::SourceBuild,
                     Some(other) => {
-                        return Err(CommandError::from(format!(
-                            "unknown doctor profile `{other}`; expected `analysis` or `source-build`"
+                        return Err(CommandError::from(unknown_value(
+                            "doctor profile",
+                            other,
+                            &["analysis", "source-build"],
                         )));
                     }
                     None => {
                         return Err(CommandError::from(
-                            "missing value for --profile".to_string(),
+                            "missing value for --profile; pass a value right after it".to_string(),
                         ));
                     }
                 };
@@ -57,10 +59,16 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), CommandError> {
                     // pre-#4318 parser answered `missing value for --root`
                     // here. Other dash-prefixed paths stay legitimate values.
                     Some("--help" | "-h" | "--json" | "--timings" | "--profile" | "--root") => {
-                        return Err(CommandError::from("missing value for --root".to_string()));
+                        return Err(CommandError::from(
+                            "missing value for --root; pass a value right after it".to_string(),
+                        ));
                     }
                     Some(value) => value,
-                    None => return Err(CommandError::from("missing value for --root".to_string())),
+                    None => {
+                        return Err(CommandError::from(
+                            "missing value for --root; pass a value right after it".to_string(),
+                        ));
+                    }
                 };
                 // #4318: a repeated documented flag is a usage mistake with a
                 // name of its own; accusing `--root` of being unknown sends
@@ -282,6 +290,7 @@ impl DoctorEnvironment {
                 detected_languages: detected_language_entries(
                     detected,
                     loaded.map(|config| config.languages().enabled()),
+                    loaded.is_some_and(|config| config.source_text().is_none()),
                 ),
                 unanalyzed_source_languages,
                 preview_language_gaps: preview_language_gaps(preview_enablement.as_ref()),
@@ -296,22 +305,64 @@ impl DoctorEnvironment {
     }
 }
 
+/// `auto_defaulted` is true when no `ripr.toml` was loaded, so the enabled list
+/// is the built-in default plus project-marker detection. Python and TypeScript
+/// are the languages that detection can enable; reporting them as explicitly
+/// configured would hide that origin, so they resolve with an unspecified
+/// intent and the when-detected policy (`auto_detected_enabled`).
 fn detected_language_entries(
     detected: &[LanguageId],
     enabled: Option<&[LanguageId]>,
+    auto_defaulted: bool,
 ) -> Vec<output::doctor::DoctorDetectedLanguage> {
+    use crate::domain::language_availability::{
+        AutoDetectionPolicy, ConfiguredIntent, LanguageAvailabilityInput,
+        resolve_language_availability,
+    };
     detected
         .iter()
-        .map(|id| output::doctor::DoctorDetectedLanguage {
-            language: id.as_str().to_string(),
-            status: language_status(*id),
-            adapter_available: id.is_available(),
+        .map(|id| {
             // JavaScript is analyzed by the `typescript` entry (and
             // `javascript` is accepted as its alias), so enablement is read
             // through the same
             // mapping the gaps path uses. `None` (no loaded configuration)
             // stays unknown rather than reading as disabled.
-            enabled: enabled.map(|list| list.contains(&config_entry(*id))),
+            let enabled = enabled.map(|list| list.contains(&config_entry(*id)));
+            let auto_enabled = auto_defaulted
+                && enabled == Some(true)
+                && matches!(
+                    config_entry(*id),
+                    LanguageId::Python | LanguageId::TypeScript
+                );
+            let report = resolve_language_availability(&LanguageAvailabilityInput {
+                project_detected: true,
+                configured: match enabled {
+                    Some(true) if !auto_enabled => ConfiguredIntent::Enabled,
+                    Some(false) => ConfiguredIntent::Disabled,
+                    _ => ConfiguredIntent::Unspecified,
+                },
+                auto_policy: if auto_enabled {
+                    AutoDetectionPolicy::WhenDetected
+                } else {
+                    AutoDetectionPolicy::Never
+                },
+                ..LanguageAvailabilityInput::for_language(*id)
+            });
+            output::doctor::DoctorDetectedLanguage {
+                language: id.as_str().to_string(),
+                status: language_status(*id),
+                adapter_available: id.is_available(),
+                enabled,
+                // Unloaded configuration leaves enablement unknown; the resolver
+                // has no unknown state, so publish none rather than a definite
+                // `not_enabled` plus an enable step the config may already satisfy.
+                availability_state: enabled.map(|_| report.state.as_str()),
+                remediation: if enabled.is_some() {
+                    report.remediation
+                } else {
+                    Vec::new()
+                },
+            }
         })
         .collect()
 }
@@ -3000,6 +3051,25 @@ fn preemptive_artifact_ignore(
     }
 }
 
+/// #11879: the same ignore verdict `ripr doctor` gives, for the first `ripr
+/// check` in a project. A newcomer who runs `check` before `doctor` otherwise
+/// meets `?? target/` in `git status` with no hint. Returns the warning only
+/// when git positively reports the artifact root unignored; a covered root,
+/// a missing repository or an unavailable git yield `None`. The default root
+/// is probed; a relocated cache dir is `doctor`'s to report.
+pub(crate) fn first_check_artifact_ignore_note(root: &Path) -> Option<String> {
+    use output::doctor::DoctorArtifactIgnore;
+    let roots = analysis::ripr_artifact_roots(root, &root.join("target/ripr/cache"), None);
+    let verdict = match ripr_artifact_ignore(root, &roots) {
+        DoctorArtifactIgnore::NoArtifacts => preemptive_artifact_ignore(root, &roots),
+        verdict => verdict,
+    };
+    match verdict {
+        DoctorArtifactIgnore::Unignored { warning } => Some(warning),
+        _ => None,
+    }
+}
+
 /// The typed evidence on whether git's index tracks files under ripr's
 /// artifact roots (#8276, relocated bases #8751). An ignore rule never
 /// untracks files committed earlier, so a repository can cover
@@ -3715,12 +3785,19 @@ fn format_bytes(bytes: u64) -> String {
     const KB: u64 = 1_024;
     const MB: u64 = 1_024 * KB;
     const GB: u64 = 1_024 * MB;
+    // A value just under a unit boundary must not round up to "1024.00" of
+    // the smaller unit: compare the two-decimal rounding, not the raw count.
+    let rounds_to_next = |value: u64, unit: u64| value as f64 / unit as f64 >= 1_023.995;
     if bytes >= GB {
         format!("{:.2} GB", bytes as f64 / GB as f64)
-    } else if bytes >= MB {
+    } else if bytes >= MB && !rounds_to_next(bytes, MB) {
         format!("{:.2} MB", bytes as f64 / MB as f64)
-    } else if bytes >= KB {
+    } else if bytes >= MB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= KB && !rounds_to_next(bytes, KB) {
         format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
     } else {
         format!("{bytes} B")
     }
@@ -5449,6 +5526,37 @@ mod tests {
     }
 
     #[test]
+    fn first_check_note_names_the_entry_only_while_unignored() -> Result<(), String> {
+        let root = unique_command_test_dir("artifact-first-check");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let empty_excludes = root.join("empty-excludes");
+        std::fs::write(&empty_excludes, "").map_err(|error| error.to_string())?;
+        for args in [
+            ["init"].as_slice(),
+            [
+                "config",
+                "core.excludesFile",
+                empty_excludes.to_str().ok_or("non-utf8 excludes path")?,
+            ]
+            .as_slice(),
+        ] {
+            crate::git::run_git(&root, args).map_err(|error| error.to_string())?;
+        }
+        let note = first_check_artifact_ignore_note(&root).ok_or("expected a note")?;
+        assert!(note.contains("/target/ripr/"), "{note}");
+        std::fs::write(root.join(".gitignore"), "/target/ripr/\n")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(first_check_artifact_ignore_note(&root), None);
+        // Outside a repository nothing is established, so nothing is said.
+        let bare = unique_command_test_dir("artifact-first-check-bare");
+        std::fs::create_dir_all(&bare).map_err(|error| error.to_string())?;
+        assert_eq!(first_check_artifact_ignore_note(&bare), None);
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&bare);
+        Ok(())
+    }
+
+    #[test]
     fn preemptive_artifact_ignore_warns_before_the_first_write() -> Result<(), String> {
         use output::doctor::DoctorArtifactIgnore;
         let root = unique_command_test_dir("artifact-preemptive");
@@ -6456,13 +6564,97 @@ mod tests {
             status: language_status(language),
             adapter_available,
             enabled: Some(true),
+            availability_state: Some("detected_compiled_enabled"),
+            remediation: Vec::new(),
         }
+    }
+
+    /// The doctor entry carries the shared availability state and its ordered
+    /// remediation, so a detected-but-disabled language names the enable step
+    /// and an unconfigured one stays unknown instead of reading as disabled.
+    #[test]
+    fn detected_entries_carry_the_shared_availability_state() {
+        // Rust is always compiled in, so the disabled branch is exercised on
+        // every feature set rather than only where the Python adapter exists.
+        let disabled =
+            detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Python]), false);
+        assert_eq!(
+            disabled[0].availability_state,
+            Some("detected_compiled_disabled")
+        );
+        assert!(
+            disabled[0]
+                .remediation
+                .iter()
+                .any(|step| step.contains("[languages]")),
+            "{:?}",
+            disabled[0].remediation
+        );
+        // JavaScript reads enablement through its `typescript` entry, so the
+        // availability state follows the same mapping as `enabled`.
+        if LanguageId::JavaScript.is_available() {
+            let js = detected_language_entries(
+                &[LanguageId::JavaScript],
+                Some(&[LanguageId::TypeScript]),
+                false,
+            );
+            assert_eq!(js[0].enabled, Some(true));
+            assert_eq!(js[0].availability_state, Some("detected_compiled_enabled"));
+        }
+        let enabled =
+            detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]), false);
+        assert_eq!(
+            enabled[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
+        assert!(enabled[0].remediation.is_empty());
+        let unknown = detected_language_entries(&[LanguageId::Rust], None, false);
+        assert_eq!(unknown[0].enabled, None);
+        // Unknown enablement publishes no state and no enable step.
+        assert_eq!(unknown[0].availability_state, None);
+        assert!(unknown[0].remediation.is_empty());
+    }
+
+    /// Without a loaded `ripr.toml` the enabled list is the built-in default plus
+    /// marker detection, so an enabled Python or TypeScript reads as
+    /// `auto_detected_enabled`. The same list from a real `ripr.toml` is explicit.
+    #[test]
+    fn auto_defaulted_python_reads_as_auto_detected_not_configured() {
+        if !LanguageId::Python.is_available() {
+            return;
+        }
+        let auto =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Python]), true);
+        assert_eq!(auto[0].enabled, Some(true));
+        assert_eq!(auto[0].availability_state, Some("auto_detected_enabled"));
+        let configured =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Python]), false);
+        assert_eq!(
+            configured[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
+        // Rust is enabled by the built-in default, not by detection.
+        let rust = detected_language_entries(&[LanguageId::Rust], Some(&[LanguageId::Rust]), true);
+        assert_eq!(
+            rust[0].availability_state,
+            Some("detected_compiled_enabled")
+        );
+        // A disabled entry stays disabled whatever the origin.
+        let disabled =
+            detected_language_entries(&[LanguageId::Python], Some(&[LanguageId::Rust]), true);
+        assert_eq!(
+            disabled[0].availability_state,
+            Some("detected_compiled_disabled")
+        );
     }
 
     #[test]
     fn detected_entries_map_javascript_to_its_typescript_entry() {
-        let entries =
-            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::TypeScript]));
+        let entries = detected_language_entries(
+            &[LanguageId::JavaScript],
+            Some(&[LanguageId::TypeScript]),
+            false,
+        );
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].language, "javascript");
         assert_eq!(
@@ -6471,7 +6663,7 @@ mod tests {
             "the typescript entry analyzes javascript, so it reads as enabled"
         );
         let entries =
-            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::Rust]));
+            detected_language_entries(&[LanguageId::JavaScript], Some(&[LanguageId::Rust]), false);
         assert_eq!(
             entries[0].enabled,
             Some(false),
@@ -6481,7 +6673,8 @@ mod tests {
 
     #[test]
     fn detected_entries_stay_unknown_without_a_loaded_configuration() {
-        let entries = detected_language_entries(&[LanguageId::Rust, LanguageId::Python], None);
+        let entries =
+            detected_language_entries(&[LanguageId::Rust, LanguageId::Python], None, false);
         assert!(
             entries.iter().all(|entry| entry.enabled.is_none()),
             "an unloadable config must not read as disabled: {entries:?}"
@@ -6535,7 +6728,7 @@ mod tests {
         // same line; the typed `adapter_available` field is what says it in JSON.
         // The expectation follows the compiled features: `--all-features`
         // builds (like CI's JUnit job) compile the Perl adapter (#7137).
-        let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]));
+        let unavailable = detected_language_entries(&[LanguageId::Perl], Some(&[]), false);
         let first = &detected_languages_lines(&unavailable, &[])[0];
         if cfg!(feature = "lang-perl") {
             assert!(unavailable[0].adapter_available);
@@ -7440,7 +7633,7 @@ mod tests {
         assert_eq!(
             doctor(&args(&["--root"])),
             Err(CommandError::Failure(
-                "missing value for --root".to_string()
+                "missing value for --root; pass a value right after it".to_string()
             ))
         );
     }
@@ -7674,7 +7867,7 @@ mod tests {
             assert_eq!(
                 doctor(&args(&["--root", flag])),
                 Err(CommandError::Failure(
-                    "missing value for --root".to_string()
+                    "missing value for --root; pass a value right after it".to_string()
                 )),
                 "a known flag cannot be the --root value: {flag}"
             );
@@ -8265,5 +8458,224 @@ mod tests {
             "expected no suggestions when lang-typescript feature is not compiled; got: {suggestions:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn format_bytes_pins_unit_boundaries_and_never_prints_1024_of_a_unit() {
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(1_023), "1023 B");
+        assert_eq!(format_bytes(1_024), "1.00 KB");
+        assert_eq!(format_bytes(1_536), "1.50 KB");
+        assert_eq!(format_bytes(1_048_576), "1.00 MB");
+        assert_eq!(format_bytes(1_073_741_824), "1.00 GB");
+        assert_eq!(format_bytes(5_368_709_120), "5.00 GB");
+        // One byte under a boundary rounds to 1024.00 of the smaller unit;
+        // it must promote to the next unit instead.
+        assert_eq!(format_bytes(1_048_575), "1.00 MB");
+        assert_eq!(format_bytes(1_073_741_823), "1.00 GB");
+        assert_eq!(format_bytes(1_048_000), "1023.44 KB");
+        // The promotion threshold is where two-decimal rounding reaches
+        // 1024.00: 1_048_570 B is 1023.994 KB, 1_048_571 B is 1023.995 KB.
+        assert_eq!(format_bytes(1_048_570), "1023.99 KB");
+        assert_eq!(format_bytes(1_048_571), "1.00 MB");
+        // The same threshold one unit up: 1023.995 MB is 1_073_736_581.12 B.
+        assert_eq!(format_bytes(1_073_736_581), "1023.99 MB");
+        assert_eq!(format_bytes(1_073_736_582), "1.00 GB");
+    }
+
+    #[test]
+    fn doctor_duration_switches_to_seconds_at_one_second() {
+        assert_eq!(doctor_duration(0), "0ms");
+        assert_eq!(doctor_duration(999), "999ms");
+        assert_eq!(doctor_duration(1_000), "1.0s");
+        assert_eq!(doctor_duration(4_949), "4.9s");
+        assert_eq!(doctor_duration(12_000), "12.0s");
+    }
+
+    #[test]
+    fn doctor_timing_suffix_is_empty_without_total_and_names_slowest_with_one() {
+        let mut report = output::doctor::DoctorReport::new(".");
+        assert_eq!(doctor_timing_suffix(&report), "");
+        report.elapsed_ms = Some(4_900);
+        assert_eq!(doctor_timing_suffix(&report), " in 4.9s");
+        report.segments.push(output::doctor::DoctorSegmentTiming {
+            name: "tool_cargo".to_string(),
+            elapsed_ms: 3_100,
+        });
+        report.segments.push(output::doctor::DoctorSegmentTiming {
+            name: "cache".to_string(),
+            elapsed_ms: 40,
+        });
+        assert_eq!(
+            doctor_timing_suffix(&report),
+            " in 4.9s (slowest: tool_cargo 3.1s)"
+        );
+    }
+
+    #[test]
+    fn split_state_and_fix_splits_on_first_separator_and_drops_empty_fix() {
+        assert_eq!(
+            split_state_and_fix("cargo missing; install rustup; then retry"),
+            ("cargo missing", Some("install rustup; then retry"))
+        );
+        assert_eq!(split_state_and_fix("cargo 1.95"), ("cargo 1.95", None));
+        assert_eq!(
+            split_state_and_fix("cargo missing; "),
+            ("cargo missing; ", None)
+        );
+    }
+
+    #[test]
+    fn failure_block_prefers_explicit_fix_then_renderer_fix_for_tool_probes() {
+        assert_eq!(
+            failure_block("git missing; install git"),
+            vec![
+                "! git missing".to_string(),
+                "  Fix: install git".to_string()
+            ]
+        );
+        assert_eq!(
+            failure_block("cargo --version failed with status 1"),
+            vec![
+                "! cargo --version failed with status 1".to_string(),
+                "  Fix: the binary on PATH ran but `--version` failed; repair or replace it so the probe can succeed".to_string(),
+            ]
+        );
+        assert_eq!(
+            failure_block("rustc timed out after 5s"),
+            vec![
+                "! rustc timed out after 5s".to_string(),
+                "  Fix: retry after reducing load, or repair the binary on PATH so `--version` answers in time".to_string(),
+            ]
+        );
+        assert_eq!(
+            failure_block("git could not be launched: denied"),
+            vec![
+                "! git could not be launched: denied".to_string(),
+                "  Fix: repair permissions or replace the binary on PATH so doctor can spawn it"
+                    .to_string(),
+            ]
+        );
+        assert_eq!(
+            failure_block("git could not be waited on: gone"),
+            vec![
+                "! git could not be waited on: gone".to_string(),
+                "  Fix: retry the probe; doctor could not confirm the process ended".to_string(),
+            ]
+        );
+        // Unknown tools and unknown suffixes get no invented repair.
+        assert_eq!(
+            failure_block("node --version failed"),
+            vec!["! node --version failed".to_string()]
+        );
+        assert_eq!(
+            failure_block("cargo exploded"),
+            vec!["! cargo exploded".to_string()]
+        );
+    }
+
+    #[test]
+    fn failure_block_escapes_terminal_control_characters() {
+        assert_eq!(
+            failure_block("git bad\u{1b}[2J; fix\nme"),
+            vec![
+                "! git bad\\u{1b}[2J".to_string(),
+                "  Fix: fix\\u{0a}me".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn artifact_roots_display_wording_by_root_count() {
+        let roots = |values: &[&str]| -> Vec<String> {
+            values.iter().map(|value| (*value).to_string()).collect()
+        };
+        assert_eq!(artifact_roots_display(&roots(&[])), "the artifact roots");
+        assert_eq!(
+            artifact_roots_display(&roots(&["target/ripr"])),
+            "target/ripr"
+        );
+        assert_eq!(
+            artifact_roots_display(&roots(&["target/ripr", "build/ripr"])),
+            "target/ripr and build/ripr"
+        );
+        assert_eq!(artifact_roots_display(&roots(&["a", "b", "c"])), "a, b, c");
+    }
+
+    #[test]
+    fn join_compact_is_none_for_no_parts_and_dot_joins_otherwise() {
+        assert_eq!(join_compact("Tools", &[]), None);
+        assert_eq!(
+            join_compact("Tools", &["git 2.47".to_string(), "cargo 1.95".to_string()]),
+            Some("\u{2713} Tools: git 2.47 \u{b7} cargo 1.95".to_string())
+        );
+    }
+
+    #[test]
+    fn mcp_config_problem_classifies_each_refusal_with_its_repair() {
+        assert_eq!(
+            mcp_config_problem(
+                r#"{"mcpServers":{"ripr":{"command":"ripr","args":["mcp","--stdio"]}}}"#
+            ),
+            Ok(())
+        );
+        let problem = |text: &str| mcp_config_problem(text).err();
+        let fix_file = "fix or remove the file, then run `ripr init --mcp`";
+        let init = "run `ripr init --mcp`";
+        let force = "run `ripr init --mcp --force` to replace the customized entry";
+        assert_eq!(
+            problem("[]"),
+            Some(("is not a JSON object".to_string(), fix_file))
+        );
+        assert_eq!(
+            problem("{}"),
+            Some(("has no `mcpServers` object".to_string(), init))
+        );
+        assert_eq!(
+            problem(r#"{"mcpServers":[]}"#),
+            Some((
+                "has an `mcpServers` that is not an object".to_string(),
+                fix_file
+            ))
+        );
+        assert_eq!(
+            problem(r#"{"mcpServers":{"other":{}}}"#),
+            Some(("has no `ripr` server entry".to_string(), init))
+        );
+        assert_eq!(
+            problem(r#"{"mcpServers":{"ripr":{"command":"ripr","args":["mcp"]}}}"#),
+            Some((
+                "`ripr` server entry runs `ripr mcp`, not `ripr mcp --stdio`".to_string(),
+                force
+            ))
+        );
+        assert_eq!(
+            problem(r#"{"mcpServers":{"ripr":{"command":"node","args":["mcp","--stdio"]}}}"#),
+            Some((
+                "`ripr` server entry runs `node mcp --stdio`, not `ripr mcp --stdio`".to_string(),
+                force
+            ))
+        );
+        assert_eq!(
+            problem(r#"{"mcpServers":{"ripr":{"args":[1,"--stdio"]}}}"#),
+            Some((
+                "`ripr` server entry runs `<no command> 1 --stdio`, not `ripr mcp --stdio`"
+                    .to_string(),
+                force
+            ))
+        );
+        let invalid = problem("{not json")
+            .map(|(message, repair)| (message.starts_with("is not valid JSON ("), repair));
+        assert_eq!(invalid, Some((true, fix_file)));
+    }
+
+    #[test]
+    fn workspace_relative_value_rejects_absolute_and_parent_escaping_paths() {
+        assert!(is_workspace_relative_value("target/tmp"));
+        assert!(is_workspace_relative_value("tmp"));
+        assert!(is_workspace_relative_value("a/./b"));
+        assert!(!is_workspace_relative_value("../tmp"));
+        assert!(!is_workspace_relative_value("a/../../tmp"));
+        assert!(!is_workspace_relative_value("/var/tmp"));
     }
 }

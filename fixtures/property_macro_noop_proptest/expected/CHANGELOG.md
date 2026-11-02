@@ -278,3 +278,55 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — property_macro_noop_proptest (22)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless property_macro_noop_proptest --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — property_macro_noop_proptest (23)
+
+Reason:
+RIPR-SPEC-0117: property-macro static_unknown keeps macro_reach_unresolved as its stop reason instead of static_probe_unknown (#11544)
+
+Command:
+`cargo xtask goldens bless property_macro_noop_proptest --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — property_macro_noop_proptest (24)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless property_macro_noop_proptest --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — property_macro_noop_proptest (25)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless property_macro_noop_proptest --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

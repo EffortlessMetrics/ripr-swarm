@@ -11,7 +11,7 @@ Extends the empty-result disclosure family (RIPR-SPEC-0082) with the
 docs-only case (#2304): when a diff changes at least one file, no changed
 file routes to a source adapter, and the pipeline produced zero findings,
 the CLI emits a one-line stderr disclosure naming the changed-file count
-and observed extensions and stating that the empty result is correct
+and observed extensions and stating that nothing was analyzed
 because ripr cannot analyze non-source files. The disclosure is not a
 Finding, not a preview_languages block, changes no JSON schema or golden,
 and keeps exit code 0; any source-routed file, or an empty diff,

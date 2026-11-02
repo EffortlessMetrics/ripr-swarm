@@ -25,12 +25,12 @@ Start here:
   Next step: ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the
     standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed
     value; add a test only if none does
-  Evidence: reach yes · infection yes · propagation yes · observation no · discriminator no
+  Evidence: reach yes · infection yes · propagation yes · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -43,10 +43,12 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast probe:src_lib.rs:predicate:d545be08
   ripr context --root <cwd>/fixtures/macro_site_scoped_rest_limit/input --diff <cwd>/fixtures/macro_site_scoped_rest_limit/diff.patch --mode fast --at probe:src_lib.rs:predicate:d545be08
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:4 (unknown); kind: return_value; reason: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
+    - ./src/lib.rs:4 (unknown: static analysis limited); kind: return_value; reason: A related Rust test has an `assert_eq!`, but ripr could not read whether it runs as the standard macro on the path that reaches this change (for example the file did not parse,…
+  Hidden classes:
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

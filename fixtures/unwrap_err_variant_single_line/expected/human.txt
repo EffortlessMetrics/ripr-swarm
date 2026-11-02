@@ -16,12 +16,12 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:validate:error_variant:error_path:err_parseerror_toolong_name.len
   Changed behavior: return Err(ParseError::TooLong(name.len()))
   Related test: tests/errors.rs:4 too_long_name_rejected_with_exact_variant
-  Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator not established
+  Evidence: reach yes · infection yes · propagation weak · observation yes · assertion not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -34,12 +34,14 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/unwrap_err_variant_single_line/input --diff <cwd>/fixtures/unwrap_err_variant_single_line/diff.patch --mode fast probe:src_lib.rs:error_path:e4b7f445
   ripr context --root <cwd>/fixtures/unwrap_err_variant_single_line/input --diff <cwd>/fixtures/unwrap_err_variant_single_line/diff.patch --mode fast --at probe:src_lib.rs:error_path:e4b7f445
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
 Write a test for it:
   ripr agent stub --root <cwd>/fixtures/unwrap_err_variant_single_line/input --at src/lib.rs:12 --kind error_path
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:12 (weak); kind: return_value; reason: Strong oracle found: exact error variant assertion
+  Hidden classes:
+    weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

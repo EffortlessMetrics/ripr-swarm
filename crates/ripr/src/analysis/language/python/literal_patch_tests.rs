@@ -60,6 +60,56 @@ fn an_edit_around_a_fixed_clock_keeps_its_credit() {
     }
 }
 
+/// Issue #10267: a module-level `def patch` / assignment is not an import, so
+/// the exactly-once import check still treats `patch` as `unittest.mock.patch`.
+#[test]
+fn a_module_level_patch_rebinding_keeps_the_limit() {
+    let new = "    return f\"{prefix}_{int(time.time())}\"";
+    for extra in [
+        "def patch(*args, **kwargs):\n    return None\n\n",
+        "async def patch(*args, **kwargs):\n    return None\n\n",
+        "patch = None\n\n",
+        "patch: object = None\n\n",
+    ] {
+        let test = clock_test(CLOCK_PATCH).replace(
+            "from idioms.clock import stamp\n\n\n",
+            &format!("from idioms.clock import stamp\n\n{extra}"),
+        );
+        assert_eq!(
+            limit(new, OLD, &test),
+            Some(StaticLimitKind::MockedModule),
+            "{extra}"
+        );
+    }
+    let mock_rebound = "from unittest import mock\n\nfrom idioms.clock import stamp\n\ndef mock():\n    return None\n\ndef test_stamp_uses_the_patched_clock():\n    with mock.patch(\"idioms.clock.time.time\", return_value=1700000000):\n        assert stamp(\"a\") == \"a-1700000000\"\n";
+    assert_eq!(
+        limit(new, OLD, mock_rebound),
+        Some(StaticLimitKind::MockedModule)
+    );
+}
+
+/// Issue #10267: last-two-segment matching accepts `other.mod.time.time` for
+/// an owner that calls `time.time()`, and `without_calls` then hides the
+/// missing-import-graph limit.
+#[test]
+fn a_cross_module_patch_target_keeps_the_limit() {
+    let test = clock_test("with patch(\"other.mod.time.time\", return_value=1700000000):");
+    assert_eq!(
+        limit("    return f\"{prefix}_{int(time.time())}\"", OLD, &test),
+        Some(StaticLimitKind::MockedModule)
+    );
+}
+
+/// Positive control: the same edit stays credited when the target names the
+/// owner's module (`idioms.clock.time.time` for `idioms/clock.py`).
+#[test]
+fn a_matching_owner_module_patch_target_keeps_its_credit() {
+    let new = "    return f\"{prefix}_{int(time.time())}\"";
+    assert_eq!(limit(new, OLD, &clock_test(CLOCK_PATCH)), None);
+    let mock_patch = "from unittest import mock\n\nfrom idioms.clock import stamp\n\ndef test_stamp_uses_the_patched_clock():\n    with mock.patch(\"idioms.clock.time.time\", return_value=1700000000):\n        assert stamp(\"a\") == \"a-1700000000\"\n";
+    assert_eq!(limit(new, OLD, mock_patch), None);
+}
+
 #[test]
 fn an_edit_to_the_patched_calls_arguments_keeps_the_limit() {
     let test = clock_test(CLOCK_PATCH);

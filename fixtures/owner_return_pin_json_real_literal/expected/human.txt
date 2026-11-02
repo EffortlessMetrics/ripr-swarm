@@ -15,12 +15,12 @@ Start here:
   Gap ID (for scripts): gap:rust:src/lib.rs:did_save_params:return_value:return_value:ok
   Changed behavior: Ok(())
   Related test (1 of 2 matched rows): tests/save.rs:5 save_success_is_observed_with_absent_empty_and_nonempty_text
-  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion yes
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -33,11 +33,14 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_return_pin_json_real_literal/input --diff <cwd>/fixtures/owner_return_pin_json_real_literal/diff.patch --mode fast probe:src_lib.rs:return_value:9659b9fa
   ripr context --root <cwd>/fixtures/owner_return_pin_json_real_literal/input --diff <cwd>/fixtures/owner_return_pin_json_real_literal/diff.patch --mode fast --at probe:src_lib.rs:return_value:9659b9fa
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: nothing to repair here; the related tests already notice this change (exposed)
 
 Hidden:
   All 2 omitted finding(s) are base-side evidence, not candidate edit targets.
     - ./src/lib.rs:5 (unrevealed); kind: error_path; reason: No detected assertion observes the changed value, error, field, or effect
-    - ./src/lib.rs:5 (weak); kind: return_value; reason: No strong discriminator was detected
+    - ./src/lib.rs:5 (weak); kind: return_value; reason: No strong assertion was detected
+  Hidden classes:
+    weak = tests reach it but check it only loosely
+    unrevealed = tests reach it but nothing appears to notice a change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -21,12 +21,12 @@ Start here:
     path and existing assertions through the public API; add a test only for an independently
     confirmed gap. This limitation does not establish a missing test. Route analyzer work to
     `analysis/rust-public-api-transitive-reach`
-  Evidence: reach no · infection unknown · propagation yes · observation no · discriminator no
+  Evidence: reach no · infection unknown · propagation yes · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -39,11 +39,13 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/module_reach_multiline_qualified_text/input --diff <cwd>/fixtures/module_reach_multiline_qualified_text/diff.patch --mode fast probe:src_inner.rs:predicate:25dc8b63
   ripr context --root <cwd>/fixtures/module_reach_multiline_qualified_text/input --diff <cwd>/fixtures/module_reach_multiline_qualified_text/diff.patch --mode fast --at probe:src_inner.rs:predicate:25dc8b63
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/inner.rs:2 (no path); kind: return_value; reason: An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
+  Hidden classes:
+    no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

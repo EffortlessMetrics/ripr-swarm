@@ -23,3 +23,76 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_refused (3)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_refused (4)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording says the adapter cannot confirm observation, not reach
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_refused (5)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording states the adapter could not confirm observation without a causal claim
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_refused (6)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_refused (7)
+
+Reason:
+RIPR-SPEC-0122: use plain wording in default human output
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_boundary_local_constant_refused (8)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless ts_boundary_local_constant_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

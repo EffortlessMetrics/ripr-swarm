@@ -21,6 +21,9 @@ import {
 import { compatibleLspEvidence } from './testCompatibility';
 import { shouldShowMainStatusBar, type RiprStatusKind } from '../../src/statusRender';
 
+/** Main status text fragment for unsaved-buffer staleness (#5319). */
+const UNSAVED_STATUS_FRAGMENT = 'ripr: unsaved changes';
+
 suite('Extension Smoke', () => {
   suiteSetup(async function (this: Mocha.Context) {
     // Activation awaits full server start: candidate compatibility probe
@@ -1213,6 +1216,32 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('copyContext never copies an empty static-limit note and says so', async () => {
+    // copyContext refuses with a repair-actions message unless an active
+    // workspace file exists, so open one like the neighbouring copy tests do.
+    const relativePath = 'src/empty-static-limit-note.rs';
+    const uri = workspaceFileUri(relativePath);
+    const context = createControllerTestContext({});
+    try {
+      await writeWorkspaceFile(relativePath, 'pub fn empty_static_limit_note_target() {}\n');
+      const document = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(document);
+      await context.controller.start();
+      await context.controller.copyContext({ label: 'static_limit_note', note: '  \n ' });
+
+      assert.deepStrictEqual(context.clipboardWrites, []);
+      assert.deepStrictEqual(context.client.requests, []);
+      assert.ok(
+        context.infoMessages.at(-1)?.includes('No ripr static-limit note is available'),
+        `expected the empty-note message, got: ${context.infoMessages.join(' | ')}`
+      );
+    } finally {
+      await context.dispose();
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      await removeWorkspacePath(relativePath);
+    }
+  });
+
   test('copyContext copies first repair packets without LSP fallback for active workspace file', async () => {
     const relativePath = 'src/first-repair-packet.rs';
     const uri = workspaceFileUri(relativePath);
@@ -1603,7 +1632,7 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('Enabled languages: none'));
       assert.ok(String(context.status.tooltip).includes('ripr.toml [languages] enabled'));
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('no enabled languages'));
+      assert.ok(context.outputLines.join('\n').includes('no enabled languages'));
       assert.ok(context.outputLines.join('\n').includes('Enabled languages: none'));
       assert.ok(context.outputLines.join('\n').includes('Next safe action:'));
 
@@ -1682,7 +1711,7 @@ suite('Extension Smoke', () => {
       });
       assert.ok(context.status.text.includes('ripr: failed'));
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('analysis refresh failed'));
+      assert.ok(context.outputLines.join('\n').includes('analysis refresh failed'));
     } finally {
       await context.dispose();
     }
@@ -2039,7 +2068,7 @@ suite('Extension Smoke', () => {
         root_recovery_route: 'refresh'
       });
 
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('root_changed'));
       assert.ok(String(context.status.tooltip).includes('new root'));
     } finally {
@@ -2064,7 +2093,13 @@ suite('Extension Smoke', () => {
         snapshot_id: 'snapshot:dirty-refresh'
       });
 
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
+      assert.ok(!context.status.text.includes('$(warning)'), context.status.text);
+      assert.strictEqual(
+        (context.status.backgroundColor as { id?: string } | undefined)?.id,
+        undefined,
+        'unsaved-buffer stale must not use statusBarItem.warningBackground'
+      );
       assert.ok(String(context.status.tooltip).includes('unsaved routed-file changes remain'));
       assert.ok(String(context.status.tooltip).includes('Current diagnostics describe the last saved workspace state.'));
     } finally {
@@ -2184,7 +2219,7 @@ suite('Extension Smoke', () => {
         run_status: 'stale',
         unavailable_languages: [{ language: 'python', file_count: 1 }]
       });
-      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT), context.status.text);
     } finally {
       await context.dispose();
     }
@@ -2527,9 +2562,11 @@ suite('Extension Smoke', () => {
       emitSucceededWithRunStatus(undefined);
       assert.ok(context.status.text.includes('$(check) ripr: diagnostics'), context.status.text);
 
-      // 'stale' keeps today's degraded presentation and retry wording.
+      // Server run_status 'stale' uses the same neutral unsaved-buffer presentation (#5319).
       emitSucceededWithRunStatus('stale');
-      assert.ok(context.status.text.includes('$(warning) ripr: stale'), context.status.text);
+      assert.ok(context.status.text.includes('$(circle-outline)'), context.status.text);
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT), context.status.text);
+      assert.ok(!context.status.text.includes('$(warning)'), context.status.text);
       const staleTooltip = String(context.status.tooltip);
       assert.ok(staleTooltip.includes('ripr analysis completed with stale or limited evidence.'), staleTooltip);
       assert.ok(
@@ -2558,7 +2595,7 @@ suite('Extension Smoke', () => {
         snapshot_id: 'snapshot:dirty-deferred'
       });
 
-      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT), context.status.text);
       const tooltip = String(context.status.tooltip);
       assert.ok(tooltip.includes('unsaved routed-file changes remain'), tooltip);
       assert.ok(tooltip.includes('Current diagnostics describe the last saved workspace state.'), tooltip);
@@ -2604,7 +2641,6 @@ suite('Extension Smoke', () => {
       assert.strictEqual(context.runRiprCalls.length, 0);
 
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('First useful action: Add equality-boundary discriminator test'));
       assert.ok(context.outputLines.join('\n').includes('First useful action: Add equality-boundary discriminator test'));
       assert.ok(context.outputLines.join('\n').includes('Report: target/ripr/reports/first-useful-action.json'));
     } finally {
@@ -4060,7 +4096,7 @@ suite('Extension Smoke', () => {
       const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
       context.controller.markWorkspaceStale(document);
 
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('editor evidence is stale'));
       assert.ok(!context.status.text.includes('first action'));
 
@@ -4408,14 +4444,14 @@ suite('Extension Smoke', () => {
     }
   });
 
-  test('main status bar visibility hides only disabled and keeps noWorkspace', () => {
+  test('main status bar visibility hides disabled and serverUnavailable and keeps noWorkspace', () => {
     const expectedVisible: Record<RiprStatusKind, boolean> = {
       disabled: false,
       noWorkspace: true,
       workspaceUntrusted: true,
       workspaceAmbiguous: true,
       resolvingServer: true,
-      serverUnavailable: true,
+      serverUnavailable: false,
       serverFailed: true,
       starting: true,
       analysisQueued: true,
@@ -4537,6 +4573,11 @@ suite('Extension Smoke', () => {
       await context.controller.start();
 
       assert.ok(context.status.text.includes('ripr: server missing'));
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'serverUnavailable must hide the main status-bar item'
+      );
       assert.ok(String(context.status.tooltip).includes('Missing configured ripr server path'));
       assert.ok(String(context.status.tooltip).includes('Workspace:'));
       assert.ok(String(context.status.tooltip).includes('Server: not resolved'));
@@ -4655,12 +4696,12 @@ suite('Extension Smoke', () => {
 
       context.controller.markWorkspaceStale(document);
 
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes(document.uri.fsPath));
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=4, diagnostics=2, files=1, findings=1, seam_diagnostics=1, published_files=1, cleared_files=0'
       });
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('last saved workspace state'));
 
       context.controller.markWorkspaceSaved(document);
@@ -4682,7 +4723,7 @@ suite('Extension Smoke', () => {
       // the buffer is closed, so no unsaved-changes wording may remain.
       assert.ok(!String(context.status.tooltip).includes('Unsaved routed files'));
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('ripr analysis completed'));
+      assert.ok(context.outputLines.join('\n').includes('ripr analysis completed'));
     } finally {
       await context.dispose();
     }
@@ -4703,7 +4744,7 @@ suite('Extension Smoke', () => {
       assert.ok(context.status.text.includes('ripr: language off'), context.status.text);
 
       context.controller.markWorkspaceStale(document);
-      assert.ok(context.status.text.includes('ripr: stale'), context.status.text);
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT), context.status.text);
       context.controller.markWorkspaceClosed(document);
       // The restored status is the typed one, not a log-derived form that
       // carries no unavailable-language rows.
@@ -4762,7 +4803,7 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes(document.uri.fsPath));
       assert.ok(String(context.status.tooltip).includes('without saving'));
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('saved workspace'));
+      assert.ok(context.outputLines.join('\n').includes('saved workspace'));
     } finally {
       await context.dispose();
     }
@@ -4781,10 +4822,10 @@ suite('Extension Smoke', () => {
         schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'cancelled',
         retry_command: 'ripr.refresh'
       });
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
 
       context.controller.markWorkspaceClosed(document);
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('retained evidence is stale'));
     } finally {
       await context.dispose();
@@ -4799,12 +4840,12 @@ suite('Extension Smoke', () => {
 
       context.controller.markWorkspaceStale(pythonDocument);
 
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('src'));
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=6, diagnostics=2, files=1, findings=1, seam_diagnostics=1, published_files=1, cleared_files=0'
       });
-      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(context.status.text.includes(UNSAVED_STATUS_FRAGMENT));
       assert.ok(String(context.status.tooltip).includes('Unsaved routed files'));
 
       context.controller.markWorkspaceSaved(pythonDocument);

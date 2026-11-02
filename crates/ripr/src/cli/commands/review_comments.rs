@@ -160,14 +160,18 @@ fn positive_u64_limit_from_env(
             let parsed = raw
                 .trim()
                 .parse::<u64>()
-                .map_err(|err| format!("{env_name} must be a positive integer: {err}"))?;
+                .map_err(|err| format!("{env_name} must be a positive integer: {err}; set it to a whole number of 1 or more, or unset it"))?;
             if parsed == 0 {
-                return Err(format!("{env_name} must be a positive integer"));
+                return Err(format!(
+                    "{env_name} must be a positive integer; set it to a whole number of 1 or more, or unset it"
+                ));
             }
             Ok(parsed)
         }
         Err(std::env::VarError::NotPresent) => Ok(default),
-        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{env_name} must be valid UTF-8")),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+            "{env_name} must be valid UTF-8; set it to plain digits, or unset it"
+        )),
     }
 }
 
@@ -230,6 +234,48 @@ fn record_review_comments_timeout(
     }
 }
 
+/// Early producer-refusal probe (#11161): a producer refusal envelope carries
+/// no `analysis_outcome`, so it needs neither the diff nor the inventory.
+/// Reading it before that work keeps an earlier diff/inventory/deadline
+/// failure from hiding the refusal and its repair route. Anything that is not
+/// a refusal (unreadable, malformed, bounded, carrying an outcome) returns
+/// `None` and keeps the loader's own validation and error ordering.
+fn early_producer_refusal_error(path: Option<&Path>) -> Option<String> {
+    let path = path?;
+    let text = crate::bounded_input::read_to_string(path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    if value.get("analysis_outcome").is_some()
+        || crate::output::gate::discloses_limited_findings_bound(&value)
+        || crate::output::gate::discloses_bounded_analysis_document(&value)
+    {
+        return None;
+    }
+    let refusal = crate::output::gate::producer_refusal(&value)?;
+    Some(review_comments_refusal_error(path, &refusal))
+}
+
+/// The named refusal error for a producer-refusal check document (#11161):
+/// the typed run status when known, the producer's own message, and the
+/// next step. A refusal envelope carries no `analysis_outcome` at all —
+/// nothing was analyzed — so the generic missing-outcome error would hide
+/// the cause.
+fn review_comments_refusal_error(
+    path: &Path,
+    refusal: &crate::output::gate::ProducerRefusal,
+) -> String {
+    let status = refusal
+        .status
+        .as_deref()
+        .unwrap_or("unknown producer refusal");
+    format!(
+        "review-comments --check-output {} is invalid: producer refusal (run_status: {status}); \
+         nothing was analyzed. Producer message: {}. Next step: {}",
+        path.display(),
+        refusal.message,
+        refusal.repair_route,
+    )
+}
+
 fn load_review_comments_analysis_outcome(
     path: Option<&Path>,
     root: &Path,
@@ -263,7 +309,7 @@ fn load_review_comments_analysis_outcome(
         })?;
     if value.get("tool").and_then(serde_json::Value::as_str) != Some("ripr") {
         return Err(format!(
-            "review-comments --check-output {} is invalid: producer tool must be ripr",
+            "review-comments --check-output {} is invalid: producer tool must be ripr; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
@@ -274,7 +320,7 @@ fn load_review_comments_analysis_outcome(
             .is_none()
         {
             return Err(format!(
-                "review-comments --check-output {} is invalid: producer envelope is missing string field {field}",
+                "review-comments --check-output {} is invalid: producer envelope is missing string field {field}; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
                 path.display()
             ));
         }
@@ -283,13 +329,13 @@ fn load_review_comments_analysis_outcome(
         != Some(output::outcome::display_path(root).as_str())
     {
         return Err(format!(
-            "review-comments --check-output {} is invalid: producer root does not match requested root",
+            "review-comments --check-output {} is invalid: producer root does not match requested root; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
     if value.get("base").and_then(serde_json::Value::as_str) != Some(base) {
         return Err(format!(
-            "review-comments --check-output {} is invalid: producer base does not match requested base",
+            "review-comments --check-output {} is invalid: producer base does not match requested base; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
@@ -301,29 +347,41 @@ fn load_review_comments_analysis_outcome(
             .is_some_and(serde_json::Value::is_array)
     {
         return Err(format!(
-            "review-comments --check-output {} is invalid: producer envelope requires summary and findings",
-            path.display()
-        ));
-    }
-    let Some(envelope) = value.get("analysis_outcome") else {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: missing analysis_outcome",
-            path.display()
-        ));
-    };
-    if envelope.is_null() {
-        return Err(format!(
-            "review-comments --check-output {} is invalid: analysis_outcome is null",
+            "review-comments --check-output {} is invalid: producer envelope requires summary and findings; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
     // #9010: a findings-bounded check document is a bounded subset, never a complete
-    // outcome; present non-`true` (including malformed) fails closed.
+    // outcome; present non-`true` (including malformed) fails closed. Runs
+    // before the outcome checks so a bounded document keeps its own repair
+    // route even when its outcome is absent — a bounded envelope also
+    // carries an explicit non-consumable record, exactly as in the gate
+    // ordering (#11161).
     if crate::output::gate::discloses_limited_findings_bound(&value)
         || crate::output::gate::discloses_bounded_analysis_document(&value)
     {
         return Err(format!(
             "review-comments --check-output {} is invalid: findings-bounded check document (document_complete is not true or run_limitations names limited_findings_bound); re-run with RIPR_CHECK_FINDINGS_BYTES=0",
+            path.display()
+        ));
+    }
+    let Some(envelope) = value.get("analysis_outcome") else {
+        // #11161: a producer refusal envelope carries no `analysis_outcome`
+        // at all — nothing was analyzed — so name the refusal (its run
+        // status, the producer's own message, and the next step) instead of
+        // the generic missing-outcome error. A consumable envelope without
+        // an outcome keeps the generic error below.
+        if let Some(refusal) = crate::output::gate::producer_refusal(&value) {
+            return Err(review_comments_refusal_error(path, &refusal));
+        }
+        return Err(format!(
+            "review-comments --check-output {} is invalid: missing analysis_outcome; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
+            path.display()
+        ));
+    };
+    if envelope.is_null() {
+        return Err(format!(
+            "review-comments --check-output {} is invalid: analysis_outcome is null; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
@@ -358,7 +416,7 @@ fn load_review_comments_analysis_outcome(
     );
     if outcome.identity.input_identity.as_deref() != Some(expected_input_identity.as_str()) {
         return Err(format!(
-            "review-comments --check-output {} is invalid: producer input identity does not match the requested diff",
+            "review-comments --check-output {} is invalid: producer input identity does not match the requested diff; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
@@ -369,13 +427,13 @@ fn load_review_comments_analysis_outcome(
         .is_some_and(|revision| revision != base)
     {
         return Err(format!(
-            "review-comments --check-output {} is invalid: typed outcome base revision does not match requested base",
+            "review-comments --check-output {} is invalid: typed outcome base revision does not match requested base; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
     if declared_complete != outcome.kind.is_complete() {
         return Err(format!(
-            "review-comments --check-output {} is invalid: analysis_complete does not match typed outcome kind",
+            "review-comments --check-output {} is invalid: analysis_complete does not match typed outcome kind; rerun `ripr check --json` for the same root, base and diff, then pass its output to `--check-output`",
             path.display()
         ));
     }
@@ -588,6 +646,14 @@ fn review_comments_with_admission(
         return Ok(());
     }
 
+    if let Some(error) = early_producer_refusal_error(options.check_output.as_deref()) {
+        return Err(record_review_comments_error(
+            &mut receipt,
+            &receipt_path,
+            "configuration",
+            error,
+        ));
+    }
     receipt.phase("configuration", "diff_discovery");
     receipt.write_atomic(&receipt_path)?;
     let diff_text = analysis::cancellation::with_token(&cancellation, || {
@@ -1135,6 +1201,114 @@ mod tests {
     }
 
     #[test]
+    fn check_output_loader_names_producer_refusal_but_keeps_generic_error() -> Result<(), String> {
+        // #11161: a producer-refusal envelope carries no `analysis_outcome`
+        // at all — nothing was analyzed — so the loader must name the
+        // refusal (typed status, producer message, next step) instead of
+        // the generic missing-outcome error. A consumable envelope without
+        // an outcome keeps the generic error.
+        let dir = unique_command_test_dir("review-comments-refusal-check-output");
+        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let _cleanup = OwnedDeadlineFixture(dir.clone());
+        let root = dir.join("repo");
+        std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        let diff_text = "diff";
+        let envelope = |refusal: bool| {
+            let mut document = serde_json::json!({
+                "schema_version": "0.2", "tool": "ripr", "mode": "draft",
+                "root": output::outcome::display_path(&root),
+                "base": "main", "summary": {}, "findings": []
+            });
+            if refusal {
+                document["analysis_scope"] = serde_json::json!({
+                    "scope": "diff",
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "repair_route": "analysis/diff-scope-budget"
+                });
+                document["run_limitations"] = serde_json::json!([{
+                    "category": "diff_scope_oversized",
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+                    "repair_route": "analysis/diff-scope-budget"
+                }]);
+            }
+            document
+        };
+        let refusal_path = dir.join("refusal.json");
+        std::fs::write(&refusal_path, envelope(true).to_string())
+            .map_err(|error| error.to_string())?;
+        let error =
+            load_review_comments_analysis_outcome(Some(&refusal_path), &root, "main", diff_text)
+                .err()
+                .ok_or_else(|| "a refusal envelope must be refused".to_string())?;
+        assert!(error.contains("producer refusal"), "{error}");
+        assert!(error.contains("diff_scope_oversized"), "{error}");
+        assert!(
+            error.contains("2878 changed Rust lines"),
+            "the producer's own message must survive: {error}"
+        );
+        assert!(
+            error.contains("analysis/diff-scope-budget"),
+            "the next step must survive: {error}"
+        );
+        assert!(
+            !error.contains("missing analysis_outcome"),
+            "the generic missing-outcome error must not hide the refusal: {error}"
+        );
+        let plain_path = dir.join("plain.json");
+        std::fs::write(&plain_path, envelope(false).to_string())
+            .map_err(|error| error.to_string())?;
+        let error =
+            load_review_comments_analysis_outcome(Some(&plain_path), &root, "main", diff_text)
+                .err()
+                .ok_or_else(|| "an envelope without an outcome must be refused".to_string())?;
+        assert!(
+            error.contains("missing analysis_outcome"),
+            "a non-refusal envelope without an outcome keeps the generic error: {error}"
+        );
+        // #11161 review: a bounded document that also discloses a refusal
+        // keeps the findings-bounded error — the bounded check runs before
+        // the outcome/refusal checks. Moving the bounded check after the
+        // refusal branch would name the refusal here and fail this
+        // assertion. (The producer never emits this mix; it pins guard
+        // order while preserving fail-closed bounded handling.)
+        let mut mixed = envelope(true);
+        mixed["run_limitations"] = serde_json::json!([
+            {
+                "category": "limited_findings_bound",
+                "run_status": "limited_findings_bound",
+                "downstream_consumable": false,
+                "message": "findings array was cut by the byte budget",
+                "repair_route": "analysis/findings-budget"
+            },
+            {
+                "category": "diff_scope_oversized",
+                "run_status": "diff_scope_oversized",
+                "downstream_consumable": false,
+                "message": "diff_scope_oversized: 2878 changed Rust lines exceed the limit (2000); analysis was not run.",
+                "repair_route": "analysis/diff-scope-budget"
+            }
+        ]);
+        let mixed_path = dir.join("mixed-bounded-refusal.json");
+        std::fs::write(&mixed_path, mixed.to_string()).map_err(|error| error.to_string())?;
+        let error =
+            load_review_comments_analysis_outcome(Some(&mixed_path), &root, "main", diff_text)
+                .err()
+                .ok_or_else(|| "a bounded envelope must be refused".to_string())?;
+        assert!(
+            error.contains("findings-bounded"),
+            "bounded-plus-refusal keeps the bounded repair route: {error}"
+        );
+        assert!(
+            !error.contains("producer refusal"),
+            "the bounded guard must win over the refusal branch: {error}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn review_comments_parses_required_revisions_and_out() {
         assert_eq!(
             parse_review_comments_options(&args(&[
@@ -1192,7 +1366,7 @@ mod tests {
         );
         assert_eq!(
             parse_review_comments_options(&args(&["--base"])),
-            Err("missing value for --base".to_string())
+            Err("missing value for --base; pass a value right after it".to_string())
         );
     }
 
@@ -1963,6 +2137,59 @@ mod tests {
         assert!(rendered_md.contains("ripr first-action"));
         assert!(rendered_md.contains("analysis scope: `gap_ledger_artifact`"));
 
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_producer_refusal_wins_over_diff_failure() -> Result<(), String> {
+        // #11161: the refusal envelope needs neither diff nor inventory, so an
+        // earlier diff failure must not hide the refusal and its repair route.
+        let root = unique_command_test_dir("review-comments-refusal-before-diff");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let refusal = root.join("refusal.json");
+        std::fs::write(
+            &refusal,
+            serde_json::json!({
+                "schema_version": "0.2", "tool": "ripr", "mode": "draft",
+                "root": ".", "base": "main", "summary": {}, "findings": [],
+                "analysis_scope": {
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "repair_route": "analysis/diff-scope-budget"
+                },
+                "run_limitations": [{
+                    "run_status": "diff_scope_oversized",
+                    "downstream_consumable": false,
+                    "message": "diff_scope_oversized: too many lines",
+                    "repair_route": "analysis/diff-scope-budget"
+                }]
+            })
+            .to_string(),
+        )
+        .map_err(|err| format!("write refusal: {err}"))?;
+        let out = root.join("target/ripr/review/comments.json");
+        let error = match review_comments_with_diff_loader(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "main",
+                "--head",
+                "HEAD",
+                "--check-output",
+                &refusal.display().to_string(),
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| Err("diff failure must not hide the refusal".into()),
+        ) {
+            Ok(()) => return Err("a refusal envelope must fail".to_string()),
+            Err(err) => err,
+        };
+        assert!(error.contains("producer refusal"), "{error}");
+        assert!(error.contains("analysis/diff-scope-budget"), "{error}");
+        assert!(!error.contains("diff failure"), "{error}");
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
         Ok(())
     }

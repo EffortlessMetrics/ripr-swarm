@@ -384,6 +384,89 @@ pub(in crate::analysis) fn constant_tail_witness(
     direct_tail_witness(probe, owner, sinks, tail_line, limitation)
 }
 
+/// Evaluate only an unshadowed bare `concat!` whose whole owner body is a
+/// single parenthesized call with one or more string-literal operands totaling
+/// at most 512 decoded bytes. Other forms and nested macros remain opaque.
+/// The parser validates both the call and all operands.
+pub(in crate::analysis) fn concat_literal_tail(
+    owner: &crate::analysis::facts::FunctionSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> Option<(usize, String, String)> {
+    use ra_ap_syntax::{AstNode, ast};
+    if !owner.body.contains("concat") {
+        return None;
+    }
+    if super::activation::macro_names_rebound(index, &["concat"]) {
+        return None;
+    }
+    let parsed = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let function = parsed.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let list = function.body()?.stmt_list()?;
+    if list.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::MacroExpr(tail) = list.tail_expr()? else {
+        return None;
+    };
+    let call = tail.macro_call()?;
+    if call.path()?.syntax().text() != "concat" {
+        return None;
+    }
+    let tree = call.token_tree()?;
+    tree.l_paren_token()?;
+    let args = crate::analysis::syntax::parse_clean_source_file(&format!(
+        "fn ripr_concat() {{ let _ = {}; }}",
+        tree.syntax().text()
+    ))?;
+    let fields: Vec<ast::Expr> = match args
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::LetStmt::cast)?
+        .initializer()?
+    {
+        ast::Expr::TupleExpr(tuple) => tuple.fields().collect(),
+        ast::Expr::ParenExpr(one) => vec![one.expr()?],
+        _ => return None,
+    };
+    if fields.is_empty() {
+        return None;
+    }
+    let mut value = String::new();
+    for field in fields {
+        let ast::Expr::Literal(literal) = field else {
+            return None;
+        };
+        let ast::LiteralKind::String(text) = literal.kind() else {
+            return None;
+        };
+        value.push_str(&text.value().ok()?);
+        if value.len() > 512 {
+            return None;
+        }
+    }
+    let expression = tail.syntax().text().to_string();
+    let offset = usize::from(tail.syntax().text_range().start());
+    let line = owner.start_line + owner.body.get(..offset)?.matches('\n').count();
+    Some((line, expression, value))
+}
+
+pub(in crate::analysis) fn concat_tail_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    index: &crate::analysis::rust_index::RustIndex,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::ReturnValue || probe.owner.as_ref() != Some(&owner.id) {
+        return None;
+    }
+    let (line, expression, _) = concat_literal_tail(owner, index)?;
+    if normalize_semantic_text(&expression) != normalize_semantic_text(&probe.expression) {
+        return None;
+    }
+    direct_tail_witness(probe, owner, sinks, line, "literal_concat_owner_tail")
+}
+
 /// #9870: the exact Result.map rewrite forwards its callback's payload.
 /// Observation remains the existing per-test Ok owner-return pin's decision.
 pub(in crate::analysis) fn result_map_witness(
@@ -1796,7 +1879,29 @@ pub(in crate::analysis) fn assigned_field_path(
     }
     let end = at + masked[at..].find(';')? + 1;
     let mut visited = Vec::new();
-    (!may_write_field(&masked[end..], path, method_body, &mut visited)).then(|| path.to_string())
+    let after = without_returned_self(&masked[end..]);
+    (!may_write_field(after, path, method_body, &mut visited)).then(|| path.to_string())
+}
+
+/// #11398: `rest` (the masked owner body after a statement, through the
+/// body's closing `}`) without a bare `self` that is the body's tail
+/// expression. A builder (`fn timeout(mut self, t: u32) -> Self`) hands the
+/// written value to its caller with that tail; it does not write the field
+/// again. A `self` anywhere else (an argument, a reborrow, an assignment
+/// right-hand side) is kept, since it may write through.
+fn without_returned_self(rest: &str) -> &str {
+    let Some(inner) = rest.trim_end().strip_suffix('}') else {
+        return rest;
+    };
+    let Some(before) = inner.trim_end().strip_suffix("self") else {
+        return rest;
+    };
+    let before = before.trim_end();
+    if before.is_empty() || before.ends_with([';', '{', '}']) {
+        before
+    } else {
+        rest
+    }
 }
 
 /// RIPR-SPEC-0228: whether the right-hand side of a changed field assignment
@@ -4305,6 +4410,29 @@ mod tests {
                 None,
                 "{changed}"
             );
+        }
+    }
+
+    #[test]
+    fn assigned_field_path_treats_a_builders_tail_self_as_the_handoff_not_a_write() {
+        let none = |_: &str| None;
+        let at = |statements: &str| {
+            let body = format!("fn timeout(mut self, t: u32) -> Self {{\n{statements}\n}}");
+            assigned_field_path(&body, 1, 2, "self.timeout = t * 2", &none)
+        };
+        // The tail `self` returns the value to the caller.
+        assert_eq!(
+            at("self.timeout = t * 2;\nself").as_deref(),
+            Some("timeout")
+        );
+        // Any other use of `self` after the write may write through it.
+        for tail in [
+            "self.timeout = t * 2;\nlet moved = self;\nmoved",
+            "self.timeout = t * 2;\nfinish(self)",
+            "self.timeout = t * 2;\nself.reset();\nself",
+            "self.timeout = t * 2;\nlet n = self",
+        ] {
+            assert_eq!(at(tail), None, "{tail}");
         }
     }
 

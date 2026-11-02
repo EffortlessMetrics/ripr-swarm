@@ -41,9 +41,14 @@ fn run_receipt_write(args: &[String]) -> Result<(), String> {
     }
 
     let opts = parse_receipt_write_options(args)?;
-    if let Some(root) = &opts.root {
-        crate::atomic_file::ensure_default_output_contained(root)?;
-    }
+    // Receipts land under `target/ripr/receipts`, never the cache, so an
+    // explicit `RIPR_CACHE_DIR` must not waive the link check, and the default
+    // path is cwd-relative when `--root` is omitted (#11477).
+    crate::atomic_file::ensure_report_output_contained(
+        opts.root
+            .as_deref()
+            .unwrap_or_else(|| std::path::Path::new(".")),
+    )?;
     let rendered = write_receipt(&opts)?;
 
     if opts.json || opts.out.is_none() {
@@ -56,7 +61,7 @@ fn run_receipt_write(args: &[String]) -> Result<(), String> {
 
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent)
-            .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
+            .map_err(|err| format!("create {} failed: {err}; check that you can write there, or pass a different `--out` path", parent.display()))?;
     }
 
     crate::atomic_file::write(&path, rendered.as_bytes(), "receipt").map_err(|err| {
@@ -94,7 +99,7 @@ fn run_receipt_check(args: &[String]) -> Result<(), String> {
     // (orphan_receipt or receipt_gap_mismatch).
     if cross_ref.is_error() {
         return Err(format!(
-            "receipt cross-reference failed: {}",
+            "receipt cross-reference failed: {}; regenerate the receipt with `ripr receipt write` against the current gap ledger, or pass the matching `--gap`",
             cross_ref.as_str()
         ));
     }
@@ -150,7 +155,7 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--packet")?;
                 if value.trim().is_empty() {
-                    return Err("receipt write --packet requires a non-empty packet ID".to_string());
+                    return Err("receipt write --packet requires a non-empty packet ID; pass a value right after --packet".to_string());
                 }
                 packet_id = Some(value.to_string());
             }
@@ -158,7 +163,7 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--verify-command")?;
                 if value.trim().is_empty() {
-                    return Err("receipt write requires --verify-command".to_string());
+                    return Err("receipt write requires --verify-command; add `--verify-command` to the command".to_string());
                 }
                 verify_command = Some(value.to_string());
             }
@@ -177,7 +182,7 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--out")?;
                 if value.trim().is_empty() {
-                    return Err("receipt write --out requires a non-empty path".to_string());
+                    return Err("receipt write --out requires a non-empty path; pass a value right after --out".to_string());
                 }
                 out = Some(PathBuf::from(value));
             }
@@ -194,10 +199,11 @@ pub(in crate::cli) fn parse_receipt_write_options(
     let canonical_gap_id = canonical_gap_id.ok_or_else(|| {
         "receipt write requires a canonical_gap_id; re-run with --gap".to_string()
     })?;
-    let verify_command =
-        verify_command.ok_or_else(|| "receipt write requires --verify-command".to_string())?;
+    let verify_command = verify_command.ok_or_else(|| {
+        "receipt write requires --verify-command; add `--verify-command` to the command".to_string()
+    })?;
     let verify_status = verify_status
-        .ok_or_else(|| "receipt requires --status (passed|failed|not_run|unknown)".to_string())?;
+        .ok_or_else(|| "receipt requires --status (passed|failed|not_run|unknown); pass one of those values, such as `--status passed`".to_string())?;
 
     Ok(ReceiptWriteOptions {
         canonical_gap_id,
@@ -227,7 +233,7 @@ pub(in crate::cli) fn parse_receipt_check_options(
                 let value = expect_value(args, i, "--gap")?;
                 if value.trim().is_empty() {
                     return Err(
-                        "receipt check --gap requires a non-empty canonical_gap_id".to_string()
+                        "receipt check --gap requires a non-empty canonical_gap_id; pass a value right after --gap".to_string()
                     );
                 }
                 gap = Some(value.to_string());
@@ -236,7 +242,7 @@ pub(in crate::cli) fn parse_receipt_check_options(
                 i += 1;
                 let value = expect_value(args, i, "--path")?;
                 if value.trim().is_empty() {
-                    return Err("receipt check --path requires a non-empty path".to_string());
+                    return Err("receipt check --path requires a non-empty path; pass a value right after --path".to_string());
                 }
                 path = Some(PathBuf::from(value));
             }
@@ -245,7 +251,7 @@ pub(in crate::cli) fn parse_receipt_check_options(
                 let value = expect_value(args, i, "--ledger")?;
                 if value.trim().is_empty() {
                     return Err(
-                        "receipt check --ledger requires a non-empty path to a gap-decision-ledger JSON file".to_string()
+                        "receipt check --ledger requires a non-empty path to a gap-decision-ledger JSON file; pass a value right after --ledger".to_string()
                     );
                 }
                 ledger = Some(PathBuf::from(value));
@@ -353,7 +359,8 @@ Usage: ripr receipt check [--path <receipt_path>] [--gap <canonical_gap_id>]
        ripr receipt check <receipt_path>
 
 Options:
-  --path PATH       Path to the receipt JSON file to validate.
+  --path PATH       Path to the receipt JSON file to validate. Give --path or --gap
+                    (or a positional path); with neither, check exits 2.
   --gap ID          Resolve path from canonical location
                     target/ripr/receipts/<canonical_gap_id>.json with
                     filename-unsafe characters (`:`, etc.) percent-encoded. The

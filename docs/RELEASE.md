@@ -466,11 +466,16 @@ existing GitHub Release rather than replacing it.
    correctly on the existing Release.
 3. After server assets are present and verified, rerun any downstream
    workflow that was gated on them, for example
-   `gh workflow run publish-extension.yml --repo EffortlessMetrics/ripr --ref v0.8.0 -f version=0.8.0 -f publish_vs_marketplace=true -f publish_open_vsx=false`,
-   or the reverse pair for Open VSX. Exactly one channel must be `true`; the
-   workflow refuses zero or two. If the fix-forward repaired this workflow
-   itself, dispatch with `--ref main` instead: the VSIX still attaches to the
-   `v<version>` Release named by `version`, not to the execution ref.
+   `publish-extension.yml`. Its dispatch requires `source_sha` (the full 40-hex
+   release head the `v<version>` tag peels to) and `manifest_sha256` (the raw-byte
+   digest of the published server manifest) besides `version`, and the run
+   must be dispatched at `source_sha`; the second channel also needs
+   `vsix_sha256`. Exactly one channel (`publish_vs_marketplace` or
+   `publish_open_vsx`) may be `true` per dispatch; the workflow refuses zero or
+   two. Use the exact commands in
+   [RELEASE_TRANSACTION.md](RELEASE_TRANSACTION.md) section 6 rather than
+   composing the inputs by hand. The VSIX attaches to the `v<version>` Release
+   named by `version`.
 4. Do not retag and do not delete the GitHub Release. Leave the tag at
    the release-prep commit; the fix-forward commit is on `main` and any
    subsequent point release will include it.

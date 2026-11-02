@@ -95,6 +95,9 @@
     },
     "mocha": {
       "serialize-javascript": "^7.0.5"
+    },
+    "vscode-languageclient": {
+      "minimatch": "^11.0.3"
     }
   },
   "capabilities": {
@@ -439,6 +442,44 @@
           "command": "ripr.showRouteQuality",
           "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/",
           "group": "ripr@7"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "ripr.copySuggestedAssertion",
+          "when": "false"
+        },
+        {
+          "command": "ripr.copyTargetedTestBrief",
+          "when": "false"
+        },
+        {
+          "command": "ripr.openRelatedTest",
+          "when": "false"
+        },
+        {
+          "command": "ripr.copyAgentRepairCommand",
+          "when": "false"
+        },
+        {
+          "command": "ripr.copyAgentPacketCommand",
+          "when": "false"
+        },
+        {
+          "command": "ripr.copyAgentBriefCommand",
+          "when": "false"
+        },
+        {
+          "command": "ripr.copyAfterSnapshotCommand",
+          "when": "false"
+        },
+        {
+          "command": "ripr.copyAgentVerifyCommand",
+          "when": "false"
+        },
+        {
+          "command": "ripr.copyAgentReceiptCommand",
+          "when": "false"
         }
       ]
     },

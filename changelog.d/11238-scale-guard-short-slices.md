@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The wall-clock growth guards shared by the scale tests now take the minimum of 15 alternating short samples (20 ms floor, 2 ms allowance) instead of 3 long ones, keep the 3x bound, and run the twin-check and added-run guards at 1,000 against 2,000 instead of 10,000 against 20,000, after hosted runners repeatedly measured the larger size at about 3.1-3.4x on unrelated PRs; the hosted cause is not established. `testing/scale.rs` gains a real-clock quadratic stand-in that must still fail the guard (#11238).

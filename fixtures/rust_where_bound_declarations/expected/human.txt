@@ -15,18 +15,18 @@ Start here:
   Why unknown: the analysis could not determine a static exposure state
   Gap ID (for scripts): gap:rust:src/lib.rs:packet:static_unknown:static_unknown:t_into<u8>+copy
   Changed behavior: T: Into<u8> + Copy,
-  Analyzer limit: No strong discriminator was detected
+  Analyzer limit: No strong assertion was detected
   Related test: src/lib.rs:19 observes_packet
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and
     changed implementations with a focused run using the project's configured test runner (`cargo
     test` for ordinary Cargo tests). Static classification may remain unknown
-  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -39,10 +39,12 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_where_bound_declarations/input --diff <cwd>/fixtures/rust_where_bound_declarations/diff.patch --mode fast probe:src_lib.rs:static_unknown:78296eca
   ripr context --root <cwd>/fixtures/rust_where_bound_declarations/input --diff <cwd>/fixtures/rust_where_bound_declarations/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:78296eca
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: ripr found 2 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:10 (exposed); kind: field_construction; reason: Strong oracle found: exact value or pattern assertion
+  Hidden classes:
+    exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

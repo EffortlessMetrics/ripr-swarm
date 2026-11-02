@@ -221,3 +221,55 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_trait_default_shadow (18)
+
+Reason:
+RIPR-SPEC-0108: seam-side trait default-method shadow no longer credited as direct owner call, #11469; human text only, withholding change
+
+Command:
+`cargo xtask goldens bless rust_trait_default_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_trait_default_shadow (19)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals (#11619)
+
+Command:
+`cargo xtask goldens bless rust_trait_default_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_trait_default_shadow (20)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless rust_trait_default_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_trait_default_shadow (21)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless rust_trait_default_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

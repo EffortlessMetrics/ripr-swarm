@@ -1,2 +1,0 @@
-<!-- section: Added -->
-- Rust: a standard `Drop::drop` is credited `exposed` when the test ends the guard's scope over a shared handle and the assertion reads it. The guard is a record literal whose field is `handle.clone()`, the scope end is a top-level block or `drop(g);`, and the assertion follows at the top level. Every other shape (another or re-created cell, an alias, a leaked or moved guard, a shadowed `drop`, a second `Drop` impl, an early return, a predicate on the changed line) stays `static_unknown` (#10814).

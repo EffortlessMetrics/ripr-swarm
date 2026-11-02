@@ -11,6 +11,8 @@ use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, RustIndex};
 use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
+mod provider_metadata;
+
 /// Returns `true` when the owner function carries an FFI or language-binding
 /// attribute that indicates its surface may be exercised by an external-language
 /// test oracle rather than a Rust test.
@@ -203,6 +205,7 @@ pub(super) struct PropertyMacroMentionIndex<'a> {
 struct PropertyMacroLocation<'a> {
     file: &'a std::path::Path,
     witness: &'a crate::analysis::facts::UnresolvedPropertyMacroFact,
+    metadata_failure: Option<crate::analysis::workspace::MetadataProbeFailure>,
 }
 
 impl<'a> PropertyMacroMentionIndex<'a> {
@@ -217,6 +220,11 @@ impl<'a> PropertyMacroMentionIndex<'a> {
                         .push(PropertyMacroLocation {
                             file: file.as_path(),
                             witness,
+                            metadata_failure: index.proptest_metadata_failure(
+                                file,
+                                witness.line,
+                                &witness.name,
+                            ),
                         });
                 }
             }
@@ -268,13 +276,24 @@ pub(super) fn apply_unresolved_property_macro_limit(
     // This is retained manifest/source authority, not a path-layout guess.
     // No per-finding filesystem reads or manifest resolution are performed.
     let owner_package = mentions.owner_package(owner_file);
-    let Some(PropertyMacroLocation { file, witness }) = locations.iter().find(|location| {
-        match (owner_package, mentions.known_package(location.file)) {
-            (Some(owner), Some(mentioned)) => owner == mentioned,
-            // An unresolved package identity cannot prove unrelatedness.
-            _ => true,
-        }
-    }) else {
+    // Prefer a relevant invocation whose actual verification failed over an
+    // earlier opaque sibling. The diagnostic stays attached to its own witness;
+    // it must never be copied onto the unsupported sibling's source pointer.
+    let Some(PropertyMacroLocation {
+        file,
+        witness,
+        metadata_failure,
+    }) = locations
+        .iter()
+        .filter(|location| {
+            match (owner_package, mentions.known_package(location.file)) {
+                (Some(owner), Some(mentioned)) => owner == mentioned,
+                // An unresolved package identity cannot prove unrelatedness.
+                _ => true,
+            }
+        })
+        .min_by_key(|location| location.metadata_failure.is_none())
+    else {
         return false;
     };
     // A lexical mention supplies no runtime edge. Keep all affected stages
@@ -307,6 +326,9 @@ pub(super) fn apply_unresolved_property_macro_limit(
     finding.recommended_next_step = Some(
         "Inspect the property macro's definition and collected tests, then run its existing test suite; this limitation does not establish a missing test.".to_string(),
     );
+    if let Some(failure) = metadata_failure {
+        provider_metadata::apply(finding, *failure);
+    }
     true
 }
 
@@ -351,16 +373,70 @@ pub(super) fn apply_rust_macro_wrapped_assertion_limit(
     let Some(witness) = witness else {
         return;
     };
+    apply_macro_assertion_witness(finding, witness);
+}
 
-    finding.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
-    if matches!(
-        witness.macro_name.rsplit("::").next(),
-        Some("prop_assert" | "prop_assert_eq" | "prop_assert_ne")
-    ) {
-        finding.recommended_next_step = Some(
-            "Inspect the property assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.".to_string(),
-        );
+/// The classifier has checked complete admitted reveal rows before capping.
+/// Keep witness selection inside the retained direct rows, and never use this
+/// route to infer an oracle from the macro's spelling or hidden rows.
+pub(in crate::analysis) fn apply_complete_proximity_macro_limit(
+    finding: &mut Finding,
+    index: &RustIndex,
+    owner_name: &str,
+) {
+    if finding.static_limit_kind.is_some()
+        || finding.class != ExposureClass::WeaklyExposed
+        || finding
+            .related_tests_matched_total
+            .is_none_or(|total| total <= finding.related_tests.len())
+    {
+        return;
     }
+    if let Some(witness) = find_unresolved_assertion_macro_witness(finding, index, Some(owner_name))
+    {
+        apply_macro_assertion_witness(finding, witness);
+    }
+}
+
+/// Leaf names of the numeric tolerance assertion macros of `approx` and
+/// `float-cmp` that pass when the values are within the tolerance. The name only
+/// selects the wording of the next step: it never classifies the macro, grades
+/// an oracle or earns credit (#6645).
+const TOLERANCE_EQ_ASSERTION_MACROS: [&str; 4] = [
+    "assert_relative_eq",
+    "assert_abs_diff_eq",
+    "assert_ulps_eq",
+    "assert_approx_eq",
+];
+
+/// The inequality forms pass when the values differ by more than the
+/// tolerance, so a tighter tolerance is the wrong advice for them.
+const TOLERANCE_NE_ASSERTION_MACROS: [&str; 3] =
+    ["assert_relative_ne", "assert_abs_diff_ne", "assert_ulps_ne"];
+
+/// The next step for a named macro limitation. A tolerance macro gets a
+/// numeric next step, because the open question is how the tolerance compares
+/// with the change, which static analysis cannot bound.
+fn macro_witness_next_step(macro_name: &str) -> String {
+    let leaf = macro_name.rsplit("::").next().unwrap_or(macro_name);
+    if matches!(leaf, "prop_assert" | "prop_assert_eq" | "prop_assert_ne") {
+        "Inspect the property assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.".to_string()
+    } else if TOLERANCE_EQ_ASSERTION_MACROS.contains(&leaf) {
+        format!(
+            "`{leaf}!` reads like a floating-point tolerance comparison that passes when the values are within the tolerance, but ripr cannot establish its tolerance semantics or bound how far this change moves the value. Check that the tolerance is tighter than the smallest difference the change can make, then run the existing test against the changed code."
+        )
+    } else if TOLERANCE_NE_ASSERTION_MACROS.contains(&leaf) {
+        format!(
+            "`{leaf}!` reads like a floating-point tolerance comparison that passes when the values differ by more than the tolerance, but ripr cannot establish its tolerance semantics or bound how far this change moves the value. Check that the original value stays outside the tolerance and the changed value would fall inside it, then run the existing test against the changed code."
+        )
+    } else {
+        "Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.".to_string()
+    }
+}
+
+fn apply_macro_assertion_witness(finding: &mut Finding, witness: RustMacroAssertionWitness) {
+    finding.static_limit_kind = Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
+    finding.recommended_next_step = Some(macro_witness_next_step(&witness.macro_name));
     finding.evidence.push(
         "A related Rust test uses an assertion-like macro that ripr does not classify as an oracle."
             .to_string(),
@@ -442,23 +518,7 @@ fn only_proximity_tests_supply_an_oracle(finding: &Finding) -> bool {
     {
         return false;
     }
-    let mut direct_seen = false;
-    let mut proximity_oracle_seen = false;
-    for related in finding.oracle_related_tests() {
-        let direct = is_direct_relation(related.relation_reason);
-        if related.relation_reason.is_none() || direct {
-            // A refused assertion is still an assertion ripr judged.
-            if related.oracle.is_some()
-                || related.miss == Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
-            {
-                return false;
-            }
-            direct_seen |= direct;
-        } else if related.oracle.is_some() {
-            proximity_oracle_seen = true;
-        }
-    }
-    direct_seen && proximity_oracle_seen
+    crate::analysis::classify::only_proximity_oracles(&finding.related_tests)
 }
 
 /// A `weakly_exposed` finding whose every recognized oracle on a directly
@@ -646,6 +706,7 @@ fn find_unresolved_assertion_macro_witness_among(
         if !finding.oracle_related_tests().any(|related| {
             related.name == test.name
                 && related.file == test.file
+                && related.line == test.start_line
                 && (!restrict_to_direct || is_direct_relation(related.relation_reason))
         }) {
             continue;
@@ -746,9 +807,10 @@ fn unresolved_assertion_macro_invocations_among(
 /// past a `;` or holds a `'`: char literals are not masked, so `'('` can
 /// unbalance the delimiters. The `'` refusal deliberately covers lifetimes
 /// and labels too (`bulk::<'static>(1)`); the delimiter walk cannot tell
-/// them apart, so narrowing it to char literals would need a real lexer. Arguments holding a nested macro invocation
-/// (`stringify!(owner(1))`) do not count either, since that macro may never
-/// evaluate the call.
+/// them apart, so narrowing it to char literals would need a real lexer.
+/// Calls inside a nested macro's input (`stringify!(owner(1))`) do not count,
+/// since it may never evaluate those tokens. A separate owner call outside
+/// that input still supplies this limitation witness.
 fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bool {
     let Some(rest) = masked.get(after_bang..) else {
         return false;
@@ -779,10 +841,21 @@ fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bo
     let Some(arguments) = close.and_then(|close| rest.get(open + 1..close)) else {
         return false;
     };
-    if arguments.contains('\'') || contains_macro_invocation(arguments) {
+    if arguments.contains('\'') {
         return false;
     }
+    let Some(macro_inputs) = macro_input_ranges(arguments) else {
+        return false;
+    };
+    let mut inputs = macro_inputs.iter().peekable();
     arguments.match_indices(owner_name).any(|(start, _)| {
+        // Both iterators advance in source order; visit each opaque input once.
+        while inputs.peek().is_some_and(|range| range.end <= start) {
+            let _ = inputs.next();
+        }
+        if inputs.peek().is_some_and(|range| range.contains(&start)) {
+            return false;
+        }
         let qualified_or_ident = arguments[..start]
             .trim_end()
             .chars()
@@ -793,16 +866,47 @@ fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bo
     })
 }
 
-fn contains_macro_invocation(text: &str) -> bool {
-    text.match_indices('!').any(|(bang, _)| {
+/// Opaque nested token trees, over already-masked arguments. Only their inputs
+/// are excluded; this does not expand a macro or establish assertion semantics.
+fn macro_input_ranges(text: &str) -> Option<Vec<std::ops::Range<usize>>> {
+    let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
+    for (bang, _) in text.match_indices('!') {
+        if ranges.last().is_some_and(|range| range.contains(&bang)) {
+            continue;
+        }
         let before = text[..bang].trim_end();
         let after = text[bang + 1..].trim_start();
-        before
+        let invoked = before
             .chars()
             .next_back()
             .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
-            && after.starts_with(['(', '[', '{'])
-    })
+            && after.starts_with(['(', '[', '{']);
+        if !invoked {
+            continue;
+        }
+        let open = text.len() - after.len();
+        let mut stack = Vec::new();
+        let mut end = None;
+        for (offset, byte) in text.as_bytes()[open..].iter().copied().enumerate() {
+            match byte {
+                b'(' => stack.push(b')'),
+                b'[' => stack.push(b']'),
+                b'{' => stack.push(b'}'),
+                b')' | b']' | b'}' => {
+                    if stack.pop() != Some(byte) {
+                        return None;
+                    }
+                    if stack.is_empty() {
+                        end = Some(open + offset + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        ranges.push(open..end?);
+    }
+    Some(ranges)
 }
 
 fn macro_name_before_bang(line: &str, bang: usize) -> Option<String> {
@@ -896,6 +1000,59 @@ fn rust_macro_assertion_limitation_detail_lines(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_tolerance_macro_gets_a_numeric_next_step_and_nothing_else_changes() {
+        for name in [
+            "assert_relative_eq",
+            "approx::assert_abs_diff_eq",
+            "::approx::assert_ulps_eq",
+            "float_cmp::assert_approx_eq",
+        ] {
+            let step = super::macro_witness_next_step(name);
+            assert!(step.contains("floating-point tolerance"), "{name}: {step}");
+            assert!(step.contains("cannot establish"), "{name}: {step}");
+            assert!(!step.contains("custom assertion macro"), "{name}: {step}");
+            // An equality form needs a tighter tolerance than the change.
+            assert!(step.contains("within the tolerance"), "{name}: {step}");
+            assert!(step.contains("tighter than the smallest"), "{name}: {step}");
+        }
+        // An inequality form passes when the values differ by more than the
+        // tolerance, so tightening it is the wrong advice (Devin, #12248).
+        for name in [
+            "assert_abs_diff_ne",
+            "approx::assert_relative_ne",
+            "::approx::assert_ulps_ne",
+        ] {
+            let step = super::macro_witness_next_step(name);
+            assert!(
+                step.contains("differ by more than the tolerance"),
+                "{name}: {step}"
+            );
+            assert!(
+                step.contains("changed value would fall inside"),
+                "{name}: {step}"
+            );
+            assert!(
+                !step.contains("tighter than the smallest"),
+                "{name}: {step}"
+            );
+        }
+        // Everything else keeps its previous wording, including look-alikes.
+        let custom = "Inspect the custom assertion macro's definition and run the existing test; its spelling does not establish assertion semantics.";
+        for name in [
+            "assert_result",
+            "check_eq",
+            "my::assert_relative_eq_all",
+            "assert_approx",
+        ] {
+            assert_eq!(super::macro_witness_next_step(name), custom, "{name}");
+        }
+        assert!(
+            super::macro_witness_next_step("proptest::prop_assert_eq")
+                .starts_with("Inspect the property assertion macro's definition")
+        );
+    }
+
     #[test]
     fn only_a_plain_literal_expected_value_is_independent_of_the_owner() {
         for attribute in [
@@ -993,6 +1150,7 @@ mod tests {
                     vec![super::PropertyMacroLocation {
                         file: witness_file,
                         witness: &witness,
+                        metadata_failure: None,
                     }],
                 )]),
                 package_authority: Some(&authorities),
@@ -1020,6 +1178,7 @@ mod tests {
                     vec![super::PropertyMacroLocation {
                         file: witness_file,
                         witness: &witness,
+                        metadata_failure: None,
                     }],
                 )]),
                 package_authority,
@@ -1281,6 +1440,32 @@ mod tests {
             12,
             "bulk"
         ));
+        for arguments in [
+            "bulk(1), snapshot![[text]]",
+            "snapshot![[text]], bulk(1)",
+            "bulk(1), outer!(inner!({[text]}))",
+            "bulk(1), quoté![[text]]",
+        ] {
+            assert!(super::macro_arguments_call(
+                &format!("assert_flag!({arguments});"),
+                12,
+                "bulk"
+            ));
+        }
+        for arguments in [
+            "discard!(bulk(1)), snapshot![[text]]",
+            "outer!(inner!(bulk(1))), text",
+            "bulk!(1)(2), snapshot![[text]]",
+            "other::bulk(1), snapshot![[text]]",
+            "other.bulk(1), snapshot![[text]]",
+            "bulk(1), snapshot!([text})",
+        ] {
+            assert!(!super::macro_arguments_call(
+                &format!("assert_flag!({arguments});"),
+                12,
+                "bulk"
+            ));
+        }
     }
 
     #[test]

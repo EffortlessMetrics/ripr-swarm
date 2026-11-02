@@ -625,3 +625,88 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_pkg_discovery_no_package (32)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+RIPR-SPEC-0122: #11229 script-file ObservationUnconfirmed wording names the preview adapter (wording only; verdict and credit unchanged)
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_pkg_discovery_no_package (33)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_pkg_discovery_no_package (34)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording says the adapter cannot confirm observation, not reach
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_pkg_discovery_no_package (35)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording states the adapter could not confirm observation without a causal claim
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_pkg_discovery_no_package (36)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_pkg_discovery_no_package (37)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_pkg_discovery_no_package (38)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless ts_pkg_discovery_no_package --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

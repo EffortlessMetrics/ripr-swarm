@@ -12,7 +12,7 @@ use crate::output::agent_seam_packets::{
 };
 use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
-use crate::output::human::plain_observation_wording;
+use crate::output::human::{plain_observation_wording, plain_stop_condition};
 use crate::output::preview_actionability::{PreviewActionability, preview_actionability_for};
 use crate::output::typescript_packet_projection::typescript_gap_record_for;
 use serde_json::Value;
@@ -55,6 +55,69 @@ pub(super) enum NoEvidenceState {
     AnalyzedNoChanges { base: Option<String> },
     /// A snapshot committed; this position simply has no evidence.
     Analyzed,
+}
+
+/// What the server observed about a file quarantined as
+/// `no_analyzed_saved_content` (#11452). Each variant states only a fact the
+/// server read; anything it cannot distinguish falls to
+/// [`UnanalyzedFileCause::NoCommittedAnalysis`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum UnanalyzedFileCause {
+    /// The file is not on disk, so no analysis can read its saved content.
+    NotOnDisk,
+    /// An analysis attempt is queued or running.
+    AttemptInProgress,
+    /// A snapshot committed, yet it recorded no saved content for this file.
+    SnapshotDidNotRecordFile,
+    /// No snapshot committed and the latest attempt failed.
+    LatestAttemptFailed,
+    /// No snapshot has committed (no attempt observed, or it ended without one).
+    NoCommittedAnalysis,
+}
+
+/// Classify an unanalyzed file from observed state. Order is fail-closed: a
+/// route is only offered when the server observed the fact it rests on.
+pub(super) fn classify_unanalyzed_file(
+    file_on_disk: bool,
+    state: AnalysisAttemptState,
+    snapshot_committed: bool,
+) -> UnanalyzedFileCause {
+    if !file_on_disk {
+        UnanalyzedFileCause::NotOnDisk
+    } else if matches!(
+        state,
+        AnalysisAttemptState::Queued | AnalysisAttemptState::Running
+    ) {
+        UnanalyzedFileCause::AttemptInProgress
+    } else if snapshot_committed {
+        UnanalyzedFileCause::SnapshotDidNotRecordFile
+    } else if state == AnalysisAttemptState::Failed {
+        UnanalyzedFileCause::LatestAttemptFailed
+    } else {
+        UnanalyzedFileCause::NoCommittedAnalysis
+    }
+}
+
+/// The hover sentence for an unanalyzed file: the observed cause and the
+/// recovery that cause honors. Static-only; it claims no finding.
+pub(super) fn unanalyzed_file_hover_route(cause: UnanalyzedFileCause) -> &'static str {
+    match cause {
+        UnanalyzedFileCause::NotOnDisk => {
+            "this file is not on disk, so ripr has no saved content to analyze; save it, then refresh (`ripr.refresh`)."
+        }
+        UnanalyzedFileCause::AttemptInProgress => {
+            "an analysis attempt is already queued or running; whether it covers this file is not yet known."
+        }
+        UnanalyzedFileCause::SnapshotDidNotRecordFile => {
+            "the latest committed analysis did not record this file's saved content; refresh (`ripr.refresh`) to ask again. ripr does not know why it was not recorded."
+        }
+        UnanalyzedFileCause::LatestAttemptFailed => {
+            "the latest analysis attempt failed and no analysis has committed; resolve the reported failure, then refresh (`ripr.refresh`)."
+        }
+        UnanalyzedFileCause::NoCommittedAnalysis => {
+            "no analysis has committed for this workspace, so ripr has not analyzed this file's saved content; refresh (`ripr.refresh`)."
+        }
+    }
 }
 
 /// The no-evidence hover, aware of whether any analysis has committed or is
@@ -508,7 +571,7 @@ fn push_gap_repair_route(lines: &mut Vec<String>, data: &Value) {
         if !stops.is_empty() {
             lines.push("- stop if:".to_string());
             for stop in stops {
-                lines.push(format!("  - {stop}"));
+                lines.push(format!("  - {}", plain_stop_condition(stop)));
             }
         }
     }
@@ -628,6 +691,10 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
     let mut lines = vec![hover_header(&classification), String::new()];
     push_preview_boundary(&mut lines, finding);
     push_preview_actionability(&mut lines, finding);
+    if let Some(disclosure) = finding.source_currentness_disclosure() {
+        lines.push(format!("**Source:** {disclosure}"));
+        lines.push(String::new());
+    }
     lines.extend([
         diagnostic.message.clone(),
         String::new(),
@@ -930,8 +997,76 @@ fn stage_line(name: &str, stage: &StageEvidence) -> String {
     format!(
         "* {name} {}: {}",
         stage.state.as_str(),
-        plain_observation_wording(&stage.summary)
+        plain_hover_summary(&plain_observation_wording(&stage.summary))
     )
+}
+
+/// Producer summaries that append the user's own source text (a sink
+/// expression, test names, a matched literal) after the first `": "`. The tail
+/// of these is never rewritten. A colon elsewhere separates a label from
+/// producer prose (`Discriminator unconfirmed: ...`) and is rewritten.
+const SOURCE_TEXT_AFTER_COLON_PREFIXES: &[&str] = &[
+    "Changed behavior appears to influence ",
+    "Complete propagation witness reaches ",
+    "No complete owner-bound propagation witness found for ",
+    "Propagation witness is incomplete for ",
+    "Related tests appear to reach ",
+    "Related tests exercise the wrapper seam's converted callee",
+    "Detected test input literal matching changed boundary",
+];
+
+/// Hover-only glossary pass over a producer stage summary (#12213). The
+/// summary strings are shared with JSON, SARIF and the CLI Evidence line (which
+/// the glossary exempts), so they are not rewritten at the source; the editor
+/// hover shows "check" where the producer wrote "discriminator". Whole words
+/// only, so identifiers like `missing_discriminators` are never touched.
+///
+/// Backticked spans and the source-text tail of the known producer forms
+/// above are never rewritten: a hover must not tell someone to look for a name
+/// their code does not contain. An unbalanced backtick means source text may
+/// hold a lone backtick, so the summary is then left verbatim.
+fn plain_hover_summary(text: &str) -> String {
+    if text.matches('`').count() % 2 == 1 {
+        return text.to_string();
+    }
+    let tail_start = if SOURCE_TEXT_AFTER_COLON_PREFIXES
+        .iter()
+        .any(|prefix| text.starts_with(prefix))
+    {
+        text.find(": ").map_or(text.len(), |at| at + 2)
+    } else {
+        text.len()
+    };
+    let mut out = String::with_capacity(text.len());
+    let mut word = String::new();
+    let mut in_code = false;
+    let flush = |word: &mut String, out: &mut String, verbatim: bool| {
+        match word.as_str() {
+            _ if verbatim => out.push_str(word),
+            "discriminator" => out.push_str("check"),
+            "Discriminator" => out.push_str("Check"),
+            "discriminators" => out.push_str("checks"),
+            "Discriminators" => out.push_str("Checks"),
+            _ => out.push_str(word),
+        }
+        word.clear();
+    };
+    for (at, c) in text.char_indices() {
+        if c.is_alphanumeric() || c == '_' {
+            word.push(c);
+            continue;
+        }
+        // `word` ended just before `at`, so the tail test uses its start.
+        let word_start = at - word.len();
+        flush(&mut word, &mut out, in_code || word_start >= tail_start);
+        if c == '`' {
+            in_code = !in_code;
+        }
+        out.push(c);
+    }
+    let word_start = text.len() - word.len();
+    flush(&mut word, &mut out, in_code || word_start >= tail_start);
+    out
 }
 
 /// The producer's `discriminate` stage grades the strongest related oracle.
@@ -953,15 +1088,15 @@ fn discriminator_stage_line(finding: &Finding) -> String {
         .collect::<Vec<_>>();
     if missing.is_empty() {
         format!(
-            "* discriminator not established ({}); related oracle: {}",
+            "* missing check not established ({}); related oracle: {}",
             finding.class.as_str(),
-            plain_observation_wording(&stage.summary)
+            plain_hover_summary(&plain_observation_wording(&stage.summary))
         )
     } else {
         format!(
-            "* discriminator missing: {}; related oracle: {}",
+            "* missing check: {}; related oracle: {}",
             missing.join(", "),
-            plain_observation_wording(&stage.summary)
+            plain_hover_summary(&plain_observation_wording(&stage.summary))
         )
     }
 }
@@ -1479,6 +1614,16 @@ fn seam_next_step_for(entry: &ClassifiedSeam) -> String {
             "Assert the exact error variant via `matches!` or `assert_matches!`.".to_string()
         }
         SeamKind::ReturnValue => "Add an exact-value assertion on the returned value.".to_string(),
+        // #11398: a field write in a method changes the value the method
+        // was called on; there is no returned struct to compare.
+        SeamKind::FieldConstruction if crate::analysis::is_field_write_seam(&entry.seam) => {
+            use crate::analysis::FieldWriteRead;
+            match crate::analysis::field_write_read(&entry.seam) {
+                Some(FieldWriteRead::CallResult) => "Call the method, then assert the exact value of the changed field on the value the call returns (a by-value method writes a moved copy).".to_string(),
+                Some(FieldWriteRead::Unspecified) => "Call the method, then assert the exact value of the changed field.".to_string(),
+                _ => "Call the method, then assert the exact value of the changed field on the value it was called on.".to_string(),
+            }
+        }
         SeamKind::FieldConstruction => {
             "Assert on the specific field or use whole-object equality.".to_string()
         }
@@ -1577,6 +1722,46 @@ mod seam_hover_tests {
             evidence,
             class: SeamGripClass::WeaklyGripped,
         }
+    }
+
+    /// #12061: the hover words a field write by the receiver mode the seam
+    /// records: a borrowed receiver is read on the value it was called on, a
+    /// by-value receiver (a moved copy) on the value the call returns, and an
+    /// unrecorded mode names neither.
+    #[test]
+    fn field_write_next_step_follows_the_receiver_mode() {
+        let step = |borrows: Option<bool>| {
+            let mut entry = weakly_gripped_classified();
+            entry.seam = RepoSeam::new(
+                "src/req.rs",
+                "req::Req::timeout",
+                SeamKind::FieldConstruction,
+                10,
+                11,
+                "self.timeout = t * 2",
+                RequiredDiscriminator::FieldValue {
+                    field: "self.timeout = t * 2".to_string(),
+                },
+                ExpectedSink::ReturnValue,
+            )
+            .with_owner_borrows_receiver(borrows);
+            seam_next_step_for(&entry)
+        };
+        let borrowed = step(Some(true));
+        assert!(
+            borrowed.contains("on the value it was called on"),
+            "{borrowed}"
+        );
+        let by_value = step(Some(false));
+        assert!(
+            by_value.contains("on the value the call returns") && !by_value.contains("called on"),
+            "{by_value}"
+        );
+        let unrecorded = step(None);
+        assert!(
+            !unrecorded.contains("called on") && !unrecorded.contains("call returns"),
+            "{unrecorded}"
+        );
     }
 
     fn sample_diagnostic() -> Diagnostic {
@@ -1691,7 +1876,30 @@ mod seam_hover_tests {
             out_of_scope_test_file_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
+            rust_diagnostic_origins: Default::default(),
         }
+    }
+
+    #[test]
+    fn gap_diagnostic_hover_renders_the_python_stop_condition_in_plain_words() -> Result<(), String>
+    {
+        // The real producer sentence (pinned against the producer in
+        // `python_repair_card`'s drift test), rendered through the hover.
+        let mut diagnostic = sample_gap_diagnostic();
+        if let Some(data) = diagnostic.data.as_mut() {
+            data["repair_route"]["stop_conditions"] = serde_json::json!([
+                "Stop if the expected value for the missing discriminator is ambiguous."
+            ]);
+        }
+        let hover = diagnostic_hover_response(&diagnostic);
+        let md = extract_markup(&hover)?;
+        if !md.contains("Stop if the expected value for the missing check is ambiguous.") {
+            return Err(format!("plain stop condition missing from hover:\n{md}"));
+        }
+        if md.contains("missing discriminator") {
+            return Err(format!("jargon stop condition reached the hover:\n{md}"));
+        }
+        Ok(())
     }
 
     #[test]
@@ -2464,5 +2672,317 @@ mod root_identity_tests {
         let root = Path::new("/w/sub/proj");
         assert!(root_matches_report(root, Some("/w/sub/proj")));
         assert!(!root_matches_report(root, Some("/w\\sub\\proj")));
+    }
+}
+
+#[cfg(test)]
+mod unanalyzed_file_cause_tests {
+    use super::*;
+
+    #[test]
+    fn classification_follows_observed_state_in_order() {
+        use AnalysisAttemptState::{Cancelled, Failed, Queued, Running, Stopped, Succeeded};
+        assert_eq!(
+            classify_unanalyzed_file(false, Running, true),
+            UnanalyzedFileCause::NotOnDisk
+        );
+        for state in [Queued, Running] {
+            assert_eq!(
+                classify_unanalyzed_file(true, state, true),
+                UnanalyzedFileCause::AttemptInProgress
+            );
+        }
+        for state in [Failed, Succeeded, Stopped] {
+            assert_eq!(
+                classify_unanalyzed_file(true, state, true),
+                UnanalyzedFileCause::SnapshotDidNotRecordFile
+            );
+        }
+        assert_eq!(
+            classify_unanalyzed_file(true, Failed, false),
+            UnanalyzedFileCause::LatestAttemptFailed
+        );
+        // Negative control: an attempt that ended without a snapshot and
+        // without a failure is neither reported as a failure nor in progress.
+        for state in [Cancelled, Stopped, Succeeded] {
+            assert_eq!(
+                classify_unanalyzed_file(true, state, false),
+                UnanalyzedFileCause::NoCommittedAnalysis
+            );
+        }
+    }
+
+    #[test]
+    fn every_cause_has_distinct_static_wording_without_unobserved_claims() {
+        let causes = [
+            UnanalyzedFileCause::NotOnDisk,
+            UnanalyzedFileCause::AttemptInProgress,
+            UnanalyzedFileCause::SnapshotDidNotRecordFile,
+            UnanalyzedFileCause::LatestAttemptFailed,
+            UnanalyzedFileCause::NoCommittedAnalysis,
+        ];
+        let texts: Vec<&str> = causes
+            .iter()
+            .map(|cause| unanalyzed_file_hover_route(*cause))
+            .collect();
+        for (index, text) in texts.iter().enumerate() {
+            assert!(!text.contains("in this session"), "{text}");
+            assert!(!text.contains("evidence appears"), "{text}");
+            assert!(!text.contains("exposed"), "{text}");
+            for other in &texts[index + 1..] {
+                assert_ne!(text, other);
+            }
+        }
+    }
+}
+
+/// #11821: the top limitation of one finding reads the same on every surface
+/// the shared owner feeds — MCP `ripr_get_top_limitation`, the LSP hover and
+/// the CLI explanation — and none renders a stronger claim than the MCP result.
+#[cfg(test)]
+mod top_limitation_parity_tests {
+    use super::*;
+    use crate::domain::{ProbeFamily, StaticLimitKind};
+    use crate::mcp::gaps::{GapItem, test_finding};
+    use tower_lsp_server::ls_types::{Position, Range};
+
+    fn hover_text(finding: &Finding) -> String {
+        let diagnostic = Diagnostic {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 1,
+                },
+            },
+            source: Some("ripr".to_string()),
+            message: "limited".to_string(),
+            ..Diagnostic::default()
+        };
+        match finding_hover_response(finding, &diagnostic).contents {
+            HoverContents::Markup(markup) => markup.value,
+            HoverContents::Scalar(_) | HoverContents::Array(_) => String::new(),
+        }
+    }
+
+    fn limitation_field(finding: &Finding, field: &str) -> Result<String, String> {
+        let item = GapItem::from_finding(finding, Path::new("."))?;
+        let document = item.limitation_document("snap");
+        document
+            .pointer(&format!("/limitation/{field}"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .ok_or_else(|| format!("limitation document has no {field}: {document}"))
+    }
+
+    #[test]
+    fn one_limitation_reads_the_same_on_mcp_hover_and_cli() -> Result<(), String> {
+        // `RustAssertionContextUnresolved` on a match arm is the one kind whose
+        // wording depends on the probe family, so it catches a surface that
+        // describes the kind without the family.
+        for (family, kind) in [
+            (
+                ProbeFamily::MatchArm,
+                StaticLimitKind::RustAssertionContextUnresolved,
+            ),
+            (
+                ProbeFamily::Predicate,
+                StaticLimitKind::RustAssertionContextUnresolved,
+            ),
+            (ProbeFamily::Predicate, StaticLimitKind::UnsupportedSyntax),
+        ] {
+            let mut finding = test_finding()?;
+            finding.probe.family = family.clone();
+            finding.static_limit_kind = Some(kind);
+
+            let mcp_kind = limitation_field(&finding, "kind")?;
+            let mcp_reason = limitation_field(&finding, "reason")?;
+            let mcp_recovery = limitation_field(&finding, "recovery")?;
+            let mcp_stage = limitation_field(&finding, "stage")?;
+            assert_eq!(mcp_stage, "producer_static_limit");
+            assert_eq!(mcp_kind, kind.as_str());
+
+            let hover = hover_text(&finding);
+            let hover_line = format!("Static limit: {mcp_kind} \u{2014} {mcp_reason}");
+            assert!(
+                hover.contains(&hover_line),
+                "hover must carry the MCP kind and reason for {family:?}/{kind:?}\nexpected line: {hover_line}\nhover:\n{hover}"
+            );
+
+            let cli = crate::output::human::render_finding(&finding);
+            let cli_line = format!("  {mcp_kind} \u{2014} {mcp_reason}\n");
+            assert!(
+                cli.contains(&cli_line),
+                "CLI must carry the MCP kind and reason for {family:?}/{kind:?}\nexpected: {cli_line}\ncli:\n{cli}"
+            );
+            assert!(
+                cli.contains(&format!("  Next: {mcp_recovery}\n")),
+                "CLI next step must equal the MCP recovery for {family:?}/{kind:?}\n{cli}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_base_side_finding_is_never_offered_as_a_repair_route_on_any_surface() -> Result<(), String>
+    {
+        // #11821: a finding whose source is not a candidate edit target
+        // (`base_deleted`) must not become a stronger route on any surface.
+        let mut finding = test_finding()?;
+        finding.source_currentness = crate::domain::SourceCurrentness::BaseDeleted;
+
+        let item = GapItem::from_finding(&finding, Path::new("."))?;
+        let document = item.limitation_document("snap");
+        let kind = document
+            .pointer("/limitation/kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("no limitation kind: {document}"))?;
+        assert_eq!(kind, "not_candidate_actionable");
+        assert_ne!(
+            document
+                .pointer("/limitation/stage")
+                .and_then(Value::as_str),
+            Some("none"),
+            "a base-side item must carry a limitation on MCP"
+        );
+
+        let cli = crate::output::human::render_finding(&finding);
+        assert!(
+            cli.contains("base_deleted \u{2014} base-side evidence, not a candidate edit target"),
+            "the CLI must say the source is not a candidate edit target:\n{cli}"
+        );
+
+        let hover = hover_text(&finding);
+        assert!(
+            hover.contains("no bounded repair instruction available"),
+            "hover must not offer a repair instruction for a base-side item:\n{hover}"
+        );
+        assert!(
+            !hover.contains("ripr repair"),
+            "hover must not offer a repair command for a base-side item:\n{hover}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_limited_finding_never_reads_as_repair_ready_on_any_surface() -> Result<(), String> {
+        let mut finding = test_finding()?;
+        finding.static_limit_kind = Some(StaticLimitKind::UnsupportedSyntax);
+        let item = GapItem::from_finding(&finding, Path::new("."))?;
+        assert_ne!(
+            item.limitation_document("snap")
+                .pointer("/limitation/kind")
+                .and_then(Value::as_str),
+            Some("no_limitation_established"),
+            "a producer static limit must outrank the absence of a limitation"
+        );
+        let hover = hover_text(&finding);
+        assert!(
+            hover.contains("Static limit: unsupported_syntax"),
+            "hover must disclose the same limit the MCP result names:\n{hover}"
+        );
+        Ok(())
+    }
+
+    /// A ledger-derived limitation item (no repair route, analyzer limitation)
+    /// reaches the editor through two stored-field readers: hover and the
+    /// code-action note. They must name the same kind and detail, and neither
+    /// may turn the limitation into a repair offer.
+    #[test]
+    fn a_ledger_limitation_reads_the_same_in_hover_and_the_code_action_note() {
+        let data = serde_json::json!({
+            "source": "gap_decision_ledger",
+            "gap_state": "static_limitation",
+            "repairability": "analyzer_limitation",
+            "static_limit_kind": "rust_assertion_context_unresolved",
+            "static_limit_detail": "The assertion macro could not be read.",
+            "repair_route": Value::Null,
+        });
+        let diagnostic = Diagnostic {
+            source: Some("ripr".to_string()),
+            message: "limited".to_string(),
+            data: Some(data.clone()),
+            ..Diagnostic::default()
+        };
+        let hover = gap_diagnostic_hover_markdown(&diagnostic, &data);
+        let note = crate::lsp::actions::static_limit_note(&data).unwrap_or_default();
+        for surface in [&hover, &note] {
+            assert!(
+                surface.contains("Static limit: rust_assertion_context_unresolved"),
+                "kind missing:\n{surface}"
+            );
+            assert!(
+                surface.contains("The assertion macro could not be read."),
+                "stored detail missing:\n{surface}"
+            );
+            assert!(
+                !surface.contains("ripr repair"),
+                "a limitation must not offer a repair command:\n{surface}"
+            );
+        }
+        assert!(
+            note.contains("Boundary: static evidence only; advisory action."),
+            "the code-action note keeps its advisory boundary:\n{note}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod plain_hover_summary_tests {
+    use super::plain_hover_summary;
+
+    #[test]
+    fn rewrites_producer_prose_but_not_user_source_text() {
+        assert_eq!(
+            plain_hover_summary("the equality-boundary discriminator is missing"),
+            "the equality-boundary check is missing"
+        );
+        // Known forms that append source text: the tail stays verbatim.
+        assert_eq!(
+            plain_hover_summary("Complete propagation witness reaches return value: discriminator"),
+            "Complete propagation witness reaches return value: discriminator"
+        );
+        assert_eq!(
+            plain_hover_summary(
+                "Related tests appear to reach f: discriminator_holds, discriminator"
+            ),
+            "Related tests appear to reach f: discriminator_holds, discriminator"
+        );
+        // Backticked source text stays verbatim.
+        assert_eq!(
+            plain_hover_summary("no strong discriminator for `discriminator`"),
+            "no strong check for `discriminator`"
+        );
+        // A lone backtick may belong to source text: leave the line alone.
+        assert_eq!(
+            plain_hover_summary("no strong discriminator for `x"),
+            "no strong discriminator for `x"
+        );
+    }
+
+    #[test]
+    fn rewrites_producer_prose_after_a_label_colon() {
+        // Real producer summaries (boundary_pairing.rs, Python static limit):
+        // the colon separates a label from producer prose, which is rewritten.
+        assert_eq!(
+            plain_hover_summary(
+                "Discriminator unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that discriminator"
+            ),
+            "Check unconfirmed: no admitted discriminating oracle is paired with the owner's boundary call (same_test_pairing_missing); a boundary input and a separate exact oracle do not establish that check"
+        );
+        assert_eq!(
+            plain_hover_summary(
+                "Static limit `x`: cannot prove whether the generated cases include the changed discriminator."
+            ),
+            "Static limit `x`: cannot prove whether the generated cases include the changed check."
+        );
+        // A Rust path colon is not a label colon.
+        assert_eq!(
+            plain_hover_summary("std::cmp::max discriminator"),
+            "std::cmp::max check"
+        );
     }
 }

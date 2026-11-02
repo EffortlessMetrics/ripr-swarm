@@ -36,7 +36,7 @@ use super::reveal::{
 };
 use crate::analysis::extract::{mask_comments_and_strings, mask_with_char_literals};
 use crate::analysis::syntax::HelperLoan;
-use crate::domain::Probe;
+use crate::domain::{Probe, ProbeFamily};
 
 /// Name an unsupported selector without extending `ArmSelector`'s proof rules.
 /// Only an unambiguous direct arm/header of a statement-free tail match qualifies.
@@ -235,6 +235,11 @@ pub(in crate::analysis) struct ArmSelector {
     /// compares arm results as return values; a `let t = match ..;` read
     /// later may map unequal results to one value.
     match_is_tail: bool,
+    /// Whether the arm's value is consumed before it can be the owner's
+    /// return value (see `EnclosingMatch::result_remapped`): a selected arm
+    /// then confirms nothing, because the consumer can make the changed and
+    /// original results equal (#12143).
+    result_remapped: bool,
     /// First path segments that name this workspace: `crate`, `self`,
     /// `super`, `Self`, the owner's impl type, and (once
     /// `with_workspace_packages` runs) each workspace package. A free
@@ -359,6 +364,44 @@ pub(in crate::analysis) struct ObservedArmInputs {
     pub(in crate::analysis) selection: ArmSelection,
 }
 
+/// #12110: the `MatchArm` view of an `error_path` probe whose changed line
+/// is a whole match arm (`_ => Err(E::New),`), so the arm selector can say
+/// which owner-call input reaches it. The old text is the same line with the
+/// removed error expression restored, so the arm's pattern reads as
+/// unchanged. `None` when the owner's line is not one readable arm holding
+/// the changed expression, the enclosing `match` is not the owner's tail
+/// expression, or the probe has no paired old text.
+pub(in crate::analysis) fn error_path_arm_probe(
+    probe: &Probe,
+    owner: &FunctionSummary,
+) -> Option<Probe> {
+    let before = probe.before.as_deref()?.trim();
+    let expression = probe.expression.trim();
+    if before.is_empty() || expression.is_empty() {
+        return None;
+    }
+    let line = owner
+        .body
+        .lines()
+        .nth(probe.location.line.checked_sub(owner.start_line)?)?
+        .trim();
+    arm_pattern_text(line)?;
+    if line.matches(expression).count() != 1 {
+        return None;
+    }
+    // The arm's result must be the owner's return value: a `let r = match ..;`
+    // read later may remap the error (`r.map_err(..)`), and then a pin of the
+    // removed variant passes before and after the change.
+    if !enclosing_match(owner, probe.location.line, true)?.match_is_tail {
+        return None;
+    }
+    let mut arm = probe.clone();
+    arm.family = ProbeFamily::MatchArm;
+    arm.expression = line.to_string();
+    arm.before = Some(line.replacen(expression, before, 1));
+    Some(arm)
+}
+
 impl ArmSelector {
     /// The selector for a `MatchArm` probe whose owner reads the arm's
     /// scrutinee from `self` or a named parameter. `None` when the arm has
@@ -446,6 +489,7 @@ impl ArmSelector {
             reached,
             arms_from_changed,
             match_is_tail,
+            result_remapped,
         } = enclosing_match(
             owner,
             probe.location.line,
@@ -591,6 +635,7 @@ impl ArmSelector {
             later,
             original_same_body,
             match_is_tail,
+            result_remapped,
             local_roots,
             owner_file: owner.file.clone(),
             test_imports: None,
@@ -815,6 +860,12 @@ impl ArmSelector {
                 None => bare && (scrutinee_type.is_none() || parent != scrutinee_type),
             }
         })
+    }
+
+    /// Whether the arm's value is consumed before it is the owner's return
+    /// value (#12143): no assertion about the owner's result confirms it.
+    pub(in crate::analysis) fn result_remapped(&self) -> bool {
+        self.result_remapped
     }
 
     /// Whether the test binds an owner call's result (`let expected =
@@ -1696,22 +1747,45 @@ fn catch_all_binding(alternative: &str) -> Option<&str> {
 /// bring in any name. A glob of an enum's variants (`use Rule::*`) does
 /// not count: Rust variants are CamelCase.
 pub(in crate::analysis) fn may_name_constant(source: &str, name: &str) -> bool {
+    use ra_ap_syntax::AstNode;
     let masked = mask_comments_and_strings(source);
     let declared = whole_word_offsets(&masked, name).into_iter().any(|offset| {
         let before = masked[..offset].trim_end();
         let before = before.strip_suffix("mut").map_or(before, str::trim_end);
         before.ends_with("const") || before.ends_with("static")
     });
-    declared
-        || flattened_use_paths(source).iter().any(|import| {
-            let mut segments = import.path.rsplit("::");
-            let last = segments.next().unwrap_or("");
-            match &import.alias {
-                Some(alias) => alias == name,
-                None if last == "*" => !segments.next().is_some_and(is_variant_name),
-                None => last == name,
+    if declared {
+        return true;
+    }
+    let may_rebind = flattened_use_paths(source).iter().any(|import| {
+        let mut segments = import.path.rsplit("::");
+        let last = segments.next().unwrap_or("");
+        match &import.alias {
+            Some(alias) => alias == name,
+            // `super::*` is judged on the parse below.
+            None if last == "*" => {
+                import.path != "super::*" && !segments.next().is_some_and(is_variant_name)
             }
-        })
+            None => last == name,
+        }
+    });
+    if may_rebind {
+        return true;
+    }
+    if !flattened_use_paths(source)
+        .iter()
+        .any(|import| import.path == "super::*")
+    {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .any(|node| parent_glob_outside_this_file(&node))
 }
 
 /// The variant names of the one enum named `type_name` that `source`
@@ -2405,10 +2479,74 @@ fn literal_value(text: &str) -> Option<LiteralValue> {
         .strip_prefix('\'')
         .and_then(|rest| rest.strip_suffix('\''))
     {
-        return (!inner.contains(['\'', '\\']) && inner.chars().count() == 1)
-            .then(|| LiteralValue::Char(inner.to_string()));
+        return decoded_char_literal_inner(inner).map(|ch| LiteralValue::Char(ch.to_string()));
     }
     integer_value(text).map(LiteralValue::Int)
+}
+
+/// The one scalar inside a `'…'` literal after the outer quotes are removed.
+fn decoded_char_literal_inner(inner: &str) -> Option<char> {
+    if inner.is_empty() {
+        return None;
+    }
+    if let Some(rest) = inner.strip_prefix('\\') {
+        let (decoded, tail) = match rest.as_bytes().first().copied()? {
+            b'n' => ('\n', &rest[1..]),
+            b'r' => ('\r', &rest[1..]),
+            b't' => ('\t', &rest[1..]),
+            b'0' => ('\0', &rest[1..]),
+            b'\\' => ('\\', &rest[1..]),
+            b'\'' => ('\'', &rest[1..]),
+            b'"' => ('"', &rest[1..]),
+            b'x' => {
+                let hex_digits = rest.get(1..)?;
+                let hex = hex_digits.get(0..2)?;
+                if hex.len() < 2
+                    || !hex.as_bytes()[0].is_ascii_hexdigit()
+                    || !hex.as_bytes()[1].is_ascii_hexdigit()
+                {
+                    return None;
+                }
+                let value = u8::from_str_radix(hex, 16).ok()?;
+                if value > 0x7F {
+                    return None;
+                }
+                (char::from(value), hex_digits.get(2..).unwrap_or(""))
+            }
+            b'u' => {
+                let after_u = rest.get(1..)?;
+                let body = after_u.strip_prefix('{')?;
+                let end = body.find('}')?;
+                let digits = &body[..end];
+                // Rust requires a leading hex digit and at most six hex digits
+                // (`_` separators allowed after the first digit).
+                if !digits.starts_with(|ch: char| ch.is_ascii_hexdigit()) {
+                    return None;
+                }
+                if digits.chars().filter(|ch| *ch != '_').count() > 6 {
+                    return None;
+                }
+                let mut value = 0u32;
+                for ch in digits.chars() {
+                    if ch == '_' {
+                        continue;
+                    }
+                    let digit = ch.to_digit(16)?;
+                    value = value.checked_mul(16)?.checked_add(digit)?;
+                }
+                let decoded = char::from_u32(value)?;
+                (decoded, body.get(end + 1..).unwrap_or(""))
+            }
+            _ => return None,
+        };
+        if !tail.is_empty() {
+            return None;
+        }
+        return Some(decoded);
+    }
+    (!inner.contains(['\'', '\\']) && inner.chars().count() == 1)
+        .then(|| inner.chars().next())
+        .flatten()
 }
 
 /// Decimal, hex, octal or binary integer literals with `_` separators and an
@@ -2497,6 +2635,11 @@ struct EnclosingMatch {
     arms_from_changed: Option<Vec<(String, String)>>,
     /// Whether only the owner body's closing `}` follows the match.
     match_is_tail: bool,
+    /// Whether the match value is consumed before it can be the owner's
+    /// return value: a method call on the match (`match .. {..}.map_err(..)`)
+    /// or a `let` binding that the owner does not return as its bare tail.
+    /// Such a consumer may map unequal arm results to one value (#12143).
+    result_remapped: bool,
 }
 
 /// `with_later_arms` asks for the changed and later arms' bodies, which only
@@ -2550,21 +2693,59 @@ fn enclosing_match(
         return None;
     }
     let earlier_patterns = earlier_arm_patterns(&masked, &source, brace + 1, arm_offset)?;
-    let close = with_later_arms
-        .then(|| matching_close_brace(&masked, brace))
-        .flatten();
-    let arms_from_changed =
-        close.and_then(|close| arms_with_bodies(&masked, &source, arm_offset, close));
-    let match_is_tail = close
-        .and_then(|close| masked.get(close + 1..))
-        .is_some_and(|rest| rest.trim() == "}");
+    let close = matching_close_brace(&masked, brace);
+    let arms_from_changed = with_later_arms
+        .then_some(close)
+        .flatten()
+        .and_then(|close| arms_with_bodies(&masked, &source, arm_offset, close));
+    let rest = close.and_then(|close| masked.get(close + 1..));
+    let match_is_tail = rest.is_some_and(|rest| rest.trim() == "}");
+    let result_remapped = rest.is_some_and(|rest| {
+        let rest = rest.trim_start();
+        rest.starts_with(|c: char| ".?[%+-*/&|^<>=!".contains(c))
+            || rest
+                .strip_prefix("as")
+                .is_some_and(|after| after.starts_with(char::is_whitespace))
+            || let_binding_before(&head[..keyword])
+                .is_some_and(|name| !binding_returned_bare(rest, &name))
+    });
     Some(EnclosingMatch {
         scrutinee: scrutinee.to_string(),
         earlier_patterns,
         reached: match_always_runs(&masked[..keyword]),
         arms_from_changed,
         match_is_tail,
+        result_remapped,
     })
+}
+
+/// The name a `let [mut] name[: Type] =` binding ends the text with, when the
+/// last statement before a `match` keyword is exactly such a binding head.
+fn let_binding_before(head: &str) -> Option<String> {
+    let statement = head.trim_end().strip_suffix('=')?;
+    let statement = statement.rsplit([';', '{', '}']).next()?.trim();
+    let statement = statement.strip_prefix("let")?;
+    if !statement.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let statement = statement.trim_start();
+    let statement = statement
+        .strip_prefix("mut")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(statement, str::trim_start);
+    let name = statement.split(':').next()?.trim();
+    is_identifier(name).then(|| name.to_string())
+}
+
+/// Whether the text after a `let name = match .. {..}` is `;` and the bare
+/// `name` as the owner's final expression, so the arm result is returned as it
+/// stands.
+fn binding_returned_bare(rest: &str, name: &str) -> bool {
+    rest.trim_start()
+        .strip_prefix(';')
+        .map(str::trim)
+        .and_then(|tail| tail.strip_suffix('}'))
+        .is_some_and(|tail| tail.trim() == name)
 }
 
 const INTEGER_TYPES: [&str; 12] = [
@@ -3189,6 +3370,44 @@ mod tests {
     }
 
     #[test]
+    fn error_path_arm_probe_restores_the_removed_expression_on_one_arm_line() {
+        let body = "fn parse(raw: &str) -> Result<u32, E> {\n    match raw {\n        \"k\" => Ok(1),\n        _ => Err(E::Blank),\n    }\n}";
+        let owner = self::owner(body, "parse");
+        let mut probe = arm_probe("Err(E::Blank)", 4);
+        probe.family = ProbeFamily::ErrorPath;
+        probe.before = Some("Err(E::Unknown)".to_string());
+        let arm = error_path_arm_probe(&probe, &owner);
+        assert_eq!(
+            arm.as_ref().map(|arm| &arm.family),
+            Some(&ProbeFamily::MatchArm)
+        );
+        assert_eq!(
+            arm.as_ref().map(|arm| arm.expression.as_str()),
+            Some("_ => Err(E::Blank),")
+        );
+        assert_eq!(
+            arm.as_ref().and_then(|arm| arm.before.as_deref()),
+            Some("_ => Err(E::Unknown),")
+        );
+
+        // The match result is bound and remapped afterwards: the owner's
+        // return value is not the arm's.
+        let remapped = "fn parse(raw: &str) -> Result<u32, E> {\n    let r = match raw {\n        \"k\" => Ok(1),\n        _ => Err(E::Blank),\n    };\n    r.map_err(|_| E::Unknown)\n}";
+        let remapped_owner = self::owner(remapped, "parse");
+        let mut remapped_probe = probe.clone();
+        remapped_probe.location = SourceLocation::new("src/lib.rs", 4, 1);
+        assert!(error_path_arm_probe(&remapped_probe, &remapped_owner).is_none());
+
+        // Not an arm line: nothing to select.
+        let mut statement = probe.clone();
+        statement.location = SourceLocation::new("src/lib.rs", 2, 1);
+        assert!(error_path_arm_probe(&statement, &owner).is_none());
+        // No paired old text: the removed variant is unknown.
+        probe.before = None;
+        assert!(error_path_arm_probe(&probe, &owner).is_none());
+    }
+
+    #[test]
     #[cfg(feature = "lang-rust")]
     fn field_selector_limit_refuses_ambiguous_or_computed_subjects() {
         let valid = "fn reason(lease: &Lease) -> u64 {\n    match lease.elapsed {\n        Some(ms) => ms,\n        None => 600,\n    }\n}";
@@ -3634,6 +3853,47 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn may_name_constant_ignores_inline_test_module_super_glob() {
+        let label = concat!(
+            "pub fn label(n: u8) -> &'static str {\n",
+            "    match n {\n",
+            "        0 => \"zero\",\n",
+            "        other => \"many\",\n",
+            "    }\n",
+            "}\n",
+        );
+        let inline_tests = concat!(
+            "#[cfg(test)]\n",
+            "mod tests {\n",
+            "    use super::*;\n",
+            "    #[test]\n",
+            "    fn t() {\n",
+            "        assert_eq!(label(5), \"many\");\n",
+            "    }\n",
+            "}\n",
+        );
+        assert!(
+            !may_name_constant(&format!("{label}{inline_tests}"), "other"),
+            "inline mod use super::* must not demote a binding arm"
+        );
+        assert!(
+            may_name_constant(&format!("use super::*;\n{label}"), "other"),
+            "file-root use super::* may still rebind"
+        );
+        assert!(
+            may_name_constant(
+                &format!("const other: u8 = 1;\n{label}{inline_tests}"),
+                "other"
+            ),
+            "declared const still counts"
+        );
+        assert!(
+            may_name_constant(&format!("use some_mod::*;\n{label}"), "other"),
+            "non-super module globs unchanged"
+        );
+    }
+
     fn resolve_with(selector: &ArmSelector, source: Option<&str>) -> ArmSelector {
         let mut selector = selector.clone();
         let declared =
@@ -3955,6 +4215,67 @@ mod tests {
         assert!(selector.assertion_selects("assert_eq!(suit_color('C'), \"black\");"));
         assert!(!selector.assertion_selects("assert_eq!(suit_color('H'), \"red\");"));
         Ok(())
+    }
+
+    #[test]
+    fn escaped_char_literal_arms_match_decoded_inputs() -> Result<(), String> {
+        let cases = [
+            ("'\\n' => 1,", "'\\n'", 1),
+            ("'\\\\' => 2,", "'\\\\'", 2),
+            ("'\\'' => 3,", "'\\''", 3),
+            ("'\\x41' => 4,", "'\\x41'", 4),
+            ("'\\u{e9}' => 5,", "'\\u{e9}'", 5),
+        ];
+        for (arm, input, want) in cases {
+            let body = format!(
+                "pub fn code(c: char) -> u32 {{\n    match c {{\n        {arm}\n        _ => 0,\n    }}\n}}\n"
+            );
+            let selector = ArmSelector::establish(&arm_probe(arm, 3), &owner(&body, "code"))
+                .ok_or_else(|| format!("premise: arm {arm} should establish"))?;
+            assert!(
+                selector.assertion_selects(&format!("assert_eq!(code({input}), {want});")),
+                "arm {arm} with input {input}"
+            );
+        }
+        let newline_body = "pub fn code(c: char) -> u32 {\n    match c {\n        '\\n' => 1,\n        _ => 0,\n    }\n}\n";
+        let selector =
+            ArmSelector::establish(&arm_probe("'\\n' => 1,", 3), &owner(newline_body, "code"))
+                .ok_or_else(|| "premise: newline arm".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(code('n'), 1);"));
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_escaped_char_literals_stay_unknown() {
+        assert_eq!(literal_value("'\\q'"), None);
+        assert_eq!(literal_value("'\\u{110000}'"), None);
+        assert_eq!(literal_value("'\\u{_}'"), None);
+        assert_eq!(literal_value("'\\u{_41}'"), None);
+        assert_eq!(literal_value("'\\u{0000000}'"), None);
+    }
+
+    #[test]
+    fn escaped_char_literals_decode_for_literal_value() {
+        assert_eq!(
+            literal_value("'\\n'"),
+            Some(LiteralValue::Char("\n".to_string()))
+        );
+        assert_eq!(
+            literal_value("'\\\\'"),
+            Some(LiteralValue::Char("\\".to_string()))
+        );
+        assert_eq!(
+            literal_value("'\\''"),
+            Some(LiteralValue::Char("'".to_string()))
+        );
+        assert_eq!(
+            literal_value("'\\x41'"),
+            Some(LiteralValue::Char("A".to_string()))
+        );
+        assert_eq!(
+            literal_value("'\\u{e9}'"),
+            Some(LiteralValue::Char("é".to_string()))
+        );
     }
 
     #[test]
@@ -4739,6 +5060,36 @@ mod tests {
             .ok_or_else(|| "premise: the Low arm is readable".to_string())?;
         assert!(low.assertion_selects("assert_eq!(f(Level::Low), 1);"));
         assert!(!low.assertion_selects("assert_eq!(f(Priority::Low), 1);"));
+        Ok(())
+    }
+    /// #12143: a `match` whose value is consumed before the owner returns it
+    /// (method call on the `match`, or a `let` binding used again) remaps the
+    /// arm's result; a bare `let`-then-return does not.
+    #[test]
+    fn a_consumed_match_value_marks_the_arm_result_remapped() -> Result<(), String> {
+        let remapped = |body: &str| -> Result<bool, String> {
+            ArmSelector::establish(&arm_probe("_ => 20,", 4), &owner(body, "f"))
+                .map(|selector| selector.result_remapped())
+                .ok_or_else(|| format!("premise: the arm is readable in {body:?}"))
+        };
+        let method = "fn f(x: u8) -> Result<u8, E> {\n    match x {\n        0 => Ok(1),\n        _ => Ok(20),\n    }.map_err(|_| E)\n}\n";
+        assert!(remapped(method)?);
+        // A binary operator, cast or `?` after the closing brace consumes it too.
+        for consumer in ["% 7", "+ 1", "as u32", "?", "== 3", "[0]"] {
+            let body = format!(
+                "fn f(x: u8) -> u32 {{\n    match x {{\n        0 => 1,\n        _ => 20,\n    }} {consumer}\n}}\n"
+            );
+            assert!(remapped(&body)?, "{consumer}");
+        }
+        let used = "fn f(x: u8) -> u8 {\n    let v = match x {\n        0 => 1,\n        _ => 20,\n    };\n    v.saturating_add(1)\n}\n";
+        assert!(remapped(used)?);
+        let bare = "fn f(x: u8) -> u8 {\n    let v = match x {\n        0 => 1,\n        _ => 20,\n    };\n    v\n}\n";
+        assert!(!remapped(bare)?);
+        let typed = "fn f(x: u8) -> u8 {\n    let mut v: u8 = match x {\n        0 => 1,\n        _ => 20,\n    };\n    v\n}\n";
+        assert!(!remapped(typed)?);
+        let tail =
+            "fn f(x: u8) -> u8 {\n    match x {\n        0 => 1,\n        _ => 20,\n    }\n}\n";
+        assert!(!remapped(tail)?);
         Ok(())
     }
 }

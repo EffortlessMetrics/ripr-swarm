@@ -20,12 +20,12 @@ Start here:
   Next step: The related test `reads_successfully` already asserts an exact value; the gap is not
     the assertion shape. Add a test input that executes the changed error arm and assert the exact
     variant or payload it produces
-  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -38,10 +38,12 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/error_path_diagnostic_raw/input --diff <cwd>/fixtures/error_path_diagnostic_raw/diff.patch --mode fast probe:src_lib.rs:error_path:fedbf836
   ripr context --root <cwd>/fixtures/error_path_diagnostic_raw/input --diff <cwd>/fixtures/error_path_diagnostic_raw/diff.patch --mode fast --at probe:src_lib.rs:error_path:fedbf836
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: ripr found 1 spot in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.
-    - ./src/lib.rs:5 (unknown); kind: static_unknown; reason: No strong discriminator was detected
+    - ./src/lib.rs:5 (unknown: static analysis limited); kind: unclear; reason: No strong assertion was detected
+  Hidden classes:
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

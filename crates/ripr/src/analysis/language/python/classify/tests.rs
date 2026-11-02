@@ -1011,7 +1011,7 @@ fn predicate_boundary_off_boundary_exact_oracle_is_weakly_exposed() -> Result<()
     );
     assert!(
         finding.missing.iter().any(|line| line.contains(
-            "No strong related test call places qty equal to item.on_hand; observed qty values: 3; observed item.on_hand values: unresolved"
+            "Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary"
         )),
         "{:?}",
         finding.missing
@@ -3000,6 +3000,87 @@ fn value_preserving_wrapper_around_owner_call_keeps_exposed() -> Result<(), Stri
     Ok(())
 }
 
+// RIPR-SPEC-0238 rule 30: an `==` over a coarse projection of the owner's
+// result (nullness, sign, remainder, class name, text length) is shared by the
+// old and new value, so it does not discriminate the changed return.
+const FEE_SOURCE: &str = "def f(x):\n    return x * 3\n";
+
+#[test]
+fn coarse_projection_of_owner_result_does_not_credit_exposed() -> Result<(), String> {
+    for body in [
+        "self.assertEqual(f(2) is None, False)",
+        "self.assertEqual(f(2) > 0, True)",
+        "assert f(3) % 3 == 0",
+        "self.assertEqual(f(2).__class__.__name__, 'int')",
+        "assert len(str(f(3))) == 1",
+        "assert all(f(2) > 0 for _ in range(2))",
+        "assert [f(2) > 0 for _ in range(2)] == [True, True]",
+        "self.assertEqual(f(2) > 0 if True else False, True)",
+    ] {
+        let finding = classify_case(
+            FEE_SOURCE,
+            &format!(
+                "import unittest\nfrom src.subject import f\n\nclass T(unittest.TestCase):\n    def test_f(self):\n        {body}\n"
+            ),
+            2,
+            "    return x * 2",
+            "    return x * 3",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn value_pinning_assertions_beside_a_coarse_projection_keep_exposed() -> Result<(), String> {
+    for body in [
+        "assert f(3) == 9",
+        "self.assertEqual(f(3), 9)",
+        "assert f(3) == 9 and f(3) % 3 == 0",
+        "assert f(3) + 1 == 10",
+    ] {
+        let finding = classify_case(
+            FEE_SOURCE,
+            &format!("from src.subject import f\n\ndef test_f():\n    {body}\n"),
+            2,
+            "    return x * 2",
+            "    return x * 3",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn length_of_a_changed_element_expression_does_not_credit_exposed() -> Result<(), String> {
+    let source = "def gen(n):\n    for i in range(n):\n        yield i * 3\n";
+    let tests =
+        |body: &str| format!("from src.subject import gen\n\ndef test_gen():\n    {body}\n");
+    for body in [
+        "assert len(list(gen(3))) == 3",
+        "assert gen(3).__class__.__name__ == 'generator'",
+    ] {
+        let finding = classify_case(
+            source,
+            &tests(body),
+            3,
+            "        yield i * 2",
+            "        yield i * 3",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{body}");
+    }
+    // The elements themselves are still pinned.
+    let finding = classify_case(
+        source,
+        &tests("assert list(gen(3)) == [0, 3, 6]"),
+        3,
+        "        yield i * 2",
+        "        yield i * 3",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
 /// Changed-line classification with both the old line and the new-side source
 /// threaded in, matching the production diff path.
 fn classify_edit_case(
@@ -3225,6 +3306,120 @@ fn message_only_change_stays_exposed_when_a_bound_comparison_rejects_the_old_mes
         "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative value\") as exc:\n        check(-1)\n    assert str(exc.value) == \"negative value: must be at most zero\"\n",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed, "{finding:?}");
+    Ok(())
+}
+
+// #9185 two-step form: `msg = "..."` then `raise Exc(msg)` (the attrs
+// `default_if_none` shape). The changed line is a plain assignment.
+const LOCAL_OLD_LINE: &str = "        msg = \"negative value: must be at least zero\"";
+const LOCAL_NEW_LINE: &str = "        msg = \"negative value: must be at most zero\"";
+const LOCAL_SOURCE: &str = "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        raise ValueError(msg)\n    return x\n";
+const MATCH_NEGATIVE_TEST: &str = "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative value\"):\n        check(-1)\n";
+
+fn classify_local_message_change(source: &str, tests: &str) -> Result<Finding, String> {
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), tests);
+    classify_change_with_source(
+        file,
+        3,
+        LOCAL_NEW_LINE,
+        Some(LOCAL_OLD_LINE),
+        &owners,
+        &tests,
+        Some(source),
+    )
+    .ok_or_else(|| "message change must produce a finding".to_string())
+}
+
+#[test]
+fn local_message_change_under_a_pattern_that_fits_both_messages_is_weakly_exposed()
+-> Result<(), String> {
+    for tests in [
+        MATCH_NEGATIVE_TEST,
+        "import unittest\nfrom src.subject import check\n\nclass T(unittest.TestCase):\n    def test_negative(self):\n        with self.assertRaisesRegex(ValueError, \"negative value\"):\n            check(-1)\n",
+    ] {
+        let finding = classify_local_message_change(LOCAL_SOURCE, tests)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+        let reason = missing_boundary(&finding, "message \"negative value: must be at most zero\"")
+            .ok_or_else(|| format!("missing discriminator absent: {finding:?}"))?;
+        assert!(
+            reason.contains("matches the old message \"negative value: must be at least zero\""),
+            "{reason}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn local_message_change_stays_exposed_when_a_pattern_rejects_the_old_message() -> Result<(), String>
+{
+    for tests in [
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"at most zero\"):\n        check(-1)\n",
+        "import pytest\nfrom src.subject import check\n\ndef test_a():\n    with pytest.raises(ValueError, match=\"negative value\"):\n        check(-1)\n\ndef test_b():\n    with pytest.raises(ValueError, match=\"at most\"):\n        check(-2)\n",
+    ] {
+        let finding = classify_local_message_change(LOCAL_SOURCE, tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn local_message_change_fails_open_on_unreadable_patterns() -> Result<(), String> {
+    for tests in [
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError, match=\"negative.*value\"):\n        check(-1)\n",
+        "import pytest\nfrom src.subject import check\n\nPATTERN = build()\n\ndef test_negative():\n    with pytest.raises(ValueError, match=PATTERN):\n        check(-1)\n",
+        "import pytest\nfrom src.subject import check\n\ndef test_negative():\n    with pytest.raises(ValueError) as exc:\n        check(-1)\n    assert str(exc.value) == \"negative value: must be at most zero\"\n",
+    ] {
+        let finding = classify_local_message_change(LOCAL_SOURCE, tests)?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{tests}: {finding:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn local_message_change_stays_unresolved_unless_the_raise_is_the_only_use() -> Result<(), String> {
+    // Each owner mentions `msg` somewhere besides the assignment and one
+    // `raise Exc(msg)`, or reaches it dynamically, so the message the pattern
+    // reads is not provably the edited literal: the existing verdict stands.
+    for source in [
+        // A second use of the message.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        log(msg)\n        raise ValueError(msg)\n    return x\n",
+        // A rebind before the raise.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        msg = msg2(x)\n        raise ValueError(msg)\n    return x\n",
+        // The raise transforms the message.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        raise ValueError(msg.upper())\n    return x\n",
+        // The raise chains a cause.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        raise ValueError(msg) from None\n    return x\n",
+        // The name is a parameter the caller can bind.
+        "def check(x, msg=None):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        raise ValueError(msg)\n    return x\n",
+        // Dynamic scope access can rebind the name.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        locals().update(msg=other())\n        raise ValueError(msg)\n    return x\n",
+        // No raise reads the message.
+        "def check(x):\n    if x < 0:\n        msg = \"negative value: must be at most zero\"\n        return msg\n    raise ValueError(\"negative value\")\n",
+        // The raise comes before the assignment.
+        "def check(x):\n    if x < 0:\n        raise ValueError(msg)\n        msg = \"negative value: must be at most zero\"\n    return x\n",
+    ] {
+        let finding = classify_local_message_change(source, MATCH_NEGATIVE_TEST)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{source}: {finding:?}"
+        );
+        assert!(
+            missing_boundary(&finding, "message \"negative value: must be at most zero\"")
+                .is_none(),
+            "{source}: {finding:?}"
+        );
+    }
     Ok(())
 }
 
@@ -3716,4 +3911,74 @@ fn truthiness_swap_fails_open_on_a_separating_default_or_a_branch_value_edit() -
     )?;
     assert_ne!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
+}
+
+const OBJECT_BASE_TESTS: &str =
+    "from src.subject import Box\n\ndef test_double():\n    assert Box(2).double() == 4\n";
+
+// #11888 hardening: a class-header lookalike inside a multi-line string (or an
+// unlexable file) is data, so it keeps its probe; a real header does not.
+#[test]
+fn a_class_header_lookalike_inside_a_multiline_string_keeps_its_probe() {
+    let source = "class Box:\n    def double(self):\n        return self.value * 2\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), OBJECT_BASE_TESTS);
+    for in_string in [false, true] {
+        let no_behavior = super::PythonNoBehaviorContext {
+            new_line_in_multiline_string: in_string,
+            ..Default::default()
+        };
+        let finding = super::classify_change_full(
+            file,
+            1,
+            "class Box:",
+            Some("class Box(object):"),
+            &owners,
+            &tests,
+            no_behavior,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(finding.is_none(), !in_string, "in_string={in_string}");
+    }
+}
+
+// Pinned shapes the object-base allow-list must not widen to.
+#[test]
+fn object_base_class_change_pins_type_params_keywords_and_header_shapes() {
+    use super::super::no_behavior::is_annotation_only_def_change as noop;
+    assert!(noop("    class Inner(object):", "    class Inner:"));
+    assert!(noop("class A[T](object):", "class A[T]:"));
+    assert!(!noop("class A[T](object):", "class A[U]:"));
+    assert!(!noop("class A[T](object):", "class A:"));
+    assert!(!noop("class Box(object): pass", "class Box: pass"));
+    assert!(!noop("class Box(object,", "class Box("));
+    assert!(!noop(
+        "class Box(object, metaclass=Meta):",
+        "class Box(metaclass=Meta):"
+    ));
+    assert!(!noop(
+        "class Box(object, flag=True):",
+        "class Box(flag=True):"
+    ));
+    assert!(!noop("class Box(Base, object):", "class Box(Base):"));
+    assert!(!noop("class Box(object):", "class Box(Base):"));
+    // Indentation mismatch is a moved statement: the classify guard refuses it.
+    let source = "class Box:\n    def double(self):\n        return 1\n";
+    let file = Path::new("src/subject.py");
+    let owners = extract_owners(file, source);
+    let tests = extract_tests(Path::new("tests/test_subject.py"), OBJECT_BASE_TESTS);
+    assert!(
+        classify_change_with_old(
+            file,
+            1,
+            "    class Box:",
+            Some("class Box(object):"),
+            &owners,
+            &tests
+        )
+        .is_some()
+    );
 }

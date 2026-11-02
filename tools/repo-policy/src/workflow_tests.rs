@@ -176,13 +176,13 @@ jobs:
   dependency-review:
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -271,14 +271,14 @@ fn workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count() {
 jobs:
   dependency-review:
     steps:
-      - uses: actions/dependency-review-action@v4
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
 "#;
     let mut allowlist = BTreeMap::new();
     allowlist.insert(
         (
             ".github/workflows/security.yml".to_string(),
-            "actions/dependency-review-action@v4".to_string(),
+            "actions/dependency-review-action@".to_string(),
         ),
         1,
     );
@@ -287,7 +287,7 @@ jobs:
         workflow_runtime_violations(".github/workflows/security.yml", workflow, &allowlist);
 
     assert!(violations.iter().any(|violation| {
-        violation.contains("uses `actions/dependency-review-action@v4` 2 time(s), allowed 1")
+        violation.contains("uses `actions/dependency-review-action@` 2 time(s), allowed 1")
     }));
 }
 
@@ -1373,8 +1373,8 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         routed_rust_ready_event_contract_violations(&any_label_request)
     );
     let skippable_result = workflow.replace(
-        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
-        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: always()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
+        "    if: success()\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    steps:\n      - name: Recheck initially admitted eligibility",
     );
     assert_ne!(
         skippable_result, workflow,
@@ -1387,6 +1387,66 @@ fn routed_rust_ready_event_matrix_withholds_draft_and_label_context() {
         "a skippable result reports success when skipped: {:?}",
         routed_rust_ready_event_contract_violations(&skippable_result)
     );
+    for (what, from, to, needle) in [
+        (
+            "the extension e2e step",
+            "      - name: Read the extension e2e check for the admitted head\n        id: vscode\n",
+            "      - name: Read something else\n        id: other\n",
+            "read the extension e2e check for the admitted head",
+        ),
+        (
+            "the summary branch that fails the Result",
+            "[ \"$VSCODE_CHECK_RESULT\" != success ]",
+            "[ \"$VSCODE_CHECK_RESULT\" = never ]",
+            "fail the Result when the selected extension e2e did not succeed",
+        ),
+        (
+            "the check-run read permission",
+            "  checks: read\n",
+            "",
+            "grant the Result's check-run read",
+        ),
+        (
+            "the same-suite binding of the skip",
+            "((.check_suite.id | tostring) == $suite)",
+            "true",
+            "bind the extension e2e verdict to this request's own successful",
+        ),
+        (
+            "the request-identity surface binding",
+            "[ \"$candidate_title\" = \"$request_title\" ]",
+            "true",
+            "bind the `vscode surface` to the ci.yml run that names this request's head and request time",
+        ),
+        (
+            "the selection inputs in the request title",
+            "$REQUEST_AT $REQUEST_SELECTION",
+            "$REQUEST_AT",
+            "include every extension-selection input (base and labels) in the request title",
+        ),
+        (
+            "the identical-title ambiguity refusal",
+            "more than one ci.yml run",
+            "more than one ci.yml rub",
+            "refuse distinct ci.yml runs that carry the identical request title",
+        ),
+        (
+            "the skipped-check exclusion from the verdict",
+            "[.[] | select(.conclusion != \"skipped\")] | last // {}",
+            "[.[]] | last // {}",
+            "decide the extension e2e verdict by the newest executed check",
+        ),
+    ] {
+        let mutated = workflow.replacen(from, to, 1);
+        assert_ne!(mutated, workflow, "fixture must remove {what}");
+        assert!(
+            routed_rust_ready_event_contract_violations(&mutated)
+                .iter()
+                .any(|violation| violation.contains(needle)),
+            "removing {what} must be rejected (#12122): {:?}",
+            routed_rust_ready_event_contract_violations(&mutated)
+        );
+    }
     for job in ["route", "detect-docs-only", "admission"] {
         let unguarded = workflow.replace(
             "github.event_name != 'pull_request' || github.event.label.name == 'merge-ready'\n",
@@ -1561,12 +1621,13 @@ fn unpinned_third_party_action_is_rejected_and_the_sha_pin_passes() -> Result<()
 }
 
 #[test]
-fn unpinned_action_rule_scopes_to_third_party_and_rejects_short_or_branch_refs() {
+fn unpinned_action_rule_covers_first_party_and_rejects_short_or_branch_refs() {
     let text = r#"
 jobs:
   build:
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - uses: ./.github/actions/local
       - uses: peter-evans/create-pull-request@5f6978f # short sha is mutable-ambiguous
       - name: branch
@@ -1576,7 +1637,12 @@ jobs:
       - uses: EffortlessMetrics/em-ci-workflows/.github/workflows/rust.yml@8ff77e5876b4a7808a58e053aa6248b1020e02d0
 "#;
     let violations = workflow_unpinned_action_violations("w.yml", text, &BTreeMap::new());
-    assert_eq!(violations.len(), 2, "{violations:?}");
+    assert_eq!(violations.len(), 3, "{violations:?}");
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("`actions/checkout@v6`"))
+    );
     assert!(
         violations
             .iter()
@@ -1914,4 +1980,33 @@ fn publish_jobs_run_locked_tools_with_scoped_pat_and_gate() -> Result<(), String
         assert!(!publish_job_violations(&commented, job, environment, pat, tool).is_empty());
     }
     Ok(())
+}
+
+#[test]
+fn retired_major_is_rejected_when_a_sha_pin_comment_names_it() {
+    let sha = "d23441a48e516b6c34aea4fa41551a30e30af803";
+    let rejects = |line: &str| {
+        workflow_runtime_violations(".github/workflows/ci.yml", line, &BTreeMap::new())
+            .iter()
+            .any(|violation| violation.contains("actions/checkout@v4"))
+    };
+    // A SHA pinned to a retired major still trips the gate through its comment.
+    assert!(rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v4.2.0\n"
+    )));
+    assert!(rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v4\n"
+    )));
+    // The current major, a longer major that merely starts with `v4`, a
+    // non-SHA ref and a different action do not.
+    assert!(!rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v6.1.0\n"
+    )));
+    assert!(!rejects(&format!(
+        "      - uses: actions/checkout@{sha} # v40.1.0\n"
+    )));
+    assert!(!rejects("      - uses: actions/checkout@main # v4.2.0\n"));
+    assert!(!rejects(&format!(
+        "      - uses: actions/cache@{sha} # v4.2.0\n"
+    )));
 }

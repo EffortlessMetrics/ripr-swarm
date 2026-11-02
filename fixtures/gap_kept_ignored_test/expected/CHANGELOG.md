@@ -217,3 +217,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — gap_kept_ignored_test (19)
+
+Reason:
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
+
+Command:
+`cargo xtask goldens bless gap_kept_ignored_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — gap_kept_ignored_test (20)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless gap_kept_ignored_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — gap_kept_ignored_test (21)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless gap_kept_ignored_test --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

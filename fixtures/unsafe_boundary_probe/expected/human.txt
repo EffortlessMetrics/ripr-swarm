@@ -18,13 +18,13 @@ Start here:
   Next step: ripr found no static test path to this change — this is not a coverage assessment. A
     test may already exercise it through macros, helper-call chains, or integration tests that
     ripr's static model does not yet trace. If none does, add a co-located test that reaches and
-    observes the changed behavior so a discriminator exists
-  Evidence: reach no · infection unknown · propagation unknown · observation no · discriminator no
+    observes the changed behavior so an assertion can notice if it is wrong
+  Evidence: reach no · infection unknown · propagation unknown · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -37,12 +37,14 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/unsafe_boundary_probe/input --diff <cwd>/fixtures/unsafe_boundary_probe/diff.patch --mode fast probe:src_lib.rs:static_unknown:eff3c10e
   ripr context --root <cwd>/fixtures/unsafe_boundary_probe/input --diff <cwd>/fixtures/unsafe_boundary_probe/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:eff3c10e
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: ripr found 5 spots in this finding's file, but could not tie one to this finding's changed line, so it cannot pick one for you; `ripr pilot` lists them, or follow the Next step above
 
 Hidden:
   2 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:5 (no path); kind: static_unknown; reason: No relevant oracle was detected
-    - ./src/lib.rs:16 (no path); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:5 (no path); kind: unclear; reason: No relevant oracle was detected
+    - ./src/lib.rs:16 (no path); kind: unclear; reason: No relevant oracle was detected
+  Hidden classes:
+    no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

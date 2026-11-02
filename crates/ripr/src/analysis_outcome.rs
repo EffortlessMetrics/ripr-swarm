@@ -68,6 +68,14 @@ impl AnalysisOutcomeKind {
 }
 
 impl AnalysisLimitationKind {
+    /// A disclosure about the shape of the change that leaves the analysis
+    /// complete: the full changed scope was read (`EolOnlyChurn`,
+    /// `VerificationOnlyChange`). Every other kind marks the outcome
+    /// incomplete.
+    pub(crate) const fn is_advisory_disclosure(self) -> bool {
+        matches!(self, Self::EolOnlyChurn | Self::VerificationOnlyChange)
+    }
+
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::CombinedHunkUnsupported => "combined_hunk_unsupported",
@@ -80,6 +88,7 @@ impl AnalysisLimitationKind {
             Self::ProducerTimeout => "producer_timeout",
             Self::ProducerFailure => "producer_failure",
             Self::EolOnlyChurn => "eol_only_churn",
+            Self::VerificationOnlyChange => "verification_only_change",
             Self::UnevaluatedCondition => "unevaluated_condition",
         }
     }
@@ -97,6 +106,9 @@ impl AnalysisLimitationKind {
             Self::ProducerTimeout => "the analysis ran out of time",
             Self::ProducerFailure => "part of the analysis failed",
             Self::EolOnlyChurn => "some files changed only in line endings",
+            Self::VerificationOnlyChange => {
+                "verifier-only contract or proof text changed; ripr does not evaluate it"
+            }
             Self::UnevaluatedCondition => {
                 "a test or credited assertion sits under a condition static analysis cannot evaluate"
             }
@@ -122,7 +134,7 @@ impl AnalysisStage {
             Self::DiffLoad => "reading the diff",
             Self::DiffParse => "parsing the diff",
             Self::LanguageAdapter => "language analysis",
-            Self::ProbeGeneration => "probe generation",
+            Self::ProbeGeneration => "change point detection",
             Self::FindingClassification => "finding classification",
             Self::AnalysisPipeline => "the analysis pipeline",
         }
@@ -189,6 +201,13 @@ pub(crate) enum AnalysisLimitationKind {
     /// full changed scope was read and probed — so unlike the kinds above it
     /// may ride on a complete outcome.
     EolOnlyChurn,
+    /// RIPR-SPEC-0368: changed lines are verification-erased text (contract
+    /// attributes such as `#[requires]`/`#[ensures]`, Creusot/Prusti ghost
+    /// items and proof macros). No test can reach or observe them, so they
+    /// seed no probe and no repair start. Like `EolOnlyChurn` this is a
+    /// disclosure about what the changed lines are, not an incomplete
+    /// analysis, so it may ride on a complete outcome.
+    VerificationOnlyChange,
     /// #8714: a credited assertion sits under a branch condition static
     /// analysis cannot evaluate, so the credited oracle may never execute.
     /// The limitation content discloses conditional credit rather than
@@ -344,7 +363,7 @@ impl AnalysisLimitation {
 
     pub(crate) fn with_affected_items(mut self, affected_items: u64) -> Result<Self, String> {
         if affected_items == 0 {
-            return Err("analysis limitation affected_items must be positive".to_string());
+            return Err("analysis limitation affected_items must be positive; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it".to_string());
         }
         self.affected_items = Some(affected_items);
         Ok(self)
@@ -363,7 +382,7 @@ impl AnalysisLimitation {
             self.path = Some(normalize_portable_analysis_path(&path)?);
         }
         if self.affected_items == Some(0) {
-            return Err("analysis limitation affected_items must be positive".to_string());
+            return Err("analysis limitation affected_items must be positive; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it".to_string());
         }
         normalize_optional_bounded_text("analysis limitation detail", &mut self.bounded_detail)?;
         self.recovery.normalize()
@@ -381,6 +400,11 @@ pub(crate) struct AnalysisOutcome {
     /// Run-local producer inputs, never reconstructed from a serialized outcome.
     #[serde(skip)]
     pub(crate) check_findings_inputs: Option<CheckFindingsInputs>,
+    /// Run-local mixed-language completeness view (#11272). Read only by the
+    /// check JSON renderer's `language_completeness` member; never part of the
+    /// serialized outcome or its identity.
+    #[serde(skip)]
+    pub(crate) language_view: Option<crate::analysis::language_outcome::LanguageCompletenessView>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -445,6 +469,7 @@ impl AnalysisOutcome {
             limitations,
             claim_boundary: ANALYSIS_OUTCOME_CLAIM_BOUNDARY.to_string(),
             check_findings_inputs: None,
+            language_view: None,
         })
     }
 
@@ -453,12 +478,12 @@ impl AnalysisOutcome {
     /// constructor sorts and deduplicates limitations before hashing.
     pub(crate) fn semantic_digest(&self) -> Result<String, String> {
         let bytes = serde_json::to_vec(self)
-            .map_err(|error| format!("serialize analysis outcome for digest failed: {error}"))?;
+            .map_err(|error| format!("serialize analysis outcome for digest failed: {error}; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"))?;
         let digest = Sha256::digest(bytes);
         let mut hex = String::with_capacity(digest.len() * 2);
         for byte in digest {
             write!(&mut hex, "{byte:02x}")
-                .map_err(|error| format!("format analysis outcome digest failed: {error}"))?;
+                .map_err(|error| format!("format analysis outcome digest failed: {error}; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"))?;
         }
         Ok(format!("sha256:{hex}"))
     }
@@ -473,7 +498,7 @@ pub(crate) fn normalize_portable_analysis_path(path: &str) -> Result<String, Str
     let has_drive_prefix = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
     if without_current.is_empty() || without_current.starts_with('/') || has_drive_prefix {
         return Err(format!(
-            "analysis limitation path must be repository-relative: {path}"
+            "analysis limitation path must be repository-relative: {path}; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
         ));
     }
 
@@ -483,7 +508,7 @@ pub(crate) fn normalize_portable_analysis_path(path: &str) -> Result<String, Str
             "" | "." => {}
             ".." => {
                 return Err(format!(
-                    "analysis limitation path contains parent traversal: {path}"
+                    "analysis limitation path contains parent traversal: {path}; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
                 ));
             }
             value => segments.push(value),
@@ -491,7 +516,7 @@ pub(crate) fn normalize_portable_analysis_path(path: &str) -> Result<String, Str
     }
     if segments.is_empty() {
         return Err(format!(
-            "analysis limitation path has no portable segments: {path}"
+            "analysis limitation path has no portable segments: {path}; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
         ));
     }
     Ok(segments.join("/"))
@@ -507,7 +532,9 @@ fn normalize_optional_bounded_text(field: &str, value: &mut Option<String>) -> R
 fn bounded_nonempty_text(field: &str, value: String) -> Result<String, String> {
     let value = value.trim().to_string();
     if value.is_empty() {
-        return Err(format!("{field} must not be empty"));
+        return Err(format!(
+            "{field} must not be empty; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
+        ));
     }
     let count = value.chars().count();
     if count > MAX_ANALYSIS_LIMITATION_DETAIL_CHARS {
@@ -531,17 +558,18 @@ fn validate_outcome(
             | AnalysisOutcomeKind::CompleteNoFindings
             | AnalysisOutcomeKind::CompleteWithFindings
     );
-    // #4952: EolOnlyChurn is a churn-shape disclosure, not an
-    // incomplete-analysis limitation — the changed scope was fully analyzed
-    // — so a complete outcome may carry it, and only it. Every other kind
+    // #4952: EolOnlyChurn (and RIPR-SPEC-0368 VerificationOnlyChange) is a
+    // change-shape disclosure, not an incomplete-analysis limitation — the
+    // changed scope was fully analyzed — so a complete outcome may carry
+    // those, and only those. Every other kind
     // still marks the outcome incomplete.
     if complete_or_subject_absent
         && limitations
             .iter()
-            .any(|limitation| limitation.kind != AnalysisLimitationKind::EolOnlyChurn)
+            .any(|limitation| !limitation.kind.is_advisory_disclosure())
     {
         return Err(format!(
-            "analysis outcome {kind:?} cannot carry incomplete-analysis limitations"
+            "analysis outcome {kind:?} cannot carry incomplete-analysis limitations; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
         ));
     }
 
@@ -553,14 +581,14 @@ fn validate_outcome(
     );
     if limited_or_failed && limitations.is_empty() {
         return Err(format!(
-            "analysis outcome {kind:?} requires at least one typed limitation"
+            "analysis outcome {kind:?} requires at least one typed limitation; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
         ));
     }
 
     match kind {
         AnalysisOutcomeKind::NoScope => {
             if counts != AnalysisOutcomeCounts::default() {
-                return Err("analysis outcome NoScope requires every count to be zero".to_string());
+                return Err("analysis outcome NoScope requires every count to be zero; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it".to_string());
             }
         }
         AnalysisOutcomeKind::NoChangedLines => {
@@ -570,7 +598,7 @@ fn validate_outcome(
                 || counts.finding_count != 0
             {
                 return Err(
-                    "analysis outcome NoChangedLines requires zero changed-line, candidate, probe, and finding counts"
+                    "analysis outcome NoChangedLines requires zero changed-line, candidate, probe, and finding counts; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
                         .to_string(),
                 );
             }
@@ -582,7 +610,7 @@ fn validate_outcome(
                 || counts.finding_count != 0
             {
                 return Err(format!(
-                    "no_behavioral_candidates requires changed lines and zero candidate, probe, and finding counts (changed_line_count={}, candidate_line_count={}, probe_count={}, finding_count={})",
+                    "no_behavioral_candidates requires changed lines and zero candidate, probe, and finding counts (changed_line_count={}, candidate_line_count={}, probe_count={}, finding_count={}); regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it",
                     counts.changed_line_count,
                     counts.candidate_line_count,
                     counts.probe_count,
@@ -592,18 +620,18 @@ fn validate_outcome(
         }
         AnalysisOutcomeKind::CompleteNoFindings => {
             if counts.finding_count != 0 {
-                return Err("complete_no_findings requires finding_count = 0".to_string());
+                return Err("complete_no_findings requires finding_count = 0; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it".to_string());
             }
             if counts.candidate_line_count == 0 && counts.probe_count == 0 {
                 return Err(
-                    "complete_no_findings requires a behavioral candidate or probe subject"
+                    "complete_no_findings requires a behavioral candidate or probe subject; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it"
                         .to_string(),
                 );
             }
         }
         AnalysisOutcomeKind::CompleteWithFindings => {
             if counts.finding_count == 0 {
-                return Err("complete_with_findings requires finding_count > 0".to_string());
+                return Err("complete_with_findings requires finding_count > 0; regenerate the artifact with the current ripr, or report this as a ripr bug with the command that produced it".to_string());
             }
         }
         AnalysisOutcomeKind::PartialWithLimitations
@@ -763,44 +791,133 @@ mod tests {
         Ok(())
     }
 
+    /// Wildcard-free match: a new `AnalysisLimitationKind` is a compile error
+    /// until this test lists its wire token.
+    fn exhaustive_limitation_wire_token(kind: AnalysisLimitationKind) -> &'static str {
+        match kind {
+            AnalysisLimitationKind::CombinedHunkUnsupported => "combined_hunk_unsupported",
+            AnalysisLimitationKind::UnresolvedConflictMarkers => "unresolved_conflict_markers",
+            AnalysisLimitationKind::MalformedDiff => "malformed_diff",
+            AnalysisLimitationKind::DiffScopeOversized => "diff_scope_oversized",
+            AnalysisLimitationKind::LanguageAdapterUnavailable => "language_adapter_unavailable",
+            AnalysisLimitationKind::LanguageScopeUnsupported => "language_scope_unsupported",
+            AnalysisLimitationKind::ChangedFileAbsentFromWorktree => {
+                "changed_file_absent_from_worktree"
+            }
+            AnalysisLimitationKind::ProducerTimeout => "producer_timeout",
+            AnalysisLimitationKind::ProducerFailure => "producer_failure",
+            AnalysisLimitationKind::EolOnlyChurn => "eol_only_churn",
+            AnalysisLimitationKind::VerificationOnlyChange => "verification_only_change",
+            AnalysisLimitationKind::UnevaluatedCondition => "unevaluated_condition",
+        }
+    }
+
+    const ALL_ANALYSIS_LIMITATION_KINDS: [AnalysisLimitationKind; 12] = [
+        AnalysisLimitationKind::CombinedHunkUnsupported,
+        AnalysisLimitationKind::UnresolvedConflictMarkers,
+        AnalysisLimitationKind::MalformedDiff,
+        AnalysisLimitationKind::DiffScopeOversized,
+        AnalysisLimitationKind::LanguageAdapterUnavailable,
+        AnalysisLimitationKind::LanguageScopeUnsupported,
+        AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
+        AnalysisLimitationKind::ProducerTimeout,
+        AnalysisLimitationKind::ProducerFailure,
+        AnalysisLimitationKind::EolOnlyChurn,
+        AnalysisLimitationKind::VerificationOnlyChange,
+        AnalysisLimitationKind::UnevaluatedCondition,
+    ];
+
+    fn analysis_limitation_kind_ordinal(kind: AnalysisLimitationKind) -> usize {
+        match kind {
+            AnalysisLimitationKind::CombinedHunkUnsupported => 0,
+            AnalysisLimitationKind::UnresolvedConflictMarkers => 1,
+            AnalysisLimitationKind::MalformedDiff => 2,
+            AnalysisLimitationKind::DiffScopeOversized => 3,
+            AnalysisLimitationKind::LanguageAdapterUnavailable => 4,
+            AnalysisLimitationKind::LanguageScopeUnsupported => 5,
+            AnalysisLimitationKind::ChangedFileAbsentFromWorktree => 6,
+            AnalysisLimitationKind::ProducerTimeout => 7,
+            AnalysisLimitationKind::ProducerFailure => 8,
+            AnalysisLimitationKind::EolOnlyChurn => 9,
+            AnalysisLimitationKind::VerificationOnlyChange => 10,
+            AnalysisLimitationKind::UnevaluatedCondition => 11,
+        }
+    }
+
     #[test]
-    fn typed_limitation_tokens_match_the_wire_contract() {
-        let limitation_kinds = [
-            (
-                AnalysisLimitationKind::CombinedHunkUnsupported,
-                "combined_hunk_unsupported",
-            ),
-            (
-                AnalysisLimitationKind::UnresolvedConflictMarkers,
-                "unresolved_conflict_markers",
-            ),
-            (AnalysisLimitationKind::MalformedDiff, "malformed_diff"),
-            (
-                AnalysisLimitationKind::DiffScopeOversized,
-                "diff_scope_oversized",
-            ),
-            (
-                AnalysisLimitationKind::LanguageAdapterUnavailable,
-                "language_adapter_unavailable",
-            ),
-            (
-                AnalysisLimitationKind::LanguageScopeUnsupported,
-                "language_scope_unsupported",
-            ),
-            (
-                AnalysisLimitationKind::ChangedFileAbsentFromWorktree,
-                "changed_file_absent_from_worktree",
-            ),
-            (AnalysisLimitationKind::ProducerTimeout, "producer_timeout"),
-            (AnalysisLimitationKind::ProducerFailure, "producer_failure"),
-            (AnalysisLimitationKind::EolOnlyChurn, "eol_only_churn"),
-            (
-                AnalysisLimitationKind::UnevaluatedCondition,
-                "unevaluated_condition",
-            ),
-        ];
-        for (kind, expected) in limitation_kinds {
-            assert_eq!(kind.as_str(), expected);
+    fn typed_limitation_tokens_match_the_wire_contract() -> Result<(), String> {
+        use std::collections::BTreeSet;
+
+        const LIMITATION_KIND_COUNT: usize = 12;
+        assert_eq!(ALL_ANALYSIS_LIMITATION_KINDS.len(), LIMITATION_KIND_COUNT);
+        let ordinals: Vec<usize> = ALL_ANALYSIS_LIMITATION_KINDS
+            .iter()
+            .copied()
+            .map(analysis_limitation_kind_ordinal)
+            .collect();
+        assert_eq!(
+            ordinals,
+            (0..ALL_ANALYSIS_LIMITATION_KINDS.len()).collect::<Vec<_>>(),
+            "ALL_ANALYSIS_LIMITATION_KINDS must list every variant once"
+        );
+
+        let mut producer_tokens = BTreeSet::new();
+        for kind in ALL_ANALYSIS_LIMITATION_KINDS {
+            let expected = exhaustive_limitation_wire_token(kind);
+            assert_eq!(kind.as_str(), expected, "{kind:?}");
+            producer_tokens.insert(expected);
+        }
+
+        // Every wire token the producer can emit must be accepted by the
+        // published review-comments schema, so a new limitation kind cannot
+        // reach `check-output-contracts`/PR evidence as a schema violation.
+        let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/ripr/review-comments.schema.json");
+        let schema_text = std::fs::read_to_string(&schema_path)
+            .map_err(|error| format!("read {} failed: {error}", schema_path.display()))?;
+        let schema: serde_json::Value = serde_json::from_str(&schema_text)
+            .map_err(|error| format!("parse review-comments schema failed: {error}"))?;
+        let schema_kind_enum = schema["$defs"]["analysis_limitation"]["properties"]["kind"]["enum"]
+            .as_array()
+            .ok_or_else(|| "analysis_limitation.kind enum missing".to_string())?;
+        let mut schema_kind_strings = Vec::with_capacity(schema_kind_enum.len());
+        for (index, value) in schema_kind_enum.iter().enumerate() {
+            let token = value.as_str().ok_or_else(|| {
+                format!("analysis_limitation.kind enum entry {index} is not a string")
+            })?;
+            schema_kind_strings.push(token);
+        }
+        let schema_tokens: BTreeSet<&str> = schema_kind_strings.iter().copied().collect();
+        if schema_tokens.len() != schema_kind_strings.len() {
+            return Err(format!(
+                "analysis_limitation.kind enum contains duplicate tokens: {schema_kind_strings:?}"
+            ));
+        }
+        let missing_from_schema: Vec<&str> = producer_tokens
+            .iter()
+            .copied()
+            .filter(|token| !schema_tokens.contains(token))
+            .collect();
+        let extra_in_schema: Vec<&str> = schema_tokens
+            .iter()
+            .copied()
+            .filter(|token| !producer_tokens.contains(token))
+            .collect();
+        if !missing_from_schema.is_empty() || !extra_in_schema.is_empty() {
+            return Err(format!(
+                "analysis_limitation.kind enum mismatch: missing from schema: {missing_from_schema:?}; extra in schema: {extra_in_schema:?}"
+            ));
+        }
+
+        // The single owner of advisory-disclosure membership: only the two
+        // change-shape disclosures leave an outcome complete.
+        for kind in ALL_ANALYSIS_LIMITATION_KINDS {
+            let advisory = matches!(
+                kind,
+                AnalysisLimitationKind::EolOnlyChurn
+                    | AnalysisLimitationKind::VerificationOnlyChange
+            );
+            assert_eq!(kind.is_advisory_disclosure(), advisory, "{kind:?}");
         }
 
         let stages = [
@@ -841,6 +958,7 @@ mod tests {
         for (recovery, expected) in recoveries {
             assert_eq!(recovery.as_str(), expected);
         }
+        Ok(())
     }
 
     #[test]

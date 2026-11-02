@@ -250,6 +250,23 @@ tests. A loop over a known non-empty literal keeps its expansion (Rule 13). A
 loop variable or callback parameter named `test`, `it` or `describe` is not
 descended. The dropped-registration disclosure no longer fires for these shapes.
 
+**Rule 21a. A `#private` class method is an owner whose reach is unknown (#10440).**
+A direct ordinary method of a top-level class declared with a `#name` key is extracted as an owner named with its
+`#` (`#calculateDelay`), so a change inside it no longer reads as a
+`typescript_owner_extraction_partial` gap with no finding. No test can call it
+by name, and reach through a public method of the class (`this.#name(...)`) is
+not modeled, so an empty relation set says nothing either way: the finding reads
+`static_unknown` with reach, observation and discrimination unknown, never the
+confident `no_static_path`, and a public caller's assertion earns it no credit.
+String-literal, numeric and computed method keys, private accessors and
+function-valued private fields keep the partial-extraction disclosure. Private
+methods, accessors and function-valued fields nested inside an enclosing owner also keep that disclosure, and their
+changed lines must not borrow the enclosing public owner's test credit. The
+disclosure counts affected files, not methods or changed lines. Human stop
+reasons, actionability and preview cards must not invent a candidate test path
+or prescribe an assertion for this unknown. Resolving the call chain from the
+tests' public entry, extracting nested private owners and disclosing a wholly deleted private member (boundaries come from candidate-side source, so removing the entire method stays a silent gap) are future work.
+
 **Rule 22. A test inside `describe.skipIf(cond)` / `describe.runIf(cond)` is reached, never credited (#10629).**
 Vitest's conditional suite factories take a runtime condition static analysis
 does not evaluate. A `describe.skipIf(cond)('name', () => { ... })` or
@@ -313,6 +330,27 @@ The resolved test/suite kind must agree with the supported local spelling.
 Mismatched aliases (`describe as test` or `test as describe`) receive no trusted
 test record and retain a typed partial-extraction limitation, including an
 assertion-only callback with no nested test call. This does not expand aliases.
+
+Skipped-suite disclosure resolves the referenced lexical runner binding, not
+its spelling (#10169). Known runner imports and immutable aliases (including
+namespace members) may establish a dormant suite callback. Parameters,
+block/catch/loop/namespace locals, unrelated imports, writes and opaque code
+cannot establish that fact. Only the dormant callback is omitted; evaluated
+registration arguments and later siblings remain eligible for a partial
+extraction notice. This disclosure rule does not expand test extraction or
+oracle credit. Computed aliases, mutable aliases and unresolved flows retain
+the conservative notice.
+
+Runner values escaping through throws, iterable values, arrow returns, tagged
+substitutions or computed member reads cannot establish dormancy. An ambient
+global-object write removes only the written property name from runner
+identity, for both bare and qualified reads of that name; a write through a
+global-object name shadowed by a local still counts as a whole-file mutation.
+The `x`-prefixed spellings (`xdescribe`, `xcontext`, `xsuite`, `xit`, `xtest`,
+`xspecify`) are dormant runner roots.
+Evaluated inline ordinary
+function constructors and tags retain body registration notices; their parameter
+shadows and uncalled function values remain separate from runner registrations.
 
 ### Assertion collection
 
@@ -379,6 +417,65 @@ pattern, a non-block body, `for await`, a non-ASCII parameter or body, a
 loop variable re-declared in the body, and every condition that already
 refuses an `.each` row).
 
+Amended (#11196): an object-row table reads the same way when its rows
+are plain object literals and the callback reads them as `row.key`.
+Two forms qualify. (1) `test.each([{ input: ..., out: ... }, ...])(title,
+(row) => ...)` with one plain identifier parameter, or one object pattern
+of plain `key` / `key: local` bindings (no default, rest, nested pattern or
+computed key). (2) `const tests = [{ ... }, ...]; for (const t of tests) {
+test(title, () => ... t.key ...); }` where the table is a `const` array
+literal in the same statement list as the loop, named exactly twice in that
+list (its declaration and the loop header, so no reassignment, `push`,
+index write, spread, alias, `concat`, `.map` derivation or export can
+reach it), the list holds no `eval`, `with` or `\u` escape, the loop body
+is exactly one test registration, and the callback takes no parameter.
+Each row is an object literal with no spread, computed key, method,
+accessor, duplicate key or `__proto__`. Every key the callback reads must
+hold a one-line literal in EVERY row: a scalar, `undefined`, or an
+all-literal nested array or object under the #11255 vocabulary. One row
+that misses the key, or holds an identifier, call, template, spread cell
+or `Number.POSITIVE_INFINITY`/`NaN` (outside the literal vocabulary),
+leaves the whole table unresolved. The row parameter may appear only as a
+plain `row.key` read (a spread of an array cell is a plain read); a bare
+row, `row[key]`, `row?.key`, an assignment, a declaration or shadowing
+parameter is refused. Every `row.key` read, scalar or container, resolves only when the
+callback is exactly one `expect(..).matcher(..)` statement and the read is
+a direct argument of the call that is the whole argument of `expect(` or of
+the matcher call. A second statement, or a read wrapped in parentheses, a
+comma list, `void`, `delete`, an array, an operator, a further member
+(`t.out.toString()`, `(t.input).pop()`) or an argument of any other call
+(`Object.assign(t.input, ..)`, `fix(t.input)`) refuses the table. A
+container (array or object) cell is shared by every read of the row, so it
+is additionally read at most once. The `expect` it names must be a whole
+word (not `myexpect(` or `x.expect(`).
+One guard, applied to the whole call text (registration plus callback) of
+every row-table entry path (`for...of`, `test.each` over arrays or object
+rows, destructured and array-row parameters), refuses the table when code
+(outside quoted text and comments) contains `eval`, `Function`, `with`,
+`arguments`, `this`, `new.target`, any backslash (identifier `\u` escapes),
+or any `/` outside a comment (a division or a regex literal is refused outright; the same words are also refused by a plain text count even inside strings); the object-row `for...of` form and the
+array-table `for...of` form (#9533) also ban `eval`, `with` and `\u` anywhere
+in their statement list (one shared helper). A destructured
+scalar local is a copy of the cell, so it is exempt from the lone-`expect`
+rule that every `row.key` read obeys. A destructured container local is not a
+copy: it references the row's array or object. It is safe only because the
+callback is a single `expect(..).matcher(..)` statement, the local is read at
+most once as one direct argument with no trailing member, and the local is not
+reassigned. A pattern that repeats a row key
+(`({ input: a, input: b })`) refuses the table, and in the `for...of` form
+the loop parameter may not appear in the registration's callee or in any
+registration argument other than the callback, except a title that is
+exactly `t.key` or `t.key.toString()` over a scalar cell in every row.
+The assertions of a
+resolved table are the concatenation over its rows, each with that
+row's literals, so the credit is an aggregate over the row set and the
+existing classifier decides whether any row's input reaches the changed
+boundary with a discriminating expected value; nothing here grants
+credit by itself. A `for...of` table written `[..] as const` or `[..] as
+T[]` resolves like the plain array (the cast changes no runtime value).
+Tuple rows with array or object cells, rows whose cells span lines and
+ragged rows keep `typescript_table_case_unresolved`.
+
 ### Recogniser order
 
 Each assertion expression is tried in this order; the first match wins:
@@ -390,6 +487,18 @@ Each assertion expression is tried in this order; the first match wins:
    the callback has a first parameter that does not shadow an imported
    assertion binding;
 4. `node:assert` or chai `assert` through an imported binding.
+
+   An un-awaited, un-returned statement `expect(..).resolves|rejects..`
+   collects nothing and reads `static_unknown` (#11535): the promise settles
+   after the test body ends, so it cannot fail the test. Awaited, returned and
+   expression-bodied forms are collected as before, except that an
+   expression-bodied `forEach` callback floats (`forEach` discards its
+   result) and collects nothing. `expect.soft(..)` and `.not.resolves` /
+   `.not.rejects` follow the same rule. The rule is derived from
+   jest and is conservative for vitest. Known limits: a test calling
+   `expect.assertions(n)` and an expression-bodied subtest or a
+   function-reference callback may be demoted although they would fail; this
+   over-demotion is accepted (fail-closed). See RIPR-SPEC-0246 rule 4.
 
 **Rule 2. Jest negation is an assertion with capped strength.** `.not`
 between `expect(...)` (or `.resolves` / `.rejects`) and the matcher is
@@ -559,6 +668,26 @@ re-reads the same one-hop local; a literal-vs-literal self-comparison
 stays strong at extraction and the observation guard refuses it credit.
 Whitespace inside a string literal is significant, so
 `expect("ab").toBe("a b")` is not self-comparing.
+
+**Rule 9a. Partial-value equality is not exact (#11522).** A `toBe`,
+`toEqual` or `toStrictEqual` reads `relational_check` / weak, not
+`exact_value` / strong, when either (a) its matcher argument is a
+top-level asymmetric matcher, a call chain rooted at an identifier named
+`expect` (`expect.any(String)`, `expect.anything()`,
+`expect.stringMatching(/B/)`, `expect.objectContaining({ a: 1 })`), or
+(b) its asserted subject is a derived property of the value: any
+`typeof <expr>` or the `.length` of a spread-free array literal
+(`expect([f(100)]).toEqual([false])` stays strong). The matcher then
+accepts a family of values, or observes a kind or constant size the
+changed behavior need not move. Both checks are shape-only: they do not
+test whether the expression names the changed owner, so
+`expect(typeof owner(x)).toBe("boolean")` loses credit it could earn.
+That is the deliberate fail-closed direction. The asymmetric-matcher
+check does not restrict the namespace (`expect.soft` is also demoted); it
+relies on rule 3, under which a non-runner `expect` yields no assertion
+before this rule is reached. The demotion runs before the `.not` cap and
+the `rejects` exact-error override, so neither re-raises it. Owner:
+`expect_assertion_from_expression` in `typescript/oracle.rs`.
 
 ### Other assertion tables
 
@@ -1573,15 +1702,33 @@ the masker.
 22. **Mock call counts (2026-10-22, #9684).**
     Adopted: for a changed side-effect call (a probe whose
     change is to what the owner's call sends), an assertion whose observed
-    expression is a plain identifier path ending `.mock.callCount()` or
-    `.mock.calls.length` counts calls and reads `mock_expectation` / weak,
+    expression ends in `.mock.callCount()` or `.mock.calls.length`,
+    including optional chains, literal computed keys, and unambiguously bound
+    callback-local `const` aliases of those paths, counts calls and reads
+    `mock_expectation` / weak (#10174),
     like `toHaveBeenCalledTimes`, under any matcher (the classifier applies
     this; extraction still labels the equality `exact_value`). Rejected:
     crediting the count as an exact value of the arguments the changed call
     sends. Not demoted: a deleted call, an added call (a changed line with
     no removed counterpart, which a count sees), or a value that decides
-    how many calls run (a count sees both), an aliased or optional-chained count,
-    and `mock.calls[0].arguments` pins, which keep their reading.
+    how many calls run (a count sees both), and `mock.calls[0].arguments`
+    pins, which keep their reading. Alias resolution follows straight-line
+    callback-local constant identities, including supported named callbacks,
+    and refuses names bound more than once anywhere in the registration.
+    An admitted nested callback keeps its own constant identities. Standalone
+    unconditional lexical blocks retain their own scope, including nested blocks.
+    A name also read outside its declaring callback or block is unresolved
+    rather than capturing an unrelated outer value; alias facts admit no new assertions.
+    A count binding cannot supply exact argument evidence even when declared
+    lexically later; this demotion establishes no execution or admission. Count facts are read once per related test; ordinary argument
+    pins do not trigger repeated whole-test parsing. Mutable, destructured,
+    outer-scope and ambiguous aliases, dynamic keys within the count
+    suffix, arithmetic on a count, and other APIs such as Sinon `callCount`
+    properties retain their existing reading; they are not covered by this
+    bounded recognizer. Ambiguous alias spellings, a test body that fails to
+    parse, and a worker-refusal textual fallback likewise retain the existing
+    reading (a disclosed fail-open). `toHaveBeenCalledTimes` already reads weak mock
+    evidence without an exact-value equality.
 23. **Factory-built getter receivers (2026-10-30, #10402).** Adopted: a getter
     owner is related to a test that binds `const box = factory(...)` once and
     asserts `expect(box.<getter>)`, when the owner's module exports `factory`
@@ -2026,6 +2173,15 @@ keys); do not take the next number.
   `export default class` imported under any local name), beside the existing
   shadowed-or-replaced-receiver control that keeps a rebound name uncredited.
 
+- #11196 (rule 11, object rows): `tests/object_row_tests.rs` pins the per-row
+  literal assertions for the `for...of` and `test.each` object-row forms and
+  their refusals (a row missing the key, an identifier, call, spread, template
+  or computed cell, a touched, aliased, exported, derived, `let` or late table,
+  a bare, computed or optional row read, a shadowing parameter, a sibling
+  statement in the loop). `app/tests/typescript_table_row_packets.rs` runs the
+  production `check` path; fixtures `ts_table_row_expected_credit` and
+  `ts_table_row_expected_refused` pin the credited and refused sets.
+
 - #9683 (rule 11, empty table): `tests/table_loop_tests.rs` pins that an empty
   `const` table holds no assertions and a `let` table does not. Corpus row
   `ts-trap-empty-table` moves from credited to gap.
@@ -2038,7 +2194,10 @@ keys); do not take the next number.
 
 - #9684 (decision 22): `tests/mock_call_count_tests.rs` pins the call-count
   reading and its controls. Corpus row `ts-trap-mocked-send` moves from
-  credited to gap.
+  credited to gap. #10174 adds runtime-labeled alias, optional-chain and
+  computed-key rows plus an argument-pin control, live golden fixtures and
+  independent RIPR-SPEC-0108 invariants. The count-only rows move from
+  credited to gap; the argument pin keeps credit. No coverage floor changes.
 
 - #10157: `call_removal_tests.rs::counted_removal_receiver_identity_controls`
   covers the four executable controls from #9667 comment 6371144187 and the

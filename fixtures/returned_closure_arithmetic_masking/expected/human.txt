@@ -15,18 +15,18 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:rust:src/lib.rs:token_unused:return_value:return_value:move_argument_captured*argument
   Changed behavior: move |argument| captured * argument
-  Missing check: No strong discriminator was detected
+  Missing check: No strong assertion was detected
   Related test (1 of 11 matched rows): src/lib.rs:58 token_unused_pin (ripr could not confirm that this assertion observes the changed behavior)
   Next step: The related test `token_unused_pin` already has an exact assertion; this does not
     establish observation of the returned value. Check whether the change can affect the returned
     value. If it can, add a separating input and assert the exact returned value. If it cannot, test
     the changed effect separately; another input cannot distinguish unchanged returns
-  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -39,20 +39,23 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/returned_closure_arithmetic_masking/input --diff <cwd>/fixtures/returned_closure_arithmetic_masking/diff.patch --mode fast probe:src_lib.rs:return_value:46975a53
   ripr context --root <cwd>/fixtures/returned_closure_arithmetic_masking/input --diff <cwd>/fixtures/returned_closure_arithmetic_masking/diff.patch --mode fast --at probe:src_lib.rs:return_value:46975a53
-  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the whole seam and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the whole seam) and ripr does not start a repair on conflicting evidence; follow the Next step above
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
 No test stub here: the owner returns `impl Trait`, which cannot be compared
 
 Hidden:
   10 lower-priority finding(s) omitted from default human output.
-    - ./src/lib.rs:4 (unknown); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
-    - ./src/lib.rs:7 (unknown); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
-    - ./src/lib.rs:10 (unknown); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
-    - ./src/lib.rs:13 (unknown); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
-    - ./src/lib.rs:16 (unknown); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
-    - ./src/lib.rs:22 (weak); kind: return_value; reason: No strong discriminator was detected
-    - ./src/lib.rs:25 (weak); kind: return_value; reason: No strong discriminator was detected
-    - ./src/lib.rs:28 (weak); kind: return_value; reason: No strong discriminator was detected
-    - ./src/lib.rs:31 (weak); kind: return_value; reason: No strong discriminator was detected
-    - ./src/lib.rs:34 (unknown); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
+    - ./src/lib.rs:4 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
+    - ./src/lib.rs:7 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
+    - ./src/lib.rs:10 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
+    - ./src/lib.rs:13 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
+    - ./src/lib.rs:16 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
+    - ./src/lib.rs:22 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:25 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:28 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:31 (weak); kind: return_value; reason: No strong assertion was detected
+    - ./src/lib.rs:34 (unknown: static analysis limited); kind: return_value; reason: A related Rust test calls this code and pins its whole result with an exact `assert_eq!`, but the change sits in a closure the call runs, a statement acting on the returned value,…
+  Hidden classes:
+    weak = tests reach it but check it only loosely
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

@@ -30,11 +30,13 @@ fn classify_total(conftest: &str, test: &str) -> Result<Finding, String> {
     .ok_or_else(|| "the changed line must classify".to_string())
 }
 
-fn assert_limited(finding: &Finding, case: &str) {
+/// The finding keeps the expected static limit for this row.
+fn assert_limit_kind(finding: &Finding, case: &str, expected: StaticLimitKind) {
     assert_eq!(
         finding.static_limit_kind,
-        Some(StaticLimitKind::UnresolvedPytestFixture),
-        "{case}: {:?}",
+        Some(expected),
+        "{case}: {:?} {:?}",
+        finding.static_limit_kind,
         finding.evidence
     );
 }
@@ -58,10 +60,12 @@ fn shapes_that_can_hide_state_keep_the_limit() -> Result<(), String> {
         (
             "env mapping",
             CONFTEST.replace("CliRunner()", "CliRunner(env={\"A\": \"1\"})"),
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "non-literal argument",
             CONFTEST.replace("CliRunner()", "CliRunner(START)"),
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "request.param is not read, but extra statements are",
@@ -69,36 +73,43 @@ fn shapes_that_can_hide_state_keep_the_limit() -> Result<(), String> {
                 "    return CliRunner()",
                 "    runner = CliRunner()\n    runner.env = request.param\n    return runner",
             ),
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "module scope",
             CONFTEST.replace("scope=\"function\"", "scope=\"module\""),
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "autouse keyword",
             CONFTEST.replace("scope=\"function\"", "autouse=True"),
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "another module's CliRunner",
             CONFTEST.replace("from click.testing import", "from helpers import"),
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "other class from click.testing",
             CONFTEST.replace("CliRunner", "Result"),
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "star import in the conftest",
             format!("from helpers import *\n{CONFTEST}"),
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "another fixture takes the runner",
             format!(
                 "{CONFTEST}\n\n@pytest.fixture(autouse=True)\ndef seed(runner):\n    runner.env = {{}}\n"
             ),
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
     ];
-    for (case, conftest) in cases {
-        assert_limited(&classify_total(&conftest, TEST)?, case);
+    for (case, conftest, expected) in cases {
+        assert_limit_kind(&classify_total(&conftest, TEST)?, case, expected);
     }
     Ok(())
 }
@@ -109,14 +120,19 @@ fn a_test_that_rebinds_the_runner_or_overrides_it_keeps_the_limit() -> Result<()
         "    assert runner is not None",
         "    runner = make()\n    assert runner is not None",
     );
-    assert_limited(&classify_total(CONFTEST, &rebound)?, "rebound local");
+    assert_limit_kind(
+        &classify_total(CONFTEST, &rebound)?,
+        "rebound local",
+        StaticLimitKind::UnresolvedPytestFixture,
+    );
     let overridden = format!(
         "import pytest\nfrom shop import total\n\n\n@pytest.fixture\ndef runner():\n    return object()\n\n\n{}",
         TEST.trim_start_matches("from shop import total\n\n\n")
     );
-    assert_limited(
+    assert_limit_kind(
         &classify_total(CONFTEST, &overridden)?,
         "same-file override",
+        StaticLimitKind::UnresolvedPytestFixture,
     );
     Ok(())
 }
@@ -136,7 +152,11 @@ fn a_workspace_local_or_relative_clirunner_is_not_the_inert_tool() -> Result<(),
         } else {
             conftest
         };
-        assert_limited(&classify_total(&conftest, TEST)?, case);
+        assert_limit_kind(
+            &classify_total(&conftest, TEST)?,
+            case,
+            StaticLimitKind::UnresolvedPytestFixture,
+        );
     }
     Ok(())
 }
@@ -144,14 +164,16 @@ fn a_workspace_local_or_relative_clirunner_is_not_the_inert_tool() -> Result<(),
 #[test]
 fn patching_the_runner_class_keeps_the_limit() -> Result<(), String> {
     let patched_conftest = format!("{CONFTEST}\n\nCliRunner.invoke = lambda self, *a, **k: None\n");
-    assert_limited(
+    assert_limit_kind(
         &classify_total(&patched_conftest, TEST)?,
         "class patched in the conftest",
+        StaticLimitKind::MockedModule,
     );
     let patched_test = format!("{TEST}\n\nCliRunner.invoke = lambda self, *a, **k: None\n");
-    assert_limited(
+    assert_limit_kind(
         &classify_total(CONFTEST, &patched_test)?,
         "class patched in the test module",
+        StaticLimitKind::UnresolvedPytestFixture,
     );
     Ok(())
 }
@@ -175,9 +197,17 @@ fn a_nearer_conftest_or_a_class_method_test_keeps_the_limit() -> Result<(), Stri
         &tests,
     )
     .ok_or_else(|| "the changed line must classify".to_string())?;
-    assert_limited(&nearer, "nearer conftest override");
+    assert_limit_kind(
+        &nearer,
+        "nearer conftest override",
+        StaticLimitKind::UnresolvedPytestFixture,
+    );
     let method = "from shop import total\n\n\nclass TestShop:\n    def test_total(self, runner):\n        assert runner is not None\n        assert total(3) == 6\n";
-    assert_limited(&classify_total(CONFTEST, method)?, "class-method test");
+    assert_limit_kind(
+        &classify_total(CONFTEST, method)?,
+        "class-method test",
+        StaticLimitKind::UnresolvedPytestFixture,
+    );
     Ok(())
 }
 
@@ -204,7 +234,11 @@ fn an_imported_autouse_fixture_that_takes_the_runner_keeps_the_limit() -> Result
         )
         .ok_or_else(|| "the changed line must classify".to_string())
     };
-    assert_limited(&build(&with_import)?, "imported autouse fixture");
+    assert_limit_kind(
+        &build(&with_import)?,
+        "imported autouse fixture",
+        StaticLimitKind::UnresolvedPytestFixture,
+    );
     let control = build(TEST)?;
     assert_eq!(control.static_limit_kind, None, "{:?}", control.evidence);
     Ok(())
@@ -231,30 +265,36 @@ fn indirect_class_patching_keeps_the_limit() -> Result<(), String> {
         (
             "dotted base",
             format!("{CONFTEST}\nimport click.testing\n\nclick.testing.CliRunner.invoke = None\n"),
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "alias",
             format!("{CONFTEST}\nRunner = CliRunner\nRunner.invoke = None\n"),
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
         (
             "setattr",
             format!("{CONFTEST}\nsetattr(CliRunner, \"invoke\", None)\n"),
+            StaticLimitKind::MockedModule,
         ),
         (
             "monkeypatch",
             autouse("monkeypatch.setattr(CliRunner, \"invoke\", None)"),
+            StaticLimitKind::MockedModule,
         ),
         (
             "mock.patch.object",
             autouse("mock.patch.object(CliRunner, \"invoke\", None)"),
+            StaticLimitKind::MockedModule,
         ),
         (
             "patch string",
             autouse("mock.patch(\"click.testing.CliRunner.invoke\")"),
+            StaticLimitKind::MockedModule,
         ),
     ];
-    for (case, conftest) in cases {
-        assert_limited(&classify_total(&conftest, TEST)?, case);
+    for (case, conftest, expected) in cases {
+        assert_limit_kind(&classify_total(&conftest, TEST)?, case, expected);
     }
     Ok(())
 }
@@ -272,20 +312,23 @@ fn an_imported_module_that_patches_or_re_exports_keeps_the_limit() -> Result<(),
         files.extend(extra);
         classify_files(&files)
     };
-    assert_limited(
+    assert_limit_kind(
         &run(&format!("{CONFTEST}\nfrom patches import apply\n"), None)?,
         "from import of a patching module",
+        StaticLimitKind::UnresolvedPytestFixture,
     );
-    assert_limited(
+    assert_limit_kind(
         &run(&format!("{CONFTEST}\nimport patches\n"), None)?,
         "plain import of a patching module",
+        StaticLimitKind::UnresolvedPytestFixture,
     );
-    assert_limited(
+    assert_limit_kind(
         &run(
             &format!("{CONFTEST}\nfrom helpers import apply\n"),
             Some(("tests/helpers.py", "from patches import apply\n")),
         )?,
         "patching module reached through a re-export",
+        StaticLimitKind::UnresolvedPytestFixture,
     );
     let control = run(
         &format!("{CONFTEST}\nfrom helpers import apply\n"),
@@ -297,18 +340,28 @@ fn an_imported_module_that_patches_or_re_exports_keeps_the_limit() -> Result<(),
 
 #[test]
 fn a_semicolon_or_redefinition_does_not_hide_a_class_patch() -> Result<(), String> {
-    for (case, tail) in [
+    for (case, tail, expected) in [
         (
             "semicolon after an import",
             "\nimport os; CliRunner.invoke = None\n",
+            StaticLimitKind::MockedModule,
         ),
         (
             "def redefinition",
             "\ndef CliRunner(*a, **k):\n    return object()\n",
+            StaticLimitKind::UnresolvedPytestFixture,
         ),
-        ("class redefinition", "\nclass CliRunner:\n    pass\n"),
+        (
+            "class redefinition",
+            "\nclass CliRunner:\n    pass\n",
+            StaticLimitKind::UnresolvedPytestFixture,
+        ),
     ] {
-        assert_limited(&classify_total(&format!("{CONFTEST}{tail}"), TEST)?, case);
+        assert_limit_kind(
+            &classify_total(&format!("{CONFTEST}{tail}"), TEST)?,
+            case,
+            expected,
+        );
     }
     Ok(())
 }

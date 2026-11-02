@@ -25,12 +25,12 @@ Start here:
     in the test's file and asserts an exact value, and ripr does not read what that helper returns,
     so ripr does not report a gap. Check that the test's setup reaches the changed code and that its
     expectation differs between the old and the new behavior; add a test only if either fails
-  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
+  Evidence: reach yes · infection yes · propagation yes · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -43,7 +43,7 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_polling_helper_associated_macro/input --diff <cwd>/fixtures/rust_polling_helper_associated_macro/diff.patch --mode fast probe:src_lib.rs:return_value:e14b9880
   ripr context --root <cwd>/fixtures/rust_polling_helper_associated_macro/input --diff <cwd>/fixtures/rust_polling_helper_associated_macro/diff.patch --mode fast --at probe:src_lib.rs:return_value:e14b9880
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 No test stub here: the owner is async and needs a runtime the stub cannot pick
 Write this test by hand: call the function, run the future it returns to completion under your async test runtime (await it), and assert the exact value it produces. ripr has no repair route for this kind of change yet, so there is no command to run; add the test, then rerun `ripr check`.
 

@@ -526,3 +526,51 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unwrap_err_variant_single_line (44)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_single_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — unwrap_err_variant_single_line (45)
+
+Reason:
+RIPR-SPEC-0122 plain wording: non-Rust terminal says spot list / missing check, Python preview next step says missing check (#11619)
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_single_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — unwrap_err_variant_single_line (46)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_single_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — unwrap_err_variant_single_line (47)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless unwrap_err_variant_single_line --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A field literal pushed onto a collection (`self.lines.push(Line { sku: .. })`) now reads `exposed` when the test compares the whole collection with one it filled by hand on a separate binding, the same whole-collection rule activation already accepted; an expected collection built through the owner, a clone, a write between the call and the assertion, or an owner that may exit before the push all stay `weakly_exposed` (#7697).

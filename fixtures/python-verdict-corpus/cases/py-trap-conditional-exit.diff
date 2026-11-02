@@ -1,0 +1,9 @@
+diff --git a/trapkit/core.py b/trapkit/core.py
+--- a/trapkit/core.py
++++ b/trapkit/core.py
+@@ -146,4 +146,4 @@
+ 
+ 
+ def conditional_exit(a, b):
+-    return a * b
++    return b * a

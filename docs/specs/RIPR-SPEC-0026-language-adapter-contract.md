@@ -164,8 +164,9 @@ directories are skipped too. `package.json` alone does not select it, nor
 do tooling config files such as `eslint.config.js`
 (a `jsconfig.json` does mark a JavaScript project). A package-led root does:
 a `package.json` with JavaScript or TypeScript source at the root or under
-`src/`, `test/` or `tests/`, whether or not a `Cargo.toml` or Python project
-marker is also present (#11336). A binary built without
+`src/`, `test/` or `tests/`, whether or not a Python project marker is also
+present (#11336). Beside a `Cargo.toml`, only the root and `src/` count, since
+Rust `tests/` hold integration tests and fixtures (#11418). A binary built without
 `lang-typescript` ignores the detector silently. A
 `--languages rust,typescript` CLI flag overrides config when needed.
 

@@ -591,9 +591,9 @@ pub(crate) fn render_human_triage(
                 "    - {}:{} ({}{}); kind: {}; reason: {}\n",
                 crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
-                finding.class.plain_label(),
+                finding.class.plain_label_with_stage(),
                 currentness,
-                finding.probe.family.as_str(),
+                super::evidence_lines::plain_probe_family(&finding.probe.family),
                 hidden_finding_reason(finding)
             ));
             if offers_test_stub(finding)
@@ -618,6 +618,30 @@ pub(crate) fn render_human_triage(
                     }
                     _ => {}
                 }
+            }
+        }
+        // #9373: gloss each class named by a listed row, once, in the plain
+        // vocabulary, so a run with several classes needs no `human-full`
+        // rerun to read them.
+        let mut listed_classes: Vec<&ExposureClass> = Vec::new();
+        for class in ExposureClass::ALL.iter() {
+            if triage
+                .omitted
+                .iter()
+                .take(listed)
+                .any(|finding| finding.class == *class)
+            {
+                listed_classes.push(class);
+            }
+        }
+        if !listed_classes.is_empty() {
+            out.push_str("  Hidden classes:\n");
+            for class in listed_classes {
+                out.push_str(&format!(
+                    "    {} = {}\n",
+                    class.plain_label_with_stage(),
+                    class.plain_gloss()
+                ));
             }
         }
         let remaining = triage.omitted.len() - listed;
@@ -677,6 +701,18 @@ fn hand_written_test_step(finding: &Finding, stub_refusal: &str, no_route: bool)
         // the return value as `result.field`.
         _ if stub_refusal == TestStubRefusal::FieldNotReturned.reason() => {
             "call the function and assert on what it returns: match the wrapper that carries the changed field (for example the `Err` variant) and check the field inside it, or compare the whole returned value"
+        }
+        // #11398: the change writes a field of `self` in a method, so the
+        // value to check is the receiver after the call, not a struct
+        // literal. A by-value receiver cannot be confirmed yet (#11398
+        // review), so the step says so instead of promising credit.
+        // #12061: a by-value receiver writes a moved copy, so the value to
+        // check is what the call returns.
+        _ if stub_refusal == TestStubRefusal::FieldWrittenByValue.reason() => {
+            "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value the call returns; a by-value method writes a moved copy, so a read of the binding you called it on sees nothing"
+        }
+        _ if stub_refusal == TestStubRefusal::FieldWrittenInMethod.reason() => {
+            "call the method with an input for which the old and new code store different values, then assert the exact value of the changed field on the value you called it on"
         }
         // A unit-returning owner has no result to compare.
         _ if stub_refusal == TestStubRefusal::NoReturnValue.reason() => {
@@ -745,6 +781,16 @@ fn names_no_route(navigation: &crate::app::FindingNavigation) -> bool {
     )
 }
 
+/// The default screen says "spot" for the stub chooser's reason; the shared
+/// reason (`app::test_stub`, also printed by `ripr agent stub`) keeps its own
+/// wording, so only this render swaps the noun (#11619).
+fn plain_stub_reason(reason: &str) -> String {
+    reason.replace(
+        " seam, so --at cannot pick one",
+        " spot, so --at cannot pick one",
+    )
+}
+
 fn push_ambiguous_stub_choices(
     out: &mut String,
     navigation: &crate::app::FindingNavigation,
@@ -754,10 +800,11 @@ fn push_ambiguous_stub_choices(
     indent: &str,
 ) {
     out.push_str(&format!(
-        "{indent}Choose a test-stub seam for {finding_id}: {reason}\n"
+        "{indent}Choose a test-stub spot for {finding_id}: {}\n",
+        plain_stub_reason(reason)
     ));
     let child = format!("{indent}  ");
-    out.push_str(&format!("{child}Each command below produces a stub, but ripr could not tell which seam your change touches.\n"));
+    out.push_str(&format!("{child}Each command below produces a stub, but ripr could not tell which spot your change touches.\n"));
     out.push_str(&format!(
         "{child}They do not establish a repair binding or close a static limitation.\n"
     ));
@@ -769,9 +816,13 @@ fn push_ambiguous_stub_choices(
 }
 
 fn hidden_finding_reason(finding: &Finding) -> String {
-    let reason = finding
+    // The family-aware wording, so a hidden match-arm finding reads the same
+    // limit text as its hover, MCP and full CLI explanation (#11821).
+    let limit_reason = finding
         .static_limit_kind
-        .map(|kind| kind.describe())
+        .map(|kind| kind.describe_for_family(&finding.probe.family));
+    let reason: &str = limit_reason
+        .as_deref()
         .or_else(|| finding.missing.first().map(String::as_str))
         .unwrap_or_else(|| match finding.class {
             ExposureClass::NoStaticPath => &finding.ripr.reach.summary,
@@ -783,7 +834,7 @@ fn hidden_finding_reason(finding: &Finding) -> String {
             }
             ExposureClass::StaticUnknown => &finding.ripr.infect.summary,
         });
-    one_line(reason)
+    one_line(&super::evidence_lines::plain_default_missing(reason))
 }
 
 /// The currentness mix of the omitted set. `unresolved_subject` is the
@@ -1405,6 +1456,17 @@ fn python_preview_safe_action(finding: &Finding, recommend_repair_start: bool) -
                 ),
                 "add or strengthen a test by hand",
             )
+        } else if finding
+            .missing
+            .iter()
+            .any(|line| line.contains("Some strong related calls have unresolved inputs"))
+        {
+            // #10990: a strong call with unresolved inputs keeps the boundary
+            // finding weak and withholds the card; say so in plain words.
+            (
+                "static evidence cannot place every strong related test input, so the boundary equality cannot become a repair target".to_string(),
+                "add or strengthen a test by hand",
+            )
         } else {
             (
                 "static evidence names no concrete missing discriminator".to_string(),
@@ -1625,7 +1687,7 @@ fn has_repair_route(finding: &Finding) -> bool {
             .any(|line| line.starts_with("suggested_verify_command: "))
 }
 
-fn is_static_limited(finding: &Finding) -> bool {
+pub(super) fn is_static_limited(finding: &Finding) -> bool {
     // The producer's named limitation remains authoritative even when its
     // conservative class is reachable_unrevealed or weakly_exposed.
     finding.static_limit_kind.is_some()
@@ -1638,7 +1700,62 @@ fn is_static_limited(finding: &Finding) -> bool {
         )
 }
 
-fn is_preview_limited(finding: &Finding) -> bool {
+/// A reach-only static limitation that still leaves a confirmed test-side
+/// weakness open (#11825).
+///
+/// `rust_transitive_reach_unresolved` says ripr cannot trace the call chain
+/// from a test to the changed owner. It says nothing about a related test whose
+/// own oracle is too weak to tell the old value from the new (`weak` or
+/// `smoke` strength, for example a smoke `is_ok()`).
+/// Such a finding is not a confirmed gap (reach is unresolved, so it stays out
+/// of `gaps=` and out of repair routing), but it is not "nothing is fixable
+/// from the test side" either. Terminal `stop=` projections must not claim it
+/// is. Other limitation kinds, and limits with no weak-assertion row, are
+/// unaffected.
+pub(super) fn limit_leaves_weak_assertion_open(finding: &Finding) -> bool {
+    finding.is_candidate_actionable()
+        && !is_preview_limited(finding)
+        && matches!(
+            finding.class,
+            ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+        )
+        && finding.static_limit_kind == Some(StaticLimitKind::RustTransitiveReachUnresolved)
+        && weak_assertion_row(finding).is_some()
+}
+
+/// The first contributing related-test row whose oracle is too weak to tell
+/// the old value from the new (`weak` or `smoke`). Selected on the row's oracle
+/// strength, never on `miss`, which is display-only. A row related to the
+/// finding by file or module proximity alone (`same_test_file`, `same_module`,
+/// `weak_token_substring`) is not bound to the changed owner, so an unrelated
+/// weak test beside a reach-limited finding does not make it open (#12058); a
+/// row with no recorded relation keeps the earlier behavior.
+///
+/// "Bound" here is deliberately narrower than
+/// [`crate::domain::RelationReason::establishes_reach`]. A finding behind
+/// `rust_transitive_reach_unresolved` is one whose reach the producer could not
+/// establish, while `establishes_reach` is true only for relations that capture
+/// a path to the owner (direct call, helper call, re-export chain, and
+/// `assertion_target_affinity` for a non-function owner). Keying on it would
+/// make `open=` fire for almost no reach-limited finding, defeating #11825. So
+/// only the three file/module proximity relations are excluded;
+/// `owner_named_test`, `import_path_affinity`, `fixture_owner_affinity`,
+/// `seam_callee_call` and `assertion_target_affinity` still count as bound to
+/// the owner here. This is a reasoned choice, not measured against a corpus.
+pub(super) fn weak_assertion_row(finding: &Finding) -> Option<&crate::domain::RelatedTest> {
+    finding.related_tests.iter().find(|test| {
+        test.is_contributing()
+            && !test
+                .relation_reason
+                .is_some_and(crate::domain::RelationReason::is_proximity_only)
+            && matches!(
+                test.oracle_strength,
+                crate::domain::OracleStrength::Weak | crate::domain::OracleStrength::Smoke
+            )
+    })
+}
+
+pub(super) fn is_preview_limited(finding: &Finding) -> bool {
     finding
         .language_status
         .is_some_and(|status| status.as_str() == "preview")
@@ -1646,6 +1763,28 @@ fn is_preview_limited(finding: &Finding) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn hidden_finding_reason_words_a_match_arm_limit_like_hover_and_mcp() -> Result<(), String> {
+        // #11821: `describe()` and `describe_for_family()` differ only for this
+        // kind on a match arm; the hidden-finding line must use the family form.
+        let mut finding = crate::mcp::gaps::test_finding()?;
+        finding.probe.family = crate::domain::ProbeFamily::MatchArm;
+        finding.static_limit_kind =
+            Some(crate::domain::StaticLimitKind::RustAssertionContextUnresolved);
+        let reason = hidden_finding_reason(&finding);
+        assert!(
+            reason.contains("`assert!`") && !reason.contains("`assert_eq!`"),
+            "a hidden match-arm limit must read the family wording: {reason}"
+        );
+        finding.probe.family = crate::domain::ProbeFamily::Predicate;
+        let other = hidden_finding_reason(&finding);
+        assert!(
+            other.contains("`assert_eq!`"),
+            "a non-match-arm limit keeps the standard wording: {other}"
+        );
+        Ok(())
+    }
     use super::*;
     use crate::app::Mode;
     use crate::domain::{
@@ -1809,11 +1948,18 @@ mod tests {
                 "fedcba9876543210".to_string(),
             ],
         });
-        assert!(ambiguous.contains("Choose a test-stub seam for finding:hidden-unique:"));
+        assert!(ambiguous.contains("Choose a test-stub spot for finding:hidden-unique:"));
         assert!(ambiguous.contains("--seam-id 0123456789abcdef"));
         assert!(ambiguous.contains("--seam-id fedcba9876543210"));
         assert!(ambiguous.contains("Each command below produces a stub"));
         assert!(!ambiguous.contains("may refuse"));
+        // The shared stub reason keeps `seam`; only this render swaps the noun.
+        assert_eq!(
+            plain_stub_reason(
+                "a.rs:3 holds more than one predicate_boundary seam, so --at cannot pick one"
+            ),
+            "a.rs:3 holds more than one predicate_boundary spot, so --at cannot pick one"
+        );
     }
 
     /// #10710 review: the hand-written step must not ask for something the
@@ -1829,6 +1975,31 @@ mod tests {
             "{not_returned}"
         );
         assert!(!not_returned.contains("changed field on what it returns"));
+        // #11398: a field write in a method names the receiver, not a wrapper.
+        let written = hand_written_test_step(
+            &finding,
+            TestStubRefusal::FieldWrittenInMethod.reason(),
+            true,
+        );
+        assert!(
+            written.contains("the value you called it on")
+                && !written.contains("`Err`")
+                && !written.contains("by value"),
+            "{written}"
+        );
+        // #12061: a by-value receiver writes a moved copy, so the step reads
+        // the call's result and never promises the called-on binding.
+        let by_value = hand_written_test_step(
+            &finding,
+            TestStubRefusal::FieldWrittenByValue.reason(),
+            true,
+        );
+        assert!(
+            by_value.contains("on the value the call returns")
+                && by_value.contains("moved copy")
+                && !by_value.contains("the value you called it on"),
+            "{by_value}"
+        );
 
         finding.probe.family = ProbeFamily::Predicate;
         let unit = hand_written_test_step(&finding, TestStubRefusal::NoReturnValue.reason(), true);
@@ -3273,6 +3444,23 @@ mod tests {
         assert!(
             !action.contains("names no concrete missing discriminator"),
             "{action}"
+        );
+        // #10990: the unresolved-call boundary decline gets its own plain
+        // wording instead of the generic line.
+        let mut unresolved_call = test_finding("finding:unresolved-call-decline");
+        unresolved_call.class = ExposureClass::WeaklyExposed;
+        unresolved_call.language = Some(LanguageId::Python);
+        unresolved_call.language_status = Some(LanguageStatus::Preview);
+        unresolved_call.missing = vec!["A strong Python oracle reaches `f`, but static evidence does not place a related test input at the changed predicate boundary. Some strong related calls have unresolved inputs, so static evidence cannot determine whether they reach the changed boundary of `x >= y`".to_string()];
+        let unresolved_action = python_preview_safe_action(&unresolved_call, false);
+        assert!(
+            unresolved_action
+                .contains("static evidence cannot place every strong related test input"),
+            "{unresolved_action}"
+        );
+        assert!(
+            !unresolved_action.contains("names no concrete missing discriminator"),
+            "{unresolved_action}"
         );
         // A weak finding without the unresolved-operand shape keeps the
         // generic line.

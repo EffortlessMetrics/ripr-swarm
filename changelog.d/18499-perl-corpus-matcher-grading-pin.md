@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- The Perl verdict corpus now pins the perl-ripr-facts producer that grades `throws_ok` and `like(dies {...}, ...)` by their literal matcher and advertises `oracle_matcher_grading`. Three rows (`perl-test2-format-entry-like`, `perl-testexception-close-out-dies-ok`, `perl-testmore-round-cents-like`) move from `static_unknown` to the correct `reachable_unrevealed` gap, with no false verdicts (#18499).

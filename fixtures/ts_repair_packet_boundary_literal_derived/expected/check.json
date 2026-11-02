@@ -41,7 +41,7 @@
       "evidence_path": ["reach yes: 1 related test(s) found for owner `shipping`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `exact_value` (rank 5)", "discriminator weak: TypeScript preview adapter: strong oracle found but no strong assertion observes an owner call at the changed predicate boundary; missing proof: `amount == 5000`.", "related test tests/shipping.test.ts:3 small order pays shipping uses strong exact value oracle: expect(...).toBe(...)", "missing discriminator amount == 5000: changed TypeScript equality-boundary at line 2 lacks a concrete preview discriminator"],
       "flow_sinks": [
       ],
-      "evidence": ["owner: shipping", "missing_discriminator: amount == 5000", "typescript_boundary_input: parameter=amount;index=0;operand=5000;value=5000", "typescript_oracle_observed: shipping(1000)", "typescript_oracle_expected: 500", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/shipping.test.ts:4", "gap_state: actionable", "actionability_category: complete_repair_packet", "why_actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)", "repair_action: add a focused assertion for the missing discriminator `amount == 5000` in the related test, shaped like `expect(shipping(5000)).toBe(expected)`", "raw_evidence_ref: file=src/shipping.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_shipping.ts:typescript_preview:04ac84fc;owner=shipping", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: jest", "typescript_test_runner: jest", "typescript_runner_hint: npm", "typescript_package_confidence: high", "typescript_verify_command: npx --no-install jest tests/shipping.test.ts"],
+      "evidence": ["owner: shipping", "missing_discriminator: amount == 5000", "typescript_boundary_input: parameter=amount;index=0;operand=5000;value=5000", "typescript_oracle_observed: shipping(1000)", "typescript_oracle_expected: 500", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/shipping.test.ts:4", "gap_state: actionable", "actionability_category: complete_repair_packet", "why_actionable: complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)", "repair_action: add a focused assertion for the missing check `amount == 5000` in the related test, shaped like `expect(shipping(5000)).toBe(expected)`", "raw_evidence_ref: file=src/shipping.ts;line=2;kind=typescript_preview_probe;source_id=probe:src_shipping.ts:typescript_preview:04ac84fc;owner=shipping", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: jest", "typescript_test_runner: jest", "typescript_runner_hint: npm", "typescript_package_confidence: high", "typescript_verify_command: npx --no-install jest tests/shipping.test.ts"],
       "missing": ["Related tests reach `shipping` with a strong oracle, but no strong assertion observes a `shipping(...)` call at the changed predicate boundary `amount == 5000`; inputs on one side of the boundary do not discriminate the changed comparison."],
       "assertion_texts": {
       },
@@ -77,7 +77,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
+          "why": "the preview adapter could not confirm that this assertion observes the changed behavior"
         }
       ],
       "typescript_preview_card": {
@@ -104,7 +104,7 @@
           "name": "small order pays shipping"
         },
         "repair_packet_ready": true,
-        "repair_route": "add a focused assertion for the missing discriminator `amount == 5000` in the related test, shaped like `expect(shipping(5000)).toBe(expected)`",
+        "repair_route": "add a focused assertion for the missing check `amount == 5000` in the related test, shaped like `expect(shipping(5000)).toBe(expected)`",
         "source": "check_typescript_preview",
         "static_limits": [],
         "suggested_assertion_shape": "Exact-value evidence is present; verify it targets the changed discriminator.",
@@ -164,15 +164,15 @@
           }
         ],
         "repair_packet_ready": true,
-        "repair_route": "add a focused assertion for the missing discriminator `amount == 5000` in the related test, shaped like `expect(shipping(5000)).toBe(expected)`",
+        "repair_route": "add a focused assertion for the missing check `amount == 5000` in the related test, shaped like `expect(shipping(5000)).toBe(expected)`",
         "unlock_condition": null,
         "why_not_actionable": "complete repair packet — package root, runner, owner, oracle target, verify, receipt, and edit cage all resolved; delegatable (advisory)"
       },
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == 5000`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only).",
-      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `amount == 5000`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; the seam-based `ripr repair` covers Rust files only).",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `amount == 5000`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only).",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for the missing check `amount == 5000`; the repair packet is complete (advisory: `ripr context --at <finding-id>` prints it; `ripr repair` covers Rust files only).",
       "language": "typescript",
       "language_status": "preview",
       "owner_kind": "function",

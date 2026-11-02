@@ -11,16 +11,23 @@ use std::path::Path;
 /// failure is returned (prefixed like the other stdout writers so a closed
 /// pipe stays silent): no JSON was delivered, so the caller must report an
 /// operational failure (exit 2) instead of the decision exit 3.
+///
+/// One owner for card, stub, and packet JSON refusals (#9127): terminal-safe
+/// JSON, a trailing newline, then the chunked stdout writer.
 pub(super) fn write_stdout_refusal_json(document: String) -> Result<(), String> {
-    use std::io::Write as _;
+    write_stdout_chunked(&prepared_stdout_refusal_json(document))
+}
+
+/// Terminal-safe JSON plus a trailing newline. Card/stub and `agent packet`
+/// refusals share this document so a control or bidi character in the envelope
+/// cannot reach the terminal raw (#9127).
+fn prepared_stdout_refusal_json(document: String) -> String {
     let document = crate::terminal_text::json_terminal_safe(document);
-    let newline = if document.ends_with('\n') { "" } else { "\n" };
-    let mut stdout = std::io::stdout().lock();
-    write!(stdout, "{document}{newline}")
-        .map_err(|err| format!("write to stdout failed: {err}"))?;
-    stdout
-        .flush()
-        .map_err(|err| format!("flush stdout failed: {err}"))
+    if document.ends_with('\n') {
+        document
+    } else {
+        format!("{document}\n")
+    }
 }
 
 /// Map a producer outcome after its original report has reached stdout.
@@ -235,11 +242,11 @@ pub(super) fn write_stdout_chunked(text: &str) -> Result<(), String> {
     for chunk in text.as_bytes().chunks(CHUNK) {
         handle
             .write_all(chunk)
-            .map_err(|err| format!("write to stdout failed: {err}"))?;
+            .map_err(|err| format!("write to stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))?;
     }
     handle
         .flush()
-        .map_err(|err| format!("flush stdout failed: {err}"))
+        .map_err(|err| format!("flush stdout failed: {err}; check the reader of ripr's output is still open, then rerun"))
 }
 
 /// Typed refusal for a [`load_for_root`] failure (#6834, shared #7331).
@@ -302,7 +309,7 @@ pub(super) fn refuse_json_envelope_checked(
         &error,
     );
     match rendered {
-        Ok(document) => write_stdout_chunked(&document)?,
+        Ok(document) => write_stdout_refusal_json(document)?,
         Err(render) => return Err(render),
     }
     Ok(error.to_string())
@@ -348,6 +355,48 @@ mod tests {
             error.starts_with("agent brief: refusing to write ripr output")
                 && error.contains("RIPR_CACHE_DIR"),
             "{error}"
+        );
+        Ok(())
+    }
+
+    // #9127: `agent packet --json` writes the same terminal-safe refusal
+    // document as card/stub. A bidi/C1 character in the envelope stays raw
+    // after serde_json; the shared writer must spell it before stdout.
+    #[test]
+    fn packet_path_refusal_json_sanitizes_control_characters() -> Result<(), String> {
+        let error = crate::core_error::CoreError::from("unknown seam \u{202e}probe:x\u{85}");
+        let rendered = crate::output::limited_check::render_refusal_envelope(
+            &crate::output::limited_check::RefusalEnvelopeContext {
+                schema_version: crate::app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
+                scope: "repo",
+                mode: None,
+                root: Path::new("."),
+                base: None,
+            },
+            &error,
+        )?;
+        assert!(
+            rendered.contains('\u{202e}') && rendered.contains('\u{85}'),
+            "packet envelope must still carry raw control/bidi characters before the writer: {rendered}"
+        );
+        // `refuse_json_envelope_checked` writes this prepared document through
+        // `write_stdout_refusal_json` (the packet path). Assert the document
+        // here so the unit test does not print JSON onto the harness stdout.
+        let delivered = prepared_stdout_refusal_json(rendered);
+        assert!(
+            !delivered.contains('\u{202e}') && !delivered.contains('\u{85}'),
+            "packet path must sanitize control/bidi characters: {delivered}"
+        );
+        assert!(
+            delivered.contains("\\u202e") && delivered.contains("\\u0085"),
+            "{delivered}"
+        );
+        assert!(delivered.ends_with('\n'), "{delivered:?}");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&delivered).map_err(|err| err.to_string())?;
+        assert_eq!(
+            parsed["schema_version"],
+            crate::app::AGENT_SEAM_PACKET_SCHEMA_VERSION
         );
         Ok(())
     }

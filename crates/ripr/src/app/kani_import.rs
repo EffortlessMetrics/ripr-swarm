@@ -67,21 +67,23 @@ pub(crate) fn import_kani_report(
     binding_json: &str,
 ) -> Result<KaniReport, String> {
     if native_json.len() > MAX_NATIVE_BYTES || binding_json.len() > MAX_BINDING_BYTES {
-        return Err("Kani import exceeds the 16 MiB native or 2 MiB binding limit".into());
+        return Err(
+            "Kani import exceeds the 16 MiB native or 2 MiB binding limit; see `ripr help`".into(),
+        );
     }
     let binding: KaniBinding = serde_json::from_str(binding_json)
-        .map_err(|err| format!("invalid Kani binding JSON: {err}"))?;
+        .map_err(|err| format!("invalid Kani binding JSON: {err}; see `ripr help`"))?;
     if binding.schema_version != KANI_BINDING_SCHEMA {
         return Err(format!(
-            "unsupported Kani binding schema; expected {KANI_BINDING_SCHEMA}"
+            "unsupported Kani binding schema; expected {KANI_BINDING_SCHEMA}; see `ripr help`"
         ));
     }
     binding
         .repository
         .validate()
-        .map_err(|err| format!("invalid Kani repository binding: {err}"))?;
+        .map_err(|err| format!("invalid Kani repository binding: {err}; see `ripr help`"))?;
     if binding.repository.source_view != RiprSourceViewV1::CapturedSourceSet {
-        return Err("Kani import currently requires a captured_source_set binding; Git trees, index and worktree identity resolution are not supported".into());
+        return Err("Kani import currently requires a captured_source_set binding; Git trees, index and worktree identity resolution are not supported; see `ripr help`".into());
     }
     require_text("run_id", &binding.run_id)?;
     require_digest("artifact_sha256", &binding.artifact_sha256)?;
@@ -96,7 +98,7 @@ pub(crate) fn import_kani_report(
         .canonicalize()
         .map_err(|err| format!("resolve Kani source root {}: {err}", root.display()))?;
     if !root.is_dir() {
-        return Err("Kani source root must be a directory".into());
+        return Err("Kani source root must be a directory; see `ripr help`".into());
     }
     let checked_source_paths = validate_sources(&root, &binding, &native.run)?;
     Ok(KaniReport {
@@ -105,7 +107,7 @@ pub(crate) fn import_kani_report(
         adapter_profile: "kani-export-0.1.0@744b3e84d6eb68fd5456826997568666791bd355".into(),
         provenance: "external_unattested",
         source_binding_state: "listed_files_match",
-        checked_root: root.to_string_lossy().into_owned(),
+        checked_root: root.to_str().ok_or("Kani source root is not UTF-8; see `ripr help`")?.to_owned(),
         checked_source_paths,
         artifact_sha256: binding.artifact_sha256.clone(),
         binding_sha256: sha256(binding_json.as_bytes()),
@@ -133,7 +135,9 @@ fn validate_context(binding: &KaniBinding, native: &NativeRun) -> Result<(), Str
         return Err("Kani target differs from the bound invocation context".into());
     }
     if binding.context.invocation.is_empty() {
-        return Err("Kani binding must record descriptive invocation tokens".into());
+        return Err(
+            "Kani binding must record descriptive invocation tokens; see `ripr help`".into(),
+        );
     }
     for token in &binding.context.invocation {
         require_text("context.invocation token", token)?;
@@ -177,7 +181,9 @@ fn validate_sources(
     native: &NativeRun,
 ) -> Result<Vec<PathBuf>, String> {
     if binding.source_files.is_empty() || binding.source_files.len() > MAX_SOURCE_FILES {
-        return Err("Kani binding must list between 1 and 4096 source files".into());
+        return Err(
+            "Kani binding must list between 1 and 4096 source files; see `ripr help`".into(),
+        );
     }
     let mut files = BTreeMap::new();
     for file in &binding.source_files {
@@ -202,7 +208,7 @@ fn validate_sources(
     for role in [SourceFileRole::Implementation, SourceFileRole::Harness] {
         if !files.values().any(|file| file.roles.contains(&role)) {
             return Err(
-                "Kani binding must identify implementation and harness source files".into(),
+                "Kani binding must identify implementation and harness source files; see `ripr help`".into(),
             );
         }
     }
@@ -236,7 +242,9 @@ fn validate_sources(
             .map_err(|err| format!("read Kani source {}: {err}", file.path))?;
         total_bytes = total_bytes.saturating_add(bytes.len() as u64);
         if total_bytes > MAX_SOURCE_BYTES {
-            return Err("Kani source inventory exceeds the 256 MiB total limit".into());
+            return Err(
+                "Kani source inventory exceeds the 256 MiB total limit; see `ripr help`".into(),
+            );
         }
         if sha256(&bytes) != file.sha256 {
             return Err(format!(
@@ -260,7 +268,7 @@ fn validate_source_path(value: &str) -> Result<(), String> {
             .any(|part| part.is_empty() || part == "." || part == "..")
     {
         return Err(format!(
-            "Kani source path {value:?} must be portable, relative and free of traversal"
+            "Kani source path {value:?} must be portable, relative and free of traversal; see `ripr help`"
         ));
     }
     Ok(())
@@ -274,7 +282,7 @@ fn regular_source_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
             .map_err(|err| format!("inspect Kani source {}: {err}", path.display()))?;
         if metadata.file_type().is_symlink() {
             return Err(format!(
-                "Kani source symlinks are unsupported: {}",
+                "Kani source symlinks are unsupported: {}; see `ripr help`",
                 path.display()
             ));
         }
@@ -284,7 +292,7 @@ fn regular_source_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
         .map_err(|err| format!("resolve Kani source {}: {err}", path.display()))?;
     if !resolved.starts_with(root) || !resolved.is_file() {
         return Err(format!(
-            "Kani source must be a regular file under root: {relative}"
+            "Kani source must be a regular file under root: {relative}; see `ripr help`"
         ));
     }
     Ok(resolved)
@@ -293,7 +301,7 @@ fn regular_source_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
 fn require_text(field: &str, value: &str) -> Result<(), String> {
     if value.trim().is_empty() || value.chars().any(char::is_control) {
         Err(format!(
-            "Kani {field} must be nonempty text without control characters"
+            "Kani {field} must be nonempty text without control characters; see `ripr help`"
         ))
     } else {
         Ok(())
@@ -310,7 +318,7 @@ fn require_digest(field: &str, value: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "Kani {field} must be sha256:<64 lowercase hexadecimal characters>"
+            "Kani {field} must be sha256:<64 lowercase hexadecimal characters>; see `ripr help`"
         ))
     }
 }

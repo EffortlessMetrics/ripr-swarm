@@ -521,6 +521,26 @@ Proof: `match_arm_proximity_test_cannot_confirm_beside_reaching_test`, the
 `match_arm_proximity_wrapper_confirms` (a same-file test of a public wrapper
 keeps `exposed`), both registered in the honesty corpus.
 
+A test related only by file or module is also withheld when one of its
+assertions calls an indexed function with no call or `macro_rules!` path to the
+owner and calls nothing that has one, even if the test makes an unindexed call
+(`.unwrap()`) that could reach the owner by name (#11552). Such an assertion
+reads that function's result: `TokenBucket::reduce`'s `OverConsumption` does not
+confirm `RateLimiter::consume`'s arm. The refusal is per assertion, needs no
+other reaching test, and only withholds. An assertion over a local also
+reads the local's initializer (`let reduced = reduce(tokens, 10);
+assert_eq!(reduced, Reduction::Over(..))`), resolved by the same single
+immutable `let` reader the self-computed expected value uses (#12056). A `mut`
+local, a local bound more than once, and one the scan cannot read add nothing,
+so such an assertion stays unattributed and keeps its credit; a macro that
+takes the owner as an argument (`run!(consume)`) is also invisible to the
+closure.
+
+Proof: `match_arm_proximity_test_pinning_another_function_cannot_confirm`, the
+`match_arm_proximity_other_function_not_credited` and
+`match_arm_proximity_bound_other_function_not_credited` fixtures; the wrapper control
+above shows a call that reaches the owner is not withheld.
+
 ## Owner-scoped tokens and self-computed expected values (#5830)
 
 A token confirms observation only when the shared word can name the same

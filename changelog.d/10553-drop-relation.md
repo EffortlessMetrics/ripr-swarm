@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- A changed `Drop::drop` impl is now related to a same-file test that lets an owned value of the type go out of scope (a `{ .. }` block or `drop(x)`) before it asserts. A destructor is never credited `exposed`, whatever the probe family: without that gate an assertion on a different or re-created cell, or a predicate on the changed line, was `exposed`. A related destructor with an exact assertion is `static_unknown`, and an assertion-free test stays a `weakly_exposed` gap (RIPR-SPEC-0240, #10553, #10736).

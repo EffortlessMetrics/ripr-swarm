@@ -77,3 +77,78 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (7)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (8)
+
+Reason:
+RIPR-SPEC-0197: #10046 leaves the wrong-module rival call unresolved, so the predicate reads infection_unknown with the return-value weak limitation retained; check.json still pinned the pre-change weak-transitive reading while the corpus pins infection_unknown; human surfaces re-blessed for the plain-wording render with 2 findings retained ; main also re-blessed the no-gap-ID refusal wording (#12003)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (9)
+
+Reason:
+RIPR-SPEC-0197: #10046 predicate stays infection_unknown (unresolved owner call identity) and return-value stays weakly_exposed; with current main's limited-finding routing the predicate finding now carries the transitive_reach_unresolved static limitation instead of a canonical gap, so classification/verdicts are unchanged, nothing becomes actionable or credited, and human.txt leads with the weak return-value finding
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (10)
+
+Reason:
+RIPR-SPEC-0001: additive summary.conflicting_expressions member (#11554)
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (11)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_super_import_in_file_wrong_module (12)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless module_reach_super_import_in_file_wrong_module --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

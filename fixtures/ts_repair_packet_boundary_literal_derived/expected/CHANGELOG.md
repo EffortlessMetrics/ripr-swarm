@@ -375,3 +375,99 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (32)
+
+Reason:
+RIPR-SPEC-0122: #11229 script-file ObservationUnconfirmed wording names the preview adapter (wording only; verdict and credit unchanged)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (33)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (34)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording says the adapter cannot confirm observation, not reach
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (35)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording states the adapter could not confirm observation without a causal claim
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (36)
+
+Reason:
+RIPR-SPEC-0088: #11619 drop the seam-based qualifier from the repair-packet advisory
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (37)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (38)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_repair_packet_boundary_literal_derived (39)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless ts_repair_packet_boundary_literal_derived --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

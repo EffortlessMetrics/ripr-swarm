@@ -75,6 +75,10 @@ const PILOT_SUMMARY_JSON: &str = "target/ripr/pilot/pilot-summary.json";
 const LEDGER_JSON: &str = "target/ripr/reports/pr-evidence-ledger.json";
 const LEDGER_MD: &str = "target/ripr/reports/pr-evidence-ledger.md";
 const COMMENTS_JSON: &str = "target/ripr/review/comments.json";
+/// The producer check document the PR-guidance step renders (#11161). When
+/// the producer refused to run, this envelope is the only place that names
+/// the cause; every downstream packet degrades to a missing/blocked state.
+const CHECK_JSON: &str = "target/ripr/pr/check.json";
 const GATE_JSON: &str = "target/ripr/reports/gate-decision.json";
 const GATE_MD: &str = "target/ripr/reports/gate-decision.md";
 const DELTA_JSON: &str = "target/ripr/reports/baseline-debt-delta.json";
@@ -202,7 +206,9 @@ struct Summary {
     out: Vec<u8>,
     /// A folded governance section carried a count that is not exactly `0`.
     attention: bool,
-    /// How many folded sections read a policy JSON report.
+    /// Bitmask of the required policy report categories read so far (one bit
+    /// per category, OR-ed in by `note_attention`); compared against
+    /// `REQUIRED_POLICY_REPORTS` to tell a complete read from a partial one.
     policy_reports_read: u8,
 }
 
@@ -333,11 +339,6 @@ impl Summary {
         self.line(
             "- Then open `index.md` in the same artifact to navigate deeper evidence artifacts.",
         );
-        self.line("- Safe next action: repair one named gap, regenerate missing or malformed artifacts, refresh stale evidence, fix wrong-root setup, or stop on no-action.");
-        self.line("- Recovery states: missing artifact, stale evidence, wrong root, malformed artifact, no actionable gap, and preview-limited evidence are explicit stop or regeneration states.");
-        self.line("- Proof rail: the repair start, verify, receipt, and receipt path are static movement evidence only; verify and receipt run after the test edit.");
-        self.line("- Preview boundary: preview-limited evidence stays syntax-first and advisory, with static limits before repair language.");
-        self.line("- Gate authority: `ripr gate evaluate` remains the pass/fail source only when `RIPR_GATE_MODE` is configured.");
         if self.is_file(START_HERE_MD) {
             self.line("- Start-here artifact: `start-here.md` in the `ripr-reports` artifact");
         } else if let Some(index) = self.doc(INDEX_JSON) {
@@ -401,6 +402,15 @@ impl Summary {
 
     fn first_run_status(&mut self, base_ref: &str) {
         self.line("#### First-run status");
+        // #11161: when the producer refused to run, the downstream packets
+        // carry missing/blocked states whose regeneration commands cannot
+        // succeed — the author sees an unexplained "blocked". The refusal
+        // cause lives only in `target/ripr/pr/check.json`'s own disclosure,
+        // so name it here: the typed status, the producer's message, that
+        // nothing was analyzed, and the next step. A complete, absent, or
+        // malformed check document adds nothing (keeps the downstream
+        // states), and a non-refusal envelope adds nothing either.
+        self.analysis_refusal_status();
         self.pilot_deadline();
         if let Some(doc) = self.doc(START_HERE_JSON) {
             self.start_here_status(&doc);
@@ -1714,6 +1724,52 @@ impl Summary {
         } else {
             self.line("- Inline comments are disabled by default. Set `RIPR_COMMENT_MODE` to `plan` to inspect a publish plan or `inline` to publish same-repo changed-line comments when permissions are safe.");
         }
+        self.blank();
+    }
+
+    /// A declined producer run, named from its own disclosure (#11161). The
+    /// check envelope carries the refusal identity the shared gate predicate
+    /// reads (`output::gate::producer_refusal`): an explicit
+    /// non-consumable record plus the typed status, message, and repair
+    /// route when the producer wrote them. Renders nothing for a complete,
+    /// absent, or malformed check document — or for a consumable envelope
+    /// without an outcome — so those keep their downstream handling.
+    fn analysis_refusal_status(&mut self) {
+        let bytes = match fs::read(self.root.join(CHECK_JSON)) {
+            Ok(bytes) => bytes,
+            Err(_) => return,
+        };
+        let value: Value = match serde_json::from_slice(&bytes) {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        // A bounded, partial, or incomplete document is not a refusal: those
+        // keep their own named repairs and downstream states. Only a true
+        // non-consumable refusal renders this block.
+        if crate::output::gate::discloses_limited_findings_bound(&value)
+            || crate::output::gate::discloses_limited_partial_scope(&value)
+            || crate::output::gate::discloses_incomplete_analysis_outcome(&value)
+        {
+            return;
+        }
+        let Some(refusal) = crate::output::gate::producer_refusal(&value) else {
+            return;
+        };
+        let status = refusal.status.as_deref().unwrap_or("producer refusal");
+        self.line("#### PR analysis did not run");
+        self.line(&format!("- Producer run status: `{status}`"));
+        self.line(&format!(
+            "- Producer message: {}",
+            code_span(&refusal.message)
+        ));
+        self.line(
+            "- This is a declined run, not a clean result: nothing was analyzed, \
+             so downstream PR guidance, evidence, and gate packets carry missing or blocked states.",
+        );
+        self.line(&format!(
+            "- Next step: {}",
+            code_span(&refusal.repair_route)
+        ));
         self.blank();
     }
 

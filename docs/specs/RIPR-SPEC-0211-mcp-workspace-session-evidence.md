@@ -285,20 +285,68 @@ official SDK transport:
     inventory cannot be gathered after the findings producer ran, the refresh
     still serves the findings with custody `not_established` and the failure
     named, rather than failing the whole refresh (a cancelled attempt still
-    fails). A committed snapshot
+    fails). A committed snapshot whose producers agree
     makes no custody claim and keeps its unchanged contract.
-  - Residuals under #7357 / #1765 / #1602: a Rust file that only the
-    inventory read and the findings producer did not (a new file or one the
-    findings scope did not select) is bound into the commitment but cannot
-    contradict the findings; unsupported, generated, `include!` and
-    mixed-language dependencies are not claimed; a committed refresh over a
-    dirty checkout still reads HEAD bytes for findings and live bytes for the
-    inventory and is not covered by this agreement; an untracked (not
-    intent-to-add) Rust file is not analyzed as a finding but is read by the
-    inventory, so editing it changes the commitment and snapshot identity; a
-    deleted or renamed tracked Rust file in the findings scope has no captured
-    bytes and may refuse custody (fail-closed, cards withheld with the cause).
-    A non-normal (empty, absolute or escaping) observed path is recorded as an
+  - A committed refresh with findings reads committed bytes for the findings
+    and live checkout bytes for the inventory. On every such refresh the
+    shared `establish_agreement` owner compares what the findings producer
+    consumed with what the inventory read, whether or not the checkout was
+    dirty when the findings ran (an edit landing after the findings is caught
+    too), and a head the findings producer observed that differs from the
+    inventory's also withholds (an unobserved head is not compared on the
+    committed path, an existing residual). Because the agreement only covers
+    paths the findings consumed while the inventory reads its own selected Rust
+    files, any dirty tracked or untracked Rust-routed path (a `.rs` file,
+    including a helper or test outside the findings scope) also withholds when
+    there are Rust findings; if that list cannot be established the refresh
+    withholds (and its remedy is to refresh again). A dirty non-Rust file
+    (README, `.py`) does not withhold Rust cards, and with no findings no
+    custody claim is made. Withholding refuses `ripr_get_repair_card` with
+    `incomplete_inventory` and the `scope` adds
+    `consumed_source_commitment: "not_established"` and
+    `repair_cards: "withheld"`. Per item, an item that was repair-ready
+    becomes `repair_packet_ready: false` with the typed
+    `worktree_source_not_committed` reason; an item already not ready keeps
+    its first-failing finding-level reason. The cause names the moved path
+    when the owner can (a consumed file edited, staged or deleted, or an
+    untracked Rust file the committed findings could not capture) and
+    otherwise says an uncommitted Rust source or test file is read by the
+    inventory. Findings, list and gap evidence are still served; the remedy is
+    to commit the uncommitted Rust source or test files (untracked ones
+    included) and refresh again, or refresh with source `worktree`. No
+    commitment is bound into a committed identity.
+  - Card currentness at request time (#7357). The refresh-time git-status
+    probe and custody are not re-run per read, and the server does not watch
+    the worktree, so `ripr_get_repair_card` re-verifies, on every read, the
+    captured SHA-256 of only the files the card's evidence is bound to (the
+    seam file, its related tests and the recommended test file) through the one
+    shared `ConsumedRustSources::first_drift` owner. A captured file whose
+    bytes now differ, or that can no longer be read, refuses with the existing
+    `stale_snapshot` code (carrying `current_snapshot_id`), names the path, and
+    says to run `ripr_refresh` again; this covers an uncommitted edit, a commit
+    made after the refresh, and a deletion, for committed and worktree
+    snapshots alike. Files with no captured commitment (non-Rust, outside the
+    inventory corpus) make no claim, edits to unrelated files keep the card,
+    and restored bytes keep it. The clean path costs one read-and-hash of those
+    few files and runs no git child. Residual: only the evidence-bound Rust
+    files are re-verified; a `HEAD` move that changes no bound file is not
+    detected per read, and the card's `currentness.basis` remains the
+    refresh-time statement.
+  - Residuals under #7357 / #1765 / #1602, worktree mode: a Rust file
+    that only the inventory read and the findings producer did not (a new file
+    or one the findings scope did not select) is bound into the commitment but
+    cannot contradict the findings; an untracked (not intent-to-add) Rust file
+    is not analyzed as a finding but is read by the inventory, so editing it
+    changes the commitment and snapshot identity. In committed mode those same
+    tracked-dirty and untracked files withhold instead (see above). Both
+    modes: gitignored Rust files can be read by the inventory (workspace
+    discovery does not apply `.gitignore`) but are not claimed; committed mode
+    does not list them because their enumeration is capped and would
+    over-withhold clean checkouts. Unsupported, generated,
+    `include!` and mixed-language dependencies are not claimed; a deleted or
+    renamed tracked Rust file in the findings scope has no captured bytes and
+    may refuse custody (fail-closed, cards withheld with the cause). A
+    non-normal (empty, absolute or escaping) observed path is recorded as an
     uncaptured observation and refuses.
 - The snapshot identity is `snapshot:sha256:` over the typed outcome digest,
   the sorted canonical item identities, and each item's evidence digest:

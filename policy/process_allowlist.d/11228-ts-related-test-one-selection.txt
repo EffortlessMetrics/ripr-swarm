@@ -1,0 +1,1 @@
+crates/ripr/tests/typescript_related_test_one_selection.rs|Command::new|1|typescript-preview|#11228: integration test runs the worktree-built ripr binary against an isolated temp TypeScript fixture to prove the headline, human-full and JSON summary name the same strongest related test; no shell, network, or user-repository mutation.

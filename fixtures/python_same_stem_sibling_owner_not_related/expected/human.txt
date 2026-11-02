@@ -29,13 +29,13 @@ Start here:
   Suggested test: test_discounts_far_above_threshold
   Test node: tests/test_pricing.py::test_discounts_far_above_threshold
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_same_stem_sibling_owner_not_related/input && python -m pytest tests/test_pricing.py::test_discounts_far_above_threshold) (high)
-  Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `amount == DISCOUNT_THRESHOLD`
-  Evidence: reach yes · infection weak · propagation weak · observation yes · discriminator weak
+  Next step — Python preview: strengthen the existing related test with a focused boundary assertion for the missing check `amount == DISCOUNT_THRESHOLD`
+  Evidence: reach yes · infection weak · propagation weak · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -48,13 +48,15 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_same_stem_sibling_owner_not_related/input --diff <cwd>/fixtures/python_same_stem_sibling_owner_not_related/diff.patch --mode fast probe:pricing.py:python_preview:2267e505
   ripr context --root <cwd>/fixtures/python_same_stem_sibling_owner_not_related/input --diff <cwd>/fixtures/python_same_stem_sibling_owner_not_related/diff.patch --mode fast --at probe:pricing.py:python_preview:2267e505
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `pricing.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `pricing.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output (Python preview: 3).
     - pricing.py:11 (no path); kind: predicate; reason: No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner.
     - pricing.py:12 (no path); kind: return_value; reason: No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner.
     - pricing.py:13 (no path); kind: return_value; reason: No Python test references `loyalty_price(`; add a pytest or unittest test that calls the changed owner.
+  Hidden classes:
+    no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
 

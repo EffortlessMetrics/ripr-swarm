@@ -288,6 +288,29 @@ pub(in crate::analysis) fn summarize_file(path: PathBuf, text: String) -> FileFa
     }
 }
 
+// Counts examined shape pairs/search comparisons only while a focused test enables it.
+// Sorting and source-byte scans are deliberately outside this counter.
+#[cfg(test)]
+thread_local! {
+    static TWIN_WORK: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn twin_work_start() {
+    TWIN_WORK.set(Some(0));
+}
+#[cfg(test)]
+pub(crate) fn twin_work_finish() -> usize {
+    TWIN_WORK.replace(None).unwrap_or_default()
+}
+
+macro_rules! twin_work {
+    () => {
+        #[cfg(test)]
+        TWIN_WORK.with(|counter| counter.update(|count| count.map(|n| n + 1)));
+    };
+}
+
 /// For each shape of one file, whether it is an ErrorPath twin of another
 /// ErrorPath shape for the same error behavior, so repository inventory
 /// keeps one of them (#6914). Indexes match `shapes`.
@@ -498,7 +521,10 @@ fn mark_returns(
     twins: &mut [bool],
 ) {
     for &(outer_index, outer) in outers {
-        let inside = inners.partition_point(|(_, inner)| inner.end_byte <= outer.end_byte);
+        let inside = inners.partition_point(|(_, inner)| {
+            twin_work!();
+            inner.end_byte <= outer.end_byte
+        });
         let Some(&(_, inner)) = inside.checked_sub(1).and_then(|last| inners.get(last)) else {
             continue;
         };
@@ -600,8 +626,12 @@ fn mark_payloads(
     twins: &mut [bool],
 ) {
     for &(inner_index, inner) in inners {
-        let first = outers.partition_point(|(_, outer)| outer.end_byte < inner.end_byte);
+        let first = outers.partition_point(|(_, outer)| {
+            twin_work!();
+            outer.end_byte < inner.end_byte
+        });
         for (_, outer) in outers.get(first..).unwrap_or_default() {
+            twin_work!();
             let Some(suffix) = source.get(inner.end_byte..outer.end_byte) else {
                 break;
             };

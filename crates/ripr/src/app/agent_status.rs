@@ -1008,7 +1008,7 @@ fn finished_attempt_warnings(
                 kind: "repair_receipt_stale".to_string(),
                 artifact: WORKFLOW_AGENT_RECEIPT_ARTIFACT.to_string(),
                 message: format!(
-                    "the receipt for repair attempt `{}` (seam `{}`) reports static grip improved (receipt advisory) at HEAD `{}`, the head its after phase recorded, but {}; status does not report the loop complete. Re-read the current inputs with `ripr check --root {}` before relying on it",
+                    "the receipt for repair attempt `{}` (gap `{}`) reports static grip improved (receipt advisory) at HEAD `{}`, the head its after phase recorded, but {}; status does not report the loop complete. Re-read the current inputs with `ripr check --root {}` before relying on it",
                     attempt.attempt_id,
                     attempt.seam_id,
                     attempt.evidence_head,
@@ -1041,7 +1041,7 @@ fn finished_attempt_warnings(
                                     )
                                 ),
                                 None => format!(
-                                    ". If seam `{}` still has its gap open, start a new attempt with `{}`",
+                                    ". If `{}` still has its gap open, start a new attempt with `{}`",
                                     attempt.seam_id,
                                     new_repair_attempt_command(
                                         root_display,
@@ -1266,7 +1266,7 @@ fn select_next_command(
         .filter(|attempt| attempt.disposition == "resumable")
         .collect::<Vec<_>>();
     let resumable_decision = if resumable.is_empty() {
-        Err("no resumable attempt".to_string())
+        Err("no resumable attempt; start one with `ripr agent start`".to_string())
     } else {
         canonical_next_action_for_inventory(root_display, &store, &resumable, &[])
     };
@@ -1350,7 +1350,7 @@ fn select_next_command(
     }
     let open_seam_ids = open.keys().copied().collect::<Vec<_>>();
     let open_decision = if open_seam_ids.is_empty() {
-        Err("no open seam".to_string())
+        Err("no open gap in the attempt inventory; start one with `ripr agent start`".to_string())
     } else {
         canonical_next_action_for_inventory(root_display, &store, &[], &open_seam_ids)
     };
@@ -1428,7 +1428,7 @@ fn select_next_command(
                 kind: "multiple_open_repair_seams".to_string(),
                 artifact: store.locator.to_string(),
                 message: format!(
-                    "repair attempts for {open_total} seams ended without a receipt; status does not choose between them. Start a new attempt for the seam you mean ({} of them can be started): {}",
+                    "repair attempts for {open_total} gaps ended without a receipt; status does not choose between them. Start a new attempt for the gap you mean ({} of them can be started): {}",
                     seams.len(),
                     seams
                         .iter()
@@ -1575,9 +1575,9 @@ fn pilot_python_repair_card_message(
     root_display: &str,
     gap_start: Option<&PilotGapStart>,
 ) -> String {
-    let mut message = "the last complete `ripr pilot` run ranked no seam but produced a Python preview repair card".to_string();
+    let mut message = "the last complete `ripr pilot` run ranked no gap but produced a Python preview repair card".to_string();
     if let Some(discriminator) = &card.missing_discriminator {
-        message.push_str(&format!(" for missing discriminator `{discriminator}`"));
+        message.push_str(&format!(" for the missing check `{discriminator}`"));
     }
     // `ripr check` admits a gap-bound start for its selected Python finding
     // (#10373), so the warning must not say `agent repair` cannot run.
@@ -1604,7 +1604,7 @@ fn pilot_python_repair_card_message(
         message.push_str(&format!(" (`{verify}`)"));
     }
     message.push_str(&format!(
-        ", then rerun `ripr check --root {}` to see whether static evidence now finds the discriminator",
+        ", then rerun `ripr check --root {}` to see whether static evidence now finds the check",
         shell_arg(root_display)
     ));
     message.push_str(&format!(
@@ -1651,7 +1651,7 @@ fn pilot_rust_excluded_message(excluded: &PilotRustExclusion) -> String {
     // The shared guidance already names the config edit and the rerun, so
     // no trailing pilot command: rerunning unchanged is exactly the loop.
     format!(
-        "the last complete `ripr pilot` run ranked no Rust seam because Rust is not enabled in `ripr.toml [languages]` ({files} not analyzed), and running pilot again unchanged ranks nothing again: {}",
+        "the last complete `ripr pilot` run ranked no Rust gap because Rust is not enabled in `ripr.toml [languages]` ({files} not analyzed), and running pilot again unchanged ranks nothing again: {}",
         crate::output::pilot::RUST_EXCLUDED_GUIDANCE,
     )
 }
@@ -1748,12 +1748,12 @@ fn pilot_declined_only_message(declined: &PilotDeclinedOnly, root_display: &str)
     };
     // The rerun follows the repair: rerunning unchanged declines them again.
     let seam_limit = if declined.seam_limit_applied {
-        " A seam limit also cut the seams it analyzed, so raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT before the rerun."
+        " A gap limit also cut the gaps it analyzed, so raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT before the rerun."
     } else {
         ""
     };
     format!(
-        "the last complete `ripr pilot` run ranked no seam because a parse limit declined {files}, so their seams are not fully analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `{}`.{seam_limit} `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`",
+        "the last complete `ripr pilot` run ranked no gap because a parse limit declined {files}, so their gaps are not fully analyzed and running pilot again unchanged declines them again. Split the file(s) below the Rust parse budget (or save them as UTF-8), then rerun `{}`.{seam_limit} `target/ripr/pilot/pilot-summary.json` lists them as `declined_rust_files`",
         pilot_select_command(root_display)
     )
 }
@@ -1789,34 +1789,34 @@ fn pilot_withheld_message(
     seam_limit_applied: Option<bool>,
     declined_files: bool,
 ) -> String {
-    let seams = if withheld == 1 {
-        "1 seam".to_string()
+    let items = if withheld == 1 {
+        "1 item".to_string()
     } else {
-        format!("{withheld} seams")
+        format!("{withheld} items")
     };
     let inspect = "Inspect them in `target/ripr/pilot/repo-exposure.md`, where each one names the stage ripr could not resolve";
     if seam_limit_applied.is_none() {
         // Fail closed: without the report, status cannot rule out a cut.
         return format!(
-            "the last complete `ripr pilot` run ranked no seam: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. `target/ripr/pilot/repo-exposure.json` is missing or unreadable, so status cannot tell whether a seam limit cut the run; rerun pilot, and if it reports a seam limit, raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT. {inspect}"
+            "the last complete `ripr pilot` run ranked no gap: it withheld {items} whose static evidence is unknown or opaque, so they are static limitations, not gaps. `target/ripr/pilot/repo-exposure.json` is missing or unreadable, so status cannot tell whether an analysis limit cut the run; rerun pilot, and if it reports an analysis limit, raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT. {inspect}"
         );
     }
     if seam_limit_applied == Some(true) {
         // A gap may sit past the cut, so "no repair applies" would claim an
         // absence the run did not establish; raising the limit is the step.
         return format!(
-            "the last complete `ripr pilot` run ranked no seam: it withheld at least {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. A seam limit cut the seams it analyzed, so seams past the cut may hold gaps: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. {inspect}"
+            "the last complete `ripr pilot` run ranked no gap: it withheld at least {items} whose static evidence is unknown or opaque, so they are static limitations, not gaps. A limit on how many spots ripr analyzes cut the run short, so repairable gaps may sit past the cut: raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT, then rerun pilot. {inspect}"
         );
     }
     if declined_files {
         // Seams in the declined files were never analyzed, so "no repair
         // applies" would claim an absence the run did not establish.
         return format!(
-            "the last complete `ripr pilot` run ranked no seam: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps. It also declined Rust files with a parse limit (named in `target/ripr/pilot/pilot-summary.json` as `declined_rust_files`), so seams in them were never analyzed: split those files below the Rust parse budget, then rerun pilot. {inspect}"
+            "the last complete `ripr pilot` run ranked no gap: it withheld {items} whose static evidence is unknown or opaque, so they are static limitations, not gaps. It also declined Rust files with a parse limit (named in `target/ripr/pilot/pilot-summary.json` as `declined_rust_files`), so spots in them were never analyzed: split those files below the Rust parse budget, then rerun pilot. {inspect}"
         );
     }
     format!(
-        "the last complete `ripr pilot` run ranked no seam: it withheld {seams} whose static evidence is unknown or opaque, so they are static limitations, not gaps, and running pilot again unchanged withholds them again. {inspect}; no repair attempt applies until a seam ranks"
+        "the last complete `ripr pilot` run ranked no gap: it withheld {items} whose static evidence is unknown or opaque, so they are static limitations, not gaps, and running pilot again unchanged withholds them again. {inspect}; no repair attempt applies until a gap ranks"
     )
 }
 
@@ -1992,7 +1992,7 @@ fn pilot_routed_to_check_message(
     gap_start: Option<&PilotGapStart>,
 ) -> String {
     let mut message =
-        "the last complete `ripr pilot` run ranked no seam and produced no repair card".to_string();
+        "the last complete `ripr pilot` run ranked no gap and produced no repair card".to_string();
     if !routes.commands.is_empty() {
         let commands = routes
             .commands
@@ -2007,7 +2007,7 @@ fn pilot_routed_to_check_message(
             Some(start) => {
                 let start = start.rendered();
                 message.push_str(&format!(
-                ": it routed {code} to {commands}, which reviews changes diff-first and prints the gap-bound start {start} for its selected finding, and running pilot again unchanged routes there again. Run {commands} and that start, or add or strengthen a test for the changed behavior by hand and rerun {commands} to see whether static evidence now finds a discriminator"
+                ": it routed {code} to {commands}, which reviews changes diff-first and prints the gap-bound start {start} for its selected finding, and running pilot again unchanged routes there again. Run {commands} and that start, or add or strengthen a test for the changed behavior by hand and rerun {commands} to see whether static evidence now finds a check"
                 ))
             }
             None => message.push_str(&format!(
@@ -2070,7 +2070,9 @@ fn legacy_next_command(
             return Some(AgentStatusCommand {
                 step: "repair_attempt_before".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                reason: "`ripr pilot` selected a seam the repair transaction can target; start its repair attempt".to_string(),
+                reason:
+                    "`ripr pilot` selected a gap that can be repaired; start its repair attempt"
+                        .to_string(),
                 command,
             });
         }
@@ -2078,7 +2080,7 @@ fn legacy_next_command(
             warnings.push(AgentStatusWarning {
                 kind: "pilot_found_no_repair_target".to_string(),
                 artifact: PILOT_SUMMARY_ARTIFACT.to_string(),
-                message: "the last complete `ripr pilot` run offered no repair attempt: its top seam is not eligible for `ripr agent repair`, and running pilot again unchanged ranks the same seams. Read `target/ripr/pilot/pilot-summary.md` for that seam, add a test for it by hand in the crate that owns it, then rerun `ripr pilot` to rank the seams against that test".to_string(),
+                message: "the last complete `ripr pilot` run offered no repair attempt: its top gap is not eligible for `ripr agent repair`, and running pilot again unchanged ranks the same gaps. Read `target/ripr/pilot/pilot-summary.md` for that gap, add a test for it by hand in the crate that owns it, then rerun `ripr pilot` to rank the gaps against that test".to_string(),
             });
             return None;
         }
@@ -2167,10 +2169,25 @@ fn legacy_next_command(
             });
             return None;
         }
+        // #11395: `ripr pilot` refuses a root with no Cargo.toml and no source
+        // to inspect, so status must not recommend it there. The verdict is the
+        // one pilot itself uses; `ripr doctor` names the same missing manifest.
+        if crate::analysis::root_has_no_inspectable_workspace(root) {
+            warnings.push(AgentStatusWarning {
+                kind: "no_workspace_to_inspect".to_string(),
+                artifact: root_display.to_string(),
+                message: format!(
+                    "{} has no Cargo.toml and no source files to inspect, so there is nothing to repair yet. Run `ripr doctor --root {}` to see what is missing, or pass `--root <dir>` for the directory that contains your workspace",
+                    root_display,
+                    shell_arg(root_display)
+                ),
+            });
+            return None;
+        }
         return Some(AgentStatusCommand {
             step: "select_seam".to_string(),
             artifact: "target/ripr/pilot".to_string(),
-            reason: "no repair seam is known yet; `ripr pilot` inspects the workspace and selects the seam to repair".to_string(),
+            reason: "no repair gap is known yet; `ripr pilot` inspects the workspace and selects the gap to repair".to_string(),
             command: pilot_select_command(root_display),
         });
     };
@@ -2192,7 +2209,7 @@ fn legacy_next_command(
             step: "repair_attempt_before".to_string(),
             artifact: store.locator.to_string(),
             reason: format!(
-                "{}; start a repair attempt for seam `{}`, which writes the workflow artifacts itself",
+                "{}; start a repair attempt for gap `{}`, which writes the workflow artifacts itself",
                 first.reason, seam.seam_id
             ),
             command: new_repair_attempt_command(root_display, &seam.seam_id, None, store.flag),
@@ -2245,7 +2262,7 @@ fn open_seam_restart_command(
         step: "repair_attempt_before".to_string(),
         artifact: store.locator.to_string(),
         reason: format!(
-            "no repair attempt for seam `{seam_id}` can continue at the current HEAD ({}); {restart}{}",
+            "no repair attempt for gap `{seam_id}` can continue at the current HEAD ({}); {restart}{}",
             ended
                 .iter()
                 .map(|attempt| format!(
@@ -2367,7 +2384,7 @@ fn attempt_command_list(attempts: &[&AgentStatusRepairAttempt]) -> String {
         .iter()
         .map(|attempt| {
             format!(
-                "`{}` (seam `{}`): `{}`",
+                "`{}` (gap `{}`): `{}`",
                 attempt.attempt_id,
                 attempt.seam_id,
                 attempt.command.as_deref().unwrap_or_default()
@@ -2415,7 +2432,7 @@ pub(crate) fn render_agent_status_json(report: &AgentStatusReport) -> Result<Str
             rendered.push('\n');
             rendered
         })
-        .map_err(|err| format!("failed to render agent status JSON: {err}"))
+        .map_err(|err| format!("failed to render agent status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String {
@@ -2516,7 +2533,7 @@ pub(crate) fn render_agent_status_markdown(report: &AgentStatusReport) -> String
 
     rendered.push_str("\n## Limits\n\n");
     rendered.push_str("- Reads existing artifacts only.\n");
-    rendered.push_str("- No repo analysis is run by this command, apart from the seam-eligibility re-check that guards a named repair start.\n");
+    rendered.push_str("- No repo analysis is run by this command, apart from the eligibility re-check that guards a named repair start.\n");
     rendered.push_str("- No runtime mutation execution.\n");
     rendered.push_str("- No automatic source edits.\n");
     rendered.push_str("- No generated tests.\n");
@@ -3309,7 +3326,7 @@ fn restart_attempt_command(
     };
     match status_class {
         "prepared" => restart(format!(
-            "repair attempt `{id}` for seam `{seam}` was prepared but never published as awaiting its edit; start a new attempt while the gap is still open"
+            "repair attempt `{id}` for gap `{seam}` was prepared but never published as awaiting its edit; start a new attempt while the gap is still open"
         )),
         "stale" => {
             let legacy_gap = manifest
@@ -3318,27 +3335,27 @@ fn restart_attempt_command(
                 .is_some_and(crate::app::repair_attempt::RepairAttemptGapBinding::is_legacy);
             let reason = if manifest.state == RepairAttemptState::AwaitingEdit && legacy_gap {
                 format!(
-                    "repair attempt `{id}` for seam `{seam}` was started by an earlier ripr build that did not record the immutable base commit, so its after phase refuses; start a new attempt while the gap is still open"
+                    "repair attempt `{id}` for gap `{seam}` was started by an earlier ripr build that did not record the immutable base commit, so its after phase refuses; start a new attempt while the gap is still open"
                 )
             } else if manifest.state == RepairAttemptState::AwaitingEdit {
                 match &view.diverged_recovery {
                     Some(recovery) => format!(
-                        "repair attempt `{id}` for seam `{seam}` was prepared at another HEAD; its after phase would refuse it. Restore the prepared head with `{}` or start a new attempt while the gap is still open",
+                        "repair attempt `{id}` for gap `{seam}` was prepared at another HEAD; its after phase would refuse it. Restore the prepared head with `{}` or start a new attempt while the gap is still open",
                         recovery.reset
                     ),
                     None => format!(
-                        "repair attempt `{id}` for seam `{seam}` was prepared at another HEAD and its after phase would finish stale; start a new attempt while the gap is still open"
+                        "repair attempt `{id}` for gap `{seam}` was prepared at another HEAD and its after phase would finish stale; start a new attempt while the gap is still open"
                     ),
                 }
             } else {
                 format!(
-                    "repair attempt `{id}` for seam `{seam}` ended stale because its analysis inputs moved; start a new attempt while the gap is still open"
+                    "repair attempt `{id}` for gap `{seam}` ended stale because its analysis inputs moved; start a new attempt while the gap is still open"
                 )
             };
             restart(reason)
         }
         "incomparable" => restart(format!(
-            "repair attempt `{id}` for seam `{seam}` ended incomparable; start a new attempt while the gap is still open"
+            "repair attempt `{id}` for gap `{seam}` ended incomparable; start a new attempt while the gap is still open"
         )),
         "failed" => restart(format!(
             "repair `{id}` for gap `{seam}` ended failed; start a new repair while the gap is still open"
@@ -3349,7 +3366,7 @@ fn restart_attempt_command(
         "limited" => match &view.receipt {
             AgentStatusAttemptReceipt::Issued { reading, .. } if reading.leaves_gap_open() => {
                 restart(format!(
-                    "the receipt for repair attempt `{id}` reports movement `{}`, which leaves the gap open; start a new attempt for seam `{seam}` and strengthen the focused test before its after phase",
+                    "the receipt for repair attempt `{id}` reports movement `{}`, which leaves the gap open; start a new attempt for gap `{seam}` and strengthen the focused test before its after phase",
                     reading.movement.as_deref().unwrap_or("unknown")
                 ))
             }
@@ -3358,12 +3375,12 @@ fn restart_attempt_command(
             _ => None,
         },
         "corrupt_or_unavailable" => restart(format!(
-            "the retained terminal evidence of repair attempt `{id}` is missing, tampered, or unbound; status does not reconstruct the outcome from another attempt's compatibility receipt. Start a new attempt for seam `{seam}` while the gap is still open"
+            "the retained terminal evidence of repair attempt `{id}` is missing, tampered, or unbound; status does not reconstruct the outcome from another attempt's compatibility receipt. Start a new attempt for gap `{seam}` while the gap is still open"
         )),
         "legacy_compatibility_only" => match &view.receipt {
             AgentStatusAttemptReceipt::Issued { .. } => None,
             _ => restart(format!(
-                "repair attempt `{id}` for seam `{seam}` finished before attempt-local terminal retention existed and its outcome cannot be reconstructed from the one-slot compatibility receipt; start a new attempt while the gap is still open"
+                "repair attempt `{id}` for gap `{seam}` finished before attempt-local terminal retention existed and its outcome cannot be reconstructed from the one-slot compatibility receipt; start a new attempt while the gap is still open"
             )),
         },
         // Terminal, after-continuation, and closed-limited classes never reach
@@ -3426,7 +3443,7 @@ pub(crate) fn render_agent_attempt_status_json(
             rendered.push('\n');
             rendered
         })
-        .map_err(|err| format!("failed to render agent attempt status JSON: {err}"))
+        .map_err(|err| format!("failed to render agent attempt status JSON: {err}; this is a ripr bug, report it with the command you ran"))
 }
 
 pub(crate) fn render_agent_attempt_status_markdown(report: &AgentAttemptStatusReport) -> String {
@@ -3810,6 +3827,31 @@ fn modified_unix_ms(time: Option<SystemTime>) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn pilot_withheld_items_are_not_called_gaps() {
+        for (limit, declined) in [
+            (None, false),
+            (Some(true), false),
+            (Some(false), true),
+            (Some(false), false),
+        ] {
+            for (count, noun) in [(1, "1 item"), (2, "2 items")] {
+                let message = pilot_withheld_message(count, limit, declined);
+                assert!(
+                    message.contains(&format!(
+                        "{noun} whose static evidence is unknown or opaque"
+                    )),
+                    "{message}"
+                );
+                assert!(
+                    message.contains("static limitations, not gaps"),
+                    "{message}"
+                );
+                assert!(!message.contains(&format!("{count} gap")), "{message}");
+            }
+        }
+    }
+
+    #[test]
     fn pilot_withheld_message_separates_declined_files_from_a_seam_cut() {
         // #9308: raising a seam limit cannot restore a declined file's seams.
         let declined = pilot_withheld_message(2, Some(false), true);
@@ -3825,6 +3867,70 @@ mod tests {
     use crate::app::repair_attempt::diverged_head_recovery;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
+
+    /// #11395: a root with no Cargo.toml and no source is not something
+    /// `ripr pilot` will inspect, so status must not recommend it. The positive
+    /// control (a Cargo.toml root) still gets the pilot command.
+    #[test]
+    fn status_does_not_recommend_pilot_where_pilot_refuses() -> Result<(), String> {
+        let empty = unique_agent_status_test_dir("no-workspace");
+        write_file(&empty.join("README.md"), "hi\n")?;
+        let report = build_agent_status_report(&empty, Path::new("."));
+        assert!(report.next_command.is_none(), "{:?}", report.next_command);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "no_workspace_to_inspect")
+            .ok_or_else(|| "expected a no_workspace_to_inspect warning".to_string())?;
+        assert!(
+            warning.message.contains("ripr doctor"),
+            "{}",
+            warning.message
+        );
+        assert!(warning.message.contains("--root"), "{}", warning.message);
+        // The suggested doctor command is bound to the selected root (a root
+        // with a space is shell-quoted), not left to default to `.`.
+        let spaced = unique_agent_status_test_dir("no workspace spaced");
+        write_file(&spaced.join("README.md"), "hi\n")?;
+        let spaced_display = spaced.to_string_lossy().into_owned();
+        let report = build_agent_status_report(&spaced, &spaced);
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.kind == "no_workspace_to_inspect")
+            .ok_or_else(|| "expected a warning for the spaced root".to_string())?;
+        assert!(
+            warning.message.contains(&format!(
+                "`ripr doctor --root {}`",
+                shell_arg(&crate::agent::loop_commands::bound_root(&spaced_display))
+            )),
+            "{}",
+            warning.message
+        );
+        assert!(
+            shell_arg(&spaced_display).starts_with(['\'', '"']),
+            "the spaced root must be quoted: {spaced_display}"
+        );
+        std::fs::remove_dir_all(&spaced).map_err(|err| format!("remove: {err}"))?;
+
+        let cargo = unique_agent_status_test_dir("with-cargo");
+        write_file(&cargo.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
+        let report = build_agent_status_report(&cargo, Path::new("."));
+        let next = report
+            .next_command
+            .as_ref()
+            .ok_or_else(|| "a Cargo workspace keeps the pilot route".to_string())?;
+        assert_eq!(next.step, "select_seam");
+        assert!(
+            !report
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == "no_workspace_to_inspect")
+        );
+        std::fs::remove_dir_all(&empty).map_err(|err| format!("remove: {err}"))?;
+        std::fs::remove_dir_all(&cargo).map_err(|err| format!("remove: {err}"))?;
+        Ok(())
+    }
 
     fn unique_agent_status_test_dir(label: &str) -> PathBuf {
         let stamp = SystemTime::now()
@@ -3881,6 +3987,8 @@ mod tests {
     #[test]
     fn agent_status_reports_missing_artifacts_and_next_commands() -> Result<(), String> {
         let root = unique_agent_status_test_dir("missing");
+        // #11395: status withholds the pilot route for a root pilot would refuse.
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
 
         let report = build_agent_status_report(&root, Path::new("."));
@@ -5213,6 +5321,8 @@ mod tests {
     #[test]
     fn agent_status_markdown_names_next_command_and_limits() -> Result<(), String> {
         let root = unique_agent_status_test_dir("markdown");
+        // #11395: status withholds the pilot route for a root pilot would refuse.
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
         std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
 
         let report = build_agent_status_report(&root, Path::new("."));
@@ -6067,6 +6177,8 @@ mod tests {
     #[test]
     fn agent_status_continues_from_the_pilot_repair_start() -> Result<(), String> {
         let root = unique_agent_status_test_dir("after-pilot");
+        // #11395: status withholds the pilot route for a root pilot would refuse.
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
         let command = "ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before";
         write_file(
             &root.join(PILOT_SUMMARY_ARTIFACT),
@@ -6161,6 +6273,8 @@ mod tests {
     #[test]
     fn agent_status_stops_when_pilot_routed_changed_code_to_check() -> Result<(), String> {
         let root = unique_agent_status_test_dir("pilot-routed-to-check");
+        // #11395: status withholds the pilot route for a root pilot would refuse.
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
         let enabled_routes = r#"[{"language": "typescript", "enabled": true, "command": "ripr check --root ."}, {"language": "python", "enabled": true, "command": "ripr check --root ."}]"#;
         let summary = |status: &str, state: &str, first_use: &str, routes: &str, repair: &str| {
             format!(
@@ -6340,7 +6454,7 @@ mod tests {
             .ok_or_else(|| format!("expected an exclusion warning: {:?}", report.warnings))?;
         assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
         for expected in [
-            "ranked no Rust seam because Rust is not enabled",
+            "ranked no Rust gap because Rust is not enabled",
             "3 files not analyzed",
             crate::output::pilot::RUST_EXCLUDED_GUIDANCE,
         ] {
@@ -6406,9 +6520,9 @@ mod tests {
             .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
         assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
         for expected in [
-            "withheld 138 seams whose static evidence is unknown or opaque",
+            "withheld 138 items whose static evidence is unknown or opaque",
             "target/ripr/pilot/repo-exposure.md",
-            "no repair attempt applies until a seam ranks",
+            "no repair attempt applies until a gap ranks",
         ] {
             assert!(warning.message.contains(expected), "{}", warning.message);
         }
@@ -6427,8 +6541,8 @@ mod tests {
             .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
             .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
         for expected in [
-            "withheld at least 138 seams",
-            "seams past the cut may hold gaps",
+            "withheld at least 138 items",
+            "repairable gaps may sit past the cut",
             "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
         ] {
             assert!(warning.message.contains(expected), "{}", warning.message);
@@ -6450,7 +6564,7 @@ mod tests {
             .find(|warning| warning.kind == "pilot_withheld_static_limitations_no_repair_target")
             .ok_or_else(|| format!("expected a withheld warning: {:?}", report.warnings))?;
         for expected in [
-            "is missing or unreadable, so status cannot tell whether a seam limit cut the run",
+            "is missing or unreadable, so status cannot tell whether an analysis limit cut the run",
             "raise or remove RIPR_PILOT_SEAM_BUDGET and RIPR_REPO_EXPOSURE_SEAM_LIMIT",
         ] {
             assert!(warning.message.contains(expected), "{}", warning.message);
@@ -6679,6 +6793,8 @@ mod tests {
     #[test]
     fn agent_status_routes_a_pilot_python_repair_card_to_first_pr() -> Result<(), String> {
         let root = unique_agent_status_test_dir("pilot-python-card");
+        // #11395: status withholds the pilot route for a root pilot would refuse.
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"x\"\n")?;
         let summary = |status: &str, seams: &str, first_use: &str, repair: &str| {
             format!(
                 r#"{{"status": "{status}", "top_actionable_seams": {seams}, "python_first_use": {first_use}, "language_routes": {{"state": "required", "routes": [{{"language": "python", "enabled": true, "command": "ripr check --root ."}}]}}, "next": {{"repair_command": {repair}}}}}"#
@@ -6698,7 +6814,7 @@ mod tests {
             .ok_or_else(|| format!("expected a Python card warning: {:?}", report.warnings))?;
         assert_eq!(warning.artifact, PILOT_SUMMARY_ARTIFACT);
         for expected in [
-            "produced a Python preview repair card for missing discriminator `amount == DISCOUNT_THRESHOLD`",
+            "produced a Python preview repair card for the missing check `amount == DISCOUNT_THRESHOLD`",
             "running pilot again unchanged records the same card",
             "`ripr first-pr --root",
             "(`pytest tests/test_pricing.py::test_discount`)",
@@ -6707,6 +6823,12 @@ mod tests {
         ] {
             assert!(warning.message.contains(expected), "{}", warning.message);
         }
+        // The card names the gap as "the missing check", never the internal term.
+        assert!(
+            !warning.message.contains("discriminator"),
+            "{}",
+            warning.message
+        );
         let rendered = render_agent_status_markdown(&report);
         assert!(
             !rendered.contains("```bash\nripr pilot --root"),

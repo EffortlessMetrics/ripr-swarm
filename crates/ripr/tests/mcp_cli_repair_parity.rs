@@ -271,7 +271,7 @@ fn observe(fixture: &Fixture) -> Result<Observed, String> {
     );
     // `agent card` takes a seam id; the CLI's own refusal text names it.
     let seam_id = repair_text
-        .split("names seam `")
+        .split("names gap `")
         .nth(1)
         .and_then(|rest| rest.split('`').next())
         .map(str::to_string);
@@ -324,8 +324,7 @@ fn already_gripped_seam_is_refused_with_one_cause_on_every_surface() -> Result<(
         "the item must be a listed check class"
     );
     assert!(
-        seen.repair_text.contains("already grip it")
-            || seen.repair_text.contains("existing tests already grip"),
+        seen.repair_text.contains("already check it"),
         "precondition: the CLI repair gate names the seam already gripped:\n{}",
         seen.repair_text
     );
@@ -393,6 +392,47 @@ fn route_not_ready_seam_is_seam_gate_refused_not_a_producer_gate() -> Result<(),
             ),
         }
     }
+    Ok(())
+}
+
+/// #11111 burn-down: `ripr agent stub` refuses an async owner, so neither
+/// surface may offer that stub command as the route. The MCP server reads the
+/// workspace sources like the CLI does and carries the same named refusal.
+#[test]
+fn async_owner_refusal_names_the_stub_refusal_on_both_surfaces() -> Result<(), String> {
+    let lib = |op: &str| format!("pub async fn dbl(x: i32) -> i32 {{\n    x {op} 2\n}}\n");
+    let fixture = Fixture::create(
+        "async-owner",
+        &[
+            ("Cargo.toml", CARGO_TOML.to_string()),
+            ("src/lib.rs", lib("*")),
+            (
+                "tests/p.rs",
+                "use fx::dbl;\n\n#[test]\nfn dbl_positive() {\n    let v = block_on(dbl(2));\n    assert!(v > 0);\n}\nfn block_on<T>(_f: impl std::future::Future<Output = T>) -> T {\n    unimplemented!()\n}\n".to_string(),
+            ),
+            (".gitignore", "target/\n.ripr/\n".to_string()),
+        ],
+        &[("src/lib.rs", lib("+"))],
+    )?;
+    let seen = observe(&fixture)?;
+    let named = "ripr cannot write a fill-in skeleton here because the owner is async";
+    assert!(
+        seen.repair_text.contains(named) && !seen.repair_text.contains("--kind return_value"),
+        "precondition: the CLI names the stub's own refusal:\n{}",
+        seen.repair_text
+    );
+    assert_eq!(
+        seen.prepare_reason, "seam_gate_refused",
+        "{}",
+        seen.prepare_detail
+    );
+    assert!(
+        seen.prepare_detail.contains(named)
+            && !seen.prepare_detail.contains("--kind return_value")
+            && !seen.prepare_detail.contains("--root"),
+        "MCP must carry the same named refusal, with no stub command and no --root: {}",
+        seen.prepare_detail
+    );
     Ok(())
 }
 

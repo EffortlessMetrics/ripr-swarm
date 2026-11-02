@@ -183,7 +183,7 @@ fn repair_after_no_movement_lines_advise_retry_until_the_budget_is_spent() -> Re
         &[
             "to recover: make the focused test edit in `src/lib.rs`",
             "leave production code unchanged",
-            "rerun this after-phase command",
+            "rerun the after phase",
         ],
     )?;
     require_contains(&first[2], &["ripr agent status", "--attempt"])?;
@@ -262,6 +262,107 @@ fn before_phase_dirty_premise_refusal_names_paths_and_commit_first_recovery() {
     }
 }
 
+/// A committed git fixture with one dirty tracked production file:
+/// `src/lib.rs` differs from HEAD with a plain production change.
+fn dirty_production_fixture(label: &str) -> Result<PathBuf, String> {
+    let root = unique_command_test_dir(label);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| format!("create src: {error}"))?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn f() -> i32 {\n    1\n}\n")
+        .map_err(|error| format!("write source: {error}"))?;
+    crate::testing::fixture_git::fixture_git_ok(&root, &["init"])?;
+    crate::testing::fixture_git::fixture_git_ok(
+        &root,
+        &["config", "user.email", "ripr-test@example.invalid"],
+    )?;
+    crate::testing::fixture_git::fixture_git_ok(&root, &["config", "user.name", "RIPR Test"])?;
+    crate::testing::fixture_git::fixture_git_ok(&root, &["add", "."])?;
+    crate::testing::fixture_git::fixture_git_ok(
+        &root,
+        &["commit", "--no-gpg-sign", "-m", "initial"],
+    )?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn f() -> i32 {\n    1\n}\n\npub fn g() -> i32 {\n    2\n}\n",
+    )
+    .map_err(|error| format!("dirty source: {error}"))?;
+    Ok(root)
+}
+
+/// #11458 red control: a dirty tracked production file must refuse the
+/// before phase with the dirty-premise text before the seam inventory
+/// loads. On the pre-fix driver the inventory/packet path answers first
+/// (an unknown-seam or config error here, never the premise text), so this
+/// fails until the pre-inventory preflight lands.
+#[test]
+fn before_phase_refuses_dirty_production_premise_before_the_seam_inventory() -> Result<(), String> {
+    let root = dirty_production_fixture("before-preflight-dirty-premise")?;
+    let result = (|| -> Result<(), String> {
+        let seam_id = "0123456789abcdef";
+        let identity =
+            crate::app::repair_attempt::BeforeRepairAttemptIdentity::prepare(&root, seam_id)?;
+        let options = AgentRepairOptions {
+            root: root.clone(),
+            root_explicit: true,
+            seam_id: Some(seam_id.to_string()),
+            gap_id: None,
+            base: None,
+            attempt_id: None,
+            phase: AgentRepairPhase::Before,
+            python_repair_trust: None,
+            edit_authorization: crate::app::python_repair_binding::EditAuthorization {
+                authorized: false,
+                authority: None,
+            },
+            verify_authorization: crate::app::python_repair_verification::VerifyAuthorization {
+                authorized: false,
+                authority: None,
+            },
+            verify_rollback: false,
+            store: None,
+            json: false,
+            quiet: false,
+        };
+        let mut refusal = AfterPhaseRefusalContext::default();
+        match run_agent_repair_phase(options, &mut refusal, Some(&identity)) {
+            Err(error) => {
+                require_contains(&error, &["Uncommitted: src/lib.rs", "Nothing was started."])
+            }
+            Ok(()) => Err("a dirty production premise must refuse the before phase".to_string()),
+        }
+    })();
+    let _ = std::fs::remove_dir_all(&root);
+    result
+}
+
+/// #11458: the gap-bound before phase refuses the same dirty premise
+/// before resolving the base or snapshotting the gap. On the pre-fix
+/// driver the snapshot/lookup path answers first (a stale-gap error here,
+/// never the premise text), so this fails there.
+#[test]
+fn gap_before_phase_refuses_dirty_production_premise_before_the_snapshot() -> Result<(), String> {
+    let root = dirty_production_fixture("gap-before-preflight-dirty-premise")?;
+    let result = gap_premise_exercise(&root);
+    let _ = std::fs::remove_dir_all(&root);
+    result
+}
+
+fn gap_premise_exercise(root: &Path) -> Result<(), String> {
+    let mut refusal = AfterPhaseRefusalContext::default();
+    match run_gap_bound_before_phase(
+        root,
+        "gap:0123456789abcdef",
+        "HEAD",
+        None,
+        false,
+        &mut refusal,
+    ) {
+        Err(error) => {
+            require_contains(&error, &["Uncommitted: src/lib.rs", "Nothing was started."])
+        }
+        Ok(()) => Err("a dirty production premise must refuse the gap start".to_string()),
+    }
+}
+
 #[test]
 fn seam_id_translation_passes_plain_ids_through_without_resolving() -> Result<(), String> {
     // A plain structured seam id has no namespace marker, so it must reach
@@ -278,7 +379,7 @@ fn seam_id_translation_passes_plain_ids_through_without_resolving() -> Result<()
 fn unknown_seam_hint_falls_back_to_the_pilot_listing_for_other_shapes() {
     let hint = unknown_seam_id_hint(Path::new("some-checkout"), "f3c9e4d21a0b7c88");
     assert!(hint.starts_with("Run `ripr pilot --root "), "{hint}");
-    assert!(hint.contains("current seam IDs"), "{hint}");
+    assert!(hint.contains("current repair IDs"), "{hint}");
     assert!(!hint.contains("finding ID"), "{hint}");
 }
 
@@ -482,7 +583,7 @@ fn agent_receipt_with_a_malformed_attempt_id_is_a_failure() -> Result<(), String
     let _ = std::fs::remove_dir_all(&root);
     match result {
         Err(CommandError::Failure(message))
-            if message == "repair attempt ID must start with `repair-attempt-`" =>
+            if message.starts_with("repair attempt ID must start with `repair-attempt-`") =>
         {
             Ok(())
         }

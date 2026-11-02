@@ -11,7 +11,7 @@
   },
   "findings": [
     {
-      "id": "probe:src_commands.py:python_preview:b3ad6932",
+      "id": "probe:src_commands.py:python_preview:v1-b7e0cdc2",
       "canonical_gap_id": "gap:python:src/commands.py:main:call_or_output_effect:side_effect:print_shipment_queued",
       "canonical_gap_group_size": 1,
       "canonical_gap": {
@@ -28,7 +28,7 @@
       "severity": "warning",
       "confidence": 0.40,
       "probe": {
-        "id": "probe:src_commands.py:python_preview:b3ad6932",
+        "id": "probe:src_commands.py:python_preview:v1-b7e0cdc2",
         "family": "side_effect",
         "delta": "effect",
         "file": "src/commands.py",
@@ -125,8 +125,8 @@
       "stop_reasons": [],
       "oracle_kind": "smoke_only",
       "oracle_strength": "smoke",
-      "recommended_next_step": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `output contains \"shipment queued\"`.",
-      "suggested_next_action": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for missing discriminator `output contains \"shipment queued\"`.",
+      "recommended_next_step": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `output contains \"shipment queued\"`.",
+      "suggested_next_action": "Python preview: strengthen the existing related test with an output/log/call-effect assertion for the missing check `output contains \"shipment queued\"`.",
       "language": "python",
       "language_status": "preview",
       "owner_kind": "function",

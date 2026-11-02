@@ -127,6 +127,18 @@ them.
 - Existing gap-ledger and classified-seam eligibility signals take precedence
   over the ordinary-finding signal; the preview packet verdict gates the
   repair-packet surface, not diagnostic delivery (#6847).
+- The preview-withheld marker (`ripr-diagnostic-preview-withheld`, #11296) is
+  budget-exempt: it is not a budget item, takes no document, workspace or
+  byte slot, and is always served after the budgeted diagnostics of its
+  document, so it can neither crowd out an eligible diagnostic nor be dropped
+  by a cap. The exemption requires the governed code and source `ripr`; a
+  lookalike code or a foreign source is budgeted like any unstamped
+  diagnostic. Because it is exempt, the producer bounds it instead: at most
+  one marker per file and at most 50 markers per analysis snapshot (files in
+  path order); the status `withheld_findings` counts still disclose every
+  withheld finding beyond the cap. The same code, exemption and cap cover the
+  static-gap marker for non-preview files (#11798); the two share the 50-marker
+  budget and differ only in `data.kind` and message.
 - Overflow is machine-readable and cannot be presented as a complete inventory.
 - Complete evidence identity is independent of the passive budget.
 - Transport, pull/push, status, client, and gate policy are out of scope for PR A.
@@ -190,6 +202,10 @@ and cross-surface listed-id resolution are covered by
 `crates/ripr/src/lsp/tests.rs::typescript_preview_finding_publishes_in_both_profiles_despite_incomplete_packet`
 and
 `crates/ripr/src/lsp/tests.rs::list_actionable_item_ids_resolve_through_collect_context_for_all_language_classes`.
+The marker exemption and its negative controls are covered by
+`crates/ripr/src/lsp/diagnostic_budget.rs::tests::preview_withheld_marker_is_budget_exempt`,
+and the producer cap by
+`crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::withheld_preview_markers_are_capped_per_snapshot`.
 The focused omission payload, identity, alias, retraction, quarantine and
 previous-result controls live in
 `crates/ripr/src/lsp/backend/delivery_selection_parity_tests/omission_tests.rs`.

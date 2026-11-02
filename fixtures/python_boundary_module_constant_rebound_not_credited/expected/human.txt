@@ -12,7 +12,7 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: preview language, advisory only
-  Safe next action: preview-language evidence is advisory; apply the next step below to the suggested test and run its verify command before relying on it
+  Safe next action: this Python preview finding has no repair card (static evidence cannot place every strong related test input, so the boundary equality cannot become a repair target), so `ripr pilot`, `ripr agent repair` and `ripr first-pr` will not route it; add or strengthen a test by hand, then rerun `ripr check`
   File: src/pricing.py:2
   Language: python
   Language status: preview
@@ -20,34 +20,33 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Gap ID (for scripts): gap:python:src/pricing.py:tier:predicate_boundary:predicate:score>=50
   Changed behavior: if score >= 50:
-  Missing check (1 of 2): A strong Python oracle reaches `tier`, but static evidence does not place
-    a related test input at the changed predicate boundary `score == 50`. No strong related test
-    call places score equal to 50; observed score values: 80
+  Missing check: A strong Python oracle reaches `tier`, but static evidence does not place a related
+    test input at the changed predicate boundary. Some strong related calls have unresolved inputs,
+    so static evidence cannot determine whether they reach the changed boundary of `score >= 50`
   Related test (1 of 2 matched rows): tests/test_pricing.py:11 test_edge
   Suggested test file: tests/test_pricing.py
   Suggested test: test_edge
   Test node: tests/test_pricing.py::test_edge
   Verify command (Bash): (cd -P -- <cwd>/fixtures/python_boundary_module_constant_rebound_not_credited/input && python -m pytest tests/test_pricing.py::test_edge) (high)
-  Next step — Python preview: strengthen the existing related test with a focused boundary assertion for missing discriminator `score == 50`
-  Evidence: reach yes · infection weak · propagation weak · observation yes · discriminator weak
+  Evidence: reach yes · infection weak · propagation weak · observation yes · assertion weak
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: 2 related Python test(s) found for owner `tier`
-    - infection weak: Related tests reach the changed predicate, but no strong related test call places an input at the changed boundary
+    - infection weak: Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary
     - 7 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/python_boundary_module_constant_rebound_not_credited/input --diff <cwd>/fixtures/python_boundary_module_constant_rebound_not_credited/diff.patch --mode fast probe:src_pricing.py:python_preview:ed436496
   ripr context --root <cwd>/fixtures/python_boundary_module_constant_rebound_not_credited/input --diff <cwd>/fixtures/python_boundary_module_constant_rebound_not_credited/diff.patch --mode fast --at probe:src_pricing.py:python_preview:ed436496
-  no repair start offered: the seam inventory behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/pricing.py` has no seam to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing discriminator to that test by hand and run the printed verify command
+  no repair start offered: the spot list behind `ripr repair` and `ripr agent repair --phase before` covers Rust files only, so this Python finding in `src/pricing.py` has no spot to start a repair from; this is a terminal state of the delegated loop, not a stale id. The gap, test node and verify command that `ripr check` prints are the manual route: add the missing check to that test by hand and run the printed verify command
 
 More:
   Full evidence: rerun with --format human-full

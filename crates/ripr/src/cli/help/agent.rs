@@ -3,19 +3,19 @@ pub(super) const AGENT_HELP: &str = r#"Create a bounded repair transaction for a
 Usage: ripr agent <subcommand>
 
 Primary workflow:
-  repair    Run the before/edit/after repair transaction and its verification phase for one seam.
+  repair    Run the before/edit/after repair transaction and its verification phase for one gap.
   status    Report existing agent-loop artifacts and the exact next command.
 
 Advanced and compatibility workflows:
-  start      Write a source-edit-free workflow manifest for one seam.
-  brief      Rank the seams in a working set so an agent starts at the strongest one.
-  packet     Expand one visible seam into the existing agent seam packet JSON.
-  card       Hand off one visible seam as the compact default repair card.
+  start      Write a source-edit-free workflow manifest for one gap.
+  brief      Rank the gaps in a working set so an agent starts at the strongest one.
+  packet     Expand one visible gap into the existing agent gap packet JSON.
+  card       Hand off one visible gap as the compact default repair card.
   stub       Write a compiling Rust test stub for one gap, ready to fill and run (Rust files only).
   verify     Compare before/after repo-exposure JSON for agent verification.
   verify-execute
              Run the one validated, bounded, read-only verify command that a packet names.
-  receipt    Summarize one seam from agent verify JSON for review handoff.
+  receipt    Summarize one gap from agent verify JSON for review handoff.
   review-summary
              Join agent-loop artifacts into a compact review packet.
 
@@ -33,10 +33,10 @@ From a Rust `ripr check` finding, `ripr agent stub --at FILE:LINE` (the location
 the finding prints) gives a ready-to-run test for that gap in one step. Stub
 generation supports Rust files only; a Python or TypeScript path exits `3`.
 
-`--seam-id` takes a seam ID from `ripr pilot --root .` or `ripr agent status`,
+`--seam-id` takes a repair ID from `ripr pilot --root .` or `ripr agent status`,
 and `--phase before` also accepts a `ripr check` finding ID (`probe:...` or
 `repo-probe:...`), a canonical gap ID, or a `file:line` location that names
-one repair-eligible seam.
+one repair-eligible gap.
 
 Run `ripr agent repair --help` for the primary repair workflow. Run
 `ripr agent status --help` to inspect an interrupted or incomplete local loop.
@@ -67,6 +67,9 @@ paths and shared command templates for the before snapshot, packet, brief,
 after snapshot, verify, and receipt steps. It remains advisory and static; it
 does not call an LLM API, run mutation testing, generate tests, edit files,
 change cache behavior, or touch LSP/MCP surfaces.
+
+A refusal (for example, an unknown seam or an unsupported language) exits `3`
+with the cause on stderr.
 "#;
 pub(super) const AGENT_BRIEF_HELP: &str = r#"Write a bounded brief for a coding agent over the current diff or change.
 
@@ -78,6 +81,8 @@ Options:
                    top level; `--root .` pins this directory.
   --diff PATH      Select a diff file and line-level working set. An existing
                    file typed relative to a member directory is bound to it.
+                   The path must stay under --root; a diff outside it is
+                   refused.
   --base REV       Derive the working set from a base revision.
   --files PATHS    Comma-separated repo-relative file paths; from a member
                    directory, existing files bind to that directory.
@@ -115,6 +120,9 @@ it renders one agent packet from an explicit agent-packet-eligible GapRecord
 without rerunning analysis. It remains advisory and static; it does not run
 mutation testing, generate tests, edit files, change cache behavior, or touch
 LSP/MCP surfaces.
+
+A refusal (for example, an unknown seam or gap) exits `3` with the cause on
+stderr and empty stdout.
 "#;
 pub(super) const AGENT_CARD_HELP: &str = r#"Hand off one seam as the compact default repair card.
 
@@ -507,6 +515,9 @@ Environment variables:
                                     recapture. Presence enables tracing even
                                     if the value is empty or 0; it does not
                                     change any verdict.
+
+A named refusal exits `3` with the cause on stderr; usage and operational
+errors exit `2`.
 "#;
 
 #[cfg(test)]

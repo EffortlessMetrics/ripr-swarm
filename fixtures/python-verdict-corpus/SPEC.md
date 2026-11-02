@@ -46,9 +46,9 @@ this repository's license, one per test library or library feature:
 - `authored-py-pytest-blocks`: multi-line replacement blocks, where the
   behavior change is the second line of a block that also rewrites the
   comment above it (#7556).
-- `authored-py-pytest-guard-arms`: RIPR-SPEC-0260 examples 1 to 5, one module
+- `authored-py-pytest-guard-arms`: RIPR-SPEC-0260 examples 1 to 7, one module
   per example so the guard, the observed input and the edited arm are the only
-  variables (an `or` guard, a rebound parameter, `True == 1`).
+  variables (an `or` guard, a rebound parameter, `True == 1`, an `is None` guard no input enters and its taken control).
 - `authored-py-pytest-self-reach`: RIPR-SPEC-0201 examples 1 to 6, the
   same-class transitive-reach limitation, including the six-hop chain, a class
   of the same name in another module and a test that calls the helper
@@ -83,6 +83,13 @@ this repository's license, one per test library or library feature:
   fixture. Each test only asserts the response is not `None`, so every mutant
   survives and the cases score how the client's application is read, not the
   oracle (run under Python 3.13.16 and pytest 9.1.1).
+- `authored-py-pytest-fixture-patch`: RIPR-SPEC-0238's fixture-substitution
+  read, one directory per case so a conftest reaches only its own test. An
+  autouse conftest fixture, a requested module fixture and a `setUp`
+  `patch.object` each replace the owner with a stand-in the test asserts, so
+  the edit cannot fail the test (gaps, `static_unknown` abstains); the control
+  directory's autouse fixture only sets an environment variable, so its exact
+  assertion catches the edit and stays credited (Python 3.13.18, pytest 9.2.0).
 - `authored-py-pytest-literals`, `authored-py-pytest-imports`,
   `authored-py-unittest-almost`, `authored-py-unittest-raises` and
   `authored-py-pytest-conjuncts`: one RIPR-SPEC-0238 rule family each (literal
@@ -113,11 +120,33 @@ this repository's license, one per test library or library feature:
   `else` arm, an `else` or `finally` block beside a swallowing `try`, a handler
   that calls `pytest.fail`, `xfail(False, reason=...)` and
   `unittest.skipUnless(True, ...)` keep the test active and are credited.
+- `authored-py-unittest-derived`: RIPR-SPEC-0238 rule 1's computed expectations (#11531).
+  An exact comparison whose expected side is built from the owner passes on any
+  edit, so it is a gap: a `setUp` attribute, class attribute, module constant or
+  local bound to the owner's call, a forwarder that returns the owner, the owner
+  minus itself, and a pytest assert against a local. A literal expectation and an
+  independent reference function pin the value and are credited, as is an
+  input both sides read (`n = make_input()`; `scale_input(n) == n * 2`). Labeled under
+  Python 3.13.18 and pytest 9.2.0.
+- `authored-py-pytest-uncollected` and `authored-py-pytest-uncollected-config`:
+  RIPR-SPEC-0238 rule 24's collection exclusions (#11527). A test pytest never
+  collects cannot notice an edit, so it is a gap that abstains with
+  `static_unknown`: a class with `__test__ = False`, one that inherits it, a
+  module with `__test__ = False`, a file named by a conftest `collect_ignore`,
+  a file name that `python_files` leaves out, and a directory that `addopts`
+  `--ignore` skips. `__test__ = True` and a file that matches `python_files`
+  stay collected and are credited. The first subject keeps a benign
+  `testpaths = ["tests"]` in `pyproject.toml`, which must not move a verdict.
 - `authored-py-pytest-bands`: RIPR-SPEC-0238 rule 21's `approx` band
   abstentions (positional band within and outside the band, spread band,
   non-literal band, longer owner body, method owner, decorated owner). Every
   case reads `static_unknown`; the outside-band edit is the one case whose
   test catches the change.
+- `authored-py-pytest-coarse`: RIPR-SPEC-0238 rule 30's coarse projections of
+  an owner's result, one owner per case, each `x * 2` edited to `x * 3`: a
+  sign (`assertEqual(f(2) > 0, True)`), a remainder (`assert f(3) % 3 == 0`)
+  and a digit count (`assert len(str(f(3))) == 1`) are gaps, and
+  `assert f(3) == 6` is the credited control.
 
 Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's
@@ -188,13 +217,10 @@ sides. A separate `normalize(normalize(x)) == normalize(x)` test retains
 the ordinary idempotence control.
 
 The three `py-nested-*-owner` cases retain these runtime labels. The outer
-owner's current gap is an explicit `known-false` record owned by #9814,
-not an accepted ideal result. Its expected row preserves the observation
-until a safe repair removes that record. Do not fix it by comparing only
-the outer and repeated callee names: that would falsely credit the inner
-owner case. A repair must resolve the oracle per finding and keep the same
-resolved assertion facts in selection, alignment and every direct strength
-consumer. Import aliases, receiver identity, owner calls nested inside the
+owner is credited because the assertion is resolved per finding: extraction
+records the outer callee and only a finding owned by that bare function reads
+the assertion as an exact pin (#9814). Comparing only the outer and repeated
+callee names would falsely credit the inner owner case. Import aliases, receiver identity, owner calls nested inside the
 repeated expression, and helper calls back into the changed owner need
 separate controls before widening credit.
 

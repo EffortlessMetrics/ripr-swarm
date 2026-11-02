@@ -14,7 +14,7 @@ Start here:
   Static exposure: unknown (severity: note, confidence 0.50)
   Why unknown: the analysis could not determine a static exposure state
   Changed behavior: pub const SEED_BASE: u32 = 1;
-  Analyzer limit: No strong discriminator was detected
+  Analyzer limit: No strong assertion was detected
   Related test: tests/other.rs:25 seeds_base
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place
@@ -22,12 +22,12 @@ Start here:
     finds a gap. Compare the original and changed implementations with a focused run using the
     project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification
     may remain unknown
-  Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
+  Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -40,14 +40,17 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_path_keyword_affinity/input --diff <cwd>/fixtures/rust_path_keyword_affinity/diff.patch --mode fast probe:src_lib.rs:static_unknown:bd010b89
   ripr context --root <cwd>/fixtures/rust_path_keyword_affinity/input --diff <cwd>/fixtures/rust_path_keyword_affinity/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:bd010b89
-  no repair start offered: this finding has no gap ID, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
 
 Hidden:
   5 finding(s) omitted: 4 lower-priority, 1 base-side evidence (not candidate edit targets).
-    - ./src/lib.rs:1 (unknown, lower-priority candidate); kind: static_unknown; reason: No relevant oracle was detected
-    - ./src/lib.rs:3 (unknown, lower-priority candidate); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:1 (unknown: static analysis limited, lower-priority candidate); kind: unclear; reason: No relevant oracle was detected
+    - ./src/lib.rs:3 (unknown: static analysis limited, lower-priority candidate); kind: unclear; reason: No relevant oracle was detected
     - ./src/lib.rs:4 (no path, lower-priority candidate); kind: field_construction; reason: Missing discriminator value: pub changed_slot: u64,
-    - ./src/lib.rs:7 (unknown, lower-priority candidate); kind: static_unknown; reason: No relevant oracle was detected
-    - ./src/lib.rs:7 (unknown, base-side); kind: static_unknown; reason: No relevant oracle was detected
+    - ./src/lib.rs:7 (unknown: static analysis limited, lower-priority candidate); kind: unclear; reason: No relevant oracle was detected
+    - ./src/lib.rs:7 (unknown: static analysis limited, base-side); kind: unclear; reason: No relevant oracle was detected
+  Hidden classes:
+    no path = no test path was found
+    unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

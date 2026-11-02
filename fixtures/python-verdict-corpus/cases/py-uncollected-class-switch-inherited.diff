@@ -1,0 +1,9 @@
+diff --git a/uncollected/core.py b/uncollected/core.py
+--- a/uncollected/core.py
++++ b/uncollected/core.py
+@@ -15,4 +15,4 @@
+ 
+ 
+ def class_inherited_off(a, b):
+-    return a * b
++    return a + b

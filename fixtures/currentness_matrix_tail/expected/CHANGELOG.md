@@ -251,3 +251,52 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_tail (19)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (20)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (21)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (22)
+
+Reason:
+RIPR-SPEC-0122 plain wording: spot / assertion in check triage Next step (#11619)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

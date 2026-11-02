@@ -31,7 +31,7 @@ schema_version = "ripr_verdict_corpus_spec_coverage.v1"
 # fixed; the opposite edit is a reviewed change with a reason.
 [grid]
 cell_floor = 21
-trap_floor = 22
+trap_floor = 23
 false_credit_ceiling = 0
 
 # LSP Repair Packet Command

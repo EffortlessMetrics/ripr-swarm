@@ -1564,6 +1564,95 @@ fn partial_scope_input_error(value: &Value, path: &Path) -> Option<String> {
     }
 }
 
+/// The named producer refusal a check document discloses (#11161): the
+/// typed run status when the document carries a known one, the producer's
+/// own first limitation message, and its repair route. `Some` exactly when
+/// the document carries an explicit non-consumable record
+/// (`downstream_consumable: false` from either the `analysis_scope` or the
+/// `run_limitations[]` position) — the RIPR-SPEC-0362 refusal identity — so
+/// a complete, absent, or malformed document, or a consumable envelope
+/// without an outcome, yields `None` and keeps its downstream generic
+/// handling. Runs after the typed bounded/partial/incomplete checks in
+/// every consumer so those keep their own named repairs.
+#[derive(Debug, PartialEq)]
+pub(crate) struct ProducerRefusal {
+    pub(crate) status: Option<String>,
+    pub(crate) message: String,
+    pub(crate) repair_route: String,
+}
+
+/// See [`ProducerRefusal`].
+pub(crate) fn producer_refusal(value: &Value) -> Option<ProducerRefusal> {
+    if !discloses_non_consumable_record(value) {
+        return None;
+    }
+    let status = refusal_run_status(value).map(str::to_string);
+    // Message and route come from ONE refusal-bearing record so a
+    // multi-record envelope never pairs an unrelated message with the
+    // refusal's route: first the refusal-bearing `run_limitations[]` entry
+    // (non-consumable or carrying the refusal status), then any entry.
+    let limitations: Vec<&Value> = value
+        .get("run_limitations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .collect();
+    let non_empty = |record: &Value, key: &str| {
+        record
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .map(str::to_string)
+    };
+    let refusal_entry = limitations
+        .iter()
+        .find(|entry| {
+            entry.get("downstream_consumable").and_then(Value::as_bool) == Some(false)
+                || (status.is_some()
+                    && entry.get("run_status").and_then(Value::as_str) == status.as_deref())
+        })
+        .copied();
+    let scope = value.get("analysis_scope");
+    let scope_refuses = scope
+        .and_then(|scope| scope.get("downstream_consumable"))
+        .and_then(Value::as_bool)
+        == Some(false);
+    let message = refusal_entry
+        .and_then(|entry| non_empty(entry, "message"))
+        .or_else(|| {
+            if refusal_entry.is_none() {
+                limitations
+                    .iter()
+                    .find_map(|entry| non_empty(entry, "message"))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "no producer message recorded".to_string());
+    let repair_route = refusal_entry
+        .and_then(|entry| non_empty(entry, "repair_route"))
+        .or_else(|| {
+            scope
+                .filter(|_| scope_refuses || refusal_entry.is_none())
+                .and_then(|scope| non_empty(scope, "repair_route"))
+        })
+        .or_else(|| {
+            if refusal_entry.is_none() {
+                limitations
+                    .iter()
+                    .find_map(|entry| non_empty(entry, "repair_route"))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| "not recorded".to_string());
+    Some(ProducerRefusal {
+        status,
+        message,
+        repair_route,
+    })
+}
+
 /// Whether a JSON document discloses the `limited_partial_scope` run state in
 /// any of the positions the run-state vocabulary uses.
 pub(crate) fn discloses_limited_partial_scope(value: &Value) -> bool {
@@ -1841,3 +1930,6 @@ fn display_path(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(kani)]
+mod gate_kani;

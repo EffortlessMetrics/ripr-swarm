@@ -17,12 +17,12 @@ Start here:
   Changed behavior: Ok(build_response(expected_id, trimmed.trim())?)
   Related test: tests/protocol.rs:4 validates_ready_response
   Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value
-  Evidence: reach yes · infection yes · propagation weak · observation yes · discriminator not established
+  Evidence: reach yes · infection yes · propagation weak · observation yes · assertion not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
-      discriminator = assertion distinguishes intended from wrong behavior
+      assertion = a test assertion tells intended from wrong behavior
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
-      missing = named discriminator absent from tests; not established = discriminator unconfirmed; not applicable = stage unused
+      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
       partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
       no test path = no test path found; unclear = analysis limited, not a verdict;
@@ -35,10 +35,12 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/guarded_result_match_owner_observation/input --diff <cwd>/fixtures/guarded_result_match_owner_observation/diff.patch --mode fast probe:src_lib.rs:return_value:6daabbf3
   ripr context --root <cwd>/fixtures/guarded_result_match_owner_observation/input --diff <cwd>/fixtures/guarded_result_match_owner_observation/diff.patch --mode fast --at probe:src_lib.rs:return_value:6daabbf3
-  no repair start offered: ripr found no seam in this finding's file to bind it to, so there is no seam to start a repair from; follow the Next step above
+  no repair start offered: `ripr check` reads a gap or limit for this change, but `ripr repair` judges the surrounding code as a whole and finds its tests already notice changes there (exposed), so it has no gap to start from. The two read different evidence (your changed lines versus the surrounding code as a whole) and ripr does not start a repair on conflicting evidence; follow the Next step above
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output.
     - ./src/lib.rs:46 (exposed); kind: error_path; reason: Strong oracle found: guarded Result match over the changed owner's result
+  Hidden classes:
+    exposed = tests appear to notice the change
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json

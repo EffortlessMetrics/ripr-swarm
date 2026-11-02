@@ -221,7 +221,42 @@ mock expectations, and custom `assert_*` helpers.
   - exception (#9542): a bare `assert f(lit, ..)` / `assert not f(lit, ..)` whose
     single resolved workspace function owner provably returns `bool` is an
     exact pin, read as `f(lit, ..) == True` / `== False`; any ambiguity, patching
-    or non-literal argument stays smoke
+    or non-literal argument stays smoke. The patch veto is narrowed
+    only to a closed allow-list (#10391): a test file keeps the credit when
+    every occurrence of a name containing `patch`, `mock`, `Mock`, `setattr`,
+    `delattr` or `monkey` is an exact `monkeypatch.setenv(` / `delenv(` /
+    `chdir(` call on an injected pytest test/fixture parameter (no default,
+    rebinding, or explicit supplying call), a directly assigned zero-argument constructor from an
+    unshadowed `unittest.mock` import (`Mock`, `MagicMock`, ..), an `import` /
+    `from .. import` statement without `as`, a formal parameter, a recognized
+    imported fixture type annotation, or an inert string statement, with no
+    argument naming the callee or owner. Inspection such as
+    `handle.assert_not_called()` remains allowed; marker-bearing inspection/reset
+    calls require a direct, unrebound zero-argument mock construction. Comprehension
+    bindings cannot borrow an import or constructor from a different scope.
+    Environment and mock calls admit only inert literal arguments: `chdir` may
+    invoke `__fspath__`, `setenv` may invoke `__str__`, and mock comparisons may
+    invoke `__eq__`. Mock configuration, escaping references, and retained call
+    results retain the veto; admitted mock calls are complete discarded expressions.
+    Constructor arguments can replace inspection methods, so they retain the veto. Arbitrary
+    receivers do not qualify by an `assert` prefix or constructor suffix. Defaults and annotations are executable expressions,
+    and all formatted strings retain the veto because their executable expressions
+    are hidden from this token scan. Non-ASCII identifiers also retain the veto:
+    this scan does not implement Python's NFKC identifier normalization. Everything else keeps the credit withheld: any other
+    patch-like call or reference or alias (`patch*`, `setattr`, `delattr`,
+    `monkeypatch.context()`, `mocker.spy`, `swap = ..`, `partial(..)`,
+    `yield from [swap := ..]`), any string outside a docstring that contains
+    `patch`, `mock`, `setattr`, `delattr`, `setitem`, `delitem`, `spy` or
+    `monkey`, any use of `getattr`, `__getattribute__`, `getfixturevalue`,
+    `__import__`, `__builtins__`, `builtins`, `__self__`, `partial`,
+    `setitem`, `delitem`, `spy`, `context` or `syspath_prepend`, a string
+    argument with a backslash, an f-string, adjacent literals, `*args` /
+    `**kwargs`, `autospec`, and file-wide `globals(`, `locals(`, `vars(`,
+    `exec(`, `eval(`, `__code__`, `__dict__`, `__globals__`, `sys.modules` and
+    `importlib`. Accepted residuals, not detected by this pass: conftest
+    autouse fixtures that patch the callee, a collaborator patched out of
+    sight, and a direct `rules.f = fake` assignment (caught by the binding
+    scan, not by patch reading).
 - `assert a == b` â†’ exact-value oracle; `assert a != b` and other
   non-equality comparisons â†’ relational check, weak
 - `assert isinstance(value, SomeType)` â†’ relational check, weak
@@ -481,7 +516,7 @@ comments, strings, and docstrings:
   loop/with header targets too; #9531), loop, `with`, walrus or augmented target
   (`(r) += ...` and `(r): list = ...` included), or not the whole bound value,
   is not credited, as is an augmented assignment after a header or `;`
-  (`if c: r += 1`), an `import r` or `nonlocal r`, and any `case` pattern line that
+  (`if c: r += 1`), an `import r`, `nonlocal r`, `global r`, `del r` or `type r = ...`, and any `case` pattern line that
   mentions the name other than as a dotted value or class pattern (`case (r):`,
   `case {"k": r}:`, `case Foo(x=r):`; a guard read such as `case x if r:` is
   demoted too, a deliberate miss). Within one
@@ -820,7 +855,8 @@ it with the source. Timestamp and checked-hash pycs are trusted the way
 CPython trusts them; the residual risk is a stale timestamp pyc after a
 same-size edit whose mtime lands in the compile second or is restored
 (`rsync -t`, `tar`, CI caches), which CPython itself would load. A pytest or
-tox configuration beside any workspace source, or above one, whose
+tox configuration (including `pytest.toml` and `.pytest.toml`) beside any
+workspace source, or above one, whose
 `pythonpath`, `python_paths` or `PYTHONPATH` setting names anything but its
 own directory refuses the credit: any other entry (an archive, a directory
 the workspace walk excludes, a root holding only compiled extensions, a path
@@ -990,13 +1026,16 @@ so a test must notice a wrong version of the new line. Python's mutation
 tool shifts a number literal up by one (mutmut `n` -> `n + 1`), and for
 `v > C` and `v <= C` (and their mirrors) that shifted bound first differs
 at `v == C + 1`. There `exposed` also needs a strong call that places the
-name at `C + 1`; otherwise the finding is `weakly_exposed` and names
-`v == C + 1` as the missing discriminator (#10842). `v >= C` and `v < C`
+name at `C + 1`; otherwise the finding is `weakly_exposed`, and names
+`v == C + 1` only when all relevant calls can be placed (#10842). `v >= C` and `v < C`
 shift onto the equality point and need no further row. A behavior change
 keeps the equality rule, because the equality row notices the edit itself
-(RIPR-SPEC-0238 example 39). When every non-literal operand is bound by some call, the boundary is
-named as the missing discriminator (`amount == threshold`, with the observed
-operand values in its reason). An operand ripr cannot bind (an attribute such
+(RIPR-SPEC-0238 example 39). When every relevant strong call can be placed and
+none witnesses the boundary, the boundary is named as the missing discriminator
+(`amount == threshold`, with the observed
+operand values in its reason). A resolved boundary witness remains valid even
+if another call cannot be placed. If no witness is resolved, an unreadable
+call or an operand ripr cannot bind (an attribute such
 as `item.on_hand`, a computed `len(name)`, a comprehension local, or a line
 with several comparisons) never counts as observed, and such a boundary is not
 named as a typed repair target: the test input may already sit on it at runtime
@@ -1059,6 +1098,22 @@ argument (test locals, `*args`, a construct-call passing a dict), static
 evidence cannot see the activating input either way: the oracle verdict stands
 and an `exposed` finding carries a `boundary_activation_unresolved` evidence
 line naming that limitation.
+
+For an adjacent `>`/`>=` or `<`/`<=` while-bound edit with an unchanged
+integer bound, a closed generator walk can resolve a rebound parameter. It
+accepts only an owner consisting of the loop, whose body is `yield name`
+followed by one unconditional `name -= 1` (descending) or `name += 1`
+(ascending). Every strong call must bind a readable integer and occur in a
+direct whole-list or whole-tuple equality against an integer-literal sequence.
+The builtin constructor and imported free-function owner must retain their
+identity. A near-side or equal input reaches the bound; a past-bound input
+does not (#9733). Partial/lossy consumers such as `next` and `sum`, slices,
+unobserved calls, assertion-message calls, nested calls, shadowed constructors,
+and unsupported assertion shapes retain the unresolved limitation: potential
+iteration alone does not establish observation of the changed final element.
+Step-two, conditional, early-exit, pre-loop rebinding, other statements and
+unreadable calls retain the existing unresolved boundary limitation. This is
+not general loop evaluation.
 
 Static-limit findings must fail closed. They keep any observed reachability and
 oracle facts, but their infection and propagation stages remain `unknown`, the
@@ -1559,6 +1614,45 @@ and seen only through its call in the test body, a discriminating call under
 a non-strong oracle (`assert not pick(0, 3)`), and an owner doctest the
 reader does not see. The change is only `exposed` to `weakly_exposed`, the
 conservative direction.
+
+### Compound and `self.<attr>` operands (#11890)
+
+The same closed allow-list also reads a compound `and`/`or` condition when the
+joining operators match and exactly one operand differs between the old and the
+new condition, both differing operands being single-operand tests of the same
+name (`self.port and self.port != 80` to `self.port is not None and
+self.port != 80`). The tested name may be `self.<attr>` instead of a bare
+parameter when the owner's class `__init__` assigns `self.<attr> = <param>`
+exactly once, nothing else in the class writes `self.<attr>`, and every strong
+related call builds the receiver inline (`Addr("h", 8080).authority()`) with a
+scalar literal for that constructor parameter, an omitted default included.
+Anything else keeps the existing verdict: two differing operands, an unknown
+constructor keyword, a missing required constructor argument, a receiver built
+elsewhere, a later write to the attribute, a falsy constructor argument that
+separates the two tests (`Addr("h", 0)`), and every other shape the #9186 rule
+already refused. `setattr` and `__dict__` writes are not read (a known limit).
+
+## Deleted Guarded Line Amendment (2026-10-31, #11889)
+
+A deleted behavior line (a removed-only record, RIPR-SPEC-0156) inside a
+guarding `if`/`elif`/`else`/`while` arm is `weakly_exposed`, not `exposed`,
+when every strong related call provably fails the guard that enclosed the line
+in the old file: the line ran under no observed input, so no strong oracle can
+notice its removal. The guarded-arm reader is the one used for live lines
+(#7392); it is handed the old file text, the owner re-spanned there and the
+old line number. A removed block header is read at its first removed body line
+so its own condition is among the guards walked. The rule is a closed
+allow-list that keeps the existing verdict on anything unrecognized: the owner
+must be a single-line `def` whose header reads the same in the old and the new
+file, the nearest enclosing scope above the line in the old file must be that
+header, and the guard conditions must be comparisons over call arguments
+(`and` conjunctions only; `or`, `not`, bare names, `is None` operands, computed
+operands, rebound parameters and calls no row binds all fail open). A removed block whose body is only partly deleted (a kept line dedented out of the guard), and any diff that adds or removes a module-level assignment, also fail open.
+
+A conjunction is false when any conjunct is false, so a conjunct this reader
+cannot evaluate no longer hides a false one (`vip and total > 1000`); this
+also applies to live guarded lines and only moves a verdict from `exposed` to
+`weakly_exposed`.
 
 ## Metrics
 

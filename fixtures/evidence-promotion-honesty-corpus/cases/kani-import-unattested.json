@@ -2,7 +2,7 @@
   "id": "kani_import_external_unattested",
   "language": "rust",
   "tier": "pure",
-  "source_report": "crates/ripr/src/app/kani_import/fixtures/honesty-report-projection.json",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/kani-import-unattested.json",
   "vector": "authored_expectation_compared_with_real_import_not_a_captured_native_run",
   "assertions": [
     {

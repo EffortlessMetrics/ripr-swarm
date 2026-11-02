@@ -306,6 +306,198 @@ fn gate_uses_the_larger_margin_and_skips_other_runner_classes() -> Result<(), St
     Ok(())
 }
 
+/// `MINIMAL` with ceilings on the `serde` row (#10914).
+fn ceilinged_config(ceilings: &str) -> Result<Config, String> {
+    parse_config(&MINIMAL.replacen(
+        "sha = \"dd18663450ec3ee38e35e3a4ee141932614e662c\"\n",
+        &format!(
+            "sha = \"dd18663450ec3ee38e35e3a4ee141932614e662c\"\nceilings = {{ {ceilings} }}\n"
+        ),
+        1,
+    ))
+}
+
+#[test]
+fn a_ceilinged_row_fails_the_gate_above_its_ceiling_whatever_the_baseline() -> Result<(), String> {
+    // #10914: a row cut under a bar stays guarded even when the baseline
+    // cannot compare it (another runner class) or holds no baseline at all.
+    let config = ceilinged_config("\"speed.warm_check_ms\" = 2000")?;
+    let warm = |repo: &str, outcome| vec![sample("speed.warm_check_ms", Some(repo), outcome)];
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &warm("serde", SampleOutcome::Value(1500.0)),
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let gate = |samples: &[Sample], runner: &str, baseline: Option<&Value>| {
+        build_report(
+            &config,
+            &all_boards(),
+            samples,
+            &context(runner),
+            baseline,
+            true,
+        )
+    };
+
+    let under = gate(
+        &warm("serde", SampleOutcome::Value(1999.0)),
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(
+        under["gate"]["status"].as_str(),
+        Some("pass"),
+        "{}",
+        under["gate"]
+    );
+    // 1500 -> 2100 is inside the 500 ms regression floor, but over the ceiling.
+    for (runner, base) in [
+        ("runner-a", Some(&baseline)),
+        ("runner-b", Some(&baseline)),
+        ("runner-a", None),
+    ] {
+        let over = gate(&warm("serde", SampleOutcome::Value(2100.0)), runner, base);
+        assert_eq!(
+            over["gate"]["status"].as_str(),
+            Some("fail"),
+            "{runner}: {}",
+            over["gate"]
+        );
+        let breaches = over["gate"]["ceiling_breaches"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(breaches.len(), 1, "{breaches:?}");
+        assert_eq!(breaches[0]["repo"], "serde");
+        assert_eq!(breaches[0]["value"], 2100.0);
+        assert!(
+            gate_failure_message(&over).contains("ceiling breached speed.warm_check_ms on serde")
+        );
+        assert!(
+            render_markdown(&over)
+                .contains("**Ceiling breached** `speed.warm_check_ms` on `serde`")
+        );
+    }
+    // A ceilinged row that ran but produced no value is not under its ceiling.
+    let incomplete = gate(
+        &warm("serde", SampleOutcome::Incomplete(900.0)),
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(incomplete["gate"]["status"].as_str(), Some("fail"));
+    let unmeasured = gate(
+        &warm("serde", SampleOutcome::NotMeasured),
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(unmeasured["gate"]["status"].as_str(), Some("fail"));
+    // Another row's value, or no sample of the row (a heavy row left out of
+    // the run), is not this row's breach.
+    let other = gate(
+        &warm("tokio", SampleOutcome::Value(9000.0)),
+        "runner-b",
+        Some(&baseline),
+    );
+    assert_eq!(
+        other["gate"]["ceiling_breaches"].as_array().map(Vec::len),
+        Some(0)
+    );
+    // A row the run selected (another of its metrics has a sample) whose
+    // ceilinged metric has no sample at all is a missing measurement.
+    let missing = gate(
+        &[sample(
+            "first_run.friction_events",
+            Some("serde"),
+            SampleOutcome::Value(1.0),
+        )],
+        "runner-a",
+        Some(&baseline),
+    );
+    assert_eq!(
+        missing["gate"]["status"].as_str(),
+        Some("fail"),
+        "{}",
+        missing["gate"]
+    );
+    let breaches = missing["gate"]["ceiling_breaches"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(breaches.len(), 1, "{breaches:?}");
+    assert_eq!(breaches[0]["repo"], "serde");
+    assert!(breaches[0]["value"].is_null());
+    // A row the run selected (recorded in its corpus) with no samples at all
+    // differs from a row the run left out, which has neither.
+    let mut selected = context("runner-a");
+    selected
+        .corpus
+        .push(json!({"id": "serde", "status": "complete"}));
+    let silent = build_report(&config, &all_boards(), &[], &selected, None, true);
+    assert_eq!(
+        silent["gate"]["status"].as_str(),
+        Some("fail"),
+        "{}",
+        silent["gate"]
+    );
+    assert_eq!(
+        silent["gate"]["ceiling_breaches"].as_array().map(Vec::len),
+        Some(1)
+    );
+    let left_out = build_report(
+        &config,
+        &all_boards(),
+        &[],
+        &context("runner-a"),
+        None,
+        true,
+    );
+    assert_eq!(
+        left_out["gate"]["ceiling_breaches"]
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+    // Without --gate a breach is reported but nothing fails.
+    let ungated = build_report(
+        &config,
+        &all_boards(),
+        &warm("serde", SampleOutcome::Value(2100.0)),
+        &context("runner-a"),
+        None,
+        false,
+    );
+    assert_eq!(ungated["gate"]["status"].as_str(), Some("not_run"));
+    Ok(())
+}
+
+#[test]
+fn a_ceiling_must_name_a_measured_per_repo_lower_is_better_metric() -> Result<(), String> {
+    for (ceilings, message) in [
+        (
+            "\"speed.warm_check_mss\" = 2000",
+            "unknown metric `speed.warm_check_mss`",
+        ),
+        (
+            "\"ci.workflow_lines\" = 150",
+            "needs a measured per-repo lower_is_better metric",
+        ),
+        (
+            "\"first_run.friction_events\" = 1",
+            "needs a measured per-repo lower_is_better metric",
+        ),
+        ("\"speed.warm_check_ms\" = 0", "must be a positive number"),
+    ] {
+        match ceilinged_config(ceilings) {
+            Err(error) if error.contains(message) => {}
+            other => return Err(format!("{ceilings}: expected `{message}`, got {other:?}")),
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn gate_fails_on_a_broken_instrument_even_without_baseline() -> Result<(), String> {
     let config = parse_config(MINIMAL)?;
@@ -1883,6 +2075,7 @@ fn manifest_corpus_entries_must_pin_full_shas_and_unique_ids() {
         note: String::new(),
         heavy: false,
         language: None,
+        ceilings: BTreeMap::new(),
     };
     let full = "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b";
     assert_eq!(validate_corpus(&[entry("a", full)]), Ok(()));
@@ -3222,6 +3415,7 @@ fn a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_par
         note: String::new(),
         heavy: false,
         language: None,
+        ceilings: BTreeMap::new(),
     };
 
     let refused = super::measure::prepare_checkout(&entry, &options);
@@ -4411,17 +4605,57 @@ fn committed_agent_receipt() -> Result<Value, String> {
     serde_json::from_str(COMMITTED_AGENT_RECEIPT).map_err(|err| err.to_string())
 }
 
+/// The check the committed receipt must pass: the gate passes and no
+/// baseline-measured metric or repository is missing. A missing sample is an
+/// `Err` here, never a pass, even though the generic gate only lists it as
+/// uncompared.
+fn agent_receipt_check(receipt: &Value) -> Result<(), String> {
+    let report = agent_gate_report(receipt)?;
+    if report["gate"]["status"].as_str() != Some("pass") {
+        return Err(gate_failure_message(&report));
+    }
+    let gaps = agent_coverage_gaps(&report, &agent_baseline()?);
+    if gaps.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("receipt lost baseline coverage: {gaps:?}"))
+    }
+}
+
 #[test]
 fn committed_agent_receipt_does_not_regress_the_agent_baseline() -> Result<(), String> {
-    let report = agent_gate_report(&committed_agent_receipt()?)?;
-    assert_eq!(
-        report["gate"]["status"].as_str(),
-        Some("pass"),
-        "{}",
-        gate_failure_message(&report)
-    );
-    let gaps = agent_coverage_gaps(&report, &agent_baseline()?);
-    assert!(gaps.is_empty(), "receipt lost baseline coverage: {gaps:?}");
+    agent_receipt_check(&committed_agent_receipt()?)
+}
+
+/// Deleting a measured metric, or one repository's sample of it, must fail
+/// the receipt check (not merely be listed), for every size metric and the
+/// agent-format gap count.
+#[test]
+fn agent_receipt_check_fails_when_a_measured_sample_disappears() -> Result<(), String> {
+    for id in [
+        "agent.check_bytes_human",
+        "agent.check_bytes_agent_format",
+        "agent.check_bytes_json",
+        "agent.agent_format_gaps_before_fix",
+    ] {
+        let mut whole = committed_agent_receipt()?;
+        let rows = whole["metrics"].as_array_mut().ok_or("no metrics")?;
+        rows.retain(|row| row["id"].as_str() != Some(id));
+        let err = agent_receipt_check(&whole)
+            .err()
+            .ok_or_else(|| format!("dropping {id} passed the receipt check"))?;
+        assert!(err.contains(id), "{id} not named in: {err}");
+
+        let mut one = committed_agent_receipt()?;
+        let rows = one["metrics"].as_array_mut().ok_or("no metrics")?;
+        rows.retain(|row| {
+            !(row["id"].as_str() == Some(id) && row["repo"].as_str() == Some("humantime"))
+        });
+        let err = agent_receipt_check(&one)
+            .err()
+            .ok_or_else(|| format!("dropping {id} for humantime passed the receipt check"))?;
+        assert!(err.contains(id), "{id} not named in: {err}");
+    }
     Ok(())
 }
 
@@ -4444,6 +4678,96 @@ fn agent_gate_fails_the_receipt_from_before_the_rerun() -> Result<(), String> {
     Ok(())
 }
 
+/// Copy of the committed receipt with one repo's `id` value replaced.
+fn agent_receipt_with_value(id: &str, repo: &str, value: f64) -> Result<Value, String> {
+    let mut receipt = committed_agent_receipt()?;
+    let row = receipt["metrics"]
+        .as_array_mut()
+        .and_then(|rows| {
+            rows.iter_mut()
+                .find(|row| row["id"].as_str() == Some(id) && row["repo"].as_str() == Some(repo))
+        })
+        .ok_or_else(|| format!("receipt has no {id} for {repo}"))?;
+    row["value"] = json!(value);
+    Ok(receipt)
+}
+
+fn agent_receipt_value(id: &str, repo: &str) -> Result<f64, String> {
+    committed_agent_receipt()?["metrics"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|row| row["id"].as_str() == Some(id) && row["repo"].as_str() == Some(repo))
+        .and_then(|row| row["value"].as_f64())
+        .ok_or_else(|| format!("receipt has no {id} for {repo}"))
+}
+
+/// #11816: output size per command is gated per format against the prior
+/// receipt. Growth up to the margin (the larger of `regression_pct` percent
+/// and `regression_floor` bytes, read from the committed config) passes, one
+/// byte more fails and names the metric and repository, and shrinking never
+/// fails. `--format agent` carries the tightest margin.
+#[test]
+fn agent_gate_fails_when_command_output_grows_past_its_margin() -> Result<(), String> {
+    let config = load_config(&committed_config())?;
+    for (id, repo) in [
+        ("agent.check_bytes_agent_format", "bytesize"),
+        ("agent.check_bytes_agent_format", "humantime"),
+        ("agent.check_bytes_agent_format", "semver"),
+        ("agent.check_bytes_human", "bytesize"),
+        ("agent.check_bytes_json", "semver"),
+    ] {
+        let def = config
+            .metric
+            .iter()
+            .find(|def| def.id == id)
+            .ok_or_else(|| format!("{id} not configured"))?;
+        let base = agent_receipt_value(id, repo)?;
+        let slack = (base * def.regression_pct / 100.0).max(def.regression_floor);
+
+        let at_margin = agent_gate_report(&agent_receipt_with_value(id, repo, base + slack)?)?;
+        assert_eq!(
+            at_margin["gate"]["status"].as_str(),
+            Some("pass"),
+            "{id} {repo}: growth equal to the margin must pass: {}",
+            gate_failure_message(&at_margin)
+        );
+
+        let over = agent_gate_report(&agent_receipt_with_value(id, repo, base + slack + 1.0)?)?;
+        assert_eq!(
+            over["gate"]["status"].as_str(),
+            Some("fail"),
+            "{id} {repo}: growth past the margin must fail"
+        );
+        let message = gate_failure_message(&over);
+        assert!(message.contains(id), "{id} not named in: {message}");
+        assert!(message.contains(repo), "{repo} not named in: {message}");
+
+        let smaller = agent_gate_report(&agent_receipt_with_value(id, repo, 1.0)?)?;
+        assert_eq!(smaller["gate"]["status"].as_str(), Some("pass"), "{id}");
+    }
+    Ok(())
+}
+
+/// The committed byte metrics are measurements, not placeholders: all three
+/// formats on all three pinned targets, and the compact format is smaller than
+/// the human one it is meant to replace for an agent.
+#[test]
+fn committed_agent_receipt_records_bytes_for_every_format_and_target() -> Result<(), String> {
+    for repo in ["bytesize", "humantime", "semver"] {
+        let human = agent_receipt_value("agent.check_bytes_human", repo)?;
+        let agent = agent_receipt_value("agent.check_bytes_agent_format", repo)?;
+        let json_bytes = agent_receipt_value("agent.check_bytes_json", repo)?;
+        assert!(agent > 0.0, "{repo}: agent-format bytes not measured");
+        assert!(
+            agent < human,
+            "{repo}: agent {agent} not under human {human}"
+        );
+        assert!(json_bytes > 0.0, "{repo}: json bytes not measured");
+    }
+    Ok(())
+}
+
 /// Dropping evidence passes the generic gate, so the coverage check is the
 /// control: each ratcheted metric, and one repository's sample of a per-repo
 /// metric, must be reported as lost.
@@ -4455,6 +4779,9 @@ fn agent_coverage_check_names_dropped_metrics_and_samples() -> Result<(), String
         "agent.tool_steps_to_fix",
         "agent.false_weak_findings_after_fix",
         "agent.white_box_tests_to_satisfy_ripr",
+        "agent.check_bytes_human",
+        "agent.check_bytes_agent_format",
+        "agent.check_bytes_json",
     ] {
         let mut receipt = committed_agent_receipt()?;
         let rows = receipt["metrics"].as_array_mut().ok_or("no metrics")?;
@@ -4661,6 +4988,16 @@ fn corpus_pins_python_commits_and_rejects_unknown_languages() -> Result<(), Stri
     if python[0].heavy || python[1..].iter().any(|entry| !entry.heavy) {
         return Err("click must be the light Python row and the larger ones heavy".to_string());
     }
+    // #10914: the large Python rows were cut under 2 s and 512 MiB and stay
+    // guarded.
+    for entry in &python[2..] {
+        if entry.ceilings.get("speed.warm_check_ms") != Some(&2000.0) {
+            return Err(format!("{} lost its 2 s warm-check ceiling", entry.id));
+        }
+        if entry.ceilings.get("speed.warm_check_peak_rss_mb") != Some(&512.0) {
+            return Err(format!("{} lost its 512 MiB peak-memory ceiling", entry.id));
+        }
+    }
     // Rows without a language stay Rust, so existing pins keep their meaning.
     if config
         .corpus
@@ -4786,6 +5123,16 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
             false,
         ),
         (
+            "vscode-typescript",
+            "c198526d8e64ba6f9944e9f7bcc079ed1f6d7fcc",
+            true,
+        ),
+        (
+            "typescript-compiler",
+            "ad04bf7488384a5dcdf7d250ccb8e5263021a8ff",
+            true,
+        ),
+        (
             "hono-typescript",
             "d54720da80134a180f5fe2dd98a7676cfc8f08b4",
             false,
@@ -4793,8 +5140,28 @@ fn corpus_pins_the_typescript_commit() -> Result<(), String> {
     ];
     if typescript != expected {
         return Err(format!(
-            "expected only the verified defu, ky, h3, execa, destr, zod, valibot, remeda and hono TypeScript rows, got {typescript:?}"
+            "expected only the verified defu, ky, h3, execa, destr, zod, valibot, remeda, vscode, typescript-compiler and hono TypeScript rows, got {typescript:?}"
         ));
+    }
+    // The large-workspace rows are regression gates (#11676, #11794): the
+    // pin above fixes what is measured, these fix how much slack it gets.
+    for (id, ms, rss) in [
+        ("vscode-typescript", 90_000.0, 1024.0),
+        ("typescript-compiler", 5_000.0, 256.0),
+    ] {
+        let entry = config
+            .corpus
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| format!("{id} row is missing"))?;
+        if entry.ceilings.get("speed.warm_check_ms") != Some(&ms)
+            || entry.ceilings.get("speed.warm_check_peak_rss_mb") != Some(&rss)
+        {
+            return Err(format!(
+                "{id} must gate warm checks at {ms} ms and {rss} MiB, got {:?}",
+                entry.ceilings
+            ));
+        }
     }
     Ok(())
 }

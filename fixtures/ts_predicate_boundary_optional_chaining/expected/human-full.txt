@@ -55,7 +55,7 @@ Evidence
   - related test tests/guards.test.ts:3 admin role behind optional chaining uses strong exact value oracle: expect(...).toBe(...)
 
 Weakness
-  - Related test reaches `userIsAdmin` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  - Related test reaches `userIsAdmin` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -125,7 +125,7 @@ Evidence
   - related test tests/guards.test.ts:7 nullish fallback boundary input uses strong exact value oracle: expect(...).toBe(...)
 
 Weakness
-  - Related test reaches `pickLabel` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  - Related test reaches `pickLabel` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1
@@ -195,7 +195,7 @@ Evidence
   - related test tests/guards.test.ts:11 yield tail at the boundary uses strong exact value oracle: expect(...).toBe(...)
 
 Weakness
-  - Related test reaches `thresholdsAbove` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator
+  - Related test reaches `thresholdsAbove` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant check
 
 TypeScript preview card (advisory)
   card version: typescript_preview_card.v1

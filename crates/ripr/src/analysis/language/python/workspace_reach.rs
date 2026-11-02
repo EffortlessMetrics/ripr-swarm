@@ -986,9 +986,14 @@ fn fixtures_over(source: &str, needles: &HashSet<String>) -> Vec<String> {
     let aliases = fixture_aliases(&source);
     // A fixture body calls an owner by the local name this file imports it
     // as (`from orders import make_order as build`).
+    // The aliases are few, so they are checked beside the shared needles
+    // instead of merged into a per-file copy: on a suite of thousands of
+    // fixture hosts, that copy cost more than the scan itself.
     let local = imported_aliases(&source, needles);
-    let needles: HashSet<String> = needles.iter().cloned().chain(local).collect();
-    let needles = &needles;
+    let names_needle = |line: &str| {
+        identifier_words(line)
+            .any(|word| needles.contains(word) || local.iter().any(|alias| alias == word))
+    };
     let mut fixtures = Vec::new();
     let mut at = 0;
     while at < lines.len() {
@@ -1035,7 +1040,7 @@ fn fixtures_over(source: &str, needles: &HashSet<String>) -> Vec<String> {
             end += 1;
         }
         let block = &lines[start..end];
-        if block.iter().any(|line| names_any(line, needles)) {
+        if block.iter().any(|line| names_needle(line)) {
             fixtures.push(name.to_string());
             for line in &lines[start..at] {
                 for literal in string_literals(line.trim_start()) {

@@ -10,10 +10,11 @@
 //! tool failure that names the tool and the next step, and the session keeps
 //! serving.
 //!
-//! `ripr_refresh` is not wrapped: worker and language-adapter panics are
-//! already typed `analysis_failed` failures at the analysis boundary (#11132).
-//! Glue panics in `ripr_refresh` itself, `read_resource`, `list_tools` and
-//! `initialize` are not covered (remaining on #11116).
+//! `ripr_refresh` is wrapped for glue panics too (worker and language-adapter
+//! panics are already typed `analysis_failed` failures at the analysis
+//! boundary, #11132). `tools/list` and `resources/read` are contained by the
+//! request-level wrapper in `server.rs` (`contain_request`). The `initialize`
+//! handshake is not claimed: the SDK runs it before the service loop.
 //!
 //! Scope: unwinding panics only. A stack overflow or `abort` ends the process
 //! and cannot be caught here. The panic payload is not echoed to the client:
@@ -44,7 +45,9 @@ impl<F: Future> ContainPanic<F> {
 /// stays usable; state the handler wrote before the panic persists, and a
 /// later call proceeds on it, so a handler that mutates session state across a
 /// possible panic point must order its writes so every intermediate state is
-/// valid. The only mutating tool handler is `ripr_prepare_repair`; it records
+/// valid. The mutating tool handlers are `ripr_prepare_repair` and `ripr_refresh`;
+/// `ripr_refresh` sets `in_flight` behind an `InFlightAttempt` guard that
+/// clears it on unwind. `ripr_prepare_repair` records
 /// the `superseded` tombstones before evicting stale transactions and inserts
 /// the new transaction last, with a fault-injection control at each step.
 impl<F: Future> Future for ContainPanic<F> {

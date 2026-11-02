@@ -50,3 +50,81 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_changed_boundary_dead_expected (5)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording names the changed behavior, not a branch
+
+Command:
+`cargo xtask goldens bless typescript_changed_boundary_dead_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_changed_boundary_dead_expected (6)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording says the adapter cannot confirm observation, not reach
+
+Command:
+`cargo xtask goldens bless typescript_changed_boundary_dead_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_changed_boundary_dead_expected (7)
+
+Reason:
+RIPR-SPEC-0122: script unconfirmed-observation wording states the adapter could not confirm observation without a causal claim
+
+Command:
+`cargo xtask goldens bless typescript_changed_boundary_dead_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_changed_boundary_dead_expected (8)
+
+Reason:
+RIPR-SPEC-0122: no-gap-ID refusal wording re-blessed now that the goldens gate compares it verbatim (#12003)
+
+Command:
+`cargo xtask goldens bless typescript_changed_boundary_dead_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_changed_boundary_dead_expected (9)
+
+Reason:
+RIPR-SPEC-0122: use generated plain wording in default human output
+
+Command:
+`cargo xtask goldens bless typescript_changed_boundary_dead_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_changed_boundary_dead_expected (10)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless typescript_changed_boundary_dead_expected --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

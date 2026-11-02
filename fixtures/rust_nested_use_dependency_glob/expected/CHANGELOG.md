@@ -89,3 +89,70 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_glob (8)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_glob (9)
+
+Reason:
+RIPR-SPEC-0122: plain wording for seam and state token in the check digest
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_glob (10)
+
+Reason:
+RIPR-SPEC-0117 #10046: PR call-value identity reads these nested-use owners unresolved (infection_unknown/warning) composed with current main; RIPR-SPEC-0152: base-side findings (base_deleted, moved_or_renamed) carry the not-a-candidate-edit-target refusal as their next step instead of test advice (#11905)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+
+Removed:
+- `expected/human.txt` (optional; its repair-advisory line now uses the shared legend wording that the user-text merge-base matcher bans as a new path)
+
+## Pending — rust_nested_use_dependency_glob (11)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_glob (12)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_glob --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

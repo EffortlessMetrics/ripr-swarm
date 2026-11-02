@@ -24,8 +24,8 @@
 use super::gaps::GapItem;
 use super::workspace::{
     AttemptFailure, CODE_ANALYSIS_FAILED, CODE_ITEM_NOT_FOUND, CODE_NO_SNAPSHOT,
-    CODE_WORKSPACE_UNAVAILABLE, RECOVERY_REPAIR_TOO_LARGE, Snapshot, WorkspaceSession,
-    bounded_document,
+    CODE_STALE_SNAPSHOT, CODE_WORKSPACE_UNAVAILABLE, RECOVERY_REPAIR_TOO_LARGE, Snapshot,
+    WorkspaceSession, bounded_document,
 };
 use crate::agent::artifact::git_output;
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
@@ -99,6 +99,11 @@ pub(crate) struct SnapshotCardProducers {
     /// omits refuses here with the CLI's own typed `policy_omitted` instead
     /// of projecting a card the CLI would refuse.
     pub(crate) config: RiprConfig,
+    /// The raw Rust bytes the refresh's inventory captured (#7357). The card
+    /// request re-verifies the digests of only the files its evidence is bound
+    /// to, so an edit after the refresh refuses instead of serving a card over
+    /// bytes the snapshot never described.
+    pub(crate) consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
 }
 
 /// One seam bound to one snapshot canonical item at commit time.
@@ -220,12 +225,25 @@ pub(crate) fn gather_seam_inventory(
         })?;
         completeness = match scoped.repo_seam_limit {
             Some(limit) => {
-                super::repair_admission::InventoryCompleteness::from_inventory_limit(limit)
+                // A default-cap cut within the repair ceiling is judged the way
+                // `ripr repair` judges it: rerun once at the exact total (#1887).
+                let widen = matches!(
+                    &limit,
+                    Ok(Some(info)) if crate::app::task_first::repair_widened_cap(info).is_some()
+                );
+                if widen {
+                    super::repair_admission::InventoryCompleteness::from_inventory_limit(
+                        crate::app::task_first::inventory_for_repair(root, config)
+                            .map(|(_, limit_info)| limit_info),
+                    )
+                } else {
+                    super::repair_admission::InventoryCompleteness::from_inventory_limit(limit)
+                }
             }
             // No index was built (the no-impact fast path), so the limit fact
             // is unknown: fall back to the repo-wide authority, fail closed.
             None => super::repair_admission::InventoryCompleteness::from_inventory_limit(
-                crate::analysis::inventory_classified_seams_at_with_config(root, config)
+                crate::app::task_first::inventory_for_repair(root, config)
                     .map(|(_, limit_info)| limit_info),
             ),
         };
@@ -256,7 +274,7 @@ pub(crate) fn bind_snapshot_card_producers(
         candidate_seams,
         completeness,
         config,
-        consumed_sources: _,
+        consumed_sources,
     } = inventory;
     let mut bindings = Vec::new();
     let mut all_candidate_seams = Vec::new();
@@ -303,6 +321,7 @@ pub(crate) fn bind_snapshot_card_producers(
         candidate_seams: all_candidate_seams,
         completeness,
         config,
+        consumed_sources,
     });
     Ok(())
 }
@@ -385,7 +404,12 @@ fn unbound_item_refusal(item: &GapItem, producers: &SnapshotCardProducers) -> At
             "read the item's evidence with ripr_get_gap, or run `ripr agent card` in the repository",
         )
     };
-    match resolve_repair_subject_in(&producers.candidate_seams, policy, &item.finding_id, None) {
+    match resolve_repair_subject_in(
+        &producers.candidate_seams,
+        policy,
+        &item.finding_id,
+        crate::app::task_first::RefusalRoot::implicit(None),
+    ) {
         RepairSubjectOutcome::Seam(seam_id) | RepairSubjectOutcome::Ineligible { seam_id, .. } => {
             producers
                 .candidate_seams
@@ -402,7 +426,7 @@ fn unbound_item_refusal(item: &GapItem, producers: &SnapshotCardProducers) -> At
                 unknown_repair_item_reason(None, &item.finding_id)
             ),
         )),
-        RepairSubjectOutcome::Ambiguous(_) => unbound(),
+        RepairSubjectOutcome::Ambiguous { .. } => unbound(),
     }
 }
 
@@ -486,6 +510,20 @@ impl WorkspaceSession {
                 ),
             )));
         }
+        // A committed snapshot over uncommitted tracked edits withholds cards
+        // for the same reason: the findings read HEAD, the cards live files.
+        if let super::workspace::SourceCustody::CommittedOverUncommitted { reason } =
+            &snapshot.custody
+        {
+            return Err(agent_card_failure(AgentCardError::refusal(
+                AgentCardRefusalKind::IncompleteInventory,
+                format!(
+                    "repair card for canonical item {} is unavailable: {}",
+                    item.canonical_id,
+                    super::workspace::committed_card_withheld_detail(reason)
+                ),
+            )));
+        }
         let Some(producers) = &snapshot.card_producers else {
             return Err(AttemptFailure::new(
                 CODE_NO_SNAPSHOT,
@@ -546,6 +584,29 @@ impl WorkspaceSession {
                 "restart the server with `ripr mcp --stdio --root <repository>` and retry",
             ));
         };
+        // The refresh-time probe and custody are not re-run per read, so a
+        // source edit after the refresh (the server does not watch the
+        // worktree) would otherwise ride a card labeled current. Re-verify the
+        // captured digests of only the files this card's evidence is bound to
+        // (the shared custody owner decides; this adapter reads bytes only).
+        let evidence_paths = crate::app::repair_card_handoff::evidence_probe_paths(entry);
+        if let Some(drift) = producers
+            .consumed_sources
+            .first_drift(evidence_paths.iter().map(PathBuf::as_path), |relative| {
+                std::fs::read(root.join(relative)).ok()
+            })
+        {
+            return Err(AttemptFailure::new(
+                CODE_STALE_SNAPSHOT,
+                format!(
+                    "repair card for canonical item {} is unavailable: {}; the snapshot no longer describes the files on disk",
+                    item.canonical_id,
+                    drift.describe()
+                ),
+                "run ripr_refresh again to analyze the current source, then retry",
+            )
+            .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
+        }
         let readiness = repair_packet_eligibility(entry).readiness;
         let seam_id = entry.seam.id().as_str().to_string();
         // The witness and finding id bind through the shared
@@ -851,6 +912,7 @@ mod tests {
             .unwrap_or_default();
         snapshot.card_producers = Some(SnapshotCardProducers {
             config: RiprConfig::default(),
+            consumed_sources: Default::default(),
             repository_head: "abc123".to_string(),
             bindings: binding.into_iter().collect(),
             candidate_seams,
@@ -879,6 +941,7 @@ mod tests {
         let candidate_seams = vec![binding.seam.clone()];
         snapshot.card_producers = Some(SnapshotCardProducers {
             config: RiprConfig::default(),
+            consumed_sources: Default::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding],
             candidate_seams,
@@ -1320,6 +1383,7 @@ mod tests {
         // item with the bound seam's owner.
         snapshot.card_producers = Some(SnapshotCardProducers {
             config: RiprConfig::default(),
+            consumed_sources: Default::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&entry, "gap:test:1")],
             candidate_seams: vec![entry.clone()],
@@ -1601,6 +1665,7 @@ mod tests {
         let mut session_snapshot = snapshot;
         session_snapshot.card_producers = Some(SnapshotCardProducers {
             config: RiprConfig::default(),
+            consumed_sources: Default::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&inner, producer_id)],
             candidate_seams: candidates.to_vec(),
@@ -1626,6 +1691,7 @@ mod tests {
                 .map_err(|failure| failure.detail)?;
         outer_session_snapshot.card_producers = Some(SnapshotCardProducers {
             config: RiprConfig::default(),
+            consumed_sources: Default::default(),
             repository_head: "abc123".to_string(),
             bindings: vec![binding_for(&outer, producer_id)],
             candidate_seams: candidates.to_vec(),

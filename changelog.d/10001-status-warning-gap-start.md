@@ -1,2 +1,0 @@
-<!-- section: Fixed -->
-- `ripr agent status` no longer says `ripr check` "offers no `ripr agent repair` start" when the routed `ripr check` prints a gap-bound TypeScript start: the `pilot_routed_to_check_no_repair_target` warning now derives from the same gap-start admission `ripr check` uses and names that start. When status cannot confirm a start, it reports that uncertainty and directs the user to the routed check for the current finding and any reason a start is unavailable (#10001, #11040).

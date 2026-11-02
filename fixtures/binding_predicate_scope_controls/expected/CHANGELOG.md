@@ -414,3 +414,75 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — binding_predicate_scope_controls (29)
+
+Reason:
+RIPR-SPEC-0122: #9373 hidden rows name the unknown stage and gloss listed classes
+
+Command:
+`cargo xtask goldens bless binding_predicate_scope_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_predicate_scope_controls (30)
+
+Reason:
+RIPR-SPEC-0122: #10691 plain wording for the default digest's missing-assertion entry and the catch-all change type
+
+Command:
+`cargo xtask goldens bless binding_predicate_scope_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_predicate_scope_controls (31)
+
+Reason:
+RIPR-SPEC-0122 plain wording for the check screen's whole-seam/untied-spot refusals, the stub chooser and the no-static-path Next step (#11619)
+
+Command:
+`cargo xtask goldens bless binding_predicate_scope_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_predicate_scope_controls (32)
+
+Reason:
+RIPR-SPEC-0118 / #10692: plain wording for seam and discriminator in default check and repair-start text; verdicts, identity and JSON fields unchanged
+
+Command:
+`cargo xtask goldens bless binding_predicate_scope_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_predicate_scope_controls (33)
+
+Reason:
+RIPR-SPEC-0122: explain missing input or assertion honestly
+
+Command:
+`cargo xtask goldens bless binding_predicate_scope_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — binding_predicate_scope_controls (34)
+
+Reason:
+RIPR-SPEC-0122: describe classified spots without implying repair eligibility
+
+Command:
+`cargo xtask goldens bless binding_predicate_scope_controls --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

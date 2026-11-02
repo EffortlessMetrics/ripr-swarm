@@ -13,7 +13,9 @@ const CACHE_STATUS_SCHEMA_VERSION: &str = "0.2";
 
 const CACHE_USAGE: &str = "Inspect, export or clear the disposable analysis cache.\n\nUsage:\n  ripr cache status [--root PATH] [--json]\n  ripr cache export [--root PATH] --out NEW_DIRECTORY\n  ripr cache clear [--root PATH] [--dry-run] [--force]";
 
-pub(in crate::cli) const CACHE_EXPORT_HELP: &str = r#"Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
+pub(in crate::cli) const CACHE_EXPORT_HELP: &str = r#"Copy a validated current-input cache snapshot without historical generations.
+
+Usage: ripr cache export [--root PATH] --out NEW_DIRECTORY
 
 Copy a qualified current-input cache snapshot, excluding historical keys,
 unreferenced shards, fingerprint mappings and staging files. The live cache
@@ -35,7 +37,9 @@ this cooperative-filesystem contract. No live-cache history is deleted.
 /// Help body for `ripr cache status`. Also the flag source for unknown-argument
 /// suggestions, so `--json` has to appear as an option-list line, not only
 /// inside the usage brackets.
-pub(in crate::cli) const CACHE_STATUS_HELP: &str = r#"Usage: ripr cache status [--root PATH] [--json]
+pub(in crate::cli) const CACHE_STATUS_HELP: &str = r#"Show cache occupancy and entry health.
+
+Usage: ripr cache status [--root PATH] [--json]
 
 Report the resolved analysis cache directory (RIPR_CACHE_DIR when set,
 otherwise target/ripr/cache under the Cargo workspace root).
@@ -61,7 +65,9 @@ The cache is disposable: deleting it only costs a slower next run. Use
 "#;
 /// Help body for `ripr cache clear`. Also the flag source for unknown-argument
 /// suggestions; keep accepted flags on option-list lines.
-pub(in crate::cli) const CACHE_CLEAR_HELP: &str = r#"Usage: ripr cache clear [--root PATH] [--dry-run] [--force]
+pub(in crate::cli) const CACHE_CLEAR_HELP: &str = r#"Evict ripr cache entries.
+
+Usage: ripr cache clear [--root PATH] [--dry-run] [--force]
 
 Removes only recognized ripr cache layers under the resolved cache directory
 (RIPR_CACHE_DIR when set, otherwise target/ripr/cache under the Cargo workspace
@@ -119,7 +125,9 @@ fn split_root_arg(
             let value = iter
                 .next()
                 .filter(|value| !value.is_empty() && !value.starts_with("--"))
-                .ok_or_else(|| format!("{command} --root requires a path"))?;
+                .ok_or_else(|| {
+                    format!("{command} --root requires a path; pass the path right after --root")
+                })?;
             root = Some(PathBuf::from(value));
         } else {
             rest.push(arg.clone());
@@ -160,7 +168,7 @@ fn cache_dir_for_explicit_root(
     // RIPR_CACHE_DIR governs the cache location.
     if !std::fs::metadata(root).is_ok_and(|metadata| metadata.is_dir()) {
         return Err(format!(
-            "cache root {} is not an existing directory",
+            "cache root {} is not an existing directory; pass an existing directory to `--root`",
             root.display()
         ));
     }
@@ -175,10 +183,10 @@ fn cache_dir_for_explicit_root(
         .any(|component| matches!(component, Component::ParentDir))
     {
         std::fs::canonicalize(root)
-            .map_err(|error| format!("resolve cache root {} failed: {error}", root.display()))?
+            .map_err(|error| format!("resolve cache root {} failed: {error}; check that the path exists and you can read it, then rerun", root.display()))?
     } else {
         std::path::absolute(root)
-            .map_err(|error| format!("resolve cache root {} failed: {error}", root.display()))?
+            .map_err(|error| format!("resolve cache root {} failed: {error}; check that the path exists and you can read it, then rerun", root.display()))?
     };
     Ok(cache_dir_for_root(&workspace_root, env_value))
 }
@@ -331,7 +339,7 @@ fn resolve_cache_dir(root: Option<&Path>) -> Result<PathBuf, String> {
         Some(root) => cache_dir_for_explicit_root(root, env_value),
         None => {
             let current_dir = std::env::current_dir()
-                .map_err(|error| format!("failed to get current dir: {error}"))?;
+                .map_err(|error| format!("failed to get current dir: {error}; run from an existing directory, or pass `--root <dir>`"))?;
             cache_dir_for_current_dir(&current_dir, env_value)
         }
     }
@@ -354,7 +362,7 @@ fn reject_symlinked_ancestor(cache_dir: &Path) -> Result<(), String> {
         match std::fs::symlink_metadata(ancestor) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(format!(
-                    "refusing to clear {}: path component {} is a symlink; no files were removed",
+                    "refusing to clear {}: path component {} is a symlink; no files were removed; point {CACHE_DIR_ENV} at a path without symlinks",
                     cache_dir.display(),
                     ancestor.display()
                 ));
@@ -363,7 +371,7 @@ fn reject_symlinked_ancestor(cache_dir: &Path) -> Result<(), String> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(format!(
-                    "failed to inspect cache path component {}: {error}; no files were removed",
+                    "failed to inspect cache path component {}: {error}; no files were removed; check permissions on that path, then rerun",
                     ancestor.display()
                 ));
             }
@@ -404,13 +412,13 @@ fn classify_cache_root(cache_dir: &Path) -> Result<CacheRoot, String> {
         .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
     {
         return Err(format!(
-            "refusing to clear {display}: it contains a `..` or `.` component; \
-             set {CACHE_DIR_ENV} to an absolute cache path without parent-directory traversal"
+            "refusing to clear {display}: it contains a `..` or `.` component; set \
+             {CACHE_DIR_ENV} to an absolute cache path without parent-directory traversal"
         ));
     }
     if normal_components(cache_dir).len() < 2 {
         return Err(format!(
-            "refusing to clear {display}: a cache root must sit at least two directories below the filesystem root"
+            "refusing to clear {display}: a cache root must sit at least two directories below the filesystem root; set {CACHE_DIR_ENV} to a deeper directory"
         ));
     }
     match std::fs::symlink_metadata(cache_dir) {
@@ -422,7 +430,7 @@ fn classify_cache_root(cache_dir: &Path) -> Result<CacheRoot, String> {
                 .map(|real| symlink_refusal_detail(&real, cfg!(windows)))
                 .unwrap_or_else(|_| "it is a symlink, not a cache directory".to_string());
             Err(format!(
-                "refusing to clear {display}: {resolved}; no files were removed"
+                "refusing to clear {display}: {resolved}; no files were removed; point {CACHE_DIR_ENV} at the real directory"
             ))
         }
         Ok(metadata) if metadata.is_dir() => {
@@ -430,10 +438,12 @@ fn classify_cache_root(cache_dir: &Path) -> Result<CacheRoot, String> {
             Ok(CacheRoot::Present)
         }
         Ok(_) => Err(format!(
-            "refusing to clear {display}: it is not a directory"
+            "refusing to clear {display}: it is not a directory; set {CACHE_DIR_ENV} to a directory, or remove the file"
         )),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(CacheRoot::Missing),
-        Err(error) => Err(format!("failed to inspect {display}: {error}")),
+        Err(error) => Err(format!(
+            "failed to inspect {display}: {error}; check the path exists and you can read it, then rerun"
+        )),
     }
 }
 
@@ -445,7 +455,7 @@ fn layer_from_status(
 ) -> Result<CacheLayerPlan, String> {
     if status.state != "ok" {
         return Err(format!(
-            "refusing to clear {}: cache layer `{name}` inspection is {}; no files were removed",
+            "refusing to clear {}: cache layer `{name}` inspection is {}; no files were removed; run `ripr cache status` to see what is wrong with that layer",
             cache_dir.display(),
             status.state
         ));
@@ -465,13 +475,13 @@ fn build_clear_plan(cache_dir: &Path) -> Result<ClearPlan, String> {
         match std::fs::symlink_metadata(&layer_path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(format!(
-                    "refusing to clear {}: recognized cache layer `{marker}` is a symlink; no files were removed",
+                    "refusing to clear {}: recognized cache layer `{marker}` is a symlink; no files were removed; replace it with a real directory, then rerun",
                     cache_dir.display()
                 ));
             }
             Ok(metadata) if !metadata.is_dir() => {
                 return Err(format!(
-                    "refusing to clear {}: recognized cache layer `{marker}` is not a directory; no files were removed",
+                    "refusing to clear {}: recognized cache layer `{marker}` is not a directory; no files were removed; remove it or move it away, then rerun",
                     cache_dir.display()
                 ));
             }
@@ -487,7 +497,7 @@ fn build_clear_plan(cache_dir: &Path) -> Result<ClearPlan, String> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(format!(
-                    "failed to inspect cache layer {}: {error}; no files were removed",
+                    "failed to inspect cache layer {}: {error}; no files were removed; check permissions on that path, then rerun",
                     layer_path.display()
                 ));
             }
@@ -499,7 +509,7 @@ fn build_clear_plan(cache_dir: &Path) -> Result<ClearPlan, String> {
 fn root_has_entries(cache_dir: &Path) -> Result<bool, String> {
     let mut entries = std::fs::read_dir(cache_dir).map_err(|error| {
         format!(
-            "failed to inspect cache root {}: {error}; no files were removed",
+            "failed to inspect cache root {}: {error}; no files were removed; check permissions on that path, then rerun",
             cache_dir.display()
         )
     })?;
@@ -509,7 +519,7 @@ fn root_has_entries(cache_dir: &Path) -> Result<bool, String> {
         .map(|entry| entry.is_some())
         .map_err(|error| {
             format!(
-                "failed to inspect cache root {}: {error}; no files were removed",
+                "failed to inspect cache root {}: {error}; no files were removed; check permissions on that path, then rerun",
                 cache_dir.display()
             )
         })
@@ -542,18 +552,18 @@ fn layer_count_label(count: usize) -> String {
 fn verify_layer_before_delete(cache_dir: &Path, layer: &CacheLayerPlan) -> Result<(), String> {
     match std::fs::symlink_metadata(&layer.path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
-            "refusing to clear {}: cache layer `{}` became a symlink; no further files were removed",
+            "refusing to clear {}: cache layer `{}` became a symlink; no further files were removed; rerun once nothing else is writing the cache",
             cache_dir.display(),
             layer.name
         )),
         Ok(metadata) if metadata.is_dir() => reject_symlinked_ancestor(&layer.path),
         Ok(_) => Err(format!(
-            "refusing to clear {}: cache layer `{}` is no longer a directory; no further files were removed",
+            "refusing to clear {}: cache layer `{}` is no longer a directory; no further files were removed; rerun once nothing else is writing the cache",
             cache_dir.display(),
             layer.name
         )),
         Err(error) => Err(format!(
-            "refusing to clear {}: cache layer `{}` changed after inspection ({error}); no further files were removed",
+            "refusing to clear {}: cache layer `{}` changed after inspection ({error}); no further files were removed; rerun once nothing else is writing the cache",
             cache_dir.display(),
             layer.name
         )),
@@ -780,7 +790,9 @@ fn parse_export_args(args: &[String]) -> Result<(Option<PathBuf>, PathBuf), Stri
         let value = args
             .next()
             .filter(|value| !value.is_empty() && !value.starts_with("--"))
-            .ok_or_else(|| format!("cache export {arg} requires a path"))?;
+            .ok_or_else(|| {
+                format!("cache export {arg} requires a path; pass the path right after {arg}")
+            })?;
         *slot = Some(PathBuf::from(value));
     }
     Ok((

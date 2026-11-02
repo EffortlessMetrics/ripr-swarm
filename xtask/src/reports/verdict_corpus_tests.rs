@@ -1699,13 +1699,13 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
     // example 10 is in the numpy subject (#7819). Examples 1 to 34 have `py-spec0233-exNN-` cases (the prefix of the
     // spec's draft number, RIPR-SPEC-0233); 35 to 40 were written from the
     // library cases that cite them, 41 from `py-fixtures-deposit` and 42 from
-    // `py-fixtures-fee-boundary`.
+    // `py-fixtures-fee-boundary`, 43 from the `py-coarse-*` cases.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0238")
         .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
-    assert_eq!(spec.in_scope_examples, 42);
+    assert_eq!(spec.in_scope_examples, 43);
     assert!(spec.uncovered.is_empty(), "uncovered: {:?}", spec.uncovered);
     assert_eq!(spec.waived, 0);
     assert!(
@@ -2488,7 +2488,8 @@ fn case_output_refuses_an_unavailable_perl_run_only_for_packet_cases() -> Result
         {"language": "perl", "status": "unavailable", "reason": "ingestion: packet is not valid JSON"}
     ]})
     .to_string();
-    let Err(err) = case_check_output(&stdout, packet_case, "ripr-lang-perl") else {
+    let subject = subject_of(packet_case, b"diff")?;
+    let Err(err) = case_check_output(&stdout, packet_case, "ripr-lang-perl", &subject) else {
         return Err("a packet case with an unavailable Perl run must be refused".to_string());
     };
     assert!(
@@ -2497,8 +2498,219 @@ fn case_output_refuses_an_unavailable_perl_run_only_for_packet_cases() -> Result
     );
     let mut plain_case = packet_case.clone();
     plain_case.perl_facts = None;
-    let check = case_check_output(&stdout, &plain_case, "ripr")?;
+    // Without a packet the unavailable run is a sibling limitation that stays
+    // visible, but the output still has to establish the expected measurement.
+    let mut admitted = measured(&subject, "complete_no_findings");
+    admitted["language_runs"] = json!([
+        {"language": "perl", "status": "unavailable", "reason": "ingestion: packet is not valid JSON"}
+    ]);
+    let check = case_check_output(&admitted.to_string(), &plain_case, "ripr", &subject)?;
     assert_eq!(check["language_runs"][0]["status"], json!("unavailable"));
+    Ok(())
+}
+
+/// The subject the harness fixes for `case` before ripr runs.
+fn subject_of(case: &Case, diff: &[u8]) -> Result<CaseSubject, String> {
+    case_subject(case, diff)
+}
+
+/// A producer-shaped result for `subject`: completion kind, the digest of the
+/// diff it read, and the language the diff routed to.
+fn measured(subject: &CaseSubject, kind: &str) -> Value {
+    json!({
+        "summary": {"changed_files_by_language": [
+            {"language": subject.language, "files": 1}
+        ]},
+        "analysis_outcome": {
+            "analysis_complete": true,
+            "outcome": {
+                "kind": kind,
+                "identity": {"input_identity": format!("sha256:{}", subject.diff_sha256)},
+            }
+        },
+        "language_completeness": {
+            "schema_version": "language_completeness.v1",
+            "mode": "diff",
+            "completeness": "complete",
+            "total_findings": 0,
+            "languages": [{
+                "language": subject.language,
+                "status": "complete_zero",
+                "findings": 0,
+                "limitations": [],
+                "disclosure": "silent",
+            }],
+        },
+        "findings": [],
+    })
+}
+
+fn first_case(dir: &Path) -> Result<Case, String> {
+    let corpus: Corpus = serde_json::from_value(corpus_value(dir)?).map_err(|e| e.to_string())?;
+    corpus
+        .cases
+        .into_iter()
+        .next()
+        .ok_or_else(|| "the corpus has no case".to_string())
+}
+
+/// #11272: `{"findings":[]}`, exit 0, an enabled config or a file count is not
+/// evidence that the expected language analyzed this case's diff.
+#[test]
+fn case_output_requires_affirmative_expected_language_evidence() -> Result<(), String> {
+    let case = first_case(&repo_corpus_dir())?;
+    let subject = subject_of(&case, b"the diff")?;
+    let admit = |check: &Value| case_check_output(&check.to_string(), &case, "ripr", &subject);
+
+    // Admitted: a completed result and a legitimate completed zero result are
+    // both scoreable, and so is an outcome that disclosed its own limits.
+    for kind in [
+        "complete_with_findings",
+        "complete_no_findings",
+        "partial_with_limitations",
+    ] {
+        admit(&measured(&subject, kind))?;
+    }
+
+    let refused = |label: &str, check: Value, needle: &str| -> Result<(), String> {
+        match admit(&check) {
+            Ok(_) => Err(format!("{label} must not establish a measurement")),
+            Err(err) if err.contains(&case.case_id) && err.contains(needle) => Ok(()),
+            Err(err) => Err(format!("{label}: unexpected refusal: {err}")),
+        }
+    };
+    refused(
+        "an empty findings array",
+        json!({"findings": []}),
+        "analysis_outcome",
+    )?;
+    refused(
+        "a failed Rust run with no completion evidence",
+        json!({"findings": [], "language_runs": [{"language": "rust", "status": "unavailable"}]}),
+        "analysis_outcome",
+    )?;
+    for kind in [
+        "no_scope",
+        "no_changed_lines",
+        "unsupported_input",
+        "analysis_failed",
+    ] {
+        refused(kind, measured(&subject, kind), kind)?;
+    }
+    let mut wrong_language = measured(&subject, "complete_no_findings");
+    wrong_language["summary"]["changed_files_by_language"] =
+        json!([{"language": "typescript", "files": 3}]);
+    refused("another language's output", wrong_language, "routed")?;
+    let mut missing_routing = measured(&subject, "complete_no_findings");
+    missing_routing["summary"] = json!({});
+    refused(
+        "no language routing",
+        missing_routing,
+        "changed_files_by_language",
+    )?;
+    let mut duplicated = measured(&subject, "complete_no_findings");
+    duplicated["summary"]["changed_files_by_language"] = json!([
+        {"language": subject.language, "files": 1},
+        {"language": subject.language, "files": 2}
+    ]);
+    refused("duplicate routing", duplicated, "exactly once")?;
+    let mut stale = measured(&subject, "complete_no_findings");
+    stale["analysis_outcome"]["outcome"]["identity"]["input_identity"] = json!("sha256:stale");
+    refused("another diff's result", stale, "sha256:stale")?;
+    let mut unbound = measured(&subject, "complete_no_findings");
+    unbound["analysis_outcome"]["outcome"]["identity"] = json!({});
+    refused("an unbound result", unbound, "input identity")?;
+
+    // Per-language completeness (#11272): the aggregate can read complete while
+    // the expected language's own row is not evidence of a run.
+    for status in [
+        "unavailable",
+        "invalid",
+        "failed",
+        "unsupported",
+        "not_selected",
+        "no_current_scope",
+    ] {
+        let mut skipped = measured(&subject, "complete_no_findings");
+        skipped["language_completeness"]["languages"][0]["status"] = json!(status);
+        refused(status, skipped, status)?;
+    }
+    for status in ["complete", "complete_zero", "partial"] {
+        let mut evidenced = measured(&subject, "complete_no_findings");
+        evidenced["language_completeness"]["languages"][0]["status"] = json!(status);
+        admit(&evidenced)?;
+    }
+    let mut no_projection = measured(&subject, "complete_no_findings");
+    no_projection
+        .as_object_mut()
+        .ok_or("measured output is not an object")?
+        .remove("language_completeness");
+    refused(
+        "a result without the projection",
+        no_projection,
+        "language_completeness",
+    )?;
+    let mut sibling_only = measured(&subject, "complete_no_findings");
+    sibling_only["language_completeness"]["languages"][0]["language"] = json!("perl");
+    refused("a sibling language's row", sibling_only, "no single row")?;
+    Ok(())
+}
+
+/// A sibling language's limitation stays visible beside the expected
+/// language's admitted evidence; it is not relabeled as the case's failure.
+#[test]
+fn case_output_keeps_a_sibling_limitation_beside_admitted_evidence() -> Result<(), String> {
+    let case = first_case(&repo_corpus_dir())?;
+    let subject = subject_of(&case, b"the diff")?;
+    let mut check = measured(&subject, "complete_no_findings");
+    check["language_runs"] = json!([{"language": "perl", "status": "unavailable"}]);
+    let admitted = case_check_output(&check.to_string(), &case, "ripr", &subject)?;
+    assert_eq!(admitted["language_runs"][0]["language"], json!("perl"));
+    Ok(())
+}
+
+#[test]
+fn the_expected_language_is_routed_from_the_anchor_not_the_output() {
+    for (file, language) in [
+        ("src/lib.rs", "rust"),
+        ("pkg/mod.py", "python"),
+        ("src/a.ts", "typescript"),
+        ("src/a.mjs", "javascript"),
+        ("lib/Hostile.pm", "perl"),
+    ] {
+        assert_eq!(expected_language(file), Some(language), "{file}");
+    }
+    assert_eq!(expected_language("Cargo.toml"), None);
+    assert_eq!(expected_language("Makefile"), None);
+}
+
+/// The live boundary: a real `ripr check` result is admitted for the language
+/// its diff routes to, and the same result is refused when the harness expects
+/// another language. Removing the admission at `run_case` fails the second
+/// half; the first half keeps the real producer evidence compatible. It builds
+/// and runs the ripr binary from the workspace target directory, so run it as
+/// `CARGO_TARGET_DIR=$PWD/target cargo test -p xtask -- --ignored run_case_admits`.
+#[test]
+#[ignore = "builds and runs the ripr binary; needs CARGO_TARGET_DIR at the workspace target"]
+fn run_case_admits_the_real_producer_result_only_for_the_routed_language() -> Result<(), String> {
+    let dir = repo_corpus_dir();
+    let case = first_case(&dir)?;
+    let work = crate::tests::temp_dir("verdict-run-case-admission");
+    let (check, _) = run_case(&dir, &case, &work)?;
+    assert_eq!(
+        check["analysis_outcome"]["outcome"]["identity"]["input_identity"]
+            .as_str()
+            .map(|identity| identity.starts_with("sha256:")),
+        Some(true),
+        "{check}"
+    );
+    let Err(err) = run_case_expecting(&dir, &case, &work, Some("python")) else {
+        return Err("a Rust result must not establish a Python measurement".to_string());
+    };
+    assert!(
+        err.contains(&case.case_id) && err.contains("python") && err.contains("routed"),
+        "{err}"
+    );
     Ok(())
 }
 
@@ -2517,7 +2729,8 @@ fn case_output_refuses_incomplete_perl_runs() -> Result<(), String> {
             {"language": "perl", "status": status, "reason": "packet rejected"}
         ]})
         .to_string();
-        let Err(err) = case_check_output(&stdout, case, "ripr-lang-perl") else {
+        let subject = subject_of(case, b"diff")?;
+        let Err(err) = case_check_output(&stdout, case, "ripr-lang-perl", &subject) else {
             return Err(format!("a `{status}` Perl run cannot be scored as silent"));
         };
         assert!(
@@ -2530,7 +2743,9 @@ fn case_output_refuses_incomplete_perl_runs() -> Result<(), String> {
         json!({"findings": [], "language_runs": [{"language": "perl"}]}),
         json!({"findings": [], "language_runs": [{"status": "ok"}]}),
     ] {
-        let Err(_err) = case_check_output(&malformed.to_string(), case, "ripr-lang-perl") else {
+        let subject = subject_of(case, b"diff")?;
+        let Err(_err) = case_check_output(&malformed.to_string(), case, "ripr-lang-perl", &subject)
+        else {
             return Err(format!(
                 "malformed language_runs must be refused: {malformed}"
             ));

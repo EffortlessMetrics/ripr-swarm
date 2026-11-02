@@ -39,7 +39,7 @@ use crate::verification_contracts::{
 };
 
 const REPORT_PATH: &str = "target/ripr/reports/schema-producer-sweep.json";
-const USAGE: &str = "usage: cargo xtask schema-producer-sweep [--rev REV] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...";
+const USAGE: &str = "usage: cargo xtask schema-producer-sweep [--rev REV | --worktree] [--live-replay [--ripr BINARY]] [--artifact SCHEMA[#POINTER]=FILE[#POINTER]]...";
 /// Every JSON file under this directory is a published schema, the same rule
 /// `check-verification-contracts` applies to the working tree.
 const SCHEMAS_PREFIX: &str = "schemas/";
@@ -122,6 +122,15 @@ const BINDINGS: &[Binding] = &[
             "fixtures/evidence-promotion-honesty-corpus/reports/",
             "hand-written `source_report` stimulus read by check-evidence-promotion-honesty, not `ripr check` output",
         )],
+    },
+    Binding {
+        schema_path: "schemas/ripr/check-timeout-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3 in crates/ripr/src/output/limited_check.rs asserts the rendered document's generation, keys, and fact/recovery shapes at the renderer, and check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery in crates/ripr/tests/cli_smoke.rs parses the real CLI bytes of a forced-deadline run; the committed fixture is hand-written (forced-deadline bytes only exist per run), so release replay still passes it with --artifact",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/check-timeout-refusal.valid.json"],
+        excluded: &[],
     },
     Binding {
         schema_path: "schemas/ripr/gate-decision.schema.json",
@@ -289,9 +298,25 @@ struct Artifact {
 }
 
 pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
-    let options = parse_args(args)?;
+    let mut options = parse_args(args)?;
     let root = crate::repo_root()?;
-    let tree = load_tree(&root, &options.rev)?;
+    let tree = if options.worktree {
+        load_worktree(&root)?
+    } else {
+        load_tree(&root, &options.rev)?
+    };
+    if options.live_replay {
+        // Exact-cut replay: run every live producer against the fixture from
+        // this commit, then validate their bytes alongside the corpus.
+        let ripr = options
+            .ripr
+            .clone()
+            .unwrap_or_else(|| root.join("target/debug/ripr"));
+        let specs = crate::schema_cut_replay::produce(&root, &tree.commit, &ripr)?;
+        for spec in &specs {
+            options.artifacts.push(parse_artifact(spec)?);
+        }
+    }
     let report = sweep(&tree, BINDINGS, &options.artifacts)?;
     let text = serde_json::to_string_pretty(&report.packet)
         .map_err(|error| format!("serialize schema producer sweep: {error}"))?;
@@ -324,39 +349,122 @@ pub(crate) fn schema_producer_sweep(args: &[String]) -> Result<(), String> {
     }
 }
 
+/// The sweep's own source and the validators whose behaviour decides its verdict.
+const SWEEP_SOURCES: &[&str] = &[
+    "xtask/src/schema_producer_sweep.rs",
+    "xtask/src/verification_contracts.rs",
+    "xtask/src/exact_schema_json.rs",
+];
+
+/// The changed path that makes `precommit` run the sweep (#12219): a schema, a
+/// committed JSON document (producer goldens and corpora), or the sweep source
+/// and validators. Anything else cannot move a sweep verdict.
+pub(crate) fn sweep_trigger(changed: &[String]) -> Option<&str> {
+    changed.iter().map(String::as_str).find(|path| {
+        path.starts_with("schemas/") || path.ends_with(".json") || SWEEP_SOURCES.contains(path)
+    })
+}
+
+/// Run the committed-document sweep over the working tree when the diff can
+/// move its verdict. Hosted gates run it on the exact commit; this closes the
+/// gap that let a golden gain a member its schema lacked (#12209 -> #12219).
+pub(crate) fn precommit_schema_sweep(changed: &[String]) -> Result<(), String> {
+    // `git diff` never lists a new untracked file, yet the worktree snapshot
+    // includes it: a fresh invalid golden must trigger the sweep too.
+    let mut changed = changed.to_vec();
+    changed.extend(untracked_paths(&crate::repo_root()?)?);
+    let changed = changed.as_slice();
+    let Some(trigger) = sweep_trigger(changed) else {
+        println!(
+            "schema-producer-sweep: skipped, no schema or JSON document changed vs origin/main"
+        );
+        return Ok(());
+    };
+    println!(
+        "schema-producer-sweep: running on the working tree because `{trigger}` changed vs origin/main"
+    );
+    schema_producer_sweep(&["--worktree".to_string()])
+}
+
+/// New, non-ignored, untracked paths (NUL-delimited, so exotic names survive).
+fn untracked_paths(root: &Path) -> Result<Vec<String>, String> {
+    let out = git(root, &["ls-files", "-z", "--others", "--exclude-standard"])?;
+    Ok(String::from_utf8_lossy(&out)
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
 struct Options {
     rev: String,
+    /// Sweep the working tree (tracked plus untracked, not ignored) instead of a
+    /// commit, so `precommit` sees an uncommitted schema/golden edit (#12219).
+    worktree: bool,
     artifacts: Vec<Artifact>,
+    live_replay: bool,
+    ripr: Option<PathBuf>,
 }
 
 fn parse_args(args: &[String]) -> Result<Options, String> {
     let mut rev = "HEAD".to_string();
     let mut artifacts = Vec::new();
+    let mut live_replay = false;
+    let mut worktree = false;
+    let mut rev_given = false;
+    let mut ripr = None;
     let mut remaining = args.iter();
     while let Some(arg) = remaining.next() {
-        let value = remaining.next().ok_or_else(|| USAGE.to_string())?;
-        if arg == "--rev" && !value.is_empty() {
-            rev = value.clone();
+        if arg == "--live-replay" {
+            live_replay = true;
             continue;
         }
-        if arg != "--artifact" {
-            return Err(USAGE.to_string());
+        if arg == "--worktree" {
+            worktree = true;
+            continue;
         }
-        let spec = value;
-        let (schema, file) = spec.split_once('=').ok_or_else(|| USAGE.to_string())?;
-        let (schema_path, schema_pointer) = split_pointer(schema);
-        let (file, subject_pointer) = split_pointer(file);
-        if schema_path.is_empty() || file.is_empty() {
-            return Err(USAGE.to_string());
+        let value = remaining.next().ok_or_else(|| USAGE.to_string())?;
+        match arg.as_str() {
+            "--rev" if !value.is_empty() => {
+                rev = value.clone();
+                rev_given = true;
+            }
+            "--ripr" if !value.is_empty() => ripr = Some(PathBuf::from(value)),
+            "--artifact" => artifacts.push(parse_artifact(value)?),
+            _ => return Err(USAGE.to_string()),
         }
-        artifacts.push(Artifact {
-            schema_path: schema_path.to_string(),
-            schema_pointer,
-            file: PathBuf::from(file),
-            subject_pointer,
-        });
     }
-    Ok(Options { rev, artifacts })
+    if ripr.is_some() && !live_replay {
+        return Err("--ripr only applies with --live-replay".to_string());
+    }
+    if worktree && (rev_given || live_replay) {
+        return Err(
+            "--worktree sweeps uncommitted bytes and cannot combine with --rev or --live-replay (replay binds to an exact commit)"
+                .to_string(),
+        );
+    }
+    Ok(Options {
+        rev,
+        worktree,
+        artifacts,
+        live_replay,
+        ripr,
+    })
+}
+
+fn parse_artifact(spec: &str) -> Result<Artifact, String> {
+    let (schema, file) = spec.split_once('=').ok_or_else(|| USAGE.to_string())?;
+    let (schema_path, schema_pointer) = split_pointer(schema);
+    let (file, subject_pointer) = split_pointer(file);
+    if schema_path.is_empty() || file.is_empty() {
+        return Err(USAGE.to_string());
+    }
+    Ok(Artifact {
+        schema_path: schema_path.to_string(),
+        schema_pointer,
+        file: PathBuf::from(file),
+        subject_pointer,
+    })
 }
 
 fn split_pointer(text: &str) -> (&str, Option<String>) {
@@ -906,9 +1014,47 @@ fn load_tree(root: &Path, rev: &str) -> Result<CandidateTree, String> {
         &["rev-parse", "--verify", &format!("{rev}^{{commit}}")],
     )?;
     let commit = String::from_utf8_lossy(&commit).trim().to_string();
+    archive_json_blobs(root, &commit, commit.clone())
+}
+
+/// Snapshot the working tree (HEAD plus every uncommitted, non-ignored change)
+/// into a tree object through a private index, so the user's index is never
+/// touched, then read it through the same `git archive` path as a commit.
+fn load_worktree(root: &Path) -> Result<CandidateTree, String> {
+    let index = root.join("target/ripr/schema-sweep-worktree.index");
+    if let Some(parent) = index.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create {}: {error}", parent.display()))?;
+    }
+    let _ = fs::remove_file(&index);
+    let index_text = index.to_string_lossy().into_owned();
+    let envs = [("GIT_INDEX_FILE", index_text.as_str())];
+    let run = |args: &[&str]| -> Result<Vec<u8>, String> {
+        let args: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
+        crate::run::capture_process_output_in("git", &args, Some(root), &[], &[], &envs)
+            .map_err(|error| error.message)
+    };
+    let snapshot = (|| {
+        run(&["read-tree", "HEAD"])?;
+        run(&["add", "-A", "--", "."])?;
+        run(&["write-tree"])
+    })();
+    let _ = fs::remove_file(&index);
+    let tree = String::from_utf8_lossy(&snapshot?).trim().to_string();
+    archive_json_blobs(root, &tree, format!("worktree-tree:{tree}"))
+}
+
+fn archive_json_blobs(root: &Path, tree_ish: &str, label: String) -> Result<CandidateTree, String> {
+    let commit = label;
     let archive = git(
         root,
-        &["archive", "--format=tar", &commit, "--", ":(glob)**/*.json"],
+        &[
+            "archive",
+            "--format=tar",
+            tree_ish,
+            "--",
+            ":(glob)**/*.json",
+        ],
     )?;
     let mut files = BTreeMap::new();
     let mut entries = tar::Archive::new(archive.as_slice());
@@ -1600,6 +1746,106 @@ mod tests {
     }
 
     #[test]
+    fn the_worktree_snapshot_sees_uncommitted_edits_and_new_files() -> Result<(), String> {
+        let root = example_root();
+        let golden = root.join("fixtures/a/expected/example.json");
+        write(&golden, r#"{"schema_version":"0.1","status":"pass"}"#);
+        commit(&root)?;
+        // Positive: the committed tree is clean.
+        let clean = load_worktree(&root).and_then(|tree| {
+            sweep(
+                &tree,
+                &[binding(Corpus::FileName("example.json"), &[])],
+                &[],
+            )
+        });
+        // Negative experiment (#12219): an uncommitted golden gains a member
+        // the schema forbids, and a new untracked golden carries the same one.
+        write(
+            &golden,
+            r#"{"schema_version":"0.1","status":"pass","conflicting_expressions":1}"#,
+        );
+        write(
+            &root.join("fixtures/b/expected/example.json"),
+            r#"{"schema_version":"0.1","status":"pass","extra":true}"#,
+        );
+        let tree = load_worktree(&root);
+        let dirty = tree
+            .as_ref()
+            .map_err(Clone::clone)
+            .and_then(|tree| sweep(tree, &[binding(Corpus::FileName("example.json"), &[])], &[]));
+        let index_left_behind = root
+            .join("target/ripr/schema-sweep-worktree.index")
+            .exists();
+        let _ = fs::remove_dir_all(&root);
+        let clean = clean?;
+        if !clean.violations.is_empty() {
+            return Err(format!("clean worktree failed: {:?}", clean.violations));
+        }
+        let dirty = dirty?;
+        let mentions = |needle: &str| dirty.violations.iter().any(|v| v.contains(needle));
+        if !mentions("fixtures/a/expected/example.json")
+            || !mentions("fixtures/b/expected/example.json")
+        {
+            return Err(format!(
+                "uncommitted or untracked drift passed the worktree sweep: {:?}",
+                dirty.violations
+            ));
+        }
+        if index_left_behind {
+            return Err("the private index was not removed".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_untracked_json_file_is_in_the_trigger_inventory() -> Result<(), String> {
+        let root = example_root();
+        commit(&root)?;
+        write(&root.join("fixtures/new/expected/check.json"), "{}");
+        write(&root.join("target/ignored.json"), "{}");
+        let untracked = untracked_paths(&root);
+        let _ = fs::remove_dir_all(&root);
+        let untracked = untracked?;
+        if sweep_trigger(&untracked) != Some("fixtures/new/expected/check.json") {
+            return Err(format!(
+                "untracked golden missed the trigger: {untracked:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_flag_parses_and_refuses_commit_bound_modes() -> Result<(), String> {
+        let ok = parse_args(&["--worktree".to_string()])?;
+        if !ok.worktree {
+            return Err("--worktree did not parse".to_string());
+        }
+        for args in [
+            vec!["--worktree", "--rev", "HEAD"],
+            vec!["--worktree", "--live-replay"],
+        ] {
+            let args: Vec<String> = args.into_iter().map(String::from).collect();
+            if parse_args(&args).is_ok() {
+                return Err(format!("{args:?} must be refused"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sweep_trigger_fires_for_schemas_json_and_the_sweep_source_only() {
+        let hit = |p: &str| sweep_trigger(&[p.to_string()]).is_some();
+        assert!(hit("schemas/ripr/check.schema.json"));
+        assert!(hit("fixtures/x/expected/check.json"));
+        assert!(hit("xtask/src/schema_producer_sweep.rs"));
+        assert!(hit("xtask/src/verification_contracts.rs"));
+        assert!(hit("xtask/src/exact_schema_json.rs"));
+        assert!(!hit("crates/ripr/src/lib.rs"));
+        assert!(!hit("docs/README.md"));
+    }
+
+    #[test]
     fn an_artifact_no_row_claims_fails_instead_of_being_dropped() -> Result<(), String> {
         let root = example_root();
         let artifact = root.join("live.json");
@@ -1706,7 +1952,17 @@ mod tests {
     fn exempt_rows_name_authorities_that_still_exist() -> Result<(), String> {
         // (name, is_test_fn, source). A helper must be defined and called; a
         // test fn must sit directly under `#[test]`.
-        let pins: [(&str, bool, &str); 3] = [
+        let pins: [(&str, bool, &str); 5] = [
+            (
+                "timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3",
+                true,
+                include_str!("../../crates/ripr/src/output/limited_check.rs"),
+            ),
+            (
+                "check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery",
+                true,
+                include_str!("../../crates/ripr/tests/cli_smoke.rs"),
+            ),
             (
                 "assert_manifest_matches_published_schema",
                 false,
@@ -1749,6 +2005,24 @@ mod tests {
                 return Err(format!("no exempt binding cites authority `{name}`"));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn live_replay_flags_parse_and_ripr_requires_replay() -> Result<(), String> {
+        let args = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let parsed = parse_args(&args(&[
+            "--live-replay",
+            "--ripr",
+            "bin/ripr",
+            "--rev",
+            "abc",
+        ]))?;
+        assert!(parsed.live_replay);
+        assert_eq!(parsed.ripr, Some(PathBuf::from("bin/ripr")));
+        assert_eq!(parsed.rev, "abc");
+        assert!(parse_args(&args(&["--ripr", "bin/ripr"])).is_err());
+        assert!(parse_args(&args(&["--live-replay", "--bogus", "x"])).is_err());
         Ok(())
     }
 
