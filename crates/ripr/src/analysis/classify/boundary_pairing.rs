@@ -215,10 +215,18 @@ fn test_pairs_boundary_input_with_oracle(
     let calls_resolve = |text: &str, line: usize| {
         super::call_identity::boundary_owner_calls_resolve(index, owner, test, text, line)
     };
-    let bound_names = boundary_bound_locals(probe, owner, test, activation, scope, &calls_resolve);
     // Computed at most once per test, and only when the entry path is live.
     let own_rows: std::cell::OnceCell<ActivationEvidence> = std::cell::OnceCell::new();
     test.assertions.iter().any(|assertion| {
+        let bound_names = boundary_bound_locals(
+            probe,
+            owner,
+            test,
+            activation,
+            scope,
+            &calls_resolve,
+            assertion.line,
+        );
         if !assertion_admitted(test, assertion)
             || !(assertion_is_discriminating(assertion) || owner_pinned(test, assertion))
         {
@@ -821,6 +829,7 @@ fn boundary_bound_locals(
     activation: &ActivationEvidence,
     scope: super::argument_fold::FoldScope<'_>,
     calls_resolve: &dyn Fn(&str, usize) -> bool,
+    before_assertion_line: usize,
 ) -> Vec<String> {
     // Last binding of a name wins so `let got = gate(10); let got = gate(100)`
     // does not keep the shadowed boundary result. A post-let mutation
@@ -834,15 +843,23 @@ fn boundary_bound_locals(
     // stays on the original line so a quoted boundary argument
     // (`gate("alpha")`) is still visible; mutation walks the mask.
     // Line-start `let` keeps an unmutated binding inside a block pairing.
+    // Mutations on or after `before_assertion_line` must not void an earlier
+    // assertion's valid pairing (#7042 item 1). Bindings are tracked per
+    // brace depth so an inner block's mutation does not void an outer binding
+    // (#7042 item 3).
     let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
     let masked_lines: Vec<&str> = masked.lines().collect();
-    let mut last: Vec<(String, bool)> = Vec::new();
+    let mut last: Vec<(String, u32, bool, bool)> = Vec::new();
+    let mut depth = 0u32;
     let mut pending = String::new();
     for (offset, original_line) in test.body.lines().enumerate() {
+        let line_number = test.start_line + offset;
+        if line_number > before_assertion_line {
+            break;
+        }
         let masked_line = masked_lines.get(offset).copied().unwrap_or(original_line);
         let bound = let_binding_name(masked_line).and_then(|_| let_binding_name(original_line));
         if let Some(name) = bound.as_deref() {
-            let line_number = test.start_line + offset;
             // Only this binding's initializer supplies its result. An
             // unrelated sibling call later on the same physical line must
             // not defeat an otherwise established owner boundary binding.
@@ -863,46 +880,100 @@ fn boundary_bound_locals(
                             probe, owner, test, &call, activation, scope, &result,
                         )
                 });
-            if let Some(existing) = last.iter_mut().find(|(tracked, _)| tracked == name) {
-                existing.1 = is_boundary;
+            if let Some(existing) = last
+                .iter_mut()
+                .find(|(tracked, bind_depth, _, _)| tracked == name && *bind_depth == depth)
+            {
+                existing.2 = is_boundary;
+                existing.3 = true;
             } else {
-                last.push((name.to_string(), is_boundary));
+                last.push((name.to_string(), depth, is_boundary, true));
             }
         }
         pending.push_str(masked_line);
         pending.push('\n');
-        if !masked_line.contains(';') {
-            continue;
+        if masked_line.contains(';') {
+            let mut statements: Vec<&str> = pending.split(';').collect();
+            let incomplete = statements.pop().unwrap_or("");
+            for statement in statements {
+                void_mutated_bound_names(statement, depth, &mut last);
+            }
+            pending = incomplete.to_string();
         }
-        let mut statements: Vec<&str> = pending.split(';').collect();
-        let incomplete = statements.pop().unwrap_or("");
-        for statement in statements {
-            void_mutated_bound_names(statement, &mut last);
+        let depth_before = depth;
+        for ch in masked_line.chars() {
+            match ch {
+                '{' => depth = depth.saturating_add(1),
+                '}' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
         }
-        pending = incomplete.to_string();
+        if depth < depth_before {
+            last.retain(|(_, bind_depth, _, _)| *bind_depth <= depth);
+        }
     }
     if !pending.trim().is_empty() {
-        void_mutated_bound_names(&pending, &mut last);
+        void_mutated_bound_names(&pending, depth, &mut last);
     }
-    last.into_iter()
-        .filter_map(|(name, is_boundary)| is_boundary.then_some(name))
+    visible_boundary_bindings(&last, depth)
+}
+
+/// Names of live boundary bindings visible at `depth` after the scan.
+fn visible_boundary_bindings(last: &[(String, u32, bool, bool)], depth: u32) -> Vec<String> {
+    let mut deepest: std::collections::BTreeMap<String, (u32, bool)> =
+        std::collections::BTreeMap::new();
+    for (name, bind_depth, is_boundary, alive) in last {
+        if !*alive || *bind_depth > depth {
+            continue;
+        }
+        let replace = deepest
+            .get(name)
+            .map(|(seen_depth, _)| *bind_depth >= *seen_depth)
+            .unwrap_or(true);
+        if replace {
+            deepest.insert(name.clone(), (*bind_depth, *is_boundary));
+        }
+    }
+    deepest
+        .into_iter()
+        .filter_map(|(name, (_, is_boundary))| is_boundary.then_some(name))
         .collect()
 }
 
 /// Void live bindings that this `;` statement reassigns or mutably borrows.
 /// The defining `let name = ...` line is an assignment of the boundary
 /// result, not a later mutation, so it is skipped for that name.
-fn void_mutated_bound_names(statement: &str, last: &mut [(String, bool)]) {
+fn void_mutated_bound_names(statement: &str, depth: u32, last: &mut [(String, u32, bool, bool)]) {
     let defining = statement.lines().find_map(let_binding_name);
-    for (tracked, live) in last.iter_mut() {
-        if !*live {
+    let mut mutated = Vec::new();
+    for (tracked, _, _, alive) in last.iter() {
+        if !*alive {
             continue;
         }
         if defining.as_deref() == Some(tracked.as_str()) {
             continue;
         }
-        if segment_mutates_bound_name(statement, tracked) {
-            *live = false;
+        if segment_mutates_bound_name(statement, tracked)
+            && !mutated.iter().any(|seen| seen == tracked)
+        {
+            mutated.push(tracked.clone());
+        }
+    }
+    for name in mutated {
+        let Some(target_depth) = last
+            .iter()
+            .filter(|(tracked, bind_depth, _, alive)| {
+                tracked == &name && *bind_depth <= depth && *alive
+            })
+            .map(|(_, bind_depth, _, _)| *bind_depth)
+            .max()
+        else {
+            continue;
+        };
+        for (tracked, bind_depth, _, alive) in last.iter_mut() {
+            if tracked == &name && *bind_depth == target_depth {
+                *alive = false;
+            }
         }
     }
 }
@@ -2267,6 +2338,161 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "let got: bool = gate(10); assert_eq!(got, true) must pair"
+        );
+    }
+
+    #[test]
+    fn post_assertion_mutation_does_not_void_an_earlier_assertion_pairing() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut late_mut = test_summary(
+            "late_mut",
+            "let mut got = gate(10);\nassert_eq!(got, true);\ngot = false;",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        late_mut.calls[0].line = 1;
+        late_mut.assertions[0].line = 2;
+        late_mut.end_line = 4;
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&late_mut],
+                &ActivationEvidence::default(),
+            ),
+            "a mutation after the assertion must not void pairing for that assertion (#7042 item 1)"
+        );
+        let mut early_mut = test_summary(
+            "early_mut",
+            "let mut got = gate(10);\ngot = false;\nassert_eq!(got, true);",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        early_mut.calls[0].line = 1;
+        early_mut.assertions[0].line = 3;
+        early_mut.end_line = 4;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&early_mut],
+                &ActivationEvidence::default(),
+            ),
+            "pre-assertion mutation must still void the binding (#7004 control)"
+        );
+    }
+
+    #[test]
+    fn block_comment_interior_mutation_does_not_void_the_binding() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut commented = test_summary(
+            "commented",
+            "let got = gate(10);\n/* got = true; */\nassert_eq!(got, true);",
+            vec![call("gate", "let got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        commented.calls[0].line = 1;
+        commented.assertions[0].line = 3;
+        commented.end_line = 4;
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&commented],
+                &ActivationEvidence::default(),
+            ),
+            "a mutation-shaped substring inside a block comment must not void (#7042 item 2)"
+        );
+    }
+
+    #[test]
+    fn inner_block_mutation_does_not_void_an_outer_boundary_binding() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut nested = test_summary(
+            "nested",
+            "let got = gate(10);\n{\n    let mut got = false;\n    got = true;\n}\nassert_eq!(got, true);",
+            vec![call("gate", "let got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        nested.calls[0].line = 1;
+        nested.assertions[0].line = 6;
+        nested.end_line = 7;
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&nested],
+                &ActivationEvidence::default(),
+            ),
+            "inner-scope mutation of a shadow name must not void the outer boundary binding (#7042 item 3)"
+        );
+        let mut inner_assert = test_summary(
+            "inner_assert",
+            "let got = gate(10);\n{\n    let got = true;\n    assert_eq!(got, true);\n}",
+            vec![call("gate", "let got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        inner_assert.calls[0].line = 1;
+        inner_assert.assertions[0].line = 3;
+        inner_assert.end_line = 5;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&inner_assert],
+                &ActivationEvidence::default(),
+            ),
+            "an inner non-boundary shadow assertion must not pair through the outer boundary binding"
+        );
+        let mut sibling_blocks = test_summary(
+            "sibling_blocks",
+            "let got = gate(100);\n{\n    let got = gate(10);\n}\n{\n    assert_eq!(got, true);\n}",
+            vec![
+                call("gate", "let got = gate(100);"),
+                call("gate", "let got = gate(10);"),
+            ],
+            vec![exact("assert_eq!(got, true);")],
+            &["100", "10"],
+        );
+        sibling_blocks.calls[0].line = 1;
+        sibling_blocks.calls[1].line = 2;
+        sibling_blocks.assertions[0].line = 5;
+        sibling_blocks.end_line = 6;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&sibling_blocks],
+                &ActivationEvidence::default(),
+            ),
+            "a sibling block's boundary binding must not pair an outer far-input assertion"
+        );
+        let mut inner_borrow = test_summary(
+            "inner_borrow",
+            "let mut got = gate(10);\n{\n    let r = &mut got;\n    *r = true;\n}\nassert_eq!(got, true);",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        inner_borrow.calls[0].line = 1;
+        inner_borrow.assertions[0].line = 5;
+        inner_borrow.end_line = 6;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&inner_borrow],
+                &ActivationEvidence::default(),
+            ),
+            "a mutable borrow of an outer binding inside a block must void pairing"
         );
     }
 
