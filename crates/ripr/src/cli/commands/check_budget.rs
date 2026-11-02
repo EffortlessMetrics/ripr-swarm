@@ -542,6 +542,9 @@ mod tests {
             "{line}"
         );
         assert!(line.contains("RIPR_GIT_TIMEOUT"), "{line}");
+        let disabled = super::explicit_check_timeout_disclosure(None, false)
+            .ok_or("explicit disable must disclose")?;
+        assert!(disabled.contains("disabled (0)"), "{disabled}");
         assert!(
             super::explicit_check_timeout_disclosure(Some(Duration::from_secs(1)), true).is_none(),
             "repo seam inventory formats skip the check budget disclosure"
