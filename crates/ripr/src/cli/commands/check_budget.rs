@@ -53,11 +53,13 @@ pub(super) fn explicit_check_timeout_disclosure(
     if repo_seam_inventory {
         return None;
     }
-    let budget = budget?;
-    Some(format!(
-        "ripr: check analysis budget {}s covers the analysis worker only; git probing and rendering are outside it (RIPR_GIT_TIMEOUT per invocation).",
-        budget.as_secs()
-    ))
+    Some(match budget {
+        Some(budget) => format!(
+            "ripr: check analysis budget {}s covers the analysis worker only; git probing and rendering are outside it (RIPR_GIT_TIMEOUT per invocation).",
+            budget.as_secs()
+        ),
+        None => "ripr: check analysis budget disabled (0); git probing and rendering still use RIPR_GIT_TIMEOUT per invocation.".to_string(),
+    })
 }
 
 /// Run `work` under `budget`. `None` runs it inline with no thread.
