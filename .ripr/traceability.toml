@@ -20034,6 +20034,27 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0377"
+name = "Repair attempt closeout matrix (R3 slice 1)"
+spec = "docs/specs/RIPR-SPEC-0377-repair-attempt-closeout-matrix.md"
+tests = [
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs::tests::repair_attempt_closeout_matrix_catalog_has_twenty_five_scenarios",
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs::tests::repair_attempt_closeout_matrix_slice_one_exercises_normal_use_rows",
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs::tests::repair_attempt_closeout_matrix_json_and_markdown_agree_on_aggregate",
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs::tests::repair_attempt_closeout_matrix_unexercised_rows_stay_missing_evidence",
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs::tests::explicit_store_resolver_matches_manifest_store",
+]
+code = [
+  "crates/ripr/src/app/repair_attempt_closeout_matrix.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0377-repair-attempt-closeout-matrix.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0283"
 name = "MCP adapter clarity contracts"
 spec = "docs/specs/RIPR-SPEC-0283-mcp-adapter-clarity-contracts.md"
