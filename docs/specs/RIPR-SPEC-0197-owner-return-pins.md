@@ -2445,7 +2445,12 @@ receiving call is itself resolved.
   records no module edge for its target. A withheld file in the
   dependent scope is routed by root only when its own path is a `src/lib.rs`,
   `src/main.rs` or `src/bin/*.rs` root, so named mode matches the full
-  closure; every other withheld site stays workspace-wide. Limits: a
+  closure; every other withheld site stays workspace-wide. Named dependent-scope
+  admission must recover the same disable signals from withheld bytes: a withheld
+  sibling that would use lexical fallback in the full index, and composition
+  spelled through attribute-head comments or non-ASCII gap whitespace after `[`,
+  so crate-root macro routing does not stay path-local when the full index refuses
+  it (#6919). Limits: a
   `[lib]`/`[[bin]]`/`[[test]]` `path` that moves a target is not read, so a
   file at a default target path that some other target includes through
   `#[path]` is still judged by its default root.

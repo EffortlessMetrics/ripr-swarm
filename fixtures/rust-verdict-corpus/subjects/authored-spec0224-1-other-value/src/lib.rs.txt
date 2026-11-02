@@ -1,0 +1,57 @@
+//! RIPR-SPEC-0224 example 1: the related test reaches the Exact arm but
+//! asserts a different value, so the miss is `assertion_not_observing`.
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Op {
+    Exact,
+    Greater,
+    GreaterEq,
+    Caret,
+}
+
+pub struct Comparator {
+    pub op: Op,
+    pub version: String,
+}
+
+pub fn parse(s: &str) -> Comparator {
+    let bytes = s.as_bytes();
+    let (op, rest) = match bytes.first() {
+        Some(&b'>') => match bytes.get(1) {
+            Some(&b'=') => (Op::GreaterEq, &s[2..]),
+            _ => (Op::Greater, &s[1..]),
+        },
+        Some(&b'=') => (Op::Exact, &s[1..]),
+        Some(&b'^') => (Op::Caret, &s[1..]),
+        _ => (Op::Caret, s),
+    };
+    Comparator {
+        op,
+        version: rest.to_string(),
+    }
+}
+
+/// A second Result the related test observes instead of the Exact arm.
+pub fn other_status() -> Result<u8, &'static str> {
+    Ok(1)
+}
+
+/// A third Result so the test has two assertions; a single assertion always
+/// matches a MatchArm probe (`assertion_count == 1`) and would read
+/// `observation_unconfirmed` instead of `assertion_not_observing`.
+pub fn other_flag() -> Result<u8, &'static str> {
+    Ok(2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_comparator_parse() {
+        let _exact = parse("=1.2.3");
+        let _caret = parse("1.2.3-alpha");
+        assert!(matches!(other_status(), Ok(_)));
+        assert!(matches!(other_flag(), Ok(_)));
+    }
+}

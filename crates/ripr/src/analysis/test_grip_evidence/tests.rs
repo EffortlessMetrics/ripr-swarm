@@ -21998,6 +21998,12 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
     for turbofish in [
         "Result::map_err::<_, _>(parse(\"1\"), |_| Fault::Odd)",
         "Result::<u8, Fault>::map_err(parse(\"1\"), |_| Fault::Odd)",
+        "Result::or(parse(\"1\"), Err(Fault::Odd))",
+        "(Result::or(parse(\"1\"), Err(Fault::Odd)))",
+        "parse(\"1\").or(Err(Fault::Odd))",
+        "parse(\"1\").or((Err(Fault::Odd)))",
+        "parse(\"1\").or(Err (Fault::Odd))",
+        "parse(\"1\").or(Err/* c */(Fault::Odd))",
         "((Result::map_err(parse(\"1\"), |_| Fault::Odd)))",
         "parse(\"1\").map_err::<Fault, _>(|_| Fault::Odd)",
     ] {
@@ -22008,6 +22014,18 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
             mapped_turbofish.0,
             StageState::Yes,
             "a turbofish map_err is not a pin on the owner's error: {turbofish}"
+        );
+    }
+    for spelled in [
+        "assert_eq!(parse(\"1\").or(Err (Fault::Odd)), Err(Fault::Odd));",
+        "assert_eq!(parse(\"1\").or(Err/* c */(Fault::Odd)), Err(Fault::Odd));",
+        "assert_eq!(parse(\"1\").or(Err(Fault::Odd)), Err(Fault::Odd));",
+    ] {
+        let spaced = read(&format!("#[test] fn odd() {{ {spelled} }}"))?;
+        assert_ne!(
+            spaced.0,
+            StageState::Yes,
+            "an Err constructor spelled with spacing or a comment is still the test's own error: {spelled}"
         );
     }
     let grouped =
@@ -22032,5 +22050,99 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
         StageState::Yes,
         "an opaque expected value is not a variant pin"
     );
+    Ok(())
+}
+
+/// Residual name-only false credits and missing pins tracked in #8917.
+#[test]
+#[rustfmt::skip]
+fn inherent_receiver_name_only_residual_gaps_issue_8917() -> Result<(), String> {
+    let site = site!("}");
+    let cases: Vec<(String, &str, bool)> = vec![
+        (
+            format!("{site}\nfn Site() -> Cache {{ Cache }}"),
+            "assert_eq!(Site().area(), 1);",
+            false,
+        ),
+        (
+            format!("{site}\nimpl Site {{ pub fn Make() -> Cache {{ Cache }} }}"),
+            "assert_eq!(Site::Make().area(), 1);",
+            false,
+        ),
+        (
+            format!(
+                "{site}\nfn fixture() -> Site {{ Site {{ v: 1 }} }}\n#[cfg(test)]\nmod tests {{\n    use ext::fixture;\n    #[test]\n    fn t() {{ assert_eq!(fixture().area(), 1); }}\n}}\n"
+            ),
+            "__mod_tests__",
+            false,
+        ),
+        (
+            site.to_string(),
+            "type Site = Cache;\n    assert_eq!(Site::new().area(), 1);",
+            false,
+        ),
+        (
+            "pub struct Ledger { balance: u32 }\nimpl Ledger {\n    pub fn new() -> Self { Self { balance: 0 } }\n    pub fn m09(&self) -> u32 { self.balance + 9 }\n}\n".to_string(),
+            "__ledger_m09__",
+            false,
+        ),
+        (
+            format!("{site}\nimpl Other<x::From<u8>> for Site {{ fn from(_: u8) -> Self {{ Site {{ v: 0 }} }} }}"),
+            "assert_eq!(Site::from(1).area(), 1);",
+            false,
+        ),
+        (
+            "#[cfg_attr(test, derive(Default))]\npub struct Site { v: u32 }\nimpl Site { pub fn area(&self) -> u32 { self.v } }".to_string(),
+            "assert_eq!(Site::default().area(), 1);",
+            true,
+        ),
+        (
+            "pub struct Site { v: u32 }\nimpl From<String> for Site { fn from(_: String) -> Self { Site { v: 1 } } }\nimpl Site { pub fn area(&self) -> u32 { self.v } }".to_string(),
+            "assert_eq!(Site::from(String::new()).area(), 1);",
+            true,
+        ),
+    ];
+    for (source, call, expected) in cases {
+        if call == "__mod_tests__" {
+            let index = index_from_files(&[(PathBuf::from("src/lib.rs"), source.as_str())])?;
+            let owner = index
+                .functions()
+                .iter()
+                .find(|f| f.name == "area" && f.item.has_self_param)
+                .ok_or("missing owner")?;
+            let caller = index
+                .tests()
+                .iter()
+                .find(|t| t.name == "t")
+                .ok_or("missing test")?;
+            assert_eq!(
+                crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+                expected,
+                "mod tests fixture import over `{source}`"
+            );
+            continue;
+        }
+        if call == "__ledger_m09__" {
+            let call = "let book = Ledger::new();\n    let book = String::new();\n    assert_eq!(book.m09(), 9);";
+            let (index, _) = receiver_rule_parts(source.as_str(), call)?;
+            let owner = index
+                .functions()
+                .iter()
+                .find(|f| f.name == "m09" && f.item.has_self_param)
+                .ok_or("missing m09 owner")?;
+            let caller = index.tests().iter().find(|t| t.name == "t").ok_or("missing test")?;
+            assert_eq!(
+                crate::analysis::classify::inherent_owner_call_resolves(caller, owner, &index),
+                expected,
+                "live-shadowed Ledger receiver"
+            );
+            continue;
+        }
+        assert_eq!(
+            receiver_resolves(source.as_str(), call)?,
+            expected,
+            "call `{call}` over `{source}`"
+        );
+    }
     Ok(())
 }
