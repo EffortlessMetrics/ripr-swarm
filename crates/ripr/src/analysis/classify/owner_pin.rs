@@ -5249,14 +5249,24 @@ impl OwnerReturnPin {
                                     // on a verified `use claims::..` import.
                                     .or_else(|| {
                                         let (name, call) = claims_payload_call(initializer)?;
-                                        let imported =
-                                            index.files().get(&test.file).is_some_and(|facts| {
-                                                source_imported_claims_macros(
-                                                    &facts.source,
-                                                    Some((test.start_line, test.end_line)),
-                                                )
-                                                .contains(&name)
-                                            });
+                                        // #12462: a doc example's imports are in its own
+                                        // synthetic source, which has no span of the file's;
+                                        // a test reads the holding file at its own lines.
+                                        let imported = match doctest {
+                                            Some(example) => {
+                                                source_imported_claims_macros(example, None)
+                                                    .contains(&name)
+                                            }
+                                            None => {
+                                                index.files().get(&test.file).is_some_and(|facts| {
+                                                    source_imported_claims_macros(
+                                                        &facts.source,
+                                                        Some((test.start_line, test.end_line)),
+                                                    )
+                                                    .contains(&name)
+                                                })
+                                            }
+                                        };
                                         // The macro panics on the other variant and yields
                                         // the payload, so only a pin on that same payload
                                         // reads: an `Err` pin (`ErrVariant`, or a field
