@@ -2453,24 +2453,16 @@ impl RustAdapter {
             oracles::PropertyMacroMentionIndex<'_>,
             classify::TransitiveReachIndex<'_>,
         )> = std::sync::OnceLock::new();
-        // #5464: two widened file-set slots (same capacity as dependent scope)
-        // reuse the Shared OnceLock pattern per slot.
-        let widened_0_files: std::sync::OnceLock<Vec<std::path::PathBuf>> =
-            std::sync::OnceLock::new();
-        let widened_0_index: std::sync::OnceLock<std::sync::Arc<RustIndex>> =
-            std::sync::OnceLock::new();
-        let widened_0_lookups: std::sync::OnceLock<(
-            oracles::PropertyMacroMentionIndex<'_>,
-            classify::TransitiveReachIndex<'_>,
-        )> = std::sync::OnceLock::new();
-        let widened_1_files: std::sync::OnceLock<Vec<std::path::PathBuf>> =
-            std::sync::OnceLock::new();
-        let widened_1_index: std::sync::OnceLock<std::sync::Arc<RustIndex>> =
-            std::sync::OnceLock::new();
-        let widened_1_lookups: std::sync::OnceLock<(
-            oracles::PropertyMacroMentionIndex<'_>,
-            classify::TransitiveReachIndex<'_>,
-        )> = std::sync::OnceLock::new();
+        // #5464: widened witness lookups cached with the same LRU capacity as
+        // [`dependent_scope::NarrowedScope::reach_index`].
+        let mut widened_reach_cache: Vec<(
+            Vec<std::path::PathBuf>,
+            std::sync::OnceLock<std::sync::Arc<RustIndex>>,
+            std::sync::OnceLock<(
+                oracles::PropertyMacroMentionIndex<'_>,
+                classify::TransitiveReachIndex<'_>,
+            )>,
+        )> = Vec::new();
 
         let rust_changed_for_presence = analyzable_changed_files
             .iter()
@@ -2860,6 +2852,7 @@ impl RustAdapter {
                         dependency_edges.as_ref(),
                     ),
                     dependent_scope::ReachIndex::Shared => {
+                        widened_reach_cache.clear();
                         if let Some(shared) = dependent_scope
                             .as_ref()
                             .and_then(dependent_scope::NarrowedScope::shared_reach)
@@ -2884,25 +2877,27 @@ impl RustAdapter {
                         }
                     }
                     dependent_scope::ReachIndex::Widened { index, files } => {
-                        let slot = if widened_0_files.get().is_some_and(|held| held == &files) {
-                            0
-                        } else if widened_1_files.get().is_some_and(|held| held == &files) {
-                            1
-                        } else if widened_0_files.get().is_none() {
-                            0
-                        } else if widened_1_files.get().is_none() {
-                            1
+                        if let Some(position) = widened_reach_cache
+                            .iter()
+                            .position(|(held, _, _)| held == &files)
+                        {
+                            let entry = widened_reach_cache.remove(position);
+                            widened_reach_cache.push(entry);
                         } else {
-                            return Err(
-                                "widened reach cache full before shared index; report this as a ripr bug with the command and workspace shape".to_string(),
-                            );
-                        };
-                        let (files_lock, index_lock, lookups_lock) = if slot == 0 {
-                            (&widened_0_files, &widened_0_index, &widened_0_lookups)
-                        } else {
-                            (&widened_1_files, &widened_1_index, &widened_1_lookups)
-                        };
-                        files_lock.get_or_init(|| files);
+                            if widened_reach_cache.len()
+                                >= dependent_scope::REACH_INDEX_CAPACITY
+                            {
+                                widened_reach_cache.remove(0);
+                            }
+                            widened_reach_cache.push((
+                                files,
+                                std::sync::OnceLock::new(),
+                                std::sync::OnceLock::new(),
+                            ));
+                        }
+                        let (_, index_lock, lookups_lock) = widened_reach_cache
+                            .last()
+                            .expect("widened reach cache holds an entry after insertion");
                         let held = index_lock.get_or_init(|| index);
                         let (mentions, reach) = lookups_lock.get_or_init(|| {
                             (
@@ -4955,14 +4950,21 @@ mod tests {
               }\n",
         );
         let start = TransitiveReachIndex::graph_build_count();
-        let result = dependent_scope::with_forced_mode(DependentScopeMode::NameAdmitted, || {
+        let named = dependent_scope::with_forced_mode(DependentScopeMode::NameAdmitted, || {
             RustAdapter.analyze_diff(
                 &diff_options(root.clone(), AnalysisMode::Draft),
                 &OraclePolicy::default(),
                 &changed,
             )
         })?;
-        let no_static = result
+        let full = dependent_scope::with_forced_mode(DependentScopeMode::Full, || {
+            RustAdapter.analyze_diff(
+                &diff_options(root.clone(), AnalysisMode::Draft),
+                &OraclePolicy::default(),
+                &changed,
+            )
+        })?;
+        let no_static = named
             .findings
             .iter()
             .filter(|finding| finding.class == ExposureClass::NoStaticPath)
@@ -4975,6 +4977,11 @@ mod tests {
             TransitiveReachIndex::graph_build_count() - start,
             1,
             "one widened file set must build one reach graph"
+        );
+        assert_eq!(
+            format!("{:?}", named.findings),
+            format!("{:?}", full.findings),
+            "named and full selection must agree for this fixture"
         );
         fs::remove_dir_all(&root).map_err(|error| format!("remove fixture: {error}"))?;
         Ok(())
