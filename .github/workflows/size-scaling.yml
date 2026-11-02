@@ -24,6 +24,10 @@ on:
         description: "Ref built as the warm-ab candidate (default: this run's commit)"
         required: false
         default: ""
+      control_slowdown:
+        description: "Negative control (#12244): inject candidate times at this ratio of each pin's baseline, 1.0 < ratio <= 10.0. Leave empty for a real measurement; a control run is not one."
+        required: false
+        default: ""
   schedule:
     - cron: "41 7 * * *"
 
@@ -112,9 +116,10 @@ jobs:
         env:
           INPUT_BASELINE: ${{ inputs.baseline_ref }}
           INPUT_CANDIDATE: ${{ inputs.candidate_ref }}
+          INPUT_CONTROL: ${{ inputs.control_slowdown }}
         run: |
           rm -rf target/ripr/warm-ab
-          cargo xtask warm-ab --baseline-ref "$INPUT_BASELINE" --candidate-ref "$INPUT_CANDIDATE" --pins xtask-tests=a58975de,product-rust=af8136f7 --external-pins rust-analyzer,tokio,servo
+          cargo xtask warm-ab ${INPUT_CONTROL:+--control-slowdown "$INPUT_CONTROL"} --baseline-ref "$INPUT_BASELINE" --candidate-ref "$INPUT_CANDIDATE" --pins xtask-tests=a58975de,product-rust=af8136f7 --external-pins rust-analyzer,tokio,servo
 
       - name: Upload warm-ab report
         if: always()

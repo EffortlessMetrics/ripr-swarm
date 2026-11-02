@@ -350,6 +350,76 @@ fn patching_a_builtin_through_the_builtins_module_is_not_read_as_the_builtin() -
 }
 
 #[test]
+fn other_ways_to_reach_the_builtins_module_are_not_read_as_the_builtin() -> Result<(), String> {
+    // Aliased module, `vars()`, `__builtins__`, a call split across lines and
+    // a spaced attribute all rewrite a builtin (#12206).
+    let arm = "def label(x):\n    if isinstance(x, str):\n        return 'text'\n";
+    let patches = [
+        "import builtins as b\nb.isinstance = checker\n\n\n",
+        "import builtins\nvars(builtins)['isinstance'] = checker\n\n\n",
+        "__builtins__.isinstance = checker\n\n\n",
+        "__builtins__['isinstance'] = checker\n\n\n",
+        "import builtins\nbuiltins . isinstance = checker\n\n\n",
+        "import builtins\nsetattr(\n    builtins,\n    'isinstance',\n    checker,\n)\n\n\n",
+        // #12222: annotated, tuple, list and chained targets rebind it too.
+        "import builtins as b\nb.isinstance: object = checker\n\n\n",
+        "import builtins as b\nb.isinstance, other = checker, None\n\n\n",
+        "import builtins as b\nother, b.isinstance = None, checker\n\n\n",
+        "import builtins as b\n(other, b.isinstance) = (None, checker)\n\n\n",
+        "import builtins as b\n[b.isinstance, other] = [checker, None]\n\n\n",
+        "import builtins as b\nother = b.isinstance = checker\n\n\n",
+        // Review of #12452: a later chained tuple, a subscripted annotation or
+        // sibling target, a starred slot and a statement after a `;`.
+        "import builtins as b\nother = (b.isinstance, slot) = checker, None\n\n\n",
+        "import builtins as b\nb.isinstance: list[int] = checker\n\n\n",
+        "import builtins as b\nb.isinstance, slot[0] = checker, None\n\n\n",
+        "import builtins as b\n*b.isinstance, other = [checker, None]\n\n\n",
+        "import builtins as b\nvalue = 1; b.isinstance, other = checker, None\n\n\n",
+        "import builtins as b\nb['isinstance'], other = checker, None\n\n\n",
+        // An escaped quote inside a string must not hide a later statement.
+        "import builtins as b\nlabel = \"say \\\"hi\\\"\"; b.isinstance = checker\n\n\n",
+        "import builtins as b\nlabel = 'it\\'s'; b.isinstance, other = checker, None\n\n\n",
+    ];
+    for patch in patches {
+        let owner = format!("{patch}{arm}");
+        assert_eq!(
+            classify(&owner, OLD_NIL, &test_of("label(3)", "None"))?,
+            ExposureClass::Exposed,
+            "builtins patch must fail closed: {patch:?}"
+        );
+    }
+    // Controls: reading through an alias, comparing, or calling `vars` on
+    // something else patches nothing.
+    for harmless in [
+        "import builtins as b\nlimit = b.len(CHECKS)\n\n\n",
+        "import builtins as b\nsame = b.isinstance == checker\n\n\n",
+        "values = vars(CONFIG)\n\n\n",
+        // #12222 controls: a bare annotation, a read in a tuple on the right,
+        // a keyword argument and a comparison inside a tuple bind nothing.
+        "import builtins as b\nb.isinstance: object\n\n\n",
+        "import builtins as b\nchecks = (b.isinstance, b.len)\n\n\n",
+        "import builtins as b\nchecks = dict(first=b.isinstance, second=b.len)\n\n\n",
+        "import builtins as b\nsame, other = b.isinstance == checker, 1\n\n\n",
+        // A subscript key, a call, a string or a comment before a later `=`.
+        "import builtins as b\nregistry = {}\nregistry[b.isinstance] = 1\n\n\n",
+        "import builtins as b\nassert check(b.isinstance, 3), \"mode=strict\"\n\n\n",
+        "import builtins as b\ncheck(b.isinstance, 3)  # n=1\n\n\n",
+        "import builtins as b\nb.isinstance: object  # a=b\n\n\n",
+        "import builtins as b\nb.isinstance, other; value = 1\n\n\n",
+        "import builtins as b\nlabel = \"say \\\"b.isinstance = 1\\\"\"\n\n\n",
+        "import builtins as b\nfor name in [b.isinstance, b.len]: count = 1\n\n\n",
+    ] {
+        let owner = format!("{harmless}{arm}");
+        assert_eq!(
+            classify(&owner, OLD_NIL, &test_of("label(3)", "None"))?,
+            ExposureClass::WeaklyExposed,
+            "a harmless mention must not suppress the guard: {harmless:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn a_for_body_over_an_empty_literal_never_runs() -> Result<(), String> {
     let body = "def label(items):\n    for item in items:\n        return item + 1\n";
     assert_eq!(

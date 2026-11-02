@@ -446,6 +446,24 @@ pub(crate) fn ts_changed_value_is_observed(
                 // scanning for a qualifying assertion.
                 continue;
             }
+            // RIPR-SPEC-0258 rule 3: a snapshot serializes only the value it names,
+            // so on an effect seam it confirms only when it names the owner
+            // call's result (or a local bound once to it). A snapshot of an
+            // unrelated value, or of an expression the allowlist does not
+            // read, neither confirms here nor falls through to the
+            // side-channel reading below.
+            if assertion.oracle_kind == OracleKind::Snapshot {
+                if ts_snapshot_subject_is_owner_result(
+                    candidate,
+                    assertion,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                ) {
+                    return true;
+                }
+                continue;
+            }
             // (1) Effect-shape oracle kinds confirm unconditionally: these ARE
             // effect observers (mock call expectation, snapshot, whole-object
             // equality capturing persisted state). This decision keys ONLY on
@@ -1708,6 +1726,10 @@ pub(crate) struct TsBoundaryRowContext<'a> {
     pub(crate) workspace_root: Option<&'a Path>,
     /// RIPR-SPEC-0249 rule 1 class pins that read strong for this change.
     pub(crate) pin_facts: Option<&'a PinFacts>,
+    /// The whole edit negates one equality operator of the changed
+    /// comparison (#12281): every input that reaches it takes the other
+    /// branch, so a `typeof` guard is flipped by an input of any kind.
+    pub(crate) equality_negation: bool,
 }
 
 /// One related test's activation of the changed predicate boundary (#5527).
@@ -1787,6 +1809,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         alias_map,
         workspace_root,
         pin_facts,
+        equality_negation,
     } = *context;
     let (left, right, nullish_boundary) = match boundary {
         TsPredicateBoundary::NotPredicate => return TypeScriptPredicateActivation::NotApplicable,
@@ -1878,7 +1901,15 @@ pub(crate) fn ts_predicate_boundary_row_activation(
             let witnessed = if let Some(operand) = left.strip_prefix("typeof ") {
                 // #11196: a `typeof <param> == "<kind>"` guard is witnessed by
                 // an input of that kind, never by the kind's name as a string.
-                typeof_kind_input_reaches_read_argument(&arguments, operand, right, owner)
+                // #12281: when the edit only negates the guard's operator, an
+                // input of any statically written kind takes the other branch.
+                typeof_kind_input_reaches_read_argument(
+                    &arguments,
+                    operand,
+                    right,
+                    owner,
+                    equality_negation,
+                )
             } else if nullish_boundary {
                 // #4104-E2 repair (review thread PRRT_kwDOSiSx0c6mUkkI):
                 // for a nullish-coalescing boundary only the NULLISH
@@ -4939,15 +4970,22 @@ fn last_identifier_segment(operand: &str) -> &str {
 /// `true` when the argument at the parameter a `typeof <param> == "<kind>"`
 /// guard reads is written as a value of exactly that kind (#11196): a function
 /// for `"function"`, a number literal for `"number"`. An input of another kind
-/// can still flip a changed operator, but it cannot tell an edited kind apart,
-/// and the kind's name as a string literal is a string input, not the kind it
-/// names. The parameter must be named by the owner's own signature, and a
-/// type assertion on the argument does not change the value it carries.
+/// cannot tell an edited kind apart, and the kind's name as a string literal
+/// is a string input, not the kind it names. The parameter must be named by
+/// the owner's own signature, and a type assertion on the argument does not
+/// change the value it carries.
+///
+/// `equality_negation` (#12281): when the whole edit negates the guard's
+/// equality operator, every input takes the other branch, so an argument
+/// written with any statically readable kind (`42` against `"function"`)
+/// witnesses the flip. An argument whose kind the text does not fix (an
+/// identifier, a call) still credits nothing.
 fn typeof_kind_input_reaches_read_argument(
     arguments: &[String],
     operand: &str,
     kind: &str,
     owner: &TypeScriptOwner,
+    equality_negation: bool,
 ) -> bool {
     let kind = kind.trim().trim_matches(['"', '\'']);
     let Some(position) = owner
@@ -4960,7 +4998,7 @@ fn typeof_kind_input_reaches_read_argument(
     arguments
         .get(position)
         .and_then(|argument| super::typeof_kind::literal_argument_typeof_kind(argument))
-        .is_some_and(|argument_kind| argument_kind == kind)
+        .is_some_and(|argument_kind| equality_negation || argument_kind == kind)
 }
 
 /// `true` when the boundary literal reaches the argument position the changed
@@ -7188,6 +7226,16 @@ pub(crate) fn classify_resolved_owner(
         typescript_changed_boundary_text(file, &probe_shape.family, old_line_text, line_text);
     let boundary_text = boundary_text.as_ref();
     let predicate_boundary = ts_predicate_boundary(&probe_shape, boundary_text);
+    // #12281: the negation sends every input down the other branch only when
+    // every call evaluates the guard, so it must also be the first statement
+    // of the owner's own body.
+    let boundary_is_equality_negation =
+        typescript_changed_boundary_is_equality_negation(
+            file,
+            &probe_shape.family,
+            old_line_text,
+            line_text,
+        ) && typescript_changed_line_is_first_body_statement(owner, line);
     // #11256: a boundary operand no test call can set names its own limitation.
     let named_limitations_from_derived_operand: Vec<TypeScriptNamedLimitation> =
         derived_boundary_operand_limitation(owner, &predicate_boundary)
@@ -7205,6 +7253,7 @@ pub(crate) fn classify_resolved_owner(
             alias_map,
             workspace_root,
             pin_facts: Some(&pin_facts),
+            equality_negation: boundary_is_equality_negation,
         };
         ts_predicate_boundary_row_activation(&context, candidate)
     };
@@ -8890,6 +8939,266 @@ pub(crate) fn ts_dropped_term_witness(
     } else {
         DroppedTermWitness::Unknown
     }
+}
+
+/// RIPR-SPEC-0258 rule 3: `true` only when the snapshot's asserted subject is
+/// the whole result of one owner call, or a local bound once to it. Allowlist:
+/// anything else (an unrelated value, a member or call on the result, a spy's
+/// recorded calls) is not read and earns no snapshot credit.
+///
+/// A free-function owner is called as `owner(..)` (or through a namespace
+/// receiver or rename local). A method owner is called as `<receiver>.m(..)`
+/// where the receiver is a local the test constructs from the owner's class
+/// and uses only as `<receiver>.<member>(..)`. A bound local must be read only
+/// by its declaration and by `expect(<local>)`, so a destructuring or loop
+/// binding that rewrites it, or any escape, refuses.
+fn ts_snapshot_subject_is_owner_result(
+    candidate: &TypeScriptRelatedCandidate<'_>,
+    assertion: &TypeScriptAssertion,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let test = candidate.test;
+    let Some(observed) = assertion.observed_expression.as_deref() else {
+        return false;
+    };
+    let observed = observed.trim();
+    let owned_names: Vec<String>;
+    let receivers: Vec<String>;
+    let names: Vec<&str>;
+    if matches!(owner.owner_kind, OwnerKind::Method | OwnerKind::ClassMethod) {
+        let constructors =
+            constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
+        let constructed = receiver_names_for_constructor_calls(&test.body_text, &constructors);
+        // The class is only constructed (`new Class(..)`), never patched
+        // through its prototype or passed on, so the method is the owner's.
+        let class_untouched = ts_identifier_is_absent(&test.body_text, "prototype")
+            && constructors
+                .iter()
+                .filter(|name| !name.contains('.'))
+                .all(|name| {
+                    ts_identifier_is_absent(&test.body_text, name)
+                        || ts_identifier_uses_all(&test.body_text, name, |before, after| {
+                            before.trim_end().ends_with("new")
+                                && after.trim_start().starts_with('(')
+                        })
+                });
+        // Each receiver has exactly one declaration (no inner redeclaration,
+        // parameter, catch or loop binding of the name) and is read only as
+        // `<receiver>.<member>(..)`, so nothing rebinds it or replaces the
+        // method.
+        owned_names = constructed
+            .iter()
+            .filter(|receiver| {
+                class_untouched
+                    && ts_receiver_is_constructed_once(&test.body_text, receiver, &constructors)
+            })
+            .map(|receiver| format!("{receiver}.{}", owner.name))
+            .collect();
+        receivers = Vec::new();
+        names = owned_names.iter().map(String::as_str).collect();
+    } else {
+        if local_identifier_declared_in_test_body(&test.body_text, &owner.name) {
+            return false;
+        }
+        receivers = unshadowed_owner_namespace_receivers(test, owner, alias_map, workspace_root);
+        // The owner's bare name counts only when no import binds it to
+        // something else (`import { enqueue as real } from owner` beside
+        // `import { enqueue } from other` leaves `enqueue(..)` unrelated),
+        // and no name the test redeclares locally counts.
+        let bare_is_unrelated =
+            owner_name_shadowed_by_unrelated_import(test, owner, alias_map, workspace_root);
+        names = ts_owner_call_names(candidate, owner, alias_map, workspace_root)
+            .into_iter()
+            .filter(|name| !(bare_is_unrelated && *name == owner.name.as_str()))
+            .filter(|name| !local_identifier_declared_in_test_body(&test.body_text, name))
+            .collect();
+    }
+    if names.is_empty() {
+        return false;
+    }
+    if ts_whole_owner_call_arguments(observed, &names, owner, &receivers).is_some() {
+        return true;
+    }
+    ts_single_declaration_uses(&test.body_text, observed, |before, after| {
+        ts_use_is_expect_argument(before, after)
+    }) && names.iter().any(|name| {
+        ts_observed_local_owner_call_arguments(test, assertion, name, &receivers).is_some()
+    })
+}
+
+/// `true` when every whole-word occurrence of `ident` in `body`'s code (not in
+/// a string or comment, and not a member segment `x.ident`) satisfies
+/// `allowed(text before, text after)`, and there is at least one. A spread
+/// `...ident` is refused, since `({ ...ident } = ..)` binds it.
+fn ts_identifier_uses_all(body: &str, ident: &str, allowed: impl Fn(&str, &str) -> bool) -> bool {
+    let is_ident_char = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    if ident.is_empty() || !ident.chars().all(is_ident_char) {
+        return false;
+    }
+    let masked = ts_mask_literals_and_comments(body);
+    let mut seen = false;
+    for (at, _) in masked.match_indices(ident) {
+        let (Some(before), Some(after)) = (masked.get(..at), masked.get(at + ident.len()..)) else {
+            return false;
+        };
+        if before.chars().next_back().is_some_and(is_ident_char)
+            || after.chars().next().is_some_and(is_ident_char)
+        {
+            continue;
+        }
+        let before_trimmed = before.trim_end();
+        if before_trimmed.ends_with("..") {
+            return false;
+        }
+        if before_trimmed.ends_with('.') {
+            continue;
+        }
+        if !allowed(before, after) {
+            return false;
+        }
+        seen = true;
+    }
+    seen
+}
+
+/// `true` when `ident` has exactly one declaration (`const|let|var ident =`) in
+/// the body's code and every other use satisfies `other_use`. A second
+/// declaration of the name in any scope, a parameter, a `catch` or loop binding,
+/// a destructuring or any assignment makes it refuse.
+fn ts_single_declaration_uses(
+    body: &str,
+    ident: &str,
+    other_use: impl Fn(&str, &str) -> bool,
+) -> bool {
+    let declarations = std::cell::Cell::new(0usize);
+    ts_identifier_uses_all(body, ident, |before, after| {
+        if ts_use_is_declaration(before, after) {
+            declarations.set(declarations.get() + 1);
+            true
+        } else {
+            other_use(before, after)
+        }
+    }) && declarations.get() == 1
+}
+
+/// `true` when `receiver` has exactly one declaration, whose initializer is
+/// exactly `new <Class>(..)` for one of the owner's `constructors` (not a
+/// conditional, logical, call-chain or other expression that merely contains
+/// it), and every other use is `receiver.member(..)`.
+fn ts_receiver_is_constructed_once(body: &str, receiver: &str, constructors: &[String]) -> bool {
+    let declarations = std::cell::Cell::new(0usize);
+    ts_identifier_uses_all(body, receiver, |before, after| {
+        if ts_use_is_declaration(before, after) {
+            declarations.set(declarations.get() + 1);
+            ts_initializer_is_new_of(after, constructors)
+        } else {
+            ts_use_is_member_call(after)
+        }
+    }) && declarations.get() == 1
+}
+
+/// `after` is `= new <Class>(..)` for one of `constructors`, ended by `;`, the
+/// end of the text, or a line break not continued by an operator.
+fn ts_initializer_is_new_of(after: &str, constructors: &[String]) -> bool {
+    let Some(rest) = after.trim_start().strip_prefix('=') else {
+        return false;
+    };
+    let Some(rest) = rest.trim_start().strip_prefix("new") else {
+        return false;
+    };
+    if !rest.starts_with(char::is_whitespace) {
+        return false;
+    }
+    let rest = rest.trim_start();
+    let Some(open) = rest.find('(') else {
+        return false;
+    };
+    let class = rest[..open].trim();
+    if !constructors.iter().any(|name| name == class) {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut end = None;
+    for (index, c) in rest[open..].char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    end = Some(open + index + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(end) = end else {
+        return false;
+    };
+    let trimmed = rest[end..].trim_start_matches([' ', '\t']);
+    if trimmed.is_empty() || trimmed.starts_with(';') {
+        return true;
+    }
+    if !trimmed.starts_with(['\n', '\r']) {
+        return false;
+    }
+    trimmed
+        .trim_start()
+        .chars()
+        .next()
+        .is_none_or(|c| !".([`+-*/%<>=?&|,:!".contains(c))
+}
+
+/// `true` when `ident` occurs nowhere in the body's code as a whole word,
+/// member segments (`x.ident`) included.
+fn ts_identifier_is_absent(body: &str, ident: &str) -> bool {
+    let is_ident_char = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+    let masked = ts_mask_literals_and_comments(body);
+    !masked.match_indices(ident).any(|(at, _)| {
+        let before_ok = masked
+            .get(..at)
+            .and_then(|before| before.chars().next_back())
+            .is_none_or(|c| !is_ident_char(c));
+        let after_ok = masked
+            .get(at + ident.len()..)
+            .and_then(|after| after.chars().next())
+            .is_none_or(|c| !is_ident_char(c));
+        before_ok && after_ok
+    })
+}
+
+/// `const|let|var <ident> = ` (a single `=`).
+fn ts_use_is_declaration(before: &str, after: &str) -> bool {
+    let before = before.trim_end();
+    let keyword = ["const", "let", "var"].iter().any(|keyword| {
+        before.strip_suffix(keyword).is_some_and(|rest| {
+            !rest
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        })
+    });
+    let after = after.trim_start();
+    keyword && after.starts_with('=') && !after.starts_with("==") && !after.starts_with("=>")
+}
+
+/// `expect(<ident>)`.
+fn ts_use_is_expect_argument(before: &str, after: &str) -> bool {
+    before
+        .trim_end()
+        .strip_suffix('(')
+        .is_some_and(|rest| rest.trim_end().ends_with("expect"))
+        && after.trim_start().starts_with(')')
+}
+
+/// `.member(` straight after the identifier.
+fn ts_use_is_member_call(after: &str) -> bool {
+    after.strip_prefix('.').is_some_and(|rest| {
+        let tail = rest.trim_start_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '$');
+        tail.len() < rest.len() && tail.trim_start().starts_with('(')
+    })
 }
 
 /// The value assertions of a related test that see the owner's returned

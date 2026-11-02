@@ -545,6 +545,15 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
     // #8767: same implicit root `ripr check` uses; `--root .` opts out.
     super::check::resolve_implicit_command_root(&mut options.root, options.root_explicit)?;
     ensure_command_root(&options.root, "continue")?;
+    // #12417: an implicit root with no workspace, package or Git top level
+    // above it is just the current directory. Reading that tree to explain
+    // where a repair could start can run for minutes with no output.
+    let unanchored = !options.root_explicit
+        && matches!(
+            super::check::resolve_project_root(std::path::Path::new(".")),
+            Ok(None)
+        )
+        && !package_manifest_above_current_dir();
     match select_continue_attempt(&options.root, options.attempt_id.as_deref()).map_err(
         |error| {
             CommandError::from(super::agent::repair_attempt_input_error(
@@ -665,7 +674,11 @@ fn run_facade_continue(mut options: ContinueFacadeOptions) -> Result<(), Command
                 format!(
                     "no current attempt to continue under {root}: {}. Next: `ripr status --root {root}`; {}",
                     none_available_detail(prepared, terminal, trust_bound, &root),
-                    start_with_repair_clause(&options.root, &root)
+                    if unanchored {
+                        unanchored_start_clause()
+                    } else {
+                        start_with_repair_clause(&options.root, &root)
+                    }
                 ),
             ))
         }
@@ -718,6 +731,28 @@ fn start_fresh_clause(
         ),
         None => start.to_string(),
     }
+}
+
+/// An ordinary package or project manifest at or above the current directory.
+/// `resolve_project_root` anchors on workspaces, Cargo packages and Git top
+/// levels only, so a standalone npm or Python project without Git still reads
+/// as unanchored there; it is a project, and keeps the full explanation.
+fn package_manifest_above_current_dir() -> bool {
+    const MANIFESTS: [&str; 4] = ["package.json", "pyproject.toml", "setup.py", "setup.cfg"];
+    let Ok(start) = std::fs::canonicalize(".") else {
+        return true;
+    };
+    start
+        .ancestors()
+        .any(|dir| MANIFESTS.iter().any(|name| dir.join(name).is_file()))
+}
+
+/// The start tail when an implicit root found no workspace to anchor on
+/// (#12417): the repair selector is not consulted, because it would scan the
+/// whole current directory to answer a question about a project that is not
+/// there.
+fn unanchored_start_clause() -> String {
+    "no workspace, package or Git repository was found above the current directory, so ripr did not look for a repair start; run it from inside your project or pass `--root <dir>`".to_string()
 }
 
 /// The "start with `ripr repair`" tail when `continue` has no attempt (#8766):

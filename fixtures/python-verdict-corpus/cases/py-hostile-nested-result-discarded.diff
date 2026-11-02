@@ -1,0 +1,11 @@
+diff --git a/hostile/nested_discard.py b/hostile/nested_discard.py
+--- a/hostile/nested_discard.py
++++ b/hostile/nested_discard.py
+@@ -1,6 +1,6 @@
+ def tally():
+     def inner(m):
+-        return m + 1
++        return m + 2
+ 
+     inner(3)
+     return 2

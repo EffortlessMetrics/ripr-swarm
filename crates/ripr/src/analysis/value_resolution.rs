@@ -48,39 +48,42 @@ use super::rust_index::{FileFactsView, RustIndex, TestSummary};
 use super::seams::{RepoSeam, RequiredDiscriminator};
 use crate::domain::ValueContext;
 use crate::value_origins::LocatedValueFact as ValueFact;
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// Per-test value facts that do not depend on a specific seam. Built
 /// once per indexed test and reused while classifying every seam.
+/// Identifier and literal strings are interned on the file's
+/// [`FileValueScan`] so tests in one file share one copy of `expected`
+/// / `100` rather than one allocation each (#9494).
 #[derive(Default)]
 pub(crate) struct ValueEnvFacts {
     /// `IDENT -> LITERAL` from `let IDENT = LITERAL;` lines in the
     /// test body (single-test scope).
-    let_bindings: BTreeMap<String, String>,
+    let_bindings: BTreeMap<Arc<str>, Arc<str>>,
     /// Each row of `#[case(L, L, ...)]`. `case_param_names` carries
     /// the test fn's parameter names in source order so a positional
     /// IDENT can be looked up across cases.
-    rstest_cases: Vec<Vec<String>>,
-    case_param_names: Vec<String>,
+    rstest_cases: Vec<Vec<Arc<str>>>,
+    case_param_names: Vec<Arc<str>>,
     /// `IDENT -> [row0_value, row1_value, ...]` from table-driven
     /// `for (IDENT, ...) in [(L, ...), ...]` loops in the test body.
-    table_bindings: BTreeMap<String, Vec<String>>,
+    table_bindings: BTreeMap<Arc<str>, Vec<Arc<str>>>,
     /// `NAME -> LITERAL` from `const NAME: T = LITERAL;` and
     /// `static NAME: T = LITERAL;` at the test's source-file top
     /// level (same-file scope). Shared with every other test in the file.
-    module_constants: Arc<BTreeMap<String, String>>,
+    module_constants: Arc<BTreeMap<Arc<str>, Arc<str>>>,
     /// `IDENT.field -> LITERAL` from same-test struct literals such as
     /// `let case = DiscountCase { amount: 100 };`, plus source-order
     /// invalidations so later shadows do not erase earlier safe calls.
-    struct_field_bindings: BTreeMap<String, StructFieldBinding>,
-    struct_field_invalidations: BTreeMap<String, Vec<SourcePosition>>,
+    struct_field_bindings: BTreeMap<Arc<str>, StructFieldBinding>,
+    struct_field_invalidations: BTreeMap<Arc<str>, Vec<SourcePosition>>,
     /// Direct `IDENT.field = VALUE` writes in the same test. The
     /// binding and write positions keep these facts local to the
     /// exact object, field, and owner-call ordering.
-    field_assignments: BTreeMap<(String, String), Vec<FieldAssignmentBinding>>,
-    local_binding_positions: BTreeMap<String, Vec<SourcePosition>>,
-    field_assignment_invalidations: BTreeMap<String, Vec<SourcePosition>>,
+    field_assignments: BTreeMap<Arc<str>, BTreeMap<Arc<str>, Vec<FieldAssignmentBinding>>>,
+    local_binding_positions: BTreeMap<Arc<str>, Vec<SourcePosition>>,
+    field_assignment_invalidations: BTreeMap<Arc<str>, Vec<SourcePosition>>,
     /// Bare `Path::new(...)` / `PathBuf::from(...)` only count when
     /// the source file imports the std path type by that exact name
     /// and does not define a same-file shadow. Fully qualified std
@@ -92,13 +95,13 @@ pub(crate) struct ValueEnvFacts {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct StructFieldBinding {
     position: SourcePosition,
-    fields: BTreeMap<String, String>,
+    fields: BTreeMap<Arc<str>, Arc<str>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct FieldAssignmentBinding {
     position: SourcePosition,
-    values: Vec<String>,
+    values: Vec<Arc<str>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,18 +121,121 @@ impl SourcePosition {
 /// with many inline tests once for each of those tests.
 #[derive(Default)]
 pub(crate) struct FileValueScan {
-    module_constants: Arc<BTreeMap<String, String>>,
+    module_constants: Arc<BTreeMap<Arc<str>, Arc<str>>>,
     path_constructor_imports: PathConstructorImports,
+    intern: Mutex<InternPool>,
+}
+
+/// Identifier and literal strings retained by one file's value facts.
+/// Tests in that file intern through this pool so equal spellings share
+/// one allocation for the rest of the evidence pass (#9494).
+#[derive(Default)]
+struct InternPool {
+    strings: HashSet<Arc<str>>,
+}
+
+impl InternPool {
+    fn intern(&mut self, s: impl AsRef<str>) -> Arc<str> {
+        let s = s.as_ref();
+        if let Some(existing) = self.strings.get(s) {
+            return Arc::clone(existing);
+        }
+        let interned = Arc::<str>::from(s);
+        self.strings.insert(Arc::clone(&interned));
+        interned
+    }
+
+    fn intern_string_map(&mut self, map: BTreeMap<String, String>) -> BTreeMap<Arc<str>, Arc<str>> {
+        map.into_iter()
+            .map(|(key, value)| (self.intern(&key), self.intern(&value)))
+            .collect()
+    }
+
+    fn intern_string_keys<V>(&mut self, map: BTreeMap<String, V>) -> BTreeMap<Arc<str>, V> {
+        map.into_iter()
+            .map(|(key, value)| (self.intern(&key), value))
+            .collect()
+    }
+
+    fn intern_vec(&mut self, values: Vec<String>) -> Vec<Arc<str>> {
+        values
+            .into_iter()
+            .map(|value| self.intern(&value))
+            .collect()
+    }
+
+    fn intern_struct_bindings(
+        &mut self,
+        bindings: BTreeMap<String, StructFieldBinding>,
+    ) -> BTreeMap<Arc<str>, StructFieldBinding> {
+        bindings
+            .into_iter()
+            .map(|(key, binding)| {
+                (
+                    self.intern(&key),
+                    StructFieldBinding {
+                        position: binding.position,
+                        fields: binding
+                            .fields
+                            .into_iter()
+                            .map(|(field, value)| (self.intern(&field), self.intern(&value)))
+                            .collect(),
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn intern_field_assignments(
+        &mut self,
+        assignments: BTreeMap<(String, String), Vec<FieldAssignmentBinding>>,
+    ) -> BTreeMap<Arc<str>, BTreeMap<Arc<str>, Vec<FieldAssignmentBinding>>> {
+        let mut out: BTreeMap<Arc<str>, BTreeMap<Arc<str>, Vec<FieldAssignmentBinding>>> =
+            BTreeMap::new();
+        for ((object, field), bindings) in assignments {
+            let interned_bindings = bindings
+                .into_iter()
+                .map(|binding| FieldAssignmentBinding {
+                    position: binding.position,
+                    values: binding
+                        .values
+                        .into_iter()
+                        .map(|value| self.intern(&value))
+                        .collect(),
+                })
+                .collect();
+            out.entry(self.intern(&object))
+                .or_default()
+                .insert(self.intern(&field), interned_bindings);
+        }
+        out
+    }
 }
 
 impl FileValueScan {
     pub(crate) fn build(test: &TestSummary, index: &RustIndex) -> Self {
         file_facts_for(test, index)
-            .map(|facts| Self {
-                module_constants: Arc::new(extract_module_constants(&facts.source)),
-                path_constructor_imports: extract_path_constructor_imports(&facts.source),
+            .map(|facts| {
+                let mut intern = InternPool::default();
+                let module_constants =
+                    Arc::new(intern.intern_string_map(extract_module_constants(&facts.source)));
+                Self {
+                    module_constants,
+                    path_constructor_imports: extract_path_constructor_imports(&facts.source),
+                    intern: Mutex::new(intern),
+                }
             })
             .unwrap_or_default()
+    }
+
+    fn intern_lock(&self) -> MutexGuard<'_, InternPool> {
+        self.intern.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Distinct interned strings this file's value facts currently hold.
+    #[cfg(test)]
+    pub(crate) fn interned_string_count(&self) -> usize {
+        self.intern_lock().strings.len()
     }
 }
 
@@ -141,31 +247,92 @@ impl ValueEnvFacts {
         Arc::ptr_eq(&self.module_constants, &other.module_constants)
     }
 
+    /// Whether both facts interned the same string for `ident`'s let-binding
+    /// value, so two tests in one file share that literal's allocation.
+    #[cfg(test)]
+    pub(crate) fn shares_let_binding_value_with(&self, other: &Self, ident: &str) -> bool {
+        match (self.let_bindings.get(ident), other.let_bindings.get(ident)) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            _ => false,
+        }
+    }
+
+    /// Whether both facts share the same interned object/field names for one
+    /// field-assignment key.
+    #[cfg(test)]
+    pub(crate) fn shares_field_assignment_keys_with(
+        &self,
+        other: &Self,
+        object: &str,
+        field: &str,
+    ) -> bool {
+        match (
+            self.field_assignments.get_key_value(object),
+            other.field_assignments.get_key_value(object),
+        ) {
+            (Some((left_object, left_fields)), Some((right_object, right_fields))) => {
+                if !Arc::ptr_eq(left_object, right_object) {
+                    return false;
+                }
+                match (
+                    left_fields.get_key_value(field),
+                    right_fields.get_key_value(field),
+                ) {
+                    (Some((left_field, _)), Some((right_field, _))) => {
+                        Arc::ptr_eq(left_field, right_field)
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn build(test: &TestSummary, file_scan: &FileValueScan, index: &RustIndex) -> Self {
         let body_clean = strip_comments_and_strings(&test.body);
-        let mut let_bindings = extract_let_bindings(&body_clean);
-        if let Some((name, value)) = index.proptest_singleton_value(test) {
-            // The closed property profile preserves the typed String binding
-            // and admits no write/rebinding. Do not teach ordinary lexical
-            // scans that a same-spelled String::new is necessarily standard.
-            let_bindings.insert(name.to_string(), value.to_string());
-        }
-        let (rstest_cases, case_param_names) = extract_rstest_cases(test);
+        let raw_let_bindings = extract_let_bindings(&body_clean);
+        let proptest_singleton = index.proptest_singleton_value(test);
+        let (raw_rstest_cases, raw_case_param_names) = extract_rstest_cases(test);
         let test_param_names = extract_fn_param_names(&body_clean);
-        let table_bindings = extract_table_bindings(&body_clean);
+        let raw_table_bindings = extract_table_bindings(&body_clean);
         let module_constants = Arc::clone(&file_scan.module_constants);
         let path_constructor_imports = file_scan.path_constructor_imports;
-        let (struct_field_bindings, struct_field_invalidations) =
+        let (raw_struct_field_bindings, raw_struct_field_invalidations) =
             extract_struct_field_bindings(&body_clean, test.start_line, &test_param_names);
-        let local_binding_positions = extract_local_binding_positions(&body_clean, test.start_line);
-        let field_assignments =
-            extract_field_assignments(&body_clean, test.start_line, &module_constants);
-        let field_assignment_invalidations = field_assignment_invalidations(
+        let raw_local_binding_positions =
+            extract_local_binding_positions(&body_clean, test.start_line);
+        let raw_field_assignment_invalidations = field_assignment_invalidations(
             &body_clean,
             test.start_line,
             &test_param_names,
-            &local_binding_positions,
+            &raw_local_binding_positions,
         );
+        let raw_field_assignments =
+            extract_field_assignments(&body_clean, test.start_line, &module_constants);
+
+        let mut intern = file_scan.intern_lock();
+        let mut let_bindings = intern.intern_string_map(raw_let_bindings);
+        if let Some((name, value)) = proptest_singleton {
+            // The closed property profile preserves the typed String binding
+            // and admits no write/rebinding. Do not teach ordinary lexical
+            // scans that a same-spelled String::new is necessarily standard.
+            let_bindings.insert(intern.intern(name), intern.intern(value));
+        }
+        let rstest_cases = raw_rstest_cases
+            .into_iter()
+            .map(|row| intern.intern_vec(row))
+            .collect();
+        let case_param_names = intern.intern_vec(raw_case_param_names);
+        let table_bindings = raw_table_bindings
+            .into_iter()
+            .map(|(key, values)| (intern.intern(&key), intern.intern_vec(values)))
+            .collect();
+        let struct_field_bindings = intern.intern_struct_bindings(raw_struct_field_bindings);
+        let struct_field_invalidations = intern.intern_string_keys(raw_struct_field_invalidations);
+        let field_assignment_invalidations =
+            intern.intern_string_keys(raw_field_assignment_invalidations);
+        let local_binding_positions = intern.intern_string_keys(raw_local_binding_positions);
+        let field_assignments = intern.intern_field_assignments(raw_field_assignments);
         Self {
             let_bindings,
             rstest_cases,
@@ -306,8 +473,7 @@ impl<'a> ValueEnv<'a> {
             return assignment
                 .values
                 .iter()
-                .cloned()
-                .map(|value| (value, ValueContext::FunctionArgument))
+                .map(|value| (value.as_ref().to_owned(), ValueContext::FunctionArgument))
                 .collect();
         }
         if let Some((object, field)) = field_projection(expr)
@@ -324,7 +490,7 @@ impl<'a> ValueEnv<'a> {
                 })
             && let Some(value) = binding.fields.get(field)
         {
-            return vec![(value.clone(), ValueContext::FunctionArgument)];
+            return vec![(value.as_ref().to_owned(), ValueContext::FunctionArgument)];
         }
         if !is_simple_identifier(expr) {
             return Vec::new();
@@ -332,14 +498,19 @@ impl<'a> ValueEnv<'a> {
 
         // 2. Let binding.
         if let Some(value) = self.facts.let_bindings.get(expr) {
-            return vec![(value.clone(), ValueContext::FunctionArgument)];
+            return vec![(value.as_ref().to_owned(), ValueContext::FunctionArgument)];
         }
         // 3. Rstest case (positional).
-        if let Some(idx) = self.facts.case_param_names.iter().position(|n| n == expr) {
+        if let Some(idx) = self
+            .facts
+            .case_param_names
+            .iter()
+            .position(|n| n.as_ref() == expr)
+        {
             let mut out = Vec::new();
             for case in &self.facts.rstest_cases {
                 if let Some(value) = case.get(idx) {
-                    out.push((value.clone(), ValueContext::TableRow));
+                    out.push((value.as_ref().to_owned(), ValueContext::TableRow));
                 }
             }
             if !out.is_empty() {
@@ -350,12 +521,12 @@ impl<'a> ValueEnv<'a> {
         if let Some(values) = self.facts.table_bindings.get(expr) {
             return values
                 .iter()
-                .map(|v| (v.clone(), ValueContext::TableRow))
+                .map(|v| (v.as_ref().to_owned(), ValueContext::TableRow))
                 .collect();
         }
         // 5. Same-file const/static.
         if let Some(value) = self.facts.module_constants.get(expr) {
-            return vec![(value.clone(), ValueContext::FunctionArgument)];
+            return vec![(value.as_ref().to_owned(), ValueContext::FunctionArgument)];
         }
         Vec::new()
     }
@@ -377,7 +548,8 @@ impl<'a> ValueEnv<'a> {
         let assignment = self
             .facts
             .field_assignments
-            .get(&(object.to_string(), field.to_string()))?
+            .get(object)?
+            .get(field)?
             .iter()
             .filter(|assignment| {
                 local_binding.at_or_before(assignment.position)
@@ -982,7 +1154,16 @@ fn extract_struct_field_bindings(
         }
         let fields = extract_struct_literal_fields(rhs);
         if !fields.is_empty() {
-            out.insert(ident.to_string(), StructFieldBinding { position, fields });
+            out.insert(
+                ident.to_string(),
+                StructFieldBinding {
+                    position,
+                    fields: fields
+                        .into_iter()
+                        .map(|(name, value)| (Arc::<str>::from(name), Arc::<str>::from(value)))
+                        .collect(),
+                },
+            );
         } else {
             push_invalidation(&mut invalidations, ident, position);
         }
@@ -1026,7 +1207,7 @@ fn extract_local_binding_positions(
 fn extract_field_assignments(
     body: &str,
     start_line: usize,
-    module_constants: &BTreeMap<String, String>,
+    module_constants: &BTreeMap<Arc<str>, Arc<str>>,
 ) -> BTreeMap<(String, String), Vec<FieldAssignmentBinding>> {
     let mut assignments: BTreeMap<(String, String), Vec<FieldAssignmentBinding>> = BTreeMap::new();
     let mut line_offset = 0;
@@ -1056,7 +1237,7 @@ fn extract_field_assignments(
                 .or_default()
                 .push(FieldAssignmentBinding {
                     position: position_at_offset(body, assignment_offset, start_line),
-                    values,
+                    values: values.into_iter().map(Arc::<str>::from).collect(),
                 });
             segment_offset += segment.len() + 1;
         }
@@ -1067,7 +1248,7 @@ fn extract_field_assignments(
 
 fn resolve_field_assignment_values(
     rhs: &str,
-    module_constants: &BTreeMap<String, String>,
+    module_constants: &BTreeMap<Arc<str>, Arc<str>>,
 ) -> Vec<String> {
     let rhs = rhs.trim();
     if looks_like_literal(rhs) {
@@ -1513,25 +1694,12 @@ fn extract_rstest_case_params(test: &TestSummary) -> (Vec<Vec<String>>, Vec<FnPa
     (cases, params)
 }
 
-/// The values rstest `#[case(..)]` rows bind to the test parameter
-/// `ident`, one per row, for the check-path activation stage (which can
-/// promote a finding to `exposed`). Fails closed to no values when the
-/// parameter is `mut` or anything in the body may rebind the name before
-/// the owner call: a `let` (simple or pattern), a `for`, `if let` or
-/// `while let` binding, a closure parameter or a match arm. A nested
-/// `fn` item also binds nothing: an owner call inside it reads that fn's
-/// own parameters, which the case rows do not bind.
-pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<String> {
+fn test_case_bound_context(test: &TestSummary, ident: &str) -> Option<(Vec<Vec<String>>, usize)> {
     if !test.nested_fn_names.is_empty() {
-        return Vec::new();
+        return None;
     }
-    // Parser authority first: the case parameter must be the only binding
-    // of `ident` anywhere in the test (a char or raw-string literal cannot
-    // hide a later `let` from the parser), and an unparsable body binds
-    // nothing. The lexical scan below still covers bindings written inside
-    // macro token trees, which the parser does not expand.
     if crate::analysis::syntax::fn_name_binding_count(&test.body, ident) != Some(1) {
-        return Vec::new();
+        return None;
     }
     let cleaned = strip_comments_and_strings(&test.body);
     let rebound = find_all(&cleaned, "let ").into_iter().any(|start| {
@@ -1543,15 +1711,48 @@ pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<S
         .is_empty()
         || !non_let_shadowing_lines(&cleaned, ident, test.start_line).is_empty();
     if rebound {
-        return Vec::new();
+        return None;
     }
     let (cases, params) = extract_rstest_case_params(test);
-    let Some(position) = params.iter().position(|param| param.name == ident) else {
+    let position = params.iter().position(|param| param.name == ident)?;
+    if params[position].is_mut {
+        return None;
+    }
+    Some((cases, position))
+}
+
+/// Number of rstest `#[case(..)]` rows on `test`.
+pub(crate) fn rstest_case_row_count(test: &TestSummary) -> usize {
+    let (cases, _) = extract_rstest_case_params(test);
+    cases.len()
+}
+
+/// The raw `#[case]` cell bound to `ident` at `case_index`, when the
+/// parameter passes the same fail-closed guards as [`test_case_bound_literals`].
+pub(crate) fn test_case_bound_cell(
+    test: &TestSummary,
+    ident: &str,
+    case_index: usize,
+) -> Option<String> {
+    let (cases, position) = test_case_bound_context(test, ident)?;
+    cases
+        .get(case_index)
+        .and_then(|case| case.get(position))
+        .map(|value| value.trim().to_string())
+}
+
+/// The values rstest `#[case(..)]` rows bind to the test parameter
+/// `ident`, one per row, for the check-path activation stage (which can
+/// promote a finding to `exposed`). Fails closed to no values when the
+/// parameter is `mut` or anything in the body may rebind the name before
+/// the owner call: a `let` (simple or pattern), a `for`, `if let` or
+/// `while let` binding, a closure parameter or a match arm. A nested
+/// `fn` item also binds nothing: an owner call inside it reads that fn's
+/// own parameters, which the case rows do not bind.
+pub(crate) fn test_case_bound_literals(test: &TestSummary, ident: &str) -> Vec<String> {
+    let Some((cases, position)) = test_case_bound_context(test, ident) else {
         return Vec::new();
     };
-    if params[position].is_mut {
-        return Vec::new();
-    }
     cases
         .iter()
         .filter_map(|case| case.get(position).map(|value| value.trim().to_string()))
