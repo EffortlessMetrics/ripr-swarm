@@ -583,7 +583,19 @@ const CONTRACTS: &[VerificationContract] = &[
     },
 ];
 
-pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String> {
+/// Counts reported by the corpus-derived producer pass (#3919).
+pub(crate) struct CorpusGateCounts {
+    pub producer_discovered: usize,
+    pub producer_validated: usize,
+    pub edge_validated: usize,
+    pub summary_lines: Vec<String>,
+}
+
+pub(crate) fn check_verification_contracts_with_hooks(
+    args: &[String],
+    corpus_gate: impl FnOnce(&Path) -> Result<CorpusGateCounts, String>,
+    corpus_derived_contract: impl Fn(&str, Option<&str>) -> bool,
+) -> Result<(), String> {
     if !args.iter().all(|arg| arg == "--check") {
         return Err("usage: cargo xtask check-verification-contracts [--check]".to_string());
     }
@@ -623,10 +635,28 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         &audit,
     ));
 
+    let corpus_counts = corpus_gate(&root)?;
+    for line in &corpus_counts.summary_lines {
+        println!("verification corpus: {line}");
+    }
+
     let mut subjects_checked = 0usize;
     for contract in CONTRACTS {
         let schema = read_json(root.join(contract.schema_path))?;
         validate_schema_document(contract.schema_path, &schema, &mut violations);
+
+        if corpus_derived_contract(contract.schema_path, contract.schema_pointer) {
+            let doc = read_text(root.join(contract.doc_path))?;
+            for marker in contract.doc_markers {
+                if !doc.contains(&format!("`{marker}`")) {
+                    violations.push(format!(
+                        "{} does not document schema field `{marker}`",
+                        contract.doc_path
+                    ));
+                }
+            }
+            continue;
+        }
 
         let exact_schema = read_exact_json(root.join(contract.schema_path))?;
         let subschema = match contract.schema_pointer {
@@ -717,8 +747,16 @@ pub(crate) fn check_verification_contracts(args: &[String]) -> Result<(), String
         // The audited count is reported beside the contract count so a run
         // cannot imply coverage of an inventory it never enumerated.
         println!(
-            "verification contracts: checked {} contracts over {subjects_checked} producer subjects; audited {} published schemas",
-            CONTRACTS.len(),
+            "verification contracts: checked {} supplemental contracts over {subjects_checked} hand-maintained subjects; corpus {} producer subjects discovered, {} validated, {} edge fixture(s); audited {} published schemas",
+            CONTRACTS
+                .iter()
+                .filter(|contract| {
+                    !corpus_derived_contract(contract.schema_path, contract.schema_pointer)
+                })
+                .count(),
+            corpus_counts.producer_discovered,
+            corpus_counts.producer_validated,
+            corpus_counts.edge_validated,
             published_schemas.len()
         );
         Ok(())
@@ -2052,6 +2090,22 @@ fn compact_json(value: &Value) -> String {
 mod tests {
     use super::*;
 
+    fn check_verification_contracts(args: &[String]) -> Result<(), String> {
+        check_verification_contracts_with_hooks(
+            args,
+            |root| {
+                let summary = crate::schema_producer_sweep::verification_corpus_gate_check(root)?;
+                Ok(CorpusGateCounts {
+                    producer_discovered: summary.producer_discovered,
+                    producer_validated: summary.producer_validated,
+                    edge_validated: summary.edge_validated,
+                    summary_lines: summary.summary_lines,
+                })
+            },
+            crate::schema_producer_sweep::contract_subjects_owned_by_corpus_gate,
+        )
+    }
+
     fn parse_exact_text(text: &str) -> Result<ExactValue, String> {
         crate::exact_schema_json::parse(text.as_bytes())
     }
@@ -2982,6 +3036,19 @@ mod tests {
             Err(err) => err,
         };
         assert!(err.contains("usage: cargo xtask check-verification-contracts"));
+    }
+
+    #[test]
+    fn check_verification_contracts_surfaces_corpus_gate_failures() {
+        let err = match check_verification_contracts_with_hooks(
+            &["--check".to_string()],
+            |_| Err("verification corpus gate failed: fixture".to_string()),
+            |_, _| false,
+        ) {
+            Ok(()) => "corpus gate errors must fail the required command".to_string(),
+            Err(err) => err,
+        };
+        assert!(err.contains("verification corpus gate failed"), "{err}");
     }
 
     #[test]

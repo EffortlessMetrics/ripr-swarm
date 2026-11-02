@@ -145,8 +145,8 @@ every run, and on pull requests and merge groups also `pr-evidence`
 unparseable artifact fails the step, so a producer that stops writing cannot
 turn a row into `not_run`. A producer that drifts from its published schema
 (for example renaming a `doctor` field) fails the gate with
-`missing required field` / `unexpected field`. Replacing the required gate's
-hand-picked subject selection is still #3919.
+`missing required field` / `unexpected field`. Replacing the required gate's hand-picked subject selection landed in #3919; the
+release sweep remains the commit-bound qualification replay (#3920).
 
 Reviewed narrower authority (#9561): `repair-attempt` and `execution_result`
 need an agent repair transaction, which is too heavy to add to the required
