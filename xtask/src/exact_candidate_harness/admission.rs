@@ -82,11 +82,14 @@ pub(crate) fn admit_installed_binary(
     })
 }
 
+/// Commit embedded in a `ripr --version` line: `ripr 0.11.0 (<sha>)`.
 pub(crate) fn version_commit(reported: &str) -> Option<String> {
-    reported
-        .split_whitespace()
-        .find(|token| token.len() == 40 && token.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .map(|token| token.to_ascii_lowercase())
+    let (_, tail) = reported.rsplit_once('(')?;
+    let sha = tail.strip_suffix(')')?.trim();
+    if sha.is_empty() || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(sha.to_ascii_lowercase())
 }
 
 pub(crate) fn snapshot_admitted_binary(

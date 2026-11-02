@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::admission::admit_installed_binary;
+use super::admission::{admit_installed_binary, version_commit};
 use super::model::{
     Aggregate, BinaryIdentity, CandidateProofControl, CandidateProofPacket, CandidateProofRow,
     HarnessExecutionState, HostIdentity, InputDigest, SCHEMA, SubjectCounts, render_json,
@@ -161,6 +161,40 @@ fn portable_root_token_preserves_semantic_cwd() -> TestResult {
 }
 
 #[test]
+fn version_commit_parses_parenthesized_version_line() -> TestResult {
+    let sha = "c7d6b397c5ea11d121800e32af890856f252d097";
+    let line = format!("ripr 0.11.0 ({sha})");
+    if version_commit(&line).as_deref() != Some(sha) {
+        return Err("expected commit from parenthesized version line".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn instrument_failure_rows_do_not_count_as_executed() -> TestResult {
+    let rows = vec![CandidateProofRow {
+        id: "broken".to_string(),
+        state: HarnessExecutionState::InstrumentFailure,
+        detail: "fixture setup failed".to_string(),
+        argv: Vec::new(),
+        cwd: ROOT_TOKEN.to_string(),
+        inputs: Vec::new(),
+        stdout_sha256: String::new(),
+        stderr_sha256: String::new(),
+        artifact_sha256: None,
+        cleanup: "not_created".to_string(),
+    }];
+    let counts = subject_counts(&rows);
+    if counts.executed != 0 {
+        return Err(format!(
+            "instrument failure must not increment executed; got {:?}",
+            counts
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn admit_options_reject_version_mismatch() -> TestResult {
     let dir = tempfile_root("admit-version")?;
     let script = dir.join("fake-ripr");
@@ -177,6 +211,27 @@ fn admit_options_reject_version_mismatch() -> TestResult {
     };
     if admit_installed_binary(&script, &options).is_ok() {
         return Err("wrong version string must fail admission".to_string());
+    }
+    let commit = "c7d6b397c5ea11d121800e32af890856f252d097";
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\necho \"ripr 0.11.0 ({commit})\"\n"),
+    )
+    .map_err(|error| error.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .map_err(|error| error.to_string())?;
+    }
+    let options = AdmitOptions {
+        expected_commit: Some(commit.to_string()),
+        ..AdmitOptions::default()
+    };
+    if admit_installed_binary(&script, &options).is_err() {
+        return Err(
+            "parenthesized commit in version line must satisfy expected_commit".to_string(),
+        );
     }
     Ok(())
 }

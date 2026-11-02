@@ -26,6 +26,7 @@ xtask/src/main.rs|expect(clippy::unwrap_used)|1|xtask test module: production pa
 xtask/src/no_panic.rs|expect(clippy::unwrap_used)|1|no-panic test module (extracted from main.rs in the #2119 decomposition): production paths receipted via policy/no-panic-allowlist.toml; tests share one module-level expect.
 xtask/src/product_gate_plan.rs|allow(dead_code)|1|Canonical product-gate authority is introduced before workflow consumers migrate; the next slice will consume it for observational parity.
 xtask/src/verification_allocation_adapter.rs|expect(dead_code)|1|#4707: Stage B advisory adapter library surface lands before optional xtask command wiring; tests are the first consumer.
+xtask/src/exact_candidate_harness/model.rs|expect(dead_code)|1|#4510: shared exact-candidate DTO and render surface for successor qualification corpora before #4507/#4515 consumers land.
 xtask/src/types.rs|allow(dead_code)|3|Test-only types (CheckStatus/CheckViolation/CheckReport) used via super::* glob in tests.rs; dead in non-test builds
 crates/ripr/src/config.rs|expect(clippy::expect_used)|1|Test module: asserts expected config diagnostics via `.expect_err("why")`; the failure mode stays part of the assertion message.
 crates/ripr/src/git.rs|expect(clippy::expect_used)|1|Test module: failure-path tests assert an expected `Err` via `.expect_err("why")`, making the expected failure mode part of the assertion message.

@@ -3,7 +3,7 @@
 
 #![expect(
     dead_code,
-    reason = "policy:4510-harness-api: shared DTO and render surface for successor qualification corpora"
+    reason = "policy:4510-harness-api: #4510 shared DTO and render surface for successor qualification corpora"
 )]
 
 use serde::Serialize;

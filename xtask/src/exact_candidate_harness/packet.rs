@@ -10,7 +10,13 @@ pub(crate) fn subject_counts(rows: &[CandidateProofRow]) -> SubjectCounts {
     let selected = rows.len();
     let executed = rows
         .iter()
-        .filter(|row| !matches!(row.state, super::model::HarnessExecutionState::NotRun))
+        .filter(|row| {
+            !matches!(
+                row.state,
+                super::model::HarnessExecutionState::NotRun
+                    | super::model::HarnessExecutionState::InstrumentFailure
+            )
+        })
         .count();
     let passed = rows.iter().filter(|row| row.state.is_pass()).count();
     let failed = rows
