@@ -3875,9 +3875,22 @@ fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-fn ident_boundary(bytes: &[u8], start: usize, end: usize) -> bool {
-    let before_ok = start == 0 || !bytes.get(start - 1).copied().is_some_and(is_ident_byte);
-    let after_ok = end >= bytes.len() || !bytes.get(end).copied().is_some_and(is_ident_byte);
+/// Whether `ch` continues a Rust identifier (Unicode `XID_Continue`, plus `_`).
+fn ident_continues(ch: char) -> bool {
+    ch == '_' || ch.is_ascii_alphanumeric() || unicode_ident::is_xid_continue(ch)
+}
+
+fn ident_boundary(text: &str, start: usize, end: usize) -> bool {
+    let before_ok = start == 0
+        || text
+            .get(..start)
+            .and_then(|before| before.chars().next_back())
+            .is_none_or(|ch| !ident_continues(ch));
+    let after_ok = end >= text.len()
+        || text
+            .get(end..)
+            .and_then(|after| after.chars().next())
+            .is_none_or(|ch| !ident_continues(ch));
     before_ok && after_ok
 }
 
@@ -4073,13 +4086,13 @@ fn last_let_statement<'a>(body: &'a str, binding: &str) -> Option<&'a str> {
         while i < bytes.len() && bytes[i].is_ascii_whitespace() {
             i += 1;
         }
-        if body[i..].starts_with("mut") && ident_boundary(bytes, i, i + 3) {
+        if body[i..].starts_with("mut") && ident_boundary(body, i, i + 3) {
             i += 3;
             while i < bytes.len() && bytes[i].is_ascii_whitespace() {
                 i += 1;
             }
         }
-        if body[i..].starts_with(binding) && ident_boundary(bytes, i, i + binding.len()) {
+        if body[i..].starts_with(binding) && ident_boundary(body, i, i + binding.len()) {
             let stmt_end = body[i..]
                 .find(';')
                 .map(|offset| i + offset)
@@ -4590,7 +4603,7 @@ fn text_resolves_method_to_type(
         } else {
             ""
         };
-        if ident_boundary(bytes, at, after) && skip_ws_if_paren(text, after) {
+        if ident_boundary(text, at, after) && skip_ws_if_paren(text, after) {
             if at >= 2 && bytes[at - 2] == b':' && bytes[at - 1] == b':' {
                 let qualifier = ident_ending_at(text, at - 2);
                 if qualifier.is_some_and(|ty| ty == impl_type) {
@@ -6059,12 +6072,13 @@ pub(in crate::analysis) fn test_dispatches_trait_impl(
             return true;
         }
         for (at, _) in body.match_indices("in") {
-            if !ident_boundary(body.as_bytes(), at, at + 2) {
+            if !ident_boundary(&body, at, at + 2) {
                 continue;
             }
-            let Some(for_at) = body[..at].rmatch_indices("for").find_map(|(start, _)| {
-                ident_boundary(body.as_bytes(), start, start + 3).then_some(start)
-            }) else {
+            let Some(for_at) = body[..at]
+                .rmatch_indices("for")
+                .find_map(|(start, _)| ident_boundary(&body, start, start + 3).then_some(start))
+            else {
                 continue;
             };
             if body[for_at..at].contains([';', '{', '}']) {
@@ -6783,7 +6797,7 @@ pub(in crate::analysis) fn is_free_function_call_at(text: &str, at: usize, name:
     }
     {
         let after = at + name.len();
-        if !ident_boundary(bytes, at, after) || !call_paren_follows(text, after) {
+        if !ident_boundary(text, at, after) || !call_paren_follows(text, after) {
             return false;
         }
         let mut before = at;
@@ -6868,10 +6882,10 @@ fn text_has_non_receiver_call_site(text: &str, name: &str) -> bool {
         // Step by the first char's width so a non-ASCII name never leaves
         // `search` inside a multibyte char.
         search = at + name.chars().next().map_or(1, char::len_utf8);
-        if !ident_boundary(bytes, at, after) || !call_suffix_follows(&masked, after) {
+        if !ident_boundary(&masked, at, after) || !call_suffix_follows(&masked, after) {
             continue;
         }
-        if fn_keyword_before(bytes, at) {
+        if fn_keyword_before(&masked, at) {
             continue;
         }
         if !receiver_dot_before(bytes, at) {
@@ -6947,10 +6961,15 @@ fn receiver_dot_before(bytes: &[u8], at: usize) -> bool {
 /// invokes the owner. The `fn` keyword must sit directly before the name
 /// (modulo trivia) with a keyword boundary, so `my_fn(name)` and calls
 /// after a declaration still count.
-fn fn_keyword_before(bytes: &[u8], at: usize) -> bool {
+fn fn_keyword_before(text: &str, at: usize) -> bool {
     let mut cursor = at;
+    // `fn r#parse` declares the same name as `parse`; skip one `r#` so the
+    // keyword scan sees `fn`, not `#` (#7092 / #7270).
+    if text.get(..at).is_some_and(|prefix| prefix.ends_with("r#")) {
+        cursor = at.saturating_sub(2);
+    }
     while let Some(previous) = cursor.checked_sub(1) {
-        match bytes.get(previous).copied() {
+        match text.as_bytes().get(previous).copied() {
             Some(byte) if byte.is_ascii_whitespace() => cursor = previous,
             _ => break,
         }
@@ -6959,13 +6978,16 @@ fn fn_keyword_before(bytes: &[u8], at: usize) -> bool {
         return false;
     };
     // `end` is the last non-trivia byte; `fn` must end exactly there.
-    let is_fn = bytes.get(end).copied() == Some(b'n')
-        && end.checked_sub(1).and_then(|i| bytes.get(i).copied()) == Some(b'f');
+    let is_fn = text.as_bytes().get(end) == Some(&b'n')
+        && end
+            .checked_sub(1)
+            .and_then(|i| text.as_bytes().get(i).copied())
+            == Some(b'f');
     if !is_fn {
         return false;
     }
     end.checked_sub(2)
-        .and_then(|i| bytes.get(i).copied())
+        .and_then(|i| text.as_bytes().get(i).copied())
         .is_none_or(|before| !before.is_ascii_alphanumeric() && before != b'_')
 }
 
@@ -10141,9 +10163,10 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
         assert_eq!(related[0].1, RelationReason::DirectOwnerCall);
     }
 
-    /// #7006 control: a path-qualified `m::parse(` call keeps
-    /// `direct_owner_call` — path qualification still spells the free
-    /// function.
+    /// #7006 / #7092 item 3 (module-path fail-open control): a path-qualified
+    /// `m::parse(` call keeps `direct_owner_call` — path qualification still
+    /// spells the free function and cannot be distinguished from `Type::parse(`
+    /// without resolver knowledge.
     #[test]
     fn given_free_function_owner_when_test_calls_path_qualified_then_direct_owner_call() {
         let owner = established_free_function("src/lib.rs", "parse");
@@ -10350,6 +10373,76 @@ mod second {\n    use super::*;\n    #[test]\n    fn dup() {\n        let _ = sc
                 "tests/config_parse.rs",
                 "nested_fn_beside_method_call",
                 "fn parse(x: &str) -> usize { x.len() } assert_eq!(config.parse(\"7\"), 7);",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "input.parse()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #7092: `fn r#parse(..)` is a nested declaration, not a call of the free
+    /// function; beside a receiver-qualified call the relation stays weak.
+    #[test]
+    fn given_free_function_owner_when_match_is_raw_ident_nested_fn_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "raw_ident_nested_fn_beside_method_call",
+                "fn r#parse(x: &str) -> usize { x.len() } assert_eq!(config.parse(\"7\"), 7);",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "input.parse()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #7092: a suffix `parse` inside a longer Unicode identifier on a
+    /// receiver must not credit the free function owner.
+    #[test]
+    fn given_free_function_owner_when_receiver_uses_unicode_prefix_name_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "unicode_prefixed_receiver",
+                "assert_eq!(config.αparse(\"7\"), 7);",
+                "parse",
+            )],
+            ..Default::default()
+        });
+        let probe = probe("src/lib.rs", "input.parse()");
+
+        let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
+
+        assert_eq!(related.len(), 1);
+        assert_eq!(related[0].1, RelationReason::WeakTokenSubstring);
+    }
+
+    /// #7092 item 3: `Type::parse(` does not establish a call of the module-level
+    /// free function (#6713 type-path refusal); the relation demotes instead of
+    /// keeping the documented #7006 `::`-path fail-open credit.
+    #[test]
+    fn given_free_function_owner_when_test_calls_type_qualified_then_name_only_relation() {
+        let owner = established_free_function("src/lib.rs", "parse");
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone()],
+            tests: vec![test_with_call(
+                "tests/config_parse.rs",
+                "type_qualified_parse",
+                "assert_eq!(Config::parse(\"7\"), 7);",
                 "parse",
             )],
             ..Default::default()
