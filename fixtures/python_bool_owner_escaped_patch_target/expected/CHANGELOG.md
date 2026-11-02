@@ -64,3 +64,16 @@ Updated:
 - `expected/check.json` (unchanged)
 - `expected/human-full.txt` (unchanged)
 - `expected/human.txt` (removed)
+
+## Pending — python_bool_owner_escaped_patch_target (5)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_bool_owner_escaped_patch_target --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

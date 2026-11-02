@@ -107,3 +107,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_route_verb_mismatch (10)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_route_verb_mismatch --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

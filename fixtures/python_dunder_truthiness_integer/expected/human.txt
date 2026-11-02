@@ -17,6 +17,7 @@ Start here:
   Language: python
   Language status: preview
   Static exposure: exposed (severity: info, confidence 0.60)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.
   Gap ID (for scripts): gap:python:src/shapes/money.py:Money.__bool__:predicate_boundary:predicate:self.cents>0
   Changed behavior: return self.cents > 0
   Check (observed, advisory): Related Python test reaches `__bool__` with an `exact_value` oracle.
