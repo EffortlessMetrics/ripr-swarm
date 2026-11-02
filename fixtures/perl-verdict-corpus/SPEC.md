@@ -32,7 +32,7 @@ it to carry a RIPR-SPEC-0235 fact the producer cannot emit yet. Their
 edit; their rates are reported apart from producer-packet rates.
 
 `spec-coverage.toml` lists RIPR-SPEC-0235 as the one in-scope spec and counts
-each of its 31 numbered examples once a case cites it in `spec_examples`. A
+each of its 32 numbered examples once a case cites it in `spec_examples`. A
 `perl-0235-*` case derived from another case keeps that case's diff and run
 truth, because a packet edit changes which facts ripr reads, not what
 `prove -l t` does with the rewrite; its base is named in `perl_facts.edits`.

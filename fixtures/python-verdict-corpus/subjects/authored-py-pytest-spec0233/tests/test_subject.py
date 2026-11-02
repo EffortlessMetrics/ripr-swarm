@@ -32,6 +32,7 @@ from src.subject import (
     perr_broad,
     perr_exc_value,
     perr_match,
+    perr_raises_class,
     perr_match_and_value,
     perr_match_anything,
     perr_raises_regex,
@@ -101,6 +102,11 @@ def test_other_then_exact():
 def test_raises_with_match():
     with pytest.raises(KeyError, match="empty"):
         perr_match("")
+
+
+def test_raises_class_edit():
+    with pytest.raises(ValueError, match="empty"):
+        perr_raises_class("")
 
 
 def test_raises_broad():
