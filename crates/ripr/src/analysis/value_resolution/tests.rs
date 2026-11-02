@@ -1166,7 +1166,12 @@ fn a_literal_let_rebound_by_a_pattern_is_not_resolved() {
         ("let (n, _m) = (9, 1);", "let (a, _m) = (9, 1);"),
         ("let Pair { n, .. } = pair;", "let Pair { a, .. } = pair;"),
         ("let [n, _] = [9, 1];", "let [a, _] = [9, 1];"),
-        ("for n in [9] { drop(n); }", "for a in [9] { drop(a); }"),
+        // The call sits inside the loop, where the pattern's `n` is the value
+        // it reads (the repro of #10819); the control's loop binds `a` instead.
+        (
+            "for n in [9] { assert_eq!(gate(n), 0); }",
+            "for a in [9] { assert_eq!(gate(a), 0); }",
+        ),
         (
             "let Some(n) = opt else { return };",
             "let Some(a) = opt else { return };",
