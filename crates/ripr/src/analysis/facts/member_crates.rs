@@ -779,6 +779,19 @@ impl MemberCrates {
         Some(package)
     }
 
+    /// `package`'s `Cargo.toml` as the analysis reads sources: through the
+    /// committed-source overlay when one is active, else the worktree file.
+    /// `None` when it cannot be read or has no `[package]`.
+    fn analyzed_manifest(&self, package: &Package) -> Option<toml::Table> {
+        let root = self.root.as_ref()?;
+        let relative = package.directory.strip_prefix(lexical(root)).ok()?;
+        let read_root = snapshot_root(root)?;
+        let text = read_manifest(&read_root, &read_root.join(relative), true).ok()??;
+        let manifest = text.parse::<toml::Table>().ok()?;
+        manifest.get("package")?;
+        Some(manifest)
+    }
+
     /// The cargo features a plain `cargo test` of the library rooted at
     /// `crate_root` enables: the closure of the manifest's `[features]
     /// default = [..]` over plain feature names (RIPR-SPEC-0279, #12230).
@@ -792,7 +805,12 @@ impl MemberCrates {
         crate_root: &Path,
     ) -> Option<std::collections::BTreeSet<String>> {
         let package = self.default_library_package(crate_root)?;
-        let Some(table) = package.manifest.get("features") else {
+        // Package selection above reads the worktree; the feature table is
+        // read where the analyzed sources are read, so a dirty `Cargo.toml`
+        // cannot add a default feature the analyzed commit lacks (review of
+        // #12368). With no committed overlay active this is the worktree file.
+        let manifest = self.analyzed_manifest(&package)?;
+        let Some(table) = manifest.get("features") else {
             return Some(std::collections::BTreeSet::new());
         };
         let table = table.as_table()?;
@@ -800,7 +818,7 @@ impl MemberCrates {
         // They differ only by the distinguished `default` name, which is
         // walked but never credited as a feature, so a list that names
         // `default` (directly or through a cycle) still terminates.
-        let implicit = implicit_dependency_features(&package.manifest, table);
+        let implicit = implicit_dependency_features(&manifest, table);
         let mut enabled = std::collections::BTreeSet::new();
         let mut visited = std::collections::BTreeSet::new();
         let mut pending = vec!["default".to_string()];
