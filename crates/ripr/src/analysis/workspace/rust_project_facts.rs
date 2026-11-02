@@ -6,9 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::analysis::workspace::project_facts_digest::seal_project_facts;
 use crate::analysis::workspace::{
     SourceRole, SourceRoleContext, classify_with, context_for_files, normalize_path,
-    seal_project_facts,
 };
 use crate::config::RiprConfig;
 use crate::domain::{
@@ -204,9 +204,7 @@ fn walk_rust_files(
             }
             let relative = path
                 .strip_prefix(workspace_root)
-                .map_err(|error| {
-                    format!("directory {path:?} escapes workspace root: {error}")
-                })?;
+                .map_err(|error| format!("directory {path:?} escapes workspace root: {error}"))?;
             if path_is_excluded(relative, excluded) {
                 continue;
             }

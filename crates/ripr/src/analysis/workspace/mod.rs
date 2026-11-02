@@ -7,6 +7,13 @@ mod module_graph;
 mod named_dependent_scope;
 mod path_dependencies;
 mod project_facts_digest;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "policy:6423-projection-slice: adapter is not wired to command or LSP consumers yet (#6423)"
+    )
+)]
 mod rust_project_facts;
 mod select;
 mod source_role;
@@ -26,7 +33,6 @@ pub(crate) use module_graph::{apply_module_graph_evidence, target_manifest_direc
 pub(crate) use path_dependencies::{
     PathDependencyAdjacency, PathDependencyGraphStatus, reverse_dependent_scope_expansion,
 };
-pub(crate) use project_facts_digest::seal_project_facts;
 pub(crate) use source_role::{
     DiffOnlySource, SourceRole, SourceRoleContext, classify_with, diff_only_source,
     is_test_surface_path, may_be_diff_only_source, seeds_diff_probes,
