@@ -338,6 +338,14 @@ fn inputs_json(inputs: &GateDecisionInputs) -> Value {
             Value::String(exception_policy.clone()),
         );
     }
+    if let Some(acknowledgements) = &inputs.acknowledgements
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert(
+            "acknowledgements".to_string(),
+            Value::String(acknowledgements.clone()),
+        );
+    }
     value
 }
 
@@ -348,6 +356,16 @@ fn policy_json(policy: &GatePolicy) -> Value {
         "acknowledgement_labels": policy.acknowledgement_labels,
         "default_workflow_posture": policy.default_workflow_posture,
     })
+}
+
+fn insert_optional_string(
+    object: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: Option<&str>,
+) {
+    if let Some(value) = value {
+        object.insert(key.to_string(), Value::String(value.to_string()));
+    }
 }
 
 fn summary_json(summary: &GateSummary) -> Value {
@@ -441,6 +459,49 @@ fn decision_json(decision: &GateDecision) -> Value {
         object.insert(
             "baseline_match_kind".to_string(),
             Value::String(match_kind.clone()),
+        );
+    }
+    if let Some(policy_object) = value.get_mut("policy").and_then(Value::as_object_mut) {
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_id",
+            decision.policy.acknowledgement_id.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_match_kind",
+            decision.policy.acknowledgement_match_kind.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_actor",
+            decision.policy.acknowledgement_actor.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_reason",
+            decision.policy.acknowledgement_reason.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_expires_at",
+            decision.policy.acknowledgement_expires_at.as_deref(),
+        );
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_review_after",
+            decision.policy.acknowledgement_review_after.as_deref(),
+        );
+        if let Some(global_scope) = decision.policy.acknowledgement_global_scope {
+            policy_object.insert(
+                "acknowledgement_global_scope".to_string(),
+                Value::Bool(global_scope),
+            );
+        }
+        insert_optional_string(
+            policy_object,
+            "acknowledgement_limitation",
+            decision.policy.acknowledgement_limitation.as_deref(),
         );
     }
     value

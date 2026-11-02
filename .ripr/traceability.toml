@@ -21134,3 +21134,31 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0372"
+name = "scoped gate acknowledgements"
+spec = "docs/specs/RIPR-SPEC-0372-scoped-gate-acknowledgements.md"
+tests = [
+  "crates/ripr/src/output/gate/tests.rs::gate_structured_acknowledgement_scopes_to_matching_canonical_gap",
+  "crates/ripr/src/output/gate/tests.rs::gate_structured_acknowledgement_does_not_ack_unrelated_canonical_gap",
+  "crates/ripr/src/output/gate/tests.rs::gate_malformed_structured_acknowledgement_is_config_error",
+  "crates/ripr/src/output/gate/tests.rs::gate_acknowledgeable_keeps_waived_candidate_visible",
+  "crates/ripr/src/output/gate/structured_acknowledgements.rs::tests::duplicate_ids_fail_closed",
+  "crates/ripr/src/output/gate/structured_acknowledgements.rs::tests::scoped_match_respects_max_matches",
+]
+fixtures = [
+  "fixtures/boundary_gap/expected/calibrated-gate/acknowledged-waiver/gate-decision.json",
+  "fixtures/boundary_gap/expected/gate-adoption/acknowledged/gate-decision.json",
+]
+code = [
+  "crates/ripr/src/output/gate/structured_acknowledgements.rs",
+  "crates/ripr/src/output/gate.rs",
+  "crates/ripr/src/cli/commands/gate.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0372-scoped-gate-acknowledgements.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

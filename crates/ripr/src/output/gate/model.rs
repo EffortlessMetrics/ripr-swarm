@@ -65,6 +65,9 @@ pub(crate) struct GateEvaluateInput {
     /// resolve against `root`. Fail-closed: a missing or malformed ledger is
     /// a `config_error`.
     pub(crate) exception_policy: Option<PathBuf>,
+    /// Optional structured acknowledgement ledger (#1966). Relative paths resolve
+    /// against `root`. Fail-closed when supplied and invalid.
+    pub(crate) acknowledgements: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,6 +133,8 @@ pub(super) struct GateDecisionInputs {
     /// Present only when `--exception-policy` was supplied (#1442), keeping
     /// existing gate-decision JSON byte-identical without the flag.
     pub(super) exception_policy: Option<String>,
+    /// Present only when `--acknowledgements` was supplied (#1966).
+    pub(super) acknowledgements: Option<String>,
 }
 
 /// Subject identity of one gate evaluation (#5263). Every field is either
@@ -299,6 +304,14 @@ pub(super) struct GateDecisionPolicy {
     pub(super) threshold: String,
     pub(super) acknowledgement_label: Option<String>,
     pub(super) baseline_identity: Option<String>,
+    pub(super) acknowledgement_id: Option<String>,
+    pub(super) acknowledgement_match_kind: Option<String>,
+    pub(super) acknowledgement_actor: Option<String>,
+    pub(super) acknowledgement_reason: Option<String>,
+    pub(super) acknowledgement_expires_at: Option<String>,
+    pub(super) acknowledgement_review_after: Option<String>,
+    pub(super) acknowledgement_global_scope: Option<bool>,
+    pub(super) acknowledgement_limitation: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -389,6 +402,9 @@ pub(super) struct GateReasonContext<'a> {
     pub(super) recommendation_calibration: &'a CalibrationEvidence,
     pub(super) mutation_calibration: &'a CalibrationEvidence,
     pub(super) acknowledgement_label: Option<&'a str>,
+    pub(super) acknowledgement_id: Option<&'a str>,
+    pub(super) acknowledgement_global_scope: Option<bool>,
+    pub(super) acknowledgement_limitation: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
