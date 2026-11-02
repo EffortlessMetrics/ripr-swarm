@@ -17,7 +17,8 @@ Linked issues:
 Support-tier impact:
 
 - None. The matrix is offline integration evidence; it does not promote a
-  language, editor surface, gate, or public support claim.
+  language, editor surface, gate, or public support claim. See
+  [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
