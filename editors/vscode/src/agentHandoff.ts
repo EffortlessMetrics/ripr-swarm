@@ -237,7 +237,7 @@ function repoGapMap(
   lines.push('Receipt state');
   lines.push(`State: ${receipt.state}`);
   pushOptionalLine(lines, 'Movement', receipt.movement);
-  pushOptionalLine(lines, 'Receipt seam', receipt.seamId);
+  pushOptionalLine(lines, 'Receipt spot', receipt.seamId);
   lines.push('');
   lines.push('First PR packet state');
   lines.push(`State: ${firstPr.state}`);
