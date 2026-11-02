@@ -2061,11 +2061,11 @@ struct FileFactsWireRef<'a> {
     used_lexical_fallback: bool,
     module_declarations: &'a [ModuleDeclarationFact],
     unresolved_property_macros: &'a [UnresolvedPropertyMacroFact],
+    #[serde(default)]
+    verus_guard_facts: &'a [crate::analysis::verus::VerusGuardFact],
     source: &'a str,
     item_scopes: Option<&'a ModuleItemScopes>,
     macro_candidates: Option<&'a MacroBindingCandidates>,
-    #[serde(default, skip_serializing_if = "<[_]>::is_empty")]
-    verus_guard_facts: &'a [crate::analysis::verus::VerusGuardFact],
 }
 
 impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
@@ -2130,10 +2130,10 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: &facts.module_declarations,
             unresolved_property_macros: &facts.unresolved_property_macros,
+            verus_guard_facts: &facts.verus_guard_facts,
             source: &facts.source,
             item_scopes: facts.item_scopes.as_deref(),
             macro_candidates: facts.macro_candidates.as_deref(),
-            verus_guard_facts: &facts.verus_guard_facts,
         }
     }
 }
