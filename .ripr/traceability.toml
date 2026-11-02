@@ -20988,7 +20988,18 @@ tests = [
   "crates/ripr/tests/out_parameter_oracle.rs::divergence_hidden_in_a_macro_or_exit_before_the_changed_write_is_not_credited",
   "crates/ripr/tests/out_parameter_oracle.rs::a_constant_conditional_sign_row_does_not_come_from_the_out_parameter_route",
   "crates/ripr/tests/out_parameter_oracle.rs::a_fmt_write_owner_and_a_non_empty_initial_local_behave_as_specified",
-  "crates/ripr/tests/out_parameter_oracle.rs::a_same_named_method_on_another_or_unresolved_receiver_is_not_credited",
+  "crates/ripr/tests/out_parameter_oracle.rs::a_same_named_method_on_another_or_unresolved_receiver_is_not_credited",  "crates/ripr/tests/collection_out_parameter_repair.rs::count_read_of_the_passed_vector_is_followed_in_both_commands",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::emptiness_read_of_the_passed_vector_is_followed_in_both_commands",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::reading_a_different_binding_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::reading_the_pushed_item_is_not_this_rules_to_grade",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::reborrowed_vector_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::vector_used_before_the_call_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::vector_aliased_after_the_call_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::namesake_in_another_module_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::conditional_push_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::second_push_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::ignored_test_is_not_followed",
+  "crates/ripr/tests/collection_out_parameter_repair.rs::should_panic_test_is_not_followed",
 ]
 fixtures = [
   "fixtures/out_parameter_unrelated_write_no_promote",
@@ -20997,6 +21008,8 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/out_parameter.rs",
+  "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs",
+  "crates/ripr/src/analysis/repair_route.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0351-out-parameter-oracle-credit.md",

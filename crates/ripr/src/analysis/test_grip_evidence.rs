@@ -46,6 +46,7 @@ use super::classify::{
     call_text_may_call_free_function, direct_collection_mutation_receiver, is_ignored,
     owner_call_text, predicate_line_arms_all_agree, reach_evidence as classify_reach_evidence,
     related_tests_reach_owner_indirectly, relation_establishes_reach, test_calls_free_function,
+    test_counts_pushed_collection_argument,
 };
 use super::facts::{CallFact, FunctionImplContext};
 use super::new_test_target::{self, NewTestTargetAdmission};
@@ -3826,9 +3827,10 @@ fn propagate_evidence(
     // matches the expected sink class (e.g., return value -> assert_eq!),
     // call it Yes. Otherwise Unknown.
     let any_oracle = related.iter().any(|t| !t.assertions.is_empty());
-    let any_matching_sink = related
-        .iter()
-        .any(|t| oracles_match_sink(seam, t, owner_fn, index, pin_syntax));
+    let any_matching_sink = related.iter().any(|t| {
+        oracles_match_sink(seam, t, owner_fn, index, pin_syntax)
+            || pushed_collection_argument_followed(seam, t, owner_fn, index, pin_syntax)
+    });
     let state = match (any_oracle, any_matching_sink) {
         (true, true) => StageState::Yes,
         (true, false) => StageState::Unknown,
@@ -3885,6 +3887,25 @@ fn oracles_match_sink(
                 }
             }
         })
+}
+
+/// #11402: a push into a `&mut` collection parameter whose test passes its
+/// own fresh local there and reads it back. The pushed value is followed to
+/// that local, so propagation holds; the read is only a count, so it grants
+/// no assertion strength and the check stays weak.
+fn pushed_collection_argument_followed(
+    seam: &RepoSeam,
+    test: &TestSummary,
+    owner_fn: Option<&FunctionSummary>,
+    index: &RustIndex,
+    pin_syntax: &crate::analysis::classify::OwnerPinSyntax,
+) -> bool {
+    matches!(seam.kind(), SeamKind::SideEffect | SeamKind::CallPresence)
+        && direct_collection_mutation_receiver(seam.expression())
+            .zip(owner_fn)
+            .is_some_and(|(receiver, owner)| {
+                test_counts_pushed_collection_argument(receiver, owner, index, test, pin_syntax)
+            })
 }
 
 fn observe_evidence(related: &[&TestSummary]) -> StageEvidence {
