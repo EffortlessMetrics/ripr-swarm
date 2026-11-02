@@ -285,7 +285,8 @@ This presentation must preserve the snapshot's diagnostics and result IDs.
   parse the advertisement from `editors/vscode/src/client.ts`, so a command
   the extension registers but does not advertise fails the parity tests.
   Further `tests.rs` tests verify `CodeActionContext.only` honoring (#1750)
-  and the kind parity invariant in both directions: emitted-kinds
+  including unknown/reserved kinds returning an empty list (#1891) and the
+  kind parity invariant in both directions: emitted-kinds
   ⊆ advertised-kinds and advertised-kinds ⊆ emitted-kinds (#7773).
 - `action_contract.rs` tests verify the versioned data payload shape, the
   deterministic `action_id`, and the closed disabled-reason vocabulary
@@ -447,8 +448,11 @@ client supports:
   (`quickfix` keeps every per-diagnostic `quickfix.ripr.*` action;
   `source` keeps only `source.ripr.refresh`; `quickfix.ripr.navigate`
   keeps only that subtree). An absent `only` leaves the response
-  unfiltered, and an action with no kind fails closed. The kind filter
-  compounds with the negotiated client-command filter.
+  unfiltered, and an action with no kind fails closed. A requested kind
+  with no matching emitted action — including unknown kinds and the
+  reserved unemitted `quickfix.ripr.verify` / `source.ripr.verify`
+  names — yields an empty list rather than unrelated actions (#1891).
+  The kind filter compounds with the negotiated client-command filter.
 - Every code action carries the versioned `ripr-code-action-data-v1` data
   payload, and diagnostic-addressing actions attach the addressed
   diagnostic (#1892). The #1776 client-command filter becomes the
