@@ -1044,8 +1044,9 @@ reaches the owner only through trait dispatch (`serialize()` then `Serialize`
 then `write_escaped`) is therefore not related.
 
 When the remaining related tests are empty and a complete path-dependency
-graph shows at least one other package that depends on the owner's crate and
-hosts tests, a `no_static_path` finding is rewritten through `withhold_gap`
+graph shows at least one other package that depends on the owner's crate
+through a normal or dev path dependency and hosts tests, a `no_static_path`
+finding is rewritten through `withhold_gap`
 to `static_unknown` under `rust_dependent_crate_reach_unresolved`. Reach that
 had been ruled out (`no`) becomes `unknown`, and stop reason
 `gap_evidence_unresolved` is recorded. Named `no_static_path` limitations
@@ -1053,7 +1054,8 @@ already on the finding (RIPR-SPEC-0118 and siblings) are replaced: keeping
 them would leave a kind whose documented class is `no_static_path`. Fast or
 Draft may omit a dependent integration test from the main index while a
 widened witness search still names it; a `tests/` tree on disk under a
-reverse neighbor is enough to refuse a confident empty related-test list.
+callable reverse neighbor that contains a `.rs` file is enough to refuse a
+confident empty related-test list. An empty `tests/` directory is not.
 
 Findings that already related a test are not touched. A workspace with no
 reverse dependents, an incomplete graph, or dependents that host no tests

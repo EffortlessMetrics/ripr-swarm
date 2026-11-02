@@ -19582,6 +19582,7 @@ tests = [
   "crates/ripr/tests/dependent_crate_trait_dispatch.rs::trait_dispatch_from_a_dependent_crate_withholds_no_static_path",
   "crates/ripr/tests/dependent_crate_trait_dispatch.rs::a_workspace_with_no_dependents_keeps_no_static_path",
   "crates/ripr/tests/dependent_crate_trait_dispatch.rs::a_dependent_crate_with_no_tests_keeps_no_static_path",
+  "crates/ripr/tests/dependent_crate_trait_dispatch.rs::a_dependent_crate_with_an_empty_tests_dir_keeps_no_static_path",
   "crates/ripr/tests/dependent_crate_trait_dispatch.rs::a_dependent_crate_that_names_the_owner_still_relates",
   "crates/ripr/tests/dependent_crate_trait_dispatch.rs::nested_test_macro_chain_is_not_indexed",
 ]

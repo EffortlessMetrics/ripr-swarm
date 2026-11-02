@@ -122,6 +122,23 @@ pub(in crate::analysis) fn withhold_dependent_crate_reach_gap(
     {
         return false;
     }
+    // Renderers take the first `limitation_*` evidence line. A prior
+    // no-path witness (RIPR-SPEC-0118 and siblings) left those fields
+    // describing its own route; drop them so the dependent-crate detail
+    // is the structured projection of the kind this pass sets.
+    finding.evidence.retain(|line| {
+        !line.starts_with(LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX)
+            && !line.starts_with(LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX)
+            && !line.starts_with(LIMITATION_ANALYZER_ROUTE_PREFIX)
+            && !line.starts_with(LIMITATION_NON_CLAIM_PREFIX)
+            && !line.starts_with(LIMITATION_HELPER_BOUNDARY_PREFIX)
+    });
+    finding.stop_reasons.retain(|reason| {
+        !matches!(
+            reason,
+            StopReason::TransitiveReachUnresolved | StopReason::MacroReachUnresolved
+        )
+    });
     withhold_gap(
         finding,
         DEPENDENT_CRATE_LIMIT,
@@ -1570,9 +1587,40 @@ mod tests {
     fn dependent_crate_tests_withhold_no_static_path() {
         let mut finding = no_path();
         finding.static_limit_kind = Some(StaticLimitKind::RustIntegrationPublicApiPathUnresolved);
+        finding
+            .stop_reasons
+            .push(StopReason::TransitiveReachUnresolved);
+        finding.evidence.extend([
+            format!(
+                "{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}entry `serialize` in tests/api.rs"
+            ),
+            format!(
+                "{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}entry `serialize` -> owner `write_escaped` through a public API"
+            ),
+            format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/language/rust/no-static-path"),
+            format!("{LIMITATION_NON_CLAIM_PREFIX}no coverage claim from the public-API witness"),
+        ]);
         assert!(withhold_dependent_crate_reach_gap(&mut finding, true));
         assert_eq!(finding.class, ExposureClass::StaticUnknown);
         assert_eq!(finding.static_limit_kind, Some(DEPENDENT_CRATE_LIMIT));
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::TransitiveReachUnresolved)
+        );
+        let first_unresolved = finding
+            .evidence
+            .iter()
+            .find_map(|line| line.strip_prefix(LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX));
+        assert_eq!(
+            first_unresolved,
+            Some(DEPENDENT_CRATE_FIRST_UNRESOLVED_EDGE)
+        );
+        let analyzer_route = finding
+            .evidence
+            .iter()
+            .find_map(|line| line.strip_prefix(LIMITATION_ANALYZER_ROUTE_PREFIX));
+        assert_eq!(analyzer_route, Some("analysis/classify/gap-admission"));
         assert_eq!(finding.ripr.reach.state, StageState::Unknown);
         assert_eq!(finding.ripr.infect.state, StageState::Unknown);
         assert_eq!(finding.ripr.reveal.observe.state, StageState::Unknown);

@@ -171,6 +171,16 @@ fn a_dependent_crate_with_no_tests_keeps_no_static_path() -> Result<(), String> 
 }
 
 #[test]
+fn a_dependent_crate_with_an_empty_tests_dir_keeps_no_static_path() -> Result<(), String> {
+    let scratch = two_crate_workspace(None)?;
+    std::fs::create_dir_all(scratch.0.join("html_dom/tests")).map_err(|error| error.to_string())?;
+    let report = check_json(&scratch.0, CORE_DIFF)?;
+    let finding = write_escaped_finding(&report)?;
+    assert_eq!(finding["classification"], "no_static_path", "{finding}");
+    Ok(())
+}
+
+#[test]
 fn a_dependent_crate_that_names_the_owner_still_relates() -> Result<(), String> {
     let scratch = two_crate_workspace(Some(
         "#[test]\nfn amp_is_escaped() {\n    assert_eq!(html_core::write_escaped(\"&\"), \"&amp;\");\n}\n",
