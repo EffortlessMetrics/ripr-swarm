@@ -16,24 +16,60 @@ pub(crate) fn check_post_0_11_dependency_defer_tracking(path: &Path) -> Result<(
 
 fn check_post_0_11_dependency_defer_tracking_text(text: &str, path: &Path) -> Result<(), String> {
     let path_label = path.display();
-    if !text.contains(POST_0_11_DEFER_SECTION_MARKER) {
+    let Some(start) = text.find(POST_0_11_DEFER_SECTION_MARKER) else {
         return Err(format!(
             "{path_label}: missing `{POST_0_11_DEFER_SECTION_MARKER}` section for post-0.11 `oxc_*`/`sha2` deferrals"
         ));
+    };
+    let section_end = text[start..]
+        .find("\n### ")
+        .map(|offset| start + offset)
+        .unwrap_or(text.len());
+    let section = &text[start..section_end];
+
+    let mut saw_owner_line = false;
+    let mut saw_linked_revisit_line = false;
+    for line in section.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Owner issue:") {
+            saw_owner_line = true;
+            if !trimmed.contains(POST_0_11_DEFER_OWNER) {
+                return Err(format!(
+                    "{path_label}: `Owner issue:` must name {POST_0_11_DEFER_OWNER}, not a different owner"
+                ));
+            }
+        }
+        if trimmed.starts_with("Linked revisit:") {
+            saw_linked_revisit_line = true;
+            if !trimmed.contains(POST_0_11_DEFER_LINKED_REVISIT) {
+                return Err(format!(
+                    "{path_label}: `Linked revisit:` must name {POST_0_11_DEFER_LINKED_REVISIT}"
+                ));
+            }
+        }
     }
-    for required in [
-        "Owner issue:",
-        POST_0_11_DEFER_OWNER,
-        "Linked revisit:",
-        POST_0_11_DEFER_LINKED_REVISIT,
-        "Revisit trigger:",
-        "`oxc_*`",
-        "`sha2`",
-        "safe_defer_post_0_11",
-    ] {
-        if !text.contains(required) {
+    if !saw_owner_line {
+        return Err(format!(
+            "{path_label}: post-0.11 defer tracker is missing an `Owner issue:` line"
+        ));
+    }
+    if !saw_linked_revisit_line {
+        return Err(format!(
+            "{path_label}: post-0.11 defer tracker is missing a `Linked revisit:` line"
+        ));
+    }
+
+    for required in ["Revisit trigger:", "`oxc_*`", "`sha2`"] {
+        if !section.contains(required) {
             return Err(format!(
                 "{path_label}: post-0.11 defer tracker is missing required marker `{required}`"
+            ));
+        }
+    }
+    for required in ["safe_defer_post_0_11", "| `oxc_*` |", "| `sha2` |"] {
+        if !text.contains(required) {
+            return Err(format!(
+                "{path_label}: dependency graph receipt is missing required defer row `{required}`"
             ));
         }
     }
@@ -385,9 +421,21 @@ mod tests {
 
     #[test]
     fn post_0_11_defer_tracker_requires_owner_and_linked_revisit() {
-        let text =
-            "safe_defer_post_0_11\nPost-0.11 dependency refresh tracker\nOwner issue: #9999\n";
+        let text = concat!(
+            "safe_defer_post_0_11\n",
+            "Post-0.11 dependency refresh tracker (#5084)\n",
+            "Owner issue: #9999\n",
+            "Linked revisit: #3811\n",
+            "Revisit trigger:\n",
+            "`oxc_*`\n",
+            "`sha2`\n",
+        );
         let result = check_post_0_11_dependency_defer_tracking_text(text, Path::new("fixture.md"));
         assert!(result.is_err());
+        assert!(
+            result
+                .err()
+                .is_some_and(|message| message.contains("Owner issue:"))
+        );
     }
 }
