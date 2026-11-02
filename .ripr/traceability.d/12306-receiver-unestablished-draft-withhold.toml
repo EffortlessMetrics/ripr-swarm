@@ -1,0 +1,6 @@
+# Registers the draft-mode partial-index placement control for #10149 under RIPR-SPEC-0352.
+[[extend]]
+id = "RIPR-SPEC-0352"
+tests = [
+  "crates/ripr/tests/receiver_unestablished_limit.rs::draft_mode_withholds_the_unplaced_generated_mount_control",
+]
