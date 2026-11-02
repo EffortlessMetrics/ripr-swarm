@@ -48,3 +48,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_catalog_description_structural_oracle (5)
+
+Reason:
+RIPR-SPEC-0122 plain-words check screen: ripr-origin fixture re-blessed from the merged producer after merging main again (#2766); the Evidence line's last stage is labelled assertion, wording only, verdicts unchanged
+
+Command:
+`cargo xtask goldens bless rust_catalog_description_structural_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
