@@ -1,0 +1,7 @@
+# Positive Err-enclosing allowlist (#12474).
+[[extend]]
+id = "RIPR-SPEC-0106"
+tests = [
+  "crates/ripr/src/analysis/extract/oracles/patterns.rs::an_err_handed_to_a_value_supplying_adapter_pins_nothing",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::inline_unwrap_err_equality_discriminates_an_error_variant_seam",
+]
