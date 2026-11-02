@@ -14607,6 +14607,9 @@ struct UnitStructFacts {
     /// Some file's `macro_rules!` matcher takes an `:ident` or `:tt`
     /// fragment, which could declare any name it is given.
     macro_takes_name: bool,
+    /// Some file invokes a macro at item or statement position whose
+    /// definition is outside the indexed file text (#7160).
+    external_defining_macro: bool,
     /// Files whose masked source mentions `macro_rules!`: only these can
     /// refuse a name by spelling it in a macro definition. Complete only
     /// while [`Self::refused`] is false: the scan stops at the first
@@ -14626,12 +14629,20 @@ impl UnitStructFacts {
         let mut glob_outside = false;
         let mut spliced = false;
         let mut macro_takes_name = false;
+        let mut external_defining_macro = false;
         let mut macro_files = BTreeSet::new();
         for (file, facts) in index.files().iter() {
             // Once any refusal verdict holds, the remaining files cannot
             // change it, and the caller refuses before reading
             // `macro_files`; stop paying for their masking.
-            if glob_outside || spliced || macro_takes_name {
+            if glob_outside || spliced || macro_takes_name || external_defining_macro {
+                break;
+            }
+            external_defining_macro |=
+                super::macro_item_names::file_has_non_local_defining_macro_invocation(
+                    &facts.source,
+                );
+            if external_defining_macro {
                 break;
             }
             let masked = mask_comments_and_strings(&facts.source);
@@ -14662,13 +14673,14 @@ impl UnitStructFacts {
             glob_outside,
             spliced,
             macro_takes_name,
+            external_defining_macro,
             macro_files,
         }
     }
 
     /// Whether the workspace-wide scans refuse every name.
     fn refused(&self) -> bool {
-        self.glob_outside || self.spliced || self.macro_takes_name
+        self.glob_outside || self.spliced || self.macro_takes_name || self.external_defining_macro
     }
 }
 
@@ -14696,8 +14708,9 @@ impl UnitStructFacts {
 ///   splice in text the scan never reads.
 ///
 /// Items a derive or attribute proc macro emits stay invisible, as for
-/// every other pin rule, as do items an out-of-workspace `macro_rules!`
-/// invocation emits (#7160).
+/// every other pin rule. An item- or statement-position macro whose
+/// definition is not in the indexed workspace text may emit unread items,
+/// so the workspace-wide scan refuses (#7160).
 pub(super) fn unit_struct_value(
     name: &str,
     test_file: &Path,
