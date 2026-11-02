@@ -591,33 +591,32 @@ fn observed_discriminator_values(
             });
         }
     }
-    if let Some(constant) = &right_constant {
-        if boundary_parameter_field_projection(&parameters, &left).is_some()
-            && let Some(boundary_value) =
-                visible_operand(&right, Some(constant)).map(|operand| operand.value)
-        {
-            collect_boundary_field_values_at_owner_calls(
-                owner,
-                &parameters,
-                &left,
-                probe.location.line,
-                related_tests,
-                index,
-                Some(constant),
-                |test, call_line, call_text, value| {
-                    if !field_boundary_values_equal(&value, &boundary_value, constant) {
-                        return;
-                    }
-                    facts.push(ValueFact {
-                        file: Some(test.file.clone()),
-                        line: call_line,
-                        text: call_text.to_string(),
-                        value: format!("{left} == {right}"),
-                        context: ValueContext::FunctionArgument,
-                    });
-                },
-            );
-        }
+    if let Some(constant) = &right_constant
+        && boundary_parameter_field_projection(&parameters, &left).is_some()
+        && let Some(boundary_value) =
+            visible_operand(&right, Some(constant)).map(|operand| operand.value)
+    {
+        collect_boundary_field_values_at_owner_calls(
+            owner,
+            &parameters,
+            &left,
+            probe.location.line,
+            related_tests,
+            index,
+            Some(constant),
+            |test, call_line, call_text, value| {
+                if !field_boundary_values_equal(value, &boundary_value, constant) {
+                    return;
+                }
+                facts.push(ValueFact {
+                    file: Some(test.file.clone()),
+                    line: call_line,
+                    text: call_text.to_string(),
+                    value: format!("{left} == {right}"),
+                    context: ValueContext::FunctionArgument,
+                });
+            },
+        );
     }
     if let (Some(constant), Some(left_credit)) = (&right_constant, left_credit.as_deref()) {
         for (file, line, text) in owner_calls_passing_constant(
@@ -2893,25 +2892,22 @@ fn missing_boundary_discriminator(
             })
         })
     });
-    let field_boundary_equality_observed = right_constant
-        .as_ref()
-        .is_some_and(|constant| {
-            boundary_parameter_field_projection(&parameters, &left).is_some()
-                && boundary_operand_values_at_owner_calls(
-                    owner,
-                    &left,
-                    probe.location.line,
-                    related_tests,
-                    index,
-                )
-                    .iter()
-                    .any(|value| {
-                        visible_operand(&right, Some(constant))
-                            .is_some_and(|operand| {
-                                field_boundary_values_equal(&value, &operand.value, constant)
-                            })
-                    })
-        });
+    let field_boundary_equality_observed = right_constant.as_ref().is_some_and(|constant| {
+        boundary_parameter_field_projection(&parameters, &left).is_some()
+            && boundary_operand_values_at_owner_calls(
+                owner,
+                &left,
+                probe.location.line,
+                related_tests,
+                index,
+            )
+            .iter()
+            .any(|value| {
+                visible_operand(&right, Some(constant)).is_some_and(|operand| {
+                    field_boundary_values_equal(value, &operand.value, constant)
+                })
+            })
+    });
     let equality_observed = exact_equality_observed
         || replaced_row_observed
         || parameter_equality(left_credit.as_deref(), right_credit.as_deref())
@@ -6116,7 +6112,12 @@ fn projected_boundary_field_expression(argument: &str, field: &str) -> Option<St
     let base = argument
         .strip_prefix('&')
         .map(str::trim)
-        .and_then(|borrowed| borrowed.strip_prefix("mut ").map(str::trim).or(Some(borrowed)))
+        .and_then(|borrowed| {
+            borrowed
+                .strip_prefix("mut ")
+                .map(str::trim)
+                .or(Some(borrowed))
+        })
         .filter(|borrowed| is_plain_identifier(borrowed))?;
     Some(format!("{base}.{field}"))
 }
@@ -6168,17 +6169,17 @@ fn boundary_field_credit_permitted(
         )
 }
 
-fn field_boundary_values_equal(
-    input: &str,
-    boundary: &str,
-    constant: &BoundaryConstant,
-) -> bool {
+fn field_boundary_values_equal(input: &str, boundary: &str, constant: &BoundaryConstant) -> bool {
     if comparable_value(input) == comparable_value(boundary) {
         return true;
     }
     constant.offset == 0 && input.trim() == constant.name
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "policy:6671-field-boundary-scan: one scan authority over owner tests and call sites"
+)]
 fn collect_boundary_field_values_at_owner_calls<F>(
     owner: &FunctionSummary,
     parameters: &[String],
@@ -6201,7 +6202,8 @@ fn collect_boundary_field_values_at_owner_calls<F>(
         return;
     };
     for test in related_tests {
-        if constant.is_some_and(|constant| !boundary_field_credit_permitted(owner, constant, test, index))
+        if constant
+            .is_some_and(|constant| !boundary_field_credit_permitted(owner, constant, test, index))
         {
             continue;
         }
@@ -6217,9 +6219,7 @@ fn collect_boundary_field_values_at_owner_calls<F>(
             ) {
                 continue;
             }
-            let Some(text) =
-                owner_name_call_text(&call.text, &owner.name, is_free(owner))
-            else {
+            let Some(text) = owner_name_call_text(&call.text, &owner.name, is_free(owner)) else {
                 continue;
             };
             let Some(arguments) = call_arguments(text, &call.name) else {
