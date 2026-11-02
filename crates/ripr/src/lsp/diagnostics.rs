@@ -2353,7 +2353,17 @@ pub(super) fn derive_run_status_with_outcome(
     if analysis_outcome.is_some_and(|outcome| !outcome.kind.is_complete()) {
         return "limited_incomplete_input";
     }
-    let has_static_limit = findings.iter().any(|f| f.static_limit_kind.is_some())
+    // #5316 partial-index reach abstention carries a static limit so
+    // canonical gaps are not regenerated, but it must not downgrade an
+    // otherwise deferred instant/LSP refresh to run_status `limited`.
+    let finding_run_status_limit = |finding: &Finding| {
+        finding.static_limit_kind.is_some()
+            && !finding
+                .evidence
+                .iter()
+                .any(|line| line.starts_with("partial_index_reach:"))
+    };
+    let has_static_limit = findings.iter().any(finding_run_status_limit)
         || gap_artifacts.iter().any(|a| a.has_static_limit());
     if has_static_limit {
         return "limited";
