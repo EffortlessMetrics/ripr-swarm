@@ -54,6 +54,16 @@ pub(super) enum NoEvidenceState {
     /// A snapshot committed and its producer outcome is `no_changed_lines`:
     /// the diff against the base has no changed lines.
     AnalyzedNoChanges { base: Option<String> },
+    /// A snapshot committed and its producer outcome is `no_scope` or
+    /// `no_behavioral_candidates`: the last analysis analyzed nothing at all,
+    /// which is not an all-clear for the change an agent believes it made
+    /// (#12416). Carries the outcome kind (the default-base cause sentence
+    /// differs per kind) and the requested base (`None` = the loader's
+    /// default resolution).
+    AnalyzedNoScope {
+        kind: crate::analysis_outcome::AnalysisOutcomeKind,
+        requested_base: Option<String>,
+    },
     /// A snapshot committed; this position simply has no evidence.
     Analyzed,
 }
@@ -148,6 +158,23 @@ pub(super) fn hover_response_without_evidence(
             );
             format!(
                 "**ripr** found no changed lines against {base_text} at its last analysis, so there is nothing to grade. ripr estimates static RIPR exposure for changed {language_text} behavior; findings appear here after a change against the base is saved and analyzed."
+            )
+        }
+        // #12416: the shared not-all-clear fact plus the editor set-a-base
+        // recovery. The cause sentence is the same bytes MCP's
+        // `empty_scope_hint` carries; only the surface wrapper differs, so a
+        // no-scope session never dead-ends in the generic analyzed advice.
+        NoEvidenceState::AnalyzedNoScope {
+            kind,
+            requested_base,
+        } => {
+            let cause = kind.empty_scope_cause_sentence(
+                requested_base.as_deref(),
+                crate::analysis_outcome::EmptyScopeDiffAuthority::SavedWorktree,
+            );
+            format!(
+                "**ripr** {cause}. {}",
+                super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE
             )
         }
         NoEvidenceState::Analyzing => format!(
