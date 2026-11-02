@@ -21118,8 +21118,6 @@ tests = [
   "crates/ripr/tests/out_parameter_oracle.rs::a_same_named_method_on_another_or_unresolved_receiver_is_not_credited",
   "crates/ripr/tests/collection_out_parameter_repair.rs::count_read_of_the_passed_vector_starts_in_both_commands",
   "crates/ripr/tests/collection_out_parameter_repair.rs::emptiness_read_keeps_the_contents_check_reason",
-  "crates/ripr/tests/collection_out_parameter_repair.rs::count_read_of_the_passed_vector_is_followed_in_both_commands",
-  "crates/ripr/tests/collection_out_parameter_repair.rs::emptiness_read_of_the_passed_vector_is_followed_in_both_commands",
   "crates/ripr/tests/collection_out_parameter_repair.rs::reading_a_different_binding_is_not_followed",
   "crates/ripr/tests/collection_out_parameter_repair.rs::reading_the_pushed_item_is_not_this_rules_to_grade",
   "crates/ripr/tests/collection_out_parameter_repair.rs::reborrowed_vector_is_not_followed",
@@ -21131,7 +21129,6 @@ tests = [
   "crates/ripr/tests/collection_out_parameter_repair.rs::ignored_test_is_not_followed",
   "crates/ripr/tests/collection_out_parameter_repair.rs::should_panic_test_is_not_followed",
   "crates/ripr/tests/collection_out_parameter_repair.rs::string_count_read_starts_in_both_commands",
-  "crates/ripr/tests/collection_out_parameter_repair.rs::string_count_read_is_followed_in_both_commands",
   "crates/ripr/tests/collection_out_parameter_repair.rs::push_argument_that_may_return_first_is_not_followed",
   "crates/ripr/tests/collection_out_parameter_repair.rs::exactly_checked_vector_is_already_noticed_not_a_contents_gap",
   "crates/ripr/tests/collection_out_parameter_repair.rs::async_owner_is_not_followed",
@@ -21148,9 +21145,6 @@ tests = [
   "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs::tests::reads_calls_and_statements_that_break_the_straight_line_are_refused",
   "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs::tests::gated_tests_shadowed_buffers_and_skippable_pushes_are_refused",
   "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs::tests::only_an_exact_nonzero_count_pins_the_push",
-  "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs::tests::count_reads_of_a_fresh_vector_or_string_are_followed",
-  "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs::tests::reads_calls_and_statements_that_break_the_straight_line_are_refused",
-  "crates/ripr/src/analysis/classify/propagation_witness/collection_out_parameter.rs::tests::gated_tests_shadowed_buffers_and_skippable_pushes_are_refused",
 ]
 fixtures = [
   "fixtures/out_parameter_unrelated_write_no_promote",
