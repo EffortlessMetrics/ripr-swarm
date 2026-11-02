@@ -146,6 +146,7 @@ fn custom_matcher_another_registration_may_replace_stays_unknown() {
         "const e = expect;\nbeforeAll(() => { e[\"ext\" + \"end\"]({ toBeCents: () => ({ pass: true }) }); });\n",
         // An escaped name anywhere in the file.
         "beforeAll(() => { expect.ext\\u0065nd({ toBeCents: () => ({ pass: true }) }); });\n",
+        "beforeAll(() => { for (const v of Object.values(glob\\u0061l)) for (const f of Object.values(v)) try { f({ toBeCents: () => ({ pass: true }) }); } catch {} });\n",
         // A computed member that builds the name from a module object.
         "import g from \"./g\";\nbeforeAll(() => { g[\"exp\" + \"ect\"][\"ext\" + \"end\"]({ toBeCents: () => ({ pass: true }) }); });\n",
         // `expect` other than as `expect(` or `expect.`, or imported other

@@ -424,6 +424,9 @@ fn expect_mention_reaches_runner(source: &str, index_after_expect: usize) -> boo
 /// to a name the plain-text route scan must not miss (`extend`, `expect`,
 /// `eval`, `Object`, or a [`GLOBAL_ROOTS`] spelling).
 fn unicode_escape_hides_routing_name(source: &str) -> bool {
+    if !source.contains("\\u") {
+        return false;
+    }
     let masked = ts_mask_literals_and_comments(source);
     let mut index = 0;
     while let Some(at) = masked[index..].find("\\u") {
@@ -443,6 +446,7 @@ fn routing_name_hidden_by_unicode(name: &str) -> bool {
         || name == "eval"
         || name == "expect"
         || name == "Object"
+        || name == "global"
         || GLOBAL_ROOTS.contains(&name)
 }
 
