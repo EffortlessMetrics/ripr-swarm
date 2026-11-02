@@ -11098,6 +11098,7 @@ tests = [
   "crates/ripr/src/analysis/seam_cache.rs::tests::integrity_nonempty_cold_warm_work_counts_and_timings_are_bounded",
   "crates/ripr/src/analysis/seam_cache.rs::tests::integrity_large_full_and_compact_envelopes_preserve_complete_warm_evidence",
   "crates/ripr/src/analysis/facts/build.rs::tests::same_key_valid_json_payload_edit_recomputes_actual_index",
+  "crates/ripr/src/analysis/facts/build.rs::tests::cache_inventory_skips_corrupt_only_build",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::integrity_invalid_classified_payload_recomputes_full_and_compact_consumers",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::same_key_fingerprint_payload_edit_declines_and_rehashes_source_truth",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_recomputes_only_directly_called_owner_seams",
@@ -11159,11 +11160,14 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::rerun_gap_groups_multiple_current_seams",
   "xtask/src/reports/targeted_rerun.rs::tests::parse_options_requires_root_and_changed_test",
   "xtask/src/reports/targeted_rerun.rs::tests::percentile_uses_sorted_nearest_rank",
+  "xtask/src/cache_payload_tamper_recovery/tests.rs::committed_corpus_passes_offline_validation",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap/input",
   "benchmarks/targeted_rerun_benchmark/input",
+  "fixtures/cache-payload-tamper-recovery",
+  "fixtures/cache-payload-tamper-recovery/corpus.json",
 ]
 code = [
   "crates/ripr/src/analysis/classify/targeted_calls.rs",
@@ -11174,6 +11178,8 @@ code = [
   "crates/ripr/src/output/gap_decision_ledger.rs",
   "crates/ripr/src/output/outcome/mod.rs",
   "xtask/src/reports/targeted_rerun.rs",
+  "xtask/src/cache_payload_tamper_recovery/mod.rs",
+  "xtask/src/cache_payload_tamper_recovery/tests.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0123-targeted-rerun.md",

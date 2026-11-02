@@ -722,6 +722,7 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                 "active-goal-authority-audit"
                     | "actionable-gap-outcomes-corpus"
                     | "blind_journey_contract"
+                    | "cache-payload-tamper-recovery"
                     | "blind_journey_execute"
                     | "blind_journey_installed_rust"
                     | "blind_journey_installed_python"

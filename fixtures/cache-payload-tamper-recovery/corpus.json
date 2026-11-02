@@ -1,0 +1,144 @@
+{
+  "schema_version": "cache_payload_tamper_recovery_corpus.v1",
+  "owner_issues": [4515, 4507],
+  "non_claim": "Library test anchors and exact-candidate execution state only; no exact packaged candidate packet or #2769 qualification is claimed until rows leave not_run.",
+  "families": [
+    {
+      "id": "repository_file_facts",
+      "disposition": "included_and_exercised",
+      "library_producer_test": "crates/ripr/src/analysis/facts/build.rs::tests::same_key_valid_json_payload_edit_recomputes_actual_index",
+      "library_consumer_test": "crates/ripr/src/analysis/facts/build.rs::tests::same_key_valid_json_payload_edit_recomputes_actual_index",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "full_classified_seam_records",
+      "disposition": "included_and_exercised",
+      "library_producer_test": "crates/ripr/src/analysis/seam_cache.rs::tests::same_key_classified_payload_and_metadata_edits_are_corrupt",
+      "library_consumer_test": "crates/ripr/src/analysis/seam_inventory.rs::tests::integrity_invalid_classified_payload_recomputes_full_and_compact_consumers",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "compact_classified_seam_records",
+      "disposition": "included_and_exercised",
+      "library_producer_test": "crates/ripr/src/analysis/seam_cache.rs::tests::same_key_classified_payload_and_metadata_edits_are_corrupt",
+      "library_consumer_test": "crates/ripr/src/analysis/seam_inventory.rs::tests::integrity_invalid_classified_payload_recomputes_full_and_compact_consumers",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "sharded_classified_records_and_shard_set_metadata",
+      "disposition": "included_and_exercised",
+      "library_producer_test": "crates/ripr/src/analysis/seam_cache.rs::tests::classified_integrity_rejects_whole_shard_set_and_never_hides_corrupt_single",
+      "library_consumer_test": "crates/ripr/src/analysis/seam_inventory.rs::tests::integrity_invalid_classified_payload_recomputes_full_and_compact_consumers",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "file_fact_inventory_admission_metadata",
+      "disposition": "included_and_exercised",
+      "library_producer_test": "crates/ripr/src/analysis/seam_cache.rs::tests::integrity_policy_checks_current_digest_after_decoded_identity_and_excludes_invalid_inventory",
+      "library_consumer_test": "crates/ripr/src/analysis/facts/build.rs::tests::cache_inventory_skips_corrupt_only_build",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "corpus_fingerprint_mapping_envelope",
+      "disposition": "included_and_exercised",
+      "library_producer_test": "crates/ripr/src/analysis/seam_cache.rs::tests::same_key_valid_json_fingerprint_payload_edit_is_corrupt",
+      "library_consumer_test": "crates/ripr/src/analysis/seam_inventory.rs::tests::same_key_fingerprint_payload_edit_declines_and_rehashes_source_truth",
+      "exact_candidate_execution": "not_run"
+    }
+  ],
+  "tamper_operations": [
+    {
+      "id": "rename_related_test",
+      "library_coverage": "partial",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "rename_owner_or_canonical_subject",
+      "library_coverage": "partial",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "alter_classification_or_evidence_field",
+      "library_coverage": "exercised",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "remove_integrity_field",
+      "library_coverage": "exercised",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "malformed_digest",
+      "library_coverage": "exercised",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "stale_or_wrong_digest",
+      "library_coverage": "exercised",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "corrupt_one_shard_member",
+      "library_coverage": "exercised",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "corrupt_shard_set_or_inventory_metadata",
+      "library_coverage": "exercised",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "foreign_or_legacy_schema_identity_control",
+      "library_coverage": "exercised",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "truncated_json_decode_control",
+      "library_coverage": "partial",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "re_sealed_unkeyed_checksum_boundary",
+      "library_coverage": "partial",
+      "exact_candidate_execution": "not_run"
+    }
+  ],
+  "required_controls": [
+    {
+      "id": "disable_checksum_validation",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "validate_envelope_key_only",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "corrupt_one_shard_while_siblings_valid",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "remove_recovery_rewrite",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "unchanged_current_entries_remain_hits",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "re_sealed_changed_payload_nonauthentication",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "nonzero_produced_and_consumed_rows",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "candidate_or_schema_movement_stales_packet",
+      "exact_candidate_execution": "not_run"
+    },
+    {
+      "id": "cancellation_during_recompute_store",
+      "exact_candidate_execution": "not_run"
+    }
+  ]
+}

@@ -1745,6 +1745,56 @@ pub(crate) fn user_surface_projection_required_run_status_violations(
         .collect()
 }
 
+pub(crate) fn validate_cache_payload_tamper_recovery_fixture_corpus(
+    violations: &mut Vec<String>,
+) -> Result<(), String> {
+    let root = Path::new("fixtures/cache-payload-tamper-recovery");
+    for required in ["SPEC.md", "corpus.json"] {
+        let path = root.join(required);
+        if !path.exists() {
+            violations.push(format!(
+                "cache payload tamper/recovery fixture corpus is missing {}",
+                normalize_path(&path)
+            ));
+        }
+    }
+    let spec_path = root.join("SPEC.md");
+    if spec_path.exists() {
+        let body = read_text_lossy(&spec_path)?;
+        if !body.contains("#4515") {
+            violations.push(
+                "cache payload tamper/recovery SPEC.md must name governing issue #4515".to_string(),
+            );
+        }
+        for heading in ["## Given", "## When", "## Then", "## Must Not"] {
+            if !body.contains(heading) {
+                violations.push(format!(
+                    "cache payload tamper/recovery SPEC.md must contain the `{heading}` section"
+                ));
+            }
+        }
+    }
+    let corpus_path = root.join("corpus.json");
+    if !corpus_path.exists() {
+        return Ok(());
+    }
+    let corpus = match crate::cache_payload_tamper_recovery::load_committed_corpus() {
+        Ok(corpus) => corpus,
+        Err(error) => {
+            violations.push(format!(
+                "cache payload tamper/recovery corpus is invalid: {error}"
+            ));
+            return Ok(());
+        }
+    };
+    if let Err(error) = crate::cache_payload_tamper_recovery::validate_corpus(&corpus) {
+        violations.push(format!(
+            "cache payload tamper/recovery corpus failed validation: {error}"
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_blind_journey_contract_fixture_corpus(
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
