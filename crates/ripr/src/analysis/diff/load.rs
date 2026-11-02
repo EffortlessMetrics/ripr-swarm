@@ -2712,6 +2712,8 @@ mod tests {
 
     #[test]
     fn lossy_owned_utf8_moves_valid_git_diff_bytes() -> Result<(), String> {
+        // Valid UTF-8 Git diff bytes use `String::from_utf8` (move) rather than
+        // borrowing the full buffer for `from_utf8_lossy` (#5000).
         let bytes = b"diff --git a/x b/x\n".to_vec();
         let expected = String::from_utf8(bytes.clone()).map_err(|err| err.to_string())?;
         assert_eq!(lossy_owned_utf8(bytes), expected);
