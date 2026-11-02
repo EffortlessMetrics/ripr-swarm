@@ -518,3 +518,28 @@ fn a_table_after_a_possible_early_exit_keeps_its_gap() -> Result<(), String> {
     }
     Ok(())
 }
+
+const WORD_COUNT_OWNER: &str = "pub fn word_count(lines: &[&str]) -> usize {
+    let mut count = 0;
+    for line in lines {
+        count += line.split_whitespace().count();
+    }
+    count
+}
+";
+
+#[test]
+fn a_word_count_table_pins_the_split_whitespace_accumulator_update() -> Result<(), String> {
+    let table_body = "let cases: [(&[&str], usize); 3] = [(&[], 0), (&[\"a b\"], 2), (&[\"one\", \"two three\"], 3)];
+        for (lines, want) in cases {
+            assert_eq!(word_count(lines), want, \"{lines:?}\");
+        }";
+    let found = accumulator_finding_from(
+        WORD_COUNT_OWNER,
+        "        count = count + line.split_whitespace().count();",
+        "        count += line.split_whitespace().count();",
+        table_body,
+    )?;
+    assert_eq!(found.class, ExposureClass::Exposed, "{found:?}");
+    Ok(())
+}

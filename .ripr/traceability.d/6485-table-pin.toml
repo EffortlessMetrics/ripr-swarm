@@ -11,11 +11,14 @@ tests = [
   "crates/ripr/tests/loop_accumulator_pin.rs::a_table_row_with_a_nonempty_input_and_a_nonzero_total_credits_the_update",
   "crates/ripr/tests/loop_accumulator_pin.rs::a_table_that_separates_nothing_or_cannot_be_read_is_withheld_never_a_gap",
   "crates/ripr/tests/loop_accumulator_pin.rs::a_table_after_a_possible_early_exit_keeps_its_gap",
+  "crates/ripr/tests/loop_accumulator_pin.rs::a_word_count_table_pins_the_split_whitespace_accumulator_update",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus/cases/loop-accumulator-table-pin.json",
   "fixtures/rust-verdict-corpus/cases/trap-loop-accumulator-table-zero-rows.json",
+  "fixtures/rust-verdict-corpus/cases/grid-loop-table.json",
 ]
 code = [
   "crates/ripr/src/analysis/classify/owner_pin/closure_adaptor.rs",
+  "crates/ripr/src/analysis/syntax/loop_accumulator.rs",
 ]

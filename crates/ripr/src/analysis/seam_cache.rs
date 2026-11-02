@@ -634,7 +634,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.139`: a table-test row title or template that merely quotes `eval`,
 /// `with`, `this`, `arguments` or `Function` no longer hides the row's
 /// mutation route; only code uses and computed keys do (#12253).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.139";
+/// `1.140`: a returned loop accumulator whose term is
+/// `line.split_whitespace().count()` is the RIPR-SPEC-0360 shape (#6485).
+/// Old entries keep the update's `static_unknown` probe.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.140";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -815,7 +818,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.139";
 /// `0.139`: same indirect-owner item scope decisions as full `1.137` (#10162).
 /// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
 /// `0.141`: same table-row quoted-word rule as full `1.139` (#12253).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.141";
+/// `0.142`: same word-count loop accumulator shape as full `1.140` (#6485).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.142";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -998,7 +1002,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.141";
 /// `0.139`: same indirect-owner item scope decisions as full `1.137` (#10162).
 /// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
 /// `0.141`: same table-row quoted-word rule as full `1.139` (#12253).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.141";
+/// `0.142`: same word-count loop accumulator shape as full `1.140` (#6485).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.142";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -5615,7 +5620,8 @@ mod tests {
         // 1.136 -> 1.137: indirect-owner item scope decisions (#10162).
         // 1.137 -> 1.138: adapter-fed Err refusal (#12359).
         // 1.138 -> 1.139: table-row quoted words no longer hide the route (#12253).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.139");
+        // 1.139 -> 1.140: word-count loop accumulator shape (#6485).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.140");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5736,8 +5742,9 @@ mod tests {
         // 0.138 -> 0.139: same indirect-owner item scope decisions as full 1.137 (#10162).
         // 0.139 -> 0.140: same adapter-fed Err refusal as full 1.138 (#12359).
         // 0.140 -> 0.141: same table-row quoted-word rule as full 1.139 (#12253).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.141");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.141");
+        // 0.141 -> 0.142: same word-count loop accumulator shape as full 1.140 (#6485).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.142");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.142");
     }
 
     #[test]

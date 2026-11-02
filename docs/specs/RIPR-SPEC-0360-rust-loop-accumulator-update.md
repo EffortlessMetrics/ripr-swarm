@@ -25,7 +25,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- #12529
 
 Support-tier impact:
 
@@ -80,13 +80,18 @@ parsed function body:
   the initialization, so nothing can shadow or rebind the walked parameter;
 - `P` is a parameter whose type is a built-in integer slice (`&[T]`,
   `&mut [T]`, `Vec<T>`, `&Vec<T>`, with `T` one of `i8`..`i128`, `isize`,
-  `u8`..`u128`, `usize`) and its name appears only in its declaration and the
-  loop;
+  `u8`..`u128`, `usize`) or, for one whitelisted word-count shape, a slice of
+  string slices (`&[&str]`, `&mut [&str]`, `Vec<&str>`, `&Vec<&str>`, with
+  optional lifetime annotations on the element type) and its name appears only
+  in its declaration and the loop;
 - the loop body is one statement, the update: `acc += term`, `acc -= term`,
   `acc = acc + term` or `acc = acc - term`, on one line;
-- `term` is the loop variable, `*variable`, an integer literal, or a **call
-  term** (below). The elements are a built-in integer type, so the update is
-  the primitive operator. A field or a second name could carry a user
+- `term` is the loop variable, `*variable`, an integer literal, a **built-in
+  method chain** on the loop variable (`line.split_whitespace().count()` with
+  no arguments), or a **call term** (below). The elements are a built-in
+  integer type, or for the word-count chain a `str` line whose whitespace split
+  is the standard library method, so the update is the primitive operator or
+  the built-in count. A field or a second name could carry a user
   `AddAssign`/`SubAssign` impl (`impl AddAssign<&W> for i32`), and an
   operator inside a plain term has mutants (`w * w` to `w + w`) that a pin of
   the total does not separate;
@@ -187,10 +192,15 @@ exact pin (a smoke call, a relational check) keeps its gap.
 
 ## Known Limits
 
-- A call outside the call term above (`count += line.split_whitespace().count()`,
-  a method, a path, a second argument, an operator on both sides) and a
-  nonzero start keep their `static_unknown` probe. Crediting them is future
-  work.
+- A call outside the call term above (a method other than the whitelisted
+  `split_whitespace().count()` chain, a path, a second argument, an operator on
+  both sides) and a nonzero start keep their `static_unknown` probe. Crediting
+  them is future work.
+- The whitelisted method chain is recognized by spelling only, like plain
+  integer terms: ripr does not resolve whether `split_whitespace` or `count` is
+  the standard-library implementation. A trait on `&&str` or a custom return
+  type with user `AddAssign`/`SubAssign` carries the same ceiling documented
+  for built-in integer elements above.
 - A call term's mutants inside the callee (`x * 2` to `x + 2` in `double`) are
   changes to the callee's own line, not to the update. The update's neighbours
   are the ones listed above; ripr does not model mutants that replace the call
