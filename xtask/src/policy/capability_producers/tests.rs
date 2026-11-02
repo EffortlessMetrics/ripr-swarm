@@ -177,10 +177,10 @@ fn enum_parser_reads_variants_and_rejects_unrecognized_shapes() -> Result<(), St
 fn real_repository_inventory_is_nonempty_and_covers_known_adapters() -> Result<(), String> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let inv = read_inventory(&root)?;
-    for language in ["rust", "typescript", "javascript", "python", "perl"] {
+    for language in ["rust", "typescript", "javascript", "python", "perl", "go"] {
         assert!(inv.enum_languages.contains(language), "{language}");
     }
-    for dir in ["rust", "typescript", "python", "perl"] {
+    for dir in ["rust", "typescript", "python", "perl", "go"] {
         assert!(inv.adapter_dirs.contains(dir), "{dir}");
         assert!(inv.lang_features.contains(&format!("lang-{dir}")), "{dir}");
     }

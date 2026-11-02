@@ -124,6 +124,7 @@ pub(super) fn compiled_feature_violations(
             "typescript" | "javascript" => "lang-typescript",
             "python" => "lang-python",
             "perl" => "lang-perl",
+            "go" => "lang-go",
             _ => {
                 violations.push(format!(
                     "language `{name}` has no canonical feature disposition"

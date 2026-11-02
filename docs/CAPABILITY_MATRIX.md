@@ -115,6 +115,8 @@ Status values:
 
 | Perl repair routing loop | `planned` | `RIPR-SPEC-0064` | Consumer spine, packet integrity, fixture-scoped two-binary harness proof, managed producer mode, doctor preview, advisory-only preview-card invariant, the corrected `perl-ripr-facts` exporter architecture, and checked `fixtures/perl-real-repo-evals` launchpoints are landed in source. The capability remains blocked on real producer data-plane proof: usable-alpha promotion still requires actionable/already-observed/limited outcomes across at least five real Perl repos, top-1 precision and verify-command thresholds, before/after receipts, expanded perl-real-repo-evals real-repo receipts, and decommissioning of the bespoke preview-card path in favor of the shared validator. Until then Perl has no gate, badge, RIPR Zero, or stable-authority claim. | `dogfood/perl-real-repo-evals-v2` | language_adapter_perl_facts_packet_v1, language_adapter_perl_gap_record_projection, language_adapter_perl_doctor_preview, language_adapter_perl_bespoke_card_advisory_only_invariant, language_adapter_perl_real_repo_eval_launchpoints |
 
+| Go language identity | `planned` | `RIPR-SPEC-0026` | Closed `LanguageId::Go` with wire token `go`, display name Go, serde round-trip, and rejection of golang aliases (#6349). Capability registry cells are `not_proven`; `.go` files stay on the unanalyzed-source list and `[languages] enabled` does not accept `go` yet. Empty Cargo feature `lang-go` aligns `required_feature`/`is_available` without shipping a Go adapter. | `go-adapter-dispatch` | language_identity_go_wire_token |
+
 ## Update Rules
 
 Update this file when a PR changes capability status, adds fixtures, changes a
