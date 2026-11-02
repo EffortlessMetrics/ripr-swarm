@@ -84,13 +84,11 @@ pub(crate) fn verus_guard_facts(source: &str) -> Vec<VerusGuardFact> {
     out
 }
 
-pub(crate) fn guard_fact_at_line<'a>(
-    facts: &'a [VerusGuardFact],
-    line: usize,
-) -> Option<&'a VerusGuardFact> {
-    facts.iter().find(|fact| {
-        line >= fact.header_start_line && line <= fact.header_end_line.max(fact.region_end_line)
-    })
+pub(crate) fn guard_fact_at_line(facts: &[VerusGuardFact], line: usize) -> Option<&VerusGuardFact> {
+    facts
+        .iter()
+        .filter(|fact| line >= fact.header_start_line && line <= fact.header_end_line)
+        .max_by_key(|fact| fact.header_start_line)
 }
 
 fn parse_region_items(
@@ -102,7 +100,6 @@ fn parse_region_items(
     let mut facts = Vec::new();
     let mut index = 0usize;
     while index < region_lines.len() {
-        let absolute_line = region_start_line + index;
         let (attrs, consumed) = collect_leading_attributes(region_lines, index);
         index += consumed;
         if index >= region_lines.len() {
@@ -112,7 +109,7 @@ fn parse_region_items(
             index += 1;
             continue;
         };
-        let header_start = absolute_line;
+        let header_start = region_start_line + index;
         let trust = trust_from_attributes(&attrs);
         let mut requires = Vec::new();
         let mut ensures = Vec::new();
@@ -297,6 +294,26 @@ mod tests {
         let source = "verus! {\nfn f(x: u32) -> (r: u32)\n    ensures r == x,\n{ x }\n}\n";
         let facts = verus_guard_facts(source);
         assert!(guard_fact_at_line(&facts, 3).is_some_and(|f| f.owner_name == "f"));
+    }
+
+    #[test]
+    fn guard_fact_at_line_picks_second_item_in_multi_item_region() {
+        let source = "verus! {\nfn a(x: u32) -> (r: u32)\n    ensures r == x,\n{ x }\nfn b(y: u32) -> (r: u32)\n    ensures r == y,\n{ y }\n}\n";
+        let facts = verus_guard_facts(source);
+        assert_eq!(facts.len(), 2);
+        assert!(
+            guard_fact_at_line(&facts, 6).is_some_and(|f| f.owner_name == "b"),
+            "line 6 is b's ensures, not a's region tail"
+        );
+        assert!(guard_fact_at_line(&facts, 3).is_some_and(|f| f.owner_name == "a"),);
+    }
+
+    #[test]
+    fn header_start_line_is_fn_line_not_attribute_line() {
+        let source = "verus! {\n#[verifier(external_body)]\nfn trusted(x: u32) -> (r: u32)\n    ensures r == x,\n{ x }\n}\n";
+        let facts = verus_guard_facts(source);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].header_start_line, 3);
     }
 
     #[test]

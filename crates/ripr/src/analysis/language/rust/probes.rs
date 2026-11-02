@@ -38,7 +38,8 @@ pub(super) fn apply_verus_macro_region_limit(
     // line, so its region lives in the reconstructed old source at the line's
     // old-side number; an added-side probe is looked up in the new source.
     let removed_side = probe.after.is_none() && probe.before.is_some();
-    let (region, side) = if removed_side {
+    let mut old_guard_facts: Option<Vec<crate::analysis::verus::VerusGuardFact>> = None;
+    let (region, side, guard_line) = if removed_side {
         let before = probe.before.as_deref().unwrap_or_default().trim();
         let Some(old_line) = changed
             .removed_lines
@@ -53,22 +54,26 @@ pub(super) fn apply_verus_macro_region_limit(
         else {
             return;
         };
+        old_guard_facts = Some(crate::analysis::verus::verus_guard_facts(&old_source));
         (
             crate::analysis::probes::verus_region_lines(&old_source, old_line),
             " of the old file",
+            old_line,
         )
     } else {
         (
             crate::analysis::probes::verus_region_lines(&facts.source, probe.location.line),
             "",
+            probe.location.line,
         )
     };
     let Some((start, end)) = region else {
         return;
     };
-    if let Some(guard) =
-        crate::analysis::verus::guard_fact_at_line(&facts.verus_guard_facts, probe.location.line)
-    {
+    let guard_facts = old_guard_facts
+        .as_deref()
+        .unwrap_or(facts.verus_guard_facts.as_slice());
+    if let Some(guard) = crate::analysis::verus::guard_fact_at_line(guard_facts, guard_line) {
         name_verus_guard_fact(finding, guard, side);
         return;
     }
@@ -110,6 +115,16 @@ pub(super) fn apply_verus_macro_region_limit_in_repo_file(
     };
     if let Some(guard) =
         crate::analysis::verus::guard_fact_at_line(&facts.verus_guard_facts, probe.location.line)
+            .or_else(|| {
+                if probe.location.line == start {
+                    facts
+                        .verus_guard_facts
+                        .iter()
+                        .find(|fact| fact.region_start_line == start && fact.region_end_line == end)
+                } else {
+                    None
+                }
+            })
     {
         name_verus_guard_fact(finding, guard, "");
         return;
@@ -1114,7 +1129,7 @@ mod tests {
             finding
                 .evidence
                 .iter()
-                .any(|line| line.contains("spanning lines 2-9 of the old file")),
+                .any(|line| line.contains("verus_guard_fact: owner=inc")),
             "{:?}",
             finding.evidence
         );

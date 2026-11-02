@@ -4237,7 +4237,7 @@ mod tests {
             finding
                 .evidence
                 .iter()
-                .any(|line| line.contains("spanning lines 2-9")),
+                .any(|line| line.contains("verus_guard_fact: owner=inc")),
             "{:?}",
             finding.evidence
         );

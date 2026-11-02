@@ -2064,6 +2064,8 @@ struct FileFactsWireRef<'a> {
     source: &'a str,
     item_scopes: Option<&'a ModuleItemScopes>,
     macro_candidates: Option<&'a MacroBindingCandidates>,
+    #[serde(default, skip_serializing_if = "<[_]>::is_empty")]
+    verus_guard_facts: &'a [crate::analysis::verus::VerusGuardFact],
 }
 
 impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
@@ -2131,6 +2133,7 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
             source: &facts.source,
             item_scopes: facts.item_scopes.as_deref(),
             macro_candidates: facts.macro_candidates.as_deref(),
+            verus_guard_facts: &facts.verus_guard_facts,
         }
     }
 }
@@ -2739,6 +2742,25 @@ fn checks_helper() {
             with_probe_shapes > 0,
             "no source reached the probe-shape branches"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn file_facts_wire_ref_roundtrips_verus_guard_facts() -> Result<(), serde_json::Error> {
+        let source = "verus! {\nfn inc(x: u32) -> (r: u32)\n    ensures r == x,\n{ x }\n}\n";
+        let mut facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            source.to_string(),
+        );
+        facts.verus_guard_facts = crate::analysis::verus::verus_guard_facts(source);
+        assert_eq!(facts.verus_guard_facts.len(), 1);
+        let wire = serde_json::to_string(&FileFactsWireRef::from(&facts))?;
+        assert!(
+            wire.contains("\"verus_guard_facts\""),
+            "borrowed wire must serialize guard facts"
+        );
+        let decoded: FileFacts = serde_json::from_str(&wire)?;
+        assert_eq!(decoded.verus_guard_facts, facts.verus_guard_facts);
         Ok(())
     }
 
