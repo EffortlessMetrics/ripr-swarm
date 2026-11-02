@@ -38,7 +38,8 @@ Support-tier impact:
 - No enablement, gating promotion, badge, baseline, RIPR Zero, release, signing, or
   publication authority. Swift, Objective-C, Swift Testing, XCTest, UI/performance tests,
   Objective-C++, and each Apple platform/SDK/configuration context remain
-  `preview` / `not_proven` until separate promotion PRs cite receipts.
+  `preview` / `not_proven` until separate promotion PRs cite receipts. The canonical
+  boundary remains [support tiers](../status/SUPPORT_TIERS.md).
 
 Policy impact:
 
