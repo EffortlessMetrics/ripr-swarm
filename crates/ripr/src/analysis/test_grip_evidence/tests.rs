@@ -21849,6 +21849,14 @@ fn inline_unwrap_err_equality_discriminates_an_error_variant_seam() -> Result<()
     let expected_err =
         read("#[test] fn odd() { assert_eq!(parse(\"1\").expect_err(\"odd\"), Fault::Odd); }")?;
     assert_eq!(expected_err.0, StageState::Yes, "expect_err spelling");
+    let ufcs_expect_err = read(
+        "#[test] fn odd() { assert_eq!(Result::expect_err(parse(\"1\"), \"odd\"), Fault::Odd); }",
+    )?;
+    assert_eq!(
+        ufcs_expect_err.0,
+        StageState::Yes,
+        "UFCS Result::expect_err spelling (#12336)"
+    );
     let opaque = read(
         "#[test] fn odd() { let want = Fault::Odd; assert_eq!(parse(\"1\").unwrap_err(), want); }",
     )?;
