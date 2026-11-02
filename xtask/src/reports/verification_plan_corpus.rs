@@ -433,7 +433,9 @@ mod tests {
         scenario.case.execution.executed_subjects = vec!["test::sample".to_string()];
         scenario.case.execution.selected_subjects = vec!["test::sample".to_string()];
         scenario.case.execution.discovered_subjects = vec!["test::sample".to_string()];
-        assert!(assess_fixture_corpus(&mutated).is_err());
+        if assess_fixture_corpus(&mutated).is_ok() {
+            return Err("mutated negative control must fail corpus check".to_string());
+        }
         Ok(())
     }
 }

@@ -309,13 +309,13 @@ pub(crate) fn verification_plan_successor_reference_violation(
         .map(|scenario| scenario.case.case_id.as_str())
         .collect();
     for scenario in &corpus.scenarios {
-        if let Some(successor) = scenario.case.successor_of.as_deref() {
-            if !case_ids.contains(successor) {
-                return Some(format!(
-                    "case `{}` successor_of `{successor}` is not present in the corpus",
-                    scenario.case.case_id
-                ));
-            }
+        if let Some(successor) = scenario.case.successor_of.as_deref()
+            && !case_ids.contains(successor)
+        {
+            return Some(format!(
+                "case `{}` successor_of `{successor}` is not present in the corpus",
+                scenario.case.case_id
+            ));
         }
     }
     None
