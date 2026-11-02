@@ -122,6 +122,15 @@ jobs:
       # The MSYS PID of the background job is not a native PID. Only a PID read from
       # /proc/<pid>/winpid reaches taskkill; with no mapping the watchdog records
       # that and kills the MSYS job only.
+      #
+      # Two nextest runs per shard, `--workspace --exclude xtask` then `-p xtask`
+      # (#12245). A build that selects `ripr` in test mode and an xtask-only build
+      # leave Cargo's fingerprint for the `xtask` binary in different states, so
+      # each alternation recompiles it (about 83 s). One workspace run left the
+      # facade test's own `cargo test -p xtask` spawns to pay that inside the
+      # capped test. Building xtask last, by `-p xtask`, pays it in nextest's
+      # build before any test clock starts. Each run is partitioned by
+      # `count:$shard/4`, so the four shards still cover every test once.
       - name: Run workspace tests (shard ${{ matrix.shard }} of 4)
         timeout-minutes: 55
         shell: bash
@@ -133,7 +142,8 @@ jobs:
         run: |
           mkdir -p target
           shard=${{ matrix.shard }}
-          cargo nextest run --profile windows-advisory --workspace --no-fail-fast --partition count:$shard/4 -E "not $ACL_TESTS" > target/shard-$shard.log 2>&1 &
+          # ripr and tools first, xtask last (#12245): see the comment above.
+          bash -c 'rc=0; for pkg in "--workspace --exclude xtask" "-p xtask"; do cargo nextest run --profile windows-advisory $pkg --no-fail-fast --partition count:$0/4 -E "not $ACL_TESTS" || rc=$?; done; exit $rc' "$shard" > target/shard-$shard.log 2>&1 &
           nextest_pid=$!
           tail -n +1 -F target/shard-$shard.log &
           tail_pid=$!
