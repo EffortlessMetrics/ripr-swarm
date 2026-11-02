@@ -1355,7 +1355,8 @@ fn owner_call_sites_before_read(
     method: &str,
     read_line: usize,
 ) -> Vec<usize> {
-    OwnerCallRebindingContext::new(body, start_line, binding).sites_before_read(binding, method, read_line)
+    OwnerCallRebindingContext::new(body, start_line, binding)
+        .sites_before_read(binding, method, read_line)
 }
 
 struct OwnerCallRebindingContext {

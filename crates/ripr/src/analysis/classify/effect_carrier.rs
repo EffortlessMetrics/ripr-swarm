@@ -354,7 +354,9 @@ fn function_field_use(function: &FunctionSummary) -> Option<FieldUse> {
 fn free_fn_field_use(body: &[Tok], param: &str) -> FieldUse {
     let mut aliased = body.to_vec();
     for token in &mut aliased {
-        if let Tok::Ident(name) = token && name == param {
+        if let Tok::Ident(name) = token
+            && name == param
+        {
             *token = Tok::Ident("self".to_string());
         }
     }
@@ -363,7 +365,9 @@ fn free_fn_field_use(body: &[Tok], param: &str) -> FieldUse {
 
 /// The identifier of the first `&mut` parameter whose type names the self type.
 fn free_fn_mut_self_param_name(signature: &[Tok]) -> Option<String> {
-    let open = signature.iter().position(|token| *token == Tok::Punct('('))?;
+    let open = signature
+        .iter()
+        .position(|token| *token == Tok::Punct('('))?;
     let mut index = open + 1;
     while index < signature.len() && !punct(signature, index, ')') {
         let start = index;
@@ -824,10 +828,15 @@ impl EffectStateCarrier {
         // (`if self.low_stock.contains(..) { self.log.push(..) }`).
         let owner_uses = function_field_use(owner)?;
         if owner_uses.whole_self
-            || owner_uses
-                .reads
-                .iter()
-                .any(|field| written_fields.contains(field))
+            && (callee.item.has_self_param
+                || !owner_bare_self_only_hands_to_callee(owner, &callee_name))
+        {
+            return None;
+        }
+        if owner_uses
+            .reads
+            .iter()
+            .any(|field| written_fields.contains(field))
             || owner_uses
                 .self_calls
                 .iter()
@@ -949,7 +958,7 @@ impl EffectStateCarrier {
         test: &TestSummary,
         assertion: &OracleFact,
     ) -> bool {
-        let compared = compared_bindings_in_whole_object_assertion(&assertion.text);
+        let compared = Self::compared_bindings_in_whole_object_assertion(&assertion.text);
         for binding in &compared {
             if super::reveal::owner_call_preceded_but_rebound_before_read(
                 &test.body,
@@ -1004,10 +1013,11 @@ impl EffectStateCarrier {
         };
         let mut bindings = BTreeSet::new();
         let first = open + 1;
-        if let Some(name) = ident(&tokens, first) {
-            if !KEYWORDS.contains(&name) && name != "Self" {
-                bindings.insert(name.to_string());
-            }
+        if let Some(name) = ident(&tokens, first)
+            && !KEYWORDS.contains(&name)
+            && name != "Self"
+        {
+            bindings.insert(name.to_string());
         }
         bindings
     }
@@ -1425,6 +1435,37 @@ fn mut_self_without_return(signature: &[Tok]) -> bool {
         }
     }
     mut_self
+}
+
+fn owner_bare_self_only_hands_to_callee(owner: &FunctionSummary, callee_name: &str) -> bool {
+    let (_, body) = match split_signature(owner) {
+        Some(parts) => parts,
+        None => return false,
+    };
+    for (index, token) in body.iter().enumerate() {
+        if !matches!(token, Tok::Ident(name) if name == "self") || punct(&body, index + 1, '.') {
+            continue;
+        }
+        if !self_argument_hands_to_callee(&body, index, callee_name) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether `self` at `index` is the first argument of `callee_name(..)`.
+fn self_argument_hands_to_callee(body: &[Tok], index: usize, callee_name: &str) -> bool {
+    let Some(open) = enclosing_call_open(body, index) else {
+        return false;
+    };
+    if open == 0 || ident(body, open - 1) != Some(callee_name) {
+        return false;
+    }
+    let Some(close) = matching_close(body, open) else {
+        return false;
+    };
+    let args = &body[open + 1..close];
+    args.first() == Some(&Tok::Ident("self".to_string()))
 }
 
 fn transitive_writes(
