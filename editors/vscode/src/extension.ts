@@ -158,6 +158,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('ripr.startCurrentRepair', async () =>
       controller?.startCurrentRepair()
     ),
+    vscode.commands.registerCommand('ripr.startOrContinueRepair', async () =>
+      controller?.startOrContinueRepair()
+    ),
     vscode.commands.registerCommand('ripr.copyCurrentRepairPacket', async () =>
       controller?.copyCurrentRepairPacket()
     ),

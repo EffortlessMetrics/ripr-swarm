@@ -57,6 +57,7 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.showStatus'));
     assert.ok(commands.includes('ripr.diagnoseSetup'));
     assert.ok(commands.includes('ripr.startCurrentRepair'));
+    assert.ok(commands.includes('ripr.startOrContinueRepair'));
     assert.ok(commands.includes('ripr.copyCurrentRepairPacket'));
     assert.ok(commands.includes('ripr.copyRepoGapMap'));
     assert.ok(commands.includes('ripr.openFirstPrPacket'));
@@ -6005,6 +6006,55 @@ suite('Extension Smoke', () => {
   });
 });
 
+suite('Start or Continue Repair shell (#2928 / #4647)', () => {
+  test('startOrContinueRepair runs the shared after phase for one live attempt', async () => {
+    const fixtureDir = path.resolve(__dirname, '../../../test-fixtures/attempt-status');
+    const awaiting = await fs.readFile(path.join(fixtureDir, 'status-awaiting_edit.json'), 'utf8');
+    const inventory = JSON.stringify({
+      schema_version: '0.1',
+      tool: 'ripr',
+      repair_attempts: [
+        {
+          attempt_id: 'repair-attempt-0123456789abcdef01234567',
+          seam_id: '67fc764ba37d77bd',
+          state: 'awaiting_edit',
+          disposition: 'resumable',
+          command:
+            'ripr agent repair --root . --attempt repair-attempt-0123456789abcdef01234567 --phase after',
+        },
+      ],
+    });
+    const afterEnvelope = JSON.stringify({
+      schema_version: '0.1',
+      kind: 'repair_after_result',
+      verify: {
+        schema_version: '0.3',
+        tool: 'ripr',
+        movement: { summary: 'Result for seam demo: weak -> exposed (improved).' },
+      },
+      agent_status: JSON.parse(awaiting),
+    });
+    const context = createControllerTestContext({
+      cliResult: inventory,
+      afterPhaseResult: afterEnvelope,
+      statusAttemptResult: awaiting,
+    });
+    try {
+      await context.controller.startOrContinueRepair();
+      const afterCall = context.runRiprCalls.find((call) =>
+        call.args.includes('--phase') && call.args[call.args.indexOf('--phase') + 1] === 'after'
+      );
+      assert.ok(afterCall, 'expected shared after-phase CLI invocation');
+      assert.ok(
+        context.infoMessages.some((message) => message.includes('improved')),
+        `expected movement summary in UI: ${context.infoMessages.join(' | ')}`
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+});
+
 interface ControllerTestOptions {
   enabled?: boolean;
   includeUnchangedTests?: boolean;
@@ -6015,6 +6065,8 @@ interface ControllerTestOptions {
   lspError?: Error;
   startupError?: Error;
   cliResult?: string;
+  afterPhaseResult?: string;
+  statusAttemptResult?: string;
   firstActionJson?: string | null;
   files?: Record<string, string | null>;
   workspaceRoot?: string | null;
@@ -6499,7 +6551,27 @@ function createControllerTestContext(options: ControllerTestOptions) {
     },
     runRipr: async (command, args, cwd) => {
       runRiprCalls.push({ command, args, cwd });
+      if (args.includes('--attempt') && options.statusAttemptResult) {
+        return options.statusAttemptResult;
+      }
       return options.cliResult ?? '{}';
+    },
+    runRiprProcess: async (command, args, cwd) => {
+      runRiprCalls.push({ command, args, cwd });
+      const phaseIndex = args.indexOf('--phase');
+      const phase = phaseIndex >= 0 ? args[phaseIndex + 1] : undefined;
+      if (phase === 'after') {
+        return {
+          exitCode: 0,
+          stdout: options.afterPhaseResult ?? '{}',
+          stderr: '',
+        };
+      }
+      return {
+        exitCode: 0,
+        stdout: options.cliResult ?? '{}',
+        stderr: '',
+      };
     },
     writeClipboard: async (text) => {
       clipboardWrites.push(text);
