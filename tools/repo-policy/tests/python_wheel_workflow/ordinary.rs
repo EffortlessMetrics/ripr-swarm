@@ -195,6 +195,12 @@ fn installed_hook_refuses_wrong_identity_empty_execution_and_missing_completion(
         "rustup",
         "test \"$1 $2 $3\" = 'which --toolchain 1.95.0' || exit 90\nprintf '%s/%s\n' \"$NATIVE_TOOL_DIR\" \"$4\"\n",
     )?;
+    fixture.write_shim(
+        "find",
+        r#"if test "${ORDINARY_FIND_SCENARIO:-}" = find_failure; then exit 9; fi
+exec /usr/bin/find "$@"
+"#,
+    )?;
     let head = "a".repeat(40);
     let tree = "b".repeat(40);
     let runner_sha = digest(&runner)?;
@@ -247,6 +253,7 @@ fn installed_hook_refuses_wrong_identity_empty_execution_and_missing_completion(
             .env("CONSUMER_PATH", "/usr/bin:/bin")
             .env("PLANTED_MARKER", root.join("planted-executed"))
             .env("NATIVE_TOOL_DIR", fixture.0.join(".git/bin"))
+            .env("ORDINARY_FIND_SCENARIO", scenario)
             .env("CARGO_BIN_EXE_ripr", "/wrong/workspace/binary")
             .output()?)
     };
@@ -275,6 +282,7 @@ fn installed_hook_refuses_wrong_identity_empty_execution_and_missing_completion(
         "zero_native_receipt",
         "missing_command",
         "missing_stream",
+        "find_failure",
     ] {
         let result = invoke(
             WORKFLOW,
@@ -298,6 +306,16 @@ fn installed_hook_refuses_wrong_identity_empty_execution_and_missing_completion(
             assert_eq!(
                 fs::read_to_string(evidence.join("native-exit-status.txt"))?,
                 "17\n"
+            );
+        }
+        if scenario == "find_failure" {
+            assert_eq!(
+                fs::read_to_string(evidence.join("native-exit-status.txt"))?,
+                "0\n"
+            );
+            assert_eq!(
+                fs::read_to_string(evidence.join("hook-exit-status.txt"))?,
+                "9\n"
             );
         }
     }

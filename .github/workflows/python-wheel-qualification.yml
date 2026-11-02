@@ -904,7 +904,8 @@ jobs:
           done
           test "$(sha256sum "${runner}" | awk '{print $1}')" = "${EXPECTED_ORDINARY_RUNNER_SHA256}"
           test "$(sha256sum "${CONSUMER_EXECUTABLE}" | awk '{print $1}')" = "${EXPECTED_PAYLOAD_SHA256}"
-          test -z "$(find "${scratch}" -mindepth 1 -print -quit)"
+          remaining="$(find "${scratch}" -mindepth 1 -print -quit)"
+          test -z "${remaining}"
           test ! -e "${PLANTED_MARKER}"
 
       - name: Retain installed ordinary identities, logs, and native outcomes
