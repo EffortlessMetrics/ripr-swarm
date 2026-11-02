@@ -27,6 +27,9 @@ pub(crate) const REPAIR_ROUTE_AUTHORITY_BOUNDARY: &str =
     "analysis/producer-owned-repair-route-readiness";
 const PRODUCER_DISCRIMINATOR_EVIDENCE: &str = "producer-owned missing discriminator fact";
 pub(crate) const SAFE_TEST_TARGET_EVIDENCE: &str = "safe test target";
+/// #11402: the route's proposed check for a push into a collection the test
+/// holds would be an exact contents comparison, which it cannot propose yet.
+pub(crate) const COLLECTION_CONTENTS_CHECK_EVIDENCE: &str = "collection contents check proposal";
 
 /// Plain-language rendering of one readiness-evidence string for human
 /// output surfaces only (#10644). A reader cannot act on the internal fact
@@ -41,6 +44,12 @@ pub(crate) fn humanize_evidence(evidence: &str) -> String {
     // human screens; the machine list keeps the stable code.
     if evidence == "observable sink localization" {
         return "a way to follow the changed value to something a test can check".to_string();
+    }
+    // #11402: the value is followed to a vector the test holds, but ripr
+    // cannot yet write the exact check of its contents.
+    if evidence == COLLECTION_CONTENTS_CHECK_EVIDENCE {
+        return "an exact check of the full contents the test reads back after the call, which ripr cannot write yet"
+            .to_string();
     }
     // #11025: the stage the static chain stopped at, in plain words. The
     // machine list keeps the stable `incomplete evidence stage: <stage>` code;
@@ -493,6 +502,17 @@ fn effect_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repai
     } else {
         missing_evidence.push("observable sink localization".to_string());
     }
+    // #11402: a push into a plain collection the test holds is checked by
+    // comparing that collection's exact contents, not by a mock expectation,
+    // and this route cannot propose that check yet. Fail closed once the
+    // value is followed, so no start proposes the wrong kind of check.
+    let contents_check_needed = stages_localize_sink
+        && crate::analysis::classify::direct_collection_mutation_receiver(seam.expression())
+            .is_some();
+    if contents_check_needed {
+        required_evidence.push(COLLECTION_CONTENTS_CHECK_EVIDENCE.to_string());
+        missing_evidence.push(COLLECTION_CONTENTS_CHECK_EVIDENCE.to_string());
+    }
 
     let current_mock_is_strong = current.as_ref() == Some(&OracleKind::MockExpectation)
         && current_strength.as_ref() == Some(&OracleStrength::Strong)
@@ -526,7 +546,8 @@ fn effect_route_readiness(seam: &RepoSeam, evidence: &TestGripEvidence) -> Repai
             .map(RepairTargetSelection::Existing)
             .unwrap_or(RepairTargetSelection::Missing),
         test_target,
-        proposed_oracle: Some(OracleKind::MockExpectation),
+        // No mock is proposed where the needed check is a contents check.
+        proposed_oracle: (!contents_check_needed).then_some(OracleKind::MockExpectation),
         current_oracle: current,
         authority_boundary: REPAIR_ROUTE_AUTHORITY_BOUNDARY,
     }
@@ -939,9 +960,10 @@ mod tests {
     mod case_identity;
 
     use super::{
-        ClassifiedSeam, RepairPacketIneligibility, RepairTargetSelection,
-        cross_language_oracle_visibility_unresolved, discriminator_fact_matches, humanize_evidence,
-        is_safe_for_repair_packet, repair_packet_eligibility, repair_packet_queue_visible,
+        COLLECTION_CONTENTS_CHECK_EVIDENCE, ClassifiedSeam, RepairPacketIneligibility,
+        RepairTargetSelection, cross_language_oracle_visibility_unresolved,
+        discriminator_fact_matches, humanize_evidence, is_safe_for_repair_packet,
+        repair_packet_eligibility, repair_packet_queue_visible,
     };
     use crate::analysis::new_test_target::{
         NewTestKind, NewTestProposalProvenance, NewTestTargetAdmission, NewTestTargetProposal,
@@ -1091,6 +1113,11 @@ mod tests {
             (
                 "observable sink localization",
                 "a way to follow the changed value to something a test can check",
+            ),
+            // #11402: the contents check the route cannot propose yet.
+            (
+                COLLECTION_CONTENTS_CHECK_EVIDENCE,
+                "an exact check of the full contents the test reads back after the call, which ripr cannot write yet",
             ),
         ];
         for (internal, plain) in cases {

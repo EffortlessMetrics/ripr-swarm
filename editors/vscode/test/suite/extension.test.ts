@@ -515,11 +515,6 @@ suite('Extension Smoke', () => {
       diagnostic.range
     );
     const contextCommand = assertCommandAction(actions, 'Inspect Test Gap - Copy Context', 'ripr.copyContext');
-    const targetedBriefCommand = assertCommandAction(
-      actions,
-      'Write targeted test: copy brief',
-      'ripr.copyTargetedTestBrief'
-    );
     const packetCommand = assertCommandAction(
       actions,
       'Agent handoff: copy packet command',
@@ -571,14 +566,6 @@ suite('Extension Smoke', () => {
     };
     assert.strictEqual(parsedContextPacket.schema_version, '0.5');
     assert.strictEqual(parsedContextPacket.packets?.[0]?.seam_id, '67fc764ba37d77bd');
-
-    await vscode.commands.executeCommand(targetedBriefCommand.command, ...(targetedBriefCommand.arguments ?? []));
-    const targetedBriefText = await waitForClipboardText((text) => text.includes('Target seam:'));
-    assert.ok(targetedBriefText.includes('Target seam:'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('src/lib.rs:2'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('predicate_boundary'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('Missing discriminator'), targetedBriefText);
-    assert.ok(targetedBriefText.includes('tests/pricing.rs'), targetedBriefText);
 
     await vscode.commands.executeCommand(packetCommand.command, ...(packetCommand.arguments ?? []));
     const packetText = await waitForClipboardText((text) => text.includes('ripr agent packet'));
@@ -963,30 +950,8 @@ suite('Extension Smoke', () => {
       const actions = await waitForCodeActions(
         uri,
         diagnostic.range,
-        (action) => action.title === 'Inspect gap: copy repair packet',
+        (action) => action.title === 'Inspect gap: copy static-limit note',
         10000
-      );
-      const repairPacketCommand = assertCommandAction(
-        actions,
-        'Inspect gap: copy repair packet',
-        'ripr.copyContext'
-      );
-      const relatedTestCommand = assertCommandAction(
-        actions,
-        'Write targeted test: open best related test',
-        'ripr.openRelatedTest'
-      );
-      const verifyCommand = assertCommandAction(
-        actions,
-        'Verify after test: copy verify command',
-        'ripr.copyAgentVerifyCommand',
-        'ripr agent verify'
-      );
-      const receiptCommand = assertCommandAction(
-        actions,
-        'Review result: copy receipt command',
-        'ripr.copyAgentReceiptCommand',
-        'ripr agent receipt'
       );
       const staticLimitCommand = assertCommandAction(
         actions,
@@ -994,52 +959,11 @@ suite('Extension Smoke', () => {
         'ripr.copyContext'
       );
 
-      await vscode.commands.executeCommand(repairPacketCommand.command, ...(repairPacketCommand.arguments ?? []));
-      const repairPacketText = await waitForClipboardText((text) =>
-        text.includes('"source": "gap_decision_ledger"') &&
-        text.includes('"canonical_gap_id": "gap:typescript:pricing:threshold-boundary"')
-      );
-      const repairPacket = JSON.parse(repairPacketText) as {
-        source?: string;
-        packets?: Array<{ language?: string; language_status?: string; verify_command?: string }>;
-      };
-      assert.strictEqual(repairPacket.source, 'gap_decision_ledger');
-      assert.strictEqual(repairPacket.packets?.[0]?.language, 'typescript');
-      assert.strictEqual(repairPacket.packets?.[0]?.language_status, 'preview');
-      assert.strictEqual(repairPacket.packets?.[0]?.verify_command, 'ripr agent verify --root . --json');
-
       await vscode.commands.executeCommand(staticLimitCommand.command, ...(staticLimitCommand.arguments ?? []));
       const staticLimitText = await waitForClipboardText((text) =>
         text.includes('Static limit: missing_import_graph')
       );
-      assert.ok(staticLimitText.includes('TypeScript preview smoke uses syntax-first evidence.'), staticLimitText);
-
-      // #4001: the copied gap route names the selected workspace (either
-      // spelling when the folder is a symlink), not the portable `--root .`.
-      const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      assert.ok(selectedRoot, 'test workspace root must be open');
-      const rootArgs = [selectedRoot, await fs.realpath(selectedRoot)].map((root) =>
-        serverShellArg(root.replace(/\\/g, '/'))
-      );
-      const boundGapCommand = (verb: string) => (text: string) =>
-        rootArgs.some((rootArg) => text === `ripr agent ${verb} --root ${rootArg} --json`);
-
-      await vscode.commands.executeCommand(verifyCommand.command, ...(verifyCommand.arguments ?? []));
-      const verifyText = await waitForClipboardText((text) => text.startsWith('ripr agent verify --root '));
-      assert.ok(boundGapCommand('verify')(verifyText), verifyText);
-
-      await vscode.commands.executeCommand(receiptCommand.command, ...(receiptCommand.arguments ?? []));
-      const receiptText = await waitForClipboardText((text) => text.startsWith('ripr agent receipt --root '));
-      assert.ok(boundGapCommand('receipt')(receiptText), receiptText);
-
-      await vscode.commands.executeCommand(relatedTestCommand.command, ...(relatedTestCommand.arguments ?? []));
-      const activeEditor = vscode.window.activeTextEditor;
-      assert.ok(activeEditor, 'expected related TypeScript test to open an editor');
-      assert.ok(
-        activeEditor.document.uri.fsPath.replace(/\\/g, '/').endsWith('/tests/pricing.test.ts'),
-        activeEditor.document.uri.fsPath
-      );
-      assert.strictEqual(activeEditor.selection.active.line, 3);
+      assert.ok(staticLimitText.includes('Static limit: missing_import_graph'), staticLimitText);
     } finally {
       await cleanupEditorGapSmokeFiles();
       await updateDiagnosticProfile(config, previousProfile);

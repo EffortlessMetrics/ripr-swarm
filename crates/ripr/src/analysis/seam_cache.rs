@@ -634,9 +634,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.139`: a table-test row title or template that merely quotes `eval`,
 /// `with`, `this`, `arguments` or `Function` no longer hides the row's
 /// mutation route; only code uses and computed keys do (#12253).
-/// `1.140`: an assertion whose `Err(..)` constructor feeds a value-supplying
+/// `1.140`: a verified `use claims::..` `assert_ok_eq!` / `assert_some_eq!` of a
+/// literal pins an `Ok`/`Some` tail and reads `exact_value` / strong
+/// (RIPR-SPEC-0197, RIPR-SPEC-0231 rule 10, #12304). Old entries keep `unknown`.
+/// `1.141`: an assertion whose `Err(..)` constructor feeds a value-supplying
 /// adapter is a relation, not an exact oracle of any kind (#12610).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.140";
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.141";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -817,8 +820,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.140";
 /// `0.139`: same indirect-owner item scope decisions as full `1.137` (#10162).
 /// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
 /// `0.141`: same table-row quoted-word rule as full `1.139` (#12253).
-/// `0.142`: same adapter-fed `Err(..)` relation as full `1.140` (#12610).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.142";
+/// `0.142`: same claims payload-equality pin as full `1.140` (#12304).
+/// `0.143`: same adapter-fed `Err(..)` relation as full `1.141` (#12610).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.143";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -1001,8 +1005,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.142";
 /// `0.139`: same indirect-owner item scope decisions as full `1.137` (#10162).
 /// `0.140`: same adapter-fed `Err(..)` refusal as full `1.138` (#12359).
 /// `0.141`: same table-row quoted-word rule as full `1.139` (#12253).
-/// `0.142`: same adapter-fed `Err(..)` relation as full `1.140` (#12610).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.142";
+/// `0.142`: same claims payload-equality pin as full `1.140` (#12304).
+/// `0.143`: same adapter-fed `Err(..)` relation as full `1.141` (#12610).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.143";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1205,9 +1210,11 @@ pub(crate) const COUNT_CACHE_SCHEMA_VERSION: &str = "0.2";
 /// `1.53`: an assertion whose `Err(..)` constructor feeds a value-supplying
 /// adapter is no longer an `ExactErrorVariant` oracle fact (#12359); `1.52`
 /// facts keep the old kind.
-/// `1.54`: an assertion whose `Err(..)` constructor feeds a value-supplying
+/// `1.54`: `assert_ok_eq` and `assert_some_eq` are trusted macro names, so the
+/// stored binding candidates may name them (#12304); `1.53` facts cannot.
+/// `1.55`: an assertion whose `Err(..)` constructor feeds a value-supplying
 /// adapter is a weak relation, not an exact oracle fact of any kind (#12610).
-pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.54";
+pub(crate) const FILE_FACT_CACHE_SCHEMA_VERSION: &str = "1.55";
 
 /// Keep the best-effort classified-seam cache from turning a successful live
 /// analysis into an unbounded post-analysis stall on large repos. Larger live
@@ -5588,7 +5595,7 @@ mod tests {
         // 1.47 -> 1.48: arrow-row oracles (RIPR-SPEC-0231 rule 9, #9619).
         // 1.48 -> 1.49: call-in-term accumulator probe (RIPR-SPEC-0360, #9478).
         // 1.49 -> 1.50: arrow row inputs substituted (RIPR-SPEC-0231 rule 9, #10797).
-        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.54");
+        assert_eq!(FILE_FACT_CACHE_SCHEMA_VERSION, "1.55");
         // 1.4 -> 1.5: metadata-sourced harness validation (#3634) flips
         // verdicts for workspaces the manifest emulation approximated.
         // 1.5 -> 1.6: the #3636 reachability authority excludes
@@ -5756,8 +5763,9 @@ mod tests {
         // 1.136 -> 1.137: indirect-owner item scope decisions (#10162).
         // 1.137 -> 1.138: adapter-fed Err refusal (#12359).
         // 1.138 -> 1.139: table-row quoted words no longer hide the route (#12253).
-        // 1.139 -> 1.140: adapter-fed Err is a relation (#12610).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.140");
+        // 1.139 -> 1.140: claims payload-equality owner pin (#12304).
+        // 1.140 -> 1.141: adapter-fed Err is a relation (#12610).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.141");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -5878,9 +5886,10 @@ mod tests {
         // 0.138 -> 0.139: same indirect-owner item scope decisions as full 1.137 (#10162).
         // 0.139 -> 0.140: same adapter-fed Err refusal as full 1.138 (#12359).
         // 0.140 -> 0.141: same table-row quoted-word rule as full 1.139 (#12253).
-        // 0.141 -> 0.142: same adapter-fed Err relation as full 1.140 (#12610).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.142");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.142");
+        // 0.141 -> 0.142: same claims payload-equality pin as full 1.140 (#12304).
+        // 0.142 -> 0.143: same adapter-fed Err relation as full 1.141 (#12610).
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.143");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.143");
     }
 
     #[test]
