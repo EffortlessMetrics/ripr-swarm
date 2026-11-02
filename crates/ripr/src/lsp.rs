@@ -11,6 +11,7 @@ pub mod diagnostic_budget;
 mod diagnostic_catalog;
 mod diagnostics;
 mod dollar_requests;
+mod fix_instruction_authority;
 mod gap_artifacts;
 mod git_inputs;
 mod hover;
@@ -24,6 +25,8 @@ mod progress;
 mod progress_stages;
 mod refresh_scheduler;
 mod repair_card;
+#[cfg(test)]
+mod saved_edit_measurement;
 #[cfg(test)]
 mod saved_edit_sequence;
 mod session_end;
